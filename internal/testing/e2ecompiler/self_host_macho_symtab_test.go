@@ -10,11 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/symname"
 )
 
-// `-g` on arm64-darwin writes the function labels into the Mach-O's LC_SYMTAB
-// (#11409), the counterpart of the ELF targets' .symtab (#6637): nm, lldb and
-// a crash backtrace name a code address by them. A default build keeps the
-// degenerate LC_SYMTAB dyld requires and no symbols. The check is on the
-// file's structure, so it needs no Apple Silicon host.
 func TestSelfHostArm64DarwinSymtab(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()

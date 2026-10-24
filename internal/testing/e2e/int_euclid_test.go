@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer div_euclid / rem_euclid helpers —
-// std/i32, std/i64, std/u32, std/u64. Euclidean division yields a remainder
-// always in [0, |rhs|) (unlike / and %, which truncate toward zero and leave a
-// sign-of-dividend remainder), so it's the "true modulo" for wrap-around
-// indexing where n % rhs would go negative. The signed versions round the
-// truncating quotient one step further from zero when the truncating remainder
-// is negative; the unsigned versions coincide with / and %. Checks all four
-// sign quadrants, the wrap-around case ((-1).rem_euclid(3) == 2), and the
-// div/rem identity n == rhs*div_euclid(rhs) + rem_euclid(rhs). Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const intEuclidProg = `
 import "std/i32";
 import "std/i64" as i64m;

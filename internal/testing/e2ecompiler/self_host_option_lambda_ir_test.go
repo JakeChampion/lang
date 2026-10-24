@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptionLambdaIR pins the lambda_captures fix: a no-capture lambda
-// whose body constructs an Option/Result (`(x) => { return Some(x+1); }`)
-// passed as a fn-value argument. lambda_captures excluded `None`/`true`/`false`
-// but NOT the call-style variant constructors `Some`/`Ok`/`Err`, so it miscounted
-// `Some` as a captured free variable, misrouted the lambda to the capturing-
-// closure (`$clo`) path, and never hoisted it -> BAIL const_func, dragging the
-// module to AST (#3457: std/option / std/result `.and_then` / `.or_else`). Each
-// case compiles through the asm_ir_run driver, asserts the oracle exit code, and
-// pins that a `$wrap` trampoline (the no-capture lift) was emitted.
 func TestSelfHostOptionLambdaIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -27,13 +18,10 @@ func TestSelfHostOptionLambdaIR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		// Option-returning lambda to a free function; unwrap -> 6.
 		{"option-free", `function applyf(v: i32, f: (i32) => Option[i32]): Option[i32] { return f(v); }
 function main(): i32 { match (applyf(5, (x: i32): Option[i32] => { return Some(x + 1); })) { Some(y) => { return y; }, None => { return 0; }, } }`, 6},
-		// Result-returning lambda (Ok); unwrap -> 8.
 		{"result-ok", `function applyr(v: i32, f: (i32) => Result[i32, i32]): Result[i32, i32] { return f(v); }
 function main(): i32 { match (applyr(7, (x: i32): Result[i32, i32] => { return Ok(x + 1); })) { Ok(y) => { return y; }, Err(_) => { return 0; }, } }`, 8},
-		// Option-returning lambda to a method on a struct receiver -> 6.
 		{"option-method", `struct W { v: i32 }
 function (w: W) applyo(f: (i32) => Option[i32]): Option[i32] { return f(w.v); }
 function main(): i32 { let w: W = W { v: 5 }; match (w.applyo((x: i32): Option[i32] => { return Some(x + 1); })) { Some(y) => { return y; }, None => { return 0; }, } }`, 6},

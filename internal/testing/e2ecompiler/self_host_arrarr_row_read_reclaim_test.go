@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// Reading a row from a nested array retains the row while allowing the
-// outer array to release its own references. The reclaim cases require zero
-// live bytes; the escape cases compare the driver with the full CLI.
-
-// arrarrRowBindChurnSrc: the minimal shape — a row bound out of a fresh
-// arr-of-arr and read locally. Nothing escapes the frame.
 const arrarrRowBindChurnSrc = `function round(n: i32): i32 {
     let placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
     let row: i32[] = placed[0];
@@ -24,8 +18,6 @@ function main(): i32 {
     return t % 3;
 }`
 
-// arrarrRowAssignChurnSrc: the ASSIGN spelling of the same read, which takes
-// the same dup and so earns the same credit.
 const arrarrRowAssignChurnSrc = `function round(n: i32): i32 {
     let placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
     let row: i32[] = [0];
@@ -40,9 +32,6 @@ function main(): i32 {
     return t % 3;
 }`
 
-// arrarrRowEscapeChurnSrc: the row ESCAPES in a returned struct's scalar-array
-// field — the #7805 repro. The construction adds a second retain and the
-// struct's own field drop balances it, so the walk still lands correctly.
 const arrarrRowEscapeChurnSrc = `struct G { text: string, lines: i32[] }
 
 function mk(n: i32): G {
@@ -104,9 +93,6 @@ func TestSelfHostArrArrRowReadReclaimX86_64(t *testing.T) {
 	}
 }
 
-// arrarrRowIterSrc: `for row in g` takes no dup, but the loop completes before
-// the exit reclaim, so the borrow is transient and the credit holds. Rows are
-// distinct so a freed-and-recycled buffer would change the sum.
 const arrarrRowIterSrc = `function round(n: i32): i32 {
     let placed: i32[][] = [[n, n + 1], [n + 2, n + 3], [n + 4, n + 5]];
     let t: i32 = 0;
@@ -121,11 +107,6 @@ function main(): i32 {
     return t % 7;
 }`
 
-// arrarrRowIterEscapeHazardSrc: the loop var ESCAPES the body, so the borrow is
-// no longer transient and the credit must still be refused. This is the shape
-// that separates "admit transient iteration" from "admit all iteration" — the
-// row outlives the loop with no counted reference, so a granted credit would
-// free a buffer `kept` still names.
 const arrarrRowIterEscapeHazardSrc = `function round(n: i32): i32 {
     let placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
     let kept: i32[] = [0];
@@ -140,11 +121,6 @@ function main(): i32 {
     return t % 7;
 }`
 
-// arrarrRowRebindHazardSrc: the reclaim-at-rebind shape. A self-append rebind
-// releases the previous structure mid-loop while `held` still names a row bound
-// in an EARLIER iteration. The bind's dup is what makes this safe — the reclaim
-// decs that row but cannot free it — so a correct answer here is the evidence
-// that granting the credit did not introduce an over-release.
 const arrarrRowRebindHazardSrc = `function round(n: i32): i32 {
     let g: i32[][] = [];
     let held: i32[] = [0];
@@ -181,11 +157,6 @@ func TestSelfHostArrArrRowReadHazardsX86_64(t *testing.T) {
 		{"rebind_holds_earlier_row", arrarrRowRebindHazardSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Both compilers must agree on the ANSWER. A credit granted to a shape
-			// that takes no counted retain frees a row its holder still reads, which
-			// shows up as a diverging exit code or a crash long before any byte
-			// count would say so. Deliberately NOT a live_bytes assertion: these
-			// shapes are expected to leak soundly.
 			_, nativeExit := nativeLeakVerdict(t, cli, dir, "arrarrrowhz_nat_"+tc.name, tc.src)
 			if nativeExit < 0 {
 				t.Fatalf("native side did not run (exit %d)", nativeExit)

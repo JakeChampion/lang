@@ -46,8 +46,6 @@ function actual(): void {
   require(bound.error == "" && p.error == "" && body.error == "", "same final output");
   require(p.register_entry == body.register_entry && p.ops.len() == bound.lines.len(), "actual positions");
   actual_operations(p, body);
-  // Unit output intentionally has no allocator implementation. A decoded call
-  // does not establish linkage, successful allocation or any memory permission.
   require(!output.text.contains("\n__fern_arr_box:\n"), "dependency remains unproved");
 }
 
@@ -132,7 +130,6 @@ function unsupported(): void {
   for line in ["call __fern_alloc", "call __fern_capw", "call __fern_large_push", "call __fern_arr_box.r", "call *__fern_arr_box", "call __fern_arr_box+1", "call __fern_arr_box, %rax", "leaq .S0+8(%rip), %rax", "leaq .S0(%rip,%rcx), %rax", "leal .S0(%rip), %eax", "leaq .S0(%rip), %eax", "leaq 123(%rip), %rax", "leaq (%rip), %rax", "leaq .S0@GOTPCREL(%rip), %rax", "leaq .S0(%rip), %rax, %rcx", "unknown_instruction", "leave"] {
     require(sample(line).kind == 0, "unknown retained: " + line);
   }
-  // Constructor additions do not silently extend existing runtime decoders.
   for line in ["call __fern_arr_box", "leaq .S0(%rip), %rax"] {
     let old = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
     require(old.error == "" && old.ops[0].kind == 0, "capacity policy isolated");

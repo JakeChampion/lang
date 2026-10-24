@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// step holds its first read of b.insts, so the planner asks the takes again.
-// That ask takes a re-read of b.insts and then an element out of it, but
-// slot_held refuses the re-read, since the held read still loads the slot.
-// The element take must go too: insts is unique to its block, so the take
-// empties the slot in place, and emit's next call reads the hole. Before, the
-// x86-64 build crashed here, as the compiler built by itself did in
-// asm_ir.ssa_block_inst.
 const twinSourceProg = `import "std/i32";
 struct Inst { kind: i32, result: i32, args: i32[], tag: string }
 struct Blk { insts: Inst[], name: string }

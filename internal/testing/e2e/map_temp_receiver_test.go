@@ -1,11 +1,5 @@
 package e2e
 
-// A Map that a call returns and nothing binds (#11246): a receiver
-// (`mk().len()`, `mk().get(k)`, `mk().keys()`), an argument to a borrowing
-// parameter, a mutator's receiver, and a `for` iterand. Each one leaked the
-// whole table on the native backends; the census leg below is the native one.
-// The interpreter and the self-host compiler were right throughout.
-
 import (
 	"strings"
 	"testing"
@@ -49,7 +43,6 @@ function main(): i32 {
 }
 `
 
-// 42 when clean; every rc underflow the run recorded adds to it.
 const mapTempReceiverRcProg = mapTempReceiverDefs + `
 function main(): i32 {
     let r: i32 = check();
@@ -64,7 +57,6 @@ func TestMapTempReceiverInterp(t *testing.T) {
 	}
 }
 
-// The wasm build under the leak census: the leg the fix is for.
 func TestMapTempReceiverNativeWasmCensus(t *testing.T) {
 	_, stderr, code := runLeakCheckWasm(t, mapTempReceiverProg, false)
 	if code != 42 && code != 0 {
@@ -79,8 +71,6 @@ func TestMapTempReceiverNativeWasmCensus(t *testing.T) {
 	}
 }
 
-// The self-host, under the sanitizer: a leak is a verdict line, a double
-// release or a read of a freed handle is fatal.
 func TestMapTempReceiverSelfHostX86_64(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, mapTempReceiverProg)
 	checkMapTempReceiver(t, stderr, code)

@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// A value block `{ stmts; tail }` whose tail names a local yields an alias of
-// that local, and the exit sweep still releases the local, so every consumer
-// has to retain the tail as it would the bare name (#10435). Without the
-// retain `return { let q = …; q }` handed back a freed buffer, and an array
-// bound from a block was released by the block local's reinit drop while the
-// binding still held it.
 func TestValueBlockTailAliasIsRetained(t *testing.T) {
 	cases := []struct {
 		name, src string
@@ -76,9 +70,6 @@ function main(): i32 {
 	}
 }
 
-// checkBalancedOnEveryBackend checks src's answer against the interpreter,
-// then that every backend agrees and that the sanitized natives and the wasm
-// census report no finding and a balanced heap.
 func checkBalancedOnEveryBackend(t *testing.T, name, src string, want int) {
 	t.Helper()
 	if got := runInterpByte(t, src); got != want {
@@ -115,17 +106,11 @@ function measure(d: dyn Shape): i32 { return d.area(); }
 function total(xs: dyn Shape[]): i32 { let t = 0; for x in xs { t = t + x.area(); } return t; }
 `
 
-// A value coerced to `dyn` is retained through the dyn coercion the checker
-// recorded against the coerced node. For a value block that node is the block
-// itself, so looking it up on the block's tail missed it, and the retain fell
-// through to a flat inc of the word below the dyn cell (#10529).
 func TestValueBlockDynCoercionIsRetained(t *testing.T) {
 	cases := []struct {
 		name, src string
 		want      int
 	}{
-		// side() keeps the Square off the static aggregates, so the census
-		// has its box to count.
 		{"issue-10529", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -210,10 +195,6 @@ function main(): i32 {
 	}
 }
 
-// An if- or match-expression yields an owned reference whichever arm runs
-// (emitCountedYield retains an aliased arm), so a borrowing consumer has to
-// release it: a call argument, a `.len()` receiver, an index read. Every one
-// of them used to strand it.
 func TestConditionalValueIsReleasedByItsConsumer(t *testing.T) {
 	const src = `struct P { x: i32, y: i32 }
 function sum(xs: i32[]): i32 { let t: i32 = 0; for x in xs { t = t + x; } return t; }
@@ -243,10 +224,6 @@ function main(): i32 {
     return t;
 }`
 	checkBalancedOnEveryBackend(t, "conditional-consumers", src, 130)
-	// A match over a fresh Option whose arm yields the payload binding: the
-	// binding is out of exprType's scope when the analysis asks, so the
-	// counted yield read as a borrow and neither the bound result nor the
-	// argument temp was released (#10552).
 	checkBalancedOnEveryBackend(t, "match-payload-yield", `function sum(xs: i32[]): i32 { let t: i32 = 0; for x in xs { t = t + x; } return t; }
 function opt(j: i32): Option[i32[]] { if (j > 0) { return Some([j, 1]); } return None; }
 function main(): i32 {
@@ -263,9 +240,6 @@ function main(): i32 {
     }
     return t;
 }`, 44)
-	// An array-view arm of a conditional argument borrows its source no longer
-	// than the call, as a bare view argument does, so the source keeps its
-	// release (#10553).
 	checkBalancedOnEveryBackend(t, "lent-view-arms", `function sumv(xs: [i32]): i32 { return xs[0] + xs.len(); }
 function main(): i32 {
     let t: i32 = 0;
@@ -279,8 +253,6 @@ function main(): i32 {
     }
     return t;
 }`, 42)
-	// An owned dyn receiver temp is released once its method call returns
-	// (#10554).
 	checkBalancedOnEveryBackend(t, "dyn-owned-receiver", dynShapesPrelude+`function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
 function main(): i32 {
     let t: i32 = 0;
@@ -310,9 +282,6 @@ function main(): i32 {
 }`, 34)
 }
 
-// A field read straight off an if-, match- or block value has to resolve the
-// struct from the value's type; the IR's owner lookup knew only named shapes
-// and refused these with `field access on unresolved struct ""`.
 func TestFieldReadOffConditionalValue(t *testing.T) {
 	e2eharness.BoxedProbes(t)
 	const src = `struct P { x: i32, y: i32 }

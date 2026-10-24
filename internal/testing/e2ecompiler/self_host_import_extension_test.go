@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// An import may write its module's `.fern` or leave it off, in both compilers:
-// `import "./two.fern";` loads two.fern and binds `two` (#12980).
 func TestImportWithFernExtension(t *testing.T) {
 	dir := t.TempDir()
 	for name, body := range map[string]string{
@@ -32,7 +30,6 @@ func TestImportWithFernExtension(t *testing.T) {
 		want int
 	}{
 		{"main.fern", 5},
-		// The module keeps its privacy behind the suffixed spelling.
 		{"private.fern", 1},
 	} {
 		path := filepath.Join(dir, c.main)

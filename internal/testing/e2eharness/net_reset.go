@@ -1,11 +1,5 @@
 package e2eharness
 
-// NetReadResetProbe checks that std/net's reads tell a peer that reset the
-// connection from one that ended it: a clean close reads as
-// `Ok(Chunk([]))`, the end of the stream, and a reset reads as an error.
-// The accepted side resets by closing with the client's byte unread, which
-// is a reset on every host here. Exit 42 and "ok" on stdout iff every check
-// holds, else the number of the first failing check.
 func NetReadResetProbe() string {
 	return `import "core/int";
 import "std/net";

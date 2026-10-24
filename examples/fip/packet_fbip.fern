@@ -1,39 +1,8 @@
-// examples/fip/packet_fbip.fern — the FBIP variant of the bounded packet codec
-// (#9584).
-//
-// Same protocol, same workload and the same answers as the other three. The
-// response buffer, the parse's results and every counter live in one `Codec`
-// struct that the data plane consumes and rebuilds, `fbip`-annotated, so each
-// construction is reuse-PAIRED: on a uniquely-owned donor it writes that box in
-// place rather than allocating.
-//
-// This is the ergonomic shape — the buffer has a name, the counters have names,
-// and a new region is a new field. What it costs shows up here in a way it did
-// not in the event loop (#9583), because that workload wrote ONE element per
-// event and this one writes up to 240. Every byte into a struct-held buffer is
-// a whole `Codec` reconstruction, and while each one is allocation-free, it is
-// not free. `packet_fip.fern` is the same algorithm with the buffer threaded as
-// its own `own` parameter, and the gap between the two is what this pair is
-// for.
 import "core/cmp";
 import "std/bench";
 import "std/i32";
 import "std/i64";
 
-// ===================== THE PROTOCOL =====================
-//
-// A 16-byte fixed header and a bounded payload, so a whole packet fits in 256
-// bytes and every buffer in every variant can be sized once, up front.
-//
-//   0..1   magic 0xFE 0x52
-//   2      version
-//   3      message type
-//   4      status (0 on a request)
-//   5      reserved
-//   6..9   request id, u32 little-endian
-//   10..11 payload length, u16 little-endian
-//   12..13 Fletcher-16 of the payload
-//   14..15 reserved
 fip function header_len(): i32 {
   return 16;
 }
@@ -102,9 +71,6 @@ fip function st_bad_checksum(): i32 {
   return 6;
 }
 
-// Fletcher-16: two running sums mod 255, which catches byte transposition
-// where a plain sum does not. Cheap enough that it is not what any variant's
-// throughput is measuring.
 fip function checksum(bytes: u8[], from: i32, n: i32): i32 {
   let a: i32 = 0;
   let b: i32 = 0;
@@ -142,20 +108,6 @@ fip function pow256(k: i32): i64 {
   return p;
 }
 
-// ===================== STATE =====================
-//
-// One response buffer, sized once for the largest packet the protocol admits,
-// the parse's five results, and the counters. The request buffer stays a local
-// in `main` and is threaded through the generator as `own`, exactly as in the
-// other three variants, so the harness is byte-identical and only the codec
-// differs.
-//
-// The parse writes its result into these fields instead of returning a record.
-// That is not a stylistic choice: a returned `Request` has no donor to pair
-// with, so it is a fresh allocation per request, and the baseline and borrowed
-// variants pay exactly that. Folding it into the state is how the count reaches
-// zero, and it is the first place this discipline changes the shape of the code
-// rather than just its annotations.
 struct Codec {
   out: u8[],
   out_len: i32,
@@ -175,10 +127,6 @@ struct Codec {
   copied: i64,
 }
 
-// ===================== THE PARSE (fbip, no copy, no record) =====================
-//
-// The validation ladder, in the order a receiver can actually apply it: the
-// framing first, because a bad length makes every later read a guess.
 fbip function reject(own c: Codec, status: i32): Codec {
   return Codec { ...c, st: status, plen: 0, at: 0 };
 }
@@ -211,14 +159,6 @@ fbip function parse_into(own c: Codec, wire: u8[], wire_len: i32): Codec {
   return Codec { ...c, st: st_ok(), at: header_len(), plen: n };
 }
 
-// ===================== THE TRANSFORM AND ENCODE (fbip) =====================
-//
-// Each of these writes bytes into `c.out` one reconstruction at a time. That is
-// the shape the annotation permits and the honest spelling of "hold the buffer
-// in a record": the buffer cannot be lifted into a local first, because
-// `let b = c.out` while `c` is still live leaves `b` SHARED and `.with` on it
-// copies — which E053 says, correctly. `packet_fip.fern` threads the same
-// buffer as its own `own` parameter and pays the store instead.
 fbip function put(own c: Codec, at: i32, v: u8): Codec {
   return Codec { ...c, out: c.out.with(at, v) };
 }
@@ -291,9 +231,6 @@ fbip function transform(own c: Codec, wire: u8[]): Codec {
 }
 
 fbip function encode_header(own c: Codec): Codec {
-  // Every field this writes is read out first: a field read in the same
-  // expression that consumes the state is E050, since the argument is
-  // evaluated after the move.
   let plen: i32 = c.out_len;
   let mt: i32 = c.mtype;
   let status: i32 = c.st;
@@ -360,8 +297,6 @@ fbip function serve(own c: Codec, wire: u8[], n: i64): Codec {
   let framed: i32 = header_len() + c.out_len;
   c = absorb(c, framed);
   c = tally(c);
-  // Bytes moved: the transform's write into the response buffer, and the
-  // header written over it. Nothing is copied into or out of a fresh array.
   return Codec { ...c, copied: c.copied + c.out_len as i64 + header_len() as i64 };
 }
 
@@ -374,13 +309,6 @@ fbip function reset(own c: Codec): Codec {
     digest: 1469598103934665603 as i64, copied: 0 as i64,
   };
 }
-
-// ===================== THE WORKLOAD =====================
-//
-// Identical in all four variants, verbatim, so the runs differ in how the
-// bytes are held and in nothing else. Every 17th request is malformed, cycling
-// through the six rejections, so the error ladder is exercised in the steady
-// state rather than in a separate test that proves nothing about throughput.
 
 fip function gen_payload_len(n: i64): i32 {
   return (n * (37 as i64) % (241 as i64)) as i32;
@@ -397,10 +325,6 @@ fip function corruption(n: i64): i32 {
   return (n / (17 as i64) % (6 as i64)) as i32;
 }
 
-// Writes one request into the buffer it is handed and gives it back. It takes
-// the buffer `own` in every variant, including this one: generating the input
-// is the harness, not the codec, and a borrowed `wire` would copy all 256
-// bytes on each `.with` — charging every variant for the instrument.
 fip function build_request(own wire: u8[], n: i64): u8[] {
   let t: i32 = 1 + (n % (4 as i64)) as i32;
   let plen: i32 = gen_payload_len(n);
@@ -456,9 +380,6 @@ fip function wire_len_for(n: i64): i32 {
   return header_len() + plen;
 }
 
-// A running digest over every response byte. Four implementations of one codec
-// agree only if this agrees, which is what makes the comparison a differential
-// test rather than three unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
   let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
@@ -491,10 +412,6 @@ function new_codec(): Codec {
 
 function main(): i32 {
   let batch: i32 = 64;
-  // 4000 rounds is 256,000 requests, which holds the per-request medians steady
-  // while keeping this program the same weight as experiment 1's — it is run
-  // under both backends, under qemu, by the SSA differential sweep over
-  // examples/, and five times that was 5x the cost for no more signal.
   let rounds: i32 = 4000;
   let wire: u8[] = zeros_u8(max_packet());
   let c: Codec = new_codec();

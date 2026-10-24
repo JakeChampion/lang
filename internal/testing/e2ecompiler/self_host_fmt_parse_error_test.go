@@ -8,20 +8,14 @@ import (
 	"testing"
 )
 
-// fmtParseErrorCases each fail to parse, at the position `-check` names.
 var fmtParseErrorCases = []struct{ name, src, where string }{
 	{"missing-semicolon", "function main(): i32 {\n  let x: i32 = 1\n  return x;\n}\n", ":3:3: error[P001]"},
 	{"missing-last-brace", "function main(): i32 {\n  return 0;\n", ":3:1: error[P001]"},
-	// The printer read this `return @;` as a void `return;`, losing the `@`.
 	{"stray-token", "function main(): i32 { return @; }\n", ":1:31: error[P001]"},
 	{"lex-error", "function main(): i32 { let s = \"abc\n  return 0; }\n", ":1:32: error[P001]"},
 	{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", ":1:13: error[P001]"},
 }
 
-// TestSelfHostFmtRefusesParseErrors pins #12646: `-fmt` on a file that does
-// not parse printed the program with a `/*unknown-stmt:…*/` marker, which is
-// not Fern, and exited 0, and `-fmt -w` called the refusal a formatter bug.
-// Every mode now reports `-check`'s parse errors, exits 1 and writes nothing.
 func TestSelfHostFmtRefusesParseErrors(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -70,8 +64,6 @@ func TestSelfHostFmtRefusesParseErrors(t *testing.T) {
 		})
 	}
 
-	// A file list keeps going past a file that does not parse, and the exit
-	// code is the worst one seen.
 	t.Run("file-list", func(t *testing.T) {
 		tmp := t.TempDir()
 		bad := filepath.Join(tmp, "bad.fern")
@@ -94,7 +86,6 @@ func TestSelfHostFmtRefusesParseErrors(t *testing.T) {
 		}
 	})
 
-	// A literate chunk body that does not parse is a fragment, kept as written.
 	t.Run("literate-fragment", func(t *testing.T) {
 		doc := "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n  let x: i32 = 1\n  return x;\n}\n```\n"
 		path := filepath.Join(t.TempDir(), "doc.fern.md")
@@ -108,7 +99,6 @@ func TestSelfHostFmtRefusesParseErrors(t *testing.T) {
 	})
 }
 
-// runFmtCapture runs cmd and returns its stdout, stderr and exit code.
 func runFmtCapture(cmd *exec.Cmd) (string, string, int) {
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-// Ownership-aware materialization for a same-shape map (#9733), from the
-// outside.
-//
-// The IR tests prove the rewrite fires where it should and declines where it
-// should not. They cannot prove it computes the same thing: writing through
-// the donor's buffer while reading from it is exactly the transform that gives
-// a plausible-looking wrong answer — off by one element, or every element
-// folded through its own overwritten neighbour.
-//
-// So this compares the combinator against a hand-written loop inside the
-// program, over the shapes where an in-place write goes wrong differently:
-// empty, one element, a length that crosses the header read, and a relay
-// through a second `own` frame.
 const arrayInPlaceSrc = `import "std/array";
 
 function dbl(x: i64): i64 { return x * (2 as i64); }
@@ -79,8 +66,6 @@ function main(): i32 {
 }
 `
 
-// 9x = the size at which the direct call disagreed with the loop, 8x = the
-// same through a relay, 7x = the fresh-construction and post-donation checks.
 func TestArm64OwnedMapMatchesTheLoop(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, arrayInPlaceSrc); code != 0 {
 		t.Errorf("owned map on arm64: got %d, want 0", code)

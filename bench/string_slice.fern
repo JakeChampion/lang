@@ -1,7 +1,3 @@
-// string_slice — substring extraction in a loop, in both forms the language
-// offers: the borrowed `str` view (which must stay allocation-free) and the
-// owned `string` copy that `__str_slice` materialises. Any change that makes
-// a view silently materialise shows up here as an instruction-count jump.
 function view_len(s: string): i64 {
   let total: i64 = 0i64;
   let i: i32 = 0;

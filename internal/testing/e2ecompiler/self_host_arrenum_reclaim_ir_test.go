@@ -6,20 +6,11 @@ import (
 	"testing"
 )
 
-// arrEnumReclaimCases pin the #5474 `MyEnum[]` array-of-enums reclaim (#4353 item 4):
-// releasing an enum array frees every element enum box and any rc payload it
-// carries, not just the outer buffer — as `string[]`, `(…)[]` and
-// `(<struct-with-array>)[]` already do. Every case must leave a balanced census.
-//
-// The negative cases extract an element — a match over `xs[0]`, a bound element, a
-// returned array — so freeing that element while a binding aliases its payload is a
-// double free. Each must compute the exact value with the underflow detector at zero.
 var arrEnumReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: rebuilt per iteration, length-only use, rc payload present.
 	{"arrenum-churn", `enum E { A(string), B }
 function main(): i32 {
     let acc: i32 = 0;
@@ -43,8 +34,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ALL-UNIT variants: no payload anywhere, so this isolates the element BOX walk
-	// from any payload drop. Leaked 600 boxes per 200 iterations pre-fix.
 	{"arrenum-unit-only", `enum E { A(string), B }
 function main(): i32 {
     let acc: i32 = 0;
@@ -59,8 +48,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// UNQUALIFIED ctor spelling (`A(..)` rather than `E.A(..)`) must reclaim the same as
-	// the qualified one.
 	{"arrenum-unqualified-ctor", `enum E { A(string), B }
 function main(): i32 {
     let acc: i32 = 0;
@@ -76,9 +63,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// MATCH-EXTRACT negative: a match over `xs[0]` binding the payload. The bound
-	// string must read back exactly (2 + 1 = 3 per round over 50
-	// rounds = 150, %251 = 150, %97 = 53) with the detector at zero.
 	{"arrenum-match-extract-safe", `enum E { A(string), B }
 function main(): i32 {
     let acc: i32 = 0;
@@ -95,7 +79,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 97;
 }`, 53},
-	// ELEMENT-BIND negative: `let e = xs[1]` binds an element box out of the array.
 	{"arrenum-elem-bind-safe", `enum E { A(string), B }
 function main(): i32 {
     let acc: i32 = 0;
@@ -110,7 +93,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 97;
 }`, 53},
-	// ESCAPE-VIA-RETURN negative: the array leaves the frame, so mk must not free it.
 	{"arrenum-escape-fn-safe", `enum E { A(string), B }
 function mk(pre: string): E[] { let xs: E[] = [E.A(pre + "x"), E.B]; return xs; }
 function main(): i32 {
@@ -122,8 +104,6 @@ function main(): i32 {
 }`, 3},
 }
 
-// TestSelfHostArrEnumReclaimIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump, census and underflow guarded.
 func TestSelfHostArrEnumReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	t.Setenv("FERN_LEAKCHECK", "1")

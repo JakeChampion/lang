@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// A user name that exists on the machine the suite runs on, and one
-// that does not. The first is read from the passwd database rather than
-// assumed: `root` is there on every Linux and macOS, but the point of
-// the operand cases is a name whose group list is not the caller's, and
-// the caller may BE root.
 func idUserNames(t *testing.T) (self string, other string) {
 	t.Helper()
 	u, err := user.Current()
@@ -21,9 +16,6 @@ func idUserNames(t *testing.T) (self string, other string) {
 	if self == "root" {
 		other = "daemon"
 		if _, err := user.Lookup(other); err != nil {
-			// A machine without `daemon` still has the caller; the
-			// operand cases then compare the caller by name, which
-			// still exercises the operand path.
 			other = self
 		}
 	}
@@ -34,29 +26,9 @@ func init() {
 	registerCorpus("id", idCases)
 }
 
-// id(1) — the composite line, the four "only" modes, and the option
-// combinations each of them refuses.
-//
-// Everything here is machine-dependent (the ids, the names, the group
-// list), so every case is a comparison between two siblings of this
-// process rather than a pinned string. The cases that are NOT about
-// this machine are the ones worth reading:
-//
-//   - The operand is looked up by name and then as a decimal uid, so
-//     `id 0` is root where `groups 0` is `no such user`. `0x0`, `4a`,
-//     `4 ` and 4294967295 are all refused, and ` +4` is not.
-//   - `no such user` carries the errno gnulib's number read leaves: ERANGE
-//     past 2^64 - 1 on both libcs, and EINVAL on Darwin for an operand
-//     with no digits, whose strtoul sets it.
-//   - `-n` / `-r` / `-z` are each refused in the default format, and
-//     two of `-ugGZ` together are refused whatever they are.
-//   - `-Z` is refused before any of that on a kernel with no SELinux.
-//   - `-G` with `-z` and more than one operand writes a second NUL per
-//     operand. `-G` without `-z`, and `-u` with it, do not.
 func idCases(t *testing.T) []invocation {
 	self, other := idUserNames(t)
 	return []invocation{
-		// The composite line, and the four "only" modes.
 		{name: "no arguments"},
 		{name: "user id", args: []string{"-u"}},
 		{name: "group id", args: []string{"-g"}},
@@ -74,12 +46,10 @@ func idCases(t *testing.T) []invocation {
 		{name: "long name and user", args: []string{"--name", "--user"}},
 		{name: "long real and group", args: []string{"--real", "--group"}},
 
-		// -a is accepted and does nothing.
 		{name: "a alone", args: []string{"-a"}},
 		{name: "a with user", args: []string{"-a", "-u"}},
 		{name: "a after user", args: []string{"-ua"}},
 
-		// --zero, and the second terminator -G alone grows.
 		{name: "zero user", args: []string{"-zu"}},
 		{name: "zero group", args: []string{"-zg"}},
 		{name: "zero group list", args: []string{"-zG"}},
@@ -92,7 +62,6 @@ func idCases(t *testing.T) []invocation {
 		{name: "group list two operands without zero", args: []string{"-G", other, other}},
 		{name: "composite two operands", args: []string{other, other}},
 
-		// Operands.
 		{name: "own name as an operand", args: []string{self}},
 		{name: "another name as an operand", args: []string{other}},
 		{name: "operand group list", args: []string{"-G", other}},
@@ -129,7 +98,6 @@ func idCases(t *testing.T) []invocation {
 		{name: "dashdash alone", args: []string{"--"}},
 		{name: "negative-looking operand after dashdash", args: []string{"--", "-0"}},
 
-		// The option combinations id refuses.
 		{name: "name in default format", args: []string{"-n"}},
 		{name: "real in default format", args: []string{"-r"}},
 		{name: "name and real in default format", args: []string{"-nr"}},
@@ -144,7 +112,6 @@ func idCases(t *testing.T) []invocation {
 		{name: "context with an operand", args: []string{"-Z", other}},
 		{name: "long context", args: []string{"--context"}},
 
-		// getopt faults, including the ambiguity id's own options make.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "digit option", args: []string{"-1"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
@@ -160,7 +127,6 @@ func idCases(t *testing.T) []invocation {
 		{name: "POSIXLY_CORRECT stops options at the first operand",
 			args: []string{other, "-u"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The write-failure paths.
 		{name: "stdout closed", stdout: stdoutClosed},
 		{name: "stdout full", stdout: stdoutFull},
 		{name: "stdout closed with -u", args: []string{"-u"}, stdout: stdoutClosed},

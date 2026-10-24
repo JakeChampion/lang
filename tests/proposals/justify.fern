@@ -1,36 +1,6 @@
-// tests/proposals/justify.fern — proposal turn, line 12:
-// "A word-wrap-aware text justifier that pads inter-word gaps evenly."
-//
-// "Evenly" is the word that looks vague and is not. With `s` spaces to spread
-// across `n` gaps, evenly means every gap is `s/n` or `s/n + 1` and never
-// anything else — so the widest and narrowest gap on a line differ by at most
-// one. That is a property, not a picture, and it holds for every line of every
-// paragraph at every width. The convention for WHICH gaps get the extra space
-// (the leftmost ones) is a second, separate assertion, because a justifier can
-// satisfy "differ by at most one" while scattering the wide gaps at random and
-// look visibly wrong.
-//
-// Around it sit the two claims that stop the padding from being achieved by
-// cheating:
-//
-//   - **Every full line is exactly `width` columns.** Not "about"; exactly.
-//     This is the one a fixture checks for the one paragraph it contains.
-//   - **The words survive.** Collapsing the output's whitespace must give back
-//     the input's words, in order, with nothing added, dropped, split or
-//     merged. A justifier that reaches the target width by inserting a
-//     character, or by hyphenating, fails this and nothing else.
-//
-// The last line is deliberately not justified — stretching it is the bug that
-// makes the final line of every paragraph look like a ransom note — and a line
-// holding a single word is not stretched either, since there is no gap to put
-// the spaces in.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
 import "std/test";
 import "std/i32";
 import "std/string";
-
-// ------------------------------------------------------------------ model ---
 
 function is_blank(c: u8): boolean {
   return c == 32 || c == 9 || c == 10 || c == 13;
@@ -64,11 +34,6 @@ function words_of(text: string): string[] {
   return out;
 }
 
-// --------------------------------------------------------------- wrapping ---
-
-// Greedy: a word joins the current line when it still fits with one space
-// before it. A word wider than the whole column gets a line to itself rather
-// than being split — hyphenation is a different program.
 function wrap(words: string[], width: i32): i32[] {
   let breaks: i32[] = [];
   if (words.len() == 0) {
@@ -89,12 +54,6 @@ function wrap(words: string[], width: i32): i32[] {
   return breaks;
 }
 
-// ------------------------------------------------------------ justifying ---
-
-// The whole definition of "evenly", in four lines: `base` everywhere, one extra
-// on the first `extra` gaps. Distributing the remainder anywhere else still
-// satisfies "differ by at most one" and still looks wrong, which is why the
-// tests check the placement separately from the spread.
 function justify_line(words: string[], from: i32, to: i32, width: i32, last: boolean): string {
   let count: i32 = to - from;
   if (count == 0) {
@@ -108,14 +67,6 @@ function justify_line(words: string[], from: i32, to: i32, width: i32, last: boo
     i = i + 1;
   }
 
-  // A single word, or the final line, is set flush left with single spaces.
-  //
-  // Both accumulators below seed with `.to_owned()`. Without it `out` starts
-  // as a borrowed alias of the array element, and the taint that correctly
-  // protects that element propagates through every self-append, so none of the
-  // intermediate buffers are ever reclaimed (#6567 — 64 B a round, all three
-  // backends). Copying at the seed says what is meant anyway: this buffer is
-  // ours to grow.
   if (count == 1 || last) {
     let out: string = words[from].to_owned();
     let k: i32 = from + 1;
@@ -166,14 +117,9 @@ function layout(text: string, width: i32): string[] {
   return lines;
 }
 
-// ------------------------------------------------------------------ oracle ---
-
-// The gap widths on a rendered line, read back without reference to how they
-// were produced.
 function gaps_of(line: string): i32[] {
   let out: i32[] = [];
   let at: i32 = 0;
-  // Skip the first word; a justified line never starts with a space.
   while (at < line.len() && line[at] != 32) {
     at = at + 1;
   }
@@ -206,8 +152,6 @@ function join_words(ws: string[]): string {
   return out;
 }
 
-// ------------------------------------------------------------- generators ---
-
 function paragraphs(): string[] {
   return [
     "the quick brown fox jumps over the lazy dog and keeps on running past the fence",
@@ -224,10 +168,6 @@ function widths(): i32[] {
   return [8, 12, 20, 40];
 }
 
-// ------------------------------------------------------------------ tests ---
-
-// Exactly the target width, not approximately — for every line that is neither
-// the last nor a lone word too wide to pad.
 function test_every_full_line_is_exactly_the_width(): test.TestOutcome {
   let ps: string[] = paragraphs();
   let ws: i32[] = widths();
@@ -254,7 +194,6 @@ function test_every_full_line_is_exactly_the_width(): test.TestOutcome {
   return test.pass();
 }
 
-// "Evenly", stated exactly: the widest and narrowest gap differ by at most one.
 function test_gaps_on_a_line_differ_by_at_most_one(): test.TestOutcome {
   let ps: string[] = paragraphs();
   let ws: i32[] = widths();
@@ -295,9 +234,6 @@ function test_gaps_on_a_line_differ_by_at_most_one(): test.TestOutcome {
   return test.pass();
 }
 
-// The separate half: the wider gaps are the leftmost ones. A justifier can
-// spread evenly and still scatter the remainder, which passes the test above
-// and looks wrong on the page.
 function test_the_wider_gaps_come_first(): test.TestOutcome {
   let ps: string[] = paragraphs();
   let ws: i32[] = widths();
@@ -329,8 +265,6 @@ function test_the_wider_gaps_come_first(): test.TestOutcome {
   return test.pass();
 }
 
-// Nothing added, dropped, split or merged: collapsing the output's whitespace
-// must give back the input's words in order.
 function test_the_words_survive_unchanged(): test.TestOutcome {
   let ps: string[] = paragraphs();
   let ws: i32[] = widths();
@@ -362,8 +296,6 @@ function test_the_words_survive_unchanged(): test.TestOutcome {
   return test.pass();
 }
 
-// The final line is set flush left with single spaces. Stretching it is what
-// makes the last line of a paragraph look like a ransom note.
 function test_the_last_line_is_not_stretched(): test.TestOutcome {
   let ps: string[] = paragraphs();
   let ws: i32[] = widths();
@@ -398,8 +330,6 @@ function test_the_last_line_is_not_stretched(): test.TestOutcome {
   return test.pass();
 }
 
-// A lone word has no gap to put the spaces in, so it is left as it is rather
-// than padded out to the column.
 function test_a_lone_word_is_not_padded(): test.TestOutcome {
   let lines: string[] = layout("antidisestablishmentarianism is long", 12);
   let i: i32 = 0;
@@ -422,9 +352,6 @@ function test_a_lone_word_is_not_padded(): test.TestOutcome {
   return test.pass();
 }
 
-// Greedy means greedy: the first word of a line could not have fitted on the
-// line before it. Without this a "justifier" could put one word per line and
-// pass everything above.
 function test_the_wrap_is_greedy(): test.TestOutcome {
   let ps: string[] = paragraphs();
   let ws: i32[] = widths();
@@ -471,7 +398,6 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("whitespace-only text produced lines");
   }
 
-  // A word wider than the column gets its own line, unsplit.
   let big: string[] = layout("tiny enormouslylongword tiny", 8);
   let found: boolean = false;
   let i: i32 = 0;
@@ -485,7 +411,6 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("an over-wide word was split or padded rather than left alone");
   }
 
-  // Words survive even when every one of them exceeds the width.
   let all_big: string[] = layout("alpha bravo charlie", 3);
   let got: string[] = words_of(join_words(all_big));
   if (got.len() != 3) {

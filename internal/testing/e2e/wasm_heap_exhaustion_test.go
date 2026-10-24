@@ -9,21 +9,10 @@ import (
 
 var wasmBacktraceFrame = regexp.MustCompile(`<wasm function (\d+)>`)
 
-// TestWASMHeapExhaustionTrapsInTheAllocator — a program that outgrows its
-// linear memory has to fail at __fern_alloc, where the growth was refused.
-//
-// __fern_alloc used to drop memory.grow's result, so a refused grow read as
-// success: the cursor advanced into memory that was never mapped and the
-// program ran on until some unrelated store fell off the end. What wasmtime
-// reported was "out of bounds memory access" inside whichever helper happened
-// to write first — string concat here — with the allocator absent from the
-// backtrace entirely (#6160).
 func TestWASMHeapExhaustionTrapsInTheAllocator(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	// Doubling a string 40 times demands ~8 TB, so the 8 MiB cap below is
-	// reached whatever the growth schedule underneath happens to be.
 	const src = `function main(): i32 {
     let s: string = "abcdefgh";
     let i: i32 = 0;
@@ -35,8 +24,6 @@ func TestWASMHeapExhaustionTrapsInTheAllocator(t *testing.T) {
 }`
 	compPath := buildCLIComponent(t, src)
 
-	// The pooling allocator is what lets a memory be capped from the CLI;
-	// 8 MiB is 128 pages.
 	cmd := exec.Command("wasmtime", "run",
 		"-O", "pooling-allocator=y",
 		"-O", "pooling-max-memory-size=8388608",

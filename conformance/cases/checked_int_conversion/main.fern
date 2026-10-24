@@ -1,5 +1,5 @@
-// `x as? T` between integers is Some(x as T) when the value fits T, and None
-// when it does not: out of range, or negative going to an unsigned type (#12708).
+
+
 import "std/i32";
 import "std/i64";
 import "std/u64";

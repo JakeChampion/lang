@@ -1,10 +1,10 @@
 import "core/int";
 import "std/i32";
 
-// Renaming and `..` together in a named-field variant pattern: the renamed
-// field binds its local, the omitted ones match anything. A guarded arm does
-// not cover its variant, so the unguarded `Entry { .. }` after it still runs
-// for the entries the guard turns away.
+
+
+
+
 enum Item {
     Entry { key: string, count: i32, weight: i32 },
     Empty,

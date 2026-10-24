@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Uniform union whose struct payload ESCAPES (returned): the
-// enum is tainted (not free-eligible), so the variant struct
-// payload must NOT be deep-freed; the caller still holds it.
+
+
+
+
+
+
 import "core/int";
 struct VInt { v: i32[] }
 struct VArr { v: i32[] }

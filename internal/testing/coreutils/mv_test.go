@@ -7,49 +7,6 @@ import (
 	"testing"
 )
 
-// mv(1) writes almost nothing, so nearly every case here is about the
-// TREE the two implementations leave behind: which names still exist,
-// which of them share an inode, and what a symbolic link holds.
-// `seedTree` gives each side its own freshly built working directory and
-// compares everything under it, so a stray temporary name fails as
-// loudly as a file that failed to move.
-//
-// Three things this corpus is mostly about:
-//
-//   - GNU tries the rename BEFORE it asks anything about the
-//     destination, with RENAME_NOREPLACE so an occupied one comes back
-//     as EEXIST. The order shows: `mv a nosuchdir/` reports the
-//     RENAME's errno and `mv a b/` a stat's, for the same ENOTDIR.
-//   - -i, -f and -n are one setting and the LAST of them wins, while
-//     --update is a second, independent one; -n beats --update=all
-//     whichever order they are written in.
-//   - The same-file refusal is three rules, not one, and a backup
-//     switches between them: `mv a h` on a hard-link pair is refused,
-//     `mv -b a h` is not, and `mv -b ./a a` is refused again.
-//
-// EXDEV is reached for real — `crossDev` puts the destination on another
-// filesystem — and both answers to it are covered: the errno under
-// `--no-copy`, and the copy-then-remove fallback without it.
-//
-// The fallback's cases are on fixtures whose every directory holds at
-// most ONE entry, or a hard-link PAIR. That is not tidiness. Its copy
-// half walks a directory's entries by ascending inode, and inode numbers
-// are not reproducible between the two working directories the two sides
-// of a comparison each get, so a `-v` run naming two entries of one
-// directory compares unequal for reasons that are not mv's. A hard-link
-// pair is exempt because both names share one inode: the sort ties, and a
-// stable sort leaves them in readdir order, which the filesystem derives
-// from the names and its own seed and so does reproduce.
-//
-// Its REMOVAL half walks readdir order, which is reproducible — and is
-// not the copy's order. TestMvCrossDeviceOrder pins that pair of orders
-// on a multi-entry tree, running both binaries against one tree so the
-// inodes are shared.
-
-// mvBasic is the main fixture: two plain files, a directory holding
-// one of their names, a symbolic link to a file, a dangling one, and a
-// symbolic link to a directory. `a` is the usual SOURCE and `b` the usual
-// occupied destination.
 func mvBasic(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -61,15 +18,11 @@ func mvBasic(t *testing.T, dir string) {
 	seedSymlink(t, dir, "d", "dl")
 }
 
-// mvOne is one file and nothing else — the fixture for the
-// operand-count diagnostics, where anything more would be noise.
 func mvOne(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
 }
 
-// mvDirs is the directory-onto-directory fixture: an empty one, a
-// non-empty one, and a nest deep enough to move into itself.
 func mvDirs(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -82,8 +35,6 @@ func mvDirs(t *testing.T, dir string) {
 	seedWrite(t, dir, "deep/z", "Z\n")
 }
 
-// mvTarget is the several-sources fixture: three files and a directory to
-// put them in, one of whose names is already taken.
 func mvTarget(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -95,9 +46,6 @@ func mvTarget(t *testing.T, dir string) {
 	seedSymlink(t, dir, "b", "bl")
 }
 
-// mvLinks is the same-file fixture: one inode under four names, reached
-// directly, through a hard link, through two symbolic links and through
-// one that spells its target with `..`.
 func mvLinks(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -112,9 +60,6 @@ func mvLinks(t *testing.T, dir string) {
 	seedSymlink(t, dir, "../h", "d/toh")
 }
 
-// mvSlash is the trailing-slash fixture: a directory and a file, so the
-// same `x/` reads as a directory on one and as ENOTDIR on the other, plus
-// a symbolic-link loop for the one errno that is neither.
 func mvSlash(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -124,10 +69,6 @@ func mvSlash(t *testing.T, dir string) {
 	seedSymlink(t, dir, "l1", "l2")
 }
 
-// mvUpdate is the --update fixture: `a` is a day older than `b`, `n` a
-// day newer, and `same` shares `b`'s timestamp to the nanosecond. `near`
-// differs from `b` only below the second, which is the resolution the
-// comparison actually runs at.
 func mvUpdate(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -147,8 +88,6 @@ func mvUpdate(t *testing.T, dir string) {
 	seedTouch(t, dir, "d/a", 1600000000, 0)
 }
 
-// The backup fixtures. `b~` and the numbered neighbours are what the
-// control picks between.
 func mvBackupSimple(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -161,8 +100,6 @@ func mvBackupTaken(t *testing.T, dir string) {
 	seedWrite(t, dir, "b~", "OLD\n")
 }
 
-// mvBackupDir is the destination whose backup name is a DIRECTORY: the
-// rename that moves the destination aside is EISDIR.
 func mvBackupDir(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
@@ -203,8 +140,6 @@ func mvNumberedDir(t *testing.T, dir string) {
 	seedMkdir(t, dir, "b.~1~")
 }
 
-// mvBackupDirs is `-b` over a DIRECTORY destination, where the backup is
-// the whole directory moved aside rather than a file copied.
 func mvBackupDirs(t *testing.T, dir string) {
 	t.Helper()
 	seedMkdir(t, dir, "s")
@@ -213,26 +148,17 @@ func mvBackupDirs(t *testing.T, dir string) {
 	seedWrite(t, dir, "t/g", "T G\n")
 }
 
-// mvQuoting is the names whose diagnostics differ between quote, quotef
-// and quoteaf: a space, an apostrophe (which makes gnulib use
-// double quotes), a leading `~`, a newline, and one that is not valid
-// UTF-8.
 func mvQuoting(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
 	seedWrite(t, dir, "sp ace", "S\n")
 	seedWrite(t, dir, "ap'os", "Q\n")
-	// Only where the filesystem holds the name. This seed serves every
-	// quoting case and one names this file, so a fatal here takes the rest.
 	if rawByteNamesHeld(t) {
 		seedWrite(t, dir, "bad\xff", "N\n")
 	}
 	seedMkdir(t, dir, "d x")
 }
 
-// mvPrompt is the `-i` fixture with several occupied destinations, so one
-// decline among several answers still costs the exit status while the
-// accepted ones move.
 func mvPrompt(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a1", "A1\n")
@@ -242,8 +168,6 @@ func mvPrompt(t *testing.T, dir string) {
 	seedWrite(t, dir, "dd/a2", "old 2\n")
 }
 
-// mvHere is the working directory's own file, for the cross-device cases:
-// everything else they need is on the other filesystem.
 func mvHere(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -251,17 +175,12 @@ func mvHere(t *testing.T, dir string) {
 	seedWrite(t, dir, "dd/f", "F\n")
 }
 
-// mvThere seeds the OTHER filesystem, reached as `xdev/…`.
 func mvThere(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "b", "B\n")
 	seedMkdir(t, dir, "sub")
 }
 
-// mvFallHere is the source side of the copy-then-remove fallback: one
-// entry per directory, plus the hard-link pair that is exempt, plus the
-// file types the copy has to recreate rather than read — a symbolic link
-// it must not follow and a FIFO it must not open.
 func mvFallHere(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "f", "F\n")
@@ -272,17 +191,11 @@ func mvFallHere(t *testing.T, dir string) {
 	seedHardlink(t, dir, "lk/a", "lk/b")
 	seedSymlink(t, dir, "f", "sl")
 	seedFifo(t, filepath.Join(dir, "pipe"))
-	// A mode the umask would not have produced, so a fallback that
-	// created the destination fresh instead of preserving fails here.
 	if err := os.Chmod(filepath.Join(dir, "f"), 0o741); err != nil {
 		t.Fatalf("chmod f: %v", err)
 	}
 }
 
-// mvFallThere is the destination side: the three states a destination can
-// be in that the fallback answers differently — absent, an existing file
-// it replaces, an empty directory it removes and recreates, and a
-// non-empty one it refuses.
 func mvFallThere(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "g", "G\n")
@@ -295,10 +208,8 @@ func init() {
 	registerCorpus("mv", mvCases)
 }
 
-// mvCases is mv(1)'s corpus.
 func mvCases(t *testing.T) []invocation {
 	return []invocation{
-		// ---- the three forms ---------------------------------------------
 		{name: "a plain rename", args: []string{"-v", "a", "c"}, seedTree: mvBasic},
 		{name: "over an existing file", args: []string{"-v", "a", "b"}, seedTree: mvBasic},
 		{name: "into a directory", args: []string{"-v", "a", "d"}, seedTree: mvBasic},
@@ -318,7 +229,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "a dangling symbolic link moves too", args: []string{"-v", "dangling", "c"}, seedTree: mvBasic},
 		{name: "over a symbolic link", args: []string{"-v", "a", "sl"}, seedTree: mvBasic},
 
-		// ---- the rename-first order ---------------------------------------
 		{name: "a missing source", args: []string{"nosuch", "x"}, seedTree: mvBasic},
 		{name: "a missing parent in the destination", args: []string{"a", "nosuch/x"}, seedTree: mvBasic},
 		{name: "a plain file as a destination parent", args: []string{"a", "b/x"}, seedTree: mvBasic},
@@ -336,7 +246,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "a file onto a directory reached by joining", args: []string{"a", "deep"}, seedTree: mvDirs},
 		{name: "a directory onto a name inside a directory", args: []string{"nest", "deep"}, seedTree: mvDirs},
 
-		// ---- the empty operand --------------------------------------------
 		{name: "an empty destination", args: []string{"a", ""}, seedTree: mvBasic},
 		{name: "an empty destination under -T", args: []string{"-T", "a", ""}, seedTree: mvBasic},
 		{name: "an empty destination for a directory", args: []string{"d", ""}, seedTree: mvBasic},
@@ -348,7 +257,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "an empty target directory", args: []string{"-t", "", "a"}, seedTree: mvBasic},
 		{name: "an empty operand among three", args: []string{"a", "", "b"}, seedTree: mvBasic},
 
-		// ---- -f / -i / -n, and their order --------------------------------
 		{name: "-f", args: []string{"-fv", "a", "b"}, seedTree: mvBasic},
 		{name: "-i declining at end of input", args: []string{"-i", "a", "b"}, seedTree: mvBasic},
 		{name: "-i accepting", args: []string{"-iv", "a", "b"}, stdin: "y", seedTree: mvBasic},
@@ -379,7 +287,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "long spellings take part", args: []string{"--force", "--no-clobber", "a", "b"}, seedTree: mvBasic},
 		{name: "long spellings the other way", args: []string{"--no-clobber", "--interactive", "a", "b"}, stdin: "y\n", seedTree: mvBasic},
 
-		// ---- --update -------------------------------------------------------
 		{name: "-u skips an older source", args: []string{"-uv", "a", "b"}, seedTree: mvUpdate},
 		{name: "-u takes a newer source", args: []string{"-uv", "n", "b"}, seedTree: mvUpdate},
 		{name: "-u on an equal timestamp", args: []string{"-uv", "same", "b"}, seedTree: mvUpdate},
@@ -412,7 +319,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "-u with a backup that is taken", args: []string{"-u", "-b", "-v", "n", "b"}, seedTree: mvUpdate},
 		{name: "-uv on a symbolic link's own timestamp", args: []string{"-uv", "a", "b"}, env: []string{"TZ=UTC"}, seedTree: mvUpdate},
 
-		// ---- the same-file rule ---------------------------------------------
 		{name: "a file onto itself", args: []string{"a", "a"}, seedTree: mvLinks},
 		{name: "the same entry spelled differently", args: []string{"./a", "a"}, seedTree: mvLinks},
 		{name: "the same entry through dotdot", args: []string{"d/../a", "a"}, seedTree: mvLinks},
@@ -440,10 +346,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "a backup does not excuse one link named twice", args: []string{"-b", "sl", "sl"}, seedTree: mvLinks},
 		{name: "-n beats the same-file rule", args: []string{"-n", "a", "a"}, seedTree: mvLinks},
 
-		// ---- --update=none-fail, --debug and --exchange ---------------------
-		// `-n` is `--update=none` settled after the option scan, so it
-		// skips silently whichever side of an --update it falls on, and
-		// only `none-fail` says anything. --debug names every skip.
 		{name: "update none-fail", args: []string{"--update=none-fail", "a", "b"}, seedTree: mvBasic},
 		{name: "update none-fail verbose", args: []string{"--update=none-fail", "-v", "a", "b"}, seedTree: mvBasic},
 		{name: "update none-fail with nothing in the way", args: []string{"--update=none-fail", "-v", "a", "gone"}, seedTree: mvBasic},
@@ -456,9 +358,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "backup and update=none-fail conflict", args: []string{"-b", "--update=none-fail", "a", "b"}, seedTree: mvBasic},
 		{name: "backup and update=all do not", args: []string{"-bv", "--update=all", "a", "b"}, seedTree: mvBackupSimple},
 
-		// --exchange swaps the two names. Only the paths that SUCCEED are
-		// compared: GNU's failure line carries an errno nothing set
-		// (docs/COREUTILS.md).
 		{name: "exchange two files", args: []string{"--exchange", "-v", "a", "b"}, seedTree: mvBasic},
 		{name: "exchange without verbose", args: []string{"--exchange", "a", "b"}, seedTree: mvBasic},
 		{name: "exchange a directory and a file", args: []string{"--exchange", "-v", "d", "b"}, seedTree: mvBasic},
@@ -472,7 +371,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "exchange rejects a value", args: []string{"--exchange=x", "a", "b"}, seedTree: mvBasic},
 		{name: "the same file joined into a directory", args: []string{"a", "d"}, seedTree: mvLinks},
 
-		// ---- directory against non-directory --------------------------------
 		{name: "-T a file onto a directory", args: []string{"-T", "a", "d"}, seedTree: mvBasic},
 		{name: "-T a directory onto a file", args: []string{"-T", "d", "b"}, seedTree: mvBasic},
 		{name: "-T a directory onto an empty directory", args: []string{"-Tv", "nest", "empty"}, seedTree: mvDirs},
@@ -481,7 +379,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "-T a file onto a directory with a trailing slash", args: []string{"-T", "a", "d/"}, seedTree: mvBasic},
 		{name: "a file onto a directory already there", args: []string{"a", "deep"}, seedTree: mvDirs},
 
-		// ---- -t / -T ---------------------------------------------------------
 		{name: "-t", args: []string{"-vt", "d", "a", "c"}, seedTree: mvTarget},
 		{name: "-t collapses trailing slashes", args: []string{"-vt", "d///", "a"}, seedTree: mvTarget},
 		{name: "-t twice", args: []string{"-t", "d", "-t", "d", "a"}, seedTree: mvTarget},
@@ -505,14 +402,12 @@ func mvCases(t *testing.T) []invocation {
 		{name: "-T twice", args: []string{"-T", "-T", "-v", "a", "new"}, seedTree: mvBasic},
 		{name: "-T does not join into a directory", args: []string{"-T", "-v", "b", "empty"}, seedTree: mvDirs},
 
-		// ---- the target-directory check ---------------------------------------
 		{name: "three operands with a missing last", args: []string{"a", "b", "nosuch"}, seedTree: mvTarget},
 		{name: "three operands with a file last", args: []string{"a", "b", "c"}, seedTree: mvTarget},
 		{name: "three operands with a symlinked directory last", args: []string{"-v", "a", "c", "dl"}, seedTree: mvTarget},
 		{name: "three operands with a trailing slash last", args: []string{"a", "b", "nosuchdir/"}, seedTree: mvTarget},
 		{name: "three operands with a file inside a directory last", args: []string{"a", "b", "d/b"}, seedTree: mvTarget},
 
-		// ---- --strip-trailing-slashes -------------------------------------------
 		{name: "--strip-trailing-slashes on a directory", args: []string{"--strip-trailing-slashes", "-v", "d///", "empty"}, seedTree: mvDirs},
 		{name: "--strip-trailing-slashes on a file", args: []string{"--strip-trailing-slashes", "-v", "a//", "c"}, seedTree: mvSlash},
 		{name: "--strip-trailing-slashes changes the joined name", args: []string{"--strip-trailing-slashes", "-v", "a//", "d"}, seedTree: mvSlash},
@@ -521,7 +416,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "--strip-trailing-slashes on a root operand", args: []string{"--strip-trailing-slashes", "//", "x"}, seedTree: mvSlash, rootRename: true},
 		{name: "without it the slashes are kept", args: []string{"-v", "d///", "empty"}, seedTree: mvDirs},
 
-		// ---- backups -------------------------------------------------------------
 		{name: "-b", args: []string{"-bv", "a", "b"}, seedTree: mvBackupSimple},
 		{name: "-b over an existing backup", args: []string{"-bv", "a", "b"}, seedTree: mvBackupTaken},
 		{name: "-b where nothing is in the way", args: []string{"-bv", "a", "fresh"}, seedTree: mvBackupSimple},
@@ -569,7 +463,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "--backup=T is not t", args: []string{"--backup=T", "a", "b"}, seedTree: mvBackupSimple},
 		{name: "--backup on a blank argument", args: []string{"--backup= ", "a", "b"}, seedTree: mvBackupSimple},
 
-		// ---- -S / --suffix ---------------------------------------------------------
 		{name: "-S turns backups on", args: []string{"-S", ".bak", "-v", "a", "b"}, seedTree: mvBackupSimple},
 		{name: "-S glued", args: []string{"-S.bak", "-v", "a", "b"}, seedTree: mvBackupSimple},
 		{name: "--suffix glued", args: []string{"--suffix=.bak", "-v", "a", "b"}, seedTree: mvBackupSimple},
@@ -585,7 +478,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "-S with no argument", args: []string{"-S"}, seedTree: mvBackupSimple},
 		{name: "-S eats the next operand", args: []string{"-S", "a", "b"}, seedTree: mvBackupSimple},
 
-		// ---- the environment ----------------------------------------------------------
 		{name: "VERSION_CONTROL", args: []string{"-bv", "a", "b"}, env: []string{"VERSION_CONTROL=numbered"}, seedTree: mvBackupSimple},
 		{name: "--backup overrides VERSION_CONTROL", args: []string{"--backup=simple", "-v", "a", "b"}, env: []string{"VERSION_CONTROL=numbered"}, seedTree: mvBackupSimple},
 		{name: "an empty VERSION_CONTROL is existing", args: []string{"-bv", "a", "b"}, env: []string{"VERSION_CONTROL="}, seedTree: mvBackupSimple},
@@ -601,7 +493,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "POSIXLY_CORRECT stops the scan", args: []string{"a", "c", "-v"}, env: []string{"POSIXLY_CORRECT="}, seedTree: mvBasic},
 		{name: "POSIXLY_CORRECT set to one", args: []string{"a", "c", "-v"}, env: []string{"POSIXLY_CORRECT=1"}, seedTree: mvBasic},
 
-		// ---- -Z, --debug, --no-copy ------------------------------------------------------
 		{name: "-Z on a rename", args: []string{"-Zv", "a", "c"}, seedTree: mvBasic},
 		{name: "-Z twice", args: []string{"-ZZ", "-v", "a", "c"}, seedTree: mvBasic},
 		{name: "--context is -Z", args: []string{"--context", "-v", "a", "c"}, seedTree: mvBasic},
@@ -616,10 +507,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "--no-copy on a rename that works", args: []string{"--no-copy", "-v", "a", "c"}, seedTree: mvBasic},
 		{name: "--no-copy takes no argument", args: []string{"--no-copy=x", "a", "c"}, seedTree: mvBasic},
 
-		// ---- across filesystems -----------------------------------------------------------
-		//
-		// --no-copy first, which is where the EXDEV is reported rather
-		// than fallen back from; the fallback's own rows follow.
 		{name: "--no-copy across filesystems", args: []string{"--no-copy", "-v", "a", "xdev/c"}, seedTree: mvHere, crossDev: mvThere},
 		{name: "--no-copy across filesystems onto an existing file", args: []string{"--no-copy", "-v", "a", "xdev/b"}, seedTree: mvHere, crossDev: mvThere},
 		{name: "--no-copy across filesystems into a directory", args: []string{"--no-copy", "-v", "a", "xdev/sub"}, seedTree: mvHere, crossDev: mvThere},
@@ -631,11 +518,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "--update=none stops before the filesystem boundary", args: []string{"--update=none", "-v", "a", "xdev/b"}, seedTree: mvHere, crossDev: mvThere},
 		{name: "the same-file rule spans filesystems", args: []string{"xdev/b", "xdev/b"}, seedTree: mvHere, crossDev: mvThere},
 
-		// ---- the copy-then-remove fallback ------------------------------------------------
-		//
-		// One entry per directory, or a hard-link pair — see the note at
-		// the top of this file for why the copy half cannot be compared
-		// on anything else.
 		{name: "across to a new name", args: []string{"-v", "f", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "across onto an existing file", args: []string{"-v", "f", "xdev/g"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "across into a directory", args: []string{"-v", "f", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
@@ -658,7 +540,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "across with --update=older on a newer source", args: []string{"--update=older", "-v", "f", "xdev/g"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "two operands across", args: []string{"-v", "f", "sl", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
 
-		// ---- operand counts -----------------------------------------------------------------
 		{name: "no operands"},
 		{name: "one operand", args: []string{"a"}, seedTree: mvOne},
 		{name: "dashdash alone", args: []string{"--"}},
@@ -668,14 +549,12 @@ func mvCases(t *testing.T) []invocation {
 		{name: "dashdash then a real pair", args: []string{"--", "a", "c"}, seedTree: mvOne},
 		{name: "dashdash with one operand after it", args: []string{"--", "a"}, seedTree: mvOne},
 
-		// ---- -v ------------------------------------------------------------------------------
 		{name: "--verbose long", args: []string{"--verbose", "a", "c"}, seedTree: mvBasic},
 		{name: "-v twice", args: []string{"-vv", "a", "c"}, seedTree: mvBasic},
 		{name: "-v is silent on a failure", args: []string{"-v", "nosuch", "c"}, seedTree: mvBasic},
 		{name: "-v is silent on a declined prompt", args: []string{"-vi", "a", "b"}, stdin: "n\n", seedTree: mvBasic},
 		{name: "-v is silent on an update skip", args: []string{"-vu", "a", "b"}, seedTree: mvUpdate},
 
-		// ---- quoting ---------------------------------------------------------------------------
 		{name: "a name with a space", args: []string{"-v", "sp ace", "out"}, seedTree: mvQuoting},
 		{name: "a name with an apostrophe", args: []string{"-v", "ap'os", "out"}, seedTree: mvQuoting},
 		{name: "a name that is not valid UTF-8", args: []string{"-v", "bad\xff", "out"}, seedTree: mvQuoting, rawByteName: true},
@@ -688,7 +567,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "an extra operand with a newline", args: []string{"-T", "a", "sp ace", "c\nd"}, seedTree: mvQuoting},
 		{name: "a same-file pair needing quotes", args: []string{"sp ace", "./sp ace"}, seedTree: mvQuoting},
 
-		// ---- the option scan --------------------------------------------------------------------
 		{name: "an invalid short option", args: []string{"-x", "a", "b"}},
 		{name: "an invalid short option in a cluster", args: []string{"-vx", "a", "b"}},
 		{name: "an unrecognized long option", args: []string{"--foo"}},
@@ -725,7 +603,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "an option after the operands", args: []string{"a", "c", "--foo"}, seedTree: mvBasic},
 		{name: "multiple target directories", args: []string{"-t", "d", "-t", "empty", "a"}, seedTree: mvDirs},
 
-		// ---- the write-failure paths -----------------------------------------------------------
 		{name: "stdout closed with nothing to write", args: []string{"a", "c"}, seedTree: mvBasic, stdout: stdoutClosed},
 		{name: "stdout closed with a verbose line", args: []string{"-v", "a", "c"}, seedTree: mvBasic, stdout: stdoutClosed},
 		{name: "stdout closed on a fault", args: []string{"-v", "nosuch", "c"}, seedTree: mvBasic, stdout: stdoutClosed},
@@ -751,19 +628,6 @@ func TestMvHelpVersion(t *testing.T) {
 	requireVersion(t, "mv", []string{"-n", "--version", "-b"}, 0)
 }
 
-// TestMvCrossDeviceOrder pins the two walk orders a cross-device move
-// uses, and that they are NOT the same order: the copy half visits a
-// directory's entries by ascending inode, the removal half in readdir
-// order. Measured against GNU 9.4, whose removal half is `rm -rv`'s walk
-// and byte-identical to it.
-//
-// It is not a corpus case because a corpus case cannot see it. The copy
-// half's order depends on inode numbers, which the two working
-// directories the two sides each get do not reproduce. Here each
-// implementation is checked against ITS OWN tree: the two expected orders
-// are read off that tree before the move runs, so no comparison between
-// the two runs is needed and nothing has to be restored — which matters
-// for `mv`, whose whole job is to remove the source it was given.
 func TestMvCrossDeviceOrder(t *testing.T) {
 	for _, side := range []struct {
 		label string
@@ -788,13 +652,6 @@ func TestMvCrossDeviceOrder(t *testing.T) {
 			dest := filepath.Join(far, "dst")
 			out := runCpIn(t, bin, dir, "-v", "src", dest)
 
-			// Only the top level is checked, which is where the order
-			// rule lives. The two halves have to be read off DIFFERENT
-			// sides of the arrow: a file's line names the source
-			// (`copied 'src/mmm' -> …`) while a directory's names only
-			// the destination it created (`created directory 'DST/zzz'`),
-			// so a filter looking for `src/` on every line would see the
-			// files and miss the directories.
 			top := func(prefix, ln string) (string, bool) {
 				rest, ok := strings.CutPrefix(ln, prefix)
 				if !ok {

@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostConstFuncGen2 pins that a compiler BUILT BY the self-host compiler
-// agrees with the one that built it on a module that passes a bare named
-// function as a value (#5649). The value lifts to a `main$wrap0` wrapper whose
-// FuncDecl box must stay alive once it is handed to the module's function list
-// (#5674); a premature free in the compiler's own code shows up only in the
-// generation that code produced.
-//
-// The failure is self-referential — the compiler miscompiles its own code — so
-// it is invisible to every single-generation test. Pinning it needs two
-// generations, which is what this test builds.
-//
-// It is env-gated because it is expensive in a way the ordinary suite is not: it
-// builds a full mmc1/mmc2 pair (~4 min, a ~220 MB stage-1 binary and a heavy
-// emit). The gate keeps a plain `go test ./...` fast; CI runs it in the `gen2`
-// job of test-e2e-selfhost.yml, which sets the variable. Locally:
-//
-//	RUN_CONST_FUNC_GEN2=1 go test ./internal/testing/e2ecompiler/ -run TestSelfHostConstFuncGen2 -timeout 30m
 func TestSelfHostConstFuncGen2(t *testing.T) {
 	if os.Getenv("RUN_CONST_FUNC_GEN2") == "" {
 		t.Skip("set RUN_CONST_FUNC_GEN2=1 to run the two-generation const_func eligibility check")
@@ -37,20 +20,9 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 
-	// No source patching any more. This test used to strip asm_ir.fern's
-	// 512-function IR budget in the temp-dir copy, because with the budget in
-	// place the ~525-function merged bundle was refused and there was no
-	// IR-built second generation to disagree with the first. The budget is now
-	// GONE from the real source (#3457), so the test exercises the shipped
-	// configuration rather than a simulation of it — which is the point: the
-	// hazard it guards is the one the removal creates.
-
-	// gen 1: native-built.
 	selfSrc := filepath.Join(dir, "drivers/asm_load_run.fern")
 	mmc1 := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "cfg_mmc1")
 
-	// gen 2: built by gen 1, so its own body came out of the IR emitter. The
-	// compiler imports core/map, which only the stdlib root resolves.
 	stdlibRoot, err := filepath.Abs("../../stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
@@ -64,9 +36,6 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	}
 	mmc2 := buildBin(t, gcc, dir, "cfg_mmc2", string(stage2Asm))
 
-	// The `.Lssa_` label count fingerprints what each generation emitted for the
-	// program. Equal counts mean the two generations agree; the control's row is
-	// what proves the fn-value is the trigger rather than the harness.
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -99,8 +68,6 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	}
 }
 
-// lirLabelCount compiles prog with the given self-host compiler binary and
-// returns how many `.Lssa_` labels the emitted asm carries.
 func lirLabelCount(t *testing.T, compiler, prog string) int {
 	t.Helper()
 	asm, err := exec.Command(compiler, prog).Output()

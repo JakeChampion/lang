@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// TestColorOffIsPlainDefault asserts colour is off by default and the
-// rendered output carries no ANSI escape — the invariant every
-// non-interactive caller (LSP, golden/differential harnesses, piped
-// `fern -check`) relies on.
 func TestColorOffIsPlainDefault(t *testing.T) {
 	if ColorEnabled() {
 		t.Fatal("colour should be OFF by default")
@@ -25,9 +21,6 @@ func TestColorOffIsPlainDefault(t *testing.T) {
 	}
 }
 
-// TestColorWrapsPrefix asserts the error label is wrapped in the
-// bold-red SGR + reset when colour is on, and that the plain text is still
-// present between the escapes.
 func TestColorWrapsPrefix(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeCodedErr{
@@ -40,7 +33,6 @@ func TestColorWrapsPrefix(t *testing.T) {
 	}
 }
 
-// TestColorWrapsCaret asserts the caret/squiggle is red under colour.
 func TestColorWrapsCaret(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeSpanErr{
@@ -53,7 +45,6 @@ func TestColorWrapsCaret(t *testing.T) {
 	}
 }
 
-// TestColorWrapsNote asserts a hint's `note:` tag is blue under colour.
 func TestColorWrapsNote(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeHintErr{
@@ -66,9 +57,6 @@ func TestColorWrapsNote(t *testing.T) {
 	}
 }
 
-// TestColorRendersGutter asserts rich (colour) mode renders a
-// right-aligned line-number gutter with a box-drawing separator, replacing
-// the classic 4-space indent for the source + caret lines (#4413 Rec §7).
 func TestColorRendersGutter(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeCodedErr{
@@ -81,8 +69,6 @@ func TestColorRendersGutter(t *testing.T) {
 	}
 }
 
-// TestASCIIGutterFallback asserts --ascii swaps the box-drawing gutter for
-// a plain `|`, and that the default (UTF-8) keeps `│` (#4413 Rec §7).
 func TestASCIIGutterFallback(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeCodedErr{
@@ -110,9 +96,6 @@ func TestASCIIGutterFallback(t *testing.T) {
 	}
 }
 
-// TestColorGuttersSecondaryLabel asserts a multi-label diagnostic's
-// secondary line also gets a line-number gutter in rich mode, so the whole
-// diagnostic reads as one consistently-guttered block (#4413 Rec §7).
 func TestColorGuttersSecondaryLabel(t *testing.T) {
 	defer SetColor(SetColor(true))
 	src := "function f(): i32 {\n    let x: i32 = 1;\n    x = \"oops\";\n    return x;\n}\n"
@@ -124,18 +107,14 @@ func TestColorGuttersSecondaryLabel(t *testing.T) {
 		},
 	}
 	out := Format("", src, err)
-	// The secondary (line 2) source line carries its own gutter.
 	if !strings.Contains(out, " 2 "+paint(ansiBlue, "│")) {
 		t.Errorf("secondary label should be guttered in rich mode, got:\n%q", out)
 	}
-	// Its underline stays `-` (distinct from the primary caret).
 	if !strings.Contains(out, paint(ansiBlue, "---")) {
 		t.Errorf("secondary underline should be blue `---`, got:\n%q", out)
 	}
 }
 
-// TestSetColorReturnsPrevious pins the restore contract used by the
-// defer SetColor(SetColor(true)) idiom above.
 func TestSetColorReturnsPrevious(t *testing.T) {
 	defer SetColor(SetColor(false))
 	if prev := SetColor(true); prev {
@@ -146,8 +125,6 @@ func TestSetColorReturnsPrevious(t *testing.T) {
 	}
 }
 
-// TestColorExplainHeader asserts `fern -explain` colours its "error EXXX:"
-// header to match the diagnostic renderer, and stays plain by default.
 func TestColorExplainHeader(t *testing.T) {
 	body := "some explanation body"
 	if out := FormatExplain("E001", body); strings.Contains(out, "\x1b[") {

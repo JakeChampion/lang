@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Run the closing string-validity property with the primary compiler, as
-// well as the reference interpreter's TestRunnerUtf8ValidityProperty.
 func TestSelfHostUtf8ValidityProperty(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := langSrcAbs(t, "tests/stdlib/utf8_validity_property_test.fern")

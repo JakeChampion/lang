@@ -13,14 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/stdlib"
 )
 
-// TestStdlibModulesImportStandalone is the flip-era regression gate:
-// every std/* and core/* module must type-check when imported on its
-// own under no-prelude. The auto-prelude used to load the whole tree,
-// which masked modules that called a method / free function from
-// another module without declaring the `import` (std/time → std/string,
-// std/test → std/f64, std/fuzz → std/test all had this). A module
-// that can't be imported alone is a latent break waiting for the first
-// program that reaches for it.
 func TestStdlibModulesImportStandalone(t *testing.T) {
 	var modules []string
 	err := fs.WalkDir(stdlib.FS(), ".", func(path string, d fs.DirEntry, err error) error {
@@ -30,9 +22,8 @@ func TestStdlibModulesImportStandalone(t *testing.T) {
 		if d.IsDir() || !strings.HasSuffix(path, ".fern") {
 			return nil
 		}
-		mod := strings.TrimSuffix(path, ".fern") // e.g. "std/array", "core/int"
+		mod := strings.TrimSuffix(path, ".fern")
 		base := filepath.Base(mod)
-		// _test_empty is a fixture with nothing to check.
 		if strings.HasPrefix(base, "_test") {
 			return nil
 		}

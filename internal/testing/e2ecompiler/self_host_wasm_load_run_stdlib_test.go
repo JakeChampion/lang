@@ -10,18 +10,12 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// wasmLoadRunStdlibCases import the standard library, so they compile through
-// asm_load_run's wasm32-wasi leg with the stdlib root rather than wasm_run,
-// which loads no imports.
 var wasmLoadRunStdlibCases = []struct {
 	name   string
 	src    string
 	want   int
-	stdout string // "" means don't check
+	stdout string
 }{
-	// An IoError keeps a reference to the path it carries. When it did not,
-	// dropping the error released the caller's path, and once() released it
-	// again on return: the underflow count, not block reuse, is the check.
 	{"io-error-keeps-caller-path-read", "function fails(p: string): i32 { match (read_file(p)) { Ok(_) => { return 0; }, Err(e) => { return 1; } } return 0; }\nfunction path_for(dir: string): string { return dir + \"/unit__x.wu\"; }\nfunction once(): i32 { let p: string = path_for(\"no-such-dir\"); return fails(p); }\nfunction main(): i32 { let n: i32 = once(); if (__rc_underflow_count() != 0) { return 99; } return n; }", 1, ""},
 	{"io-error-keeps-caller-path-write", "function fails(p: string): i32 { match (write_file(p, \"x\")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } return 0; }\nfunction path_for(dir: string): string { return dir + \"/unit__x.wu\"; }\nfunction once(): i32 { let p: string = path_for(\"no-such-dir\"); return fails(p); }\nfunction main(): i32 { let n: i32 = once(); if (__rc_underflow_count() != 0) { return 99; } return n; }", 1, ""},
 	{"io-error-keeps-caller-path-stat", "function fails(p: string): i32 { match (stat(p)) { Ok(_) => { return 0; }, Err(e) => { return 1; } } return 0; }\nfunction path_for(dir: string): string { return dir + \"/unit__x.wu\"; }\nfunction once(): i32 { let p: string = path_for(\"no-such-dir\"); return fails(p); }\nfunction main(): i32 { let n: i32 = once(); if (__rc_underflow_count() != 0) { return 99; } return n; }", 1, ""},
@@ -231,13 +225,9 @@ var wasmLoadRunStdlibCases = []struct {
 	{"map-has-and-not", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.contains(1) && !m.contains(2)) { return 7; } return 0; }", 7, ""},
 	{"map-has-and-true", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); if (m.contains(1) && m.contains(2)) { return 5; } return 0; }", 5, ""},
 	{"map-has-or-short", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.contains(1) || m.contains(2)) { return 9; } return 0; }", 9, ""},
-	// target_os() / target_arch() are folded to the -target's names before the
-	// typed lowering, which has no body for either call.
 	{"target-name-folds", "function main(): i32 { write(target_os()); write(\"|\"); write(target_arch()); if (target_arch() == \"wasm32\") { return 0; } return 1; }", 0, "wasi|wasm32"},
 }
 
-// wasmStdlibLoader compiles programs that import the standard library to WAT
-// through asm_load_run's wasm32-wasi leg with the stdlib root.
 type wasmStdlibLoader struct {
 	runner []string
 	bin    string
@@ -256,7 +246,6 @@ func newWasmStdlibLoader(t *testing.T) *wasmStdlibLoader {
 	return &wasmStdlibLoader{runner: runner, bin: buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "asm_load_run"), root: root}
 }
 
-// emit compiles src and returns the WAT; extra flags follow the target.
 func (l *wasmStdlibLoader) emit(t *testing.T, src string, extra ...string) []byte {
 	t.Helper()
 	mainPath := filepath.Join(t.TempDir(), "main.fern")
@@ -266,9 +255,6 @@ func (l *wasmStdlibLoader) emit(t *testing.T, src string, extra ...string) []byt
 	return runDriverFile(t, l.runner, l.bin, mainPath, append([]string{l.root, "-target", "wasm32-wasi"}, extra...)...)
 }
 
-// TestSelfHostWasmLoadRunStdlib compiles each case with asm_load_run -target
-// wasm32-wasi and runs the module under wasmtime, checking its exit code and
-// stdout.
 func TestSelfHostWasmLoadRunStdlib(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -293,11 +279,6 @@ func TestSelfHostWasmLoadRunStdlib(t *testing.T) {
 	}
 }
 
-// TestSelfHostAsmLoadRunEmitForm pins asm_load_run's `-emit component-core`:
-// the core it emits is the component-mode core (an _lang_run export, no
-// preview1 imports), and the form is refused off wasm32-wasi. A program that
-// names no I/O but whose lowering aborts through exit (semreach's unreachable
-// branches) gets the I/O core the CLI emits, with exit imported.
 func TestSelfHostAsmLoadRunEmitForm(t *testing.T) {
 	l := newWasmStdlibLoader(t)
 	wat := string(l.emit(t, "function main(): i32 { write(\"hi\"); return 0; }", "-emit", "component-core"))

@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// The self-hosted CLI on its default (typed) lowering, which routes every
-// intermediate through a slot. The CLI folds literal sub-expressions in the
-// AST first, so these programs reach their constants through an inlined leaf's
-// parameter: only the IR passes can see them.
-
-// typedFoldCases fold only when propagation and folding run to a fixpoint:
-// each fold stores a new constant that the next propagation has to carry to
-// its load. The interpreter is the oracle, and every case returns <= 120.
 var typedFoldCases = []struct {
 	name string
 	main string
@@ -46,11 +38,6 @@ func TestSelfHostTypedFoldValues(t *testing.T) {
 	}
 }
 
-// TestSelfHostTypedFoldShape pins that a constant expression built through
-// slots reaches the backend as one constant: `f(3) + 1` inlines to three
-// slot-routed operations over constants and must emit 22 with no arithmetic.
-// The opaque twin passes a parameter instead, so it keeps the arithmetic this
-// looks for and the absence in `folded` is not vacuous.
 func TestSelfHostTypedFoldShape(t *testing.T) {
 	cli := newStrictCLI(t)
 	src := "function f(x: i32): i32 { return (x * 2 + 1) * 3; }\n" +
@@ -80,9 +67,6 @@ func TestSelfHostTypedFoldShape(t *testing.T) {
 	}
 }
 
-// TestSelfHostTypedLICM runs licmPrograms through the CLI: the typed lowering
-// opens scopes between `loop` and the condition, and the length reads must
-// still come out of the header.
 func TestSelfHostTypedLICM(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range licmPrograms {
@@ -110,10 +94,6 @@ func TestSelfHostTypedLICM(t *testing.T) {
 	}
 }
 
-// TestSelfHostTypedLICMDataAddress pins that a byte read of a string whose
-// length the loop header reads takes the string's data address from before
-// the loop: each iteration is one `movzbl (base,index)`, with no reload of
-// the address from the box.
 func TestSelfHostTypedLICMDataAddress(t *testing.T) {
 	cli := newStrictCLI(t)
 	src := "@noinline function sum(s: string): i32 { let t: i32 = 0; let i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }\n" +
@@ -126,7 +106,6 @@ func TestSelfHostTypedLICMDataAddress(t *testing.T) {
 	if matchShape(body, `movq \(%r\w+\), %rdx\n\s*movzbl \(%rdx,`) {
 		t.Errorf("sum reloads the data address before every byte:\n%s", body)
 	}
-	// 'a' + 'b' + 'c' = 294.
 	if got, _ := cli.runX86(t, asm); got != 94 {
 		t.Errorf("x86-64 exited %d, want 94", got)
 	}

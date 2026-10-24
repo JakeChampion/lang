@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer checked_rem helpers — std/i32, std/i64,
-// std/u32, std/u64 — the remainder sibling of checked_div, completing the
-// checked_ family for %. checked_rem returns Some(n % other) except on
-// divide-by-zero (all types) and MIN % -1 (the signed types, the one remainder
-// that overflows). Checks a normal remainder, the sign-of-dividend result,
-// divide-by-zero, and the MIN % -1 overflow. Returns 42 iff every check holds
-// across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const intCheckedRemProg = `
 import "std/i32";
 import "std/i64" as i64m;

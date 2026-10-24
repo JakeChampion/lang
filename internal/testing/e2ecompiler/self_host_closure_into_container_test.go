@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// A closure box a call returns, stored straight into a container, is released
-// with the container (#10437): a struct field, an array literal element, an
-// `.append` argument and a tuple element, each written with the call in place
-// rather than bound to a local first. A closure-returning call hands its caller
-// a counted box, so the container takes that count over.
 const closureCallIntoContainerSrc = `struct H { f: (i32) => i32, n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function mkh(i: i32): H { return H { f: mk(i * 3), n: i }; }
@@ -34,15 +29,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureCallIntoContainerWant = 74
 
-// The same containers built from a closure LOCAL that stays live after each
-// container is released: the loop rebinds h, fs and p while g is still called,
-// and keep outlives them all. The struct literal retains the local, so a struct
-// that outlives it — appended to hs, or returned by wrap — still holds a live
-// box; before, it borrowed the local's box and read it after the local's
-// release freed it.
 const closureContainerSharedSrc = `struct H { f: (i32) => i32, n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function wrap(i: i32): H { let g: (i32) => i32 = mk(i); return H { f: g, n: i }; }
@@ -68,16 +56,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureContainerSharedWant = 4
 
-// A function returning a closure it does not own — a parameter, a struct
-// field, an array element, a for-loop variable — retains it for the caller,
-// which releases the result like any other closure-returning call's. Before,
-// the caller's release freed the box the parameter's owner still held. The
-// `pass(keep)(i)` callee form releases each evaluation's box. The rows after
-// this one cover more borrowed spellings: the return retains every value its
-// frame does not provably own, so no borrowed spelling is listed anywhere.
 const closureReturnBorrowedSrc = `struct H { f: (i32) => i32, n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function pass(f: (i32) => i32): (i32) => i32 { return f; }
@@ -103,11 +83,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnBorrowedWant = 3
 
-// An array element read through a struct field, returned directly and through
-// the `elem(g)(i)` callee form.
 const closureReturnFieldArraySrc = `struct G { fs: ((i32) => i32)[], n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function elem(g: G): (i32) => i32 { return g.fs[0]; }
@@ -124,10 +101,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnFieldArrayWant = 91
 
-// A tuple element (#10593).
 const closureReturnTupleElemSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function tfirst(p: ((i32) => i32, i32)): (i32) => i32 { return p.0; }
 function main(): i32 {
@@ -143,10 +118,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnTupleElemWant = 78
 
-// A value-position `if` over array elements and a `match` over parameters.
 const closureReturnValueBranchSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function pickif(fs: ((i32) => i32)[], c: boolean): (i32) => i32 { return (if (c) { fs[0] } else { fs[1] }); }
 function pickmatch(f: (i32) => i32, g: (i32) => i32, c: i32): (i32) => i32 { return match (c) { 0 => f, _ => g }; }
@@ -166,11 +139,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnValueBranchWant = 58
 
-// A tuple-pattern `match`, which yields its value through a local every arm
-// stores into: borrowed parameters from one function, fresh boxes from another.
 const closureReturnPatternMatchSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function pickb(f: (i32) => i32, g: (i32) => i32, c: i32): (i32) => i32 {
     return match ((c, 0)) { (0, _) => f, _ => g };
@@ -193,11 +163,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnPatternMatchWant = 86
 
-// The result of calling a closure VALUE, which is not trusted to be counted:
-// `() => keep` hands back its capture without a count (#10592).
 const closureReturnClosureCallSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function viaclo(g: () => ((i32) => i32)): (i32) => i32 { return g(); }
 function main(): i32 {
@@ -215,12 +182,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnClosureCallWant = 3
 
-// Values the returning frame owns, so the return adds no count: a fresh
-// lambda, a module function's box, a closure-returning call, a closure local
-// the frame moves out, and a closure-returning method.
 const closureReturnOwnedSrc = `struct M { b: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function dbl(x: i32): i32 { return x * 2; }
@@ -247,10 +210,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnOwnedWant = 55
 
-// An `own` fn parameter is the returning frame's too (#10958).
 const closureReturnOwnParamSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function passown(own f: (i32) => i32): (i32) => i32 { return f; }
 function main(): i32 {
@@ -265,11 +226,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureReturnOwnParamWant = 33
 
-// An `own` fn parameter kept in a container the callee returns, beside a fn
-// parameter a closure captures (#10958).
 const closureOwnParamKeptSrc = `function apply_int(f: (i32) => i32, n: i32): i32 { return f(n); }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function via_capture(f: (i32) => i32, n: i32): i32 { return apply_int((x: i32): i32 => { return f(x) + 1; }, n); }
@@ -294,11 +252,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureOwnParamKeptWant = 64
 
-// An unannotated lambda returning its capture, bound straight from the call
-// (#10592), and a tuple whose closure element a callee only borrows (#10593).
 const closureLambdaReturnsCaptureSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function main(): i32 {
     let t: i32 = 0;
@@ -314,7 +269,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureLambdaReturnsCaptureWant = 89
 
 const closureTupleBorrowedByCallSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
@@ -331,7 +285,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureTupleBorrowedByCallWant = 69
 
 var closureIntoContainerCases = []struct {

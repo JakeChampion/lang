@@ -8,12 +8,8 @@ import (
 	"unsafe"
 )
 
-// xattrAbsentText is strerror(ENOATTR), what Darwin answers for an
-// attribute that is not there.
 const xattrAbsentText = "Attribute not found"
 
-// setUserXattr is setxattr(2), BSD 236: (path, name, value, size,
-// position, options). `syscall` has no binding for it on Darwin.
 func setUserXattr(t *testing.T, path, name, value string) {
 	t.Helper()
 	const sysSetxattr = 236
@@ -32,9 +28,6 @@ func setUserXattr(t *testing.T, path, name, value string) {
 	}
 }
 
-// hostUserXattr is getxattr(2), BSD 234, read back through the host so a
-// probe's write is checked by something other than the probe; ok is false
-// when the attribute is absent.
 func hostUserXattr(t *testing.T, path, name string) (string, bool) {
 	t.Helper()
 	const sysGetxattr = 234

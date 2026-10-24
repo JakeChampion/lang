@@ -8,22 +8,11 @@ import (
 	"testing"
 )
 
-// setArgsCases exercise `set_args` (#9694) on every self-host target, each
-// built with the leak census and the sanitizer on.
-//
-// The runtime keeps one retained unit of the array set_args is lent, answers
-// every later args() call with a retain of it, and releases the array it
-// replaces. So a program may drop what args() hands back as often as it likes
-// without freeing the stored array, a replaced array is freed once its last
-// holder lets go, and the census at exit — after the runtime gives back its
-// own unit — balances.
 var setArgsCases = []struct {
 	name, src string
 	args      []string
 	want      int
 }{
-	// The multicall shape: argv shifted by one, so the utility sees its own
-	// name as argv[0].
 	{"shift", `function main(): i32 {
     let argv: string[] = args();
     if (argv.len() != 3) { return 1; }
@@ -36,8 +25,6 @@ var setArgsCases = []struct {
     if (now[1] != "--bogus") { return 4; }
     return 42;
 }`, []string{"uname", "--bogus"}, 42},
-	// A thousand args() results dropped after set_args, and a second set_args
-	// replacing the first array.
 	{"loop", `function shifted(): string[] {
     let rest: string[] = [];
     for a in args()[1:] { rest = rest.append(a + "!"); }
@@ -58,9 +45,6 @@ function main(): i32 {
     if (total != 4000) { return 4; }
     return 42;
 }`, []string{"x", "y"}, 42},
-	// The caller keeps writing to the array it lent: the stored one is
-	// shared, so neither write reaches args(). An element read out of args()
-	// outlives the set_args that replaces its array.
 	{"lent-array", `function twice(s: string): string { return s + "-" + s; }
 function main(): i32 {
     let mine: string[] = [twice("a"), twice("b")];
@@ -77,8 +61,6 @@ function main(): i32 {
     if (args().len() != 1 || args()[0] != "q-q") { return 5; }
     return 42;
 }`, nil, 42},
-	// Storing the array already stored: the retain has to come before the
-	// release, or the array is freed while it is being kept.
 	{"set-to-itself", `function twice(s: string): string { return s + "-" + s; }
 function main(): i32 {
     set_args([twice("a"), twice("b")]);

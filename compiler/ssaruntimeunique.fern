@@ -1,5 +1,3 @@
-// Scoped proof of the native stack-entry uniqueness helper's actual assembly.
-// Not a proof of native inline templates, call sites, or the whole runtime.
 import "./util";
 import "./ssaproofnames" as names;
 import "std/string";
@@ -46,9 +44,6 @@ function assignment(line: string): boolean {
   return i > 0 && util.str_has_prefix(rest, "=");
 }
 
-// Full final output is supplied, so duplicate helper/local labels elsewhere
-// cannot silently bind a branch to a different definition. Assembly aliases,
-// macros and includes could replace definitions outside this body: refuse them.
 function lines(text: string): string[] {
   let out: string[] = [];
   for raw in text.split("\n") {
@@ -82,10 +77,6 @@ function body(all: string[], start: i32): string[] {
   return out;
 }
 
-// Boundary ABI: non-inline pointers at or above 65536 name a readable
-// normalized header (bit1 cleared), with a signed32 RC at offset -8. This
-// checker proves no heap writes and the exact borrowed Boolean result; it
-// does not establish pointer validity or credit ownership at a caller.
 struct Program { ops: flow.Op[], error: string }
 
 function program(all: names.Names, code: string[], arm: boolean): Program {
@@ -137,8 +128,6 @@ pub function check(text: string, architecture: string): helper.Proof {
 }
 
 function paths(ops: flow.Op[], arm: boolean): helper.Proof {
-  // Exhaustive abstract classes, not representative numeric test samples.
-  // Every recognized predicate is constant on each of these 2*2*4 classes.
   for tagged in [false, true] {
     for low in [false, true] {
       for rc in [-1, 0, 1, 2] {

@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostBorrowedFieldRetainIRX86_64 pins a struct built from a BORROWED
-// parameter: `mk(deps: string[]): H { return H { deps: deps }; }`. The struct
-// literal retains the stored array, so the caller drops the returned struct
-// without freeing an array it still reads. Each row churns 3000 rounds and
-// exits 0; 99 is an over-release, and any other non-zero is a value read wrong
-// after the drop, which is what a missing retain looks like.
 func TestSelfHostBorrowedFieldRetainIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -44,9 +38,6 @@ func TestSelfHostBorrowedFieldRetainIRX86_64(t *testing.T) {
 		}
 	}
 
-	// ADMISSION: the caller of a borrowed-parameter producer now drops the
-	// returned struct. Absent on the parent, where `round` emitted no drop at
-	// all — not a shallower one, none.
 	run(t, `struct H { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -56,12 +47,6 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-caller-drops", 0)
 
-	// SOUNDNESS, the sharpest shape: the struct is built from a LIVE local and
-	// dropped FIRST, in an inner scope, and the local's elements are read
-	// afterwards under heavy recycling pressure (a 40-block string plus a fresh
-	// array between the drop and the reads). Without the construction retain the
-	// drop frees the array and every element, and these reads see recycled
-	// memory rather than their own bytes.
 	run(t, `struct H { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -80,8 +65,6 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-local-outlives-struct", 0)
 
-	// TWO structs over ONE array: each drop decs, and the array survives both.
-	// A retain taken once but dec'd twice would tick the underflow detector.
 	run(t, `struct H { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }

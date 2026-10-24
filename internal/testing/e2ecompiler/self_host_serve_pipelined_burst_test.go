@@ -27,13 +27,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostServePipelinedBurst pipelines more requests than the
-// io_uring's buffer ring holds (docs/NET-P7-IO-URING-PLAN.md slice 3, 256
-// buffers of 4 KiB): one connection sends 40,000 requests, some 1.4 MB,
-// beside three that send 8,000 each, every write racing the reads, and
-// every answer must come back in order. Under epoll and under the ring,
-// where the loop reads through provided buffers and falls back to reading
-// the socket when they run out.
 func TestSelfHostServePipelinedBurst(t *testing.T)     { runPipelinedBurst(t, false) }
 func TestSelfHostServePipelinedBurstRing(t *testing.T) { runPipelinedBurst(t, true) }
 

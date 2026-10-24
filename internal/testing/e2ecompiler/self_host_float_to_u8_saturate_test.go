@@ -8,28 +8,6 @@ import (
 	"testing"
 )
 
-// A float truncated into a u8 saturates, it does not wrap.
-//
-// `-1.0 as u8` answered 255 on the self-host and 0 on native (#9912). Native
-// picks the truncation's signedness from the DESTINATION — "Unsigned is chosen
-// per the destination's signed-ness", `OpITruncF64` with `Unsigned:
-// !dstInt.IsSigned()` — converts at 32 bits and then masks to the destination's
-// width. The self-host picked it from the destination's WIDTH instead, so u8
-// fell through to the signed conversion: the signed clamp out of a negative
-// lands at INT32_MIN, and the mask reads that clamp's low byte. -1 → 255,
-// -5 → 251, -300 → 212, each the low byte of the two's complement.
-//
-// u32 and u64 were already right (#4332 gave them the unsigned forms); u8 was
-// the width that fix did not reach. u16, i8 and i16 are not castable from a
-// float on either compiler (E064), so u8 is the whole of the gap.
-//
-// The program is SELF-CHECKING and answers a row number, because a value-per-
-// exit-code probe cannot report 255 on wasm — WASI refuses anything at or above
-// 126. Row 0 is agreement.
-//
-// The interpreter runs the same rows here rather than the pins being taken on
-// trust: if its rule ever moves, its own leg fails and names the row, instead
-// of the self-host being quietly held to a stale contract.
 const floatToU8SaturateSrc = `
 function u8_of(x: f64): i32 { return (x as u8) as i32; }
 function u8_of32(x: f32): i32 { return (x as u8) as i32; }
@@ -60,8 +38,6 @@ function main(): i32 {
 }
 `
 
-// floatToU8Rows names what each answer means, so a failure reads as the rule
-// that broke rather than as a bare number.
 var floatToU8Rows = map[int]string{
 	1:  "-1.0 as u8 — the negative clamp, the shape #9912 reported (wrapping answers 255)",
 	2:  "-5.0 as u8 (wrapping answers 251)",
@@ -82,9 +58,6 @@ var floatToU8Rows = map[int]string{
 	17: "-1.0 as i32 — the SIGNED destination still answers -1, not a clamp",
 }
 
-// floatToU8Explain turns semCompileRun's "<exit>|<stdout>" into the rule that
-// broke. An answer it cannot read as a row is reported as-is rather than
-// mapped to row 0, which would claim agreement.
 func floatToU8Explain(t *testing.T, leg, got string) {
 	t.Helper()
 	row, err := strconv.Atoi(strings.TrimSuffix(got, "|"))
@@ -108,7 +81,6 @@ func TestSelfHostFloatToU8Saturates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The interpreter first: it is the oracle the self-host is held to.
 	t.Run("interp", func(t *testing.T) {
 		if code := runInterpExit(t, floatToU8SaturateSrc); code != 0 {
 			t.Fatalf("interpreter answered %d — row %d failed: %s", code, code, floatToU8Rows[code])

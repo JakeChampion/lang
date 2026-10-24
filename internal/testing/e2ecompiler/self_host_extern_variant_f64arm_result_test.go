@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantF64ArmResultCustomProvider is the result-side mirror:
-// a `variant ev { i(s32), d(f64) }` lifted into a self-host enum `Ev { I(i32),
-// D(f64) }`. The i64 join is returned indirectly (disc:u8 @0, payload @8); the
-// wrapper stores the full 8 bytes into the box at +4, and a match on the f64 arm
-// reads them back with f64.load (the S1 width-aware bind), recovering the float
-// from the i64 bit-container.
-//
-// `classify: func(n: s32) -> ev`: n<10 -> i(7), else -> d(2.5). The self-host
-// `match` checks each arm's payload at its own type.
 func TestSelfHostExternVariantF64ArmResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,8 +38,6 @@ func TestSelfHostExternVariantF64ArmResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly in the canonical memory layout: a
-	// 16-byte area (disc:u8 @0, payload @8) via cabi_realloc, 8-aligned. i=0/d=1.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

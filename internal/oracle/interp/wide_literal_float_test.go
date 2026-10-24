@@ -2,9 +2,6 @@ package interp
 
 import "testing"
 
-// An integer literal past i64 max settled into float context carries its
-// magnitude in Value as a wrapped bit pattern; converted as signed it came out
-// negative, so `let f: f64 = 9223372036854775808` was -2^63.
 func TestWideIntLiteralInFloatContextKeepsSign(t *testing.T) {
 	v := evalProgramValue(t, `function main(): i32 {
 	let f: f64 = 9223372036854775808;

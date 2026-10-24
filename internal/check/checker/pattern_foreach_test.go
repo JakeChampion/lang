@@ -8,7 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// checkSrc parses and checks a program, returning the diagnostics as one string.
 func checkSrc(t *testing.T, src string) string {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -21,10 +20,6 @@ func checkSrc(t *testing.T, src string) string {
 	return ""
 }
 
-// A destructuring `for (a, b) in …` header reaches the checker un-lowered; the
-// loop it becomes is chosen HERE, by the iterand's type. An array binds the
-// pattern against each element (index loop); a Map binds it against each entry
-// (cursor loop).
 func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	arrayProg := `function f(): i32 {
 		let xs: (i32, i32)[] = [(1, 2)];
@@ -40,8 +35,6 @@ func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	}`
 
 	arrBlk := checkedForEachBlock(t, arrayProg)
-	// iter / len / idx / for — the same shape the plain `for x in xs` form
-	// lowers to, with the pattern bound inside the loop body.
 	if len(arrBlk.Stmts) != 4 {
 		t.Fatalf("array lowering: expected 4 stmts (iter/len/idx/for), got %d", len(arrBlk.Stmts))
 	}
@@ -58,9 +51,6 @@ func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	}
 
 	mapBlk := checkedForEachBlock(t, mapProg)
-	// cursor / for — the entry cursor keeps the Map walk allocation-free, so
-	// it must NOT lower to the index loop, and it binds nothing besides the
-	// cursor itself.
 	if len(mapBlk.Stmts) != 2 {
 		t.Fatalf("map lowering: expected 2 stmts (cursor/for), got %d", len(mapBlk.Stmts))
 	}
@@ -68,7 +58,6 @@ func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	if !ok {
 		t.Fatalf("map lowering: first stmt should bind the cursor, got %T", mapBlk.Stmts[0])
 	}
-	// Checked, so the method call is already rewritten to its mangled name.
 	call, ok := cursor.Init.(*ast.Call)
 	if !ok {
 		t.Fatalf("map lowering: the cursor is `m.iter()`, got %T", cursor.Init)
@@ -86,8 +75,6 @@ func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	}
 }
 
-// checkedForEachBlock checks a one-loop program and returns the Block the
-// pattern foreach lowered to.
 func checkedForEachBlock(t *testing.T, src string) *ast.Block {
 	t.Helper()
 	prog, err := parser.Parse(src)

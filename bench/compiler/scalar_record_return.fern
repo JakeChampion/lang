@@ -1,5 +1,3 @@
-// A closed record-return ABI: every call only projects its four scalar fields.
-// Print the allocations in the loop and a full-width checksum independently.
 import "std/i64";
 import "std/u64";
 

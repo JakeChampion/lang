@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// `tests/stdlib/sim_fetch_test.fern` runs std/fetch's client over the
-// scripted network in std/sim_fetch: every behaviour of the dialled route
-// (bounds at their exact virtual time, redirects, the reset retry, the
-// block list, decoding, the body caps) against a transport the test
-// scripts. It is the client's sim parity suite, so it runs on every
-// backend, and on the self-host compiler in internal/testing/e2ecompiler's
-// std/test e2e.
-
 const simFetchSuite = "tests/stdlib/sim_fetch_test.fern"
 
 var simFetchWant = []string{"# Suite: std/sim_fetch", "# pass 53", "# fail 0", "1..53"}

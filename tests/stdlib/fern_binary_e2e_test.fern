@@ -1,18 +1,5 @@
 import "std/test";
 
-// tests/stdlib/fern_binary_e2e_test.fern — end-to-end
-// migration pattern: a Fern test file that drives the `fern`
-// binary itself, asserts on its (exit_code, stdout, stderr)
-// triple, and scrubs its tempdir at the end via
-// `defer_cleanup`.
-//
-// This is the shape the migrated Go-side e2e suite will land
-// in. The test reads the path to the binary under test from
-// `$FERN_BIN`; CI exports it after `go build`, dev laptops
-// can `FERN_BIN=$PWD/fern go test`-style. When the env var
-// isn't set the whole suite skips cleanly rather than
-// cascading false failures.
-
 function test_interp_returns_exit_code(fern_bin: string): test.TestOutcome {
   let src: string = "function main(): i32 { return 7; }";
   let r: ProcessResult = subprocess(fern_bin, ["-interp", "-"], src);
@@ -34,16 +21,9 @@ function test_check_passes_clean_program(fern_bin: string): test.TestOutcome {
 function test_check_rejects_type_error(fern_bin: string): test.TestOutcome {
   let src: string = "function main(): i32 { return \"not an int\"; }";
   let r: ProcessResult = subprocess(fern_bin, ["-check", "-"], src);
-  // -check exits non-zero on errors; the exact code isn't
-  // contractual but we know it's not 0.
   if (r.exit_code == 0) {
     return test.fail("expected non-zero exit on type error, got 0");
   }
-  // The diagnostic should mention the violation. We probe
-  // for "error" rather than pinning the exact wording so
-  // a small phrasing tweak ("type error" → "return type
-  // mismatch") doesn't break the test. Codes (`error[E002]:`)
-  // and the plain `error:` shape both match.
   if (!r.stderr.contains("error")) {
     return test.fail("stderr missing `error`:\n" + r.stderr);
   }
@@ -51,9 +31,6 @@ function test_check_rejects_type_error(fern_bin: string): test.TestOutcome {
 }
 
 function test_interp_reads_a_file(fern_bin: string, dir: string): test.TestOutcome {
-  // Write a fixture to the tempdir, then point Fern at it
-  // via `-interp <path>` rather than stdin. Verifies the
-  // file-path entry point + working-directory handling.
   let src_path: string = dir + "/prog.fern";
   let src: string = "function main(): i32 { print(\"file-mode\"); return 42; }";
   match (write_file(src_path, src)) {
@@ -69,12 +46,6 @@ function test_interp_reads_a_file(fern_bin: string, dir: string): test.TestOutco
 function main(): i32 {
   let r: test.TestRunner = test.test_new("fern binary e2e");
 
-  // Gate the suite on $FERN_BIN being set + pointing at an
-  // executable. A best-effort sanity probe spawns `fern
-  // -interp -` with an empty stdin and inspects the exit
-  // code; spawn failure (binary missing, not executable)
-  // surfaces as 127 per the subprocess builtin's
-  // POSIX-shell convention.
   let fern_bin: string = "";
   match (env("FERN_BIN")) {
     Some(p) => {
@@ -94,9 +65,6 @@ function main(): i32 {
     return r.finish();
   }
 
-  // Allocate a tempdir for the file-mode test + register
-  // cleanup. defer_cleanup at the runner level scrubs the
-  // directory regardless of test outcome.
   let dir: string = "";
   match (temp_dir("fern-e2e")) {
     Ok(d) => {

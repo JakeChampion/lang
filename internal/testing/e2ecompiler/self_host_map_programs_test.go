@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// mapProgramCases are map programs whose exit code is the answer: wide and
-// float values, keyed and string columns, iteration, snapshots, deletes, a
-// map in a struct field and in a tuple element, and the build-and-drop loops
-// whose heap readout and underflow count catch a leaked or over-released
-// entry (1 = the heap grew, 99 = an over-release, 88 = a wrong value read
-// back). Each runs on every target through the CLI, on core/map (#9608).
 var mapProgramCases = []struct {
 	name string
 	src  string

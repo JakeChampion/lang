@@ -1,19 +1,5 @@
-// coreutils/lib/fts.fern — the path rules GNU's fts(3) imposes on every
-// utility that walks a tree.
-//
-// They are shared because they are SUBTLE, not because they are long.
-// The trailing-slash rule has a special case that reads like an
-// off-by-one and is not one, and a copy that dropped it reported
-// `chcon -R --preserve-root ctx //` against `'/'` where GNU says `'//'`.
 import "std/string";
 
-// `trim(p)` — a RUN of trailing slashes cut to one, which fts does
-// before the operand is ever printed. A path that is NOTHING but
-// slashes is left alone, so `///` is `/` but `//` stays `//`: POSIX
-// makes a leading pair distinct from a single slash, and fts never
-// shortens an operand into a different root.
-//
-//   `d///` is `d/`, `d/.///` is `d/./`, `///` is `/`, `//` is `//`.
 pub function trim(p: string): string {
   let n: i32 = p.len();
   if (n > 2 && p[n - 1] as i32 == 47) {
@@ -24,9 +10,6 @@ pub function trim(p: string): string {
   return slice_unchecked(p, 0, n) + "";
 }
 
-// `child_path(dir, name)` — a child of `dir`, which already ends in a
-// slash when the operand it came from did. `trim` leaves that one
-// slash in place, so joining must not add a second.
 pub function child_path(dir: string, name: string): string {
   if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
     return dir + name;
@@ -34,22 +17,10 @@ pub function child_path(dir: string, name: string): string {
   return dir + "/" + name;
 }
 
-// ---- components ------------------------------------------------------------
-//
-// The three rules for walking a path one component at a time, shared
-// because `mkdir -p` and `install -d` / `-D` create the same components
-// and have to agree about which of them are names. They are pure path
-// arithmetic: no stat, no policy.
-// Whether the byte at `i` of `s` is a slash.
 pub function is_slash(s: string, i: i32): boolean {
   return s[i] as i32 == 47;
 }
 
-// The index one past the last component of `dir` that is not empty, or
-// -1 when every component is. That component is the LAST thing `-p`
-// creates, and everything before it is an ancestor: `a//b//c` has three
-// components and two ancestors, `a//` has one component and none, and
-// `/` has none at all — which is why `mkdir -p /` succeeds silently.
 pub function last_component_end(dir: string): i32 {
   let end: i32 = 0 - 1;
   let start: i32 = 0;
@@ -66,10 +37,6 @@ pub function last_component_end(dir: string): i32 {
   return end;
 }
 
-// Whether the component of `dir` spanning [start, stop) is one the walk
-// steps through rather than creates. GNU chdir's into `.` and `..`
-// instead of trying to make them, and an empty component (a doubled
-// slash) is not a name at all.
 pub function is_traversed(dir: string, start: i32, stop: i32): boolean {
   let n: i32 = stop - start;
   if (n == 0) {

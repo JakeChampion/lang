@@ -9,42 +9,6 @@ import (
 	"testing"
 )
 
-// `__crc32_cksum(crc, s)` on the self-host IR path — the CRC-32 cksum(1)
-// prints (poly 0x04C11DB7, MSB first, unreflected, no final complement),
-// #9128.
-//
-// It lands SCALAR on all three self-host backends at once, which is §3.4's
-// step 1: the intrinsic becomes total before anything depends on it being
-// fast. The two native emitters fold the same bytes with a carry-less
-// multiply, so what these three have to match is the DEFINITION.
-//
-// Two things a port of this one gets wrong that no sibling can teach it:
-//
-//   - The STRING IS OPERAND 1, not 0. The carried crc comes first, so a body
-//     copied from count_byte unboxes the wrong stack slot. Every length in
-//     the sweep below fails at once when that happens, which is the good
-//     case; what is not is a body that pops in the right order and then
-//     zero-extends the result, because the top bit is live here and a CRC
-//     with it set reads back as a large positive number from a 64-bit slot.
-//     Only a pin whose ANSWER has bit 31 set separates that, which most
-//     inputs do not — see the two high-byte cases and their lengths.
-//
-//   - It CARRIES state in. sum_bytes starts from zero every call; this one
-//     resumes, and that identity — one call over the whole string equals
-//     three calls over its pieces — is the entire reason std/hash can hash a
-//     stream in chunks. The reference below cannot check it, because a
-//     reference implementation carries state the same way a broken kernel
-//     that ignores the incoming crc would not. So the chunking is checked
-//     against a FIXED expectation instead.
-
-// crc32CksumIRProg is SELF-CHECKING: it carries its own bit-at-a-time
-// reference in Fern and compares `__crc32_cksum` against it over every length
-// to 40, then pins eight values computed by the Go oracle in
-// internal/testing/e2e/crc32_cksum_test.go so that a reference and a kernel wrong in
-// the same way still fail.
-//
-// A failure returns a small distinct code rather than a checksum, so the exit
-// status says WHICH shape disagreed. 42 means every comparison matched.
 const crc32CksumIRProg = `function ref(crc: i32, s: string): i32 {
     let c: i32 = crc;
     let i: i32 = 0;
@@ -108,8 +72,6 @@ function main(): i32 {
 }
 `
 
-// runCrc32CksumIR compiles crc32CksumIRProg with the self-host modload driver
-// for the given register target and returns the exit code.
 func runCrc32CksumIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -154,10 +116,6 @@ func TestSelfHostCrc32CksumIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCrc32CksumIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostCrc32CksumIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host crc32_cksum wasm IR e2e")

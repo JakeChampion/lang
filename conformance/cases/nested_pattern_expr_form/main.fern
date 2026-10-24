@@ -1,9 +1,9 @@
-// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
-// re-matches the payload, so every backend sees only flat arms.
-//
-// Expression-form nested match, including plain-slot rebinding through
-// a block-expression.
-// exit: 105 + 3 + 1
+
+
+
+
+
+
 function g(o: Option[Result[i32, i32]]): i32 {
   return match (o) {
     Some(Ok(n)) => n + 100,

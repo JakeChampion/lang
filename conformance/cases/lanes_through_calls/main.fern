@@ -1,8 +1,8 @@
-// A lane value keeps all of its lanes through each way the backends move it:
-// as the result of an inlined call, which is a copy of the callee's result,
-// as an argument to a call, and in a spill slot next to the scalars read out
-// of it. The kernels take their lanes through std/num's methods, so each one
-// is a chain of small calls.
+
+
+
+
+
 import "std/f64";
 import "std/num" as num;
 
@@ -18,8 +18,8 @@ function show2(tag: string, v: f64x2): void {
   print(tag + " " + __f64x2_lane(v, 0).to_string() + " " + __f64x2_lane(v, 1).to_string());
 }
 
-// Each group of lanes goes out through poly and back with `__f32x4_with`,
-// whose four writes each read one lane of a spilled value.
+
+
 function run(xs: f32[]): f32[] {
   let out: f32[] = xs;
   let i: i32 = 0;

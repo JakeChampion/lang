@@ -1,6 +1,6 @@
-// A program's own struct may share a bare name with a builtin IoError variant.
-// The struct does not displace the variant: std/error's `message()` matches
-// IoError's `NotFound` and `Interrupted`, and this program's arms do too.
+
+
+
 import "std/error";
 import "std/i32";
 

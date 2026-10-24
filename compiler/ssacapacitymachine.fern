@@ -1,10 +1,6 @@
-// Scoped normal-x86 capacity effects, derived only from the supplied text.
-// Private halves preserve arbitrary original register and return identities.
 import "./ssacapacityisa" as isa;
 import "./ssacapacityvalue" as value;
 
-// kind: invalid, numeric low32, original GPR half, SP half, return half,
-// arbitrary scratch half. Token halves never become numeric zero implicitly.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
@@ -125,7 +121,6 @@ function read(s: State, r: value.Interval, at: i32, width: i32): Word {
 }
 
 function store(s: State, at: i32, width: i32, w: Word): State {
-  // Original return halves are read-only, including overlapping wide stores.
   if (at < 0 || at <= 7 && at + width / 32 > 6) {
     return State { ...s, ok: false };
   }
@@ -142,14 +137,12 @@ function stack_step(s: State, r: value.Interval, op: isa.Op): State {
   }
   let sp = s.regs[4].low.identity;
   if (op.kind == 6) {
-    // PUSH SP must capture the old SP before subtracting eight.
     let saved = s.regs[op.source];
     let at = address(s, 4, -8, 64);
     let pushed = store(s, at, 64, saved);
     return write(pushed, 4, identity(3, sp - 8));
   }
   if (op.destination == 4) {
-    // POP SP has a distinct assignment order; it is deliberately unsupported.
     return State { ...s, ok: false };
   }
   let loaded = read(s, r, address(s, 4, 0, 64), 64);
@@ -182,7 +175,6 @@ function add_sub(r: value.Interval, a: value.Value, b: value.Value, subtract: bo
     return value.unknown();
   }
   let v = value.add(r, a, if (subtract) { -b.offset } else { b.offset });
-  // Conservative 32-bit domain: prove no wrap; flags remain unknown.
   return if (width == 64 || nonnegative(r, v)) { v } else { value.unknown() };
 }
 
@@ -258,8 +250,6 @@ function comparison(s: State, r: value.Interval, op: isa.Op): State {
   if (!nonnegative(r, v) || op.immediate < 0) {
     return State { ...s, flags: unknown_flags() };
   }
-  // Both operands are nonnegative width-fitting bit patterns. These facts
-  // justify unsigned predicates only; no signed/overflow flags are invented.
   return State { ...s, flags: value.compare(r, v, op.immediate as i64) };
 }
 
@@ -334,7 +324,6 @@ function finished(s: State, r: value.Interval): boolean {
       return false;
     }
   }
-  // Plain RET reads this original return word and advances the proven S by 8.
   return same_word(read(s, r, 6, 64), identity(4, 0)) && same_word(read(s, r, 8, 64), numeric(r, value.expected(r)));
 }
 
@@ -371,13 +360,6 @@ function path(p: isa.Program, r: value.Interval): boolean {
   return false;
 }
 
-// Explicit preconditions: aligned canonical S with readable S..S+15,
-// writable S-24..S-1 and S+8..S+15, and argument N in 1..65535 at S+8.
-// Establishes rounded/capped argument, restored original GPRs, original RET
-// with final SP=S+8, and exact saved RDX/RCX/RAX scratch words. Every other
-// byte is unchanged because no other write is permitted. Address permissions,
-// caller ownership and linked code identity remain separate obligations.
-// This API is not production/default admission or another target's proof.
 pub function check(output: string): boolean {
   let p = isa.program(output);
   if (p.error != "") {

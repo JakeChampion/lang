@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// A `?`'s Type is the payload the IR lays the SOURCE box out by, so settling
-// it against its destination may only fix a literal payload's width (#10614):
-// stamping the destination's i64 onto an `Option[i32]` source moved the
-// payload load past the end of the box.
 func TestTryOpTypeIsTheSourcePayload(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"i32 source in i64 cast", `function f(o: Option[i32]): Option[i64] { return Some((o)? as i64); }

@@ -1,5 +1,5 @@
-// Evaluate the return value before cleanup. Rebinding a record's source in a
-// defer does not replace the value the caller receives.
+
+
 struct P { a: i32 }
 
 function build(): P {

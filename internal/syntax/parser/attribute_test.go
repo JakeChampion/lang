@@ -7,9 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// An attribute before a declaration it does not apply to is a P001 at that
-// declaration's first token, whatever the declaration is (#12742): `const`,
-// `resource` and `pub use` were once accepted with the attribute dropped.
 func TestAttributePlacement(t *testing.T) {
 	const (
 		structOrEnum = "only applies to a `struct` or `enum` declaration"
@@ -52,7 +49,6 @@ func TestAttributePlacement(t *testing.T) {
 	}
 }
 
-// Each attribute still stamps the declaration it applies to.
 func TestAttributeAppliesToItsDeclaration(t *testing.T) {
 	prog, err := Parse(`@derive(Eq)
 pub opaque struct A { x: i32 }

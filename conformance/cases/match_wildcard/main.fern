@@ -1,4 +1,4 @@
-// A match whose final arm is a wildcard catch-all.
+
 enum Sign { Neg, Zero, Pos }
 
 function classify(n: i32): Sign {

@@ -2,9 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A caller releases a returned tuple's array child whatever the callee's body
-// spells (#9004): `return t` of a local tuple and a returned tuple literal
-// balance alike, because the caller reads the callee's return contract.
 func TestSelfHostReturnedLocalTupleReleasesItsChild(t *testing.T) {
 	boxedProbes(t)
 	cli := buildSelfHostCLI(t)

@@ -10,23 +10,6 @@ import (
 	"testing"
 )
 
-// The self-host compiler carries its own copy of this package
-// (compiler/platforms.fern, #6633) because it cannot import Go. Two
-// copies of a classification is exactly the shape CLAUDE.md warns about: a new
-// builtin needs classifying in both capability systems, and the way that goes
-// wrong is one side being updated and the other not — silently, because
-// neither compiler can see the other's table.
-//
-// These tests read the Fern source as data and compare it entry-for-entry with
-// the maps above, so a builtin gated here and unclassified there fails a fast
-// Go test rather than surfacing as "the self-host compiled a program native
-// refuses". They deliberately do NOT build anything: the price of the gate has
-// to be low enough that it runs on every change to this file.
-//
-// Target NAMES are compared too since #6635 gave the self-host driver this
-// package's `<isa>-<environment>` spellings; capability sets are compared per
-// PROFILE, which is where the meaning lives.
-
 const selfHostPlatformsSrc = "../../../compiler/platforms.fern"
 
 func readSelfHostPlatforms(t *testing.T) string {
@@ -38,7 +21,6 @@ func readSelfHostPlatforms(t *testing.T) string {
 	return string(b)
 }
 
-// fernStringList pulls the string literals out of a Fern array literal body.
 func fernStringList(body string) []string {
 	var out []string
 	for _, m := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(body, -1) {
@@ -47,9 +29,6 @@ func fernStringList(body string) []string {
 	return out
 }
 
-// TestSelfHostGatedBuiltinsMatch pins the gated half of the classification:
-// every builtin gated here is gated there, by the same capability, and the
-// self-host gates nothing extra.
 func TestSelfHostGatedBuiltinsMatch(t *testing.T) {
 	src := readSelfHostPlatforms(t)
 	gateRe := regexp.MustCompile(`Gate\s*\{\s*builtin:\s*"([^"]+)",\s*capability:\s*"([^"]+)"\s*\}`)
@@ -81,9 +60,6 @@ func TestSelfHostGatedBuiltinsMatch(t *testing.T) {
 	}
 }
 
-// TestSelfHostCoreBuiltinsMatch pins the other half. A builtin that moves from
-// core to gated (or the reverse) on one side only is a program one compiler
-// builds and the other refuses.
 func TestSelfHostCoreBuiltinsMatch(t *testing.T) {
 	src := readSelfHostPlatforms(t)
 	body := regexp.MustCompile(`(?s)core_builtins\(\): string\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(src)
@@ -106,10 +82,6 @@ func TestSelfHostCoreBuiltinsMatch(t *testing.T) {
 	}
 }
 
-// TestSelfHostCapabilityProfilesMatch compares the capability lists
-// themselves, per profile and in order: a capability added to a profile here
-// and not there changes what one compiler will build, and the order is what
-// `fern -targets` prints.
 func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 	src := readSelfHostPlatforms(t)
 	profRe := regexp.MustCompile(`(?s)if \(profile == "([a-z-]+)"\) \{.*?return \[(.*?)\];`)
@@ -124,8 +96,6 @@ func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 		got, ok := found[name]
 		if !ok {
 			if len(want) == 0 {
-				// The empty profile ("none") is a fall-through with no
-				// literal to find, which is the same set by another spelling.
 				continue
 			}
 			t.Errorf("profile %q is missing from the self-host's capability_profile()", name)
@@ -143,10 +113,6 @@ func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 	}
 }
 
-// TestSelfHostTargetNamesMatch pins the target list itself, so a build command
-// moves between the two compilers unchanged. The one difference the self-host
-// is allowed is a target it has no backend for at all; there is none today, so
-// the lists are compared whole.
 func TestSelfHostTargetNamesMatch(t *testing.T) {
 	got := fernStringList(regexp.MustCompile(`(?s)pub function targets\(\): string\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(readSelfHostPlatforms(t))[1])
 	if len(got) == 0 {
@@ -171,9 +137,6 @@ func TestSelfHostTargetNamesMatch(t *testing.T) {
 	}
 }
 
-// TestSelfHostListingMatches pins the rest of what `fern -targets` prints —
-// each target's description and its environment's handler kinds — so the two
-// binaries list the same thing.
 func TestSelfHostListingMatches(t *testing.T) {
 	src := readSelfHostPlatforms(t)
 	descBody := regexp.MustCompile(`(?s)pub function description\(name: string\): string \{(.*?)\n\}`).FindStringSubmatch(src)
@@ -208,8 +171,6 @@ func TestSelfHostListingMatches(t *testing.T) {
 	}
 }
 
-// TestSelfHostEquivalentsMatch pins the builtin E066 points a refused call at,
-// so the two compilers' messages name the same alternative.
 func TestSelfHostEquivalentsMatch(t *testing.T) {
 	body := regexp.MustCompile(`(?s)function equivalent\(builtin: string\): string \{(.*?)\n\}`).FindStringSubmatch(readSelfHostPlatforms(t))
 	if body == nil {

@@ -1,69 +1,17 @@
-// compiler/ssa_lift.fern — lift the self-host STACK IR (ir.fern's
-// `Op[]`) into SSA form (ssa.fern's `SFunc`). The lift is the front of
-// `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md): each lowered function's ops
-// become one SFunc that `ssa.prune_dead`, `ssa.regalloc_linear` and the
-// per-ISA emitters in `asm_arm64_ir.fern` and `asm_ir.fern` turn into code
-// on the frame, ABI and runtime the stack machine this replaced used.
-//
-// What comes out is spelled onto the flat backends' layouts, never a layout
-// of its own: a record field is a load at (i+1)*8 behind the shape word, an
-// array's length a load at 0, a string's at 8, a construction a box
-// allocation and stores, a string or runtime op the same helper call the
-// flat arm makes, and an op with no selection of its own (the byte kernels,
-// the map ops, the byte buffer, the string ops) a `flat_op` that runs the
-// stack machine's arm between a push of the operands and a pop of the
-// result. A binary carries its IR kind name and width (`str`, `imm`), a
-// unary the op name, so the emitters select from the table the stack
-// machine uses. The reference-count helper calls the lowering threads
-// through stay calls, so an emitted function keeps the memory model of the
-// stack-machine function beside it.
-//
-// The lift is a single linear pass over the op stream: the operand stack
-// becomes value ids, the declared locals slots that phis merge at every
-// scope exit and loop header, and the structured scopes (`block` / `loop` /
-// `if` / `else` / `end`, `br` / `brif`) are tracked on an explicit scope
-// stack. A merge visits only the slots written inside the scope, and a loop
-// header carries a phi only for the slots its body writes: the rest hold
-// one value on every path, so the cost of a scope is its writes, not the
-// function's slot count. An op the lift cannot admit sets `ok=false` and
-// names itself in `bail`, and the backend refuses the function naming it:
-// every op the lowering produces has an arm, so a bail is a compiler bug
-// (ircore.ssa_refuse).
-
 import "./ir";
 import "./ssa";
 import "./util";
 
-// `bail` names the IR op kind that forced ok=false (or "unbalanced-scope"),
-// "" when the lift succeeded — a diagnostic for the coverage scan; the
-// production drivers read only .func / .ok. With slot tracking, `seen_vals`
-// and `seen_slots` pair each value stored to or read from a local slot with
-// that slot, which is how a `-g` build finds the values a source variable
-// holds (#11410).
 pub struct ReturnPos { block: i32, line: i32, col: string }
 
 pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string, seen_vals: i32[], seen_slots: i32[], source_returns: ReturnPos[], source_values: i64[] }
 
-// ---- small array helpers (value-semantics, no slice syntax) -------------
-
-// splice appends `more` onto the block's instruction list. A helper builds
-// what it adds on a fresh list and the caller appends it here, onto a list
-// only this frame holds: an append on the list passed INTO the helper copied
-// the whole list, since the caller's reference kept it shared, and that made
-// the lift quadratic on the compiler's largest functions.
 function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
   for x in more {
     insts = insts.append(x);
   }
   return insts;
 }
-
-// The lift writes its slot vector and scope rows with `.with` on the local
-// itself: an element update through a helper's parameter copies the whole
-// array, since the caller's reference keeps it shared, and on the compiler's
-// largest functions that copy per store made the lift quadratic. The scope
-// stacks and rows never shrink: `sc_n` is the depth, a scope exit lowers it,
-// and the next entry at that depth overwrites what the exit left.
 
 function drop_last(a: i32[]): i32[] {
   let out: i32[] = [];
@@ -85,8 +33,6 @@ function drop_last2(a: i32[]): i32[] {
   return out;
 }
 
-// put_at / put_at_s write v at depth d of a scope stack, growing it only past
-// its length.
 function put_at(own xs: i32[], d: i32, v: i32): i32[] {
   if (d < xs.len()) {
     return xs.with(d, v);
@@ -94,8 +40,6 @@ function put_at(own xs: i32[], d: i32, v: i32): i32[] {
   return xs.append(v);
 }
 
-// scope_edges lists a scope's edges in the order they were recorded, from its
-// latest, `last`, back along `link`.
 function scope_edges(link: i32[], last: i32): i32[] {
   let n: i32 = 0;
   let e: i32 = last;
@@ -120,17 +64,6 @@ function put_at_s(own xs: string[], d: i32, v: string): string[] {
   return xs.append(v);
 }
 
-// ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
-
-// LitWord / decimal_word parse an IR literal's SOURCE TEXT into the i32 the
-// SSA `const_int` holds. The IR carries integer literals as text so the
-// backends can splice hex / full-u32 values straight into an immediate; the lift
-// needs a number, and util.digits_to_i32 handles plain DECIMAL only — so a
-// non-decimal literal reports ok=false and the caller bails rather than emitting
-// a wrong constant. Shared by const_i32_text and const_struct's field words.
-// The value-stack state a value-producing op reads and rewrites: the SSA
-// value counter, the operand stack, the instructions built so far, and the
-// ok flag a malformed op clears.
 struct LiftVals { nvals: i32, stack: i32[], insts: ssa.SInst[], ok: boolean }
 
 struct LitWord { ok: boolean, value: i32 }
@@ -211,7 +144,6 @@ function bin_sym(k: string): string {
   return "";
 }
 
-// drop_n drops the last n elements.
 function drop_n(a: i32[], n: i32): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -222,10 +154,6 @@ function drop_n(a: i32[], n: i32): i32[] {
   return out;
 }
 
-// fbin_sym names the f64 binaries: "" for any other op. Arithmetic (fadd
-// and the rest) yields an f64; a compare (feq and the rest) yields an i32
-// 0/1. A float is its bit pattern in an integer register throughout, so the
-// binary carries the op name and the emitter selects the float instruction.
 function fbin_sym(k: string): string {
   if (k == "fadd") {
     return "+";
@@ -260,22 +188,10 @@ function fbin_sym(k: string): string {
   return "";
 }
 
-// ---- the lift ------------------------------------------------------------
-
-// admits reports whether the production lift has an arm for `op`: one of
-// its own, or the stack machine's through flat_op.
 pub function admits(kt: KindTable, op: ir.Op): boolean {
   return op.kind_tag >= 0 && op.kind_tag < kt.classes.len() && (kt.classes[op.kind_tag] & 1) != 0 || flat_arm_op(op);
 }
 
-// flat_arm_op reports whether `op` can run through the stack machine's own
-// arm (flat_op, 59): the arm pops what op_pops says, pushes one value, and
-// reads no frame slot. dyn_dispatch's arm reads its arguments from the
-// locals the lowering spilled them to, which the register path keeps no
-// slots for; the lift has an instruction of its own for it (60).
-// flat_name is the name a flat op is lifted under: its own, except the
-// in-place scale, which ir carries as a flag on scale_f64 and rcsigs reads
-// as the move it is.
 function flat_name(k: string, op: ir.Op): string {
   if (k == "scale_f64" && op.i32_imm == 1) {
     return "scale_f64_in_place";
@@ -290,25 +206,6 @@ function flat_arm_op(op: ir.Op): boolean {
   return ir.op_pops(op) >= 0 && ir.op_pushes(op) == 1;
 }
 
-// lift_from_ir_prod is the lift the production backends read
-// (docs/SELFHOST-SSA-BACKEND.md): it admits the integer spine, the structured
-// control flow and every `call_direct` as instructions of its own, and every
-// other op with a known stack effect through the stack machine's arm for it
-// (flat_arm_op); what is left bails, naming the op. The runtime
-// helper calls the lowering threads through — the reference-count pair, the
-// per-type drops, the reclaim helpers — stay calls, so the emitted function
-// keeps the memory model of the stack-machine function beside it. A binary
-// carries its IR kind name and width (`str`, `imm`) rather than the symbol the
-// optimiser reads, and an integer cast carries the cast in `str`, so the
-// emitter selects instructions from the same table the stack machine does.
-// KindTable is every op kind's name and class bits by id, built once per
-// module: lift_impl reads it per op instead of classifying each kind it
-// meets per function. classes packs the bits lift_impl branches on: bit 0 an
-// op lift_from_ir_prod admits, bit 1 a memory op lift_prod_mem lowers onto
-// the flat backends' box layouts (ssa.fern's kinds 40..48), bit 2 an f64 op,
-// bit 3 a bin_sym. argc is the helper call's operand count for a kind the
-// stack machine emits as a call into the runtime, else 0; host marks the
-// host-floor kinds; pops is ir.pops_by_kind.
 pub struct KindTable { names: string[], classes: i32[], argc: i32[], host: boolean[], pops: i32[] }
 
 pub function kind_table(): KindTable {
@@ -317,8 +214,6 @@ pub function kind_table(): KindTable {
   let classes: i32[] = [];
   let argc: i32[] = [];
   let host: boolean[] = [];
-  // Ids run past kind_count(): the registry's census walks every id below
-  // 1024 and takes the ones kind_name answers for, and so does this.
   let id: i32 = 0;
   while (id < 1024) {
     let k: string = ir.kind_name(id);
@@ -356,29 +251,21 @@ pub function kind_table(): KindTable {
   return KindTable { names: names, classes: classes, argc: argc, host: host, pops: ir.pops_by_kind() };
 }
 
-// KindFacts is what the name lists in kind_facts say of each kind they name,
-// found once per name through `ix`: bits 1 the spine, 2 a memory op, 4 an
-// f64 unary; argc and host as KindTable carries them.
 struct KindFacts { ix: util.NameIndex, bits: i32[], argc: i32[], host: boolean[] }
 
 function kind_facts(): KindFacts {
-  // The spine lift_from_ir_prod admits as instructions of its own.
   let spine: string[] = [
     "const_i32", "const_i32_text", "const_i64",
     "int_extend", "int_wrap", "int_cast", "u32_wrap", "not",
     "load_local", "store_local", "tee_local", "drop", "return",
     "block", "loop", "if", "else", "end", "br", "brif", "call_direct", "dyn_dispatch",
   ];
-  // The memory ops lift_prod_mem lowers onto the box layouts.
   let mem: string[] = [
     "struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "str_data", "tuple_get", "opt_tag", "opt_payload", "opt_set_payload",
     "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is", "struct_set_shape",
     "struct_make", "arr_make", "tuple_make", "opt_make", "str_slice",
     "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "const_struct", "call_indirect",
   ];
-  // The ops the stack machine emits as a call into the runtime, by operand
-  // count. str_call (49) reaches a Fern-compiled helper on the stack ABI with
-  // the arguments in order; rt_call (50) a routine on the register ABI.
   let two: string[] = ["str_concat", "str_eq", "str_cmp", "arr_push", "arr_push_owned", "arr_push_i64", "arr_push_f64", "arr_push_owned_i64", "arr_push_owned_f64"];
   let one: string[] = [
     "str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
@@ -387,10 +274,6 @@ function kind_facts(): KindFacts {
   ];
   let three: string[] = ["arr_slice", "subprocess", "str_from_bytes_range"];
   let two_io: string[] = ["write_file", "write_file_bytes", "write_file_exec", "read_chunk", "read_chunk_bytes", "write_bytes", "write_some_bytes", "writer_write"];
-  // The host floor the stack machine reaches without a Fern helper on the
-  // stack ABI: the raw syscalls, exit, the string box stamp, the three static
-  // addresses and the full-width address add; with the zero-operand helper
-  // calls, which no operand count names; and the four bit counts.
   let host: string[] = [
     "syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string",
     "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "raw_addr", "monotonic_ns", "now_unix_ms",
@@ -398,9 +281,6 @@ function kind_facts(): KindFacts {
     "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
     "clz", "ctz", "popcount", "bswap",
   ];
-  // The f64 unaries: the literal, the single-instruction math, and the
-  // conversions and reinterprets. The f64 binaries are fbin_sym's. Which
-  // register class holds a value is the allocator's choice (ssa.float_values).
   let f64_un: string[] = [
     "const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
     "i32_to_f64", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
@@ -414,14 +294,9 @@ function kind_facts(): KindFacts {
   f = listed(f, two_io, 0, 2, false);
   f = listed(f, host, 0, 0, true);
   f = listed(f, f64_un, 4, 0, false);
-  // The lane ops (ir.lane_kind_names) are their own class: lift_lane_prod
-  // lifts each as one instruction, and the allocator's float class holds the
-  // results (ssa.lane_values).
   return listed(f, ir.lane_kind_names(), 16, 0, false);
 }
 
-// listed records `bit`, `argc` and `host` for each of `names`. A name listed
-// twice keeps the first operand count it was given.
 function listed(own f: KindFacts, names: string[], bit: i32, argc: i32, host: boolean): KindFacts {
   for n in names {
     let at: i32 = f.ix.find(n);
@@ -442,8 +317,6 @@ pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots
   return lift_impl(kt, name, nparams, nslots, ops, track_slots);
 }
 
-// lift_with_lanes is lift_from_ir_prod for an emitter: the parameters among
-// `lane_slots` are marked lane values (ssa.lane_result).
 pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean, lane_slots: i32[]): LResult {
   let l: LResult = lift_impl(kt, name, nparams, nslots, ops, track_slots);
   if (lane_slots.len() == 0 || l.func.blocks.len() == 0) {
@@ -461,12 +334,6 @@ pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: 
   return LResult { ...l, func: ssa.SFunc { ...l.func, blocks: blocks } };
 }
 
-// lift_lane_prod lifts one lane op (ir.is_lane_kind) as one instruction:
-// kind 10 with one operand, 9 with two, 61 with three, and 62 for the store,
-// whose effect keeps it where the pure kinds may be pruned. The operands come
-// off the stack in order, the element width rides in `imm`, and an extract
-// or replace carries its lane index after the name ("vextract:1"). A store's
-// result is dead, as lift_store's is.
 function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
   let argc: i32 = ir.op_pops(op);
   if (stack.len() < argc) {
@@ -500,11 +367,6 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
   return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
 }
 
-// lift_float_prod lifts one f64 op: a binary carries its kind name and width
-// 64 like the integer binaries, a unary its kind name (an int-to-float
-// conversion also its source width) with the unsigned flag in `imm`; a
-// reinterpret between f64 and i64 is a unary too, which a register backend with
-// a float register class makes the move between the classes.
 function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
   let argc: i32 = 1;
   if (fbin_sym(k) != "") {
@@ -527,9 +389,6 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   } else {
     let what: string = k;
     if (k == "i32_to_f64") {
-      // The lowering leaves the width 0 on the widening it inserts at an
-      // f64 parameter or in mixed arithmetic; the stack machine converts
-      // that as a signed 32-bit source.
       let w: i32 = register_width(op.width);
       if (w == 0) {
         w = 32;
@@ -546,14 +405,6 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
 }
 
-// lift_prod_host lifts one host-floor op: a syscall is a register-ABI call
-// (50) carrying its name with the number first among its operands, as are
-// exit and the string box stamp; the two static addresses
-// are sym_addr (58) with the symbol in `str` and `imm` 1 when the word at it
-// is wanted; raw_addr is the 64-bit add; the clock ops are stack-ABI calls
-// with no operand. The width loads and stores at an address are the box
-// load and store at offset 0, a 4-byte one carrying "i32" in `str`; a store
-// leaves the zero the stack machine pushes in its place.
 function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "line") {
     return lift_line(op, lv);
@@ -638,8 +489,6 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   return lift_pop_push(lv, 0, 49, counted_bit(op), k);
 }
 
-// counted_bit is the mark a runtime call carries in `imm` (bit 2, beside the
-// unique-push bit) when its result is a counted reference (ir.counted).
 function counted_bit(op: ir.Op): i32 {
   if (ir.is_counted(op)) {
     return 2;
@@ -647,8 +496,6 @@ function counted_bit(op: ir.Op): i32 {
   return 0;
 }
 
-// The name a packed op's call carries (ir.packed), and the `str` a packed
-// element load or store carries, which select the byte-stride forms.
 function packed_suffix(op: ir.Op): string {
   if (ir.is_packed(op)) {
     return "_u8";
@@ -656,9 +503,6 @@ function packed_suffix(op: ir.Op): string {
   return "";
 }
 
-// The `str` a load of a counted reference carries (ir.counted): what the
-// emitted-RC certifier reads a unit-holding load by. A packed element is a
-// byte, never a reference, so the two marks never meet on one load.
 function counted_mark(op: ir.Op): string {
   if (ir.is_counted(op)) {
     return "rc";
@@ -681,8 +525,6 @@ function mark_packed(lv: LiftVals, op: ir.Op): LiftVals {
   return LiftVals { ...lv, insts: lv.insts.with(last, ssa.SInst { ...lv.insts[last], str: "u8" }) };
 }
 
-// unique_push is 1 on an owned push whose receiver the lowering tested
-// unique (ir.op_arr_push_owned), else 0; it rides in the instruction's imm.
 function unique_push(k: string, op: ir.Op): i32 {
   if (util.str_has_prefix(k, "arr_push_owned") && op.i32_imm == 1) {
     return 1;
@@ -697,10 +539,6 @@ function prod_call_kind(k: string): i32 {
   return 49;
 }
 
-// ld_off is the byte offset a single-load op reads at, or -1 when `k` is
-// not one: a record field at (i+1)*8 behind the shape word, an array's
-// length at 0, a string's data pointer at 0 and length at 8, a tuple element
-// at i*8, an Option box's tag at 0 and payload at 8.
 function ld_off(k: string, op: ir.Op): i32 {
   if (k == "struct_get") {
     return (op.i32_imm + 1) * 8;
@@ -717,9 +555,6 @@ function ld_off(k: string, op: ir.Op): i32 {
   return 0 - 1;
 }
 
-// lift_prod_mem lowers one memory op onto kinds 40..48. Every arm pops what
-// the stack machine pops and pushes what it pushes, so the operand stack
-// stays aligned with the IR's own accounting.
 function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
   let lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
   if (kt.host[tag]) {
@@ -750,8 +585,6 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
   return lift_prod_read(k, op, lv);
 }
 
-// call_indirect: the operand stack is [a0, .., a(n-1), target] with the
-// function value on top; call_ind takes the target first, then the arguments.
 function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
   let argc: i32 = op.i32_imm;
   if (lv.stack.len() < argc + 1) {
@@ -775,13 +608,6 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 
-// lift_prod_store is the five stores: a record field, a tuple element and a
-// checked array element push nothing back, the raw stores leave the stored
-// value. A tuple element sits at `idx * 8` where a record field sits one shape
-// word further in, the offsets `ld_off` already reads them back at, and every
-// element rides the same eight bytes on these backends whatever its width —
-// which is why the wide form takes this arm too, as the wide READ takes the
-// plain load.
 function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "struct_set") {
     return lift_store(lv, 41, (op.i32_imm + 1) * 8);
@@ -801,9 +627,6 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   return lift_store_keep(lv, 55);
 }
 
-// lift_prod_make is the constructions: a box allocated and filled, or copied.
-// For any other op it hands back `lv` unchanged with ok false, which
-// lift_prod_mem reads as "not a construction".
 function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "struct_make") {
     return lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv);
@@ -826,9 +649,6 @@ function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   return LiftVals { ...lv, ok: false };
 }
 
-// A str_slice whose lowering gave it frame slots for the view box (i32_imm
-// above 0) keeps a frame box in the SSA emit too, in words of the emitter's
-// choosing; the emitter reads only whether it is one.
 function view_in_frame(op: ir.Op): i32 {
   if (op.i32_imm > 0) {
     return 1;
@@ -836,8 +656,6 @@ function view_in_frame(op: ir.Op): i32 {
   return 0;
 }
 
-// lift_store_keep is a raw store that leaves the stored value on the stack,
-// as raw_store_ptr and raw_store8 push it back.
 function lift_store_keep(lv: LiftVals, kind: i32): LiftVals {
   if (lv.stack.len() < 3) {
     return LiftVals { ...lv, ok: false };
@@ -850,8 +668,6 @@ function lift_store_keep(lv: LiftVals, kind: i32): LiftVals {
   return LiftVals { ...stored, stack: stored.stack.append(val) };
 }
 
-// lift_prod_read is the value-producing half: the single loads, the checked
-// element and byte reads, and the two label addresses.
 function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (ld_off(k, op) >= 0) {
     return lift_pop_push(lv, 1, 40, ld_off(k, op), counted_mark(op));
@@ -877,8 +693,6 @@ function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   return lift_pop_push(lv, 0, 47, 0, op.str);
 }
 
-// lift_pop_push pops `npop` operands (bottom first in args) and pushes the
-// result of one instruction of kind `kind` over them.
 function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string): LiftVals {
   if (lv.stack.len() < npop) {
     return LiftVals { ...lv, ok: false };
@@ -900,8 +714,6 @@ function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 
-// lift_line is the source-position marker (ir.op_line) as ssa kind 35
-// ("line"): imm the merged line, str the column, pushing nothing.
 function lift_line(op: ir.Op, lv: LiftVals): LiftVals {
   let pushed: LiftVals = lift_pop_push(lv, 0, 35, op.i32_imm, util.i64_to_string(op.i64_imm));
   if (!pushed.ok) {
@@ -910,8 +722,6 @@ function lift_line(op: ir.Op, lv: LiftVals): LiftVals {
   return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
 }
 
-// lift_store is a store that pushes nothing: st_at pops [box, val], arr_st
-// pops [base, idx, val] (val on top in both).
 function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
   let npop: i32 = 2;
   if (kind == 43 || kind == 53 || kind == 55) {
@@ -924,10 +734,6 @@ function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
   return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
 }
 
-// struct_set_shape: write the interned shape address over slot 0 of the box on
-// top of the stack and leave the box there. The store is the same kind 41 that
-// struct_set uses at offset 0 and the address the same kind 46 variant_is
-// compares against, so both emitters already select for it.
 function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
   if (lv.stack.len() < 1) {
     return LiftVals { ...lv, ok: false };
@@ -944,8 +750,6 @@ function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
   return LiftVals { ...stored, stack: stored.stack.append(box) };
 }
 
-// variant_is: the shape word at 0 of the box against the variant's interned
-// shape address, by pointer equality, as both flat backends test it.
 function lift_variant_is_prod(op: ir.Op, lv: LiftVals): LiftVals {
   let tag: LiftVals = lift_pop_push(lv, 1, 40, 0, "");
   if (!tag.ok) {
@@ -955,9 +759,6 @@ function lift_variant_is_prod(op: ir.Op, lv: LiftVals): LiftVals {
   return lift_pop_push(shape, 2, 9, 0, "eq");
 }
 
-// lift_box_make allocates a box of `cap` words and stores the `n` operands on
-// the stack (the last pushed is the highest element) at `first` + i*8; a
-// shape name stores the shape's address at 0 first, as struct_make does.
 function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals): LiftVals {
   if (lv.stack.len() < n) {
     return LiftVals { ...lv, ok: false };
@@ -994,10 +795,6 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
 
-// A packed u8 literal (ir.packed) takes a box of the words its bytes fill,
-// whose length __fern_arr_box stores as that word count, so the byte count
-// is stored over it before the elements go in a byte apart. The capacity
-// stays in words, which is what the release sizes the block by.
 function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
   if (lv.stack.len() < n) {
     return LiftVals { ...lv, ok: false };
@@ -1029,9 +826,6 @@ function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
 
-// An empty array literal is allocated with the capacity its first push would
-// grow it to, and its length stored as zero, so building an array from `[]`
-// costs one allocation rather than a throwaway empty box and then the real one.
 function lift_empty_arr(lv: LiftVals): LiftVals {
   let box: i32 = lv.nvals;
   let zero: i32 = box + 1;
@@ -1041,8 +835,6 @@ function lift_empty_arr(lv: LiftVals): LiftVals {
   return LiftVals { nvals: zero + 2, stack: lv.stack.append(box), insts: insts, ok: true };
 }
 
-// lift_opt_make_prod builds the two-word Option box [tag@0, payload@8] the
-// stack machine builds from the payload it pops.
 function lift_opt_make_prod(tag: i32, lv: LiftVals): LiftVals {
   let stack: i32[] = lv.stack;
   if (stack.len() < 1) {
@@ -1064,14 +856,6 @@ function lift_opt_make_prod(tag: i32, lv: LiftVals): LiftVals {
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
 
-// bin_str / bin_imm are what a lifted binary carries: the optimiser's symbol
-// for the optimiser's consumers, the IR kind name and width for the production
-// emitter.
-
-// lift_int_narrow_prod lifts the integer width ops as the stack machine
-// selects them: a pointer-width extend or wrap moves nothing, so the value
-// flows through; the rest become one unary carrying the op (and the cast's
-// target type) in `str` and the unsigned flag in `imm`.
 function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], prior: ssa.SInst[], ok: boolean): LiftVals {
   if (stack.len() < 1) {
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: false };
@@ -1099,8 +883,6 @@ function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
 }
 
-// Both lifted ISAs are 64-bit, so a pointer-width binary runs at 64: its
-// shift count masks mod 64 and its divide takes the 64-bit register pair.
 function register_width(width: i32): i32 {
   if (width == ir.width_ptr()) {
     return 64;
@@ -1108,9 +890,6 @@ function register_width(width: i32): i32 {
   return width;
 }
 
-// sign_extended32 says `v` was defined in this block by a signed 32-bit wrap,
-// extend, cast or load, so its register already holds what a further signed
-// 32-bit wrap or extend would produce.
 function sign_extended32(insts: ssa.SInst[], v: i32): boolean {
   let i: i32 = insts.len() - 1;
   while (i >= 0) {
@@ -1126,9 +905,6 @@ function sign_extended32(insts: ssa.SInst[], v: i32): boolean {
   return false;
 }
 
-// lift_const_text_prod lifts a literal carried as source text to the text
-// constant (kind 3), `imm` 64 for an i64 or pointer-width literal, which each
-// emitter materialises the way its stack machine does.
 function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
   let width: i32 = 0;
   if (k == "const_i64" || op.width == ir.width_ptr()) {
@@ -1145,7 +921,6 @@ function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
 }
 
-// tracked is `xs` with `x` appended when tracking is on.
 function tracked(xs: i32[], on: boolean, x: i32): i32[] {
   if (!on) {
     return xs;
@@ -1160,21 +935,20 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let source_returns: ReturnPos[] = [];
   let source_values: i64[] = [];
   let next_blk: i32 = 0;
-  let bail: string = "";  // the op kind that forced a fall-back (scan diagnostic)
+  let bail: string = "";
 
   let blocks: ssa.SBlock[] = [];
-  let cur_id: i32 = next_blk;  // entry = block 0
+  let cur_id: i32 = next_blk;
   next_blk = next_blk + 1;
   let cur_insts: ssa.SInst[] = [];
   let cur_preds: i32[] = [];
   let cur_term: ssa.STerm = STerm_none();
-  let cur_dead: boolean = false;  // current block is unreachable (post-branch)
+  let cur_dead: boolean = false;
 
   let stack: i32[] = [];
   let slots: i32[] = [];
   let ok: boolean = true;
 
-  // params -> value ids 0..nparams-1; declared locals -> const_int 0.
   let p: i32 = 0;
   while (p < nparams) {
     let pv: i32 = nvals;
@@ -1190,9 +964,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     slots = slots.append(zv);
   }
 
-  // ---- unified scope stack (if / block / loop), innermost = last entry --
-  // Per-scope (one entry each): kind, uid (edge ownership), target block id
-  // (if->merge, block->exit, loop->header), and the if-only bookkeeping.
   let sc_kind: string[] = [];
   let sc_target: i32[] = [];
   let sc_else: i32[] = [];
@@ -1200,39 +971,17 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let sc_then_blk: i32[] = [];
   let sc_then_reaches: i32[] = [];
   let sc_parent: i32[] = [];
-  // sc_edge_last: the scope's latest edge, -1 for none. `edge_link` chains
-  // each edge to the one recorded before it for the same scope.
   let sc_edge_last: i32[] = [];
-  // loop: the block count when it opened; its header is appended after.
   let sc_blk_from: i32[] = [];
-  // Where the scope's entries start in the three stacks below.
   let sc_dl_from: i32[] = [];
   let sc_tl_from: i32[] = [];
   let sc_lp_from: i32[] = [];
-  // The op index each scope opened at; a loop's bounds how far back a
-  // slot's last read may sit and still run again (`read_horizon`).
   let sc_op: i32[] = [];
   let sc_n: i32 = 0;
-  // The outermost open loop's scope, -1 when no loop is open.
   let sc_outer_loop: i32 = 0 - 1;
 
-  // ---- slot writes, tracked per scope ----------------------------------
-  // slot_mark[s] is the deepest open scope slot s has been written in (-1:
-  // none). A scope's writes sit in dl_* from sc_dl_from: the slot, its
-  // value when the scope opened, and the mark the first write found. A
-  // closing scope folds them into its parent's. An if's then-arm entries
-  // move to tl_* at `else` with the arm's exit value, so the else arm
-  // starts from the pre-if slots and records its own. A merge visits the
-  // written slots only: a slot no arm wrote holds the same value on
-  // every path.
   let slot_mark: i32[] = filled(nslots, 0 - 1);
-  // slot_pos is a merge's scratch: -1 outside one, else the slot's entry in
-  // the table that merge builds (a dl_* row, a tl_* index or tl_n plus a
-  // dl_* row at an if's end, an lp_* row at a loop's). A merge clears the
-  // range it set before it finishes, so the next one starts from -1.
   let slot_pos: i32[] = filled(nslots, 0 - 1);
-  // matb is a block merge's scratch: one row per written slot, one column
-  // per edge, kept across merges and grown to the largest.
   let matb: i32[] = [];
   let dl_slot: i32[] = [];
   let dl_old: i32[] = [];
@@ -1243,20 +992,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let tl_old: i32[] = [];
   let tl_prev: i32[] = [];
   let tl_n: i32 = 0;
-  // A loop's header phis, in slot order: the slot, the phi and the slot's
-  // value before the loop.
   let lp_slot: i32[] = [];
   let lp_phi: i32[] = [];
   let lp_pre: i32[] = [];
   let lp_n: i32 = 0;
 
-  // ---- branch edges (global, chained per target scope) -----------------
-  // Each br/brif records the predecessor block and, in ep_* from
-  // edge_from, the value of every slot written since the target scope
-  // opened that no longer holds what it held at the open; a slot not
-  // listed holds that value. The target
-  // scope consumes its edges at `end` (loop -> header phis; block -> exit
-  // merge). A loop's entry edge lists nothing: its values are lp_pre.
   let edge_link: i32[] = [];
   let edge_block: i32[] = [];
   let edge_from: i32[] = [];
@@ -1302,8 +1042,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     let k: string = kt.names[tag];
     let cls: i32 = kt.classes[tag];
 
-    // Skip dead code after a terminator (e.g. ops after a `return`/`br`
-    // inside an arm); only else/end/the matching block delimiters act on it.
     if (cur_term.kind_tag != 0 && tag != t_else && tag != t_end) {
       i = i + 1;
       continue;
@@ -1311,7 +1049,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
 
     let old_vals = nvals;
     if (tag == t_ptr_width) {
-      // Both lifted ISAs are 64-bit, so the width is a known constant.
       let pv: i32 = nvals;
       nvals = nvals + 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: pv, args: [], imm: 8, str: "" });
@@ -1359,8 +1096,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: op.i32_imm, str: "" });
       stack = stack.append(v);
     } else if (tag == t_const_f64) {
-      // An f64 constant: the const_float inst, carrying its exact bit
-      // pattern as decimal i64 text for each emitter to materialise.
       let fcv: i32 = nvals;
       nvals = nvals + 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 4, result: fcv, args: [], imm: 0, str: util.i64_to_string(ir.const_f64_bits(op)) });
@@ -1423,10 +1158,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       cur_insts = splice(cur_insts, lv.insts);
       ok = lv.ok;
     } else if (tag == t_dyn_dispatch) {
-      // The receiver and the arguments are the values of the argc
-      // consecutive slots from base_slot the lowering stored them to;
-      // the instruction carries them as operands and the op's index
-      // for its labels.
       let dargs: i32[] = [];
       let dk: i32 = 0;
       while (dk < op.width) {
@@ -1475,7 +1206,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         let parent_id: i32 = cur_id;
         cur_term = STerm_brif(cond, then_id, else_id);
         blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
-        // push an if-scope
         sc_kind = put_at_s(sc_kind, sc_n, "if");
         sc_op = put_at(sc_op, sc_n, i);
         sc_target = put_at(sc_target, sc_n, merge_id);
@@ -1502,9 +1232,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         ok = false;
       } else {
         let merge_id2: i32 = sc_target[top];
-        // The then-arm reaches the merge only if it ran off its end
-        // live — not if it returned, nor if it branched out (break /
-        // continue), which leaves cur_dead with an empty terminator.
         let reaches: i32 = 0;
         if (cur_term.kind_tag == 0 && !cur_dead) {
           reaches = 1;
@@ -1514,8 +1241,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         sc_then_blk = sc_then_blk.with(top, cur_id);
         sc_then_reaches = sc_then_reaches.with(top, reaches);
-        // The arm's writes move aside with their exit values, and
-        // the slots go back to what they held before the if.
         let je: i32 = sc_dl_from[top];
         while (je < dl_n) {
           let se: i32 = dl_slot[je];
@@ -1529,8 +1254,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           je = je + 1;
         }
         dl_n = sc_dl_from[top];
-        // Don't emit a phantom block for an arm that already branched
-        // out (its real terminated block was appended at the branch).
         if (!cur_dead) {
           blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
         }
@@ -1562,16 +1285,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       let hdr_id: i32 = next_blk;
       next_blk = next_blk + 1;
       let entry_blk: i32 = cur_id;
-      // close the entry block with a br to the header; record the entry edge.
       cur_term = STerm_br(hdr_id);
       blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
       edge_link = edge_link.append(0 - 1);
       edge_block = edge_block.append(entry_blk);
       edge_from = edge_from.append(ep_slot.len());
-      // header block: a placeholder phi per slot the body writes (args
-      // filled at `end`). Installing it is a write in the enclosing
-      // scope; a slot the body never writes keeps its value through
-      // the loop.
       let wl: i32[] = loop_writes(ops, i, nslots, scan_tags);
       let lp_from_l: i32 = lp_n;
       let hdr_insts: ssa.SInst[] = [];
@@ -1635,7 +1353,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         } else {
           let tgt: i32 = sc_target[pos];
           let obid: i32 = cur_id;
-          // record this out-edge for the target scope's merge.
           edge_link = edge_link.append(sc_edge_last[pos]);
           sc_edge_last = sc_edge_last.with(pos, edge_link.len() - 1);
           edge_block = edge_block.append(obid);
@@ -1703,8 +1420,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_preds = preds_a;
           cur_term = STerm_none();
           cur_dead = false;
-          // The slots the arm wrote, in slot order: a phi where the
-          // arm's exit value differs from the pre-if one.
           let lo_a: i32 = nslots;
           let hi_a: i32 = 0 - 1;
           let ja: i32 = dfrom;
@@ -1764,8 +1479,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_preds = preds_b;
           cur_term = STerm_none();
           cur_dead = preds_b.len() == 0;
-          // The slots either arm wrote, in slot order. slot_pos holds
-          // a then entry's index, or tl_n plus an else-only entry's.
           let tfrom: i32 = sc_tl_from[t2];
           let lo_b: i32 = nslots;
           let hi_b: i32 = 0 - 1;
@@ -1827,9 +1540,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             s3 = s3 + 1;
           }
         }
-        // Fold the if's writes into the enclosing scope: the else (or
-        // only) arm's entries first, then the then-arm's that the
-        // else arm did not write again.
         let hq: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wq: i32 = dfrom;
         let jq: i32 = dfrom;
@@ -1862,11 +1572,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         tl_n = sc_tl_from[t2];
         sc_n = sc_n - 1;
       } else if (sc_kind[t2] == "loop") {
-        // A body whose last statement returns reaches the loop's end
-        // as a live, terminated block; it is appended here. One that
-        // falls off the end continues after the loop, in the enclosing
-        // scope: it branches to a fresh block that becomes current,
-        // with the body's slot values, once the header is rebuilt.
         let lf: LoopFall = loop_fall(cur_dead, cur_term, cur_id, next_blk);
         next_blk = lf.next_blk;
         if (lf.falls) {
@@ -1874,7 +1579,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         blocks = loop_tail_appended(blocks, cur_dead, cur_id, cur_insts, cur_term, cur_preds);
         let hid: i32 = sc_target[t2];
-        // this loop's incoming edges (entry + back-edges).
         let eidx: i32[] = scope_edges(edge_link, sc_edge_last[t2]);
         let lpreds: i32[] = [];
         let q: i32 = 0;
@@ -1882,9 +1586,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           lpreds = lpreds.append(edge_block[eidx[q]]);
           q = q + 1;
         }
-        // Each phi's operand per back edge: what the edge recorded
-        // for its slot, else the phi itself. The entry edge (first
-        // in eidx) contributes the pre-loop value.
         let lfrom: i32 = sc_lp_from[t2];
         let nw: i32 = lp_n - lfrom;
         let nback: i32 = eidx.len() - 1;
@@ -1913,8 +1614,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           }
           q1 = q1 + 1;
         }
-        // rebuild the header block: fill each placeholder phi's args.
-        // It was appended after the loop opened, so the scan starts there.
         let bi: i32 = sc_blk_from[t2];
         while (bi < blocks.len() && blocks[bi].id != hid) {
           bi = bi + 1;
@@ -1925,8 +1624,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           let ii: i32 = 0;
           while (ii < b.insts.len()) {
             let inst: ssa.SInst = b.insts[ii];
-            // The header's first nw instructions are its
-            // placeholder phis, in lp order.
             if (ii < nw && inst.kind_tag == 8 && lp_phi[lfrom + ii] == inst.result) {
               let pargs: i32[] = [lp_pre[lfrom + ii]];
               let qq: i32 = 0;
@@ -1950,14 +1647,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_term = STerm_none();
           cur_dead = false;
         } else {
-          // Nothing leaves the loop alive and the tail block was
-          // just appended, so control continues in a FRESH dead
-          // block — the same shape `br` leaves behind. Staying on
-          // the published id let a later unconditional append (the
-          // function's own tail, an `if`, a `loop`) emit that block
-          // a second time, and two entries with one id spell one
-          // label twice (#9688). The body's writes go back to the
-          // header phis.
           cur_id = next_blk;
           next_blk = next_blk + 1;
           cur_insts = [];
@@ -1978,7 +1667,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           r0 = r0 + 1;
         }
         lp_n = lfrom;
-        // Fold the body's writes into the enclosing scope.
         let hl: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wl2: i32 = sc_dl_from[t2];
         let jl: i32 = wl2;
@@ -2001,18 +1689,10 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           sc_outer_loop = 0 - 1;
         }
       } else {
-        // block: open the exit, merging all br/brif-out edges (+ a
-        // fall-through edge if the current block reaches `end` live).
         let eid: i32 = sc_target[t2];
         let bidx: i32[] = scope_edges(edge_link, sc_edge_last[t2]);
         let falls_through: boolean = !cur_dead && cur_term.kind_tag == 0;
         let fcur: i32 = cur_id;
-        // A LIVE current block is always emitted: with a synthesized
-        // br-to-exit if it runs off the end, or as-is if it already ended
-        // in a `return`. Only the fall-through case feeds the exit merge.
-        // (Without the return case, a match arm's body — a block whose
-        // fall-through path ends in `return` — would dangle: branched-to
-        // by the arm's brif but never appended.)
         if (!cur_dead) {
           if (falls_through) {
             cur_term = STerm_br(eid);
@@ -2030,11 +1710,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         let eo_insts: ssa.SInst[] = [];
         let dfrom_b: i32 = sc_dl_from[t2];
-        // An exit no edge reaches keeps the fall-through values. Else, per
-        // slot written since the block opened, each edge's value is what it
-        // recorded, else the value at the open, and a phi gathers them only
-        // when they disagree. The phis go in slot order; the rows that agree
-        // are settled as they come, since each touches only its own slot.
         if (bidx.len() > 0) {
           let nb: i32 = dl_n - dfrom_b;
           let ne: i32 = bidx.len();
@@ -2067,11 +1742,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             }
             qb1 = qb1 + 1;
           }
-          // A row whose edges disagree needs a phi; the phis are made in
-          // slot order. The rows are put in that order by a scan over the
-          // slot range they span, through slot_pos, which still maps each
-          // row's slot to its row, unless the range is wider than the square
-          // of their count, when sorting the few rows is cheaper.
           let ph_row: i32[] = [];
           let ph_lo: i32 = nslots;
           let ph_hi: i32 = 0 - 1;
@@ -2150,7 +1820,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         cur_preds = bpreds;
         cur_term = STerm_none();
         cur_dead = bpreds.len() == 0;
-        // Fold the block's writes into the enclosing scope.
         let hb: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wb: i32 = dfrom_b;
         let jf: i32 = dfrom_b;
@@ -2171,14 +1840,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         sc_n = sc_n - 1;
       }
     } else {
-      ok = false;  // outside the slice — caller falls back.
+      ok = false;
     }
     if (op.source > 0) {
       source_values = located_values(source_values, old_vals, nvals, op.source);
     }
-    // Record the offending op kind the first time the lift bails (any
-    // branch above — unhandled op, width-64, stack underflow, …). A tag
-    // ir.kind_name cannot render carries its raw numeric id.
     if (!ok && bail == "") {
       bail = k;
       if (k == "invalid") {
@@ -2188,7 +1854,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     i = i + 1;
   }
 
-  if (ok && sc_n != 0) {  // unbalanced scopes
+  if (ok && sc_n != 0) {
     ok = false;
 
     bail = "unbalanced-scope";
@@ -2198,13 +1864,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     if (cur_term.kind_tag == 0 && stack.len() >= 1) {
       cur_term = STerm_ret(stack[stack.len() - 1]);
     } else if (cur_term.kind_tag == 0 && !cur_dead) {
-      // A REACHABLE final block with no value on the stack still needs a
-      // terminator so it is emitted. This is the exhaustive-match exit:
-      // when every arm diverges (returns), the block's structural exit is
-      // reachable only through the dead "no arm matched" default edge — a
-      // br into a block that would otherwise be dropped (empty + untermed),
-      // dangling that edge's label. A dummy `ret 0` (never executed) makes
-      // the block real. Mirrors how native fills an unreachable exit.
       let dz: i32 = nvals;
       nvals = nvals + 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: dz, args: [], imm: 0, str: "" });
@@ -2219,7 +1878,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   return LResult { func: f, ok: ok, bail: bail, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values };
 }
 
-// filled is n copies of v.
 function filled(n: i32, v: i32): i32[] {
   let out: i32[] = [];
   while (out.len() < n) {
@@ -2228,8 +1886,6 @@ function filled(n: i32, v: i32): i32[] {
   return out;
 }
 
-// edge_end is where edge e's recorded slot values stop in ep_*: the next
-// edge's start, or the end of the list for the newest edge.
 function edge_end(edge_from: i32[], e: i32, total: i32): i32 {
   if (e + 1 < edge_from.len()) {
     return edge_from[e + 1];
@@ -2237,11 +1893,6 @@ function edge_end(edge_from: i32[], e: i32, total: i32): i32 {
   return total;
 }
 
-// loop_writes lists, ascending and without repeats, the slots a store or
-// tee names between the loop opening at ops[at] and its matching end.
-// tags is [block, loop, if, end, store_local, tee_local].
-// last_reads is each slot's last read, as an op index, or -1: a load, or an
-// argument a dyn dispatch takes from its run of slots.
 function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
   let out: i32[] = filled(nslots, 0 - 1);
   let i: i32 = 0;
@@ -2265,11 +1916,6 @@ function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
   return out;
 }
 
-// read_horizon is the earliest op a slot's last read must reach for the slot
-// to be read again once scope `t2` closes at op `at`: `at` itself, or the
-// start of the outermost loop still open around it, whose back edge runs its
-// body again. A row whose slot's last read falls short is dead there, and a
-// closing scope drops it rather than folding it into its parent.
 function read_horizon(outer_loop: i32, opened: i32[], t2: i32, at: i32): i32 {
   if (outer_loop >= 0 && outer_loop < t2) {
     return opened[outer_loop];
@@ -2324,9 +1970,6 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   return out;
 }
 
-// LoopFall is a loop body that reaches the loop's end alive and unterminated:
-// `tail` is that block, `cont` the fresh block control continues in after
-// the loop.
 struct LoopFall { falls: boolean, tail: i32, cont: i32, next_blk: i32 }
 
 function loop_fall(dead: boolean, term: ssa.STerm, id: i32, next_blk: i32): LoopFall {
@@ -2343,8 +1986,6 @@ function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts:
   return blocks.append(ssa.SBlock { id: id, insts: insts, term: term, preds: preds });
 }
 
-// In production mode every callee is a call, the runtime helpers included:
-// the emitted function keeps the stack machine's memory model.
 function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
   let argc: i32 = op.i32_imm;
   if (stack.len() < argc) {
@@ -2370,11 +2011,6 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
 }
 
-// call_mark is a call's `imm`: 4 where the typed lowering proved an rc
-// operand has no byte-view tag, and 5 where it proved a release's box has
-// the one count (ir.sole), which the emitters read; else the mark the
-// certifier reads — a shell's release (ir.shell) 2, a counted result
-// (ir.counted) 1, a lent one (ir.lent) 3.
 function call_mark(op: ir.Op): i32 {
   if (op.i64_imm == 4 && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")) {
     return 4;
@@ -2396,8 +2032,6 @@ function call_mark(op: ir.Op): i32 {
   }
   return 0;
 }
-
-// ---- STerm constructors (ssa.fern's t_* helpers are module-private) ------
 
 function STerm_ret(value: i32): ssa.STerm {
   return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };

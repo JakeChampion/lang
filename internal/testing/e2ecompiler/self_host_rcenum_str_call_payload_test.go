@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// --- A STRING payload built by a fresh-producer CALL (#7364) -----------------
-//
-// `R.Full(w("x"))` — a user function's result as the variant's string payload —
-// is reclaimed exactly as the same program with the concat INLINED, in both the
-// exit-sweep and the match-consumed shapes: a function whose every return is a
-// fresh sole-owned string box is as fresh a producer as a literal or a concat.
-//
-// The alias row is half the point: a callee that returns its PARAMETER hands
-// back a box the caller still owns; a release under it exits 99.
-//
-// Every want was confirmed against bin/fern -interp; alloc/free counts are the
-// self-host build's own, pinned exactly.
-
 type rcEnumStrCallCase struct {
 	name   string
 	src    string
@@ -32,8 +19,6 @@ type rcEnumStrCallCase struct {
 func rcEnumStrCallCases() []rcEnumStrCallCase {
 	return []rcEnumStrCallCase{
 		{
-			// THE REPRO (#7364): exit-sweep shape, if-block local, producer call
-			// payload. Base: 150/0, 3600 live bytes.
 			name: "call_payload_if_block",
 			src: `enum R { Full(string), Empty }
 @noinline function hold(o: R): i32 { return 0; }
@@ -47,7 +32,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 50, allocs: 100, frees: 100,
 		},
 		{
-			// The match-consumed sibling, same payload. Base: 300/0, 7200 live bytes.
 			name: "call_payload_match_consumed",
 			src: `enum R { Full(string), Empty }
 @noinline function hold(o: R): i32 { return 0; }
@@ -61,8 +45,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// The REBIND path: every assignment a fresh producer-call
-			// construction, superseded chain plus final value all released.
 			name: "call_payload_rebind",
 			src: `enum R { Full(string), Empty }
 @noinline function hold(o: R): i32 { return 0; }
@@ -76,8 +58,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 50, allocs: 200, frees: 200,
 		},
 		{
-			// CONTROL — a literal payload was already credited. Must stay
-			// balanced and unchanged. `ids` keeps the variant a heap box.
 			name: "ctl_literal_payload",
 			src: `enum R { Full(string), Empty }
 @noinline function hold(o: R): i32 { return 0; }
@@ -91,9 +71,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 50, allocs: 50, frees: 50,
 		},
 		{
-			// The callee returns its PARAMETER, so the payload aliases
-			// `keep`, a live local this frame releases. An over-release
-			// here would exit 99.
 			name: "refused_alias_returning_callee",
 			src: `enum R { Full(string), Empty }
 @noinline function hold(o: R): i32 { return 0; }
@@ -111,9 +88,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		}}
 }
 
-// TestSelfHostRcEnumStrCallPayloadX86_64 — a string payload from a
-// fresh-producer call is reclaimed exactly as an inline concat is, and an
-// alias-returning callee is never released under its caller.
 func TestSelfHostRcEnumStrCallPayloadX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -151,9 +125,6 @@ func TestSelfHostRcEnumStrCallPayloadX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcEnumStrCallPayloadWasmIR — the wasm sibling. Exit codes only:
-// leak rows do not move one, so this leg catches a release that frees a LIVE
-// box on wasm.
 func TestSelfHostRcEnumStrCallPayloadWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping rc-enum string-call payload wasm IR e2e")
@@ -192,7 +163,6 @@ func TestSelfHostRcEnumStrCallPayloadWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcEnumStrCallPayloadIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostRcEnumStrCallPayloadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

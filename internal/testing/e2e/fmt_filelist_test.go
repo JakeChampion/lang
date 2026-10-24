@@ -10,12 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/printer"
 )
 
-// TestFmtFileList pins the native half of the gofmt-shaped `-fmt FILE...`
-// contract the self-host CLI mirrors (TestSelfHostFmtWriteAndDiffViaInterp's
-// file-list case): stdout mode concatenates in argument order, `-d` prints one
-// diff per differing file and exits 1 when any does, `-w` writes every file, a
-// file that cannot be read does not stop the rest but does set the exit code,
-// and `-o` — one output name — is refused with more than one input.
 func TestFmtFileList(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	const unformatted = "function add(a: i32,b: i32): i32 {\nreturn a+b;\n}\n"
@@ -50,7 +44,6 @@ func TestFmtFileList(t *testing.T) {
 	if out, code := run("-fmt", "-o", filepath.Join(dir, "out.fern"), messy, clean); code != 2 || out != "" {
 		t.Errorf("-fmt -o with two inputs: exit %d (want 2), out %q", code, out)
 	}
-	// The missing file is reported and skipped; the rest is still formatted.
 	if out, code := run("-fmt", filepath.Join(dir, "nope.fern"), clean); code != 1 || out != want {
 		t.Errorf("-fmt with a missing file first: exit %d (want 1), out:\n%s", code, out)
 	}

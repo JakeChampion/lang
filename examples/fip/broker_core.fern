@@ -26,8 +26,6 @@ pub struct Broker {
   result_slot: i32,
 }
 
-// A field no constant folds, so each pool slot is a heap box reserve can
-// rebuild in place rather than one shared static box, which cannot donate.
 @noinline
 function no_topic(): i32 {
   return -1;
@@ -89,7 +87,6 @@ pub fip function producer_message(b: Broker): Message {
   return b.producer;
 }
 
-// Free pool -> producer. Detaching the slot releases the collection's donor reference.
 pub fip function reserve(own b: Broker, topic: i32, payload: i64): Broker {
   if (topic < 0 || topic >= b.topics) {
     return result(b, 1, -1);
@@ -159,7 +156,6 @@ pub fip function enqueue(own b: Broker, slot: i32, topic: i32): Broker {
   return b;
 }
 
-// Publication is atomic across subscribers; refusal leaves the producer lease intact.
 pub fip function publish(own b: Broker): Broker {
   let slot: i32 = b.producer_slot;
   if (slot < 0) {
@@ -177,7 +173,6 @@ pub fip function publish(own b: Broker): Broker {
   return Broker { ...b, producer_slot: -1, status: 0, result_slot: slot };
 }
 
-// Broker -> consumer lease. The payload remains immutable while deliveries exist.
 pub fip function consume(own b: Broker, subscriber: i32): Broker {
   if (subscriber < 0 || subscriber >= b.subscribers) {
     return result(b, 1, -1);
@@ -204,7 +199,6 @@ pub fip function message(b: Broker, subscriber: i32): Message {
   return b.leases[subscriber];
 }
 
-// Consumer -> free pool only after the last queued or leased delivery acknowledges.
 pub fip function acknowledge(own b: Broker, subscriber: i32, serial: i64): Broker {
   if (subscriber < 0 || subscriber >= b.subscribers) {
     return result(b, 1, -1);

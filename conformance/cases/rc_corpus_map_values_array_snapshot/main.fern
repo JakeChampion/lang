@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// m.values() snapshot of an array-valued map: each element is
-// retained (the snapshot co-owns), so dropping the snapshot
-// and the map balances to a single free per value.
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

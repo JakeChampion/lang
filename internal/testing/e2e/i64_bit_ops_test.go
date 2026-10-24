@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i64's bit ops (the wider counterparts to
-// std/i32's): count_ones — set bits in the 64-bit two's-complement
-// representation (a negative n counts sign-extended high bits) — and bit_length
-// — bits to represent the magnitude |n| (highest set bit + 1, i64::MIN special-
-// cased). Values past the i32 range (2^32, i64::MAX/MIN) exercise the full i64
-// width. Both return i32, so the wasmbin enum-i64 gap doesn't apply. Returns 42
-// iff every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const i64BitOpsProg = `
 import "std/i64";
 function main(): i32 {

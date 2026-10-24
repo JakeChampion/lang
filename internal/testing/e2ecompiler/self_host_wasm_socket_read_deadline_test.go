@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// A connected socket is not evidence that input is readable. Keep the peer
-// open without sending bytes, so only the receive deadline can finish.
 func TestSelfHostWasmSocketReadDeadline(t *testing.T) {
 	primary, stdlib := witSelfHostCLI(t)
 	bootstrap := buildLangBinForInterp(t)

@@ -1,20 +1,11 @@
 import "std/test";
 import "std/i32";
 
-// tests/stdlib/i32_bit_arith_test.fern — pure-Fern coverage of std/i32's
-// abs_diff (absolute difference, the non-negative magnitude via an ordering
-// branch) and count_zeros (the complement of count_ones; the two sum to 32).
-// Kept as its own suite rather than folded into i32_test so the self-host
-// merged bundle stays well under the asm_ir IR budget. The Go-side
-// TestI32AbsDiffCountZeros pins these across all four backends; this is the
-// migration-shaped (pure-Fern, std/test-driven) companion.
-
 function test_abs_diff_pos(): test.TestOutcome {
   return test.assert_eq(5.abs_diff(8), 3);
 }
 
 function test_abs_diff_reversed(): test.TestOutcome {
-  // Symmetric: order of operands doesn't change the magnitude.
   return test.assert_eq(8.abs_diff(5), 3);
 }
 
@@ -35,7 +26,6 @@ function test_count_zeros_zero(): test.TestOutcome {
 }
 
 function test_count_zeros_all_ones(): test.TestOutcome {
-  // -1 is all ones in two's complement → no zero bits.
   return test.assert_eq((0 - 1).count_zeros(), 0);
 }
 
@@ -48,7 +38,6 @@ function test_count_zeros_seven(): test.TestOutcome {
 }
 
 function test_ones_plus_zeros(): test.TestOutcome {
-  // Invariant across an arbitrary bit pattern.
   if (305419896.count_ones() + 305419896.count_zeros() != 32) {
     return test.fail("count_ones + count_zeros should be 32");
   }

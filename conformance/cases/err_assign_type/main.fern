@@ -1,4 +1,4 @@
-// Initialising an i32 variable with a boolean.
+
 function main(): i32 {
     let x: i32 = true;
     return x;

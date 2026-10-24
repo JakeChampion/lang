@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSignalDispositionIRWasm pins signal_ignore / signal_default on
-// the self-host's wasm IR path (#8792), and the two reads — signal_mask and
-// signal_disposition — that this PR adds and that would otherwise lower
-// untested.
-//
-// Nothing in either WASI world can deliver a signal, so all four lower to a
-// no-op that drops their arguments and leaves a zero behind — the correct
-// answer rather than a stub for a missing import, the same shape as
-// hostname()'s "". What that leaves to assert is the STACK EFFECT: the
-// arithmetic around the calls is what a wrong one would corrupt, and it is
-// checked by the exit code rather than by reading the WAT, so a lowering that
-// emitted the right text with the wrong balance still fails.
 func TestSelfHostSignalDispositionIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host signal-disposition wasm IR e2e")

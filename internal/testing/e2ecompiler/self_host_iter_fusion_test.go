@@ -11,12 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Lazy core/iter chains fused into one loop (#6795). Each chain starts from
-// `iter.of(xs)` or `iter.range(lo, hi)`, runs `map`, `filter`, `take` and
-// `flat_map` adapters, and ends in `fold` or `len`; a `skip` chain runs
-// unfused beside them. It is compared with a hand-written
-// loop inside the program, with fusion on and off, and the leak checker
-// confirms nothing the unfused chains build is left behind.
 const iterFusionSrc = `import "core/iter";
 
 function build(n: i32): i64[] {
@@ -168,8 +162,6 @@ function main(): i32 {
 }
 `
 
-// Exit 10..54 names the case that disagreed with its loop and the size it
-// disagreed at: (case * 5 + size index) - 40. 99 is a refcount underflow.
 func TestSelfHostIterFusion(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {
@@ -193,10 +185,6 @@ func TestSelfHostIterFusion(t *testing.T) {
 	}
 }
 
-// A fused lazy chain allocates nothing: not the iterator, not an adapter, not
-// the Option and tuple each `next` returns. Unfused, the same calls allocate,
-// which keeps the zero from passing vacuously. The program prints how many
-// allocations each chain made; exit 20..23 names a chain with a wrong result.
 const iterFusionAllocationSrc = `import "core/iter";
 import "std/i64";
 @noinline function mapped(xs: i64[]): i64 {
@@ -255,7 +243,6 @@ func TestSelfHostIterFusionAllocatesNothing(t *testing.T) {
 	}
 }
 
-// The report names each lazy chain it fuses and why it leaves one alone.
 const iterFusionReportSrc = `import "core/iter";
 function filtered(xs: i64[]): i64 {
 	return iter.of(xs).filter((x: i64): boolean => x > (1 as i64)).map((x: i64): i64 => x * x).fold(0 as i64, (a: i64, b: i64): i64 => a + b);

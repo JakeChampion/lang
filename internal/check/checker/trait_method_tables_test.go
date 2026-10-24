@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Info.TraitMethods / Info.MethodOwners are the trait-aware index beside
-// the flat Info.Methods namespace: they record WHICH trait provided each
-// hoisted method, so a method name offered by two traits for one type
-// stays addressable. Every path that produces an impl method has to stamp
-// `FuncDecl.ImplTrait` for that to hold — the parser's impl desugar, the
-// checker's trait-default synthesis, and `@derive` expansion alike.
-
-// newTableChecker is a checker with just the method tables wired up, for
-// driving registerMethod / resolveMethod directly.
 func newTableChecker() *checker {
 	return &checker{info: &Info{
 		Methods:         map[string]string{},
@@ -34,8 +25,6 @@ func newTableChecker() *checker {
 	}}
 }
 
-// checkInfo parses + checks src and returns the resulting Info, failing
-// the test on any diagnostic.
 func checkInfo(t *testing.T, src string) *Info {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -85,8 +74,6 @@ func sortedKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// An ordinary `impl Trait for Type` method registers under the trait and
-// keeps the historical flat mangling.
 func TestTraitMethodTablesImplMethod(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 trait Area { function area(self: Self): i32; }
@@ -97,8 +84,6 @@ function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 	wantOwners(t, info, "P", "area", []string{"Area"})
 }
 
-// An associated function (`impl Default for i32 { function default() }`)
-// hoists to `__assoc_…` and is indexed the same way.
 func TestTraitMethodTablesAssocFunction(t *testing.T) {
 	info := checkInfo(t, `trait Default { function default(): Self; }
 impl Default for i32 { function default(): Self { return 0; } }
@@ -108,8 +93,6 @@ function main(): i32 { return i32.default(); }`)
 	wantOwners(t, info, "i32", "default", []string{"Default"})
 }
 
-// A @derive-d method is synthesised by the checker, not the parser, so it
-// carries its own ImplTrait stamp.
 func TestTraitMethodTablesDerivedMethod(t *testing.T) {
 	info := checkInfo(t, `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
@@ -121,8 +104,6 @@ function main(): i32 { let a = P { x: 1 }; let b = P { x: 2 }; if (a.eq(b)) { re
 	wantOwners(t, info, "P", "eq", []string{"Eq"})
 }
 
-// A trait DEFAULT method the impl does not override is materialised by
-// synthesizeTraitDefaults, and must be attributed to the trait too.
 func TestTraitMethodTablesInheritedDefault(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 trait Greet {
@@ -137,9 +118,6 @@ function main(): i32 { let p = P { x: 1 }; return p.greet(); }`)
 	wantOwners(t, info, "P", "greet", []string{"Greet"})
 }
 
-// An inherent method belongs to no trait: it registers in the flat
-// namespace only, and contributes NO MethodOwners entry — a missing key
-// is what "not provided by a trait" looks like.
 func TestTraitMethodTablesInherentMethodHasNoOwner(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 function (p: P) area(): i32 { return p.x; }
@@ -158,9 +136,6 @@ function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 	}
 }
 
-// Two DIFFERENT traits providing one method name for one type is no
-// longer a redeclaration: both register, each addressable under its own
-// trait. What the call site does with them is E074's business.
 func TestSameMethodFromTwoTraitsIsNotARedeclaration(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 trait A { function go(self: Self): i32; }
@@ -178,8 +153,6 @@ function main(): i32 { let p = P { x: 1 }; return p.x; }`)
 	}
 }
 
-// The SAME trait providing one method name twice for one type is still a
-// plain redeclaration, and so are two inherent declarations.
 func TestSameTraitTwiceStillRedeclares(t *testing.T) {
 	for name, src := range map[string]string{
 		"same trait twice": `struct P { x: i32 }
@@ -207,10 +180,6 @@ function main(): i32 { return P.make().x; }`,
 	}
 }
 
-// A type carrying BOTH an inherent method and a trait-provided one of the
-// same name is an ambiguity, not silent shadowing: otherwise `p.go()`
-// would mean the trait method inside a generic body (where dispatch goes
-// through the bound) and the inherent one at a concrete call site.
 func TestInherentAndTraitMethodCollide(t *testing.T) {
 	for name, src := range map[string]string{
 		"inherent declared second": `struct P { x: i32 }
@@ -234,9 +203,6 @@ function main(): i32 { let p = P { x: 1 }; return p.go(); }`,
 	}
 }
 
-// Two traits a module can both name is an ambiguity at the CALL site, and
-// the report has to identify each candidate well enough to act on: the
-// trait that provided it and where that impl was written.
 func TestAmbiguousCallSiteNamesBothTraitsAndPositions(t *testing.T) {
 	err := checkSource(t, `struct P { x: i32 }
 trait A { function go(self: Self): i32; }
@@ -254,8 +220,6 @@ function main(): i32 { let p = P { x: 1 }; return p.go(); }`)
 	}
 }
 
-// MethodOwners values are sorted regardless of declaration order, so
-// nothing downstream inherits source or map-iteration order.
 func TestMethodOwnersSorted(t *testing.T) {
 	c := newTableChecker()
 	for _, trait := range []string{"Zebra", "Mango", "Apple"} {
@@ -264,9 +228,6 @@ func TestMethodOwnersSorted(t *testing.T) {
 	}
 	wantOwners(t, c.info, "P", "go", []string{"Apple", "Mango", "Zebra"})
 
-	// The first registration keeps the bare mangling every backend and
-	// golden already names; the later, differently-owned ones interpose
-	// the trait so the flat FuncSigs key stays unique.
 	wantTraitMethod(t, c.info, "Zebra", "P", "go", "__method_P_go")
 	if got := c.info.TraitMethods["Mango.P.go"]; got != "__method_P__Mango__go" {
 		t.Errorf(`TraitMethods["Mango.P.go"] = %q, want "__method_P__Mango__go"`, got)
@@ -276,9 +237,6 @@ func TestMethodOwnersSorted(t *testing.T) {
 	}
 }
 
-// A generic enum's instantiated methods all register under the unmangled
-// receiver name, so a call on one instantiation must pick the method whose
-// receiver parameter is that instantiation, not the first registered (#9308).
 func TestInstForReceiverPicksMatchingEnumInstantiation(t *testing.T) {
 	c := newTableChecker()
 	bag := func(arg string) ast.Type {
@@ -303,9 +261,6 @@ func TestInstForReceiverPicksMatchingEnumInstantiation(t *testing.T) {
 	}
 }
 
-// resolveMethod is the single lookup every trait-aware reader goes
-// through. With no preference it reproduces the flat `Methods` answer
-// exactly; with one it selects that trait's own registration.
 func TestResolveMethodPrefersNamedTrait(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 trait Area { function area(self: Self): i32; }
@@ -323,8 +278,6 @@ function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 	}
 }
 
-// An inherent method resolves with an empty owner — that is what tells a
-// caller the implementation came from no trait.
 func TestResolveMethodInherentHasNoOwner(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 function (p: P) area(): i32 { return p.x; }
@@ -336,8 +289,6 @@ function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 	}
 }
 
-// A preference is matched by SIMPLE name, so a caller can ask for `Ord`
-// without knowing the trait arrives module-mangled as `cmp__Ord`.
 func TestResolveMethodPreferenceIgnoresModuleMangling(t *testing.T) {
 	c := newTableChecker()
 	c.registerMethod("P", "cmp", "cmp__Ord", "__method_P_cmp", "", ast.Position{})
@@ -350,10 +301,6 @@ func TestResolveMethodPreferenceIgnoresModuleMangling(t *testing.T) {
 	}
 }
 
-// The property the move/borrow analysis rests on: the owner reported for
-// an unpreferred lookup, fed back in as the preference, returns the SAME
-// implementation. Without it `methodConsumesReceiver` could read the
-// `own` flags of an impl the call site did not dispatch to.
 func TestResolveMethodOwnerRoundTripsToSameImpl(t *testing.T) {
 	c := newTableChecker()
 	for _, trait := range []string{"Zebra", "Mango", "Apple"} {
@@ -368,8 +315,6 @@ func TestResolveMethodOwnerRoundTripsToSameImpl(t *testing.T) {
 	if !ok || again != mangled {
 		t.Errorf("re-resolving with owner %q gave %q, want %q", owner, again, mangled)
 	}
-	// And each other trait's own registration stays individually
-	// addressable — the point of the split index.
 	for trait, want := range map[string]string{"Mango": "__method_P__Mango__go", "Apple": "__method_P__Apple__go"} {
 		got, gotOwner, ok := c.resolveMethod("P", "go", []string{trait})
 		if !ok || got != want || gotOwner != trait {
@@ -378,10 +323,6 @@ func TestResolveMethodOwnerRoundTripsToSameImpl(t *testing.T) {
 	}
 }
 
-// An impl colliding with a standard-library inherent method is reported at
-// the impl the program wrote, in its own file, with each candidate's file
-// named. It used to carry the stdlib method's line under the user's file name
-// (`main.fern:1304:5`), a line the file does not have (#11853).
 func TestAmbiguousDeclReportedAtTheProgramsImpl(t *testing.T) {
 	err := checkModuleSource(t, `import "std/i32";
 trait Display { function to_string(self: Self): string; }

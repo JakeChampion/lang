@@ -4,29 +4,6 @@ import (
 	"testing"
 )
 
-// Self-reassign of an owned struct/enum LOCAL through a method or call —
-// `s = s.emit(x)` — deep-drops the OLD value (freeing its nested array/struct
-// heap) instead of flat-dec'ing the box and orphaning the fields. This is the
-// self-host SSA-builder accumulator shape (`s.cur.insts.append(inst)` threaded
-// through method calls that rebuild the builder each step): the flat dec leaked
-// the old block's instruction buffer every emit → O(N^2) peak memory and OOM.
-//
-// SOUNDNESS BOUND: only structs that are transitively Map-free qualify
-// (typeSelfDropSafe — Map's deep drop is incomplete). STRING fields joined the
-// safe set (#3425): they are now inc'd at every sharing construction site
-// (field-init emitAliasInc, struct-update base copy) and genStructDropFn's
-// per-ABI freeing __fern_str_dec balances the drop side, so a string field
-// shared via a functional-copy reassign is a COUNTED alias the rc-gated drop
-// releases correctly. (The original exclusion dated from the era before
-// strings were rc-tracked, when the same deep-drop was a UAF.) Array /
-// nested-struct / enum fields were always inc'd at construction. These pin
-// (1) the bounded-heap win for the string-free accumulator, (2) that a
-// string-FIELD accumulator is value-correct + over-release-free now that it
-// reclaims, and (3) the bounded-heap win for the string-FIELD accumulator —
-// the self-host-style `s = s.emit(op)` shape, where flat-dec'ing
-// the old boxes pins the ops array at rc >= 2 and turns every append into a
-// whole-array clone (the #3425 Effect-A quadratic).
-
 func selfReassignFieldBumpSrc(n string) string {
 	return `struct Blk { insts: i32[] }
 struct St { cur: Blk }
@@ -41,7 +18,6 @@ function main(): i32 {
 }`
 }
 
-// Value-correct + no over-release for the string-free accumulator.
 const selfReassignFieldSoundSrc = `struct Blk { insts: i32[] }
 struct St { cur: Blk }
 function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.append(x) } }; }
@@ -54,12 +30,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A struct with a HEAP STRING field, functional-copy self-reassigned in a loop
-// (the EmitState/`s = s.write(..)` shape). The deep-drop now FIRES here
-// (strings are rc-counted at construction, so the old box's freeing
-// __fern_str_dec is balanced); this must stay value-correct + over-release
-// free — the guard that the lifted exclusion doesn't re-introduce the
-// pre-rc-tracking UAF.
 const selfReassignStringFieldSoundSrc = `struct Acc { tag: string, xs: i32[] }
 function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
 function tagfor(i: i32): string { if (i % 2 == 0) { return "even-ish-longer"; } return "odd-ish-longer"; }
@@ -72,13 +42,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// selfReassignStringFieldBumpSrc is the bump-scaling twin of the soundness
-// case above: a string-fielded struct LOCAL threaded through `s = s.step(v)`
-// with a growing i32[] field. Before the typeSelfDropSafe string admission
-// (#3425) the old box was flat-dec'd (never freed) each rebind, so every
-// superseded box kept a live reference to the CURRENT xs buffer — each append
-// then cloned the whole accumulated array (rc >= 2), O(N^2) bytes. With the
-// deep-drop firing the shape is O(N); this pins the sub-quadratic scaling.
 func selfReassignStringFieldBumpSrc(n string) string {
 	return `struct Acc { tag: string, xs: i32[] }
 function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
@@ -93,9 +56,6 @@ function main(): i32 {
 }`
 }
 
-// ssaAccumSoundSrc: value-correct + no over-release for the threaded-param
-// string-bearing accumulator (the consumed-param promotion must keep the rc
-// accurate — a still-shared value stays rc>1 and is only flat-dec'd).
 const ssaAccumSoundSrc = `struct Bld { name: string, insts: i32[] }
 function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.append(x) }; }
 function build(s: Bld, n: i32): Bld {
@@ -130,9 +90,6 @@ func TestX86_64SelfReassignFieldSound(t *testing.T) {
 	}
 }
 
-// The string-fielded LOCAL accumulator (`s = s.step(v)` on a struct with a
-// string field + growing i32[]) reclaims O(N) now that typeSelfDropSafe admits
-// strings (#3425) — the self-host state-threading shape.
 func TestX86_64SelfReassignStringFieldBounded(t *testing.T) {
 	_, n1 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("200"))
 	_, n2 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("400"))
@@ -148,8 +105,6 @@ func TestArm64SelfReassignFieldSound(t *testing.T) {
 	}
 }
 
-// arm64 twin of TestX86_64SelfReassignStringFieldBounded (two-word strings:
-// the construction __fern_str_inc + genStructDropFn's WidthString str_dec arm).
 func TestArm64SelfReassignStringFieldBounded(t *testing.T) {
 	_, n1 := compileAndRunArm64FreeOn(t, selfReassignStringFieldBumpSrc("200"))
 	_, n2 := compileAndRunArm64FreeOn(t, selfReassignStringFieldBumpSrc("400"))
@@ -166,34 +121,14 @@ func TestWASMSelfReassignFieldBounded(t *testing.T) {
 	if got := runWasm(t, selfReassignStringFieldSoundSrc); got != 0 {
 		t.Errorf("string-field accumulator: got %d, want 0 (UAF regression guard)", got)
 	}
-	// String-fielded LOCAL accumulator reclaims O(N) (typeSelfDropSafe string
-	// admission, #3425) — two-word strings use __fern_str_inc / the
-	// WidthString str_dec arm of __drop_struct_.
 	sn1 := runWasm(t, selfReassignStringFieldBumpSrc("200"))
 	sn2 := runWasm(t, selfReassignStringFieldBumpSrc("400"))
 	assertSubQuadratic(t, "wasm string-field", sn1, sn2)
-	// The threaded-param accumulator (the self-host's actual shape) is
-	// over-release-free on wasm. wasm keeps a separate, pre-existing
-	// function-boundary reclamation limitation for this shape, so only
-	// soundness is pinned here.
 	if got := runWasm(t, ssaAccumSoundSrc); got != 0 {
 		t.Errorf("threaded-param accumulator: got %d, want 0 (over-release)", got)
 	}
 }
 
-// unionThreadedParamSrc is the same threaded-param shape with a UNION-typed
-// accumulator instead of a struct — the self-host parser's `parse_postfix`
-// shape: `base = e_unary_at(op, base, …)` rebinds a borrowed `Expr` param into
-// a node that KEEPS the old value as a payload, and the node is returned.
-//
-// Before the enum admission in computeConsumedParams the union param stayed on
-// the borrow baseline while its reassignment still emitted the overwrite dec,
-// so the caller's box lost a reference it never gave away: rc undercounted by
-// one per wrap. The value survived only because the caller's own releases
-// happened to be non-freeing — with the payload's box at rc 0 while live, any
-// drop that reached it freed memory the returned node still pointed at, and the
-// recycled block came back as the WRONG VALUE (acc != 1225 here; in the
-// self-host compiler, a silently corrupted AST).
 const unionThreadedParamSrc = `struct Leaf { v: i32[] }
 struct Wrap { operand: Ex, n: i32 }
 type Ex = Leaf | Wrap;

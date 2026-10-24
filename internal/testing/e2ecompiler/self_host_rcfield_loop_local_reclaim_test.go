@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// #4357: a struct LOOP-LOCAL carrying an rc-array field
-// (`while { let t: P = …; }`, P = `{ x: i32, xs: i32[] }`) releases the prior
-// iteration's field buffers as well as its box at each rebind, so the `xs`
-// buffer does not leak per iteration. Both a struct-LITERAL source and a
-// fresh-returning-CALL source are covered.
-//
-// Gated on the self-host x86-64 driver (asm_run):
-//   - FIXPOINT: the loop's bump growth is BOUNDED — equal at N=50 and N=5000.
-//   - OVER-RELEASE: only the dead prior value's buffers are freed, never the
-//     live value's, so the field reads stay correct and
-//     __rc_underflow_count() reports 0.
-
 func rcFieldLoopLocalLiteralSrc(n string) string {
 	return `struct P { x: i32, xs: i32[] }
 function main(): i32 {
@@ -42,9 +30,6 @@ function main(): i32 {
 }`
 }
 
-// A SCALAR-only fresh-returning-CALL struct loop-local (`let t = mk(i)`, P = {x,y}
-// no rc field) releases its BOX every iteration; the box is all there is to
-// release for a scalar struct. #4357 follow-up.
 func scalarLoopLocalCallSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v + 1 }; }
@@ -57,10 +42,6 @@ function main(): i32 {
 }`
 }
 
-// The deep reclaim must free only the dead PRIOR box's field buffers, never the
-// live value's: acc reads t.x + all three xs elements each iteration, and a wrong
-// free would corrupt the sum or trip __rc_underflow_count. per iter: i + i + (i+1) +
-// (i+2) = 4i+3; sum over 0..199 = 4*19900 + 600 = 80200.
 const rcFieldLoopLocalDetectorSrc = `struct P { x: i32, xs: i32[] }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;

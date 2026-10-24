@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The signal pollable of the Driver's reactor (#9853) on every leg of the
-// Go compiler.
-
 func TestReactorSignalInterp(t *testing.T) {
 	if out, got := runInterpExitCode(t, e2eharness.ReactorSignalProbe("interp")); got != 42 {
 		t.Fatalf("interp got %d, want 42; first failing check: %s", got, out)
@@ -32,7 +29,6 @@ func TestReactorSignalArm64(t *testing.T) {
 	}
 }
 
-// The Darwin leg: kqueue's EVFILT_SIGNAL behind an ignored signal.
 func TestArm64DarwinReactorSignal(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")

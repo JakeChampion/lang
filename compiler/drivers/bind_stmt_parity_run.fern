@@ -1,37 +1,9 @@
-// compiler/bind_stmt_parity_run.fern — the anti-drift gate on
-// checker.fern's bind_stmt.
-//
-// bind_stmt is check_stmt's SCOPE half without the inference (#8181): twelve
-// diagnostic walkers thread a Scope through a body and throw the inferred type
-// away, and running the whole type checker to obtain that Scope was 14.41% of
-// a `checker.fern` compile. The two must agree on every statement form — one
-// that binds in check_stmt and not in bind_stmt silently breaks name
-// resolution in all twelve passes, and the symptom surfaces as a spurious or
-// missing diagnostic somewhere else entirely.
-//
-// This driver reads a program from stdin and replays check_module's statement
-// walk over it. For every statement of every function body — recursing into
-// nested blocks exactly as the walkers do — and of the top level, in the scope
-// check_module would walk it in, it compares the bindings check_stmt(st, cur)
-// leaves against the ones bind_stmt(st, cur) leaves. It prints one line per
-// disagreement and exits 1. Either way it ends with two `#` lines — how many
-// statements it compared, and which statement forms those were — so the Go
-// gate can tell a program that agreed from one that was never walked, and can
-// hold the corpus to covering every ast.Stmt form.
-//
-// The scope comes from checker.module_scopes rather than an empty one on
-// purpose: with no struct / union / signature tables every annotation resolves
-// to unknown on BOTH sides, so a divergence in what an annotation binds would
-// compare equal and the gate would pass vacuously.
-
 import "../ast";
 import "../checker";
 import "../parser";
 import "./rundriver";
 import "../util";
 
-// scope_diff describes the first way two scopes disagree, and "" when they
-// carry the same names, in the same order, at the same types.
 function scope_diff(want: checker.Scope, got: checker.Scope): string {
   if (want.names.len() != got.names.len()) {
     return "check_stmt bound " + util.i32_to_string(want.names.len()) + " name(s), bind_stmt " + util.i32_to_string(got.names.len());
@@ -55,9 +27,6 @@ function scope_diff(want: checker.Scope, got: checker.Scope): string {
   return "";
 }
 
-// form_of names a statement's form for the coverage line. Enumerated rather
-// than wildcarded: a new ast.Stmt variant should land here as a missing arm,
-// which is the same signal the two steppers need.
 function form_of(st: ast.Stmt): string {
   match (st) {
     ast.StmtVar(_) => {
@@ -100,15 +69,8 @@ function form_of(st: ast.Stmt): string {
   return "StmtUnrecognised";
 }
 
-// Walked is the running state of the walk: the disagreements found so far,
-// how many statements were compared, and which forms were among them.
 struct Walked { diffs: string[], compared: i32, forms: string[] }
 
-// walk threads the scope through a body the way the twelve diagnostic walkers
-// do, comparing the two steppers at every statement. The scope threaded
-// forward is check_stmt's, so each statement is compared from the same
-// starting scope on both sides and one divergence cannot cascade into the
-// rest of the body.
 function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): Walked {
   let out: Walked = acc;
   let cur: checker.Scope = s;

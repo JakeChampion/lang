@@ -25,7 +25,6 @@ func brokerDriverFiles(t *testing.T, dir string) string {
 }
 
 func brokerDriverOracle(subscribers, occupancy, turns int, mode string) map[string]int64 {
-	// Independent serial stream. No subject queues or lifecycle helpers.
 	payload := func(serial int) int64 { return int64(serial)*17 - 1000000 }
 	var observed, queued int64
 	for i := 1; i <= turns; i++ {

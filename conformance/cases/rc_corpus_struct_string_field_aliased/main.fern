@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// String struct field, aliased across two structs + a live local,
-// then all dropped. Exercises the native single-word x86-64
-// string-field reclaim (__drop_struct_<N> → __fern_str_dec): the
-// field-init alias-incs balance the per-struct frees so the shared
-// buffer is freed exactly once (no over-release). cat() defeats
-// constant-folding so the concat is a real heap string.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 struct H { name: string, n: i32 }

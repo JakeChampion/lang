@@ -1,14 +1,3 @@
-// examples/vcl/vclbackend_test.fern — TAP suite for the VCL evaluator,
-// the variable scoping table, and the request state machine.
-//
-//   fern -interp examples/vcl/vclbackend_test.fern
-//
-// The parser's own suite is `vcl_test.fern`; this one starts from a
-// parsed program and checks what RUNNING it does. Most cases drive a
-// whole request through `machine.run` and assert on the response, the
-// disposition, or the ordered list of subroutines that executed — the
-// path through the state machine is the observable that makes a routing
-// bug legible, so it is the one the tests read.
 import "std/test";
 import "std/string";
 import "std/i64";
@@ -20,7 +9,6 @@ import "./parser";
 import "./eval";
 import "./machine";
 
-// A minimal program: a backend, plus whatever subroutines a case needs.
 function program(body: string): string {
   return "vcl 4.1;\nbackend origin { .host = \"127.0.0.1\"; }\n" + body + "\n";
 }
@@ -39,7 +27,6 @@ function run_as(body: string, method: string, url: string, ip: string): machine.
   return machine.run(decls_of(program(body)), method, url, ip, cache);
 }
 
-// header reads a response header from an outcome, or "" when unset.
 function header(o: machine.Outcome, name: string): string {
   return value.to_str(o.txn.resp.headers.get(name));
 }
@@ -57,9 +44,6 @@ function path_of(o: machine.Outcome): string {
   return out;
 }
 
-// expr_result evaluates a VCL expression by assigning it to a response
-// header and reading the header back, which exercises the real coercion
-// path rather than a test-only entry point.
 function expr_result(expr: string): string {
   let o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = " + expr + "; return (deliver); }", "/e");
   if (!o.ok) {
@@ -68,46 +52,35 @@ function expr_result(expr: string): string {
   return header(o, "R");
 }
 
-// ------------------------------------------------------------ coercions
-// `+` concatenates when either side is a string, so a byte count lands in
-// the header as its number of bytes.
 function test_string_plus_bytes_concatenates(): test.TestOutcome {
   return test.assert_eq(expr_result("\"\" + 256KB"), "262144");
 }
 
-// Byte units are 1024-based, as VCL's are.
 function test_byte_units_are_binary(): test.TestOutcome {
   return test.assert_eq(expr_result("\"\" + 1MB"), "1048576");
 }
 
-// Duration arithmetic stays a duration and prints with three decimals.
 function test_duration_arithmetic(): test.TestOutcome {
   return test.assert_eq(expr_result("\"\" + (1h - 10s)"), "3590.000");
 }
 
-// INT arithmetic stays integral: a status plus one must not become a
-// real and print as "201.000".
 function test_int_arithmetic_stays_integral(): test.TestOutcome {
   let o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = \"\" + (beresp.status + 1); return (deliver); }", "/i");
   return test.assert_eq(header(o, "R"), "201");
 }
 
-// INT division truncates.
 function test_int_division_truncates(): test.TestOutcome {
   return test.assert_eq(expr_result("\"\" + (7 / 2)"), "3");
 }
 
-// A real is a real, and keeps its decimals.
 function test_real_arithmetic(): test.TestOutcome {
   return test.assert_eq(expr_result("\"\" + (1.5 * 2)"), "3.000");
 }
 
-// An unset header is empty in string context.
 function test_unset_header_is_empty_string(): test.TestOutcome {
   return test.assert_eq(expr_result("\"[\" + bereq.http.Nope + \"]\""), "[]");
 }
 
-// regsub takes VCL's `\1` capture references.
 function test_regsub_backreference(): test.TestOutcome {
   return test.assert_eq(expr_result("regsub(\"a-42-b\", \"([0-9]+)\", \"<\\1>\")"), "a-<42>-b");
 }
@@ -124,7 +97,6 @@ function test_regsuball_rejects_partial_utf8(): test.TestOutcome {
   return test.assert_eq(expr_result("regsuball(\"é\", \"^.\", \"X\")"), "ERR:vcl_backend_response: regsuball produced invalid UTF-8");
 }
 
-// ------------------------------------------------------------------ ACL
 function acl_program(): string {
   return "acl purgers { \"127.0.0.1\"; \"192.0.2.0\"/24; ! \"192.0.2.23\"; }\n" + "sub vcl_recv {\n" + "  if (client.ip ~ purgers) { return (synth(200, \"in\")); }\n" + "  return (synth(403, \"out\"));\n" + "}\n";
 }
@@ -141,9 +113,6 @@ function test_acl_admits_a_covered_address(): test.TestOutcome {
   return test.assert_eq(acl_says("192.0.2.10"), "in");
 }
 
-// The most specific entry wins, not the first written. The excluded host
-// is also inside the /24, so a first-match-wins walk would admit it and
-// the `!` line would be dead — which is exactly the bug this pins.
 function test_acl_exclusion_beats_a_broader_inclusion(): test.TestOutcome {
   return test.assert_eq(acl_says("192.0.2.23"), "out");
 }
@@ -156,8 +125,6 @@ function test_acl_matches_localhost(): test.TestOutcome {
   return test.assert_eq(acl_says("127.0.0.1"), "in");
 }
 
-// `!x ~ acl` is the idiomatic mismatch test and must negate the MATCH,
-// not the address.
 function test_acl_negated_match_idiom(): test.TestOutcome {
   let body: string = "acl a { \"10.0.0.0\"/8; }\n" + "sub vcl_recv { if (!client.ip ~ a) { return (synth(403, \"denied\")); } return (synth(200, \"ok\")); }\n";
   let out: machine.Outcome = run_as(body, "GET", "/", "192.0.2.1");
@@ -174,7 +141,6 @@ function test_acl_negated_match_idiom(): test.TestOutcome {
   return test.assert_eq(inside.txn.resp.reason, "ok");
 }
 
-// ------------------------------------------------------------- scoping
 function scope_error(body: string): string {
   let o: machine.Outcome = run_get(body, "/s");
   if (o.ok) {
@@ -183,13 +149,10 @@ function scope_error(body: string): string {
   return o.err;
 }
 
-// `beresp` does not exist on the client side.
 function test_beresp_unreadable_in_recv(): test.TestOutcome {
   return test.assert_contains(scope_error("sub vcl_recv { if (beresp.status == 200) { return (pass); } return (hash); }"), "'beresp.status' is not readable in vcl_recv");
 }
 
-// The classic VCL mistake: `req` is not available while fetching. This is
-// the rule that sends people to `bereq`.
 function test_req_unreadable_in_backend_sub(): test.TestOutcome {
   return test.assert_contains(scope_error("sub vcl_backend_response { set beresp.http.X = req.url; return (deliver); }"), "'req.url' is not readable in vcl_backend_response");
 }
@@ -202,24 +165,18 @@ function test_resp_unwritable_in_recv(): test.TestOutcome {
   return test.assert_contains(scope_error("sub vcl_recv { set resp.http.X = \"1\"; return (hash); }"), "'resp.http.X' is not writable in vcl_recv");
 }
 
-// A misspelled variable is rejected by name rather than read as empty.
 function test_unknown_variable_is_rejected(): test.TestOutcome {
   return test.assert_contains(scope_error("sub vcl_recv { set req.hdr.Host = \"x\"; return (hash); }"), "unknown variable 'req.hdr.Host'");
 }
 
-// `unset` is only meaningful on a header.
 function test_unset_scalar_is_rejected(): test.TestOutcome {
   return test.assert_contains(scope_error("sub vcl_recv { unset req.url; return (hash); }"), "is not a header and cannot be unset");
 }
 
-// A `call`ed subroutine runs in its CALLER's scope, so a helper invoked
-// from a backend subroutine still may not see `req`.
 function test_called_sub_inherits_caller_scope(): test.TestOutcome {
   return test.assert_contains(scope_error("sub helper { set beresp.http.X = req.url; }\n" + "sub vcl_backend_response { call helper; return (deliver); }"), "not readable in vcl_backend_response");
 }
 
-// ------------------------------------------------------- state machine
-// The ordinary cacheable path, and then a hit off what it stored.
 function test_miss_then_hit(): test.TestOutcome {
   let body: string = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
   let decls: ast.Decl[] = decls_of(program(body));
@@ -241,8 +198,6 @@ function test_miss_then_hit(): test.TestOutcome {
   return test.assert_eq(path_of(second), "vcl_recv -> vcl_hash -> vcl_hit -> vcl_deliver");
 }
 
-// `obj.hits` counts deliveries from cache: 0 on the miss, 1 on the first
-// hit.
 function test_obj_hits_counts_from_one(): test.TestOutcome {
   let body: string = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }\n" + "sub vcl_deliver { set resp.http.H = obj.hits; return (deliver); }";
   let decls: ast.Decl[] = decls_of(program(body));
@@ -258,7 +213,6 @@ function test_obj_hits_counts_from_one(): test.TestOutcome {
   return test.assert_eq(header(b, "H"), "1");
 }
 
-// A pass never stores, so an identical second request fetches again.
 function test_pass_never_caches(): test.TestOutcome {
   let body: string = "sub vcl_recv { return (pass); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
   let decls: ast.Decl[] = decls_of(program(body));
@@ -274,9 +228,6 @@ function test_pass_never_caches(): test.TestOutcome {
   return test.assert_contains(path_of(b), "vcl_pass");
 }
 
-// The built-in `vcl_recv` runs when the user's falls through without
-// returning — so a cookie-bearing request is passed even though the
-// program never says so. This is the rule VCL authors are caught by most.
 function test_builtin_recv_passes_on_cookie(): test.TestOutcome {
   let decls: ast.Decl[] = decls_of(program("sub vcl_recv { set req.http.Seen = \"1\"; }"));
   let c: runtime.Cache = runtime.cache_new();
@@ -287,8 +238,6 @@ function test_builtin_recv_passes_on_cookie(): test.TestOutcome {
   return test.assert_contains(path_of(o), "vcl_pass");
 }
 
-// Without the cookie the same program hashes, which is what shows the
-// built-in is deciding rather than the path being fixed.
 function test_builtin_recv_hashes_without_cookie(): test.TestOutcome {
   let o: machine.Outcome = run_get("sub vcl_recv { set req.http.Seen = \"1\"; }", "/c");
   if (!o.ok) {
@@ -297,7 +246,6 @@ function test_builtin_recv_hashes_without_cookie(): test.TestOutcome {
   return test.assert_contains(path_of(o), "vcl_hash");
 }
 
-// An unknown method pipes, per the built-in.
 function test_builtin_recv_pipes_unknown_method(): test.TestOutcome {
   let o: machine.Outcome = run_as("sub vcl_recv { }", "FROBNICATE", "/", "127.0.0.1");
   if (!o.ok) {
@@ -306,8 +254,6 @@ function test_builtin_recv_pipes_unknown_method(): test.TestOutcome {
   return test.assert_eq(o.disposition, "pipe");
 }
 
-// A response with no positive TTL is not stored, which is the built-in
-// `vcl_backend_response` decision.
 function test_zero_ttl_is_not_stored(): test.TestOutcome {
   let body: string = "sub vcl_backend_response { set beresp.ttl = 0s; return (deliver); }";
   let decls: ast.Decl[] = decls_of(program(body));
@@ -320,7 +266,6 @@ function test_zero_ttl_is_not_stored(): test.TestOutcome {
   return test.assert_false(b.hit);
 }
 
-// `beresp.uncacheable` suppresses storage even with a positive TTL.
 function test_uncacheable_is_not_stored(): test.TestOutcome {
   let body: string = "sub vcl_backend_response { set beresp.ttl = 1h; set beresp.uncacheable = true; return (deliver); }";
   let decls: ast.Decl[] = decls_of(program(body));
@@ -333,7 +278,6 @@ function test_uncacheable_is_not_stored(): test.TestOutcome {
   return test.assert_false(b.hit);
 }
 
-// A purge evicts what was stored, so the next request misses.
 function test_purge_evicts(): test.TestOutcome {
   let body: string = "sub vcl_recv { if (req.method == \"PURGE\") { return (purge); } return (hash); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
   let decls: ast.Decl[] = decls_of(program(body));
@@ -354,7 +298,6 @@ function test_purge_evicts(): test.TestOutcome {
   return test.assert_false(after.hit);
 }
 
-// `return (synth(status, reason))` carries both through to the response.
 function test_synth_carries_status_and_reason(): test.TestOutcome {
   let o: machine.Outcome = run_get("sub vcl_recv { return (synth(405, \"Not allowed\")); }", "/x");
   if (!o.ok) {
@@ -366,8 +309,6 @@ function test_synth_carries_status_and_reason(): test.TestOutcome {
   return test.assert_eq(o.txn.resp.reason, "Not allowed");
 }
 
-// `vcl_hash` decides the cache key, so hashing the Host separates two
-// requests for the same URL.
 function test_hash_data_separates_by_host(): test.TestOutcome {
   let body: string = "sub vcl_hash { hash_data(req.url); hash_data(req.http.Host); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
   let decls: ast.Decl[] = decls_of(program(body));
@@ -384,8 +325,6 @@ function test_hash_data_separates_by_host(): test.TestOutcome {
   return test.assert_true(again.hit);
 }
 
-// A `call` runs the callee's body inline, and a `return` inside it ends
-// the whole subroutine.
 function test_call_returns_from_the_caller(): test.TestOutcome {
   let body: string = "sub deny { return (synth(403, \"nope\")); }\n" + "sub vcl_recv { call deny; return (hash); }";
   let o: machine.Outcome = run_get(body, "/call");
@@ -395,10 +334,6 @@ function test_call_returns_from_the_caller(): test.TestOutcome {
   return test.assert_eq(o.txn.resp.reason, "nope");
 }
 
-// A bare `return;` returns from the CALLEE only — the caller carries on
-// with the next statement. An action-carrying return ends the whole
-// subroutine, which the case above pins; these are different rules and
-// conflating them makes every early-exit helper terminate the request.
 function test_bare_return_exits_only_the_callee(): test.TestOutcome {
   let body: string = "sub early { return; }\n" + "sub vcl_recv { call early; set req.http.X = \"reached\"; return (pass); }";
   let o: machine.Outcome = run_get(body, "/bare");
@@ -408,15 +343,7 @@ function test_bare_return_exits_only_the_callee(): test.TestOutcome {
   return test.assert_contains(path_of(o), "vcl_pass");
 }
 
-// A bare `return;` reaching the end of a `vcl_*` subroutine names no
-// action, so the built-in default applies just as falling off the end
-// does — here, a pass because the request carries a cookie.
 function test_bare_return_at_entry_falls_through_to_builtin(): test.TestOutcome {
-  // The bare return is in `vcl_recv` ITSELF, not in a helper: a helper's
-  // bare return is already absorbed by the call, so it would not reach the
-  // entry-level rule this case exists to pin. The checker rejects this
-  // spelling; `machine.run` is called directly to reach the evaluator
-  // without it, which is the "program that was never checked" path.
   let decls: ast.Decl[] = decls_of(program("sub vcl_recv { return; }"));
   let c: runtime.Cache = runtime.cache_new();
   let o: machine.Outcome = machine.run_with_headers(decls, "GET", "/bf", "127.0.0.1", ["Cookie"], ["a=1"], c);
@@ -426,8 +353,6 @@ function test_bare_return_at_entry_falls_through_to_builtin(): test.TestOutcome 
   return test.assert_contains(path_of(o), "vcl_pass");
 }
 
-// Mutually recursive subroutines are bounded rather than exhausting the
-// stack.
 function test_recursive_call_is_bounded(): test.TestOutcome {
   let body: string = "sub a { call b; }\nsub b { call a; }\nsub vcl_recv { call a; return (hash); }";
   let o: machine.Outcome = run_get(body, "/r");
@@ -437,7 +362,6 @@ function test_recursive_call_is_bounded(): test.TestOutcome {
   return test.assert_contains(o.err, "call nesting too deep");
 }
 
-// A restart loop is bounded too.
 function test_restart_is_bounded(): test.TestOutcome {
   let o: machine.Outcome = run_get("sub vcl_recv { return (restart); }", "/loop");
   if (o.ok) {
@@ -446,7 +370,6 @@ function test_restart_is_bounded(): test.TestOutcome {
   return test.assert_contains(o.err, "too many restarts");
 }
 
-// Compound assignment reads the current value first.
 function test_compound_assignment(): test.TestOutcome {
   let o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = \"a\"; set beresp.http.R += \"b\"; return (deliver); }", "/ca");
   if (!o.ok) {
@@ -455,8 +378,6 @@ function test_compound_assignment(): test.TestOutcome {
   return test.assert_eq(header(o, "R"), "ab");
 }
 
-// `&&` short-circuits, so the right side's effect does not happen when
-// the left is false.
 function test_and_short_circuits(): test.TestOutcome {
   let body: string = "sub vcl_recv { if (false && std.tolower(\"X\") == \"x\") { return (pass); } return (hash); }";
   let o: machine.Outcome = run_get(body, "/sc");
@@ -466,8 +387,6 @@ function test_and_short_circuits(): test.TestOutcome {
   return test.assert_contains(path_of(o), "vcl_hash");
 }
 
-// An unsupported VMOD call is an error naming it, not a silent empty
-// string that would quietly change a policy's behaviour.
 function test_unknown_function_is_rejected(): test.TestOutcome {
   return test.assert_contains(scope_error("sub vcl_recv { set req.http.X = mystery.thing(\"a\"); return (hash); }"), "unsupported function 'mystery.thing'");
 }

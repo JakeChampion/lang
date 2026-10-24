@@ -2,8 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// hexIRCases compile the std/hex API through the self-hosted compiler.
-// The interpreter supplies the expected result for each target.
 var hexIRCases = []struct {
 	name string
 	main string
@@ -16,14 +14,11 @@ var hexIRCases = []struct {
 	{"roundtrip-len", `let Ok(bytes) = hex.decode(hex.encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])) else { return 127; }; return bytes.len();`},
 }
 
-// hexSource imports the module with its checked decode result.
 func hexSource(t *testing.T, mainBody string) []byte {
 	t.Helper()
 	return []byte("import \"std/hex\";\nfunction main(): i32 { " + mainBody + " }\n")
 }
 
-// TestSelfHostHexIR runs each case through the self-host CLI on x86-64 and
-// wasm, oracle-checked against the interpreter.
 func TestSelfHostHexIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

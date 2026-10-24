@@ -1,22 +1,22 @@
 // spec: AL-01
-//
-// A source-declared receiver method whose result is consumed by another
-// call — `base.drop(2).len()` — owns that result and must reclaim it.
-// The reclaim gate rejected every `__`-prefixed callee that was not
-// proven to return a fresh value, and a source method mangles to
-// `__method_<Type>_<name>`, so an identity return anywhere in the body
-// (`if (n <= 0) { return s; }`) disqualified the whole method and every
-// materialised result was stranded. The builtin lowerings that gate is
-// really about (`arr.push` / `m.set`) have no declaration at all, so
-// they are excluded by not being user-declared.
-//
-// `tail(0)` and `keeps` are the controls on the is_unique gate: they
-// take the identity path, so the result aliases a value the caller still
-// owns and must survive being read afterwards. A reclaim that ignored
-// the gate would free it here.
-//
-// The case prints the SHAPE, never a byte count — see
-// docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/i64";
@@ -41,7 +41,7 @@ function rounds(n: i32): i32 {
     for i in 0..n {
         let base: string = "long-enough-payload-" + (i % 8).to_string();
         t = t + base.drop(2).len() + base.tail(4).to_owned().len();
-        // Identity path: the result aliases `base`, still live below.
+
         t = t + base.tail(0).len() + base.len();
 
         let b: Box = Box { tag: "start-tag-value", n: i % 8 };
@@ -60,7 +60,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

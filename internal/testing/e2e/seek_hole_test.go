@@ -1,12 +1,3 @@
-// `r.seek(offset, 3)` and `r.seek(offset, 4)`: SEEK_DATA and SEEK_HOLE on
-// every native target, Darwin included although its own numbers for the pair
-// are the other way round. The probe writes a 4 MiB file whose only data is
-// one byte at 1 MiB and records four answers: the first data, the first hole,
-// the hole after the data, and SEEK_DATA from the end (ENXIO). Whether the
-// filesystem keeps the holes is its own call, so the expected line is Go's
-// lseek of the same file with the host's constants, which still tells a
-// swapped or dropped whence apart on a filesystem without holes. Neither WASI
-// preview has the pair: every answer there is EINVAL.
 package e2e
 
 import (
@@ -60,7 +51,6 @@ function main(): i32 {
 `, p("sparse.bin"), p("answers.txt"))
 }
 
-// seekHoleWant is the host's own answer for dir/sparse.bin.
 func seekHoleWant(t *testing.T, dir string) string {
 	t.Helper()
 	f, err := os.Open(filepath.Join(dir, "sparse.bin"))
@@ -90,7 +80,6 @@ func seekHoleWant(t *testing.T, dir string) string {
 	return strings.Join([]string{first, h0, h1, end}, " ")
 }
 
-// seekHoleCheck reads the probe's answers back and checks the file it wrote.
 func seekHoleCheck(t *testing.T, dir, want string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "answers.txt"))
@@ -125,7 +114,6 @@ func TestArm64SeekHole(t *testing.T) {
 	seekHoleCheck(t, dir, seekHoleWant(t, dir))
 }
 
-// Built everywhere, run on Apple Silicon, where the runtime swaps the pair.
 func TestArm64DarwinSeekHole(t *testing.T) {
 	dir := t.TempDir()
 	if !buildAndRunDarwin(t, dir, seekHoleSource(dir)) {

@@ -1,16 +1,3 @@
-// Float-semantics end-to-end test. Pins the portable subset of
-// Fern's f32 / f64 surface (docs/FLOAT-SEMANTICS.md) by running
-// the same program through every available backend and asserting
-// they agree on the result, plus the #5363 defaults: a bare float
-// literal is f64 and `float` is the f64 alias.
-//
-// The portable subset documented today: ordinary arithmetic,
-// ordinary comparisons, in-range float-to-int truncation.
-// Specifically NOT tested: NaN bit-patterns, sign-of-zero
-// discrimination through arithmetic, denormal handling,
-// out-of-range float-to-int — those are platform-dependent
-// by spec.
-
 package e2e
 
 import (
@@ -19,14 +6,6 @@ import (
 	"testing"
 )
 
-// TestFloatSemantics_PortableSubset runs a small program through
-// arm64 / x86_64 / wasm and asserts every available backend
-// returns the documented exit code. Exercises ordinary arithmetic
-// + comparison, which the doc guarantees as bit-identical across
-// every backend.
-//
-// Each backend skips individually when its toolchain is missing
-// (mirrors the diff-oracle's skip behaviour).
 func TestFloatSemantics_PortableSubset(t *testing.T) {
 	src := `function main(): i32 {
 		let a: f32 = 3.5;
@@ -66,13 +45,6 @@ func TestFloatSemantics_PortableSubset(t *testing.T) {
 	})
 }
 
-// TestFloatDefaultWidthF64 pins the #5363 decision at runtime: an
-// unannotated float expression evaluates and dispatches at f64
-// precision (1.0/3.0 renders with std/f64's shortest-round-trip f64
-// formatter — 0.3333333333333333, #5536), an `f64`-annotated value
-// behaves identically, and an explicit f32 renders with
-// std/f64's shortest-round-trip f32 formatter (0.33333334, the fewest
-// digits that parse back to that f32) — on the interpreter, x86-64, and wasm.
 func TestFloatDefaultWidthF64(t *testing.T) {
 	src := `import "std/f64";
 function main(): i32 {

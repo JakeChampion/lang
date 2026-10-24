@@ -1,36 +1,23 @@
-// echo.fern — write arguments to stdout, like `echo(1)`.
-//
-//   -n   do not output the trailing newline
-//   -e   interpret backslash escapes (\n \t \r \\ \0)
-//
-//   $ ./echo hello world          ->  hello world
-//   $ ./echo -n no-newline        ->  no-newline (no trailing \n)
-//   $ ./echo -e 'a\tb'            ->  a<TAB>b
-//
-// Showcases: flag-then-operands parsing, manual backslash-escape
-// expansion over raw bytes, `write` vs `print` for newline control.
 import "std/string";
 import "std/array";
 
-// Expand C-style backslash escapes in `s` (used under -e).
 function unescape(s: string): string {
   let n: i32 = s.len();
   let out: string = "";
   let i: i32 = 0;
   while (i < n) {
     if (s[i] == 92 && i + 1 < n) {
-      // backslash
       let c: i32 = s[i + 1] as i32;
       if (c == 110) {
-        out = out + "\n";  // \n
+        out = out + "\n";
       } else if (c == 116) {
-        out = out + "\t";  // \t
+        out = out + "\t";
       } else if (c == 114) {
-        out = out + "\r";  // \r
+        out = out + "\r";
       } else if (c == 92) {
-        out = out + "\\";  // \\
+        out = out + "\\";
       } else if (c == 48) {
-        out = out + "\x00";  // \0
+        out = out + "\x00";
       } else {
         out = out + slice_unchecked(s, i, i + 2);
       }
@@ -49,9 +36,6 @@ function main(): i32 {
   let escapes: boolean = false;
   let words: string[] = [];
 
-  // Leading flags are consumed only while they look like -n / -e;
-  // the first non-flag operand ends option parsing (matching the
-  // common echo behaviour where flags must come first).
   let i: i32 = 1;
   let still_flags: boolean = true;
   while (i < argv.len()) {

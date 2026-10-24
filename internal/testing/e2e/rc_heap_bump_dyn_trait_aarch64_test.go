@@ -1,27 +1,9 @@
-// RC of `dyn Trait` values on the arm64 backend (Perceus slice 4c — see
-// docs/DYN-TRAITS.md §4.4). The structural mirror of the x86-64 slice 4b
-// (rc_heap_bump_dyn_trait_x86_64_test.go): both natives share the BOXED
-// representation — a `dyn` value is a single pointer to a 16-byte
-// {data, vtable} heap cell — so reclaim must both run the erased concrete
-// destructor (through the vtable's trailing drop slot) AND free the cell.
-//
-// These mirror the wasm 4a proofs (rc_heap_bump_dyn_trait_test.go) and the
-// x86-64 4b proofs on arm64: a bounded create+drop loop whose heap
-// high-water stays FLAT across N (cell + concrete + the concrete's
-// transitively-owned String all reclaim), a no-over-release check, a merged
-// multi-trait drop, and a borrowed dispatched-only `dyn` param that must NOT
-// be dropped by the callee (no double-free, no premature free of the
-// caller's cell). Run under qemu-aarch64.
 package e2e
 
 import (
 	"testing"
 )
 
-// dynTraitBumpGrowthSrcArm64 creates + drops a `dyn Shape` over a struct
-// that transitively owns a heap String each iteration. With reclaim the
-// 16-byte cell + the String box both free per iteration, so the high-water
-// is bounded.
 func dynTraitBumpGrowthSrcArm64(n string) string {
 	return `import "std/i32";
 trait Shape {
@@ -44,14 +26,6 @@ function main(): i32 {
 }`
 }
 
-// TestArm64DynTraitHeapBumpBounded: the core leak/reclaim proof. A loop
-// creating + dropping a `dyn Shape` over a String-bearing struct must
-// report the SAME bump growth at N=50 and N=5000 — a leak would grow with
-// N. Proves the boxed cell, the concrete struct box, AND the transitively-
-// owned String all reclaim (otherwise the per-iteration String buffer +
-// cell would grow the high-water unboundedly). The natives reuse the
-// freelist, so the bounded value may even be 0 — boundedness (small ==
-// large) is the assertion, not a specific non-zero plateau.
 func TestArm64DynTraitHeapBumpBounded(t *testing.T) {
 	small := mustRunArm64FreeOn(t, dynTraitBumpGrowthSrcArm64("50"))
 	large := mustRunArm64FreeOn(t, dynTraitBumpGrowthSrcArm64("5000"))
@@ -60,9 +34,6 @@ func TestArm64DynTraitHeapBumpBounded(t *testing.T) {
 	}
 }
 
-// TestArm64DynTraitNoUnderflow: the same loop must not over-release — no
-// double-free of the cell, the concrete box, or the inner String between
-// the dyn drop and any other reference. __rc_underflow_count() must be 0.
 func TestArm64DynTraitNoUnderflow(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -87,11 +58,6 @@ function main(): i32 {
 	}
 }
 
-// TestArm64DynTraitMultiTraitDrop: a merged `dyn A + B` value reclaims
-// through the merged-vtable drop slot (at index = the MERGED method count,
-// 3 here: a1, b1, b2). The loop must stay bump-bounded, proving the drop
-// slot is read at the right merged offset on the boxed representation
-// (vtable + methodCount*8 absolute pointer).
 func TestArm64DynTraitMultiTraitDrop(t *testing.T) {
 	src := func(n string) string {
 		return `import "std/i32";
@@ -122,13 +88,6 @@ function main(): i32 {
 	}
 }
 
-// TestArm64DynTraitBorrowedParamNoDrop: a `dyn` parameter that is only
-// dispatched on (never stored or returned) stays BORROWED — the callee
-// must NOT drop it (the caller owns the cell). A double-free of the cell or
-// the inner String would surface as a non-zero __rc_underflow_count(); a
-// premature free of the cell would corrupt the caller's value (and the
-// loop's bump would diverge). The caller still reclaims its own `dyn`
-// local each iteration, so the loop stays bounded.
 func TestArm64DynTraitBorrowedParamNoDrop(t *testing.T) {
 	mk := func(tail string) string {
 		return `import "std/i32";
@@ -147,8 +106,6 @@ function main(): i32 {
     ` + tail + `
 }`
 	}
-	// Underflow check: a borrowed param dropped (the cell freed) by the
-	// callee, then again by the caller, would underflow / double-free.
 	underflow := mk(`let i: i32 = 0;
     let sum: i32 = 0;
     while (i < 200) {
@@ -160,8 +117,6 @@ function main(): i32 {
 	if _, code := compileAndRunArm64FreeOn(t, underflow); code != 0 {
 		t.Errorf("borrowed dyn param over-releases = %d, want 0", code)
 	}
-	// Bounded check: the caller's local still reclaims; no leak from the
-	// borrow (and no double-free corrupting the freelist).
 	bumped := func(n string) string {
 		return mk(`let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;

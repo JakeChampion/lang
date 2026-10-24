@@ -8,23 +8,10 @@ import (
 	"testing"
 )
 
-// #8427: a struct rebuilt over an `own` base ran rc traffic over its unsigned
-// scalar fields. is_enum_like_name reads `u32` / `u64` as a bare nominal
-// enum, and both struct-reuse emitters keyed on it: the reuse arm released
-// the OLD value of an overridden `total: u64` with __fern_rc_dec (a byte
-// count that, once past the low-address guard, is written through — a
-// SIGSEGV after ~70 thousand-byte updates on x86-64), and the fresh arm
-// retained the copied field and moved it through a width-64 struct_get,
-// which the wasm emitter renders as f64.load / f64.store (rejected by the
-// validator: expected i32, found f64). The i64 override temp was untyped too.
-//
-// The cases are the streaming-hasher absorb shape that surfaced it, sized so
-// the counter crosses the guard, and every expectation is the interpreter's.
 var selfHostStructUpdateScalarFieldCases = []struct {
 	name string
 	src  string
 }{
-	// The return form over an `own` base: the reuse arm's old-field release.
 	{"own-return-spread-u64", "struct St { a: u32, buf: u8[], buf_len: i32, total: u64 }\n" +
 		"function absorb(own h: St, bs: [u8]): St {\n    let n: i32 = bs.len();\n    return St { ...h, buf_len: n, total: h.total + (n as u64) };\n}\n" +
 		"function (h: St) update(chunk: string): St { h = absorb(h, chunk.as_bytes()); return h; }\n" +
@@ -32,8 +19,6 @@ var selfHostStructUpdateScalarFieldCases = []struct {
 		"    let chunk: string = string_from_bytes_unchecked(b);\n    let h: St = St { a: 1, buf: __alloc_u8(64), buf_len: 0, total: 0 as u64 };\n" +
 		"    let k: i32 = 0;\n    while (k < 100) { h = h.update(chunk); k = k + 1; }\n" +
 		"    return ((h.total / (1000 as u64)) as i32) + h.buf_len / 100 + __rc_underflow_count() * 100;\n}"},
-	// The rebind form with a field moved into an `own` helper: the fresh arm's
-	// non-overridden-field copy (the wasm f64 site) and the i64 override temp.
 	{"own-rebind-field-move-u64", "struct St { a: u32, buf: u8[], buf_len: i32, total: u64 }\n" +
 		"function cp(own dst: u8[], at: i32, src: [u8], from: i32, len: i32): u8[] {\n    let i: i32 = 0;\n    while (i < len) { dst = dst.with(at + i, src[from + i]); i = i + 1; }\n    return dst;\n}\n" +
 		"function absorb(own h: St, bs: [u8]): St {\n    let n: i32 = bs.len();\n    let bl: i32 = h.buf_len;\n    let take: i32 = 64 - bl;\n    if (take > n) { take = n; }\n" +
@@ -45,8 +30,6 @@ var selfHostStructUpdateScalarFieldCases = []struct {
 		"    return ((h.total / (1000 as u64)) as i32) - 90 + (h.buf[3] as i32) % 7 + h.buf_len / 8 + __rc_underflow_count() * 100;\n}"},
 }
 
-// TestSelfHostStructUpdateScalarFieldsX86_64 — the production x86-64 IR path
-// against the interpreter oracle.
 func TestSelfHostStructUpdateScalarFieldsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -76,8 +59,6 @@ func TestSelfHostStructUpdateScalarFieldsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructUpdateScalarFieldsWasmIR — the wasm-IR leg, where the
-// width-64 field copy has to validate as i64 before anything can run.
 func TestSelfHostStructUpdateScalarFieldsWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm-IR struct-update scalar-field e2e")

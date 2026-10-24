@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A phi that only an unreachable block read (#12104, nightly differential seed
-// 94692). The `if (false)` arm's nested matches give the join after the Result
-// test phis that nothing reachable reads once forwarding drops that arm. Kept,
-// each took a register home, one shared with the live Err payload, and its
-// edge copy zeroed the payload before `e3 - 900` read it.
 const deadPhiAfterThreadingSrc = `import "std/i32";
 function id[T](x: T): T { return x; }
 function pick(v0: Result[i32, i32]): i32 {

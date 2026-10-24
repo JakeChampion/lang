@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// jsonStringScanSrc drives std/json's escaper and string parser across the
-// boundaries of the runs `__scan_set` skips: an escape at either end, runs of
-// escapes, every control class, a NUL, multi-byte UTF-8, the slice fast path
-// for a string with no escape, and the failures an unterminated string and
-// a bad escape take.
 const jsonStringScanSrc = `import "std/json";
 import "std/i32";
 

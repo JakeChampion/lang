@@ -1,7 +1,3 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/fixture_test.go.
 package e2eharness
 
 import (
@@ -32,34 +28,13 @@ func RunFixtureInterp(t *testing.T, mainPath, stdin string) (string, int) {
 	return so.String(), cmd.ProcessState.ExitCode()
 }
 
-// LoadCheckMono runs the shared front of the pipeline (modload →
-// constfold → check → monomorph) against a fixture's entry file. It
-// loads from the real fixture directory so relative `./sibling`
-// imports resolve against the on-disk layout.
-//
-// It names no target, so a `target_os()` / `target_arch()` call reaches the
-// lowering unfolded and the backend answers it with its own target — which
-// is also what the driver's fold would have said. LoadCheckMonoFor folds
-// the two before the check, as the driver does.
 func LoadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) {
 	t.Helper()
 	return LoadCheckMonoFor(t, mainPath, "")
 }
 
-// LoadCheckMonoFor is LoadCheckMono for a program compiled for the named
-// target ("arm64-linux", "wasm32-wasi", …), whose two halves are what
-// `target_os()` and `target_arch()` fold to. An empty or unknown name
-// leaves both calls unfolded.
 func LoadCheckMonoFor(t *testing.T, mainPath, target string) (*checker.Info, *ast.Program) {
 	t.Helper()
-	// Ensure core/int is in the import closure so the wasm runner's
-	// BuildOptions.PrintMainResult wrapper can stringify main()'s i32
-	// return (int_to_string) — the auto-prelude used to supply that
-	// name. Injected via a LoadWith override on the entry file so
-	// relative `./sibling` imports still resolve against the real
-	// fixture directory; harmless (unused, tree-shaken) on the x86 /
-	// arm64 runners, which don't print the result. Negative `err_*`
-	// fixtures bypass this (they go through runFixtureCompileError).
 	abs, err := filepath.Abs(mainPath)
 	if err != nil {
 		t.Fatalf("abs: %v", err)
@@ -109,10 +84,4 @@ func Contains(xs []string, x string) bool {
 	return false
 }
 
-// ConformanceCases is the conformance corpus root.
-//
-// The corpus deliberately lives OUTSIDE internal/: it describes the
-// language, not any one implementation of it, and both the Go-side
-// backends and the self-host compiler are measured against it. See
-// conformance/README.md for the case format.
 func ConformanceCases() string { return RepoPath("conformance", "cases") }

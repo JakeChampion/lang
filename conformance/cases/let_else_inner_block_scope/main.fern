@@ -1,9 +1,9 @@
-// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
-// must diverge, so the bindings are live for the rest of the block.
-//
-// A let-else nested inside a block binds for the rest of THAT
-// block only — the outer block's statements are untouched.
-// exit: 6*10 + 9
+
+
+
+
+
+
 enum O { Has(i32), Nil }
 function f(o: O): i32 {
   let acc: i32 = 0;

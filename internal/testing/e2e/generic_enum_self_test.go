@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// genericEnumSelfSrc has a generic enum's instance come only from context:
-// a unit variant inside `Ok(...)` and a `match` on a method returning `Self`
-// (#12089), and a bounded impl's associated function reached directly and
-// through a bound (#12088).
 const genericEnumSelfSrc = `import "core/cmp";
 import "std/i32";
 
@@ -98,10 +94,6 @@ err negative
 string V()
 `
 
-// genericEnumNameClashSrc has a free bounded generic and a bounded impl's
-// associated function share the name `make`, the free one called from a
-// generic enum's method beside a generic struct: the associated function
-// must neither be cloned in the free one's place nor kept twice.
 const genericEnumNameClashSrc = `import "core/cmp";
 import "std/i32";
 

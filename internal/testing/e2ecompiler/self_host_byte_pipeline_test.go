@@ -66,9 +66,6 @@ func TestSelfHostArm64DarwinBytePipeline(t *testing.T) {
 	}
 }
 
-// Exercise the primary assembler as well as Wasmtime's WAT parser. A flat
-// instruction inside a folded Reader branch previously passed WAT execution
-// but made the primary core-module assembler index an empty instruction node.
 func TestSelfHostBytePipelineCoreModule(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

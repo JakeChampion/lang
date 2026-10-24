@@ -1,9 +1,9 @@
-// `if let` reads the shared pattern grammar (#5356): every pattern form a
-// `match` accepts works in its head.
-//
-// Or-pattern: each alternative binds its own name set, so `x` is
-// bound by whichever alternative matched.
-// exit: 5*10 + 4 + 0
+
+
+
+
+
+
 enum E { A(i32), B(i32), C }
 function pick(e: E): i32 {
   if let A(x) | B(x) = e { return x; }

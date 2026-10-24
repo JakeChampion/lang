@@ -1,8 +1,3 @@
-// Code generated for the #4398 part-3 e2e package split; edit freely.
-//
-// Aliases binding this package's historical helper names to the shared
-// harness (internal/testing/e2eharness), so the ~900 test files keep their bare
-// identifiers. internal/testing/e2ecompiler carries the same alias file.
 package e2ecompiler
 
 import (
@@ -61,8 +56,6 @@ var writeSelfHostModloadProjectTyped = e2eharness.WriteSelfHostModloadProjectTyp
 var x86_64Tooling = e2eharness.X86_64Tooling
 var x86_64Runner = e2eharness.X86_64Runner
 
-// selfHostImportClosureFiles is the self-host import closure of one driver,
-// as absolute-ish paths under compiler.
 func selfHostImportClosureFiles(t *testing.T, fernName string) []string {
 	t.Helper()
 	return e2eharness.SelfHostImportClosure(t, "../../../compiler", fernName)

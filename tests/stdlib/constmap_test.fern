@@ -3,11 +3,6 @@ import "std/constmap";
 import "std/i32";
 import "std/result";
 
-// tests/stdlib/constmap_test.fern — std/constmap, the immutable string-keyed
-// map built as a binary fuse structure. What is pinned: every key maps to its
-// value at several sizes (the peeling must succeed and the assignment must
-// agree with the lookup), the verified map rejects keys it never saw, and
-// the construction refuses a duplicate key and a length mismatch.
 function keys_of(n: i32): string[] {
   let ks: string[] = [];
   let i: i32 = 0;
@@ -28,8 +23,6 @@ function values_of(n: i32): u64[] {
   return vs;
 }
 
-// round_trip builds an n-key map and names the first key that maps wrong,
-// or the build error; "" when every key maps to its value.
 function round_trip(n: i32): string {
   let ks: string[] = keys_of(n);
   let vs: u64[] = values_of(n);
@@ -57,7 +50,6 @@ function test_round_trip_1000(): test.TestOutcome {
   return test.assert_eq(round_trip(1000), "");
 }
 
-// The small sets are where the peeling has the least slack.
 function test_round_trip_small(): test.TestOutcome {
   let n: i32 = 1;
   while (n <= 9) {
@@ -83,7 +75,6 @@ function test_empty(): test.TestOutcome {
   }
 }
 
-// The verified map answers every key it holds and none it does not.
 function test_verified(): test.TestOutcome {
   let n: i32 = 1000;
   let ks: string[] = keys_of(n);

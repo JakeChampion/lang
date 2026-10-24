@@ -9,28 +9,6 @@ import (
 	"testing"
 )
 
-// --- The bare-ident tuple element's retain, given back (#7226) ---------------
-//
-// A tuple literal holding a bare ident that names an rc-container local
-// retains it, so the tuple box is a second owner of the buffer. That reference
-// must be given back when the tuple dies; left held, it stranded the buffer at
-// rc 1 forever:
-//
-//	(i32, i32[]) from a bare ident   allocs=400 frees=200   live 8000 (40 B/round)
-//	(i32[], i32[]) two idents        allocs=600 frees=200   live 16000
-//
-// The release must cover exactly the positions the construction retained, not
-// every position of rc type: releasing a position the construction never
-// retained is the use-after-free TestSelfHostRcTupleSweepHazardsX86_64 pins.
-//
-// Two shapes must stay correct, and both are covered below: a PARAM ident
-// element (the retain is on a buffer the frame does not own, so it must be
-// released exactly once), and an untaken-branch tuple whose slot still holds
-// its entry zero at the exit (a null tuple's elements must not be read).
-//
-// Every want below was confirmed against bin/fern -interp, never read off the
-// self-host run under test.
-
 type tupIdentElemCase struct {
 	name string
 	src  string
@@ -40,7 +18,6 @@ type tupIdentElemCase struct {
 func tupIdentElemCases() []tupIdentElemCase {
 	return []tupIdentElemCase{
 		{
-			// The main shape: one bare-ident array element.
 			name: "ident_elem_array",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -51,8 +28,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 10,
 		},
 		{
-			// Two retained positions in one tuple — the release must walk both, so a
-			// per-position list rather than a single flag.
 			name: "two_ident_elems",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -64,9 +39,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 74,
 		},
 		{
-			// The source local is READ after the tuple is built. The release is at
-			// scope exit, after every use, so the read must still see live bytes —
-			// this is the case a release emitted at construction would corrupt.
 			name: "ident_read_after",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -77,10 +49,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 40,
 		},
 		{
-			// A PARAM ident element: the construction retains a buffer the
-			// frame does not own, so it must be released exactly once. Getting
-			// it wrong over-releases the caller's live array, which the
-			// underflow counter would catch.
 			name: "param_ident_elem",
 			src: `function use_it(xs: i32[], i: i32): i32 {
     let t: (i32, i32[]) = (i, xs);
@@ -90,16 +58,6 @@ function main(): i32 { let xs: i32[] = [7, 11]; let x: i32 = 0; let r: i32 = 0; 
 			want: 57,
 		},
 		{
-			// The tuple's last mention is NOT the final statement, so the
-			// precise drop-on-last-use fires as LIVE code instead of being
-			// emitted after the return as dead code. That path frees the box and
-			// ZEROES the slot, so the exit sweep — the one that does replay the
-			// element kinds — then finds null and releases nothing. The two are
-			// alternatives, not a sequence, and every release site that can claim
-			// a "TUP:" box has to give the element retains back.
-			//
-			// This is most real code: any use of the tuple other than in the
-			// final return reaches it.
 			name: "last_use_before_return",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -111,10 +69,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 53,
 		},
 		{
-			// The same path reached through a SCALAR element read. Nothing about
-			// the tuple's own use is rc-relevant here — it is purely that `t` is
-			// mentioned before the last statement — which is what rules out the
-			// extraction gate as the cause and pins it on the drop site.
 			name: "last_use_scalar_read",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -126,11 +80,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 53,
 		},
 		{
-			// Two same-named tuple locals in SIBLING BLOCKS, retaining at
-			// DIFFERENT positions. Each binding must release the position it
-			// retained: mixing them up by name releases position 1 of a tuple
-			// that retained position 0 — a 4000-byte strand, and a live-buffer
-			// release once the positions disagree about what is owned.
 			name: "same_name_sibling_blocks",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -143,10 +92,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 40,
 		},
 		{
-			// The tuple is built only on one branch, so on the other the slot still
-			// holds its entry zero when the sweep runs. __fern_rc_dec null-guards the
-			// box; op_tuple_get would dereference. A missing guard here is a segfault,
-			// not a leak, so this case is about surviving at all.
 			name: "untaken_branch_null",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -159,24 +104,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// TestSelfHostTupleIdentElemExtractionHazardX86_64 — a tuple whose owned-pointer
-// element is EXTRACTED must not earn the element release.
-//
-// `return t.1` / `let u = t.1` hands the element's reference to a new owner, so
-// releasing it at the tuple's scope exit releases a reference the frame no longer
-// holds — an over-release that reads as **exit 99** (rc underflow) against the
-// interpreter's 40.
-//
-// Each probe ends with an explicit `__rc_underflow_count()` check, and that is the
-// essential part: WITHOUT it both cases pass on a compiler that over-releases,
-// because a doubly-released block goes back to the freelist and the arithmetic
-// still comes out at 40. The counter is the only thing that separates the two
-// readings.
-//
-// These assert the ANSWER, not leak counts: a wrongly-granted release here is
-// a wrong answer or a crash, not a number.
-//
-// Both wants came from bin/fern -interp.
 func TestSelfHostTupleIdentElemExtractionHazardX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -189,11 +116,6 @@ func TestSelfHostTupleIdentElemExtractionHazardX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// THE over-release. The extracted element leaves the frame and the
-			// caller binds it to an exit-swept slot, so a release here is the
-			// second claim on one reference. The decoy allocation recycles the
-			// freed block, so a surviving bug corrupts the value as well as
-			// tripping the counter.
 			name: "elem_extracted_escaping",
 			src: `function grab(i: i32): i32[] {
     let xs: i32[] = [i, i + 1];
@@ -211,8 +133,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 40,
 		},
 		{
-			// The same extraction without leaving the frame. Refused too — the
-			// gate is about a second owner existing, not about where it lives.
 			name: "elem_extracted_local",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -236,12 +156,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// TestSelfHostTupleIdentElemRetainX86_64 — the retained element references are
-// given back, so allocs and frees balance exactly.
-//
-// allocs == frees is the essential assertion in both directions. frees short
-// of allocs is the leak this closes; frees ABOVE allocs would mean the sweep and
-// the rebind store both claimed one reference, which is a double free.
 func TestSelfHostTupleIdentElemRetainX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -285,9 +199,6 @@ func TestSelfHostTupleIdentElemRetainX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleIdentElemRetainWasmIR — the wasm sibling. Exit codes only:
-// FERN_LEAKCHECK is x86-64-only, and the answer is what proves the release did
-// not free a live buffer.
 func TestSelfHostTupleIdentElemRetainWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple ident-elem retain wasm IR e2e")
@@ -326,7 +237,6 @@ func TestSelfHostTupleIdentElemRetainWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleIdentElemRetainIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleIdentElemRetainIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -1,5 +1,5 @@
-// `if let` reads the shared pattern grammar (#5356): every pattern form a
-// `match` accepts works in its head.
+
+
 function main(): i32 {
   let t: (i32, i32) = (3, 4);
   if let (a, b) = t { return a * 10 + b; }

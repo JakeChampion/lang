@@ -1,38 +1,9 @@
-// cut.fern — GNU-compatible `cut`.
-//
-//   cut -b LIST | -c LIST | -f LIST [-d DELIM] [-ns z] [--complement]
-//       [--output-delimiter=STRING] [FILE]...
-//
-// One of -b / -c / -f selects positions from each line: bytes for -b and
-// -c (the same thing in the C locale), delimiter-separated fields for
-// -f. A LIST is `N`, `N-`, `N-M` or `-M`, comma- or blank-separated;
-// overlapping ranges are merged and the selection is written in INPUT
-// order, once, whatever order the list was given in.
-//
-// Four behaviours here are the reference binary's and are not what a
-// first reading of the manual suggests:
-//
-//   - `-d ''` is the NUL byte, not "no delimiter", and so is
-//     `--output-delimiter=`.
-//   - A line with no delimiter is printed WHOLE under -f, unless -s.
-//     A line that has one always ends in the line delimiter, even when
-//     the selection picked nothing out of it.
-//   - When the field delimiter IS the line delimiter, the whole FILE is
-//     one record whose fields are its lines: `cut -d '\n' -f1` on two
-//     lines prints the first and stops.
-//   - The output delimiter separates RANGES under -b / -c and FIELDS
-//     under -f, and ranges are merged only where they overlap — `1-2,3-4`
-//     stays two ranges, so `-b1-2,3-4 --output-delimiter=X` is `abXcd`.
 import "std/array";
 import "std/string";
 import "std/u64";
 import "std/io_buffered";
 import "./lib/gnu";
 
-// Option ids in GNU's declaration order — `cut --=x` lists `--bytes`
-// `--characters` `--fields` `--delimiter` `--only-delimited`
-// `--output-delimiter` `--complement` `--zero-terminated`. `-n` has no
-// long name and is accepted and ignored.
 function opt_bytes(): i32 {
   return 1;
 }
@@ -73,7 +44,6 @@ function opt_whitespace(): i32 {
   return 10;
 }
 
-// `-F` is `-w -O ' '` with a field list, for busybox and toybox.
 function opt_blank_fields(): i32 {
   return 11;
 }
@@ -119,7 +89,6 @@ function is_blank_byte(b: i32): boolean {
   return b == 32 || b == 9;
 }
 
-// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
@@ -132,8 +101,6 @@ function is_digit(c: i32): boolean {
   return c >= 48 && c <= 57;
 }
 
-// The C locale's isblank; a list separator alongside the comma. A
-// newline is NOT one, so `-b '1\n3'` names an invalid position.
 function is_blank(c: i32): boolean {
   return c == 32 || c == 9;
 }
@@ -142,15 +109,8 @@ function u64_max(): u64 {
   return 18446744073709551615 as u64;
 }
 
-// ---- the position list -----------------------------------------------------
-//
-// `Ranges` — the selection, sorted by start and with overlapping pairs
-// merged. `his` holds u64_max() for an open-ended `N-`.
 struct Ranges { los: u64[], his: u64[] }
 
-// `parse_list(spec, fields)` — GNU's list grammar. Every fault exits 1
-// through the usage path; the wording differs between the field and the
-// byte/character modes, which is what `fields` selects.
 function parse_list(spec: string, fields: boolean): Ranges {
   let los: u64[] = [];
   let his: u64[] = [];
@@ -185,9 +145,6 @@ function parse_list(spec: string, fields: boolean): Ranges {
         if (!lhs && !rhs) {
           gnu.die_usage("invalid range with no endpoint: -", 1);
         }
-        // `N-` runs to the end of the line; `N-0` names 0 and is a
-        // decreasing range, so the open form is the ABSENCE of a
-        // right-hand side rather than a zero one.
         if (!rhs) {
           los = los.append(initial);
           his = his.append(u64_max());
@@ -219,8 +176,6 @@ function parse_list(spec: string, fields: boolean): Ranges {
       } else {
         lhs = true;
       }
-      // UINTMAX_MAX is out of range even though it fits: GNU reserves
-      // it, so a list naming it is refused like one that overflows.
       let over: boolean = false;
       match (value.checked_mul(10 as u64)) {
         Some(m) => {
@@ -287,8 +242,6 @@ function bad_value_word(fields: boolean): string {
   return "invalid byte/character position";
 }
 
-// Sort by start, then fuse pairs that OVERLAP. Adjacency is not enough:
-// `1-2,3-4` stays two ranges, which the output delimiter can see.
 function merge(r: Ranges): Ranges {
   let los: u64[] = r.los;
   let his: u64[] = r.his;
@@ -326,10 +279,6 @@ function merge(r: Ranges): Ranges {
   return Ranges { los: outl, his: outh };
 }
 
-// The gaps between the selected ranges, which is what `--complement`
-// selects. An empty gap between two adjacent ranges is dropped: it can
-// never match a position, and keeping it would be a range the output
-// delimiter counted.
 function complement_of(r: Ranges): Ranges {
   let los: u64[] = [];
   let his: u64[] = [];
@@ -350,7 +299,6 @@ function complement_of(r: Ranges): Ranges {
   return Ranges { los: los, his: his };
 }
 
-// ---- settings --------------------------------------------------------------
 struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: u8[], out_delim_set: boolean, ws: boolean, trim: boolean }
 
 pub function main(): i32 {
@@ -369,7 +317,6 @@ pub function main(): i32 {
   opts = opts.append(gnu.valued("F", "", opt_blank_fields()));
 
   let spec: string = "";
-  // 0 none yet, 1 bytes or characters, 2 fields.
   let mode: i32 = 0;
   let delim: i32 = 9;
   let delim_set: boolean = false;
@@ -378,8 +325,6 @@ pub function main(): i32 {
   let complement: boolean = false;
   let out_delim: u8[] = [];
   let out_delim_set: boolean = false;
-  // `-w` / `-F`: a run of blanks is the delimiter. `space_out` is the
-  // `-F` half, which also makes a space the default output delimiter.
   let ws: boolean = false;
   let ws_set: boolean = false;
   let trim: boolean = false;
@@ -424,7 +369,6 @@ pub function main(): i32 {
           suppress = true;
         } else if (m.id == opt_outdelim()) {
           out_delim_set = true;
-          // An empty STRING is one NUL byte, as an empty -d is.
           if (m.value.len() == 0) {
             out_delim = [0 as u8];
           } else {
@@ -454,8 +398,6 @@ pub function main(): i32 {
   if (delim_set && ws_set) {
     gnu.die_usage("-d and -w are mutually exclusive", 1);
   }
-  // An explicit -d overrides the blank delimiter -F asked for, but not
-  // the space it made the default output delimiter.
   if (delim_set && !ws_set) {
     ws = false;
   }
@@ -477,15 +419,10 @@ pub function main(): i32 {
   return run(files, Settings { r: r, fields: mode == 2, delim: delim, term: term, suppress: suppress, out_delim: out_delim, out_delim_set: out_delim_set, ws: ws, trim: trim });
 }
 
-// `run(files, s)` — the whole selection. Every selected piece is pushed
-// straight into stdout's builder, which is flushed once it holds a
-// block, so no byte is copied into an accumulator on the way.
 function run(files: string[], s: Settings): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
   let ok: boolean = true;
-  // A field delimiter equal to the line delimiter makes the whole FILE
-  // one record whose fields are its lines.
   let one_record: boolean = s.fields && s.delim == s.term;
 
   let fi: i32 = 0;
@@ -499,18 +436,11 @@ function run(files: string[], s: Settings): i32 {
   let carry: usize = buf_new(0);
   let tail: boolean = false;
   let done: boolean = false;
-  // The running record, for the one_record shape.
   let rec_idx: u64 = 1 as u64;
   let rec_k: i32 = 0;
   let rec_printed: boolean = false;
   let rec_open: boolean = false;
   let rec_ri: i32 = 0;
-  // Whether field 1 is selected, and gnulib's rule for when it has to
-  // be read into a buffer before the line can be judged delimited: when
-  // exactly one of "non-delimited lines are suppressed" and "field 1 is
-  // wanted" holds, the other cannot be decided without the field.
-  // Whether the output delimiter is the input delimiter, which is what
-  // lets consecutive selected fields go out as one slice of the input.
   let join_runs: boolean = s.out_delim.len() == 1 && s.out_delim[0] as i32 == s.delim;
   let first_sel: boolean = s.r.los.len() > 0 && s.r.los[0] <= 1 as u64;
 
@@ -522,8 +452,6 @@ function run(files: string[], s: Settings): i32 {
       let got: boolean = false;
       while (!got) {
         if (!have_reader) {
-          // A record open across the lines of the file just finished is
-          // closed before the next one starts: cut does not join files.
           if (rec_open) {
             if (!(s.suppress && rec_k == 1 && !first_sel)) {
               buf_push_byte(h, s.term);
@@ -619,9 +547,6 @@ function run(files: string[], s: Settings): i32 {
       hi = buf.len();
     }
     pos = j + 1;
-    // The line's content, without the terminator it may carry.
-    // Only the tail a file left behind is unterminated: it holds
-    // everything after that file's last line delimiter.
     let terminated: boolean = !tail;
     let body: i32 = hi;
     if (terminated) {
@@ -649,8 +574,6 @@ function run(files: string[], s: Settings): i32 {
       }
       buf_push_byte(h, s.term);
     } else if (one_record) {
-      // This line is one FIELD of the file-long record. An unterminated
-      // FIRST line is the whole record and holds no delimiter at all.
       if (rec_k == 0 && !terminated) {
         if (!s.suppress) {
           buf_push_bytes_range(h, buf, lo, body);
@@ -672,9 +595,6 @@ function run(files: string[], s: Settings): i32 {
         rec_open = true;
       }
     } else if (s.ws) {
-      // `-w` / `-F`: a RUN of blanks is one delimiter, so a leading or
-      // trailing run leaves an empty field at that end — unless
-      // `--whitespace-delimited=trimmed` took the two runs off first.
       let a: i32 = lo;
       let z: i32 = body;
       if (s.trim) {
@@ -729,8 +649,6 @@ function run(files: string[], s: Settings): i32 {
         buf_push_byte(h, s.term);
       }
     } else {
-      // Where the next delimiter is. Kept as a cursor across lines so
-      // the scans over one chunk cost it once in total.
       let nd: i32 = delimat;
       if (carried) {
         nd = __memchr_bytes(buf, s.delim, 0);
@@ -738,11 +656,6 @@ function run(files: string[], s: Settings): i32 {
         nd = __memchr_bytes(chunk, s.delim, lo);
       }
       if (nd < 0 || nd >= body) {
-        // No delimiter on this line: it goes out whole, or not at all.
-        // A selection that can never match anything — `--complement
-        // -f1-` — leaves the line empty rather than whole: GNU stops
-        // reading fields the moment no later one can be selected, and
-        // that is before it has anything to print the line from.
         if (s.r.los.len() == 0) {
           buf_push_byte(h, s.term);
         } else if (!s.suppress) {
@@ -754,10 +667,6 @@ function run(files: string[], s: Settings): i32 {
         let idx: u64 = 1 as u64;
         let ri: i32 = 0;
         let printed: boolean = false;
-        // Consecutive selected fields joined by the input delimiter are
-        // the input's own bytes, so when the output delimiter IS that
-        // byte they go out as ONE slice — `-f1,3-5` costs two appends
-        // per line rather than seven.
         let run: i32 = 0 - 1;
         while (true) {
           let e: i32 = body;
@@ -796,8 +705,6 @@ function run(files: string[], s: Settings): i32 {
           buf_push_bytes_range(h, buf, run, body);
           run = 0 - 1;
         }
-        // The line delimiter always follows. GNU <= 9.11 left it off
-        // one shape its own buffering lost track of, under -z at EOF.
         buf_push_byte(h, s.term);
       }
       if (carried) {

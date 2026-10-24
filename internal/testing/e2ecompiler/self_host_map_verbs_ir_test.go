@@ -8,31 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostMapVerbsIR pins generic map-method monomorphisation on the
-// self-host IR path. core/map's verbs (`merge` / `extend` / `get_or_insert`)
-// are unbounded `[K, V]` receiver methods, which monomorphize_module skips
-// (receiver methods) and the erasure path leaves generic (Map is a built-in,
-// so promotion excludes it). The shared erased body then reads the key-kind off
-// the unsubstituted `Map[K, V]` — where map_key_kind_of defaults to string —
-// so an i32-keyed map's integer key was handed to the string path and
-// dereferenced as a pointer (SIGSEGV).
-//
-// register_map_method_generics folds each such method into a free generic
-// `__mapm_<verb>[K, V]` (receiver as arg0, the receiver's type-vars as the
-// clone's type params) so the proven free-generic worklist clones one concrete
-// `__mapm_verb__<K>__<V>` per key/value pair, with subst_ty rewriting
-// `Map[K,V] → Map[i32,i32]` — so the cloned body's key-kind is correct.
-// mono_expr rewrites `m.verb(args)` → `__mapm_verb(m, args)`, and the map-op
-// receiver resolution recovers a Map return type from the call so a chained
-// `.get_or` on the result dispatches as a map op (not `i32.get_or`).
-//
-// Asserts the program decides IR, the asm carries the i32 clone
-// (`__mapm_merge__i32__i32`), and the program runs to exit 0 — at i32 keys
-// (the case that SIGSEGVs without it) AND at string keys (accidentally
-// correct under the string default).
-//
-// Native only: the file-loading driver reads stdlib modules by host path from
-// argv (mirrors TestSelfHostStdTestE2E / TestSelfHostImportAliasIR).
 func TestSelfHostMapVerbsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -53,8 +28,6 @@ func TestSelfHostMapVerbsIR(t *testing.T) {
 		wantClone string
 	}{
 		{
-			// i32 keys — the case that SIGSEGV'd before the fold (the integer
-			// key dereferenced as a string pointer by the default key-kind).
 			name:      "i32_keys",
 			wantClone: "__mapm_merge__i32__i32",
 			src: `import "core/map";
@@ -78,8 +51,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// string keys — already correct under the string default, but must
-			// still go through the fold (a distinct clone, not the i32 one).
 			name:      "string_keys",
 			wantClone: "__mapm_merge__string__i32",
 			src: `import "core/map";

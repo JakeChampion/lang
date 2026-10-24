@@ -1,12 +1,9 @@
-// Retain the checked adapter through source tree shaking, then remove it
-// and its unused ndarray callees when no typed site selected it.
 import "./parser";
 import "./irtables";
 import "./util";
 
 pub struct Result { bodies: irtables.LowerResult[], extra: irtables.LowerResult[] }
 
-// Declaration positions stay fixed. Each extra index names its input row.
 pub struct MappedResult { result: Result, extra_indices: i32[] }
 
 function unchanged(bodies: irtables.LowerResult[], extra: irtables.LowerResult[], mapped: boolean): MappedResult {
@@ -32,8 +29,6 @@ function exported(mod: parser.Module, name: string): boolean {
 
 function mentions(r: irtables.LowerResult, name: string): boolean {
   for op in r.ops {
-    // Function addresses can be embedded in constant-record payloads, not
-    // just direct calls. Substring matching deliberately over-keeps here.
     if (util.contains(op.str, name)) {
       return true;
     }
@@ -53,8 +48,6 @@ function referenced(all: irtables.LowerResult[], at: i32): boolean {
 }
 
 function ordinary_candidate(mod: parser.Module, r: irtables.LowerResult): boolean {
-  // Never broaden this to runtime or receiver-method symbols. Those can
-  // have implicit callers outside the direct-call/constant-address census.
   return r.ok && !r.superseded && util.str_has_prefix(r.name, "ndarray__")
     && !util.contains(r.name, ".") && !exported(mod, r.name);
 }

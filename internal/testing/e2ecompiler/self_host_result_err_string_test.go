@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// An unmatched Result local whose Err payload is a string is released whole
-// (#10439): the Err string with it when proven fresh, and the box when the Ok
-// payload is a scalar.
-
 const resultErrLoop = `import "std/i32";
 import "std/result";
 function main(): i32 {
@@ -35,7 +31,6 @@ var resultErrStringRows = []leakRow{
         if (q.unwrap_or(true)) { n = n + 1; }`), true},
 	{"scalar_ok_built_ok", resultErrLoopSrc(`        let q: Result[i32, string] = Ok(i);
         n = (n + q.unwrap_or(3)) % 101;`), true},
-	// Never matched or unwrapped; the read keeps the construction built.
 	{"unused", `@noinline function keep(q: Result[i32, string]): i32 { return 0; }
 function main(): i32 {
     let q: Result[i32, string] = Err("a" + "b");
@@ -56,7 +51,6 @@ function main(): i32 {
     return n;
 }
 `, true},
-	// The callee leaks one block per `return Err(x.to_string())` (#10628).
 	{"producer", `import "std/i32";
 import "std/result";
 function parse(i: i32): Result[i32, string] {
@@ -74,8 +68,6 @@ function main(): i32 {
     return n;
 }
 `, false},
-	// The result of `and` wraps r's Err string uncounted and outlives r, so r
-	// must not release it.
 	{"result_outlives", `import "std/i32";
 import "std/result";
 function main(): i32 {
@@ -90,8 +82,6 @@ function main(): i32 {
     return 0;
 }
 `, false},
-	// `or` returns r's own Ok string uncounted, and s outlives r (#10439):
-	// on main r's release freed the string under s (wasm answered 20, not 23).
 	{"ok_result_outlives", `import "std/i32";
 import "std/result";
 function main(): i32 {
@@ -106,8 +96,6 @@ function main(): i32 {
     return 0;
 }
 `, false},
-	// The same escape through a call chain (#10660). The strings share a length
-	// so a freed buffer is reused, turning a use-after-free into a wrong answer.
 	{"ok_result_outlives_chained", `import "std/i32";
 import "std/result";
 function main(): i32 {
@@ -122,7 +110,6 @@ function main(): i32 {
     return 2;
 }
 `, true},
-	// The Err payload is a live local's string, so only the box is released.
 	{"err_aliases_live", `import "std/i32";
 import "std/result";
 function main(): i32 {

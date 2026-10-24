@@ -9,15 +9,6 @@ import (
 	"testing"
 )
 
-// An append that fits and may mutate its receiver runs in __fern_arr_push's
-// frameless head; everything else (a full receiver, a shared one, and every
-// append under the sanitizer, which checks the count first) takes the framed
-// body, except an empty receiver with no capacity, which grows to four slots
-// before building one, popping the four-slot class itself and calling the box
-// shim only when that class is empty. The program drives each path: appends to the
-// immortal empty literal, in place and growing, to a literal that already
-// holds elements, and to an alias, which must copy and leave the original
-// alone.
 const arrPushFastProg = `function main(): i32 {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -37,7 +28,6 @@ const arrPushFastProg = `function main(): i32 {
 }
 `
 
-// arrPushHead is the listing from the helper's label to its first return.
 func arrPushHead(t *testing.T, asm, label string) string {
 	t.Helper()
 	start := strings.Index(asm, label+":\n")
@@ -103,8 +93,6 @@ func TestSelfHostArrPushFastPath(t *testing.T) {
 				if !strings.Contains(empty, pop) || frame[target].MatchString(empty) || strings.Contains(empty, boxCall) {
 					t.Errorf("%s: an empty receiver does not pop its four-slot class before the slow path's frame:\n%s", target, empty)
 				}
-				// The owned append's first append to a static empty array goes
-				// to the shared slow path before building a frame of its own.
 				owned := string(asm)[strings.Index(string(asm), ".Lapo_slow:\n"):]
 				owned = owned[:frame[target].FindStringIndex(owned)[0]]
 				if !regexp.MustCompile(`\b(js|b) \.Larr_push_slow\b`).MatchString(owned) {

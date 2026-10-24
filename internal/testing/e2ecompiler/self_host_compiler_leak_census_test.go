@@ -38,12 +38,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostCompilerFreesWhatItAllocatesX86_64 builds the self-host
-// compiler with FERN_LEAKCHECK and requires every compile it runs to free
-// what it allocated: each output form of each target, `-g`, and one of the
-// compiler's own modules. A string builder the emitter takes the text of and
-// never frees is the leak this caught: one per stack-op arm, per leaf body
-// and per runtime round, and the 1 MiB instruction buffer of a binary.
 func TestSelfHostCompilerFreesWhatItAllocatesX86_64(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -111,8 +105,6 @@ func TestSelfHostCompilerFreesWhatItAllocatesX86_64(t *testing.T) {
 	}
 }
 
-// runnerCommand runs bin under runner, the emulator prefix x86_64Tooling
-// returns (empty on an x86-64 host).
 func runnerCommand(runner []string, bin string, args ...string) *exec.Cmd {
 	argv := append(append(append([]string{}, runner...), bin), args...)
 	return exec.Command(argv[0], argv[1:]...)

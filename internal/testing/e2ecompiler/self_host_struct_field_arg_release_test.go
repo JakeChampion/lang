@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A struct local with an array field keeps its release when a callee hands it
-// back, rebuilds it through a field read, or takes its field as an argument
-// (#9203). A field read at a call argument does not move the field out — the
-// callee's construction retains that argument — so the local keeps its deep
-// drop.
 const structFieldArgSrc = `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
@@ -52,7 +47,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const structFieldArgWant = 29
 
 func writeStructFieldArgSrc(t *testing.T) string {

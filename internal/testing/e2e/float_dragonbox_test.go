@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// decimalNorm reduces a formatted float to `sign + significand digits + "e" +
-// decimal exponent`, so a comparison ignores notation entirely — Fern's
-// fixed/scientific thresholds differ from Go's 'g'. "1.25e+02", "125e0" and
-// "125" all normalise to "125e0". What survives is exactly what has to match:
-// the digits and the value.
 func decimalNorm(s string) string {
 	s = strings.TrimSpace(s)
 	neg := strings.HasPrefix(s, "-")
@@ -46,21 +41,6 @@ func decimalNorm(s string) string {
 	return fmt.Sprintf("%s%se%d", sign, s, exp)
 }
 
-// shortestTie reports whether two normalised shortest forms are the two sides
-// of an EXACT decimal tie: the same digit count, both exactly equidistant from
-// v, and `got` itself parsing back to v. On a tie both are equally correct
-// shortest representations — Dragonbox breaks it to the even final digit, while
-// Go's strconv switched sides between toolchains (2^-12 as binary32: "…62"
-// under Go 1.24, "…63" under 1.26) — so digit-for-digit equality over-pins
-// precisely this case and nothing else.
-//
-// Equidistant does not imply round-trip, which is why the parse is established
-// here rather than assumed of the caller. At a power of two the gap below the
-// value is half the gap above it, so the two sides of a tie can straddle the
-// rounding interval: for 2^-24 they are 5960464477539063e-23 and
-// 5960464477539062e-23, and the lower one parses back one ULP short — the
-// shorter-interval miscompile TestFloatShortestPowersOfTwoF64 exists to catch,
-// which a distance test alone would accept as a tie.
 func shortestTie(got, want string, v float64, bits int) bool {
 	if !roundTripsTo(got, v, bits) {
 		return false
@@ -79,8 +59,6 @@ func shortestTie(got, want string, v float64, bits int) bool {
 	return dg != nil && dw != nil && dg.Cmp(dw) == 0
 }
 
-// roundTripsTo reports whether a decimal parses back to exactly v at the given
-// bit width.
 func roundTripsTo(s string, v float64, bits int) bool {
 	p, err := strconv.ParseFloat(s, bits)
 	if err != nil {
@@ -92,8 +70,6 @@ func roundTripsTo(s string, v float64, bits int) bool {
 	return p == v
 }
 
-// splitDecimalNorm splits a decimalNorm result ("[-]digits e exp") back into
-// its significand digits and exponent.
 func splitDecimalNorm(s string) (digits string, exp int, ok bool) {
 	i := strings.IndexByte(s, 'e')
 	if i < 0 {
@@ -106,8 +82,6 @@ func splitDecimalNorm(s string) (digits string, exp int, ok bool) {
 	return s[:i], e, true
 }
 
-// decimalDistance returns |digits·10^exp − rv| as an exact rational, or nil if
-// the digits do not parse.
 func decimalDistance(digits string, exp int, rv *big.Rat) *big.Rat {
 	n, ok := new(big.Int).SetString(digits, 10)
 	if !ok {
@@ -130,20 +104,9 @@ func abs(x int) int {
 	return x
 }
 
-// TestShortestTieAdmitsOnlyExactTies pins what shortestTie relaxes: the two
-// sides of an exact decimal tie, and nothing else. The pair at 2^-24 is the
-// case worth the round-trip guard — the two sides are exactly equidistant, yet
-// only one of them parses back to the value.
 func TestShortestTieAdmitsOnlyExactTies(t *testing.T) {
-	// 2^-12 as binary32: both 8-digit sides are exactly 5e-12 away and both
-	// parse back, so either is a correct shortest form. Go 1.24 chose the
-	// first, Go 1.26 and Dragonbox disagree about which.
 	pow12 := math.Ldexp(1, -12)
-	// 2^-24 as binary64: equidistant sides, but the lower one lands one ULP
-	// short because the gap below a power of two is half the gap above it.
 	pow24 := math.Ldexp(1, -24)
-	// Every 1-digit decimal from 3e-324 to 7e-324 parses to the smallest
-	// subnormal, so a same-length pair here round-trips without being a tie.
 	tiny := math.SmallestNonzeroFloat64
 
 	for _, tc := range []struct {
@@ -168,8 +131,6 @@ func TestShortestTieAdmitsOnlyExactTies(t *testing.T) {
 	}
 }
 
-// runFloatStrings compiles a program that prints one `to_string()` per line for
-// `n` values and returns the lines.
 func runFloatStrings(t *testing.T, body string, n int) []string {
 	t.Helper()
 	src := "import \"std/f64\";\nfunction main(): i32 {\n" + body + "    return 0;\n}\n"
@@ -184,16 +145,6 @@ func runFloatStrings(t *testing.T, body string, n int) []string {
 	return lines
 }
 
-// TestFloatShortestPowersOfTwoF64 pins the shorter-interval branch of the
-// Dragonbox formatter. At a power of two the significand field is zero, so the
-// gap below the value is half the gap above it and the rounding interval is
-// ASYMMETRIC. The exact-bignum formatter this replaced tested every candidate
-// against the symmetric interval (2m±1)*2^(e-1) regardless, so at a power of
-// two it accepted a significand one digit too short: 2^-1019 formatted as
-// "1.780059086805761e-307", which parses back to 18014398509481983 — one ULP
-// BELOW the value being formatted. Every power of two must round-trip exactly
-// and agree with Go's shortest digit for digit, or be the other side of an
-// exact tie with it (shortestTie).
 func TestFloatShortestPowersOfTwoF64(t *testing.T) {
 	var vals []float64
 	for e := -1074; e <= 1023; e++ {
@@ -230,9 +181,6 @@ func TestFloatShortestPowersOfTwoF64(t *testing.T) {
 	}
 }
 
-// TestFloatShortestPowersOfTwoF32 is the binary32 sibling of
-// TestFloatShortestPowersOfTwoF64, covering the same shorter-interval branch
-// over the f32 exponent range.
 func TestFloatShortestPowersOfTwoF32(t *testing.T) {
 	var vals []float32
 	for e := -149; e <= 127; e++ {
@@ -269,20 +217,11 @@ func TestFloatShortestPowersOfTwoF32(t *testing.T) {
 	}
 }
 
-// TestFloatShortestMatchesStrconvExactly is the stronger form of
-// TestFloatShortestRoundTrip. Dragonbox is correctly rounded, so the digits
-// must equal Go's shortest exactly — not merely be no longer than them, which
-// is all the round-trip tests could assert while the formatter was
-// approximate. The shortest form is unique except at an exact decimal tie,
-// where both sides are equally correct and shortestTie admits the one
-// round-half-to-even picks. Covers the boundary classes each Dragonbox branch
-// handles: subnormals, the normal/subnormal seam, powers of ten, the extremes,
-// and a random spread.
 func TestFloatShortestMatchesStrconvExactly(t *testing.T) {
 	vals := []float64{
 		0.1, 0.2, 0.3, 0.1 + 0.2, 1.0 / 3.0, 1.5, 2.25, 100, 123456.789,
 		1e20, 1e21, 1e22, 1e23, 9.999999999999999e22,
-		5e-324, 1e-323, 2.2250738585072014e-308, // subnormal / normal seam
+		5e-324, 1e-323, 2.2250738585072014e-308,
 		4.450147717014403e-308, 8.98846567431158e307,
 		math.MaxFloat64, math.SmallestNonzeroFloat64,
 		0.000125, 3.5, 42, 1, 10,
@@ -292,8 +231,6 @@ func TestFloatShortestMatchesStrconvExactly(t *testing.T) {
 			vals = append(vals, v)
 		}
 	}
-	// Neighbours of every value above exercise the ties and the
-	// even/odd-significand interval switch.
 	for _, v := range append([]float64{}, vals...) {
 		for _, w := range []float64{
 			math.Nextafter(v, math.Inf(1)), math.Nextafter(v, math.Inf(-1)),

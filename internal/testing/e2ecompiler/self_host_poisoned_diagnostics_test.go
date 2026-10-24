@@ -13,9 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// These cases mirror the Go checker's poisoned-binding corpus: an invalid
-// initializer must not turn later uses into more errors, while independent
-// mistakes and redeclarations remain visible.
 func TestSelfHostPoisonedBindingDiagnostics(t *testing.T) {
 	data, err := os.ReadFile(e2eharness.RepoPath("internal", "testing", "e2ecompiler", "testdata", "poisoned_diagnostics.json"))
 	if err != nil {

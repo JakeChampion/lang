@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// arrayStructuralVerbsProgram exercises the generic structural array verbs
-// added to std/array (#2689): reverse / take / drop / concat over an arbitrary
-// T[]. The verbs take no callback, so they lower on every AOT backend (no
-// indirect-call limitation). main checks reverse/take/drop/concat over an i32[]
-// and the `take(n) ++ drop(n) == xs` complement law; it returns 0 iff every
-// check holds, so exit 0 means the verbs are correct on the backend under test.
-//
-// (Element types are kept scalar here. reverse/take/drop/concat are correct
-// over struct[] too — see the interp + self-host coverage in
-// tests/stdlib/array_structural_verbs_test.fern — but field access on a
-// generic function's struct[] *return* hits a separate, pre-existing native
-// codegen limit ("field access on unresolved struct"), out of scope for #2689.)
 const arrayStructuralVerbsProgram = `
 import "std/array";
 function main(): i32 {
@@ -55,13 +43,6 @@ func TestInterpArrayStructuralVerbs(t *testing.T) {
 	}
 }
 
-// Note: the x86-64 / arm64 AOT backends are covered by the self-host
-// stdtest gate (TestSelfHostStdTestE2E / …Arm64, case "array_structural_verbs"),
-// which compiles tests/stdlib/array_structural_verbs_test.fern through the
-// real self-hosted compiler — full pipeline incl. monomorphisation — and
-// diffs it against the interpreter. The compileAndRunX86_64 / compileAndRunArm64
-// helpers skip the monomorph pass, so they can't compile these generic verbs;
-// runWasm (below) uses the full CLI pipeline and can.
 func TestWASMArrayStructuralVerbs(t *testing.T) {
 	if code := runWasm(t, arrayStructuralVerbsProgram); code != 0 {
 		t.Errorf("wasm generic structural verbs: exit = %d, want 0", code)

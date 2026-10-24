@@ -1,20 +1,20 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The array dec-on-overwrite has to walk the old buffer's
-// elements wherever that buffer still owns them. The buffer-only
-// __fern_arr_dec is right for exactly one RHS — the self-append,
-// whose MOVE-grow transfers the elements without an inc — and was
-// emitted for every RHS, so both shapes here stranded one element
-// per overwrite (256 B over four rounds on both natives).
-//
-// `a = mk()` cannot alias the old value. `b = via_with(b, ...)`
-// can: the cow hands the receiver's own buffer back at rc 1, so
-// the deep drop sits behind a pointer-changed test and the
-// same-buffer arm keeps the shallow dec that releases what the
-// call added. Dropping that arm rather than guarding it leaks
-// MORE than the original bug — the buffer never reaches zero —
-// which is why both shapes are covered in one case.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @noinline
 function mk(pad: string, n: i32): string[] {
     let o: string[] = [];

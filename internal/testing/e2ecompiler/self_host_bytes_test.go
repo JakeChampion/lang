@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// u8ArrayLit renders a byte string as a Fern `u8[]` literal. The
-// encoders take `u8[]` (#5730) and these programs are compiled with only
-// the module under test in scope, so std/string's `s.bytes()` is not
-// available to convert a literal.
 func u8ArrayLit(s string) string {
 	parts := make([]string, 0, len(s))
 	for i := 0; i < len(s); i++ {
@@ -19,20 +15,9 @@ func u8ArrayLit(s string) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-// TestSelfHostBytesX86_64 proves the self-hosted x86-64 compiler can
-// compile the real std/hex and std/base64 — which build u8[] buffers
-// via __alloc_u8, fill them with array index-assignment (arr[i] = v),
-// and convert back with string_from_bytes_unchecked. Each module's encode is
-// checked against a known vector and round-tripped through decode.
 func TestSelfHostBytesX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// Successful decode results contain u8[], so each
-	// result needs reading back as text before `write`. Note the
-	// failure mode if this is wrong: the self-host compiler accepts
-	// `write(u8[])` and silently emits NOTHING rather than raising a
-	// type error (#5742), so the decode half just vanishes from the
-	// output.
 	cases := []struct {
 		mod, input, encoded string
 	}{
@@ -41,7 +26,6 @@ func TestSelfHostBytesX86_64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.mod, func(t *testing.T) {
-			// encode → write the encoded form, then `|`, then decode.
 			mainSrc := "import \"std/" + tc.mod + "\";\n" +
 				"function main(): i32 {\n" +
 				"    let e: string = " + tc.mod + ".encode(" + u8ArrayLit(tc.input) + ");\n" +
@@ -70,19 +54,10 @@ func TestSelfHostBytesX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostBytesArm64 is the ARM64 counterpart (CI-gated, qemu):
-// the self-hosted aarch64 compiler compiles real std/hex + std/base64
-// and the emitted binaries round-trip a known vector.
 func TestSelfHostBytesArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	// Successful decode results contain u8[], so each
-	// result needs reading back as text before `write`. Note the
-	// failure mode if this is wrong: the self-host compiler accepts
-	// `write(u8[])` and silently emits NOTHING rather than raising a
-	// type error (#5742), so the decode half just vanishes from the
-	// output.
 	cases := []struct {
 		mod, input, encoded string
 	}{

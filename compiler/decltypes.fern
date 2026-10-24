@@ -1,15 +1,8 @@
-// Exact declaration adapters for passes that still consume ParamDecl metadata.
-// Keep signature construction in one place: typed match binders and legacy
-// declaration spellings must describe the same closure calling convention.
 import "./ast";
 import "./parser";
 import "./typeinfo";
 import "./util";
 
-// Lifted declarations still carry type spellings. Preserve a proven absent
-// enum argument across that boundary with a token the source lexer cannot
-// admit as a type name. The checker decodes it only in an enum argument;
-// arbitrary unknowns still refuse rather than becoming absent payloads.
 pub function capture_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(retained_type(t));
 }

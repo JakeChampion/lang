@@ -1,61 +1,3 @@
-// uptime.fern — GNU-compatible `uptime`.
-//
-//   uptime [OPTION]... [FILE]
-//
-// One line: the local clock, how long the machine has been up, how many
-// sessions are open, and the three load averages.
-//
-//	 19:49:16  up  1:02,  3 users,  load average: 0.56, 0.81, 0.67
-//
-// The spacing is required and none of it is regular. A leading
-// space, two spaces after the clock, one space after `up` and after the
-// day count, `%2d` hours so a
-// single-digit hour keeps a column, `%02d` minutes, a comma and two
-// spaces between every field, and two spaces again before `load
-// average:`.
-//
-// ---- what this is NOT -------------------------------------------------
-//
-// procps-ng ships a different `uptime` with `-p` and `-s`, and on Debian
-// and its derivatives that is the one on PATH: their coreutils package
-// does not build this program at all. GNU's has no options but `--help`
-// and `--version`, so `uptime -p` here is `invalid option -- 'p'`.
-//
-// ---- where the numbers come from --------------------------------------
-//
-// Both counts come from the login-accounting database — the FILE
-// operand, or the default database — rather than from the kernel: a
-// BOOT_TIME record carries the boot instant and a USER_PROCESS record
-// with a non-empty name is one session. The LAST boot record wins,
-// which is what GNU's loop leaves behind. A database that cannot be read
-// is an empty one with no diagnostic, which is what glibc's utmp reader
-// gives GNU for an unopenable FILE.
-//
-// On Linux the load averages come from the kernel, as /proc/loadavg, which
-// is what glibc's getloadavg(3) reads. The kernel writes those three as
-// `%lu.%02lu`, so `%.2f` of the double glibc parses out of them is the
-// same two digits back again, and this reformats the digits rather than
-// going through a float.
-//
-// ---- Darwin ----------------------------------------------------------
-//
-// Darwin has no /proc. Its getloadavg(3) is `sysctl({CTL_VM,
-// VM_LOADAVG})`, three fixed-point loads and their scale, and `%.2f`
-// of each is that ratio rounded to nearest with ties to even, which
-// this does in integers. The default database there is utmpx, and when
-// it holds no boot record gnulib takes the boot instant from
-// `sysctl({CTL_KERN, KERN_BOOTTIME})`, for that file and no other.
-//
-// Any other target REFUSES rather than printing the line without its
-// load averages -- which is a shape GNU also produces, when
-// getloadavg(3) fails, and would therefore look like an answer instead
-// of a gap.
-//
-// ---- what cannot go wrong quietly -------------------------------------
-//
-// A boot time in the future, or none at all, is `up ???? days ??:??,`
-// and exit 1 rather than a negative duration. GNU reports `couldn't get
-// boot time` for the second before it prints anything.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -85,7 +27,6 @@ function two(v: i32): string {
   return v.to_string();
 }
 
-// `%2d`: a space-padded field, not a zero-padded one.
 function pad2(v: i32): string {
   if (v < 10) {
     return " " + v.to_string();
@@ -93,10 +34,6 @@ function pad2(v: i32): string {
   return v.to_string();
 }
 
-// The three load averages as GNU prints them — from /proc/loadavg on
-// Linux, from `vm.loadavg` on Darwin — or None when the kernel gives
-// none, the state getloadavg(3) reports as -1, where uptime ends the
-// line after the session count.
 function load_averages(): Option[string] {
   if (target_os() == "darwin") {
     return darwin_load_averages();
@@ -139,8 +76,6 @@ function darwin_load_averages(): Option[string] {
   }
 }
 
-// `%.2f` of `num / den`: rounded to nearest, ties to even, as printf
-// rounds a double that holds the ratio exactly.
 function hundredths(num: i64, den: i64): string {
   let q: i64 = num * (100 as i64) / den;
   let r: i64 = num * (100 as i64) % den;
@@ -150,7 +85,6 @@ function hundredths(num: i64, den: i64): string {
   return (q / (100 as i64)).to_string() + "." + two((q % (100 as i64)) as i32);
 }
 
-// An unsigned little-endian field of `width` bytes.
 function le_bytes(bs: u8[], at: i32, width: i32): i64 {
   let v: i64 = 0 as i64;
   let i: i32 = width - 1;
@@ -161,7 +95,6 @@ function le_bytes(bs: u8[], at: i32, width: i32): i64 {
   return v;
 }
 
-// Darwin's boot instant: `struct timeval` from KERN_BOOTTIME, or 0.
 function darwin_boot_time(): i64 {
   match (sysctl([1, 21])) {
     Ok(bs) => {
@@ -176,9 +109,6 @@ function darwin_boot_time(): i64 {
   }
 }
 
-// One `%.2f` field. The kernel writes exactly two decimals, so this is
-// the identity on every value it produces; a shorter fraction is padded
-// and a longer one truncated rather than rounded, which no kernel emits.
 function two_places(s: string): string {
   let whole: string = "";
   let frac: string = "";
@@ -204,9 +134,6 @@ function two_places(s: string): string {
   return whole + "." + slice_unchecked(frac, 0, 2);
 }
 
-// The clock, the elapsed time and the session count, in that order.
-// Returns the line and the exit status, which is 1 when a field had to
-// be filled in with question marks.
 function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i64): (string, i32) {
   let entries: utmp.Entry[] = [];
   let why: string = "";
@@ -215,9 +142,6 @@ function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i6
       entries = v;
     },
     Err(e) => {
-      // GNU's `error (0, errno, ...)` picks up the errno the failed
-      // open left behind, so the database that could not be read names
-      // itself in the boot-time diagnostic.
       why = ": " + gnu.io_error_text(e);
     }
   }
@@ -276,9 +200,6 @@ function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i6
 
 pub function main(): i32 {
   let operands: string[] = gnu.parse_standard_options_only(args(), "uptime", help_text(), 1);
-  // After the option scan, so `--help` and `--version` answer on every
-  // target and only a run that would have to produce the load averages
-  // is refused.
   if (target_os() != "linux" && target_os() != "android" && target_os() != "darwin") {
     gnu.error("the load averages are read from /proc/loadavg, which " + target_os() + " does not have");
     return 1;

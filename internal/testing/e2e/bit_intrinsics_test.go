@@ -1,35 +1,5 @@
 package e2e
 
-// The bit-counting intrinsics: `__clz32` / `__ctz32` / `__popcount32` and their
-// 64-bit siblings. Each lowers to a single IR op (OpClz / OpCtz / OpPopcount)
-// rather than a runtime-helper call, because avoiding the call is most of the
-// point — measured on x86-64, 20M calls cost 0.489s through the stdlib's SWAR
-// sequence against 0.099s for the same loop with a trivial callee, so the SWAR
-// body is ~80% of the runtime and a call would put it straight back.
-//
-// WHAT EACH BACKEND ACTUALLY EMITS differs, and the differences are load-
-// bearing rather than incidental:
-//
-//   - wasm has all six as single opcodes with exactly these zero semantics.
-//   - arm64 gets a real `clz`; ctz is `rbit` + `clz`, which inherits the
-//     width-at-zero definition for free (reversing zero leaves zero);
-//     popcount is the SIMD `cnt` + `addv` pair, since AArch64 has no scalar
-//     popcount.
-//   - x86-64 uses `lzcnt` / `tzcnt` / `popcnt`. The first two are DEFINED at
-//     zero — they return the operand width, exactly what the op specifies —
-//     which is why they are selected over the same-opcode `bsr` / `bsf`,
-//     whose destination is undefined there.
-//
-// So ZERO is the case that matters most here: it is the input the op
-// definition pins, and the one where a wrong answer is most likely to look
-// plausible (-1, or the width off by one). Every op is checked at zero first,
-// then at every single-bit position across both widths, so an off-by-one in
-// the width arithmetic cannot hide at one end.
-//
-// The interpreter is the oracle and uses math/bits rather than replicating the
-// SWAR sequence — an independent implementation, so a shared bug cannot make
-// both agree.
-
 import "testing"
 
 const bitIntrinsicsProg = `

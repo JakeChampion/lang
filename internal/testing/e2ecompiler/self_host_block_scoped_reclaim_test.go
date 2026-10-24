@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// --- Block-scoped reclaim (#6127) ----------------------------------------------
-//
-// A local declared inside a loop or a nested block must be released on every
-// iteration, including the last, and sibling blocks that declare the same name
-// must each be freed exactly once. Each probe holds a heap value, since a
-// scalar tuple is not heap-allocated.
-//
-// These assert allocs == frees alongside live_bytes == 0: frees > allocs is a
-// double free, frees < allocs an unclaimed box, and they mean different bugs.
-
 func TestSelfHostBlockScopedReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -133,8 +123,6 @@ function main(): i32 {
 	})
 
 	t.Run("sibling_blocks_declare_the_same_name", func(t *testing.T) {
-		// Two slots, one name-keyed credit. Each must be freed exactly once — this
-		// is the case a shared credit could double-free.
 		balanced(t, "bs_siblings", `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -159,10 +147,6 @@ function main(): i32 {
 	})
 
 	t.Run("declared_two_blocks_deep", func(t *testing.T) {
-		// An `if` inside a `while` retires the slot, then the while body retires it
-		// again. Stacking sentinels left reclaim_slot_name returning "!retired!t"
-		// rather than "t" — measured, exactly half of this corpus stayed unreclaimed
-		// until retire_locals was made prefix-once.
 		balanced(t, "bs_nested2", `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -184,11 +168,6 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostBlockScopedReclaimHazardsX86_64 — the block-scoped shapes the
-// credit must still REFUSE. Freeing a retired slot at function exit is only
-// sound while that slot is the sole reference to its value, so each of these
-// keeps a live reference past the block and asserts BEHAVIOUR: the failure mode
-// is a wrong answer or a crash, not a leak. Every `want` is from `fern -interp`.
 func TestSelfHostBlockScopedReclaimHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -201,8 +180,6 @@ func TestSelfHostBlockScopedReclaimHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The block-scoped value is copied to a local that OUTLIVES the block and
-			// is read after the loop. Freeing the retired slot would dangle it.
 			name: "aliased_to_an_outer_local",
 			src: `function round(r: i32): i32 {
     let outer: (i32, i32) = (0, 0);
@@ -223,7 +200,6 @@ function main(): i32 {
 			want: 61,
 		},
 		{
-			// Stored into a container declared outside the loop, read after it.
 			name: "escapes_into_an_outer_container",
 			src: `function round(r: i32): i32 {
     let xs: (i32, i32)[] = [];
@@ -247,8 +223,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// Returned from inside the loop — moved out, so the callee must not free
-			// it at its own exit sweep.
 			name: "returned_from_inside_the_loop",
 			src: `function build(r: i32): (i32, i32) {
     let i: i32 = 0;
@@ -272,9 +246,6 @@ function main(): i32 {
 			want: 6,
 		},
 		{
-			// The declaring branch is never taken, so the slot is never written. It
-			// must route a guarded null rather than stack garbage — the prologue
-			// zeroes the whole body slot range, and this pins that it still does.
 			name: "declaring_branch_never_taken",
 			src: `function round(r: i32): i32 {
     let acc: i32 = 0;
@@ -293,8 +264,6 @@ function main(): i32 {
 			want: 1,
 		},
 		{
-			// A block-scoped Option whose Some-arm payload leaves as a bare ident, so
-			// the callee may retain the buffer.
 			name: "block_scoped_option_payload_escapes",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(r: i32): i32 {

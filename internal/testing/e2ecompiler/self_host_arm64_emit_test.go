@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostAsmArm64Bootstrap compiles each case through the self-hosted
-// CLI (`fern.fern`, built for the x86-64 host) with `-target arm64-linux
-// -emit asm`, assembles the output with aarch64-linux-gnu-gcc and runs it
-// under qemu-aarch64 (or natively on an arm64 host), checking the exit code
-// and, where a case names one, stdout. A declaration the typed lowering
-// refuses fails the compile. A case is either a whole program or bare
-// statements, which the CLI wraps into `main`.
 func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -20,7 +13,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		name     string
 		source   string
 		expected int
-		stdout   string // "" means don't check
+		stdout   string
 	}{
 		{"return-literal", "return 42;", 42, ""},
 		{"arithmetic", "return 1 + 2 * 3;", 7, ""},
@@ -63,8 +56,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"locals-single", "let x = 5; return x;", 5, ""},
 		{"locals-three", "let a = 10; let b = 20; let c = 30; return a + b + c;", 60, ""},
 		{"reassign", "let x = 5; x = x + 3; return x;", 8, ""},
-		// `arena` is no longer a reserved word (the arena block + builtins
-		// were removed) — it must parse as an ordinary identifier.
 		{"arena-as-identifier", "let arena = 3; arena = arena + 4; return arena;", 7, ""},
 		{"compound-assign", "let x = 1; x *= 6; x += 1; return x;", 7, ""},
 		{"while-sum-counter", "let i = 1; let s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15, ""},
@@ -75,13 +66,11 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, ""},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
 		{"func-with-local-vars", "function compute(a: i32): i32 { let b = a * 2; let c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, ""},
-		// Pipe operator |> — desugars `x |> f(args)` to `f(x, args)`.
 		{"pipe-call", "function inc(n: i32): i32 { return n + 1; } function main(): i32 { return 5 |> inc(); }", 6, ""},
 		{"pipe-bare-callee", "function inc(n: i32): i32 { return n + 1; } function main(): i32 { return 5 |> inc; }", 6, ""},
 		{"pipe-extra-args", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return 5 |> add(10); }", 15, ""},
 		{"pipe-chained", "function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return 5 |> inc() |> dbl(); }", 12, ""},
 		{"pipe-binary-lhs", "function inc(n: i32): i32 { return n + 1; } function main(): i32 { return 2 + 3 |> inc(); }", 6, ""},
-		// if-expressions — desugar to an immediately-invoked closure.
 		{"if-expr-true", "function main(): i32 { let x: i32 = if (true) { 3 } else { 4 }; return x; }", 3, ""},
 		{"if-expr-false", "function main(): i32 { let x: i32 = if (false) { 3 } else { 4 }; return x; }", 4, ""},
 		{"if-expr-capture", "function main(): i32 { let n: i32 = 10; let x: i32 = if (n > 5) { n + 1 } else { 0 }; return x; }", 11, ""},
@@ -90,14 +79,10 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"if-expr-as-arg", "function id(n: i32): i32 { return n; } function main(): i32 { return id(if (true) { 5 } else { 6 }); }", 5, ""},
 		{"direct-iife", "function main(): i32 { return ((): i32 => { return 3; })(); }", 3, ""},
 		{"iife-with-args", "function main(): i32 { return ((a: i32, b: i32): i32 => { return a + b; })(4, 5); }", 9, ""},
-		// Local (nested) functions — desugar to a closure-valued local.
 		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, ""},
 		{"local-fn-args", "function main(): i32 { function add(a: i32, b: i32): i32 { return a + b; } return add(4, 5); }", 9, ""},
 		{"local-fn-capture", "function main(): i32 { let n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, ""},
 		{"local-fn-two", "function main(): i32 { function f(): i32 { return 2; } function g(): i32 { return 3; } return f() * g(); }", 6, ""},
-		// defer — runs the action at function exit (LIFO, conditional via a
-		// per-defer flag, return value captured before cleanup). Observed
-		// via an array a caller mutates and reads back.
 		{"defer-fires", `function inc(c: Cell[i32]): i32 { defer c.set(9); return 1; } function main(): i32 { let c = cell_new(0); inc(c); return c.get(); }`, 9, ""},
 		{"defer-retval-before-cleanup", "function f(): i32 { let x = 5; defer x = 99; return x; } function main(): i32 { return f(); }", 5, ""},
 		{"defer-lifo", `function f(c: Cell[i32]): i32 { defer c.set(1); defer c.set(2); return 0; } function main(): i32 { let c = cell_new(0); f(c); return c.get(); }`, 1, ""},
@@ -156,9 +141,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// Struct element of a destructured tuple keeps its type →
-			// receiver method dispatches via shape pointer (Box.bump),
-			// not __fn_i32__bump. See the x86 mirror.
 			"tuple-destructure-struct-method",
 			"struct Box { n: i32 } " +
 				"pub function (b: Box) bump(): i32 { return b.n + 1; } " +
@@ -168,7 +150,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// Method call with a `fn`-typed parameter — see x86 mirror.
 			"method-fn-arg-boxed-not-called",
 			"struct Foo { n: i32 } " +
 				"pub function (f: Foo) call_one(fn: () => void): Foo { " +
@@ -180,7 +161,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// Receiver-method calls returning Option[T] — see x86 mirror.
 			"match-receiver-method-option-payload",
 			"struct Wrap { n: i32 } " +
 				"pub function (w: Wrap) try_get(): Option[i32] { " +
@@ -195,7 +175,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// `m.get_or(k, default)` — see x86 mirror.
 			"map-get-or-string",
 			"import \"core/map\";\nfunction main(): i32 { " +
 				"let m: Map[string, i32] = map_new(8); " +
@@ -207,9 +186,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// `u32` / `u64` / `i64` route through the i32 codegen path
-			// so `(n as u32).to_string()` doesn't fall to struct
-			// shape-dispatch. See x86 mirror.
 			"wider-int-as-cast-to-string",
 			"import \"std/u32\";\nimport \"std/u64\";\nfunction main(): i32 { let a: u32 = 99 as u32; let b: u64 = 7 as u64; " +
 				"if (a.to_string() != \"99\") { return 1; } " +
@@ -219,9 +195,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// u32.to_string() with BIT 31 SET must format UNSIGNED via the
-			// __fern_u32_to_string runtime helper, not the signed i32 one.
-			// arm64 mirror of the x86 regression guard for #2649.
 			"u32-high-bit-to-string",
 			"import \"std/u32\";\nfunction main(): i32 { " +
 				"if ((4294967295 as u32).to_string() != \"4294967295\") { return 1; } " +
@@ -232,11 +205,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// IEEE NaN semantics — every relation with NaN is false
-			// except `!=`. arm64's fcmp + cset family already handles
-			// this (Z=1 only on ordered equal, mi/ls/gt/ge all require
-			// ordered flags), so this case is a parity assertion vs
-			// the x86 NaN-mask fix.
 			"f64-nan-compares",
 			"function main(): i32 { " +
 				"let nan: f64 = 0.0 / 0.0; let one: f64 = 1.0; " +
@@ -252,8 +220,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// Small builtins: f64<->i64 / f32<->i32 bit reinterprets,
-			// sleep_ms(0), remove_file on a missing path. See x86 mirror.
 			"small-builtins-roundtrip",
 			"function main(): i32 { " +
 				"let a: f64 = 3.5; " +
@@ -267,9 +233,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// Ok(x) / Err(x) lower as Result heap boxes (tag @0,
-			// payload @8), not as calls to __fn_Ok / __fn_Err.
-			// See the x86 mirror.
 			"result-ok-err-constructors",
 			"function ok_path(): Result[i32, string] { return Ok(40); } " +
 				"function err_path(): Result[i32, string] { return Err(\"nope\"); } " +
@@ -480,13 +443,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// Capture is by REFERENCE — one shared cell — so the outer n = 99
-			// is visible inside the closure, matching the interpreter, which
-			// defines the semantics (closureconv.BoxMutatedCaptures, #2896 /
-			// #5301). This expected 5 back when the legacy AST arm64 backend
-			// still snapshotted at
-			// make time; that divergence has since closed, so the legacy path
-			// now agrees with the oracle and the IR path (#5479).
 			"closure-capture-by-reference",
 			"function main(): i32 { let n = 5; let f = (): i32 => { return n; }; n = 99; return f(); }",
 			99,
@@ -676,9 +632,6 @@ function main(): i32 { write("  HI  ".trim().repeat(2)); return 0; }`,
 			2,
 			"bc",
 		},
-		// 64-bit-element arrays (i64[] / f64[]): the native arm64 backend
-		// already uses 8-byte element slots, so values above 2^31 round-trip.
-		// Mirrors the wasm i64arr-* cases.
 		{
 			"arr-i64-literal-index-large",
 			"function main(): i32 { let xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }",
@@ -1366,11 +1319,8 @@ function main(): i32 { let s = "hi"; let t = s.to_string(); write(t); return t.l
 			0,
 			"",
 		},
-		// Match-arm guards (`Pat when <expr> =>`): true guard runs the arm; a
-		// false guard falls through to the next arm (the guard reads the binding).
 		{"match-guard-pass", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(8); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 1, ""},
 		{"match-guard-fallthrough", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(3); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 2, ""},
-		// Match expressions (value position): IIFE + statement-match desugar.
 		{"match-expr", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(5); let x: i32 = match (o) { Has(n) => n, Nil => 0 }; return x; }", 5, ""},
 		{"match-expr-other-arm", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Nil; return match (o) { Has(n) => n, Nil => 42 }; }", 42, ""},
 	}
@@ -1387,8 +1337,6 @@ function main(): i32 { let s = "hi"; let t = s.to_string(); write(t); return t.l
 		})
 	}
 
-	// Negative: the checker must REJECT a program that uses an Option[i32]
-	// (`.max()`) where an i32 is declared, rather than emitting a box pointer.
 	t.Run("rejects-option-as-i32", func(t *testing.T) {
 		bad := "import \"std/array\";\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return xs.max(); }"
 		out, stderr, err := cli.tryEmit(t, "arm64-linux", bad)

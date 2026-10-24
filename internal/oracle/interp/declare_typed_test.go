@@ -7,11 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A parameter or `let` whose type cannot reach a Map is bound without
-// walking its value, so passing an n-element `i32[]` to a function costs
-// no element visits. Counting visits keeps the assertion deterministic:
-// growing the array by appends walks it a few times over, while a walk
-// per binding would visit every element twice a call, 2·n·calls in all.
 func TestTypedBindingSkipsWalk(t *testing.T) {
 	const n, calls = 4000, 1000
 	src := fmt.Sprintf(`function peek(a: i32[], i: i32): i32 {
@@ -65,8 +60,6 @@ func TestHoldsNoMap(t *testing.T) {
 	}
 }
 
-// A scalar has no walk to skip, so binding one allocates no bookkeeping:
-// every call with an i32 parameter would otherwise pay for a map.
 func TestTypedScalarBindingAllocatesNothing(t *testing.T) {
 	e := newEnv(nil)
 	e.declareTyped("n", Number(1), ast.NumberType{Width: 32, Signed: true})
@@ -79,9 +72,6 @@ func TestTypedScalarBindingAllocatesNothing(t *testing.T) {
 	}
 }
 
-// An enum whose payloads reach no Map or Array is not walked: consing an
-// n-node list of scalars reassigns the list n times, and a walk per store
-// would visit every node so far, n²/2 payloads in all.
 func TestScalarEnumListSkipsWalk(t *testing.T) {
 	const n = 4000
 	src := fmt.Sprintf(`enum L { Nil, Cons(i32, L) }
@@ -102,8 +92,6 @@ func TestScalarEnumListSkipsWalk(t *testing.T) {
 	}
 }
 
-// An enum carrying a Map is still walked, so the map's count sees the
-// enum's slot and a write through another alias copies it.
 func TestEnumCarryingMapIsCounted(t *testing.T) {
 	src := `import "core/map";
 	enum Box { Full(Map[string, i32]), Empty }

@@ -1,9 +1,9 @@
-// A destructuring parameter reads the shared pattern grammar (#5356): struct
-// patterns (with rename and `..`), tuples, and `w @ PAT`.
-//
-// Both lambda forms take the same parameter grammar as a named
-// function — the verbose one and the arrow one.
-// exit: 34 + 7
+
+
+
+
+
+
 struct Point { x: i32, y: i32 }
 function main(): i32 {
   let p: Point = Point { x: 3, y: 4 };

@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFieldReclaimStrWasmIR is the wasm leg of the #4355
-// replaced-STRING-field reclaim (x86 sibling:
-// TestSelfHostFieldReclaimStrIRX86_64). On wasm a heap string is one inline
-// rc-headered block, so $__fern_arr_dec is the string free; the rebind must
-// release a replaced string field and keep a carried or aliased one readable.
 func TestSelfHostFieldReclaimStrWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host field-reclaim-str wasm IR e2e")
@@ -27,7 +22,6 @@ func TestSelfHostFieldReclaimStrWasmIR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		// Consume-rebind churn — the replaced string field recycles, flat.
 		{"field-reclaim-str-flat-wasm", `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n, s.n + 1], name: s.name + "x", n: s.n + 1 }; }
 function main(): i32 {
@@ -43,7 +37,6 @@ function main(): i32 {
     if (s.n != 3) { return 97; }
     return 0;
 }`, 0},
-		// Carried field (functional update) stays readable, no double-free.
 		{"field-reclaim-str-carried-safe-wasm", `struct S { xs: i32[], name: string, n: i32 }
 function bump(s: S): S { return S { ...s, n: s.n + 1 }; }
 function main(): i32 {
@@ -55,7 +48,6 @@ function main(): i32 {
     if (s.n != 1500) { return 96; }
     return 0;
 }`, 0},
-		// STRING-ONLY struct (#4355) — churn flat.
 		{"field-reclaim-str-only-flat-wasm", `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
 function main(): i32 {
@@ -71,7 +63,6 @@ function main(): i32 {
     if (b.n != 3) { return 97; }
     return 0;
 }`, 0},
-		// Aliased read (`let t = s.name`) survives the rebind's field free.
 		{"field-reclaim-str-aliased-read-safe-wasm", `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n], name: s.name + "x", n: s.n + 1 }; }
 function main(): i32 {

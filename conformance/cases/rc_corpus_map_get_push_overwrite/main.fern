@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// get → push → overwrite-set (the std/url query_parse shape).
-// The overwrite frees the prior value (overwrite-dec), but here
-// a live get-borrow (cur) holds it, so the rc-aware dec only
-// decrements; the final plain borrow-dec leaks it. Either way
-// the counter must stay 0 (no over-release).
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/array";

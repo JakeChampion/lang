@@ -1,61 +1,3 @@
-// chmod.fern — GNU-compatible `chmod`.
-//
-//   chmod [OPTION]... MODE[,MODE]... FILE...
-//   chmod [OPTION]... OCTAL-MODE FILE...
-//   chmod [OPTION]... --reference=RFILE FILE...
-//
-// One fchmodat(2) per entry, and under `-R` a depth-first PRE-order walk
-// that visits a directory before its children and takes those children in
-// raw readdir order — GNU hands fts no comparator, so the order the kernel
-// returns is the order `-v` prints and the order the calls happen in.
-//
-// ---- the mode grammar -----------------------------------------------------
-//
-// `lib/mode.fern` is the MODE operand — the grammar, the umask rule, and
-// what a directory keeps through a `=`. It is the same module `mkdir -m`
-// compiles its MODE with, and chmod hands it the two things it alone knows:
-// the entry's current twelve bits and whether the entry is a directory.
-//
-// What is chmod's own is below: the umask COMPLAINT, the mode arriving
-// through the option letters, and the walk.
-//
-// ---- the umask a clause could not clear through ----------------------------
-//
-// A `-` clause the umask stops from clearing everything it named is a
-// DIAGNOSTIC, not a silent narrowing — `chmod -w` on 0777 under 022 leaves
-// 0577 and says so, exiting 1. The test is per file: run the clauses a
-// second time with the umask taken as zero, and complain when the mode that
-// actually landed has a bit that run does not.
-//
-// It is raised ONLY for a mode that arrived through the option letters,
-// which is the spelling the warning exists for: `chmod -w f` complains and
-// `chmod -- -w f` — the identical change, typed as an operand — does not.
-// That is not about the leading `-`, it is about which path the mode came
-// in by: `chmod -- 'a+w,-w' f` is silent and `chmod -x,u+r,-w f` is not.
-//
-// A `--reference` is outside all of that: it writes the reference's twelve
-// bits verbatim, so a directory's setuid and setgid go with them.
-//
-// ---- the mode can arrive as an option ---------------------------------------
-//
-// `chmod -w file` works because every mode character is declared as a short
-// option taking an OPTIONAL argument: the first one in a cluster swallows the
-// rest of it, and the whole argv element becomes the mode string — which is
-// why `-Rw` is `invalid mode: '-Rw'` and not a recursive `-w`. Elements are
-// joined with commas in argv order (`-r -w` is `-r,-w`), and once the mode
-// has come from options the first operand is a FILE rather than a mode.
-//
-// ---- the one thing this cannot do -------------------------------------------
-//
-// GNU's fts is fd-relative — it holds a descriptor on each directory and
-// calls fchmodat against it — so a tree renamed underneath a running
-// `chmod -R` cannot be tricked into chmod'ing something outside it, and a
-// path longer than PATH_MAX is still reachable. The runtime has no
-// fd-relative traversal (#9074 / #9078), so the walk below concatenates
-// paths: it meets ENAMETOOLONG partway down a tree GNU finishes, and a
-// concurrent rename of an interior directory can redirect a chmod to another
-// subtree. Nothing in the corpus renames anything under a running chmod, so
-// the two agree there; the gap is real all the same.
 import "std/array";
 import "std/errno";
 import "./lib/gnu";
@@ -63,7 +5,6 @@ import "./lib/filetype";
 import "./lib/fts";
 import "./lib/mode";
 
-// ---- options ---------------------------------------------------------------
 function opt_changes(): i32 {
   return 1;
 }
@@ -92,8 +33,6 @@ function opt_recursive(): i32 {
   return 7;
 }
 
-// Every byte a mode may start or continue with, declared so `chmod -w` and
-// `chmod -0644` reach the mode instead of getopt's `invalid option`.
 function opt_mode(): i32 {
   return 8;
 }
@@ -118,8 +57,6 @@ function opt_physical(): i32 {
   return 13;
 }
 
-// -H, -L and -P: which symbolic links the WALK follows. -H is the
-// default and follows only one named on the command line.
 function trav_command_line(): i32 {
   return 0;
 }
@@ -132,9 +69,6 @@ function trav_physical(): i32 {
   return 2;
 }
 
-// `--dereference` / `-h`: whether the change lands on the link or on
-// what it points at. Neither given follows a command-line link and
-// nothing below one, which is what the walk did before 9.5 named it.
 function deref_unset(): i32 {
   return 0 - 1;
 }
@@ -153,14 +87,8 @@ function v_all(): i32 {
 
 struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean, deref: i32, traverse: i32 }
 
-// What one run has to say about every file: the compiled MODE or the fixed
-// mode `--reference` read, the umask the empty-who clauses are filtered by,
-// and whether the mode came in through the option letters — the only
-// spelling the umask complaint is raised for.
 struct Target { changes: mode.Changes, fixed: i32, has_fixed: boolean, mask: i32, from_option: boolean }
 
-// The whole of the mutable state: the stdio stream `-v` writes through, and
-// the exit status a diagnostic turns to 1.
 struct St { out: gnu.Stdio, status: i32 }
 
 function help_text(): string {
@@ -198,9 +126,6 @@ function help_text(): string {
   return out;
 }
 
-// The long options in GNU's declaration order, which is visible: the
-// ambiguity list prints candidates in it, so `--r` names '--recursive' before
-// '--reference'. `--help` and `--version` are appended by getopt_new.
 function option_table(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "changes", opt_changes()));
@@ -265,9 +190,6 @@ function parse(argv: string[]): Parsed {
         } else if (m.id == opt_physical()) {
           s = Settings { ...s, traverse: trav_physical() };
         } else if (m.id == opt_mode()) {
-          // The WHOLE argv element is the mode, however much of it getopt
-          // already consumed as options: `-vRw` is the mode `-vRw`, and a
-          // fault. A later element is joined on with a comma.
           let token: string = argv[g.index() - 1];
           if (has_mode) {
             mode = mode + "," + token;
@@ -285,9 +207,6 @@ function parse(argv: string[]): Parsed {
   return Parsed { s: s, mode: mode, has_mode: has_mode, reference: reference, has_reference: has_reference, files: g.operands() };
 }
 
-// ---- diagnostics -----------------------------------------------------------
-// A diagnostic `-f` silences. The exit status still moves: `-f` suppresses
-// the message, not the failure.
 function fail_quiet(st: St, s: Settings, msg: string): St {
   if (s.quiet) {
     return St { ...st, status: 1 };
@@ -295,8 +214,6 @@ function fail_quiet(st: St, s: Settings, msg: string): St {
   return St { out: st.out.report(msg), status: 1 };
 }
 
-// A diagnostic `-f` does NOT silence: the root failsafe, a `--reference` that
-// cannot be read, and the umask complaint.
 function fail_loud(st: St, msg: string): St {
   return St { out: st.out.report(msg), status: 1 };
 }
@@ -308,16 +225,11 @@ function say(st: St, s: Settings, line: string): St {
   return St { ...st, out: st.out.fwrite(line) };
 }
 
-// The entry could not be reached at all. `-v` adds its own line after the
-// diagnostic, which is why the two are written in this order.
 function unreachable(st0: St, s: Settings, path: string, msg: string): St {
   let st: St = fail_quiet(st0, s, msg);
   return say(st, s, gnu.quotea(path) + " could not be accessed\n");
 }
 
-// ---- the root failsafe -----------------------------------------------------
-// Compared by device and inode, so every spelling of `/` is caught — `//`,
-// `/.`, `/tmp/..` — and each one that is not literally `/` says so.
 function is_root_dir(info: FileStat): boolean {
   match (stat("/")) {
     Ok(root) => {
@@ -338,10 +250,6 @@ function refuse_root(st0: St, path: string): St {
   return fail_loud(st, "use --no-preserve-root to override this failsafe");
 }
 
-// ---- one entry -------------------------------------------------------------
-// The mode `t` should end up with, the mode the same clauses reach with the
-// umask taken as zero, and whether the two differ in the direction that is a
-// complaint — a bit the mask stopped a `-` clause from clearing.
 function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) {
   if (t.has_fixed) {
     return (t.fixed, t.fixed, false);
@@ -354,16 +262,6 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
   return (masked.mode, naive.mode, (masked.mode & mode.complement(naive.mode)) != 0);
 }
 
-// `follows` is whether the change lands on what the name points AT. When
-// it does not and the name is a symbolic link (`link` is its own stat),
-// the change is the LINK's mode — `chmod_at` without following, which is
-// GNU's lchmod. Darwin keeps a mode on a symlink and changes it; Linux
-// keeps none and answers EOPNOTSUPP (ENOSYS below fchmodat2), which GNU
-// reports as "neither … has been changed" and does not count as a
-// failure. The mode REPORTED is `info`, what the walk stat'ed: a
-// command-line link is followed by the walk whatever the change lands
-// on, so `-hv` on one prints the referent's old mode on Darwin, as GNU's
-// fts entry does.
 function change_one(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: Option[FileStat], follows: boolean): St {
   let st: St = st0;
   let path: string = ent.path;
@@ -395,16 +293,11 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, l
     }
   }
   if (r.2) {
-    // The one diagnostic that names the file the way a shell would need it
-    // typed rather than always in quotes.
     st = fail_loud(st, gnu.quotef(path) + ": new permissions are " + mode.symbolic(wanted) + ", not " + mode.symbolic(r.1));
   }
   return st;
 }
 
-// Whether a refused `chmod_at` on a symbolic link is the kernel saying a
-// link HAS no mode here — EOPNOTSUPP, or ENOSYS from a kernel without
-// fchmodat2 — rather than a failure to change one.
 function link_has_no_mode(e: IoError): boolean {
   let n: i32 = errno.of(e);
   return n == errno.EOPNOTSUPP || n == errno.ENOSYS;
@@ -417,12 +310,6 @@ function describe(path: string, old: i32, wanted: i32): string {
   return "mode of " + gnu.quotea(path) + " changed from " + mode.octal4(old) + " (" + mode.symbolic(old) + ") to " + mode.octal4(wanted) + " (" + mode.symbolic(wanted) + ")\n";
 }
 
-// ---- the walk --------------------------------------------------------------
-// `Ent` — where an entry is: its full path, which every message names it by,
-// and below an operand the directory holding it and its name there, which
-// every call reaches it through, as GNU's fts does. A path is resolved from
-// the root once per operand rather than once per entry, and a tree deeper
-// than PATH_MAX is walked like any other.
 struct Ent { path: string, dir: Option[Dir], name: string }
 
 function operand(path: string): Ent {
@@ -462,8 +349,6 @@ function ent_chmod(e: Ent, m: i32, follow: boolean): Result[void, IoError] {
   }
 }
 
-// A directory reached through a symlink is opened by its path: opening one
-// by name inside its parent refuses to follow the link.
 function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
   match (e.dir) {
     Some(d) => {
@@ -476,17 +361,9 @@ function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
   return open_dir(e.path);
 }
 
-// Two independent questions, and 9.5 named the second one. -H / -L / -P
-// decide which symbolic links the WALK follows, which is what makes an
-// entry a directory to descend into; --dereference / -h decide whether
-// the CHANGE lands on the link or on what it points at. `top` marks a
-// command-line operand, which is the level -H follows at and the only
-// one the root failsafe is asked about.
 function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
   let st: St = st0;
   let path: string = ent.path;
-  // What the walk sees: the target's type when this link is one it
-  // follows, and the link itself otherwise.
   let followed: boolean = s.traverse == trav_logical() || top && s.traverse != trav_physical();
   let lands: boolean = s.deref == 1 || s.deref == deref_unset() && top;
   if (followed) {
@@ -495,10 +372,6 @@ function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
         return visit(st, s, t, ent, info, link_stat(ent), lands, top);
       },
       Err(e) => {
-        // A symlink whose target is not there is its own wording; every other
-        // failure — a loop, a name too long, a component that is not a
-        // directory — is the plain one. `-h` has nothing to dereference, so
-        // the change lands on the dangling link itself.
         if (errno.of(e) == errno.ENOENT) {
           match (link_stat(ent)) {
             Some(l) => {
@@ -520,8 +393,6 @@ function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
         return visit(st, s, t, ent, info, None, lands, top);
       }
       if (s.deref == 1) {
-        // The walk did not follow it but the change does, so the mode
-        // reported is the referent's.
         match (ent_stat(ent)) {
           Ok(target) => {
             return visit(st, s, t, ent, target, Some(info), true, top);
@@ -539,8 +410,6 @@ function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
   }
 }
 
-// The link's own stat when `ent` names a symbolic link, which is what a
-// change that does not follow it lands on.
 function link_stat(ent: Ent): Option[FileStat] {
   match (ent_lstat(ent)) {
     Ok(info) => {
@@ -555,10 +424,6 @@ function link_stat(ent: Ent): Option[FileStat] {
   }
 }
 
-// One entry that was reached. `info` is what the walk saw — the referent's
-// stat when it followed the link — and `link` the link's own when the name
-// is one. The directory is chmod'ed BEFORE its children are read, which is
-// the order GNU's pre-order walk imposes.
 function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): St {
   let st: St = st0;
   let path: string = ent.path;
@@ -569,8 +434,6 @@ function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: 
   if (!s.recursive || !filetype.is_dir(info.mode)) {
     return st;
   }
-  // A directory whose children cannot be listed has its own wording, where
-  // an entry that could not be STATTED is `cannot access`.
   let via_link: boolean = false;
   match (link) {
     Some(_) => {
@@ -601,9 +464,6 @@ function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: 
   return st;
 }
 
-// ---- main ------------------------------------------------------------------
-// The process umask, read the only way POSIX offers: set zero, take the
-// answer, put it back.
 function current_umask(): i32 {
   let mask: i32 = umask(0);
   let back: i32 = umask(mask);
@@ -613,9 +473,6 @@ function current_umask(): i32 {
 pub function main(): i32 {
   let p: Parsed = parse(args());
   let s: Settings = p.s;
-  // A recursive walk that follows no link cannot reach a referent, so
-  // asking it to change one is refused; asking it nothing settles on the
-  // link. And a walk that follows every link changes every referent.
   if (s.recursive && s.traverse == trav_physical()) {
     if (s.deref == 1) {
       gnu.error("-R --dereference requires either -H or -L");
@@ -628,8 +485,6 @@ pub function main(): i32 {
   }
   let files: string[] = p.files;
   let mode_spec: string = p.mode;
-  // A mode that arrived through the option letters and a --reference are the
-  // one combination chmod refuses outright, ahead of the operand count.
   if (p.has_reference && p.has_mode) {
     gnu.die_usage("cannot combine mode and --reference options", 1);
   }

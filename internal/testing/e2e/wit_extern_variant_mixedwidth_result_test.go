@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantMixedWidthResultCustomProvider is the *mixed-width* `variant`
-// *result* gate (docs/WIT-BRING-YOUR-OWN.md): a WIT variant whose payloaded arms
-// have different canonical core widths — `variant val { i(s32), l(s64) }` (32-
-// and 64-bit). The canonical join is i64 (one slot), so a 32-bit arm occupies its
-// low half. The result wrapper reads the i64 join slot and, branching on the disc,
-// stores each arm's payload into the Fern box at that arm's own box offset —
-// `i64.store` for the 64-bit arm, `i32.wrap_i64`+`i32.store` for the 32-bit arm
-// (ir.ExternEnumParam.Variants + appendVariantResultStore).
-//
-// `classify: func(n: s32) -> val`: n<100 → i(n), else → l(5_000_000_000). The
-// `L` arm carries a value that needs 64 bits — proving the i64 slot round-trips.
 func TestExternVariantMixedWidthResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestExternVariantMixedWidthResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly: a 16-byte area (disc:u8 @0, i64
-	// join slot @8) via cabi_realloc. i=0 stores s32 @8; l=1 stores s64 @8.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

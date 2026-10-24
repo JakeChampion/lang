@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// The self-host twins of internal/testing/e2e/wasm_component_fs_mutate_test.go: the
-// path-mutating filesystem builtins in a component the self-host CLI builds,
-// and the instance types that component declares. A component that declares a
-// method its core never imports demands a capability it has no use for, so
-// each test pins what wasi:filesystem/types declares as well as what runs.
-// main returns 0 only when every step passed, since a component reports only
-// 0 or non-zero.
-
-// buildFsMutateComponent compiles src to a component with the self-host CLI
-// and returns its path and its `wasm-tools print` text.
 func buildFsMutateComponent(t *testing.T, cli *selfHostCLI, dir, src string) (string, string) {
 	t.Helper()
 	srcPath, comp := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wasm")
@@ -49,8 +39,6 @@ func requireWasmTools(t *testing.T) {
 	}
 }
 
-// checkDeclares fails for each of want the component does not declare and
-// each of unwanted it does.
 func checkDeclares(t *testing.T, printed string, want, unwanted []string) {
 	t.Helper()
 	for _, w := range want {
@@ -65,11 +53,6 @@ func checkDeclares(t *testing.T, printed string, want, unwanted []string) {
 	}
 }
 
-// TestSelfHostWasmComponentTempDirRemoveFile runs create, write, read, unlink
-// and check-gone in a component. Reading after remove_file must fail, or
-// unlink-file-at never ran; removing what is gone must fail too. The directory
-// temp_dir made is `probe-` and eight hex digits under the preopen, the name
-// native's component gives it.
 func TestSelfHostWasmComponentTempDirRemoveFile(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
@@ -107,10 +90,6 @@ func TestSelfHostWasmComponentTempDirRemoveFile(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentStatOnly runs stat and nothing else. stat-at takes
-// the preopen and a path, so the component must not declare open-at. It must
-// declare the whole descriptor-stat record, timestamps included, but with
-// `datetime` declared inline, so it imports no clock it never reads.
 func TestSelfHostWasmComponentStatOnly(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
@@ -146,10 +125,6 @@ func TestSelfHostWasmComponentStatOnly(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentCreateDirAll creates a nested path, writes into its
-// leaf, reads it back and creates it again, which must be Ok. A program that
-// only creates directories declares create-directory-at without
-// unlink-file-at.
 func TestSelfHostWasmComponentCreateDirAll(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
@@ -176,10 +151,6 @@ func TestSelfHostWasmComponentCreateDirAll(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentDropCache runs drop_cache on a writer and a reader.
-// The fern world must declare descriptor.advise for the CLI to compose it at
-// all, which is how coreutils' dd builds for wasm32-wasi. A host may ignore the
-// advice, so what runs is the success path and the bytes left behind.
 func TestSelfHostWasmComponentDropCache(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)

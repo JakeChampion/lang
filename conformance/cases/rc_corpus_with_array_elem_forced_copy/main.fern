@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `.with` on an array-of-ARRAYS (rc-tracked pointer elements are the inner
-// buffers), receiver live after the call → CoW copy branch. Exercises the
-// ArrayType element arm of __fern_arr_cow_inplace_ptr / the old-element
-// drop. g stays {[1,1],[2,2],[3,3]}, h is {[9,9],[2,2],[3,3]}. 0 when
-// correct.
+
+
+
+
+
+
+
+
 function main(): i32 {
     let g: i32[][] = [[1, 1], [2, 2], [3, 3]];
     let h: i32[][] = g.with(0, [9, 9]);

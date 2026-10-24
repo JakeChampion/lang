@@ -7,28 +7,6 @@ import (
 	"testing"
 )
 
-// optAscriptionCases pin the Option/Result recovery for a CAST scrutinee
-// (#5646 option 3).
-//
-// The parser desugars both casts to a unary op, with disjoint tags:
-//
-//	e as? T          -> as?_T          the dyn-Trait downcast, yielding Option[T]
-//	e as Option[T]   -> as_Option[T]   a plain ascription; the tag IS the type
-//
-// Only the downcast was enumerated, so `match (None as Option[i32])` resolved to
-// "" and bailed the enclosing function. Its sibling
-// ascription shapes — `let x = None as Option[i32]`, `return None as
-// Option[i32]` — already lowered, because they bind or return through an
-// annotation that carries the payload type. The value-position match is the one
-// place the cast is the only written type, which is why it was the lone bail
-// left in `TestSelfHostAsmIRPath` under FERN_STRICT_IR.
-//
-// `downcast-guard` is the `as?` shape, which shares the new helper: it must keep
-// resolving, and it is the case a naive prefix test would break, since a tag is
-// matched against "as?_" and "as_" in that order.
-//
-// Every `want` stays in [0, 126) — the wasm leg exits through WASI, which
-// rejects anything above that.
 var optAscriptionCases = []struct {
 	name string
 	src  string
@@ -61,9 +39,6 @@ function main(): i32 {
 `, 9},
 }
 
-// TestSelfHostOptAscriptionIRX86_64 asserts each cast scrutinee lowers on the IR
-// path — proven by running under FERN_STRICT_IR, where a bail is exit 3 — and
-// still produces the interpreter's answer.
 func TestSelfHostOptAscriptionIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := strictIRDriver(t)
 	dir := filepath.Dir(driverBin)
@@ -89,8 +64,6 @@ func TestSelfHostOptAscriptionIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptAscriptionIRWasm runs the same cases through the wasm IR
-// backend, which shares the resolver.
 func TestSelfHostOptAscriptionIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host opt-ascription wasm IR e2e")

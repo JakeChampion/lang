@@ -2,7 +2,6 @@ package e2eharness
 
 import "strings"
 
-// CommByteCase describes inputs that must retain byte ordering and spelling.
 type CommByteCase struct {
 	Name, A, B, Stdin string
 	Args              []string
@@ -10,8 +9,6 @@ type CommByteCase struct {
 	Exit              int
 }
 
-// CommByteCases covers both record delimiters, all byte values, chunk-spanning
-// records and retained ordering history. Args exclude the two file operands.
 func CommByteCases() []CommByteCase {
 	var cases []CommByteCase
 	for _, term := range []byte{'\n', 0} {

@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// ifLetCases cover `if let PAT = EXPR { then } else { else }`, which the
-// parser desugars to `match (EXPR) { PAT => { then }, _ => { else } }`.
-// Covers the Some arm, the else arm (None), a no-else fall-through, and
-// a user enum variant. Exit codes cross-checked vs the Go backend.
 var ifLetCases = []struct {
 	name string
 	src  string
@@ -20,8 +16,6 @@ var ifLetCases = []struct {
 	{"user-variant", "enum Shape { Circle(i32), Empty } function main(): i32 { let s: Shape = Circle(42); if let Circle(r) = s { return r; } else { return 0; } }", 42},
 }
 
-// TestSelfHostIfLetX86_64 — `if let` desugar with the self-hosted
-// x86-64 compiler.
 func TestSelfHostIfLetX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -48,7 +42,6 @@ func TestSelfHostIfLetX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIfLetArm64 — CI-gated arm64 counterpart.
 func TestSelfHostIfLetArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range ifLetCases {

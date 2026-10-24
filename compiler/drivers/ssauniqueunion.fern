@@ -46,7 +46,6 @@ function variants(row: ssaprepare.Emitted, e: semrecords.Enum): void {
   for layout in [-1, 0, 3, 4] {
     schema(row, semrecords.Enum { ...e, layout: layout }, false);
   }
-  // Flags do not supply the box representation or release-effect proof.
   schema(row, semrecords.Enum { ...e, views: !e.views, nests_func: !e.nests_func }, true);
 }
 
@@ -93,8 +92,6 @@ function member_records(row: ssaprepare.Emitted, e: semrecords.Enum): void {
     i = i + 1;
   }
   require(hits == 1);
-  // A valid name index cannot rescue absent record schemas; an absent index
-  // cannot invalidate complete independently checked record facts.
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: [] } }), false);
   let no_records = semrecords.no_records();
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, names: no_records.names } }), true);

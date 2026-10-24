@@ -12,14 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportScalarReactorComposes is the P6 slice-3 gate
-// (docs/WIT-BRING-YOUR-OWN.md): the world-driven composer lifts an arbitrary
-// scalar `@export` function as a named world export. A reactor (a library with
-// no cli/run) exports `local:test/math@0.1.0#add`; the wasm backend surfaces
-// the `iface#wit-name` core export (slice 2) and ComposeExportsFromWorld aliases
-// it, lifts it with the WIT canonical ABI `(u32,u32)->u32`, and emits the
-// component export. Gated by `wasm-tools validate` (the lift + export are
-// well-formed); running it through a consumer is the next slice.
 func TestExportScalarReactorComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -33,7 +25,6 @@ func TestExportScalarReactorComposes(t *testing.T) {
 		}
 	}
 
-	// A world that EXPORTS a custom scalar interface.
 	witDir := filepath.Join(dir, "wit")
 	if err := os.MkdirAll(witDir, 0o755); err != nil {
 		t.Fatalf("mkdir wit: %v", err)
@@ -53,7 +44,6 @@ func TestExportScalarReactorComposes(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// A reactor exporter: just the @export function, no main / cli/run.
 	src := `@export("local:test/math@0.1.0", "add")
 function add(a: i32, b: i32): i32 { return a + b; }`
 	mainPath := filepath.Join(dir, "exporter.fern")
@@ -75,7 +65,6 @@ function add(a: i32, b: i32): i32 { return a + b; }`
 	if out, err := exec.Command(wasmtools, "validate", mine).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
 	}
-	// The component must declare the world export.
 	out, err := exec.Command(wasmtools, "component", "wit", mine).CombinedOutput()
 	if err != nil {
 		t.Fatalf("wasm-tools component wit: %v\n%s", err, out)
@@ -85,13 +74,6 @@ function add(a: i32, b: i32): i32 { return a + b; }`
 	}
 }
 
-// TestExportScalarRunsViaConsumer is the runnable P6 slice-3 gate: a Fern
-// reactor's `@export add` is composed into a component (ComposeExportsFromWorld),
-// then a separate Fern consumer that `@import`s `local:test/math#add` and calls
-// it from main is composed (ComposeFromWorldAuto) and the two are linked with
-// `wasm-tools compose`. The consumer runs under wasmtime and observes the
-// exporter's result — proving the lifted export is actually callable across the
-// component boundary (docs/WIT-BRING-YOUR-OWN.md).
 func TestExportScalarRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -109,7 +91,6 @@ func TestExportScalarRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// --- 1. Build the Fern exporter reactor → exporter component. ---
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -145,7 +126,6 @@ function add(a: i32, b: i32): i32 { return a + b; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- 2. Build the Fern consumer command importing local:test/math#add. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -194,7 +174,6 @@ function main(): i32 {
 		t.Fatalf("write consumer component: %v", err)
 	}
 
-	// --- 3. Link the exporter into the consumer's import; run it. ---
 	final := filepath.Join(dir, "final.wasm")
 	run(wasmtools, "compose", consumer, "--definitions", exporter, "-o", final)
 	run(wasmtools, "validate", final)
@@ -207,13 +186,6 @@ function main(): i32 {
 	}
 }
 
-// TestExportStringResultLiftRunsViaConsumer is the P6 slice-5b gate: the
-// composer's string-RESULT lift (the memory lift from 5a). A hand-written WAT
-// exporter core returns a string via the canonical return area (a pointer to
-// [data_ptr, byte_len]); ComposeExportsFromWorld lifts `local:test/strings#greet`
-// with PutCanonSectionLiftWithMemory, and a Fern consumer that @imports it and
-// `write`s the result links + runs under wasmtime. The WAT core stands in for
-// the Fern->canonical wrapper (the next sub-slice). docs/WIT-BRING-YOUR-OWN.md.
 func TestExportStringResultLiftRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -231,8 +203,6 @@ func TestExportStringResultLiftRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// --- exporter: a WAT core returning "hi" via the canonical return area. ---
-	// return area @0 = [ptr=16, len=2]; bytes "hi" @16. greet() -> ptr(=0).
 	expCoreWat := filepath.Join(dir, "exp_core.wat")
 	if err := os.WriteFile(expCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -275,7 +245,6 @@ func TestExportStringResultLiftRunsViaConsumer(t *testing.T) {
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- consumer: Fern, @imports greet() -> string and writes it. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -333,12 +302,6 @@ function main(): i32 { write(greet()); return 0; }`
 	}
 }
 
-// TestExportStringResultFromFernRunsViaConsumer is the P6 slice-5c gate: a
-// string-returning export from FERN SOURCE (no hand-written core). The wasmbin
-// wrapper repacks the Fern (data,len) pair into the canonical return area, the
-// composer lifts it with the memory lift, and a Fern consumer that @imports
-// `greet() -> string` and writes it links + runs under wasmtime — proving the
-// whole Fern→component→consumer string-export path. docs/WIT-BRING-YOUR-OWN.md.
 func TestExportStringResultFromFernRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -356,7 +319,6 @@ func TestExportStringResultFromFernRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// --- exporter: Fern reactor `@export greet(): string`. ---
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -395,7 +357,6 @@ function greet(): string { return "hi"; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- consumer: Fern, @imports greet() -> string and writes it. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -453,12 +414,6 @@ function main(): i32 { write(greet()); return 0; }`
 	}
 }
 
-// TestExportStringParamRunsViaConsumer is the P6 slice-5d gate: a string
-// PARAMETER export. A Fern reactor `@export len_of(s: string): i32` is lifted
-// with the realloc lift (the canonical ABI materialises the incoming bytes in
-// the core memory via cabi_realloc, then passes (ptr,len) — which maps directly
-// to wasmbin's two-word string, so no wrapper). A Fern consumer calls
-// len_of("hello") and expects 5. docs/WIT-BRING-YOUR-OWN.md.
 func TestExportStringParamRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -476,7 +431,6 @@ func TestExportStringParamRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// --- exporter: Fern reactor `@export len_of(s: string): i32`. ---
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -512,7 +466,6 @@ function len_of(s: string): i32 { return s.len(); }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- consumer: Fern, @imports len-of(s: string) -> u32 and checks it. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)

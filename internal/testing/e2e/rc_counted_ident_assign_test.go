@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// #9948 — `chunk = kept`, where `kept` is a borrowed alias whose inc was
-// cancelled, left `chunk` inheriting kept's borrow taint. But the assignment
-// retains kept, so chunk owns a count of its own: the taint only cost chunk
-// its drops, including its own `[]` initialiser on the rounds that never
-// reach the alias at all (50 rounds: allocs=250 frees=200 live_bytes=800).
-//
-// Each balanced case is held to the interpreter's exit code, a silent
-// sanitizer and a balanced census. The escaped case is the direction the fix
-// must not open: kept's struct is a map key, which the map holds uncounted,
-// so chunk must stay tainted — freeing it through chunk is a use-after-free
-// once the map is read back in the caller. That case leaks by design and is
-// held to "no over-release" only.
 const countedIdentAssignPrelude = `import "core/int";
 import "std/i32";
 
@@ -113,8 +101,6 @@ function main(): i32 {
     while (i < 50) { t = t + round(i); i = i + 1; }
     return t % 100;
 }`},
-	// The append builds `p` on the heap: a constant literal is a static
-	// aggregate, which leaves the census nothing to count.
 	{"copy_of_a_borrowed_parameter", countedIdentAssignPrelude + `
 @noinline
 function from_param(p: u8[]): i32 {
@@ -186,7 +172,6 @@ func checkCountedIdentAssign(t *testing.T, stdout, stderr string, code, want int
 	}
 }
 
-// checkNoOverRelease allows the sanitizer's leak verdict and nothing else.
 func checkNoOverRelease(t *testing.T, stdout, stderr string, code, want int) {
 	t.Helper()
 	if code != want {
@@ -226,7 +211,6 @@ func TestWASMCountedIdentAssignOwnsItsCount(t *testing.T) {
 	for _, tc := range countedIdentAssignCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := runInterpByte(t, tc.src)
-			// The census build prints main's result rather than exiting with it.
 			stdout, stderr, code := runLeakCheckWasm(t, tc.src, false)
 			if code != 0 || strings.TrimSpace(stdout) != strconv.Itoa(want) {
 				t.Fatalf("exit = %d, stdout = %q, want main's result %d\nstderr: %s", code, stdout, want, stderr)

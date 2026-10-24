@@ -2,34 +2,16 @@ package e2ecompiler
 
 import "testing"
 
-// stateMachineIRCases is a COMBINATION/integration pin: a word-counting state
-// machine that exercises, in one module, an interaction no single-construct pin
-// covers — a struct-update (`M { ...m, … }`) emitted from inside a `match` arm
-// whose scrutinee is itself a struct field (`m.state`, an enum), guarded by
-// `if`/else, driven by a `while` loop over string byte indices (`s[i]`), with the
-// updated struct flowing through a by-value function parameter and back as a
-// struct return, then read field-wise. Each constituent already lowers and is
-// individually pinned (struct-update, nested match, while, enum-from-struct-field,
-// string byte index, struct-by-value param + struct return); this checks their
-// composition on the IR path.
-//
-// Oracle-checked against the interpreter; every result is <= 126 (wasmtime
-// exit-code truncation, cf. #2908). Mirrors self_host_nested_tuple_ir_test.go.
 var stateMachineIRCases = []struct {
 	name string
 	main string
 }{
-	// "ab cd ef": 3 words, 6 non-space chars -> 3*10 + 6 = 36.
 	{"multi-word", stateMachineProg(`ab cd ef`)},
-	// "hello": 1 word, 5 chars -> 15.
 	{"single-word", stateMachineProg(`hello`)},
-	// " a  bb ": 2 words (a, bb), 3 chars -> 2*10 + 3 = 23.
 	{"leading-trailing-double-space", stateMachineProg(` a  bb `)},
-	// "": loop body never runs; struct-update never fires -> 0.
 	{"empty", stateMachineProg(``)},
 }
 
-// stateMachineProg builds the word-counter program over the given input string.
 func stateMachineProg(s string) string {
 	return `enum St { InWord, Between }
 struct M { state: St, words: i32, chars: i32 }
@@ -48,8 +30,6 @@ function main(): i32 {
 }`
 }
 
-// TestSelfHostStateMachineIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostStateMachineIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

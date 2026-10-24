@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Closure-capture composite — a closure capturing an ARRAY OF
-// STRUCTS deep-drops each element box via __drop_arr_struct_Item
-// (Stage B loop) at the closure's death, not just the buffer.
-// Two elements per iter → f() returns len 2.
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 struct Item { tags: i32[] }

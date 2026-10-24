@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostBareBlockIR covers a bare block statement `{ ... }` (its own
-// scope) through the self-hosted x86-64 compiler. The self-host Stmt union
-// has no StmtBlock, so the parser
-// desugars a statement-position `{` to `if (true) { ... }` (the same trick
-// `loop` uses for `while (true)`). Parsing it as StmtUnknown silently drops
-// its inner statements (issue #2821).
 func TestSelfHostBareBlockIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

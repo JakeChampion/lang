@@ -1,14 +1,14 @@
-// monotonic_ns() + sleep_ms() builtin runtimes (#2843). Both
-// type-check and run on the interpreter; this fixture locks in the
-// NATIVE x86-64 / arm64 code-generation backends, which previously
-// emitted a call to an undefined `monotonic_ns` / `sleep_ms` symbol
-// (assemble/link failure). monotonic_ns is a monotonically
-// non-decreasing nanosecond clock, so the second reading is >= the
-// first; sleep_ms simply has to run without dangling. Exit 7 proves
-// both runtimes are present and the clock is well-ordered.
-//
-// All four backends, wasm included since #7947 gave wasmbin a
-// poll_oneoff sleep — the gap this case was waived for.
+
+
+
+
+
+
+
+
+
+
+
 function main(): i32 {
     let a: i64 = monotonic_ns();
     sleep_ms(1);

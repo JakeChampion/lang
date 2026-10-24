@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// `__count_runs(s, inside, set)` on the self-host IR path: how many runs of
-// bytes whose entry in the u8[] `set` is nonzero begin in s, with `inside`
-// nonzero meaning the byte before s was a member. wc's word count.
-//
-// The set's length lives in the array header and its bytes in the backend's
-// element slots, eight bytes on the register backends and four on wasm, so
-// the sweep holds a full set, a short one and an empty one, both values of
-// `inside`, and every length up to 40.
-
-// countRunsIRProg is SELF-CHECKING: it carries a Fern reference and compares
-// the kernel against it. A failure returns a small distinct code saying which
-// shape disagreed; 42 means every comparison matched.
 const countRunsIRProg = `function ref(s: string, inside: i32, set: u8[]): i32 {
     let prev: boolean = inside != 0;
     let runs: i32 = 0;
@@ -66,8 +54,6 @@ function main(): i32 {
 }
 `
 
-// runCountRunsIR compiles countRunsIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runCountRunsIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -112,10 +98,6 @@ func TestSelfHostCountRunsIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCountRunsIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostCountRunsIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host count_runs wasm IR e2e")

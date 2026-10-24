@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// Literal or-patterns on the self-host compiler (#5355): `match (x) { 1 | 2
-// | 3 => … }`. The self-host literal-match arm loop now splits on `|` at a
-// precedence above bitwise-or (parse_lit_alts), so `1 | 2` reads as "1 or
-// 2", not the value 3 — matching the native front-end. Each alternative
-// becomes its own literal arm sharing the guard + body, expanded through
-// the existing build_literal_match if-chain. Ranges combine with `|` too
-// (`1..5 | 10..15`). These cases build the self-host x86-64 driver and
-// oracle-check the compiled binary against the interpreter.
 var selfHostOrPatternCases = []struct {
 	name string
 	main string

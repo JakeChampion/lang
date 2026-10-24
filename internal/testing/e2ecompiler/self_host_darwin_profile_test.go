@@ -11,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Cross-build every mode on Linux. The macOS lane additionally executes the
-// timer/trampoline, checks named stacks, and asks Go's pprof to read the files.
 func TestSelfHostDarwinProfile(t *testing.T) {
 	if runtime.GOOS == "darwin" && runtime.GOARCH != "arm64" {
 		t.Fatal("native Darwin profiling requires an Apple Silicon runner")

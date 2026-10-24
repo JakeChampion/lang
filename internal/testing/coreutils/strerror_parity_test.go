@@ -11,19 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/strerror"
 )
 
-// GNU prints strerror(3), so a diagnostic naming an errno is worded by
-// the host libc — and sixteen errnos read differently on Darwin. Two
-// copies of that wording exist by necessity: internal/tables/strerror, which
-// the runtime reports IoError.Other from, and coreutils/lib/gnu.fern,
-// which the utilities call when they name an errno GNU names without
-// one coming back from a syscall. These two tests keep the second copy
-// honest: the first pins every helper to the Go table, the second fails
-// when a utility writes the wording out by hand instead of calling one.
-
-// gnuFernHelper matches a `<errno>_text()` helper in coreutils/lib/gnu.fern,
-// and gnuFernHelperDecl matches only its signature. The two are compared so a
-// helper the formatter reshapes fails the test rather than going unmatched:
-// a pattern that silently selects nothing is the way a gate like this dies.
 var (
 	gnuFernHelper = regexp.MustCompile(
 		`(?m)^pub function (\w+)_text\(\): string \{\s*\n\s*if \(target_os\(\) == "darwin"\) \{\s*\n\s*return "([^"]*)";\s*\n\s*\}\s*\n\s*return "([^"]*)";\s*\n\}`)
@@ -73,9 +60,6 @@ func TestGnuFernErrnoTextMatchesStrerrorTable(t *testing.T) {
 	}
 }
 
-// gnu.fern also carries two errno NUMBERS, because exec_errno_text maps
-// raw errnos rather than an IoError, and the two platforms disagree on
-// where ENAMETOOLONG and ELOOP sit. Both come from the same Go table.
 func TestGnuFernErrnoNumbersMatchStrerrorTable(t *testing.T) {
 	src := gnuFernSource(t)
 	for _, tc := range []struct{ helper, errno string }{
@@ -106,17 +90,6 @@ func TestGnuFernErrnoNumbersMatchStrerrorTable(t *testing.T) {
 	}
 }
 
-// A utility that writes a glibc-only wording out as a literal is
-// correct on Linux and wrong on Darwin, and nothing at the call site
-// says so. gnu.fern's helpers are the only place those strings may
-// appear.
-//
-// "Glibc-only" is narrower than "differs from this entry's Darwin
-// wording": EOPNOTSUPP is worded "Operation not supported" by glibc and
-// "Operation not supported on socket" by Darwin, but Darwin ALSO words
-// its separate ENOTSUP "Operation not supported" — so that string is
-// correct on both platforms and a utility may write it. Only a wording
-// no platform's Darwin libc produces is one nobody may spell out.
 func TestNoUtilitySpellsAGlibcOnlyErrnoText(t *testing.T) {
 	root := repoRoot(t)
 	darwinWordings := map[string]bool{}
@@ -148,9 +121,6 @@ func TestNoUtilitySpellsAGlibcOnlyErrnoText(t *testing.T) {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
-			// A Darwin wording can carry a glibc one as a prefix
-			// ("Address family not supported by protocol family"), so the
-			// Darwin ones leave the line before the glibc ones are sought.
 			for d := range darwinWordings {
 				line = strings.ReplaceAll(line, d, "")
 			}

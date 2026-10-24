@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// soleLoopWithCase is one program, the function `fn` whose `with` writes and
-// appends it pins, and whether those may drop their uniqueness test: `proved`
-// when the array the loop writes is one only this frame ever holds, so the
-// write is in place without asking, and false where another holder may see
-// the box and the test must stay.
 type soleLoopWithCase struct {
 	name   string
 	fn     string
@@ -18,8 +13,6 @@ type soleLoopWithCase struct {
 }
 
 var soleLoopWithCases = []soleLoopWithCase{
-	// The fill loop the compiler's own tables are built with: a fresh
-	// zero-filled array, written once per iteration through the loop's phi.
 	{"fill-fresh", "fill", true, `@noinline
 function fill(n: i32): i32[] {
     let out: i32[] = __alloc_i32(n);
@@ -34,7 +27,6 @@ function main(): i32 {
     let a: i32[] = fill(40);
     return (a[0] + a[39] + 100) % 101;
 }`},
-	// Reading an element or the length of the box shares nothing.
 	{"fill-reads-back", "prefix", true, `@noinline
 function prefix(n: i32): i32[] {
     let out: i32[] = __alloc_i32(n);
@@ -49,7 +41,6 @@ function main(): i32 {
     let a: i32[] = prefix(10);
     return a[9];
 }`},
-	// Two loops in a row over one box, the second's phi fed by the first's.
 	{"two-loops", "twice", true, `@noinline
 function twice(n: i32): boolean[] {
     let seen: boolean[] = __alloc_bool(n);
@@ -73,8 +64,6 @@ function main(): i32 {
     for b in s { if (b) { c = c + 1; } }
     return c;
 }`},
-	// The append loop the compiler's own lists are built with: an empty
-	// literal grown once per iteration through the loop's phi.
 	{"append-fresh", "build", true, `@noinline
 function build(n: i32): i32[] {
     let out: i32[] = [];
@@ -89,7 +78,6 @@ function main(): i32 {
     let a: i32[] = build(30);
     return (a.len() + a[29]) % 101;
 }`},
-	// A literal built at run time, grown and then written over.
 	{"append-then-with", "grow_set", true, `@noinline
 function grow_set(n: i32): i32[] {
     let out: i32[] = [n, n + 1];
@@ -109,8 +97,6 @@ function main(): i32 {
     let a: i32[] = grow_set(9);
     return a[0] + a[1] + a[10];
 }`},
-	// A helper that builds and returns its own array hands the caller a box
-	// no one else holds, so the caller's writes to it ask nothing.
 	{"fresh-helper", "squares", true, `@noinline
 function zeros(n: i32): i32[] {
     let out: i32[] = [];
@@ -135,7 +121,6 @@ function main(): i32 {
     let a: i32[] = squares(10);
     return a[9];
 }`},
-	// The same through a second helper that only passes the result on.
 	{"fresh-chain", "cubes", true, `@noinline
 function zeros(n: i32): i32[] {
     return __alloc_i32(n);
@@ -159,8 +144,6 @@ function main(): i32 {
     let a: i32[] = cubes(5);
     return a[4] % 101;
 }`},
-	// A helper that takes the array owned and hands it back, written or
-	// grown, passes a sole box through: the caller's later writes ask nothing.
 	{"passed-through", "fill_put", true, `@noinline
 function put(own xs: i32[], i: i32, v: i32): i32[] {
     if (i < xs.len()) {
@@ -187,8 +170,6 @@ function main(): i32 {
     let a: i32[] = fill_put(8);
     return a[7];
 }`},
-	// A helper whose result is always a fresh copy or a sole write, given the
-	// caller's array owned: the caller's own writes between calls ask nothing.
 	{"through-helper-with", "marks", true, `@noinline
 function set(own bits: i32[], i: i32): i32[] {
     return bits.with(i, 1);
@@ -208,8 +189,6 @@ function main(): i32 {
     let r: i32[] = marks(4);
     return r[3] * 10 + r[7];
 }`},
-	// The loop's array is stored into a record only by its last use, which
-	// moves it: the writes before still ask nothing.
 	{"moved-into-record", "snap_last", true, `struct Held { xs: i32[] }
 @noinline
 function snap_last(n: i32): Held {
@@ -225,8 +204,6 @@ function main(): i32 {
     let h: Held = snap_last(6);
     return h.xs[5];
 }`},
-	// A second name held across the write: the write must copy, and the kept
-	// name still reads the value before it.
 	{"aliased-in-loop", "alias", false, `@noinline
 function alias(n: i32): i32 {
     let out: i32[] = __alloc_i32(n);
@@ -243,7 +220,6 @@ function alias(n: i32): i32 {
 function main(): i32 {
     return alias(5);
 }`},
-	// Lent to a call between writes: the callee could keep it, so the test stays.
 	{"lent-to-call", "lent", false, `@noinline
 function total(xs: i32[]): i32 {
     let t: i32 = 0;
@@ -265,8 +241,6 @@ function lent(n: i32): i32 {
 function main(): i32 {
     return lent(12);
 }`},
-	// Stored into a record the loop then writes past: the record keeps the
-	// value it was built with.
 	{"stored-in-record", "store", false, `struct Snap { xs: i32[] }
 @noinline
 function store(n: i32): i32 {
@@ -283,8 +257,6 @@ function store(n: i32): i32 {
 function main(): i32 {
     return store(4);
 }`},
-	// An append with a second name held across it: the kept name still
-	// reads the length before it.
 	{"append-aliased", "kept_len", false, `@noinline
 function kept_len(n: i32): i32 {
     let out: i32[] = [];
@@ -300,8 +272,6 @@ function kept_len(n: i32): i32 {
 function main(): i32 {
     return kept_len(6);
 }`},
-	// A constant literal is one box every evaluation shares: a write to it
-	// copies, so the second call reads the constant unchanged.
 	{"constant-literal", "bump", false, `@noinline
 function bump(n: i32): i32 {
     let a: i32[] = [1, 2, 3];
@@ -311,7 +281,6 @@ function bump(n: i32): i32 {
 function main(): i32 {
     return bump(10) + bump(10);
 }`},
-	// Appending to a parameter whose box the caller still reads.
 	{"append-parameter", "more", false, `@noinline
 function more(own xs: i32[], n: i32): i32[] {
     let i: i32 = 0;
@@ -327,8 +296,6 @@ function main(): i32 {
     let c: i32[] = more(a, 3);
     return b.len() * 10 + c.len();
 }`},
-	// A helper that hands back the array it was given returns a box the
-	// caller may still hold under another name.
 	{"helper-returns-parameter", "via", false, `@noinline
 function same(own xs: i32[]): i32[] {
     return xs;
@@ -348,7 +315,6 @@ function via(n: i32): i32 {
 function main(): i32 {
     return via(3);
 }`},
-	// A helper that returns a constant literal returns the shared static box.
 	{"helper-returns-constant", "bump_base", false, `@noinline
 function base(): i32[] {
     return [1, 2, 3];
@@ -362,7 +328,6 @@ function bump_base(n: i32): i32 {
 function main(): i32 {
     return bump_base(10) + bump_base(10);
 }`},
-	// A parameter's box may have other holders in the caller.
 	{"parameter", "fill_in", false, `@noinline
 function fill_in(own xs: i32[]): i32[] {
     let i: i32 = 0;
@@ -380,19 +345,6 @@ function main(): i32 {
 }`},
 }
 
-// Each pinned function is @noinline: called once, it would otherwise be
-// spliced into main and have no body of its own to count in.
-//
-// TestSelfHostSoleLoopWithX86_64 pins the uniqueness proof behind a `with`
-// or an `append` in a loop (ssaunits.sole_boxes): an array a fresh or empty
-// allocation, a `with`, an `append` or a call to a row whose result is sole
-// (ssaunits.fresh_rows) makes, carried around a loop, read, written and
-// handed on only by its last use, never lent, stored or retained while it is
-// still read, is written in place with no test, and every other shape keeps
-// the test. Each program's exit
-// is the interpreter's, run under
-// the sanitizer, so a proof that let a shared box be written in place shows
-// up as the wrong answer as well as in the count.
 func TestSelfHostSoleLoopWithX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

@@ -1,18 +1,3 @@
-// `window_size` end to end on every backend that provides it — the four
-// natives. No wasm world has a terminal to measure, so E066 refuses the
-// builtin there (capability `tty`) and the last test in this file is that
-// refusal rather than a wasm probe.
-//
-// Each backend reads the kernel's `struct winsize` by hand — three
-// hand-written assembly sequences and one Go one — so each gets a REAL
-// terminal, of a size the harness set itself, rather than being taken on
-// trust. A helper that answered a plausible 80x24 would pass any test that
-// only checked the shape of the answer, which is why the size asked for here
-// is one no default produces.
-//
-// The second half is the refusal: a pipe is not a terminal, and ENOTTY has to
-// come back as `Err` rather than as a 0x0 a caller cannot tell from a
-// measurement. That is the arm `ls` falls back to COLUMNS on.
 package e2e
 
 import (
@@ -26,15 +11,11 @@ import (
 	"testing"
 )
 
-// The size the harness stamps on the pty. Neither number is a terminal
-// default, so an answer that matches cannot have come from a guess.
 const (
 	wsRows = 13
 	wsCols = 57
 )
 
-// windowSizeSource asks about fd 1 and reports what it found through the exit
-// code: 0 for the expected size, and a distinct code per way of being wrong.
 const windowSizeSource = `function main(): i32 {
     match (window_size(1)) {
         Ok(ws) => {
@@ -46,8 +27,6 @@ const windowSizeSource = `function main(): i32 {
     }
 }`
 
-// windowSizeNoTtySource is the same question asked of a descriptor that is not
-// a terminal. The Err arm is the answer; an Ok of any size is a fiction.
 const windowSizeNoTtySource = `function main(): i32 {
     match (window_size(1)) {
         Ok(ws) => { return 24; },
@@ -55,8 +34,6 @@ const windowSizeNoTtySource = `function main(): i32 {
     }
 }`
 
-// runOnPTY runs `newCmd()`'s command with its stdout wired to a real pty of
-// the size above, and returns the exit code.
 func runOnPTY(t *testing.T, newCmd func() *exec.Cmd) int {
 	t.Helper()
 	master, slave, err := openPTY()
@@ -67,8 +44,6 @@ func runOnPTY(t *testing.T, newCmd func() *exec.Cmd) int {
 	if err := setPTYSize(slave, wsRows, wsCols); err != nil {
 		t.Fatalf("set pty size: %v", err)
 	}
-	// A pty buffer is small enough that an undrained one can block a writer,
-	// so the master is drained for as long as the child runs.
 	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(io.Discard, master)
@@ -87,8 +62,6 @@ func runOnPTY(t *testing.T, newCmd func() *exec.Cmd) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-// runOnPipe is the same run with stdout redirected, which is what makes the
-// question unanswerable.
 func runOnPipe(t *testing.T, newCmd func() *exec.Cmd) int {
 	t.Helper()
 	cmd := newCmd()
@@ -102,8 +75,6 @@ func runOnPipe(t *testing.T, newCmd func() *exec.Cmd) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-// assertWindowSize is the pair of runs every backend gets: the size the
-// harness set comes back off a terminal, and a redirected descriptor refuses.
 func assertWindowSize(t *testing.T, build func(src string) func() *exec.Cmd) {
 	t.Helper()
 	if code := runOnPTY(t, build(windowSizeSource)); code != 0 {
@@ -142,10 +113,6 @@ func TestInterpWindowSize(t *testing.T) {
 	})
 }
 
-// The Darwin request number is a different constant from Linux's
-// (0x40087468 vs 0x5413), and it reaches a different backend arm. Neither of
-// the two legs above runs it — both are Linux targets — so the Mach-O build
-// gets its own, executed on Apple Silicon and built everywhere.
 func TestArm64DarwinWindowSize(t *testing.T) {
 	fern := buildFernCLI(t)
 	build := func(src, name string) string {
@@ -177,10 +144,6 @@ func TestArm64DarwinWindowSize(t *testing.T) {
 	}
 }
 
-// Neither WASI preview has an ioctl, and wasi:cli's terminal-output resource
-// reports no size, so the answer on that target is a named refusal at check
-// time rather than a backend stub: no wasi profile grants `tty`, and E066 says
-// so with the builtin's name and the call site's position.
 func TestWASMWindowSizeRefused(t *testing.T) {
 	dir := t.TempDir()
 	bin := buildFernCLI(t)

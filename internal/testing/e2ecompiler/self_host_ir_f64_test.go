@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRF64Eligible pins that programs using f64 locals/arithmetic/
-// comparison, i32<->f64 casts, f64 in a FREE-function signature (param/return)
-// and f64 in a METHOD signature all lower through the IR. It asks the path
-// probe (semlower.verdict, via eligBits) and bit-packs the per-case results, so
-// the want is 8+4+2+1 = 15 (bits 8/4/2/1).
 func TestSelfHostIRF64Eligible(t *testing.T) {
 	progs := []string{
 		"function main(): i32 { let x: f64 = 1.5; let y: f64 = 2.25; let z: f64 = x + y; if (z > 3.0) { return 7; } return 0; }",

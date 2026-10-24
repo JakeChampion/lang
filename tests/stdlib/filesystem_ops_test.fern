@@ -1,21 +1,10 @@
 import "core/cmp";
 import "std/test";
 
-// tests/stdlib/filesystem_ops_test.fern — exercises the
-// `read_dir` / `remove_file` / `remove_dir_all` builtins and
-// the runner's `defer_cleanup(path)` hook. Together these
-// give a migrated test enough fs vocabulary to create a
-// fixture tree, walk it, point a subprocess at it, then
-// scrub everything at the end of the run.
-
 function test_temp_dir_returns_abs_path(): test.TestOutcome {
   match (temp_dir("fs-ops")) {
     Ok(dir) => {
-      // Best-effort absolute-path check: every supported
-      // OS roots its temp dir under `/`. (Windows isn't
-      // a Fern target; on POSIX-likes the prefix holds.)
       let ok: boolean = dir.starts_with("/") || dir.starts_with("\\");
-      // Don't leak: remove the directory we just made.
       match (remove_dir_all(dir)) {
         Ok(_) => {},
         Err(_) => {}
@@ -35,9 +24,6 @@ function test_temp_dir_returns_abs_path(): test.TestOutcome {
 function test_read_dir_lists_what_we_wrote(): test.TestOutcome {
   match (temp_dir("readdir-fixture")) {
     Ok(dir) => {
-      // Write three files, then list. Sort the output so
-      // the comparison is order-independent (read_dir
-      // promises only the set of names, not the order).
       match (write_file(dir + "/a.txt", "a")) {
         Ok(_) => {},
         Err(_) => {
@@ -108,7 +94,6 @@ function test_remove_file_removes_a_single_file(): test.TestOutcome {
           return test.fail("remove_file returned Err");
         }
       }
-      // After the targeted unlink, only keep.txt is left.
       match (read_dir(dir)) {
         Ok(names) => {
           match (remove_dir_all(dir)) {
@@ -134,9 +119,6 @@ function test_remove_file_removes_a_single_file(): test.TestOutcome {
 }
 
 function test_remove_file_on_missing_target_is_an_error(): test.TestOutcome {
-  // Match Go's `os.Remove` semantics: removing a path that
-  // doesn't exist returns an error. Callers that don't care
-  // about that distinction should ignore the return value.
   match (remove_file("/tmp/lang-this-file-definitely-does-not-exist-83274")) {
     Ok(_) => {
       return test.fail("expected error on missing target, got None");
@@ -162,9 +144,6 @@ function test_create_dir_all_builds_a_missing_chain(): test.TestOutcome {
           return test.fail("create_dir_all returned Err");
         }
       }
-      // A write into the leaf is the proof the whole chain
-      // exists: a walk that created only the last component
-      // leaves a path write_file cannot reach.
       match (write_file(leaf + "/deep.txt", "deep")) {
         Ok(_) => {},
         Err(_) => {
@@ -200,8 +179,6 @@ function test_create_dir_all_builds_a_missing_chain(): test.TestOutcome {
 }
 
 function test_create_dir_all_on_existing_path_is_ok(): test.TestOutcome {
-  // `mkdir -p` semantics: an existing directory is not an error,
-  // so a caller can create unconditionally rather than stat first.
   match (temp_dir("mkdirp-exists")) {
     Ok(dir) => {
       match (create_dir_all(dir)) {
@@ -229,8 +206,6 @@ function test_create_dir_all_on_existing_path_is_ok(): test.TestOutcome {
 }
 
 function test_create_dir_all_under_a_file_is_an_error(): test.TestOutcome {
-  // The failure that is still a failure: a component of the path
-  // exists as a regular file, so the chain cannot be built.
   match (temp_dir("mkdirp-notdir")) {
     Ok(dir) => {
       let blocker: string = dir + "/blocker";
@@ -269,9 +244,6 @@ function test_create_dir_all_under_a_file_is_an_error(): test.TestOutcome {
 }
 
 function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
-  // Mirrors Go's `os.RemoveAll`: missing target is fine —
-  // the postcondition (path does not exist) is already
-  // satisfied.
   match (remove_dir_all("/tmp/lang-this-dir-definitely-does-not-exist-83274")) {
     Ok(_) => {
       return test.pass();

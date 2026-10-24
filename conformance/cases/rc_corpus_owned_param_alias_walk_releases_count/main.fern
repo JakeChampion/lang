@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The tree-walk read path (`let cur = root; cur = kids[..]`) taints
-// `root` through the alias, which used to keep an owned parameter's
-// count forever: one whole trie stranded per lookup. An owned
-// parameter now spends its count unless it ESCAPED into an uncounted
-// sink. Leak-only; the leak gate holds it at zero.
+
+
+
+
+
+
+
+
 enum N { E, L(i32[]), B(N[]) }
 struct PV { len: i32, root: N, tail: i32[] }
 function leaf_for(root: N, shift: i32, i: i32): i32[] {

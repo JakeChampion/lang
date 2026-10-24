@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The container read is not the trigger: a call returning the array
-// directly breaks identically (it aborted with "array index out of
-// range" rather than SIGSEGV, which is the same corruption read
-// through a recycled length word).
+
+
+
+
+
+
+
 struct P { a: i32, b: i32 }
 function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
 function f(n: i32): i32 {

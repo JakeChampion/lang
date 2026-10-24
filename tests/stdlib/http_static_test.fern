@@ -8,16 +8,6 @@ import "std/sim";
 import "std/sim_fetch";
 import "std/sim_platform";
 
-// tests/stdlib/http_static_test.fern — std/http/static over a mock
-// platform's files: a file answered whole with its validators and media
-// type, HEAD and the methods refused; paths that would leave the directory,
-// dotfiles, a directory's index and the redirect that adds its `/`; the
-// preconditions ahead of the range; one range as a 206, an unsatisfiable
-// one as a 416, and the ones answered whole; a precompressed sibling chosen
-// by Accept-Encoding; `byte_range` and `content_type` on their own; and the
-// same handler on the simulated platform.
-
-// 1994-11-06T08:49:37Z, the files' modification time.
 function changed(): i64 {
   return 784111777 as i64;
 }
@@ -70,7 +60,6 @@ function field(r: HttpResponse, name: string): string {
   }
 }
 
-// The status, the named fields and the body.
 function shown(r: HttpResponse, names: string[]): string {
   let out: string = r.status.to_string();
   for n in names {
@@ -83,15 +72,12 @@ function test_file_whole(): test.TestOutcome {
   return test.assert_eq(shown(fetch("GET", "/a.txt", []), ["Content-Type", "ETag", "Last-Modified", "Accept-Ranges", "Vary", "Content-Encoding"]), "200 | text/plain; charset=utf-8 | \"784111777.0-11\" | Sun, 06 Nov 1994 08:49:37 GMT | bytes | Accept-Encoding | - | hello world");
 }
 
-// HEAD answers the GET's fields; another method is a 405 naming both.
 function test_methods(): test.TestOutcome {
   let head: HttpResponse = fetch("HEAD", "/a.txt", []);
   let post: HttpResponse = fetch("POST", "/a.txt", []);
   return test.assert_eq(head.status.to_string() + " " + field(head, "ETag") + " / " + shown(post, ["Allow"]), "200 \"784111777.0-11\" / 405 | GET, HEAD | ");
 }
 
-// A `..` segment, a NUL and a dotfile are 404s, as are a missing file and
-// a file asked for as a directory; `Options.dotfiles` serves the dotfile.
 function test_paths_refused(): test.TestOutcome {
   let got: string = "";
   for p in ["/../a.txt", "/docs/../../a.txt", "/docs/..", "/a.txt\x00", "/.env", "/docs/.env", "/missing", "/a.txt/"] {
@@ -101,15 +87,10 @@ function test_paths_refused(): test.TestOutcome {
   return test.assert_eq(got + fetch_with(dotted, "GET", "/.env", []).body_string(), "404 404 404 404 404 404 404 404 SECRET=1");
 }
 
-// `.` segments and repeated slashes name the same file; the path is the
-// serve loop's decoding, so a `%` in it is a `%` in the name.
 function test_paths_cleaned(): test.TestOutcome {
   return test.assert_eq(fetch("GET", "//./a.txt?x=1", []).body_string() + " " + fetch("GET", "/100%.txt", []).body_string(), "hello world percent");
 }
 
-// A directory without its `/` is a 301 to the path with it, the query
-// kept and the segment encoded again, since the path arrives decoded; with
-// it, its index; with no index, or no index file, a 404.
 function test_directories(): test.TestOutcome {
   let moved: HttpResponse = fetch("GET", "/docs?lang=en", []);
   let none: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), index: "" } };
@@ -119,9 +100,6 @@ function test_directories(): test.TestOutcome {
   return test.assert_eq(got, "301 docs/?lang=en | 200 | text/html; charset=utf-8 | <h1>docs</h1> | 404 404 | My%20Docs/ a%0Db%3Ac/?x");
 }
 
-// The preconditions come first: a current copy is a 304 carrying the
-// fields RFC 9110 §15.4.5 lists, even with a range that could not be
-// satisfied; a failed If-Match a 412.
 function test_preconditions(): test.TestOutcome {
   let tag: string = "\"784111777.0-11\"";
   let a: HttpResponse = fetch("GET", "/a.txt", ["If-None-Match", tag, "Range", "bytes=50-"]);
@@ -137,9 +115,6 @@ function test_range_one(): test.TestOutcome {
   return test.assert_eq(got, "206 | bytes 0-4/11 | text/plain; charset=utf-8 | hello / 206 | bytes 6-10/11 | world / 206 | bytes 6-10/11 | world");
 }
 
-// Past the end is a 416 naming the size; a range that does not parse,
-// another unit, ranges overlapping past the file's size, a HEAD and a
-// repeated field are answered whole.
 function test_range_whole_or_none(): test.TestOutcome {
   let got: string = shown(fetch("GET", "/a.txt", ["Range", "bytes=11-"]), ["Content-Range"]);
   for r in ["bytes=a-b", "bytes=5-2", "items=0-1", "bytes=0-10, 0-10", "bytes="] {
@@ -150,10 +125,6 @@ function test_range_whole_or_none(): test.TestOutcome {
   return test.assert_eq(got, "416 | bytes */11 |  200 200 200 200 200 200 200");
 }
 
-// Several ranges are a 206 whose body is `multipart/byteranges` (RFC 9110
-// §14.6), each part under the file's media type and its own Content-Range,
-// the mock's random bits making the boundary; of several ranges only one
-// satisfiable is a plain 206 of it.
 function test_multipart(): test.TestOutcome {
   let b: string = "00000000000000000000000000000000";
   let part: string = "Content-Type: text/plain; charset=utf-8\r\nContent-Range: ";
@@ -163,7 +134,6 @@ function test_multipart(): test.TestOutcome {
   return test.assert_eq(got + " / " + one, want + " / 206 | bytes 0-1/11 | he");
 }
 
-// `Options.max_ranges` bounds the parts; past it the file goes whole.
 function test_max_ranges(): test.TestOutcome {
   let two: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), max_ranges: 2 } };
   let a: HttpResponse = fetch_with(two, "GET", "/a.txt", ["Range", "bytes=0-0, 2-2"]);
@@ -171,8 +141,6 @@ function test_max_ranges(): test.TestOutcome {
   return test.assert_eq(a.status.to_string() + " " + b.status.to_string() + " " + b.body_string(), "206 200 hello world");
 }
 
-// If-Range honours the range only for the current strong tag or the exact
-// modification time.
 function test_if_range(): test.TestOutcome {
   let got: string = "";
   for v in ["\"784111777.0-11\"", "\"old\"", "Sun, 06 Nov 1994 08:49:37 GMT", "Sun, 06 Nov 1994 08:49:38 GMT"] {
@@ -181,8 +149,6 @@ function test_if_range(): test.TestOutcome {
   return test.assert_eq(got, "206 200 206 200 ");
 }
 
-// The sibling Accept-Encoding ranks highest is sent with its coding and its
-// own tag, under the file's media type; identity when none is acceptable.
 function test_precompressed(): test.TestOutcome {
   let names: string[] = ["Content-Encoding", "Content-Type", "ETag"];
   let got: string = shown(fetch("GET", "/a.txt", ["Accept-Encoding", "gzip"]), names);
@@ -192,15 +158,12 @@ function test_precompressed(): test.TestOutcome {
   return test.assert_eq(got, "200 | gzip | text/plain; charset=utf-8 | \"784111777.0-8-gzip\" | GZ-BYTES / 200 | br | text/plain; charset=utf-8 | \"784111777.0-9-br\" | BR-BYTES! / hello world / hello world");
 }
 
-// A range of a precompressed response is a range of the sibling's bytes;
-// no `precompressed` codings means no siblings and no `Vary`.
 function test_precompressed_range_and_off(): test.TestOutcome {
   let plain: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), precompressed: [] } };
   let got: string = shown(fetch("GET", "/a.txt", ["Accept-Encoding", "gzip", "Range", "bytes=0-1"]), ["Content-Range"]);
   return test.assert_eq(got + " / " + shown(fetch_with(plain, "GET", "/a.txt", ["Accept-Encoding", "gzip"]), ["Vary", "Content-Encoding"]), "206 | bytes 0-1/8 | GZ / 200 | - | - | hello world");
 }
 
-// `Options.cache_control` rides on every file response and on its 304.
 function test_cache_control(): test.TestOutcome {
   let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, max_age: Some(3600 as i64) };
   let d: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), cache_control: Some(cc) } };
@@ -209,8 +172,6 @@ function test_cache_control(): test.TestOutcome {
   return test.assert_eq(field(a, "Cache-Control") + " / " + b.status.to_string() + " " + field(b, "Cache-Control"), "public, max-age=3600 / 304 public, max-age=3600");
 }
 
-// `serve_path` takes a decoded path relative to the directory, as a
-// router's rest parameter is.
 function test_serve_path(): test.TestOutcome {
   let m: mock_platform.MockPlatform = site();
   let d: static.Dir = static.dir("www");
@@ -243,9 +204,6 @@ function range_shown(r: static.Range): string {
   }
 }
 
-// RFC 9110 §14.1.2 against a 100-byte representation, and an empty one:
-// ranges past the end dropped from a set, several kept in the order asked,
-// and the sets declined whole.
 function test_byte_range(): test.TestOutcome {
   let got: string = "";
   for v in ["bytes=0-99", "bytes=0-", "bytes=99-", "bytes=100-", "bytes=-1", "bytes=-0", "bytes=-500", "BYTES = 1-2", "bytes=1-2,", "bytes=200-300, 5-6", "bytes=200-, 300-", "bytes=99999999999999999999999-", "bytes=10-19, 0-4, -5", "bytes=0-99, 0-99", "bytes=0-1, x"] {
@@ -263,8 +221,6 @@ function test_content_type(): test.TestOutcome {
   return test.assert_eq(got, "text/javascript; charset=utf-8 | application/wasm | image/png | font/woff2 | application/json | application/octet-stream | application/octet-stream | application/octet-stream | ");
 }
 
-// The simulated platform answers `stat` from the files the test set and
-// its clock, so the same handler runs there.
 function test_sim_platform(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));

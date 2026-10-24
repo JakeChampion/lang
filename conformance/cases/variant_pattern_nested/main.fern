@@ -1,11 +1,11 @@
 import "core/int";
 import "std/i32";
 
-// Named-field variant patterns with renaming and `..` where patterns nest: in
-// a payload slot (`Some(Rect { w: ww, .. })`), and with a sub-pattern in a
-// field (`Rect { w: 0, .. }`, `Tagged { tag: Some(t), .. }`). A field's
-// sub-pattern makes the arm refutable, so the later `..` arm for the same
-// variant still runs for the values it turns away.
+
+
+
+
+
 enum Shape {
     Circle { r: i32 },
     Rect { w: i32, h: i32 },

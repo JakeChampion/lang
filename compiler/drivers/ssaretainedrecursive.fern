@@ -1,5 +1,3 @@
-// Actual generated recursive helpers remain outside the leaf proof. A
-// parameter schema or an alignment annotation cannot certify their effects.
 import "../asmcore";
 import "../asm_ir";
 import "../asm_arm64_ir";
@@ -36,8 +34,6 @@ function find(rows: ssaprepare.Emitted[], name: string): i32 {
 }
 
 function loaded_link(row: ssaprepare.Emitted): void {
-  // Match identities in the actual final graph, not the numeric IDs or
-  // offsets printed by an earlier diagnostic capture.
   let calls = 0;
   for block in row.body.formed.f.blocks {
     for op in block.insts {

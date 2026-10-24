@@ -1,5 +1,3 @@
-// Resolve retained native rows without relowering or substituting old bodies.
-// A successful binding is not an ownership proof or a whole-module certificate.
 import "./asmcore";
 import "./ircore";
 import "./ssaprepare";
@@ -47,8 +45,6 @@ function target_binding(found: ssaprepare.Emitted[], name: string, architecture:
   if (architecture != "arm64" && architecture != "x86-64" || row.context.architecture != architecture) {
     return Binding { rows: [], error: "mismatched native architecture" };
   }
-  // Even a disabled entry must agree with the actual selection inputs.
-  // This consistency check is necessary, but does not prove entry effects.
   let c = row.context;
   let expected = ircore.release_entry(row.body.lowered, c.architecture, c.rc_free_debug, c.reg_entries);
   if (row.release_entry.counted != expected.counted || row.release_entry.unique_drop != expected.unique_drop) {
@@ -57,19 +53,12 @@ function target_binding(found: ssaprepare.Emitted[], name: string, architecture:
   return Binding { rows: found, error: "" };
 }
 
-// Scoped composition under the ordinary, untagged record-pointer ABI. This
-// proves the supplied release/Drop pair, not a runtime implementation or an
-// arbitrary function with a counted suffix. No caller-supplied proof flag.
 pub function release(rows: ssaprepare.Emitted[], name: string, drop: string, architecture: string, parent: typeinfo.Type): Binding {
   let r = binding(rows, name, architecture);
   let d = resolve(rows, drop, architecture);
   return release_pair(r, d, parent);
 }
 
-// Derive the ordinary record ABI from the SAME selected helper descriptors.
-// Descriptors identify construction inputs, not effects: the complete formed
-// bodies, each producer's schema and native entry must still pass below.
-// Like other selected APIs, this requires integrity of the supplied carrier.
 pub function release_selected(rows: ssaprepare.Emitted[], name: string, drop: string, architecture: string): Binding {
   let r = binding(rows, name, architecture);
   let d = resolve(rows, drop, architecture);
@@ -111,14 +100,6 @@ function release_pair(r: Binding, d: Binding, parent: typeinfo.Type): Binding {
 }
 
 function release_entry(row: ssaprepare.Emitted, drop: ssaprepare.Emitted): Binding {
-  // Both fields already agree with the actual LowerResult and PRE context.
-  // For untagged records, low pointers and negative RC skip both operations;
-  // RC>1 skips Drop and decrements once. These are exactly the proved body's
-  // shared paths. RC==0 enters that SAME body and retains runtime underflow.
-  // ARM RC==1 also enters it. The x86 shortcut must invoke the SAME proved
-  // Drop, then __fern_rc_dec (mapped to __fn___fern_arr_dec.u, past the floor
-  // test the shortcut already made), on the saved parent pointer and return
-  // zero, matching the body's unique path.
   let entry = row.release_entry;
   if (entry.unique_drop != "" && entry.unique_drop != drop.label_name) {
     return Binding { rows: [], error: "mismatched proved release entry Drop" };

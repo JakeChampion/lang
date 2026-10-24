@@ -1,6 +1,6 @@
-// `load` reads the lanes at an index of an array, and `with` answers the
-// array with them written there, leaving any other holder of the array as it
-// was. An f32 array takes an f32x4 the same way.
+
+
+
 import "std/f64";
 
 function total(xs: f64[]): f64 {

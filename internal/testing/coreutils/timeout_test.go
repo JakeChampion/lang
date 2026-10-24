@@ -6,70 +6,16 @@ import (
 	"testing"
 )
 
-// timeout(1) runs a command with a deadline, and almost everything worth
-// testing is about what happens at the deadline rather than before it.
-//
-// Six things are worth knowing before reading the cases.
-//
-//   - **The status after a timeout is 124, except when the command was
-//     KILLED.** `--foreground -s HUP` is 124 and `--foreground -s KILL` is
-//     137; a `-k` grace period that expires is 137 too, even when the first
-//     signal delivered nothing (`-s 0 -k G`). `--preserve-status` passes the
-//     command's own status through instead, so a TERMed command is 143.
-//   - **Without `--foreground`, timeout puts ITSELF in a new process group**
-//     and signals the group, so the signal comes back to it. It ignores the
-//     signal first, which SIGKILL and SIGSTOP do not allow — so `-s KILL`
-//     takes timeout down with the command (the shell sees it killed by 9,
-//     which is the same 137) and `-s STOP` would stop it, leaving nothing
-//     running to send the SIGCONT that resumes the command. There is
-//     therefore no STOP case here: it hangs on both sides by construction.
-//   - **A stop signal is followed by a SIGCONT, in group mode only.**
-//     `-s TSTP` recovers and reports 124 by default; `--foreground -s TSTP`
-//     hangs, which is again a case no corpus can hold.
-//   - **A DURATION of 0 disables its timeout** and `-k 0` disables the
-//     kill-after, so both wait the command out.
-//   - **Option parsing stops at the first operand** — `timeout 1 -v CMD`
-//     tries to exec `-v` — and the only ambiguous long prefix is `--v`,
-//     between `--verbose` and `--version`.
-//   - **`-s 0` is accepted**, names kill's deliver-nothing check, and `-v`
-//     spells it `EXIT`. `env --block-signal=0` refuses the same spelling;
-//     this is timeout's own rule.
-//
-// TIMING. Every case is built so the two outcomes are far apart: a command
-// that must outlive its deadline sleeps for seconds against a deadline of
-// 0.05s, and one that must finish first is `true` against a deadline of
-// seconds. A command that has to SURVIVE the signal sleeps only briefly,
-// because the case then waits for it.
-
 func init() {
 	registerCorpus("timeout", timeoutCases)
 }
 
-// timeoutIgnoresTerm is a command that blocks SIGTERM and then outlives its
-// deadline and its grace period: the only thing that ends it early is the
-// KILL a `-k` expiry sends. /bin/sh rather than a coreutils binary because
-// trapping a signal is what a shell is for, and it is the same interpreter on
-// both sides.
-//
-// Two seconds rather than a comfortable thirty, because the sleep is a
-// GRANDCHILD and `--foreground` signals the command's pid alone: the shell
-// dies and the sleep is orphaned still holding the stdout pipe, so the
-// harness's read does not finish until it exits. Both sides wait the same
-// way, so the case is honest either way — it is only the suite's time. Two
-// seconds is well past the trapDeadline plus the 0.2 grace period.
 func timeoutIgnoresTerm() []string {
 	return []string{"/bin/sh", "-c", `trap "" TERM; sleep 2`}
 }
 
-// trapDeadline is the duration the kill-after cases give timeoutIgnoresTerm.
-// A TERM that lands before the shell has run its trap kills the shell, and
-// the run exits 124 with no KILL, so the deadline has to outlast the shell's
-// startup on a loaded runner (#10070).
 const trapDeadline = "0.5"
 
-// timeoutExecTree is the fixture for the exec-failure cases: the two ways a
-// command can be there and still not run. A directory and a file without the
-// execute bit are both EACCES (126) where a missing name is ENOENT (127).
 func timeoutExecTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -89,7 +35,6 @@ func timeoutCases(t *testing.T) []invocation {
 	trueBin := referenceBin(t, "true")
 	execDir := timeoutExecTree(t)
 
-	// ---- the operands ----
 	add(invocation{name: "no arguments"})
 	add(invocation{name: "a duration and no command", args: []string{"1"}})
 	add(invocation{name: "dashdash alone", args: []string{"--"}})
@@ -101,7 +46,6 @@ func timeoutCases(t *testing.T) []invocation {
 	add(invocation{name: "an empty command", args: []string{"1", ""}})
 	add(invocation{name: "the duration after dashdash", args: []string{"--", "5", trueBin}})
 
-	// ---- the duration grammar, which is strtold plus one suffix byte ----
 	for _, d := range []string{"1s", "1m", "1h", "1d", "1e2", ".5", "5.", "+1", " 1", "0x1", "inf", "007", "1.5"} {
 		add(invocation{name: "duration " + d, args: []string{d, trueBin}})
 	}
@@ -113,11 +57,9 @@ func timeoutCases(t *testing.T) []invocation {
 	add(invocation{name: "a negative duration is an option", args: []string{"-1", trueBin}})
 	add(invocation{name: "negative zero is an interval", args: []string{"--", "-0", trueBin}})
 
-	// ---- a zero duration disables the timeout ----
 	add(invocation{name: "zero waits the command out", args: []string{"0", sleepBin, "0.2"}})
 	add(invocation{name: "zero with a kill-after", args: []string{"-k", "0.2", "0", "/bin/sh", "-c", `trap "" TERM; sleep 0.2`}})
 
-	// ---- the timeout itself ----
 	add(invocation{name: "the command times out", args: []string{"0.05", sleepBin, "30"}})
 	add(invocation{name: "verbose names the signal", args: []string{"-v", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the long verbose spelling", args: []string{"--verbose", "0.05", sleepBin, "30"}})
@@ -126,7 +68,6 @@ func timeoutCases(t *testing.T) []invocation {
 	add(invocation{name: "foreground times out too", args: []string{"--foreground", "0.05", sleepBin, "30"}})
 	add(invocation{name: "foreground and verbose", args: []string{"--foreground", "-v", "0.05", sleepBin, "30"}})
 
-	// ---- the signal ----
 	for _, s := range []string{"TERM", "term", "SIGTERM", "sigterm", "SigTerm", "15", "015"} {
 		add(invocation{name: "signal " + s, args: []string{"-v", "-s", s, "0.05", sleepBin, "30"}})
 	}
@@ -134,40 +75,27 @@ func timeoutCases(t *testing.T) []invocation {
 	add(invocation{name: "signal 9", args: []string{"-v", "-s", "9", "0.05", sleepBin, "30"}})
 	add(invocation{name: "signal KILL in the foreground", args: []string{"--foreground", "-v", "-s", "KILL", "0.05", sleepBin, "30"}})
 	add(invocation{name: "signal HUP in the foreground", args: []string{"--foreground", "-v", "-s", "HUP", "0.05", sleepBin, "30"}})
-	// A signal the command SURVIVES, so the case waits it out: the status is
-	// still 124, and the `-v` line still names what was sent.
 	add(invocation{name: "signal zero delivers nothing", args: []string{"-v", "-s", "0", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "signal CONT is survivable", args: []string{"-v", "-s", "CONT", "0.05", sleepBin, "0.3"}})
-	// A stop signal, which the group-mode SIGCONT recovers from.
 	add(invocation{name: "a stop signal is resumed", args: []string{"-v", "-s", "TSTP", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "a realtime signal", args: []string{"-v", "-s", "RTMIN", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "a realtime signal with an offset", args: []string{"-v", "-s", "RTMIN+1", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "the top of the realtime range", args: []string{"-v", "-s", "RTMAX", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "a number in the realtime range", args: []string{"-v", "-s", "64", "0.05", sleepBin, "0.3"}})
-	// A wait status names the signal that produced it, so these three are
-	// SIGKILL by another name and get the KILL shape.
 	add(invocation{name: "a wait status is a signal", args: []string{"-v", "-s", "137", "0.05", sleepBin, "30"}})
 	add(invocation{name: "SIG and a number", args: []string{"-v", "-s", "SIG9", "0.05", sleepBin, "30"}})
-	// Signal 0 delivers nothing, and -v prints its name, so these also pin
-	// EXIT as the name of 0 rather than a special case in timeout.
 	add(invocation{name: "EXIT is signal zero", args: []string{"-v", "-s", "EXIT", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "a number masking to zero", args: []string{"-v", "-s", "256", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "an unbounded number masking to zero", args: []string{"-v", "-s", "2000000000", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "the last signal wins", args: []string{"-v", "-s", "KILL", "-s", "TERM", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the long signal spelling", args: []string{"-v", "--signal=TERM", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the signal glued to the letter", args: []string{"-v", "-sTERM", "0.05", sleepBin, "30"}})
-	// LOST and UNUSED are kernel-UAPI names glibc never defines, so GNU
-	// refuses them; the shared table accepted them until #9643.
-	// SIG137 and 393 are the shared operand2sig grammar (#9652): the mask is
-	// in the digit arm, so a SIG prefix never reaches it, and the mask at 255
-	// and above is 0xFF — 393 & 0xFF is 137, which no signal is.
 	for _, s := range []string{"BOGUS", "99999", "32", "33", "65", "", " TERM", "TERM ", "0x0", "+0", "-1", "int ", "LOST", "UNUSED", "SIG137", "393", "2147483648"} {
 		add(invocation{name: "bad signal " + s, args: []string{"-s", s, "1", trueBin}})
 	}
 	add(invocation{name: "zero is a signal", args: []string{"-s", "0", "5", trueBin}})
 	add(invocation{name: "two zeros are still signal zero", args: []string{"-s", "00", "5", trueBin}})
 
-	// ---- the kill-after grace period ----
 	add(invocation{name: "the kill-after is not needed", args: []string{"-v", "-k", "0.3", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the kill-after expires", args: append([]string{"-v", "-k", "0.2", trapDeadline}, timeoutIgnoresTerm()...)})
 	add(invocation{name: "the kill-after expires quietly", args: append([]string{"-k", "0.2", trapDeadline}, timeoutIgnoresTerm()...)})
@@ -183,14 +111,12 @@ func timeoutCases(t *testing.T) []invocation {
 	}
 	add(invocation{name: "a bad kill-after beats a bad duration", args: []string{"-k", "x", "y", trueBin}})
 
-	// ---- exec failures ----
 	add(invocation{name: "a command that is not there", args: []string{"5", "no-such-command-here"}})
 	add(invocation{name: "a path that is not there", args: []string{"5", "./no-such-command-here"}})
 	add(invocation{name: "a file without the execute bit", args: []string{"5", filepath.Join(execDir, "unreadable")}})
 	add(invocation{name: "a directory", args: []string{"5", filepath.Join(execDir, "adir")}})
 	add(invocation{name: "a directory named as a dot", args: []string{"5", "."}})
 
-	// ---- option parsing ----
 	add(invocation{name: "an unknown short option", args: []string{"-z", "1", trueBin}})
 	add(invocation{name: "an unknown long option", args: []string{"--bogus", "1", trueBin}})
 	add(invocation{name: "an ambiguous long prefix", args: []string{"--v", "1", trueBin}})
@@ -217,10 +143,6 @@ func TestTimeout(t *testing.T) {
 	requireParity(t, "timeout", timeoutCases(t))
 }
 
-// The two options whose TEXT is ours by design (docs/COREUTILS.md).
-// Everything else about them still has to match, including that `--help`
-// beats a later usage error and loses to an earlier one. `--v` is NOT here:
-// it is ambiguous for this utility, so it belongs in the corpus above.
 func TestTimeoutHelpVersion(t *testing.T) {
 	requireHelp(t, "timeout", []string{"--help"}, 0)
 	requireHelp(t, "timeout", []string{"--h"}, 0)

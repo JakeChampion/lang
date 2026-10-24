@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// --- A struct declared inside a block (#6127) ---------------------------------
-//
-// A struct local declared inside a `while` body is released when its block
-// ends — the box and its rc fields — so `S { xs: i32[], n: i32 }` over 100
-// rounds reaches live_bytes 0.
-//
-// The field drop is the hazardous half. When a block-scoped struct's FIELD is
-// moved out — `let lo: StringLitOut = add_string_lit(s, ..); s = lo.state;` —
-// the field must not be freed under its new owner: a read of a nested-struct /
-// array / string field is a move, not a borrow. Getting that wrong segfaulted
-// the gen1 self-compile while every differential probe program still agreed
-// with the oracle, which is why the fixpoint runs FIRST on a reclaim change and
-// not last.
-
 func TestSelfHostBlockScopedStructBoxX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -50,7 +36,6 @@ func TestSelfHostBlockScopedStructBoxX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// The box and its `xs` buffer are both reclaimed.
 	t.Run("struct_declared_in_a_loop", func(t *testing.T) {
 		src := `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -86,7 +71,6 @@ function main(): i32 {
 		}
 	})
 
-	// A scalar-only struct has no field drop to withhold, so it reaches zero.
 	t.Run("scalar_only_struct_in_a_loop_reaches_zero", func(t *testing.T) {
 		src := `struct S { a: i32, b: i32 }
 function round(r: i32): i32 {
@@ -116,17 +100,6 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostBlockScopedStructBoxHazardsX86_64 — block-scoped shapes whose box
-// is not the sole owner. Each keeps a live reference past the block and reads it
-// after, so a wrongly-granted free is a use-after-free rather than a leak.
-//
-// Free counts are exact and pinned at what this build produces (every row
-// reclaims all it allocates); `__rc_underflow_count()` is asserted separately,
-// because only the counter tells a safe release from one landing on a live box.
-// An initial `held` takes the round number, so it is a heap box rather than a
-// static one.
-//
-// Every `want` is from `fern -interp`.
 func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -141,10 +114,6 @@ func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
 		wantFrees int64
 	}{
 		{
-			// Each block-scoped box is moved into a container read after
-			// the loop. The exit code (a read of every element after the
-			// loop) says the release lands after the last live use rather
-			// than under it.
 			name: "boxes_escape_into_an_outer_container",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -164,9 +133,6 @@ function round(r: i32): i32 {
 			wantFrees: 900,
 		},
 		{
-			// Aliased to a local that outlives the block and is read after
-			// it. The typed lowering reclaims every block, allocs == frees;
-			// the answer (57) is what says no release landed under `held`.
 			name: "aliased_to_an_outer_local",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -185,9 +151,6 @@ function round(r: i32): i32 {
 			wantFrees: 900,
 		},
 		{
-			// Returned out of the block to the caller. Every block is
-			// reclaimed, allocs == frees, and the answer agrees with
-			// interp.
 			name: "returned_from_inside_the_block",
 			body: `struct S { xs: i32[], n: i32 }
 function build(r: i32): S {
@@ -207,7 +170,6 @@ function round(r: i32): i32 {
 			wantFrees: 800,
 		},
 		{
-			// Passed to a callee that keeps it.
 			name: "passed_to_a_callee_that_keeps_it",
 			body: `struct S { xs: i32[], n: i32 }
 @noinline function keepit(s: S): S { return s; }
@@ -227,8 +189,6 @@ function round(r: i32): i32 {
 			wantFrees: 900,
 		},
 		{
-			// The FIELD extracted out of the block and read after the loop;
-			// every block is reclaimed.
 			name: "field_extracted_out_of_the_block",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {

@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// An enum local rebound through a counted handback — `cur = f(cur)` where f
-// returns its parameter — keeps its release (#10447): the result is the
-// local's own chain with one more count, and the rebind gives the old count
-// back.
-
 const enumRebindHead = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 function k_of(r: i32): i32 { return r % 7; }
@@ -48,7 +43,6 @@ var enumSelfRebindRows = []leakRow{
         cs = hb_sc_param(o);
         t = t + cs.val() + o.val();
 `), true},
-	// Rebinds inside a branch are admitted when each is an "ENUM:" call.
 	{"sc_cond", enumRebindLoop(`        let cs: Sc = mk_sc(r);
         let o: Sc = mk_sc(r + 1);
         if (r % 2 == 0) {
@@ -66,8 +60,6 @@ var enumSelfRebindRows = []leakRow{
         }
         t = t + cs.val();
 `), true},
-	// A rebind to another local inside a branch is not a counted call, so the
-	// local keeps no credit rather than being released alongside the lender.
 	{"sc_cond_alias", enumRebindLoop(`        let cs: Sc = mk_sc(r);
         let o: Sc = mk_sc(r + 1);
         if (r % 2 == 0) {
@@ -75,14 +67,11 @@ var enumSelfRebindRows = []leakRow{
         }
         t = t + cs.val() + o.val();
 `), false},
-	// Handing back another local's chain keeps the rc local out of the fresh
-	// family: the result is not its own chain.
 	{"rc_other", enumRebindLoop(`        let cur: Rc = mk_rc(r);
         let o: Rc = mk_rc(r + 1);
         cur = hb_rc_param(o);
         t = t + rval(cur) + rval(o);
 `), false},
-	// Two handback positions, only one of them the local itself.
 	{"rc_pick_mixed", enumRebindLoop(`        let cur: Rc = mk_rc(r);
         let o: Rc = mk_rc(r + 1);
         cur = hb_rc_pick(cur, o, r % 2 == 0);

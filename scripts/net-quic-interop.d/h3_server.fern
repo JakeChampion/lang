@@ -1,9 +1,3 @@
-// An HTTP/3 server over UDP for one connection: answers every request
-// with 200, a body naming its method and path and how many body bytes it
-// carried, and a trailer; exits 0 once the connection is done after
-// answering at least one request.
-//   h3_server PORT CERT.pem KEY.pem
-// It prints a line once its socket is bound, which the script waits on.
 import "std/net";
 import "std/quic/conn";
 import "std/quic/packet";
@@ -28,8 +22,6 @@ function answer(req: HttpRequest): HttpResponse {
   return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new().append("content-type", "text/plain"), trailers: headers.header_map_new().append("x-served-by", "fern"), background: None };
 }
 
-// served answers the requests the connection reported, and prints how it
-// ended.
 function served(s: Server, c: h3q.Conn): Server {
   let evs: h3q.Event[] = c.events;
   let cur: h3q.Conn = c.events_taken();

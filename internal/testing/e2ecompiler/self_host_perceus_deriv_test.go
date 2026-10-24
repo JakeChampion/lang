@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// Taylor coefficients of exp((1+t)*log(1+t)) give an independent analytic
-// oracle for successive derivatives of x^x at x=1, without expression rewrites.
 func perceusDerivAtOne(n int) int64 {
 	h := make([]*big.Rat, n+1)
 	f := make([]*big.Rat, n+1)
@@ -126,8 +124,6 @@ function main(): i32 {
 	for i, tc := range cases {
 		fmt.Fprintf(&src, "if (!same(deriv.%s, %s)) { return %d; }\n", qualify.Replace(tc.call), qualify.Replace(tc.expected), i+1)
 	}
-	// Counts from the committed arbitrary-precision DAG audit; no memoization
-	// is used by the benchmark. The independent Taylor oracle checks its value.
 	counts := []int64{2, 6, 22, 90, 420, 2202, 12886}
 	src.WriteString("let original: deriv.Expr = deriv.Pow(deriv.Var(\"x\"), deriv.Var(\"x\"));\nlet e: deriv.Expr = original;\n")
 	for i, count := range counts {

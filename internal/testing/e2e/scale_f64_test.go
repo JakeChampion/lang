@@ -4,36 +4,6 @@ import (
 	"testing"
 )
 
-// __scale_f64 is the eighth kernel of docs/ATLAS-PLATFORM-PLAN.md §3, and the
-// first over an ARRAY rather than a string, with a buffer out rather than a
-// scalar: it allocates its result, header and all, so the caller owns one
-// fresh f64[] per call.
-//
-// It ships SCALAR on all eight backends at once, which is §3.4's step 1, and
-// this corpus is written while every body is still one multiply per element
-// so that it is not written to fit whatever the vector code later does.
-//
-// What a port of a buffer-out kernel gets wrong, and none of it is the
-// arithmetic:
-//
-//   - the HEADER. cap, rc and len sit at data-12 / -8 / -4 on every native
-//     backend, and the length is what every later read and the release
-//     consult; a body that writes the length into the wrong slot passes the
-//     first element read and fails `len()`.
-//   - the TAIL. A vector body handles a whole block at a time, so lengths
-//     that are not a multiple of the lane count are the ones that lose an
-//     element or write one past the end. The sweep covers 0..40 and the
-//     boundaries of a two- and four-lane block.
-//   - the ALLOCATION. Exactly one, for the result: a body that appends
-//     element by element allocates the geometric regrows too, and one that
-//     writes into its input allocates none and corrupts the caller. The
-//     native legs count allocations across the call.
-//   - the INPUT. It is borrowed, so it must read the same after the call,
-//     and the result must be a different buffer.
-//
-// The program is self-checking against a Fern reference loop and prints its
-// verdict, 42 for every check passed, so the same source runs on every leg
-// and the corpus runners' exit-0 convention holds.
 const scaleF64Body = `import "std/array";
 import "std/i32";
 
@@ -123,13 +93,10 @@ function verdict(): i32 {
 }
 `
 
-// The verdict as the exit status, for the legs that read one.
 const scaleF64Src = scaleF64Body + `
 function main(): i32 { return verdict(); }
 `
 
-// The verdict printed, for the corpus runners that require exit 0 and hand
-// back stdout.
 func TestInterpScaleF64(t *testing.T) {
 	if got := runInterpExit(t, scaleF64Src); got != 42 {
 		t.Errorf("__scale_f64 on interp = %d, want 42 (see scaleF64Src for what each code means)", got)

@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The literal motivating builtin. buf_push memcpys the bytes
-// past the builder's tail and returns void, so the fresh concat
-// argument nets to zero owners after the caller's dec
-// (measured 101/1 before, 101/101 after).
+
+
+
+
+
+
+
 struct St { h: usize }
 
 @noinline

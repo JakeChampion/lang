@@ -7,23 +7,6 @@ import (
 	"testing"
 )
 
-// urlCases bundle the full std/url module plus a main and check the exit code.
-// query_parse exercises Map[string, string[]] with the get → Option[string[]] →
-// .len() / .append() path that depends on the Map value-type inference.
-//
-// `-no-treeshake` is essential, and it is what keeps these cases meaning
-// what their name says. asm_load_run prunes to what `main` reaches by default,
-// which for a main that only calls `url_parse` is 21 functions and NONE of
-// url's real ones — `query_parse` and `query_encode` both pruned away. The
-// cases would still pass, having stopped compiling the module they exist to
-// compile. Un-pruned it is 107 functions on x86-64 and 118 on arm64, with
-// `query_encode` — the `(string, string)[]` parameter destructured per element,
-// which is the shape #8745 is about — among them.
-//
-// std/url.fern `import "core/map"` (since #1576), so these need a LOADING
-// driver: the stdin bundle drivers — asm_run / asm_ir_run — resolve no
-// imports, and say so: "asm_run has no module loader; UNRESOLVED imports:
-// core/map … to judge this program use a loading driver".
 var urlCases = []struct {
 	name string
 	main string
@@ -35,9 +18,6 @@ var urlCases = []struct {
 	{"query-has", `let m: Map[string,string[]] = query_parse("x=9"); if (m.contains("x") && !m.contains("z")) { return 5; } return 0;`, 5},
 }
 
-// urlEntry writes std/url.fern plus `mainBody` to a fresh directory and returns
-// the entry path, for a loading driver to resolve `core/map` under the stdlib
-// root rather than being handed a bundle on stdin.
 func urlEntry(t *testing.T, mainBody string) string {
 	t.Helper()
 	src, err := os.ReadFile("../../stdlib/std/url.fern")
@@ -53,7 +33,6 @@ func urlEntry(t *testing.T, mainBody string) string {
 	return entry
 }
 
-// urlStdlibRoot is the root a loading driver resolves `core/…` under.
 func urlStdlibRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("../../stdlib")
@@ -63,8 +42,6 @@ func urlStdlibRoot(t *testing.T) string {
 	return root
 }
 
-// TestSelfHostUrlX86_64 compiles std/url + a main with the self-hosted
-// x86-64 compiler and checks exit codes.
 func TestSelfHostUrlX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -96,7 +73,6 @@ func TestSelfHostUrlX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostUrlArm64 — CI-gated arm64 counterpart.
 func TestSelfHostUrlArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

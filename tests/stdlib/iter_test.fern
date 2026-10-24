@@ -1,13 +1,8 @@
 import "std/test";
 import "core/iter" as iter;
 
-// tests/stdlib/iter_test.fern — pure-Fern coverage of the core/iter
-// stdlib (the generic Iterator[T] protocol + Range / ArrayIter, the free
-// reducers and the Iterator methods), driven through the std/test runner. The Go-side
-// *_test.go suites unit-test each piece; this is the migration-shaped
-// (pure-Fern) companion, exercising the surface end-to-end via assertions.
 function test_sum_range(): test.TestOutcome {
-  return test.assert_eq(iter.sum(iter.range(0, 5)), 10);  // 0+1+2+3+4
+  return test.assert_eq(iter.sum(iter.range(0, 5)), 10);
 }
 
 function test_len_range(): test.TestOutcome {
@@ -16,11 +11,11 @@ function test_len_range(): test.TestOutcome {
 
 function test_of_sum(): test.TestOutcome {
   let xs: i32[] = [3, 1, 4, 1, 5];
-  return test.assert_eq(iter.sum(iter.of(xs)), 14);  // array → iterator
+  return test.assert_eq(iter.sum(iter.of(xs)), 14);
 }
 
 function test_product(): test.TestOutcome {
-  return test.assert_eq(iter.product(iter.range(1, 5)), 24);  // 1*2*3*4
+  return test.assert_eq(iter.product(iter.range(1, 5)), 24);
 }
 
 function test_nth(): test.TestOutcome {
@@ -99,7 +94,7 @@ function test_map_filter(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5, 6];
   let evens = iter.of(xs).filter((x: i32): boolean => x % 2 == 0).collect();
   let doubled = iter.of(evens).map((x: i32): i32 => x * 2).collect();
-  return test.assert_eq(iter.sum(iter.of(doubled)), 24);  // (2+4+6)*2
+  return test.assert_eq(iter.sum(iter.of(doubled)), 24);
 }
 
 function main(): i32 {

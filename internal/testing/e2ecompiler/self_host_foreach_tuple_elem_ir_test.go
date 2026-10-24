@@ -8,48 +8,34 @@ import (
 	"testing"
 )
 
-// Element-type typing of a `for p in <(tuple)[]>` loop variable: `p` carries the
-// element tuple's types, so `p.N` resolves — pointer elements (string / struct)
-// included. A wrong element type is a SILENT MISCOMPILE: an INFERRED
-// `let s = p.1` (a string element) mistyped makes `s.len()` mis-read the length
-// while p.1 itself prints fine. Found by differential probing; each case is
-// oracle-checked vs the interpreter and routing-pinned to "ir".
 var foreachTupleElemIRCases = []struct {
 	name string
 	src  string
 }{
-	// The original miscompile: `p.1.len()` over an (i32, string) tuple array —
-	// 1 + 2 + 3 = 6. (`p.1` is a pointer element; the i32 element p.0 was fine.)
 	{"i32_string_p1_len", `function main(): i32 {
     let ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
     let s = 0;
     for p in ps { s = s + p.1.len(); }
     return s;
 }`},
-	// Both elements read: p.0 (i32) + p.1.len() → (1+1)+(2+2)+(3+3) = 12.
 	{"i32_string_both", `function main(): i32 {
     let ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
     let s = 0;
     for p in ps { s = s + p.0 + p.1.len(); }
     return s;
 }`},
-	// (string, string): reading the SECOND string element specifically → 2 + 3 = 5.
 	{"string_string_p1", `function main(): i32 {
     let ps: (string, string)[] = [("a", "xx"), ("bb", "yyy")];
     let s = 0;
     for p in ps { s = s + p.1.len(); }
     return s;
 }`},
-	// Inferred local off the element: `let str = p.1` (no annotation) — the exact
-	// path the miscompile took (an annotated `let str: string = p.1` masked it) → 6.
 	{"inferred_local", `function main(): i32 {
     let ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
     let s = 0;
     for p in ps { let str = p.1; s = s + str.len(); }
     return s;
 }`},
-	// A STRUCT tuple element: `p.1.name.len()` + `p.1.age` resolve through the
-	// element tuple tag → (1 + 2 + 30) + (2 + 3 + 40) = 78.
 	{"struct_elem", `struct Rec { name: string, age: i32 }
 function main(): i32 {
     let ps: (i32, Rec)[] = [(1, Rec { name: "ab", age: 30 }), (2, Rec { name: "cde", age: 40 })];

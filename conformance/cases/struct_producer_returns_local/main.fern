@@ -1,17 +1,17 @@
-// A struct producer that RETURNS A LOCAL — the ordinary way real code builds
-// a value — beside the two variants a credit must refuse: returning a
-// parameter, and returning a reassigned local. The corpus held 21
-// literal-returning producers and 3 parameter-returning ones and none of
-// this form, so every change to producer crediting swept back byte-identical
-// whether right or wrong (#7362, #7357 shape 4).
-//
-// The exits, the underflow check and keep's intact buffer are the
-// assertions — crediting pass(keep) or re()'s superseded first literal would
-// release what another owner holds. The self-host census is 903/900
-// live_bytes=120 against native's 602/602/0: a fixed residue, the strand
-// pass() leaves on its parameter, rather than the per-round class this
-// fixture was written to expose (241 B/round, 24120 bytes at 100 rounds),
-// which the #7664 widening credited.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct P { xs: i32[], s: string }
 
 function w(s: string): string { return s + ""; }

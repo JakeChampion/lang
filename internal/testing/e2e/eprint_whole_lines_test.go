@@ -1,9 +1,3 @@
-// `eprint` writes a line and its newline in one write, so processes sharing
-// a stderr never land a write inside each other's line: a write of at most
-// PIPE_BUF bytes to a pipe is atomic, and the serve supervisor's workers log
-// to the one stderr they inherit. The probe is that shape without the
-// sockets: four forked workers each printing a thousand lines, read back
-// through a pipe, every line whole and every worker's count exact.
 package e2e
 
 import (
@@ -25,8 +19,6 @@ const (
 	eprintPayloadBytes   = 100
 )
 
-// eprintWorkersSource forks the workers; each prints its lines and exits,
-// and the parent exits 0 once every worker has.
 func eprintWorkersSource() string {
 	return fmt.Sprintf(`import "core/int";
 
@@ -68,8 +60,6 @@ function main(): i32 {
 `, eprintPayloadBytes, eprintWorkers, eprintLinesPerWorker)
 }
 
-// checkWholeLines fails on any line that is not one worker's whole line,
-// and on a worker whose lines were not all seen.
 func checkWholeLines(t *testing.T, stderr string) {
 	t.Helper()
 	pay := strings.Repeat("x", eprintPayloadBytes)
@@ -117,8 +107,6 @@ func TestArm64EprintWholeLines(t *testing.T) {
 	runEprintWorkers(t, e2eharness.RunArm64Bin(qemu, bin))
 }
 
-// TestArm64DarwinEprintWholeLines is the same probe through the Darwin
-// writev(2). Off Apple Silicon the build is what is checked.
 func TestArm64DarwinEprintWholeLines(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

@@ -1,7 +1,7 @@
 import "core/int";
 
-// Only a reached registration may read this branch-local array. Replay sees
-// its replacement, not the value present when the defer was registered.
+
+
 function observe(enabled: boolean): i32 {
     let seen: i32 = 1;
     loop {

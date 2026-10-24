@@ -1,6 +1,6 @@
-// A float cast converts its operand's result. It does not bind the type
-// argument of a generic call inside it, which the argument already fixes
-// (#12976).
+
+
+
 import "std/f64";
 
 function twice[T](x: T): T {

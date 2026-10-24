@@ -2,13 +2,6 @@ import "std/metrics";
 import "std/test";
 import "std/string";
 
-// tests/stdlib/metrics_test.fern — std/metrics: a counter, a gauge and a
-// histogram rendered in the Prometheus text exposition format, the
-// histogram's cumulative buckets and `+Inf`, label values escaped, HELP and
-// TYPE written once per name, two expositions merged by summing their
-// samples (integers as integers, a float sum as a float), snapshot frames
-// split at the EOF line, and the scrape answers for the probe paths.
-
 function test_counter_renders(): test.TestOutcome {
   let c: metrics.Counter = metrics.counter("jobs_total", "Jobs taken.");
   c.inc();

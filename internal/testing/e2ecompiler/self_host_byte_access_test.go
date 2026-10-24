@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// ssa.fold_byte_access drops the extensions of a byte value and gives a byte
-// load or store at `add(a, b) + 0` the address `a + b`. The program reads
-// every byte value through each producer the pass trusts, with 128..255 in
-// the mix, so an extension dropped that was not an identity (a sign
-// extension of a byte, say) reads as a negative number and fails its check.
 const byteAccessProg = `@noinline
 function table_char(alpha: usize, v: i64): i64 {
     return __load_u8(alpha + (v >> 6 & 63 as i64) as usize) as i64 | __load_u8(alpha + (v & 63 as i64) as usize) as i64 << 8;
@@ -72,14 +67,10 @@ func TestSelfHostByteAccessFold(t *testing.T) {
 	if err := os.WriteFile(src, []byte(byteAccessProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A byte load at a sum the pass did not fold: the sum computed, then a
-	// zero materialised as the index.
 	zeroIndex := map[string]*regexp.Regexp{
 		"x86-64-linux": regexp.MustCompile(`xorl %\w+, %\w+\n\s+movzbl \(`),
 		"arm64-linux":  regexp.MustCompile(`mov x\d+, #0\n\s+ldrb `),
 	}
-	// A sign or zero extension straight after a byte load: what the pass
-	// removes.
 	extended := map[string]*regexp.Regexp{
 		"x86-64-linux": regexp.MustCompile(`movzbl [^\n]*, %(\w+)d\n\s+(movslq %(\w+)d, %(\w+)|movl %(\w+)d, %(\w+)d)\n`),
 		"arm64-linux":  regexp.MustCompile(`ldrb w(\d+), [^\n]*\n\s+(sxtw|uxtw|mov w)`),

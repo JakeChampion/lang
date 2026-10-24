@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// grownSharedSrc's `balance` returns its rotations' calls until the
-// rotations, each called once, are spliced into it; only then is it a
-// shared callee, and it is spliced into both of `ins`'s calls. Nothing calls
-// it after that, so its own body is dropped as a function spliced into every
-// caller is.
 const grownSharedSrc = `enum T { E, N(T, i32, T) }
 
 function depth(t: T): i32 {
@@ -109,10 +104,6 @@ func TestSelfHostGrownSharedCulledX86_64(t *testing.T) {
 	}
 }
 
-// updateBaseSrc's `step` returns `mk`'s result on one path and rebuilds it
-// with every field named on the other, so the result's only other use is the
-// update's base. That use keeps `mk` from being spliced there: the caller
-// does more with the box than return it.
 const updateBaseSrc = `import "std/array";
 
 struct P { a: i32[], n: i32 }
@@ -178,12 +169,6 @@ func TestSelfHostSharedSpliceSeesUpdateBaseX86_64(t *testing.T) {
 	}
 }
 
-// mutualSharedSrc's `ping` returns a record and has two callers,
-// `apart_ping` and `pong`, which only ping calls. The two recurse through
-// each other, so ping is never shared: a copy spliced into pong makes pong
-// call itself, a copy spliced into apart_ping brings a call to pong, and
-// round after round the copies multiplied, some 900 of them in apart_ping.
-// apart_ping keeps its call.
 const mutualSharedSrc = `struct Range { lo: i32, hi: i32, name: string }
 
 function ping(lo: i32, n: i32, name: string): Range {
@@ -232,9 +217,6 @@ func TestSelfHostMutualRecursionNotSharedX86_64(t *testing.T) {
 	}
 }
 
-// exhaustiveLeafSrc's `is_red` ends in the unreachable block an exhaustive
-// match leaves, and most of its blocks are the match lowering's empty jumps.
-// It is a leaf all the same, spliced at both of `probe`'s calls.
 const exhaustiveLeafSrc = `enum Color { Red, Black }
 enum Tree { Node(Color, Tree, i32, Tree), Leaf }
 

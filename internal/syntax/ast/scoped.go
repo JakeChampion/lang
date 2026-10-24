@@ -1,15 +1,5 @@
 package ast
 
-// ScopeWalker walks a function body with binder tracking, so a pass that
-// runs before the checker can tell a module-level name from a local that
-// shadows it. Every binder the parser produces — parameters, `let` and
-// destructure declarations, `for` and `match` bindings, lambda parameters —
-// opens or extends a scope; IsBound answers for the point the walk is at.
-//
-// Visit is called on every expression slot before that expression's
-// children, and may replace the slot. It returns whether to descend into
-// the (possibly replaced) expression. AfterStmt, when set, runs after a
-// statement's children have been walked.
 type ScopeWalker struct {
 	Visit     func(slot *Expr, w *ScopeWalker) bool
 	AfterStmt func(st Stmt)
@@ -20,7 +10,6 @@ func (w *ScopeWalker) pushScope() { w.bound = append(w.bound, map[string]bool{})
 
 func (w *ScopeWalker) popScope() { w.bound = w.bound[:len(w.bound)-1] }
 
-// Bind records name as bound in the innermost scope.
 func (w *ScopeWalker) Bind(name string) {
 	if name == "" || len(w.bound) == 0 {
 		return
@@ -28,7 +17,6 @@ func (w *ScopeWalker) Bind(name string) {
 	w.bound[len(w.bound)-1][name] = true
 }
 
-// IsBound reports whether name is shadowed by a binder at this point.
 func (w *ScopeWalker) IsBound(name string) bool {
 	for i := len(w.bound) - 1; i >= 0; i-- {
 		if w.bound[i][name] {
@@ -38,9 +26,6 @@ func (w *ScopeWalker) IsBound(name string) bool {
 	return false
 }
 
-// WalkFunc walks fn's parameter defaults at top-level scope, then its body
-// with the parameters bound. A default is pasted into the call site, so it
-// sees none of the parameters.
 func (w *ScopeWalker) WalkFunc(fn *FuncDecl) {
 	for i := range fn.Params {
 		if fn.Params[i].Default != nil {
@@ -55,7 +40,6 @@ func (w *ScopeWalker) WalkFunc(fn *FuncDecl) {
 	w.popScope()
 }
 
-// WalkBlock walks b's statements in a scope of their own.
 func (w *ScopeWalker) WalkBlock(b *Block) {
 	if b == nil {
 		return
@@ -67,7 +51,6 @@ func (w *ScopeWalker) WalkBlock(b *Block) {
 	w.popScope()
 }
 
-// WalkStmt walks one statement, binding what it declares.
 func (w *ScopeWalker) WalkStmt(st Stmt) {
 	switch x := st.(type) {
 	case *Block:
@@ -84,8 +67,6 @@ func (w *ScopeWalker) WalkStmt(st Stmt) {
 	case *Loop:
 		w.WalkStmt(x.Body)
 	case *For:
-		// The init's binding is in scope for the cond, the step and the
-		// body, so the frame wraps all four rather than the body alone.
 		w.pushScope()
 		if x.Init != nil {
 			w.WalkStmt(x.Init)
@@ -100,8 +81,6 @@ func (w *ScopeWalker) WalkStmt(st Stmt) {
 		w.WalkExpr(&x.Iter)
 		w.WalkExpr(&x.RangeHigh)
 		w.pushScope()
-		// A destructuring header carries its real binders on Pattern —
-		// `for (a, b) in xs` — with Var only the synthetic element holder.
 		w.Bind(x.Var)
 		if x.Pattern != nil {
 			w.WalkStmt(x.Pattern)
@@ -113,8 +92,6 @@ func (w *ScopeWalker) WalkStmt(st Stmt) {
 			w.WalkExpr(&x.Value)
 		}
 	case *Var:
-		// The init is walked BEFORE the name binds: `let N = N;` reads the
-		// outer N on its right-hand side and shadows it only afterwards.
 		w.WalkExpr(&x.Init)
 		w.Bind(x.Name)
 	case *Destructure:
@@ -124,8 +101,6 @@ func (w *ScopeWalker) WalkStmt(st Stmt) {
 		for _, n := range x.Names {
 			w.Bind(n)
 		}
-		// A nested level's binders live on Nested[i].Names, and its Init
-		// reads Names[i], so each level walks after this one binds.
 		for _, nd := range x.Nested {
 			if nd != nil {
 				w.WalkStmt(nd)
@@ -143,8 +118,6 @@ func (w *ScopeWalker) WalkStmt(st Stmt) {
 	case *Match:
 		w.WalkExpr(&x.Tag)
 		for _, arm := range x.Arms {
-			// A literal or range pattern is a value position; the pattern's
-			// binders shadow only the guard and the body.
 			if arm.Literal != nil {
 				w.WalkExpr(&arm.Literal)
 			}
@@ -169,8 +142,6 @@ func (w *ScopeWalker) WalkStmt(st Stmt) {
 	}
 }
 
-// WalkExpr visits the expression in slot, then its children unless Visit
-// declined.
 func (w *ScopeWalker) WalkExpr(slot *Expr) {
 	if slot == nil || *slot == nil {
 		return

@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCreateDirAllArm64IR is the arm64 half of
-// TestSelfHostCreateDirAllIR (#6749) — arm64-linux is the DEFAULT target, so a
-// builtin that only works on x86-64 is a builtin most users cannot call.
-//
-// Both native self-host backends reach create_dir_all through the same Fern
-// runtime source (asmcore.rt_src_create_dir_all), with only the mkdirat number
-// and AT_FDCWD coming from the target, so this pins that the arm64 op dispatch
-// and the fs-bundle gate actually emit it — and then runs the same chain under
-// qemu to prove the shared body works there too.
 func TestSelfHostCreateDirAllArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

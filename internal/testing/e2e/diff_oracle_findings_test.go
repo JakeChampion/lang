@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// selfHostFinding is one seed a differential leg failed, reduced to what
-// nightly triage groups by: the leg, what went wrong, and the pass the
-// decision bisect named. FERN_FINDINGS names the file each is appended to as
-// a JSON line, and scripts/nightly-findings.mjs counts them by signature.
 type selfHostFinding struct {
 	Test  string `json:"test"`
 	Seed  uint64 `json:"seed"`
@@ -45,8 +41,6 @@ func recordFinding(t *testing.T, f selfHostFinding) {
 	}
 }
 
-// failureClass is what a leg's failure message says went wrong, without the
-// seed's numbers or its program: the format's first line, up to its first verb.
 func failureClass(format string) string {
 	line, _, _ := strings.Cut(format, "\n")
 	if i := strings.IndexByte(line, '%'); i >= 0 {
@@ -55,8 +49,6 @@ func failureClass(format string) string {
 	return strings.TrimRight(line, " =(—-:,")
 }
 
-// refusalClass is the reason the compiler gave for refusing a seed, without
-// the function it named.
 func refusalClass(gap string) string {
 	switch {
 	case strings.Contains(gap, " emits unbalanced reference counting"):
@@ -77,7 +69,6 @@ func refusalClass(gap string) string {
 	return "refused"
 }
 
-// legName is the differential leg a seed's subtest runs under.
 func legName(t *testing.T) string {
 	leg, _, _ := strings.Cut(t.Name(), "/")
 	return leg

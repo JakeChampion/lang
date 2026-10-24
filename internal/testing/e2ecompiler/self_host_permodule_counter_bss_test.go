@@ -9,36 +9,6 @@ import (
 	"testing"
 )
 
-// The introspection readouts — `__heap_bump_bytes()`,
-// `__arr_push_shared_count()` and `__arr_push_shared_bytes()` — are the ONLY
-// builtins whose self-host lowering reads a runtime `.bss` word INLINE
-// (kind_tag 80, 216 and 217) rather than calling a global accessor that reads
-// the word from inside its own unit, the way `__rc_underflow_count()` does
-// through `__fn___fern_rc_underflow_count`.
-//
-// The runtime — and so every one of those words — is emitted into the ENTRY unit
-// alone. An inline `movq __fern_heap_ptr(%rip)` / `adrp x0, __fern_heap_ptr`
-// therefore cannot resolve from a library unit unless the definition is `.globl`.
-// Whole-program builds never notice: one unit, one file, local resolution. Under
-// `-per-module-emit` the link fails outright with "undefined reference to
-// __fern_heap_ptr".
-//
-// #6058 found this the hard way on `__fern_arr_push_shared` — CI caught it only
-// once the compiler's own sources called the counter, and the builtin had been
-// unusable from a non-entry unit since #6023 with nothing to notice. It fixed
-// that one symbol and left the heap cursor/end pair carrying the identical
-// latent hazard, documented at both backend sites. This is that pair's guard, and
-// it covers the cliff counter and its byte-weight sibling alongside it so the
-// whole class is pinned by one test rather than one symbol by accident — every
-// new inline-.bss-reading builtin belongs here at the same time as its `.globl`.
-//
-// The shape is the minimal trigger: the counters are called from a LIBRARY
-// module, never the entry, so the reference and the definition land in different
-// translation units. Exit 42 proves the read also executed and returned
-// something sane (a positive high-water mark after an array is built on the
-// heap — a literal is placed statically — and a zero
-// cliff count — and so a zero cliff WEIGHT — for a program that never appends to
-// a shared buffer).
 const perModuleCounterLibSrc = `@noinline pub function probe(): i32 {
     let xs: i32[] = [];
     let i: i32 = 1;
@@ -55,8 +25,6 @@ const perModuleCounterMainSrc = `import "./counters";
 function main(): i32 { return counters.probe(); }
 `
 
-// writePerModuleCounterProject stages the entry + library pair in a fresh dir and
-// returns the entry path.
 func writePerModuleCounterProject(t *testing.T) string {
 	t.Helper()
 	proj := t.TempDir()
@@ -70,10 +38,6 @@ func writePerModuleCounterProject(t *testing.T) string {
 	return entry
 }
 
-// perModuleUnits drives the count / needs / emit sequence and writes each unit to
-// disk, returning the paths. The native runtime's global string buffer holds only
-// ONE emit per process, so — like a real build system — each module is emitted by
-// its own driver invocation.
 func perModuleUnits(t *testing.T, runner []string, driverBin, entry string, targetArgs []string, minModules int) []string {
 	t.Helper()
 	drive := func(args ...string) string {
@@ -101,10 +65,6 @@ func perModuleUnits(t *testing.T, runner []string, driverBin, entry string, targ
 
 	dir := filepath.Dir(entry)
 	var objs []string
-	// Every word the probe reads INLINE must actually be referenced from a
-	// non-entry unit — otherwise the link below passes for the wrong reason
-	// (nothing to resolve). One entry per symbol, so dropping any one builtin's
-	// inline read fails here rather than silently narrowing the test.
 	sawLibRef := map[string]bool{
 		"__fern_heap_ptr":        false,
 		"__fern_arr_push_shared": false,
@@ -136,9 +96,6 @@ func perModuleUnits(t *testing.T, runner []string, driverBin, entry string, targ
 	return objs
 }
 
-// TestSelfHostPerModuleCounterBSSLinkX86_64 links the cross-unit counter shape on
-// x86-64. Without `.globl __fern_heap_ptr` / `.globl __fern_heap_end` in
-// asm_ir.fern's runtime, the link fails with "undefined reference".
 func TestSelfHostPerModuleCounterBSSLinkX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
@@ -165,9 +122,6 @@ func TestSelfHostPerModuleCounterBSSLinkX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPerModuleCounterBSSLinkArm64 is the arm64 half — the backends are
-// kept in lockstep on this, and the arm64 lowering reads the same two words via
-// adrp/add/ldr.
 func TestSelfHostPerModuleCounterBSSLinkArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

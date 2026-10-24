@@ -9,12 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelinuxMergeContext checks chcon's component arithmetic against
-// libselinux's rules (context_new, context_*_set, context_str) on inputs
-// chcon only reaches on a kernel WITH SELinux, which none of the corpus
-// machines has: a context is two to five colons and no whitespace, only the
-// range may hold a colon or a space, every component that fails is reported,
-// and an empty value is a value.
 func TestSelinuxMergeContext(t *testing.T) {
 	probe, err := filepath.Abs(filepath.Join("testdata", "selinux_merge", "main.fern"))
 	if err != nil {

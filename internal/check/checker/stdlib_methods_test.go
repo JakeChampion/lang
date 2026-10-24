@@ -22,18 +22,12 @@ const (
 	stdlibMethodsFern = "../../../compiler/stdlib_methods.fern"
 )
 
-// indexedReceivers are the method surfaces E043 advises on: the ones a
-// program reaches without declaring the type, whose methods live in stdlib
-// modules it may not have imported.
 var indexedReceivers = map[string]bool{
 	"string": true, "i32": true, "u8": true, "i64": true, "u32": true, "u64": true,
 	"usize": true, "f32": true, "f64": true, "boolean": true, "char": true,
 	"Option": true, "Result": true,
 }
 
-// buildStdlibMethodIndex reads every std/ and core/ module and returns the
-// module that declares each method on an indexed receiver: a public receiver
-// function, or a method of an `impl` block.
 func buildStdlibMethodIndex(t *testing.T) (map[string]map[string]string, map[string]map[string]string) {
 	t.Helper()
 	index := map[string]map[string]string{}
@@ -92,7 +86,6 @@ func buildStdlibMethodIndex(t *testing.T) (map[string]map[string]string, map[str
 	return index, narrow
 }
 
-// generalStdlibReceiver requires an independent type parameter in every receiver slot.
 func generalStdlibReceiver(f *ast.FuncDecl, prog *ast.Program) bool {
 	c := stdlibReceiverContext(prog)
 	var params []string
@@ -126,7 +119,6 @@ func stdlibReceiverContext(prog *ast.Program) *checker {
 	return c
 }
 
-// stdlibReceiverPattern preserves the declaration's nominal types and free parameters.
 func stdlibReceiverPattern(module, spelling string) (ast.Type, []string) {
 	src, ok := stdlib.Resolve(module)
 	if !ok {
@@ -162,8 +154,8 @@ func stdlibReceiverPattern(module, spelling string) (ast.Type, []string) {
 	panic("missing receiver " + spelling + " in " + module)
 }
 
-const generatedNote = "Generated from the stdlib sources by TestStdlibMethodIndex. After a stdlib\n" +
-	"change, run `go test ./internal/check/checker -run TestStdlibMethodIndex -update`."
+const generatedNote = "TestStdlibMethodIndex generates this file from the standard library sources.\n" +
+	"Use `go test ./internal/check/checker -run TestStdlibMethodIndex -update` to regenerate it."
 
 func stdlibMethodsGoSource(index, narrow map[string]map[string]string) string {
 	var b strings.Builder
@@ -171,8 +163,7 @@ func stdlibMethodsGoSource(index, narrow map[string]map[string]string) string {
 	b.WriteString("package checker\n\n")
 	b.WriteString("import \"github.com/jakechampion/lang/internal/syntax/ast\"\n\n")
 	b.WriteString("// " + strings.ReplaceAll(generatedNote, "\n", "\n// ") + "\n//\n")
-	b.WriteString("// stdlibMethodIndex maps a receiver's method surface (ast.ReceiverTypeName)\n")
-	b.WriteString("// and a method name to the stdlib module that declares the method.\n")
+	b.WriteString("// stdlibMethodIndex maps receiver and method names to their standard library modules.\n")
 	b.WriteString("var stdlibMethodIndex = map[string]map[string]string{\n")
 	for _, recv := range sortedKeys(index) {
 		fmt.Fprintf(&b, "\t%q: {\n", recv)
@@ -231,9 +222,7 @@ func stdlibMethodsFernSource(index, narrow map[string]map[string]string) string 
 		return "[" + strings.Join(quoted, ", ") + "]"
 	}
 	var b strings.Builder
-	b.WriteString("// stdlib_methods.fern — the stdlib module that declares each method on a\n")
-	b.WriteString("// receiver a program reaches without declaring it. The Go checker's\n")
-	b.WriteString("// stdlibMethodIndex holds the same entries.\n//\n")
+	b.WriteString("// This module maps receiver and method names to their standard library modules.\n//\n")
 	b.WriteString("// " + strings.ReplaceAll(generatedNote, "\n", "\n// ") + "\n\n")
 	b.WriteString("const RECEIVERS: string[] = " + list(recvs) + ";\n\n")
 	b.WriteString("const METHODS: string[] = " + list(methods) + ";\n\n")
@@ -253,9 +242,7 @@ func stdlibMethodsFernSource(index, narrow map[string]map[string]string) string 
 		}
 	}
 	b.WriteString("  return [];\n}\n\n")
-	b.WriteString(`// module_of(receiver, method) — the module that declares method on the
-// receiver surface, or "" when no stdlib module does.
-pub function module_of(receiver: string, method: string): string {
+	b.WriteString(`pub function module_of(receiver: string, method: string): string {
   let i: i32 = 0;
   while (i < METHODS.len()) {
     if (METHODS[i] == method && RECEIVERS[i] == receiver) {
@@ -267,7 +254,6 @@ pub function module_of(receiver: string, method: string): string {
 }
 
 `)
-	b.WriteString("// receiver_of returns the restricted receiver spelling, or \"\" for a general declaration.\n")
 	b.WriteString("pub function receiver_of(receiver: string, method: string): string {\n")
 	for _, recv := range sortedKeys(narrow) {
 		fmt.Fprintf(&b, "  if (receiver == %q) {\n", recv)
@@ -277,9 +263,7 @@ pub function module_of(receiver: string, method: string): string {
 		b.WriteString("  }\n")
 	}
 	b.WriteString("  return \"\";\n}\n\n")
-	b.WriteString(`// methods_on(receiver) — every method the stdlib declares on the receiver
-// surface.
-pub function methods_on(receiver: string): string[] {
+	b.WriteString(`pub function methods_on(receiver: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;
   while (i < METHODS.len()) {
@@ -294,9 +278,6 @@ pub function methods_on(receiver: string): string[] {
 	return b.String()
 }
 
-// TestStdlibMethodIndex pins both generated copies of the index to the stdlib
-// sources, so a method added to or moved between modules cannot leave E043
-// naming the wrong import in either checker.
 func TestStdlibMethodIndex(t *testing.T) {
 	index, narrow := buildStdlibMethodIndex(t)
 	if len(index["string"]) < 100 || index["string"]["trim"] != "std/string" {

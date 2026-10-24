@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostAmbientEffectDifferentialX86_64 is the parity gate for the
-// ambient-effect rule (E080): a handler reaching a host effect around its
-// `Platform` bag is refused by both compilers at the same declaration, with
-// the same handler, builtin and capability named, and a handler reaching it
-// through the bag is accepted by both.
-//
-// The chain is not compared: native's walk orders callees by first use in
-// a body and the self-host's by declaration, so two paths to one builtin
-// may print in a different order. The verdict, the site and the effect are
-// what a program builds or fails on.
 func TestSelfHostAmbientEffectDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -40,7 +30,7 @@ function main(): i32 { return 0; }
 	cases := []struct {
 		name string
 		src  string
-		want []string // "line:col handler builtin capability" per E080
+		want []string
 	}{
 		{
 			name: "direct",
@@ -98,8 +88,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			want: []string{"5:1 handle eprint log"},
 		},
 		{
-			// #10619: std/url's url_parse has a `let close`, which reached
-			// std/async's reactor `close` and refused examples/wasm/url_router.
 			name: "a local named like a method",
 			src: `import "std/http";
 import "std/platform";
@@ -121,8 +109,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			want: nil,
 		},
 		{
-			// std/unicode's case mapping has a `let mid`, which std/http's own
-			// handlers reach through HeaderMap.set.
 			name: "a std local named like an entry function",
 			src: `import "std/http";
 import "std/platform";
@@ -153,8 +139,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			want: []string{"3:1 handle eprint log"},
 		},
 		{
-			// std/http's respond_error calls `plat.log`; std/fuzz and std/log
-			// declare a free `log` that prints.
 			name: "a free function spelled like a bag method",
 			src: `import "std/http";
 import "std/platform";
@@ -237,8 +221,6 @@ function main(): i32 { return helper(); }
 	}
 }
 
-// e080Sites reduces a compiler's output to its E080 diagnostics as
-// `line:col handler builtin capability`, in emission order.
 func e080Sites(out string) []string {
 	var sites []string
 	for _, line := range strings.Split(out, "\n") {

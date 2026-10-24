@@ -1,36 +1,8 @@
-// examples/fip/packet_borrowed.fern — the sliced-parse variant of the bounded
-// packet codec (#9584).
-//
-// Same protocol, same workload and the same answers as the other three. The
-// one change from the baseline is that a parse no longer copies: a `Request`
-// carries the OFFSET and LENGTH of its payload inside the wire buffer, and
-// every read goes back to that buffer. Nothing is annotated and nothing is
-// owned — this is still ordinary Fern.
-//
-// It is the middle rung, and the interesting one. It removes the copy a reader
-// would notice first while keeping the two allocations a reader would not: the
-// transform still builds a fresh array and the encode still builds another. So
-// it says how much of the baseline's cost was the payload copy and how much was
-// everything else, which is the question "just take a slice" always raises.
 import "core/cmp";
 import "std/bench";
 import "std/i32";
 import "std/i64";
 
-// ===================== THE PROTOCOL =====================
-//
-// A 16-byte fixed header and a bounded payload, so a whole packet fits in 256
-// bytes and every buffer in every variant can be sized once, up front.
-//
-//   0..1   magic 0xFE 0x52
-//   2      version
-//   3      message type
-//   4      status (0 on a request)
-//   5      reserved
-//   6..9   request id, u32 little-endian
-//   10..11 payload length, u16 little-endian
-//   12..13 Fletcher-16 of the payload
-//   14..15 reserved
 function header_len(): i32 {
   return 16;
 }
@@ -99,9 +71,6 @@ function st_bad_checksum(): i32 {
   return 6;
 }
 
-// Fletcher-16: two running sums mod 255, which catches byte transposition
-// where a plain sum does not. Cheap enough that it is not what any variant's
-// throughput is measuring.
 function checksum(bytes: u8[], from: i32, n: i32): i32 {
   let a: i32 = 0;
   let b: i32 = 0;
@@ -114,12 +83,6 @@ function checksum(bytes: u8[], from: i32, n: i32): i32 {
   return b * 256 + a;
 }
 
-// ===================== THE PARSE (no copy) =====================
-//
-// The payload stays in the wire buffer; the request names where it is. The
-// record is four scalars, so constructing one allocates nothing — but it is
-// only valid while that buffer holds this request, which is the discipline a
-// slice asks of its caller and the compiler is not being asked to check here.
 struct Request {
   status: i32,
   msg_type: i32,
@@ -143,8 +106,6 @@ function known_type(t: i32): boolean {
   return t == msg_echo() || t == msg_sum() || t == msg_reverse() || t == msg_upper();
 }
 
-// The validation ladder, in the order a receiver can actually apply it: the
-// framing first, because a bad length makes every later read a guess.
 function parse(wire: u8[], wire_len: i32): Request {
   if (wire_len < header_len()) {
     return Request { status: st_truncated(), msg_type: 0, req_id: 0 as i64, at: 0, len: 0 };
@@ -170,15 +131,9 @@ function parse(wire: u8[], wire_len: i32): Request {
   if (!known_type(t)) {
     return Request { status: st_bad_type(), msg_type: t, req_id: id, at: 0, len: 0 };
   }
-  // No copy: the payload is already in the buffer, at a known place.
   return Request { status: st_ok(), msg_type: t, req_id: id, at: header_len(), len: plen };
 }
 
-// ===================== THE TRANSFORM (allocating) =====================
-//
-// Four shapes, chosen so the copying differs between them: echo and reverse
-// move the whole payload, upper moves it and rewrites some of it, sum reduces
-// it to eight bytes.
 function transform(wire: u8[], req: Request): u8[] {
   let out: u8[] = [];
   let n: i32 = req.len;
@@ -210,7 +165,6 @@ function transform(wire: u8[], req: Request): u8[] {
     }
     return out;
   }
-  // sum: eight little-endian bytes of the payload's byte sum.
   let total: i64 = 0 as i64;
   let s: i32 = 0;
   while (s < n) {
@@ -234,8 +188,6 @@ function pow256(k: i32): i64 {
   }
   return p;
 }
-
-// ===================== THE ENCODE (allocating) =====================
 
 function encode(req: Request, body: u8[]): u8[] {
   let out: u8[] = [];
@@ -266,13 +218,6 @@ function encode(req: Request, body: u8[]): u8[] {
   return out;
 }
 
-// ===================== THE WORKLOAD =====================
-//
-// Identical in all four variants, verbatim, so the runs differ in how the
-// bytes are held and in nothing else. Every 17th request is malformed, cycling
-// through the six rejections, so the error ladder is exercised in the steady
-// state rather than in a separate test that proves nothing about throughput.
-
 function gen_payload_len(n: i64): i32 {
   return (n * (37 as i64) % (241 as i64)) as i32;
 }
@@ -288,10 +233,6 @@ function corruption(n: i64): i32 {
   return (n / (17 as i64) % (6 as i64)) as i32;
 }
 
-// Writes one request into the buffer it is handed and gives it back. It takes
-// the buffer `own` in every variant, including this one: generating the input
-// is the harness, not the codec, and a borrowed `wire` would copy all 256
-// bytes on each `.with` — charging every variant for the instrument.
 function build_request(own wire: u8[], n: i64): u8[] {
   let t: i32 = 1 + (n % (4 as i64)) as i32;
   let plen: i32 = gen_payload_len(n);
@@ -347,9 +288,6 @@ function wire_len_for(n: i64): i32 {
   return header_len() + plen;
 }
 
-// A running digest over every response byte. Four implementations of one codec
-// agree only if this agrees, which is what makes the comparison a differential
-// test rather than three unrelated benchmarks.
 function mix(d: i64, b: i32): i64 {
   let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
@@ -407,8 +345,6 @@ function serve(wire: u8[], n: i64, c: Counts): Counts {
     d = mix(d, resp[i] as i32);
     i = i + 1;
   }
-  // Bytes moved on this request: the transform's output and the encode's copy
-  // of it into the response frame. The parse copy is the term that is gone.
   let moved: i64 = body.len() as i64 + resp.len() as i64;
   let out: Counts = tally(c, req.status);
   return Counts { ...out, digest: d, copied: out.copied + moved };
@@ -434,14 +370,9 @@ function zeros_u8(n: i32): u8[] {
 
 function main(): i32 {
   let batch: i32 = 64;
-  // 4000 rounds is 256,000 requests, which holds the per-request medians steady
-  // while keeping this program the same weight as experiment 1's — it is run
-  // under both backends, under qemu, by the SSA differential sweep over
-  // examples/, and five times that was 5x the cost for no more signal.
   let rounds: i32 = 4000;
   let wire: u8[] = zeros_u8(max_packet());
   let c: Counts = zero_counts();
-  // One warm round before the mark, so first-touch costs are not measured.
   let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);

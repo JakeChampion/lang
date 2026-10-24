@@ -19,13 +19,6 @@ import (
 	"time"
 )
 
-// std/tls/server against Go's crypto/tls client: a Fern line-echo server
-// under a P-384 CA with a P-256 leaf (its key as SEC 1), a P-384 leaf and an
-// Ed25519 leaf (PKCS #8), each taking a client with the default key shares,
-// one that sends only a P-256 share and is asked for X25519 by
-// HelloRetryRequest, one connecting by address with no SNI, one that does
-// not trust the CA, and one offering only TLS 1.2. Both native backends and
-// the interpreter.
 func TestTLSServerAgainstGo(t *testing.T) {
 	bin := buildFernCLI(t)
 	for _, kind := range []string{"p256", "p384", "ed25519"} {
@@ -61,19 +54,14 @@ func TestTLSServerAgainstGoInterp(t *testing.T) {
 }
 
 type tlsServerWorld struct {
-	dir, src string
-	kind     string
-	pool     *x509.CertPool
-	other    *x509.CertPool
-	cache    tls.ClientSessionCache
-	// client and otherClient are client certificates under the CA and under
-	// the other CA, for the client-auth run.
+	dir, src            string
+	kind                string
+	pool                *x509.CertPool
+	other               *x509.CertPool
+	cache               tls.ClientSessionCache
 	client, otherClient tls.Certificate
 }
 
-// newTLSServerWorld writes the server's certificate, key and source. The
-// P-256 key goes out as SEC 1 and the others as PKCS #8, so both readers
-// meet a key Go wrote.
 func newTLSServerWorld(t *testing.T, kind string) *tlsServerWorld {
 	t.Helper()
 	w := &tlsServerWorld{dir: t.TempDir(), kind: kind, cache: tls.NewLRUClientSessionCache(4)}
@@ -122,9 +110,6 @@ func keyPEM(t *testing.T, key crypto.Signer, sec1 bool) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 }
 
-// The server: a listener on a port the host picks, printed first, then one
-// connection at a time, each reported on a line of its own. With the
-// argument "client-auth" it requires a client certificate under the CA.
 const tlsServerSource = `import "std/i32";
 import "std/net";
 import "std/string";
@@ -280,18 +265,12 @@ function main(): i32 {
 `
 
 type tlsServerCase struct {
-	name   string
-	config *tls.Config
-	// want is the server's report for the connection; wantErr is what the
-	// Go client's dial must fail with, empty when it must succeed.
+	name          string
+	config        *tls.Config
 	want, wantErr string
-	// resumed is whether the Go client must have resumed from a ticket.
-	resumed bool
+	resumed       bool
 }
 
-// cases are run in order against one server. The default and resume cases
-// share a session cache, so the second resumes from the ticket the first
-// was issued.
 func (w *tlsServerWorld) cases() []tlsServerCase {
 	trusted := func(mod func(*tls.Config)) *tls.Config {
 		c := &tls.Config{RootCAs: w.pool, ServerName: "localhost", NextProtos: []string{"fern-echo", "h2"}, MinVersion: tls.VersionTLS13}
@@ -309,10 +288,6 @@ func (w *tlsServerWorld) cases() []tlsServerCase {
 	}
 }
 
-// clientAuthCases run against the server requiring a client certificate: a
-// client under the CA, one sending none (the server's certificate_required
-// alert), one under the other CA, and one under the CA resuming, which
-// shows no certificate again.
 func (w *tlsServerWorld) clientAuthCases() []tlsServerCase {
 	cache := tls.NewLRUClientSessionCache(4)
 	with := func(certs []tls.Certificate, cached bool) *tls.Config {
@@ -335,8 +310,6 @@ func (w *tlsServerWorld) driveClientAuth(t *testing.T, cmd *exec.Cmd) {
 	w.run(t, cmd, w.clientAuthCases())
 }
 
-// drive starts the server, runs every case against it in order and checks
-// its report.
 func (w *tlsServerWorld) drive(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	w.run(t, cmd, w.cases())
@@ -376,12 +349,9 @@ func (w *tlsServerWorld) run(t *testing.T, cmd *exec.Cmd, cases []tlsServerCase)
 
 func (w *tlsServerWorld) connect(t *testing.T, port string, c tlsServerCase) {
 	t.Helper()
-	// The interpreter takes seconds over a handshake.
 	d := &net.Dialer{Timeout: 60 * time.Second}
 	conn, err := tls.DialWithDialer(d, "tcp", "127.0.0.1:"+port, c.config)
 	if c.wantErr != "" {
-		// A server refusing the client's certificate does so after the
-		// client's Finished, so the alert reaches Go on its first read.
 		if err == nil {
 			_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
 			if _, err = io.WriteString(conn, c.name+"\n"); err == nil {
@@ -401,7 +371,6 @@ func (w *tlsServerWorld) connect(t *testing.T, port string, c tlsServerCase) {
 		return
 	}
 	defer conn.Close()
-	// The interpreter takes seconds to verify a client's chain.
 	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
 	st := conn.ConnectionState()
 	if st.Version != tls.VersionTLS13 {

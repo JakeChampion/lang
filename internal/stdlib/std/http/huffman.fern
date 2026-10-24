@@ -1,15 +1,8 @@
-// std/http/huffman — the Huffman code HTTP header compression shares:
-// HPACK's (RFC 7541 Appendix B), which QPACK (RFC 9204 §4.1.2) uses as is.
-//
-// A string is coded symbol by symbol and padded to a byte with the most
-// significant bits of EOS, all ones; a decoder refuses EOS itself, padding
-// of eight bits or more, and padding that is not all ones (RFC 7541 §5.2).
+// This module provides the Huffman code for HPACK and QPACK.
 
 import "std/error";
 import "core/cmp";
 
-// HuffmanError — why a coded string was refused: it is not one, or it
-// decodes to more than the room given.
 pub enum HuffmanError { InvalidCode, ExceedsRoom }
 
 pub function (e: HuffmanError) message(): string {
@@ -32,7 +25,6 @@ impl error.Error for HuffmanError {}
 
 impl cmp.Display for HuffmanError {}
 
-// encoded_len is the bytes the coding of `bytes` takes.
 pub function encoded_len(bytes: [u8]): i32 {
   let bits: i32 = 0;
   for b in bytes {
@@ -41,7 +33,6 @@ pub function encoded_len(bytes: [u8]): i32 {
   return (bits + 7) / 8;
 }
 
-// encode appends the codes of `bytes` to `out`, padded to a byte.
 pub function encode(out: u8[], bytes: [u8]): u8[] {
   let o: u8[] = out;
   let acc: i64 = 0;
@@ -63,12 +54,6 @@ pub function encode(out: u8[], bytes: [u8]): u8[] {
   return o;
 }
 
-// decode reads a coded string, refusing one that decodes to more than
-// `room` bytes as soon as it would. It runs the code's tree four bits at
-// a time through HUFF_DEC: each entry is the state reached, whether a
-// symbol was completed on the way and which, whether the string may end
-// here (the bits since the last symbol are fewer than eight and all
-// ones), and whether the bits can be no code at all, EOS included.
 pub function decode(coded: [u8], room: i32): Result[u8[], HuffmanError] {
   let out: u8[] = __alloc_u8(coded.len() * 8 / 5 + 1);
   __arr_set_len(out, 0);
@@ -103,20 +88,11 @@ pub function decode(coded: [u8], room: i32): Result[u8[], HuffmanError] {
   return Ok(out);
 }
 
-// The flags of a HUFF_DEC entry, above its symbol byte; the next state is
-// above them.
 const DEC_EMIT: i32 = 256;
 
 const DEC_ACCEPT: i32 = 512;
 
 const DEC_FAIL: i32 = 1024;
-
-// Each symbol's code and length (HUFF_CODE, HUFF_LEN), the two packed as
-// `code << 8 | length` for the encoder (HUFF), and the decoding states
-// (HUFF_DEC): 256 states, one per node of the code's tree that a nibble
-// boundary can land on, 16 entries each, `next << 11 | flags << 8 |
-// symbol`. scripts/gen-huffman-table.py writes HUFF and HUFF_DEC from
-// HUFF_CODE and HUFF_LEN and checks them against a bit-by-bit decoder.
 
 const HUFF_LEN: u8[] = [
   13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,
@@ -174,9 +150,6 @@ const HUFF_CODE: i32[] = [
   1073741823,
 ];
 
-// HUFF packs each symbol's code and length as `code << 8 | length`, the
-// encoder's one indexed load per symbol. gen-huffman-table.py writes it
-// from HUFF_CODE and HUFF_LEN.
 const HUFF: i64[] = [
   2095117, 2147473431, 68719469084, 68719469340, 68719469596, 68719469852, 68719470108, 68719470364,
   68719470620, 4294961688, 274877905950, 68719470876, 68719471132, 274877906206, 68719471388, 68719471644,

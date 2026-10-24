@@ -12,10 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Compare non-NaN result bits with a scalar operation on the same target,
-// including signed zero, infinities and subnormals. FS-04 leaves arithmetic
-// NaN payloads unspecified: require NaN production, while unchanged inputs
-// retain their exact payloads. Rebuilding the reference keeps donors unique.
 const scaleReuseSrc = `import "std/ndarray";
 import "std/i64";
 @noinline function value(i: i32): f64 {
@@ -275,8 +271,6 @@ func TestSelfHostNdarrayScaleReuseAllocation(t *testing.T) {
 					t.Logf("disabled=%s shared=%s: %+v", disabled, shared, got)
 				}
 			}
-			// Compare identical workloads with only the reuse switch changed.
-			// Shared mode performs an extra alias check that also allocates.
 			unique, fresh := results["00"], results["10"]
 			if unique.Calls >= fresh.Calls || unique.Bytes >= fresh.Bytes {
 				t.Fatalf("reuse did not reduce both counters: unique=%+v disabled=%+v", unique, fresh)

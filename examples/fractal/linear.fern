@@ -1,5 +1,3 @@
-// Perturbation and bivariate linear approximation for a group of nearby pixels.
-// The direct renderer remains the reference for exact floating-point output.
 import "std/f64";
 import "std/array";
 import "std/simd";
@@ -25,8 +23,6 @@ pub struct Reference {
 
 pub struct Start { real: f64, imaginary: f64, steps: i32, work: i32 }
 
-// Skip a shared prefix, then return to direct SIMD iteration.
-// Each jump covers at least eight updates, so lookup cost stays bounded.
 pub function prefix(ref: Reference, real: f64, imaginary: f64, limit: i32): Start {
   let cr: f64 = real - ref.real;
   let ci: f64 = imaginary - ref.imaginary;
@@ -70,8 +66,6 @@ function norm(real: f64, imaginary: f64): f64 {
   return (real * real + imaginary * imaginary).sqrt();
 }
 
-// Each step's validity radius includes the tile's maximum parameter delta.
-// epsilon limits the nonlinear term relative to the linear perturbation term.
 pub function reference(real: f64, imaginary: f64, delta_max: f64, limit: i32, epsilon: f64): Reference {
   let zr: f64[] = [0.0];
   let zi: f64[] = [0.0];
@@ -95,7 +89,6 @@ pub function reference(real: f64, imaginary: f64, delta_max: f64, limit: i32, ep
   while (at + 1 < zr.len()) {
     let size: f64 = norm(zr[at], zi[at]);
     let radius: f64 = epsilon * 2.0 * size;
-    // The skipped interval must not contain an unchecked escape.
     if (radius > 256.0 - size) {
       radius = 256.0 - size;
     }
@@ -124,7 +117,6 @@ pub function reference(real: f64, imaginary: f64, delta_max: f64, limit: i32, ep
   return Reference { real: real, imaginary: imaginary, zr: zr, zi: zi, levels: levels, series: model };
 }
 
-// Compose y after x: A = Ay*Ax and B = Ay*Bx + By.
 function merge(x: Step, y: Step, delta_max: f64): Step {
   let size: f64 = norm(x.ar, x.ai);
   let radius: f64 = 0.0;
@@ -147,7 +139,6 @@ function merge(x: Step, y: Step, delta_max: f64): Step {
   };
 }
 
-// Search from the largest aligned block to the smallest.
 function lookup(ref: Reference, at: i32, remaining: i32, delta: f64): Option[Step] {
   if (at < 1) {
     return None;

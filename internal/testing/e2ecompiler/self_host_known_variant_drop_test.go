@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// knownVariantSrc's `vals` drops `a` and `b` where a payload read has fixed
-// their variant to `Val`, which holds no counted field: those drops release
-// the box alone, where the type's release helper would test the variant
-// again. Where nothing read the payload, as in the `_` arms, the helper
-// stays.
 const knownVariantSrc = `enum Expr { Val(i32), Neg(Expr) }
 
 @noinline

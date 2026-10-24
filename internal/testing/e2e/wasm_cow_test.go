@@ -2,10 +2,6 @@ package e2e
 
 import "testing"
 
-// TestWASMAliasedArraySetCoW: a mutation through one alias of a shared array
-// or map copies rather than writing through, so the other alias keeps its
-// value. A retain the runtime skipped would let `ys.with(...)` take the rc==1
-// in-place path on a shared buffer.
 func TestWASMAliasedArraySetCoW(t *testing.T) {
 	cases := []struct {
 		name string
@@ -48,14 +44,7 @@ function main(): i32 {
 	}
 }
 
-// TestWASMRcDecReclaim is the dec-side companion to the CoW cases: a drop
-// releases what it holds (so nothing is left live, and nothing is released
-// twice), an overwrite frees the prior value, and heavy churn through the
-// freelist stays correct.
 func TestWASMRcDecReclaim(t *testing.T) {
-	// Dropping an array that holds a shared element releases that element's
-	// retain: the census balances. Were the dec skipped, `inner` would
-	// outlive main with one count too many.
 	t.Run("drop_dec_fires", func(t *testing.T) {
 		_, stderr, code := runLeakCheckWasm(t, `function consume(inner: u8[]): i32 {
     let outer: u8[][] = [inner];
@@ -78,8 +67,6 @@ function main(): i32 {
 		name string
 		src  string
 	}{
-		// Nesting fresh + aliased elements and dropping the outer
-		// array yields correct values and no over-release.
 		{"drop_no_over_release", `function build(): i32 {
     let inner: i32[] = [1, 2, 3];
     let a: i32[][] = [inner];        // aliased element (inc'd)
@@ -89,7 +76,6 @@ function main(): i32 {
 function main(): i32 {
     return (build() - 8) + __rc_underflow_count();
 }`},
-		// Overwrite-set frees the prior value; no over-release.
 		{"dec_on_overwrite", `
 import "core/map";
 function main(): i32 {
@@ -99,8 +85,6 @@ function main(): i32 {
     let v: i32[] = m.get_or(7, []);
     return (v[2] - 65) + __rc_underflow_count();
 }`},
-		// Freelist reuse: heavy alloc churn stays correct and bounded
-		// (a corrupted freelist would trap or mis-read here).
 		{"churn_freelist_reuse", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

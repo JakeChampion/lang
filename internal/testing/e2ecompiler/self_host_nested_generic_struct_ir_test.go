@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// nestedGenericStructIRCase is a self-host generic-struct program whose
-// instantiation the struct monomorphiser has to infer: a type argument that is
-// ITSELF a generic struct (`Box[Box[i32]]`, a COMPOSITE instantiation key), or
-// one read off a local whose own type was inferred.
-//
-// For the composite key, the generic-struct monomorphiser (parser.fern)
-// rewrites a nested struct literal's inner instantiation first, so
-// `infer_lit_key` sees the mangled inner type (`Box__i32`) and keys the outer
-// clone `Box__Box__i32`. A single-type-param struct (and its methods) takes the
-// whole key as its one concrete arg — splitting it on `__` would fracture the
-// mangled nested arg back into `["Box", "i32"]`; multi-param keys still split
-// unambiguously. Each exit code is pinned against the interpreter oracle and
-// kept <= 120.
 type nestedGenericStructIRCase struct {
 	name     string
 	src      string
@@ -28,40 +15,32 @@ type nestedGenericStructIRCase struct {
 }
 
 var nestedGenericStructIRCases = []nestedGenericStructIRCase{
-	// the core shape, annotation-driven instantiation.
 	{"two_level_i32", `struct Box[T] { v: T }
 function main(): i32 {
     let b: Box[Box[i32]] = Box { v: Box { v: 7 } };
     return b.v.v;
 }`, 7},
-	// no annotation: the inner literal's own instantiation drives the outer key.
 	{"two_level_no_anno", `struct Box[T] { v: T }
 function main(): i32 {
     let b = Box { v: Box { v: 7 } };
     return b.v.v;
 }`, 7},
-	// three levels of nesting.
 	{"three_level", `struct Box[T] { v: T }
 function main(): i32 {
     let b: Box[Box[Box[i32]]] = Box { v: Box { v: Box { v: 5 } } };
     return b.v.v.v;
 }`, 5},
-	// nested string payload, method dispatch on the innermost field.
 	{"nested_string_method", `struct Box[T] { v: T }
 function main(): i32 {
     let b: Box[Box[string]] = Box { v: Box { v: "hello" } };
     return b.v.v.len();
 }`, 5},
-	// a method on the generic struct, called on a nested instantiation (the
-	// method clone keys the same composite single-param way).
 	{"nested_method", `struct Box[T] { v: T }
 function (b: Box[T]) get(): T { return b.v; }
 function main(): i32 {
     let b: Box[Box[i32]] = Box { v: Box { v: 7 } };
     return b.get().v;
 }`, 7},
-	// the method is called at BOTH levels (`b.get()` returns the inner Box,
-	// then `.get()` on that returns the i32).
 	{"nested_method_both_levels", `struct Box[T] { v: T }
 function (b: Box[T]) get(): T { return b.v; }
 function main(): i32 {
@@ -69,9 +48,6 @@ function main(): i32 {
     let inner = b.get();
     return inner.get();
 }`, 7},
-	// A literal whose type argument comes only from a field of an unannotated
-	// local: the local binds the instantiation its own literal was given
-	// (#10275).
 	{"field_of_unannotated_local", `struct P[T] { b: T }
 function main(): i32 {
     let p = P { b: "xy" };
@@ -84,14 +60,12 @@ function main(): i32 {
     let q = P { a: p.a, b: p.b };
     return q.a.len();
 }`, 1},
-	// the reassignment in #10275: the new literal reads the local it replaces.
 	{"reassign_over_own_field", `struct P[T] { a: T[], b: T }
 function main(): i32 {
     let p = P { a: ["q"], b: "xy" };
     p = P { a: p.a.append("z"), b: p.b };
     return p.a.len();
 }`, 2},
-	// a local bound from a call returning an instantiation types the same way.
 	{"field_of_call_bound_local", `struct P[T] { b: T }
 function mk(): P[string] { return P { b: "xy" }; }
 function main(): i32 {
@@ -99,8 +73,6 @@ function main(): i32 {
     let q = P { b: p.b };
     return q.b.len();
 }`, 2},
-	// so do a `for` variable over an array of instantiations and an Option
-	// payload.
 	{"field_of_for_var", `struct P[T] { b: T }
 function main(): i32 {
     let ps: P[string][] = [P { b: "xy" }, P { b: "abc" }];
@@ -108,8 +80,6 @@ function main(): i32 {
     for p in ps { let q = P { b: p.b }; n = n + q.b.len(); }
     return n;
 }`, 5},
-	// the same over an unannotated Option / Result scrutinee, both Result arms,
-	// and a user enum's variant payload (#10302).
 	{"field_of_unannotated_ok_payload", `struct P[T] { b: T }
 function mk(): Result[P[string], string] { return Ok(P { b: "xy" }); }
 function main(): i32 {
@@ -162,9 +132,6 @@ function main(): i32 {
         None => { return 9; }
     }
 }`, 2},
-	// an array argument's parameter is the destination of its literal's
-	// elements, so each literal is laid out as a Same[i64] whatever its first
-	// field says.
 	{"literal_in_array_argument", `struct Same[T] { a: T, b: T }
 function take(xs: Same[i64][]): i32 {
     let s: i64 = xs[0].a + xs[0].b + xs[1].b;
@@ -174,8 +141,6 @@ function main(): i32 {
     let y: i64 = 4294967296;
     return take([Same { a: 3, b: y }, Same { a: 1, b: 4294967296 }]);
 }`, 3},
-	// a nested instantiation and a flat instantiation of the same struct
-	// coexisting (each clones independently).
 	{"coexist_with_flat", `struct Box[T] { v: T }
 function main(): i32 {
     let a: Box[Box[i32]] = Box { v: Box { v: 3 } };
@@ -184,9 +149,6 @@ function main(): i32 {
 }`, 7},
 }
 
-// TestSelfHostNestedGenericStructIRX86_64 runs each nested generic-struct
-// program through the self-host asm_run driver (Fern → x86-64 asm → binary →
-// exit code).
 func TestSelfHostNestedGenericStructIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -220,9 +182,6 @@ func TestSelfHostNestedGenericStructIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedGenericStructWasmIR is the wasm sibling: monomorphize_structs
-// is a target-independent parser pass, so the wasm IR backend gets nested generic
-// structs for free. Each case asserts the same oracle exit code.
 func TestSelfHostNestedGenericStructWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host nested-generic-struct wasm IR e2e")

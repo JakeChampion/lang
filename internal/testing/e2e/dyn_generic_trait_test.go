@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// Generic dyn-trait objects (#2691 trait-spine): `dyn Container[i32]` is a
-// runtime trait object over a *pinned* instantiation of a generic trait.
-// The trait argument is erased at runtime (the vtable is keyed by trait
-// name); it drives only the checker's coercion gate and the
-// method-signature substitution that makes `get(): T` read as `get(): i32`.
-// Two concrete types implement Container[i32]; both box into the same
-// `dyn Container[i32]` and dispatch by concrete type. BoxI.get() = 40,
-// Pair.get() = 1 + 1 = 2; 40 + 2 = 42.
 const dynGenericTraitSrc = `trait Container[T] {
     function get(self: Self): T;
 }
@@ -71,9 +63,6 @@ func TestWASMDynGenericTrait(t *testing.T) {
 	}
 }
 
-// `as?` downcast recovers the concrete type from behind a generic dyn
-// object: the runtime tag is the concrete type (the trait argument is
-// erased), so `d as? BoxI` succeeds and yields the boxed value. 41 + 1 = 42.
 const dynGenericDowncastSrc = `trait Container[T] { function get(self: Self): T; }
 struct BoxI { v: i32 }
 impl Container[i32] for BoxI { function get(self: Self): i32 { return self.v; } }
@@ -120,10 +109,6 @@ func TestWASMDynGenericDowncast(t *testing.T) {
 	}
 }
 
-// A generic trait composes with another trait in a multi-trait object:
-// `dyn Get[i32] + Name`. The concrete type must impl every trait (Get at
-// the pinned i32, and Name); method resolution spans the union, with the
-// generic Get's `get(): T` read as `get(): i32`. 41 + 1 = 42.
 const dynGenericMultiTraitSrc = `trait Get[T] { function get(self: Self): T; }
 trait Name { function name(self: Self): i32; }
 struct W { v: i32 }

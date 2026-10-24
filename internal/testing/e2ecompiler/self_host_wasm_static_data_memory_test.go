@@ -12,33 +12,11 @@ import (
 	"testing"
 )
 
-// The self-host wasm backend declared `(memory (export "memory") 16)` — a
-// hardcoded 16 pages, 1 MiB — however much static data the module carried.
-//
-// Data segments are written at instantiation and the two freelist arrays are
-// written by __fern_free, and neither grows memory: only __fern_alloc does, off
-// $heap. So a module whose literals push $heap past the declared minimum traps
-// on load, before a single instruction of the program runs, with "out of bounds
-// memory access" and nothing pointing at the size.
-//
-// Every driver stayed under 1 MiB of literals, so nothing hit it until
-// playground_run.fern carried the stdlib as `-embed` assets: 1.9 MB of data
-// needing 30 pages, a module that validated and could not be instantiated.
-// This reproduces it without -embed, from literals alone.
-
 const (
-	// Distinct 32 KiB literals. Distinct matters: identical ones dedupe to a
-	// single data segment and the module stays small.
 	bigLiteralBytes = 32 * 1024
-	// 40 of them is ~1.3 MB of data, needing 21 pages against the old 16. The
-	// count is the assertion: below ~32 the module fits and the bug is
-	// invisible, which is why every existing driver missed it.
 	bigLiteralCount = 40
 )
 
-// bigLiteralProgram returns a program whose string literals exceed one page
-// budget, summing their lengths so the exit code proves the data survived the
-// move rather than merely that the module loaded.
 func bigLiteralProgram() string {
 	var b strings.Builder
 	b.WriteString("function main(): i32 {\n  let n: i32 = 0;\n")
@@ -74,8 +52,6 @@ func TestSelfHostWasmMemoryCoversStaticData(t *testing.T) {
 		t.Fatalf("wasm IR driver failed: %v", err)
 	}
 
-	// The declared minimum, read back so a failure says "16 pages" rather than
-	// only "it trapped".
 	m := memoryDeclRe.FindSubmatch(wat)
 	if m == nil {
 		t.Fatal("emitted module has no `(memory (export \"memory\") N)` declaration")

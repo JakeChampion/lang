@@ -8,24 +8,6 @@ import (
 	"testing"
 )
 
-// `ircore.all_runtime_need_roots()` calls itself "the closed set of runtime-need
-// ROOT names — every string the codegen ever passes to `s.need(…)`", and the
-// per-module driver feeds exactly that list to the ENTRY module's shared runtime
-// instead of the exact per-module union. The soundness argument is that the list
-// is an over-approximation: a root missing from it is a module linking against an
-// undefined `__fern_*`.
-//
-// The list was maintained by hand, and the gaps do not announce themselves. A
-// root is only reachable from a LIBRARY-only module — nothing in the compiler's
-// own per-module build calls `w.flags()`, `w.write_some()` or `__heap_alloc_count()`
-// — so the per-module link fixtures the comment names never ask the entry unit for
-// those bodies, and the gate reads green with the row absent. Four roots
-// (`fd_flags`, `write_some`, `open_with`, `crc32_cksum`) sat missing that way under
-// #9353, and `alloc_count` went missing the same way the day #9596 landed.
-//
-// So this derives the set mechanically and pins the invariant instead. It builds
-// nothing and reads the Fern sources as data, which is what makes it cheap enough
-// to run on every change to them.
 var needRootSources = []string{
 	"asm_ir.fern",
 	"asm_arm64_ir.fern",
@@ -35,16 +17,8 @@ var needRootSources = []string{
 	"asmcore.fern",
 }
 
-// marksNeed matches a root marked with a STRING LITERAL: `s.need("x")`. A root
-// marked through a variable (`s.need(sig_fn)` — signal_ignore / signal_default)
-// is invisible here by construction, which is why the list stays hand-written
-// and this test only proves one direction: everything spelled as a literal is
-// listed. Extra rows are fine and expected; the over-approximation is the point.
 var marksNeed = regexp.MustCompile(`\.need\("([a-z0-9_]+)"\)`)
 
-// allRuntimeNeedRootsBody isolates the `return [ … ];` of
-// ircore.all_runtime_need_roots so a `need("…")` elsewhere in ircore.fern cannot
-// be mistaken for a listed row.
 func allRuntimeNeedRootsBody(t *testing.T) string {
 	t.Helper()
 	const path = "ircore.fern"
@@ -73,9 +47,6 @@ func TestAllRuntimeNeedRootsCoversEveryLiteralNeed(t *testing.T) {
 		t.Fatal("all_runtime_need_roots parsed as empty — the extraction is broken, not the list")
 	}
 
-	// `x` is the doc comment's own example ("If a NEW .need(\"x\") root is
-	// added…"), not a root. It is the only literal in these files that is
-	// documentation rather than code.
 	ignored := map[string]bool{"x": true}
 
 	marked := map[string][]string{}

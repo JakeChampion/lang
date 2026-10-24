@@ -12,12 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// TestRunRewritesGenericCallSitesInsideEveryExprShape locks in
-// the walker's coverage of expression shapes that can host a
-// generic Call. Earlier versions missed MapLit / FString /
-// Assign — a generic call buried inside one of these would
-// survive un-mangled through Run, and the trailing re-check
-// would fail with "undefined identifier <generic-fn>".
 func TestRunRewritesGenericCallSitesInsideEveryExprShape(t *testing.T) {
 	cases := []struct {
 		name string
@@ -121,9 +115,6 @@ function main(): i32 {
 			if err := monomorph.Run(prog, info); err != nil {
 				t.Fatalf("monomorph: %v", err)
 			}
-			// Confirm the generic decl is gone and a mangled
-			// clone took its place — that's the sign the
-			// rewrite-and-clone cycle ran end-to-end.
 			var sawClone, sawGeneric bool
 			for _, fn := range prog.Funcs {
 				if fn.Name == "id" {
@@ -143,11 +134,6 @@ function main(): i32 {
 	}
 }
 
-// TestRunRewritesGenericStructLitsInEveryPosition pins the positions a
-// generic struct literal can occupy inside a generic body. Each has to be
-// rewritten to its mangled instantiation per clone; one left behind reaches
-// the post-monomorph re-check as `unknown struct type` — an internal error
-// naming no construct (#7149).
 func TestRunRewritesGenericStructLitsInEveryPosition(t *testing.T) {
 	cases := []struct {
 		name string
@@ -203,20 +189,6 @@ function main(): i32 { return run(1) + run(true); }`,
 	}
 }
 
-// TestRunSubstitutesMethodCallTypeArgsInGenericBody locks in the
-// fix for a substitution-walker gap: a generic function body that
-// calls an Array method (`push` / `len`) on a `T[]` receiver stamps
-// the method call's `TypeArgs` to `[T]` during the first check. The
-// monomorph clone-substitution walker must rewrite those `TypeArgs`
-// to the concrete instantiation (`[i32]`), or the post-monomorph
-// re-check substitutes the method signature by `T→T` (a no-op) and
-// rejects the concrete element type against the abstract `T[]`.
-//
-// The bug surfaced because `substituteExpr` had no `*ast.Assign`
-// case, so the `push` call inside `out = out.append(x)` (and the
-// whole RHS of any reassignment, e.g. inside a `for-in` loop body)
-// was never walked. Before the fix, monomorph.Run returned
-// "re-check failed (compiler bug): … expected T[], got i32[]".
 func TestRunSubstitutesMethodCallTypeArgsInGenericBody(t *testing.T) {
 	cases := []struct {
 		name string
@@ -278,22 +250,6 @@ function main(): i32 {
 	}
 }
 
-// TestRunHandlesPartiallyInferredGenericCalls — variant
-// constructors like `Ok(x)` and `Err(e)` only fix one of
-// Result[T, E]'s two type parameters via their payload. The
-// other has to come from the surrounding context (var-init
-// annotation, function return slot).
-//
-// Before the destination-refinement work, the checker stamped
-// the call's TypeArgs as `[Result{no args}]`, monomorph
-// mangled to `pick__Result`, and the cloned param types were
-// bare Result. The re-check rejected with "Result has 2 type
-// parameter(s), 0 supplied".
-//
-// This test locks in the fix: each program type-checks and
-// monomorphs cleanly. Langsmith's `skipGeneric` workaround in
-// internal/testing/fernsmith/fernsmith.go can come back to a simple
-// flip once this is solid.
 func TestRunHandlesPartiallyInferredGenericCalls(t *testing.T) {
 	cases := []struct {
 		name string
@@ -341,34 +297,12 @@ function main(): i32 {
 	}
 }
 
-// TestWalkerCoversEveryASTNodeWithChildren is the essential
-// "no silent gaps" guarantee for monomorph's call-rewriting
-// walker. Through this thread the walker has been missing seven
-// shapes that can host a sub-expression (MapLit, FString,
-// Assign, Lambda, nested FuncDecl, Defer, Switch) — each one
-// surfaced months apart, always as "monomorph: re-check
-// failed: undefined identifier <generic-fn>" after a generic
-// call buried in the un-walked shape survived the rewrite
-// step.
-//
-// This test enumerates every AST node with sub-expression
-// children and asserts that a generic call buried inside is
-// found and rewritten by monomorph. Adding a new AST variant
-// forces an entry here (or an explicit Skip with a noted
-// reason).
-//
-// Pairs with `allASTNodesWithChildren` below as a tripwire:
-// any *ast.Expr / *ast.Stmt that *could* host a child
-// expression must either appear in the coverage table or be
-// listed in the "intentionally leaf or post-monomorph" skip
-// set.
 func TestWalkerCoversEveryASTNodeWithChildren(t *testing.T) {
 	cases := []struct {
 		node string
 		src  string
 		skip string
 	}{
-		// ---- Expression shapes with sub-expressions ----
 		{node: "Call.Args", src: `function id[T](x: T): T { return x; }
 function f(n: i32): i32 { return n; }
 function main(): i32 { return f(id(7)); }`},
@@ -463,7 +397,6 @@ function main(): i32 { return (id(7i64) as i32); }`},
 			skip: "MakeClosure is closureconv-synthetic; monomorph runs before closureconv and never sees it",
 		},
 
-		// ---- Statement shapes with sub-expressions ----
 		{node: "Var.Init", src: `function id[T](x: T): T { return x; }
 function main(): i32 { let n: i32 = id(7); return n; }`},
 		{node: "Destructure.Init", src: `function id[T](x: T): T { return x; }
@@ -555,8 +488,6 @@ function main(): i32 {
 			if err := monomorph.Run(prog, info); err != nil {
 				t.Fatalf("monomorph: %v\nsrc:\n%s", err, c.src)
 			}
-			// Confirm a clone with the mangled name landed.
-			// The generic decl `id[T]` should be gone too.
 			sawClone := false
 			for _, fn := range prog.Funcs {
 				if fn.Name == "id" {
@@ -572,13 +503,8 @@ function main(): i32 {
 		})
 	}
 
-	// Tripwire: assert the case list covers every ast.Expr /
-	// ast.Stmt with sub-expression children. The skip set above
-	// counts as coverage (acknowledged not-applicable).
 	covered := map[string]bool{}
 	for _, c := range cases {
-		// Split on `.` so "Call.Args" maps to "Call". A node
-		// may appear under multiple specific entries.
 		base := c.node
 		if i := strings.Index(base, "."); i >= 0 {
 			base = base[:i]
@@ -595,15 +521,6 @@ function main(): i32 {
 	}
 }
 
-// allASTNodesWithChildren enumerates every Expr / Stmt
-// implementation whose body has sub-expression children that
-// monomorph's walker needs to recurse into. Leaf nodes (Ident,
-// NumberLit, BoolLit, etc.) are excluded — they don't host
-// Call sites.
-//
-// Compile-time-checked: each entry is a `(*ast.NodeType)(nil)`
-// pointer, so removing the type from the package fails the
-// build right here.
 func allASTNodesWithChildren() []string {
 	exprs := []ast.Expr{
 		(*ast.CastExpr)(nil),
@@ -660,21 +577,6 @@ func trimPkg(s string) string {
 	return s
 }
 
-// TestMonomorphTupleArgProducesAssemblerSafeName locks in that a
-// generic function/struct instantiated with a TUPLE type argument
-// mangles to a symbol containing no parentheses. A tuple type's
-// String() is `(i32, i32)`; sanitize() has to strip the `(`/`)`, or
-// the clone name `id__(i32__i32)` reaches the native assemblers and
-// fails to assemble (wasm tolerates it). The
-// emitted clone names must be `[A-Za-z0-9_]`-only.
-// A polymorphically-recursive generic struct (`Nest[T]` whose field is
-// typed `Nest[Nest[T]]`) demands an unbounded family of instantiations,
-// so monomorphisation can't terminate. It must report a clear
-// "did not terminate / infinitely recursive" error rather than running
-// off the round cap and failing the trailing re-check with a misleading
-// "compiler bug". Regression for I3 in docs/ADVERSARIAL-REVIEW-2026-06.md.
-// The re-check after instantiation applies the checked target's rules:
-// config_get stays itself on the proxy world instead of becoming env.
 func TestRunRecheckKeepsTheTarget(t *testing.T) {
 	prog, err := parser.Parse(`function read[T](x: T, name: string): Option[string] { return config_get(name); }
 function main(): i32 { match (read(1, "GREETING")) { Some(v) => { return 0; }, None => { return 1; } } }`)
@@ -708,10 +610,6 @@ function main(): i32 { return 0; }`
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		// If a future checker rule pre-rejects polymorphic recursion,
-		// that's an acceptable place to catch it — but then this test
-		// should move to the checker. For now the checker accepts it and
-		// monomorph is the gate.
 		t.Skipf("checker rejected the recursive generic (moved earlier): %v", err)
 	}
 	err = monomorph.Run(prog, info)
@@ -726,22 +624,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// Four parallel walks in this package descend a generic body; the
-// *ast.FuncDecl case had been added to one of them and missed in the other
-// three, so a NESTED NAMED FUNCTION was left holding the enclosing generic's
-// type parameters and the monomorpher's own re-check rejected the program it
-// had just produced (#7042).
-//
-// Each row fails on the parent for a different reason, so they are separate
-// cases rather than one program:
-//
-//   - nested-fn-type-param      substituteStmt never substituted T
-//   - nested-fn-struct-lit      walkStmtStructLits never rewrote `Box { … }`
-//   - nested-fn-annotation      rewriteStmtTypes never rewrote `Box[i32]`
-//   - lambda-annotation         rewriteStmtTypes descended into no expression
-//     at all, so a lambda body was unreachable
-//   - two-instantiations        CloneStmt shared the nested FuncDecl by
-//     pointer, so the second clone overwrote the first
 func TestMonomorphEntersNestedFunctionAndLambdaBodies(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"nested-fn-type-param", `function apply[T](acc: T, f: (i32, T) => T): T { return f(1, acc); }
@@ -794,9 +676,6 @@ function main(): i32 {
 			if err != nil {
 				t.Fatalf("check: %v", err)
 			}
-			// Run's own re-check is the assertion: it reports
-			// "re-check failed (compiler bug)" for exactly the shapes
-			// above, naming the type it failed to substitute.
 			if err := monomorph.Run(prog, info); err != nil {
 				t.Fatalf("monomorph: %v", err)
 			}
@@ -804,30 +683,6 @@ function main(): i32 {
 	}
 }
 
-// The same class as TestMonomorphEntersNestedFunctionAndLambdaBodies, one
-// statement kind later: a `defer` action was reachable by none of the three
-// walks that had been taught about nested functions, and neither CloneStmt nor
-// CloneExpr deep-copied the node, so every instantiation of a generic shared
-// one action.
-//
-// It is worth pinning separately because the failure is a REFUSED COMPILE that
-// blames itself — the monomorpher's own re-check rejects the program it just
-// produced with "compiler bug" — so it reads as an internal error rather than
-// as a missing case:
-//
-//	monomorph: re-check failed (compiler bug): unknown struct type "Holder"
-//
-// Each row failed on the parent for a different reason:
-//
-//   - defer-struct-lit    walkStmtStructLits never rewrote `Holder { … }`
-//   - defer-in-generic    the same, with the type parameter still to substitute
-//   - defer-nested        the action is reached through an enclosing `if`
-//   - defer-two-insts     CloneExpr shared the action's *BlockExpr by pointer,
-//     so the second instantiation substituted into the first one's nodes
-//   - loop-two-insts      CloneStmt shared an *ast.Loop body the same way
-//
-// The no-defer twin of each shape already compiled, which is what isolates the
-// statement kind rather than the generic.
 func TestMonomorphEntersDeferAndLoopBodies(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"defer-struct-lit", `struct Holder[T] { v: T }
@@ -931,13 +786,6 @@ function main(): i32 {
 	}
 }
 
-// TestMonomorphNestedGenericNameIsConsistent locks in that a
-// nested generic instantiation like `Box[Box[i32]]` mangles to the
-// SAME name whether the outer struct's type arg arrives raw
-// (StructType{Name:"Box", Args:[i32]}) or pre-rewritten
-// (StructType{Name:"Box__i32"}). A mismatch surfaces as a monomorph
-// re-check failure: "cannot assign Box__Box_i32_ to variable of type
-// Box__Box__i32".
 func TestMonomorphNestedGenericNameIsConsistent(t *testing.T) {
 	src := `struct Box[T] { v: T }
 function main(): i32 {
@@ -957,16 +805,6 @@ function main(): i32 {
 	}
 }
 
-// TestRunSubstitutesArrayLiteralElemTypeAtCallSite locks in the fix
-// for a codegen-corrupting gap: an array literal passed to a generic
-// `T[]` parameter is stamped by the checker with ElemType = the type
-// parameter (e.g. `T`). The caller isn't a generic clone, so the
-// clone-substitution walker never reached it, and the unsubstituted
-// ParamType drove the wrong per-element store width at codegen — a
-// pointer-element array (struct[]) got single-word stores into
-// pointer-width slots, corrupting the array on drop. monomorph.Run
-// must substitute the concrete instantiation into the argument's
-// ElemType at the call site.
 func TestRunSubstitutesArrayLiteralElemTypeAtCallSite(t *testing.T) {
 	src := `
 import "std/i32";
@@ -986,8 +824,6 @@ function main(): i32 {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	// Find the array-literal argument in main and confirm its
-	// ElemType is the concrete StructType, not a leftover ParamType.
 	var lit *ast.ArrayLit
 	for _, fn := range prog.Funcs {
 		if fn.Name != "main" {
@@ -1011,12 +847,6 @@ function main(): i32 {
 	}
 }
 
-// TestRunTransitiveInstantiation locks in transitive monomorphisation:
-// a generic function whose body calls another generic (`wrap[T]`
-// calling `id[T]`) must instantiate the callee too. Before the
-// worklist fixpoint, the cloned `wrap[i32]` body still called the
-// generic `id` (which gets removed after the pass), and the
-// post-monomorph re-check failed with "expected T, got i32".
 func TestRunTransitiveInstantiation(t *testing.T) {
 	src := `
 import "std/i32";
@@ -1034,8 +864,6 @@ function main(): i32 { return wrap(5); }`
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	// Both wrap and id must have an i32 clone, and no generic decl
-	// may survive.
 	var ids, wraps, generics int
 	for _, fn := range prog.Funcs {
 		switch {
@@ -1058,14 +886,6 @@ function main(): i32 { return wrap(5); }`
 	}
 }
 
-// TestGenericDeriveDefaultMonomorphises guards the fix for the
-// "re-check failed: undefined identifier T/i32" crash: a generic struct's
-// derived `default()` is a receiver-less associated function whose call site
-// `Box.default()` must (a) get its type args inferred from the binding's
-// destination type and (b) have its `T.default()` body rewritten to the
-// concrete type — including a PRIMITIVE type param resolving onto a primitive
-// `impl Default for i32`. Each case must check + monomorphise without error
-// and leave no generic decl behind.
 func TestGenericDeriveDefaultMonomorphises(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"struct-param", `trait Default { function default(): Self; }
@@ -1103,19 +923,6 @@ function main(): i32 { let b: Box[string] = Box.default(); return b.v.len(); }`}
 	}
 }
 
-// TestAssocCallRewriteNamesEveryScalarWidth walks a `T.default()`
-// associated call through every scalar a type argument can bind to. The
-// rewrite names `T`'s impl with the same classifier the checker
-// registers `impl Default for <scalar>` under (`ast.ReceiverTypeName`);
-// when the two disagreed the call resolved onto ANOTHER type's impl and
-// the trailing re-check failed with a "compiler bug".
-//
-// `u8` is the case that motivated the table: it used to fall through a
-// width switch that only knew 32 and 64, so a byte was named `u32` here
-// while the checker named it `u8`, and `zero[u8]()` failed with
-// "undefined identifier u32" — or, once a u32 impl existed to land on,
-// "return value: expected u8, got u32". Every width is listed so
-// the next one to arrive is a one-line addition, not another skew.
 func TestAssocCallRewriteNamesEveryScalarWidth(t *testing.T) {
 	scalars := []struct{ ty, zero, use string }{
 		{"i32", "0", "b"},
@@ -1154,20 +961,6 @@ function main(): i32 { let b: %[1]s = zero[%[1]s](); return %[3]s; }`, s.ty, s.z
 	}
 }
 
-// TestRunAcceptsPolymorphicFloatBinaryArg — a float binary expression is
-// the only context where a `+`/`-`/`*`/`/` node can reach the end of
-// checking still float-typed AND width-less: passed to `[A](a: A)` whose
-// return type does not mention A, nothing ever pins its operands to a
-// concrete float type, so `commonFloatWidth` stays polymorphic and
-// `FloatWidth` is left at 0.
-//
-// The checker's trailing "default a leftover-polymorphic integer op to
-// i32" pass keyed on `FloatWidth == 0` and so stamped `IntWidth = 32` on
-// exactly those nodes. Monomorph's post-clone re-check then read the node
-// back as an integer op and rejected the argument against the concrete
-// `f64` parameter it had just inferred: "re-check failed (compiler bug):
-// argument 1: expected f64, got i32". The pass now excludes a float op on
-// `IsFloat`.
 func TestRunAcceptsPolymorphicFloatBinaryArg(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1208,13 +1001,6 @@ function main(): i32 { print(one(1 + 2)); print(one(1.5 - 0.25)); return 0; }`,
 	}
 }
 
-// A generic enum whose variant carries an ARRAY of itself — `Br(H[T][])`, the
-// persistent-collection node shape — is clone-needed (#3693), and the clone's
-// body carries the enclosing substitution in every type slot substituteNode
-// fills, not only Var/Lambda/FuncDecl: the array-method call `kids.len()`
-// keeps `T = H[i32]` in its TypeArgs, and an array literal its ElemType. The
-// mangling pass has to rewrite those slots to the clone `H__i32` as well, or
-// the re-check rejects its own output ("expected H[i32][], got H__i32[]").
 func TestRunRewritesSubstitutedCallTypeArgsAgainstEnumClone(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"array-method-on-generic-enum-array-param", `
@@ -1279,10 +1065,6 @@ function main(): i32 {
 	}
 }
 
-// A value binding spelled like its function's type parameter shadows the
-// type parameter, so `T.eq(u)` is a method call on the value. The clone must
-// keep that receiver: rewriting it to the concrete type read `i32.eq(u)` as
-// an associated call and failed the re-check with E043 (#10380).
 func TestRunKeepsValueReceiverSpelledLikeTypeParam(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"parameter", `import "core/cmp";
@@ -1308,10 +1090,6 @@ function main(): i32 { return same(3, 3) + same("a", "b"); }`},
 	}
 }
 
-// An associated call through a bounded type parameter, `T.zero()`, keeps the
-// bound's provider when the re-check reads it at the concrete type (#12281).
-// Two traits each provide `zero` for P, so the clone's `P.zero()` alone is
-// ambiguous; spelled at P in the source it still is.
 func TestRunRoutesBoundedAssocCallToTheBound(t *testing.T) {
 	const traits = `struct P { x: i32 }
 trait A { function zero(): Self; }
@@ -1366,10 +1144,6 @@ function main(): i32 { return via_a[P]().x + via_b[P]().x; }`)
 	}
 }
 
-// A generic enum the monomorphizer keeps generic keeps its parametric impls
-// through the re-check. Dropping them left the re-check with no Eq or Hash
-// for `Slot[i32]`, so a map keyed by it was refused as E045 after the first
-// check had accepted it.
 func TestRunKeepsGenericEnumConformance(t *testing.T) {
 	src := `import "core/map";
 import "core/cmp";

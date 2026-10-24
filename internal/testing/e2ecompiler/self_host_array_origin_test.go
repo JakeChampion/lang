@@ -31,8 +31,6 @@ function main(): i32 {
 }
 `
 
-// Calling the genuine map from a user function with a mangled-looking name
-// does not make it a stdlib combinator. This wrapper reverses its result.
 const customArrayWrapperDecl = `import "std/array";
 function __arrm_map[T](xs: T[], f: (T) => T): T[] {
   let mapped = array.map(xs, f);

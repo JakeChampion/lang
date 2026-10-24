@@ -15,21 +15,6 @@ import (
 	"time"
 )
 
-// Graceful shutdown (#9854, the seven steps of #9851 §2), shared by the
-// native tests and their self-host twins: SIGTERM keeps the loop accepting
-// for a grace, fails the readiness path, closes the listener, ends
-// keep-alive (a request whose keep-alive was decided before the signal is
-// answered and then closed), drains what is in flight under a deadline and
-// exits 0, or 1 when it cut a request off; the supervisor forwards the
-// signal to its workers and waits for them; and a listener handed in
-// through LISTEN_FDS is served instead of a fresh one.
-
-// ServeShutdownSource is a server whose /slow burns pure work
-// until 1.5 s of the bag's monotonic clock has passed, so the checks' 100 ms
-// head start lands mid-request on any runner, whose readiness path is
-// /healthz and which answers
-// everything else at once, with a 300 ms grace and `drainMs` to drain.
-// `entry` is the serve call, which reads `opts`.
 func ServeShutdownSource(drainMs int, entry string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -61,13 +46,6 @@ function main(): i32 {
 `, drainMs, entry)
 }
 
-// StartServerProcess starts cmd in its own process group, with its stderr
-// in a file the caller can read, and kills the whole group at cleanup: a
-// supervisor forks workers, and killing only the parent would orphan a
-// worker still holding the listener. extraFiles are handed to the child
-// from descriptor 3 up, the way LISTEN_FDS announces a listener. When the
-// test has failed, cleanup logs whether the server had exited on its own
-// and what it wrote to stderr.
 func StartServerProcess(t *testing.T, cmd *exec.Cmd, extraFiles ...*os.File) (stderrPath string) {
 	t.Helper()
 	cmd.ExtraFiles = append(cmd.ExtraFiles, extraFiles...)
@@ -94,9 +72,6 @@ func StartServerProcess(t *testing.T, cmd *exec.Cmd, extraFiles ...*os.File) (st
 	return stderrPath
 }
 
-// serverEnded says whether the server had already exited, and how, before
-// cleanup kills it. A server that has not been waited for is reaped here
-// when it has exited, which leaves the cleanup's own wait nothing to do.
 func serverEnded(cmd *exec.Cmd) string {
 	if cmd.ProcessState != nil {
 		return "had exited: " + cmd.ProcessState.String()
@@ -115,8 +90,6 @@ func serverEnded(cmd *exec.Cmd) string {
 	}
 }
 
-// fileTail is the last max bytes of the file at path, or why it could not
-// be read.
 func fileTail(path string, max int) string {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -131,9 +104,6 @@ func fileTail(path string, max int) string {
 	return string(b)
 }
 
-// WaitServerReady dials until the listener accepts. The probe connection
-// closes without sending a request, which the loop reads as a closed
-// connection and moves on from.
 func WaitServerReady(t *testing.T, addr string, within time.Duration) {
 	t.Helper()
 	limit := time.Now().Add(within)
@@ -150,8 +120,6 @@ func WaitServerReady(t *testing.T, addr string, within time.Duration) {
 	t.Fatalf("server never bound on %s within %v; last dial: %v", addr, within, last)
 }
 
-// rawRequest writes one request on a fresh connection and returns the
-// connection, for the caller to read at its own pace.
 func rawRequest(t *testing.T, addr, path, connection string) net.Conn {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -207,8 +175,6 @@ func waitExit(t *testing.T, cmd *exec.Cmd, within time.Duration) int {
 	return -1
 }
 
-// childrenState names each child the process still has, with the kernel
-// function it waits in, for the report of a shutdown that hung.
 func childrenState(pid int) string {
 	kids, err := ChildPIDs(pid)
 	if err != nil {
@@ -239,12 +205,6 @@ func sigterm(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// CheckShutdownDrains drives a server built from ServeShutdownSource with
-// a drain deadline longer than /slow: an idle keep-alive connection and a
-// request in flight are open when SIGTERM arrives; the readiness path
-// answers 503 with close within the grace, the in-flight request is
-// answered and its connection closed, the idle one is closed, and the
-// process exits 0.
 func CheckShutdownDrains(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -257,15 +217,11 @@ func CheckShutdownDrains(t *testing.T, cmd *exec.Cmd, addr string) {
 	defer slow.Close()
 	time.Sleep(100 * time.Millisecond)
 	sigterm(t, cmd)
-	// Within the grace the loop still accepts; the readiness path says
-	// not ready, with close, once the slow handler is done.
 	probe := rawRequest(t, addr, "/healthz", "")
 	defer probe.Close()
 	if resp := readResponse(t, probe, "/healthz after SIGTERM"); resp.StatusCode != 503 || !resp.Close {
 		t.Fatalf("/healthz after SIGTERM: status %d close=%v, want 503 close", resp.StatusCode, resp.Close)
 	}
-	// The in-flight request's keep-alive was decided before the signal,
-	// so the close follows the response instead of being announced.
 	resp := readResponse(t, slow, "/slow across SIGTERM")
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 || string(body) != "slow" {
@@ -278,9 +234,6 @@ func CheckShutdownDrains(t *testing.T, cmd *exec.Cmd, addr string) {
 	}
 }
 
-// CheckShutdownAbortsAtDrainDeadline drives a server built with a 400 ms
-// drain deadline: a request that never completes is cut off at the
-// deadline and the process exits 1.
 func CheckShutdownAbortsAtDrainDeadline(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -307,12 +260,6 @@ func CheckShutdownAbortsAtDrainDeadline(t *testing.T, cmd *exec.Cmd, addr string
 	}
 }
 
-// CheckShutdownWaitsForBackground asks `path` of a server whose response
-// leaves background work running, signals SIGTERM, and expects the process
-// to exit 0 within `within`, the work having logged `logged` by then: that
-// it ran to its end inside the drain deadline, or that it saw itself
-// cancelled at it. Background work holds no connection, so cutting it off
-// is not an aborted drain.
 func CheckShutdownWaitsForBackground(t *testing.T, cmd *exec.Cmd, addr, stderrPath, path, logged string, within time.Duration) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -335,10 +282,6 @@ func CheckShutdownWaitsForBackground(t *testing.T, cmd *exec.Cmd, addr, stderrPa
 	}
 }
 
-// CheckSupervisedShutdown drives a supervisor over two workers: SIGTERM to
-// the supervisor is forwarded, a request in flight on a worker is
-// answered, the supervisor exits 0 once its workers drained, and no
-// worker's shutdown is logged as a death.
 func CheckSupervisedShutdown(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -360,14 +303,6 @@ func CheckSupervisedShutdown(t *testing.T, cmd *exec.Cmd, addr, stderrPath strin
 	}
 }
 
-// StartInheritedServer starts cmd as StartServerProcess does, serving a
-// listener it inherits as descriptor 3 (LISTEN_FDS=1), and answers the
-// listener's loopback address. The listener exists before the server does,
-// so there is no port for another test to take between choosing it and the
-// server binding it. The test's own copy is closed once the server holds
-// one, so a server that closes its listener stops accepting connections.
-// The harness's server sources pass port 0 to their serve entry, which the
-// inherited listener supersedes.
 func StartInheritedServer(t *testing.T, cmd *exec.Cmd) (addr, stderrPath string) {
 	t.Helper()
 	fd, port := boundSocket(t, false)
@@ -382,11 +317,6 @@ func StartInheritedServer(t *testing.T, cmd *exec.Cmd) (addr, stderrPath string)
 	return fmt.Sprintf("127.0.0.1:%d", port), stderrPath
 }
 
-// ReservedPort is a port for a server that binds it itself with
-// SO_REUSEPORT. It is held until the test ends by a socket that is bound
-// with SO_REUSEPORT but never listens: every other binder is refused the
-// port, the server's own binds share it, and no connection is queued on the
-// reservation.
 func ReservedPort(t *testing.T) int {
 	t.Helper()
 	fd, port := boundSocket(t, true)
@@ -394,9 +324,6 @@ func ReservedPort(t *testing.T) int {
 	return port
 }
 
-// boundSocket is a TCP socket bound to an ephemeral port on the address
-// std/serve's own listener takes: `::` for both families, or `0.0.0.0`
-// where the host has no IPv6.
 func boundSocket(t *testing.T, reusePort bool) (fd, port int) {
 	t.Helper()
 	fd, err := tcpSocket(syscall.AF_INET6)
@@ -435,7 +362,6 @@ func boundSocket(t *testing.T, reusePort bool) (fd, port int) {
 	return -1, 0
 }
 
-// tcpSocket is a TCP socket that no other test's child inherits.
 func tcpSocket(family int) (int, error) {
 	syscall.ForkLock.RLock()
 	defer syscall.ForkLock.RUnlock()
@@ -455,9 +381,6 @@ func bindEphemeral(fd int, sa syscall.Sockaddr, reusePort bool) error {
 	return syscall.Bind(fd, sa)
 }
 
-// CheckInheritedListener drives a server started with an inherited
-// listener and LISTEN_FDS=1: it answers on that listener, and exits 0 on
-// SIGTERM.
 func CheckInheritedListener(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	conn := rawRequest(t, addr, "/ok", "Connection: close\r\n")

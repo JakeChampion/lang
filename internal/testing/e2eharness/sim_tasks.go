@@ -1,14 +1,5 @@
 package e2eharness
 
-// SimTasksProgram is the sim's task gate (docs/NET-P3-SUSPENSION-PLAN.md
-// §3.8): three handlers on a SimPlatform fetch scripted upstreams through
-// plat.http, run together by sim.run_tasks. Each connect takes 5 ms and the
-// answers come 30, 10 and 50 ms after the request, so under the self-host
-// compiler every plat.http parks and the handlers finish in virtual-time
-// order, b at 15 ms and a at 35 ms; c is cancelled at 20 ms, as a client
-// disconnecting would, and its plat.http answers Cancelled at that moment.
-// Everything printed is virtual time, so the output is the same bytes on
-// every target.
 const SimTasksProgram = `import "std/async";
 import "std/sim";
 import "std/sim_fetch";
@@ -59,6 +50,4 @@ function main(): i32 {
 }
 `
 
-// SimTasksWant is the self-host output: the tasks park, so they finish in
-// virtual-time order and the third is cancelled while it waits.
 const SimTasksWant = "/b beta at 15\n/c cancelled at 20\n/a alpha at 35\ndone alpha\ndone beta\ncancelled\nnow 35\n"

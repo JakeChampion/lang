@@ -4,16 +4,6 @@ import (
 	"testing"
 )
 
-// #7911 — `m.insert(k, v)` overwriting an existing entry keeps the key the
-// column already holds and discards the incoming one. The boxed ABIs (wasm,
-// arm64 two-word) released that key cell in freeDiscardedSetKeyCell; the
-// single-word x86-64 path, where the column holds the data pointer itself,
-// left the incoming reference unreclaimed — one heap key per overwrite.
-//
-// Every key below is pushed past the SSO inline threshold so it has a buffer
-// to leak, and the suffix cycles through four values so most inserts are
-// overwrites.
-
 const mapOverwriteFreshKeySrc = `import "core/map";
 import "std/i32";
 @noinline
@@ -46,10 +36,6 @@ function main(): i32 {
 }`
 }
 
-// The release must undo exactly the reference the set took. An aliased key
-// is retained at the set, so it stays alive for the reads after the overwrite;
-// a literal's sentinel is a no-op; an index-read key is retained like an
-// ident. 0 iff every read saw the right string AND nothing dec'd past zero.
 const mapOverwriteAliasedKeyUnderflowSrc = `import "core/map";
 import "std/i32";
 @noinline

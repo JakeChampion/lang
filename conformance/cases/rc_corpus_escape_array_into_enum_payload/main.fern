@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Escape into an enum payload (variant constructor arg):
-// the json `JArray(inner)` shape. emitEnumNew stores the
-// payload WITHOUT an inc (unlike StructLit), so an owned
-// array passed in escapes uncounted into the box and must
-// not be freed at the helper's exit. The churn loop both
-// reclaims same-size blocks and accumulates a distinctive
-// value so a reused-block corruption reads back wrong.
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 enum Wrap { Arr(i32[]), Empty }

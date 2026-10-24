@@ -1,5 +1,3 @@
-// x86NativeRunner is how a test execs an x86-64 Linux binary: directly on an
-// amd64 host, under qemu-x86_64 elsewhere, and a SKIP when neither is there.
 package e2e
 
 import (

@@ -2,14 +2,6 @@ import "std/test";
 import "std/http";
 import "std/string";
 
-// tests/stdlib/http_request_bytes_test.fern — the byte-based request
-// parser (#5714): `http_parse_request_bytes` reads the request as it came
-// off the wire, and `http_parse_request` is the same parse over text. The
-// two must agree on every request, well-formed or not, and nothing the
-// parse keeps may be a view into the wire, so the buffer is free to be
-// reused.
-
-// `body_text(req)` — the body as text, or what `body_string` refused.
 function body_text(req: HttpRequest): string {
   match (req.body_string()) {
     Ok(text) => {
@@ -91,7 +83,6 @@ function test_bare_request_has_no_headers(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// A header block with `n` fields, each `X-i: i`.
 function fields(n: i32): string {
   let block: string = "";
   let i: i32 = 0;
@@ -102,10 +93,6 @@ function fields(n: i32): string {
   return block;
 }
 
-// repeat(s, n) — s concatenated n times, built by doubling so the bytes
-// copied are linear in the result: the self-host compiler's string
-// concatenation has no in-place append, and the 1 MiB bodies below would
-// otherwise copy a terabyte.
 function repeat(s: string, n: i32): string {
   if (n <= 0) {
     return "";
@@ -123,13 +110,10 @@ function repeat(s: string, n: i32): string {
   return out;
 }
 
-// A request whose line is `line_len` bytes before its CRLF.
 function line_of(line_len: i32): string {
   return "GET /" + repeat("a", line_len - 14) + " HTTP/1.1\r\nHost: h\r\n\r\n";
 }
 
-// A request whose header block, request line included, is `block_len`
-// bytes before the CRLF CRLF that ends it.
 function block_of(block_len: i32): string {
   let line: string = "GET / HTTP/1.1\r\nHost: h\r\n";
   return line + "X: " + repeat("v", block_len - line.len() - 3) + "\r\n\r\n";
@@ -147,8 +131,6 @@ function accepted(wire: string): boolean {
   return false;
 }
 
-// Each cap admits a request at it and refuses the one a byte or a field
-// past it.
 function test_caps_admit_what_fits(): test.TestOutcome {
   match (http.http_parse_request_bytes(("GET / HTTP/1.1\r\nHost: h\r\n" + fields(99) + "\r\n").bytes())) {
     Some(req) => {
@@ -184,7 +166,6 @@ function test_caps_admit_what_fits(): test.TestOutcome {
   return test.pass();
 }
 
-// Every refusal the parser makes, on both entries.
 function refused(wire: string): boolean {
   let text: boolean = true;
   match (http.http_parse_request(wire)) {
@@ -315,9 +296,6 @@ function test_refusals_agree(): test.TestOutcome {
   return test.pass();
 }
 
-// The framed parse tells a partial request from a malformed one: a loop
-// keeps reading on the first and closes on the second, and a request past
-// a cap is malformed as soon as the cap is passed.
 function framing_of(wire: string): i32 {
   match (http.http_parse_request_framed(wire.bytes())) {
     http.Framed(_) => {
@@ -379,10 +357,6 @@ function test_framing_tells_incomplete_from_malformed(): test.TestOutcome {
   return test.pass();
 }
 
-// A chunked body (RFC 9112 §7.1) is decoded, chunk extensions skipped,
-// trailers read under the header rules into `request.trailers`, apart
-// from the headers, and the framed length covers the whole wire, so the
-// request behind it is found.
 function wire_chunked(): string {
   return "POST /up HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=\"x\"\r\nhello\r\n06\r\n world\r\n0\r\nX-Sum: 11\r\n\r\n";
 }
@@ -391,7 +365,6 @@ function chunked(body: string): string {
   return "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" + body;
 }
 
-// body_of(wire) — the decoded body, or "<refused>".
 function body_of(wire: string): string {
   match (http.http_parse_request_bytes(wire.bytes())) {
     Some(req) => {
@@ -493,9 +466,6 @@ function test_chunked_refusals(): test.TestOutcome {
   if (!refused("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")) {
     return test.fail("chunked twice accepted");
   }
-  // The coding is compared byte-wise: a Unicode fold would read the
-  // Kelvin sign (U+212A, three bytes) as `k`, and a whitespace trim
-  // wider than SP and HTAB would let VT or FF ride in the token.
   if (!refused("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunKed\r\n\r\n5\r\nhello\r\n0\r\n\r\n")) {
     return test.fail("a Kelvin sign in the coding accepted");
   }
@@ -541,9 +511,6 @@ function test_chunked_refusals(): test.TestOutcome {
   return test.pass();
 }
 
-// The three-way answer over a chunked body, and each of its caps at the
-// edge: the body cap is on the decoded bytes, the framing budget on the
-// rest.
 function test_chunked_framing_tells_incomplete_from_malformed(): test.TestOutcome {
   if (framing_of(chunked("5")) != 1) {
     return test.fail("an unterminated chunk-size line is not incomplete");
@@ -584,8 +551,6 @@ function test_chunked_framing_tells_incomplete_from_malformed(): test.TestOutcom
   if (accepted(chunked("100001\r\n" + repeat("b", 1048577) + "\r\n0\r\n\r\n"))) {
     return test.fail("a chunk of 1 MiB and a byte accepted");
   }
-  // The framing of `5;<ext>\r\nhello\r\n0\r\n\r\n` is 11 bytes plus the
-  // extension.
   if (!accepted(chunked("5;" + repeat("e", 32757) + "\r\nhello\r\n0\r\n\r\n"))) {
     return test.fail("chunk framing of 32768 bytes refused");
   }
@@ -595,8 +560,6 @@ function test_chunked_framing_tells_incomplete_from_malformed(): test.TestOutcom
   return test.pass();
 }
 
-// status_of(wire) — the status a malformed request is refused with, or
-// 0 when it is not refused.
 function status_of(wire: string): i32 {
   match (http.http_parse_request_framed(wire.bytes())) {
     http.Framed(_) => {
@@ -615,12 +578,6 @@ function status_of(wire: string): i32 {
   return 0;
 }
 
-// Each refusal names the status the serve loop answers it with: 400 for
-// the grammar, the Host rule and a coding list that does not end in
-// `chunked`, 413 for a body past its cap, 414 for a request line past its
-// cap, 431 for a header block past its byte or field cap or chunk framing
-// past its budget, 501 for a coding under the final `chunked` the parser
-// cannot decode.
 function test_refusal_statuses(): test.TestOutcome {
   if (status_of("GET  / HTTP/1.1\r\nHost: h\r\n\r\n") != 400) {
     return test.fail("an empty target: " + status_of("GET  / HTTP/1.1\r\nHost: h\r\n\r\n").to_string());
@@ -676,10 +633,6 @@ function test_refusal_statuses(): test.TestOutcome {
   return test.pass();
 }
 
-// `Expect: 100-continue` (RFC 9110 §10.1.1) is answered while the body is
-// still to come, and only then: a request whose body has arrived is
-// framed, one whose body is short says so, the field is read
-// case-insensitively, and an HTTP/1.0 request's expectation is ignored.
 function test_expect_continue(): test.TestOutcome {
   let head: string = "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
   if (framing_of(head) != 3) {
@@ -706,9 +659,6 @@ function test_expect_continue(): test.TestOutcome {
   return test.pass();
 }
 
-// The framing a persistent connection reads off the parse: the bytes the
-// request occupies, and whether the connection outlives it (RFC 9112
-// §9.3).
 function framed(wire: string): Option[http.HttpFramed] {
   match (http.http_parse_request_framed(wire.bytes())) {
     http.Framed(f) => {
@@ -768,8 +718,6 @@ function test_framed_from_reads_the_request_behind(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// `framed_after(wire, prev)` — the request `wire` frames with `prev` as
-// the request before it.
 function framed_after(wire: string, prev: http.HttpFramed): Option[http.HttpFramed] {
   match (http.http_parse_request_framed_from(wire.bytes(), 0, http.http_limits(), prev)) {
     http.Framed(f) => {
@@ -782,8 +730,6 @@ function framed_after(wire: string, prev: http.HttpFramed): Option[http.HttpFram
   return None;
 }
 
-// `framed_differs(a, b)` — the first thing two framed requests disagree
-// on, or "".
 function framed_differs(a: http.HttpFramed, b: http.HttpFramed): string {
   if (a.request.method != b.request.method || a.request.path != b.request.path) {
     return "request line: " + a.request.method + " " + a.request.path + " against " + b.request.method + " " + b.request.path;
@@ -814,9 +760,6 @@ function framed_differs(a: http.HttpFramed, b: http.HttpFramed): string {
   return "";
 }
 
-// A request parsed with the one before it as `prev`, kept whole or as a
-// serve loop keeps it, is the request parsed with nothing before it, how
-// much or little of `prev` it repeats.
 function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
   let wires: string[] = [
     "GET / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n",
@@ -878,8 +821,6 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
   return test.pass();
 }
 
-// What a serve loop keeps of a request has no body or trailers, and the
-// rest of the request unchanged.
 function test_framed_kept_drops_the_body(): test.TestOutcome {
   match (framed(wire_post())) {
     Some(f) => {
@@ -961,10 +902,6 @@ function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
   let wire: u8[] = wire_post().bytes();
   match (http.http_parse_request_bytes(wire)) {
     Some(req) => {
-      // Overwrite the wire buffer after the parse: the request must
-      // not see it. A counted alias would be copied on write and pass
-      // here too, so what this pins is that no field is an uncounted
-      // view (a `str`, a slice) into the wire.
       let i: i32 = 0;
       while (i < wire.len()) {
         wire = wire.with(i, 120 as u8);
@@ -982,8 +919,6 @@ function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// The path a handler sees: the target decoded once, its dot segments
-// removed, the query as it came.
 function target_of(method: string, target: string): string {
   match (http.http_request_target(method, target)) {
     Ok(p) => {
@@ -1120,9 +1055,6 @@ function test_target_refusals(): test.TestOutcome {
   return test.pass();
 }
 
-// The version is an HTTP-version (RFC 9112 §2.3): another major version is
-// refused with 505, anything else that is not `HTTP/` digit `.` digit with
-// 400, and a higher minor version is read as HTTP/1.1.
 function test_version_rules(): test.TestOutcome {
   if (status_of("GET / ICE/1.0\r\nHost: h\r\n\r\n") != 400) {
     return test.fail("another protocol");
@@ -1176,8 +1108,6 @@ function test_version_rules(): test.TestOutcome {
   return test.pass();
 }
 
-// Chunk extensions are skipped when well-formed (RFC 9112 §7.1.1) and
-// refused otherwise.
 function test_chunk_extension_grammar(): test.TestOutcome {
   if (body_of(chunked("5;a\r\nhello\r\n0\r\n\r\n")) != "hello") {
     return test.fail("a bare name refused");
@@ -1224,8 +1154,6 @@ function test_chunk_extension_grammar(): test.TestOutcome {
   return test.pass();
 }
 
-// One empty line before the request line is ignored (RFC 9112 §2.2) and
-// counted in the framed length; a second is refused.
 function test_empty_line_before_the_request(): test.TestOutcome {
   let wire: string = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
   match (http.http_parse_request_framed(wire.bytes())) {
@@ -1262,7 +1190,6 @@ function test_empty_line_before_the_request(): test.TestOutcome {
   return test.pass();
 }
 
-// `header_of(wire, name)` — the value the parse keeps for `name`.
 function header_of(wire: string, name: string): string {
   match (http.http_parse_request(wire)) {
     Some(req) => {
@@ -1282,8 +1209,6 @@ function header_of(wire: string, name: string): string {
   return "<refused>";
 }
 
-// A header value is text: obs-text that spells UTF-8 is kept as that
-// text, and a value whose bytes do not spell it is refused with 400.
 function test_header_value_must_be_utf8(): test.TestOutcome {
   let accented: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: José\r\n\r\n";
   if (header_of(accented, "x-name") != "José") {
@@ -1296,8 +1221,6 @@ function test_header_value_must_be_utf8(): test.TestOutcome {
   return test.assert_eq(status_of(broken), 400);
 }
 
-// An escape in the path decodes to bytes, and those bytes have to spell
-// UTF-8: `%C3%A9` is `é`, `%FF` is refused.
 function test_path_escapes_must_be_utf8(): test.TestOutcome {
   if (target_of("GET", "/caf%C3%A9?q=%FF") != "/café?q=%FF") {
     return test.fail("decoded path: " + target_of("GET", "/caf%C3%A9?q=%FF"));

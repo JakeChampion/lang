@@ -1,5 +1,3 @@
-// `uring` and `ktls`: Linux's io_uring and kernel TLS, refused everywhere
-// else, while the stdlib modules that wrap them build for every target.
 package e2e
 
 import (
@@ -39,9 +37,6 @@ func TestRingAndKTLSRefusedOffLinux(t *testing.T) {
 	}
 }
 
-// std/async's io_uring driver and std/tls/ktls reach the builtins under a
-// target_os() branch, so a program using them compiles off Linux, where the
-// branch is not in the program.
 func TestLinuxOnlyWrappersBuildEverywhere(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

@@ -1,6 +1,5 @@
 package e2eharness
 
-// RegexUTF8Program keeps byte matching and tests the checked text boundary.
 const RegexUTF8Program = `import "std/regex";
 import "std/array";
 import "std/string";

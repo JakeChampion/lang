@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// Raw syscall operands already name the target's kernel ABI. Darwin's
-// assembly retargeting changes their number register and trap, not the value.
 func TestSelfHostProfileSyscallABI(t *testing.T) {
 	dir := copySelfHostTree(t)
 	const driver = "import \"./rtprofile\";\nfunction main(): i32 {\n let av: string[] = args(); let mode: i32 = 1;\n if (av[2] == \"2\") { mode = 2; } else if (av[2] == \"3\") { mode = 3; } else if (av[2] == \"4\") { mode = 4; }\n print(rtprofile.source(av[1], mode)); return 0;\n}\n"

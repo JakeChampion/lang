@@ -1,30 +1,9 @@
-// Independent normal-x86 capacity-helper syntax. Decoded records are data,
-// never effect certificates. A checker must derive this program internally
-// from its own complete text and independently prove every reachable effect.
 import "./ssadecrementtext" as text;
 import "./ssainlineuniqueisa" as registers;
 import "./ssaproofnames" as names;
 import "./util";
 import "std/string";
 
-// kind: 0 unsupported, 1 label, 2 register move, 3 load, 4 store,
-// 5 immediate move, 6 push, 7 pop, 8 BSR, 9 SUB, 10 ADD, 11 AND,
-// 12 NEG, 13 SHL by CL, 14 SHR by CL, 15 LEA, 16 CMP immediate,
-// 17 branch, 18 plain RET. Extended: 19 RIP-relative global LEA,
-// 20 immediate SHL, 21 immediate SHR. Release: 22 immediate store,
-// 23 self TEST32, 24 underflow INC32, 25 direct dependency call.
-// String-only: 26 TEST8 immediate, 27 self TEST64, 28 register CMP,
-// 29 heap-bound global load, 30 heap-bound global CMP. For kind 28,
-// flags describe destination minus source; for 30, source minus global.
-// Constructor-only: 31 CFI metadata (condition retains the complete line).
-// Allocator-only: 32 memory PUSH, 33 memory POP, 34 heap-global store.
-// 35 unbound branch outside the contiguous entry fragment: condition and
-// symbol are data only. Taking it requires refusal, not an external effect.
-// PUSH/POP retain effective-address operands; records do not execute them.
-// Caller-only: 39 immediate memory CMP, 40 immediate memory SUB. Direct
-// call symbols remain unbound data; no callee effects follow from decoding.
-// Arithmetic source -1 is immediate.
-// Widths are bits; addresses retain signed byte offsets and scaled indices.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, immediate: i32, condition: string, target: i32, symbol: string }
 
 pub struct Program { ops: Op[], error: string }
@@ -79,8 +58,6 @@ function valid_scale(scale: string): boolean {
   return scale == "1" || scale == "2" || scale == "4" || scale == "8";
 }
 
-// Split only at top-level commas, rejecting malformed parentheses instead of
-// silently losing an index or treating a third operand as trailing metadata.
 function operands(s: string): string[] {
   let result: string[] = [];
   let start = 0;
@@ -268,71 +245,48 @@ function decode_operands(name: string, args: string[]): Op {
   return if (calculated.kind > 0) { calculated } else { lea(name, args[0], args[1]) };
 }
 
-// Selection, instruction positions and branch destinations derive from the
-// same complete supplied text. Empty error proves syntax/binding only. Cycles,
-// unknown instructions and empty streams remain unproved for semantic refusal.
 pub function program(output: string): Program {
   return selected_program(text.dependency(output, "__fern_capw"), 0);
 }
 
-// This fixed-entry API additionally decodes large-push addressing and shifts.
-// A future semantic checker must invoke it internally on the same supplied
-// output. Empty error does not prove any register, memory or ownership effect.
 pub function large_program(output: string): Program {
   return selected_program(text.dependency(output, "__fern_large_push"), 1);
 }
 
-// Call records name dependencies but do not establish their definitions or
-// effects. The semantic checker must derive both from this same output.
 pub function array_program(output: string): ArrayProgram {
   let body = text.select(output, "__fn___fern_arr_dec");
   let p = selected_program(body, 2);
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
-// Same instruction grammar, separate complete-native declaration boundary.
 pub function native_array_program(output: string): ArrayProgram {
   let body = text.native_array_release(output);
   let p = selected_program(body, 2);
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
-// Both string entries come from this same closed-namespace text selection.
-// Globals and calls are names only, not linked permissions or effect proofs.
 pub function string_program(output: string): ArrayProgram {
   let body = text.select(output, "__fn___fern_str_free");
   let p = selected_program(body, 3);
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
-// Ordinary retained constructor syntax, not a constructor effect certificate.
-// CFI and symbol addresses remain data, without unwind or linked-address facts.
-// The consumer must independently bind this SAME output to the selected row.
 pub function constructor_program(output: string, entry: string): ArrayProgram {
   let body = text.native_body(output, entry);
   let p = selected_program(body, 4);
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
-// Complete ordinary caller syntax, including its inline RC guards. This is
-// DATA only: the consumer must bind the SAME final SSA, derive every reachable
-// effect and independently check each dependency. Old modes stay unchanged.
 pub function caller_program(output: string, entry: string): ArrayProgram {
   let body = text.native_body(output, entry);
   let p = selected_program(body, 7);
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
-// Fixed helper syntax only. A call names the allocator without proving it.
 pub function array_box_program(output: string): Program {
   return selected_program(text.array_box(output), 5);
 }
 
-// Select the allocator's contiguous executable entry fragment from complete
-// output. Its later terminal block follows a rodata section and is outside
-// this fragment: outbound transfers remain explicit unbound kind 35 records.
-// Unsupported operations remain kind 0, never silently omitted.
-// Heap/global names and stack operands grant no linked permissions or effects.
 pub function allocator_program(output: string): Program {
   return selected_program(text.allocator(output), 6);
 }
@@ -510,7 +464,6 @@ function constructor_symbol(s: string): boolean {
 }
 
 function constructor_decode(line: string): Op {
-  // native_body already validated the closed CFI grammar and frame bounds.
   if (line.starts_with(".cfi_")) {
     return Op { ...empty(31), condition: line };
   }
@@ -566,9 +519,6 @@ function caller_decode(line: string): Op {
 }
 
 function caller_memory(name: string, source: string, destination: string): Op {
-  // Kind 40 retains the inline shared-RC subtraction as data. The selected
-  // count-one caller machine refuses it if reachable; decoding is not an
-  // execution proof for that shared path.
   let kind = if (name == "cmpq" || name == "cmpl") { 39 } else { if (name == "subq" || name == "subl") { 40 } else { 0 } };
   let imm = large_literal(source);
   let addr = address(destination);
@@ -598,7 +548,6 @@ function byte_test(a: string, b: string): Op {
     return empty(0);
   }
   let n = util.digits_to_i32(imm);
-  // Accept only the unsigned spelling of an encodable byte, never truncate.
   return if (n >= 0 && n <= 255) { Op { ...empty(26), width: 8, source: reg, immediate: n } } else { empty(0) };
 }
 
@@ -734,8 +683,6 @@ function hex_digit(c: u8): i32 {
   return -1;
 }
 
-// Only a bounded nonnegative signed-i32 hexadecimal literal is represented.
-// Larger/negative hexadecimal operands conservatively remain unsupported.
 function large_literal(s: string): string {
   let decimal = literal(s);
   if (decimal != "") {

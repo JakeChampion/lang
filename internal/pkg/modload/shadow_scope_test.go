@@ -1,21 +1,5 @@
 package modload_test
 
-// A local binding shadows a module decl of the same name, so the import
-// rewriter must leave every reference to it alone. It collects those names
-// with collectLocals, which walked statements only — and two binding
-// positions are not reachable that way (#6993):
-//
-//   - a `defer { … }` action is a BlockExpr, i.e. an expression, so nothing
-//     inside it was ever visited;
-//   - a match arm's `@` whole-value binding is stored on the arm rather than its
-//     Bindings list.
-//
-// Either one left the local out of the set, so the reference was mangled to
-// `<mod>__<name>` and resolved to the module decl: `error[E001]: undefined
-// identifier "shadowlib__K"` here, and a silent read of the wrong value
-// wherever the two happen to share a type. collectLocals now runs over
-// ast.Walk, which reaches both.
-
 import (
 	"path/filepath"
 	"testing"
@@ -60,10 +44,6 @@ function main(): i32 {
 }
 `
 
-// TestShadowedLocalsInDeferAndAtBinding pins that both binding positions
-// suppress the import rewrite. The const is a `string` and both locals are
-// `i32`, so a mangled reference cannot merely read the wrong value — it fails
-// the checker, which is what makes this a gate rather than a coincidence.
 func TestShadowedLocalsInDeferAndAtBinding(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"shadowlib.fern": shadowScopeLib,
@@ -80,8 +60,6 @@ func TestShadowedLocalsInDeferAndAtBinding(t *testing.T) {
 	if _, err := checker.Check(prog); err != nil {
 		t.Fatalf("checker rejected a local shadowing a module const: %v", err)
 	}
-	// The module's own functions still mangle — only the shadowing locals
-	// are exempt.
 	if findFunc(prog, "shadowlib__at_binding") == nil {
 		t.Errorf("expected mangled shadowlib__at_binding in merged program; got %v", funcNames(prog))
 	}
@@ -145,13 +123,6 @@ const shadowScopePatternMain = `import "./shadowlib";
 function main(): i32 { return shadowlib.tuple_binder(); }
 `
 
-// TestShadowedLocalsInPatternBinders pins that every binder position of a
-// match arm's pattern suppresses the import rewrite — a tuple element, a
-// nested tuple element, a variant sub-pattern inside a tuple, a payload
-// sub-pattern, and the expression form of match — beside the plain payload
-// binder that always did. The shadowed decl is a `() => i32` function and
-// every binder an `i32`, so a mangled reference cannot merely read the wrong
-// value: `helper + b` fails the checker (#8607).
 func TestShadowedLocalsInPatternBinders(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"shadowlib.fern": shadowScopePatternLib,

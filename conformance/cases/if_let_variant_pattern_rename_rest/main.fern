@@ -1,8 +1,8 @@
 import "core/int";
 import "std/i32";
 
-// `if let` takes a named-field variant pattern with renaming and `..`, as
-// `match` does.
+
+
 enum Shape {
     Circle { r: i32 },
     Rect { w: i32, h: i32 },

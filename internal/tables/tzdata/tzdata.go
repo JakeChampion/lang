@@ -1,41 +1,3 @@
-// Package tzdata builds the IANA time zone table that std/tz embeds, so
-// `tz.iana_zone(name)` answers on every target, wasm included, without
-// reading /usr/share/zoneinfo at run time.
-//
-// # Source
-//
-// The data is the zoneinfo.zip that ships with the pinned Go toolchain
-// (mise.toml), which Go's lib/time/update.bash builds from one IANA
-// release with zic. The release and the archive's SHA-256 are pinned
-// below; a toolchain bump that moves tzdata fails Load until both are
-// updated and the table regenerated, so a tzdata bump is a
-// regenerate-and-diff. Every name in the archive is included, aliases
-// too: identical records are stored once, so an alias costs only its
-// name.
-//
-// # Subset
-//
-// Transitions before 1970-01-01T00:00:00Z are dropped. The state in
-// force at the epoch becomes the zone's opening entry, so an instant
-// before 1970 reads that offset rather than its historical one. From
-// the last transition on, the zone's POSIX TZ footer rule governs, which
-// is what answers dates past the table, however far out.
-//
-// # Encoding
-//
-// Two Fern string literals. The names literal is `;Name=offset` per zone,
-// sorted, with a trailing `;`, where `offset` is the decimal index into
-// the records literal. A record is
-//
-//	footer|abbr:off:dst,abbr:off:dst,...|transitions;
-//
-// The first type is the opening entry. `transitions` is one entry per
-// transition: the time since the previous one (the first since the
-// epoch) as a varint, then one alphabet character naming its type. A
-// delta that is a whole number of minutes is stored as minutes*2, any
-// other as seconds*2+1. A varint is little-endian groups of five bits,
-// one alphabet character each, with 32 added to every group but the
-// last. No character in either literal needs an escape.
 package tzdata
 
 import (
@@ -57,31 +19,25 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/fmtsource"
 )
 
-// Version is the IANA release the pinned toolchain's zoneinfo.zip holds.
 const Version = "2026c"
 
-// ArchiveSHA256 pins that archive's bytes.
 const ArchiveSHA256 = "b2d18a7c8fa8142097a48c99609fb3c92db5ee98bc740294e57eab8ae9f94779"
 
-// Alphabet is the 64 digits of the transition encoding.
 const Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-"
 
-// Zone is one TZif file's content from the epoch on.
 type Zone struct {
-	Types  []Type  // Types[0] is in force from the epoch to Times[0]
-	Times  []int64 // ascending, all >= 0
-	Idx    []int   // Idx[i] is the type in force from Times[i]
-	Footer string  // POSIX TZ rule past the last transition; may be empty
+	Types  []Type
+	Times  []int64
+	Idx    []int
+	Footer string
 }
 
-// Type is one local time type.
 type Type struct {
 	Off  int32
 	DST  bool
 	Abbr string
 }
 
-// ArchivePath is where the pinned toolchain keeps zoneinfo.zip.
 func ArchivePath() (string, error) {
 	out, err := exec.Command("go", "env", "GOROOT").Output()
 	if err != nil {
@@ -90,7 +46,6 @@ func ArchivePath() (string, error) {
 	return filepath.Join(strings.TrimSpace(string(out)), "lib", "time", "zoneinfo.zip"), nil
 }
 
-// Load reads every TZif file from the pinned archive, keyed by zone name.
 func Load() (map[string][]byte, error) {
 	path, err := ArchivePath()
 	if err != nil {
@@ -126,7 +81,6 @@ func Load() (map[string][]byte, error) {
 	return files, nil
 }
 
-// header is a TZif header's six counts.
 type header struct{ isut, isstd, leap, time, typ, char int }
 
 func readHeader(b []byte) (header, error) {
@@ -141,8 +95,6 @@ func (h header) size(width int) int {
 	return h.time*width + h.time + h.typ*6 + h.char + h.leap*(width+4) + h.isstd + h.isut
 }
 
-// Parse reads the 64-bit block of a version 2+ TZif file and cuts it at
-// the epoch.
 func Parse(b []byte) (Zone, error) {
 	h1, err := readHeader(b)
 	if err != nil {
@@ -181,8 +133,6 @@ func Parse(b []byte) (Zone, error) {
 	return cut(types, times, idx, footer), nil
 }
 
-// firstType is the type before the first transition, chosen the way Go's
-// time package chooses it (lookupFirstZone).
 func firstType(types []Type, idx []byte) int {
 	used := false
 	for _, k := range idx {
@@ -208,8 +158,6 @@ func firstType(types []Type, idx []byte) int {
 	return 0
 }
 
-// cut keeps the transitions at or after the epoch and the types they
-// use, renumbered in order of first use with the opening type first.
 func cut(types []Type, times []int64, idx []byte, footer string) Zone {
 	open := firstType(types, idx)
 	start := 0
@@ -237,7 +185,6 @@ func cut(types []Type, times []int64, idx []byte, footer string) Zone {
 
 func digit(d int) byte { return Alphabet[d] }
 
-// Undigit is digit's inverse, -1 outside the alphabet.
 func Undigit(c byte) int { return strings.IndexByte(Alphabet, c) }
 
 func putVarint(b *strings.Builder, v int64) {
@@ -248,7 +195,6 @@ func putVarint(b *strings.Builder, v int64) {
 	b.WriteByte(digit(int(v)))
 }
 
-// Encode renders one record, terminator included.
 func (z Zone) Encode() (string, error) {
 	var b strings.Builder
 	if strings.ContainsAny(z.Footer, "|;\"\\") {
@@ -288,7 +234,6 @@ func (z Zone) Encode() (string, error) {
 	return b.String(), nil
 }
 
-// Decode reads the record at the start of s back, the inverse of Encode.
 func Decode(s string) (Zone, error) {
 	end := strings.IndexByte(s, ';')
 	if end < 0 {
@@ -335,15 +280,13 @@ func Decode(s string) (Zone, error) {
 	return z, nil
 }
 
-// Table is the two encoded literals.
 type Table struct {
 	Names   string
 	Records string
-	Zones   int // names
-	Unique  int // distinct records
+	Zones   int
+	Unique  int
 }
 
-// Build encodes every zone in files.
 func Build(files map[string][]byte) (Table, error) {
 	names := make([]string, 0, len(files))
 	for n := range files {
@@ -376,17 +319,15 @@ func Build(files map[string][]byte) (Table, error) {
 	return Table{Names: idx.String(), Records: recs.String(), Zones: len(names), Unique: len(at)}, nil
 }
 
-// Begin and End bracket the generated block in std/tz.
 const (
 	Begin = "// ---- BEGIN GENERATED tzdata (go run ./cmd/tzdatagen) ----"
 	End   = "// ---- END GENERATED tzdata ----"
 )
 
-// Block is the Fern source between Begin and End.
 func (t Table) Block() string {
-	return fmt.Sprintf(`// IANA tzdata %s, every zone and alias of the Go toolchain's
-// zoneinfo.zip, from 1970 on: %d names, %d distinct records. The
-// encoding is documented in internal/tables/tzdata. Do not edit by hand.
+	return fmt.Sprintf(`// The table contains IANA tzdata %s from 1970 onward.
+// It has %d zone names and %d distinct records.
+// See internal/tables/tzdata for the binary format. Do not edit by hand.
 pub function iana_version(): string {
   return %q;
 }
@@ -401,7 +342,6 @@ function iana_records(): string {
 `, Version, t.Zones, t.Unique, Version, t.Names, t.Records)
 }
 
-// Rewrite replaces the generated block in src.
 func (t Table) Rewrite(src string) (string, error) {
 	i := strings.Index(src, Begin)
 	j := strings.Index(src, End)
@@ -411,11 +351,8 @@ func (t Table) Rewrite(src string) (string, error) {
 	return fmtsource.Format(src[:i] + Begin + "\n" + t.Block() + src[j:])
 }
 
-// TzFern is std/tz's path from the repository root.
 const TzFern = "internal/stdlib/std/tz.fern"
 
-// Generate is std/tz's source with the table regenerated from the
-// pinned archive.
 func Generate(src string) (string, error) {
 	files, err := Load()
 	if err != nil {

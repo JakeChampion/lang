@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map.keys() / .values() snapshot a column into a fresh array.
-// That array must use the standard 16-byte rc-array header
-// (capacity@data-12, rc=1@data-8, length@data-4, data@base+16)
-// — the i32 path (then __map_column in core/map.fern) and the wide
-// i64/u64/f64 path (emitWideMapKeys/Values) both built a
-// length-only header, so the snapshot's scope-exit drop read
-// heap metadata at data-8 as the rc and underflowed (even when
-// consumed — the array drops at exit regardless). Exercises
-// unused + consumed snapshots on the i32 (runtime-helper) and
-// i64 (IR wide-builder) paths. Consumed i32 keys anchor the
-// value: len 3 + (1+2+3) = 9 per iter; 500x → 4500.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function mk(): i32 {
@@ -19,14 +19,14 @@ function mk(): i32 {
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     m = m.insert(3, 30);
-    let ks = m.keys();      // unused i32[] snapshot, dropped at exit
-    let vs = m.values();    // unused i32[] snapshot, dropped at exit
+    let ks = m.keys();
+    let vs = m.values();
     let wm: Map[i64, i64] = map_new(8);
     wm = wm.insert(5, 50);
     wm = wm.insert(6, 60);
-    let wks = wm.keys();    // unused i64[] (IR wide path), dropped at exit
-    let wvs = wm.values();  // unused i64[] (IR wide path), dropped at exit
-    let ks2 = m.keys();     // consumed snapshot anchors the value
+    let wks = wm.keys();
+    let wvs = wm.values();
+    let ks2 = m.keys();
     return ks2.len() + ks2[0] + ks2[1] + ks2[2];
 }
 function main(): i32 {

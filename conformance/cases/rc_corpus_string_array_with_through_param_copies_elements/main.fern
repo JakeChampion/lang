@@ -1,20 +1,20 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `.with` on a `string[]` PARAM, where the caller keeps the receiver
-// live so the CoW takes its copy branch (#6407). Until strings joined
-// the counted-element set, that copy went through the plain
-// __fern_arr_cow_inplace: a raw memcpy leaving the fresh buffer
-// sharing the caller's element pointers at unchanged rc. Both arrays
-// then walk-dropped the same strings — a double free, and a SIGSEGV
-// on x86-64 rather than the leak the issue was filed as.
-//
-// The elements are CONCATENATED rather than written as literals: a
-// string literal is a static-sentinel buffer that inc/dec
-// short-circuit on, so a literal-element array cannot express this
-// bug at all. The rounds matter for the same reason — one round
-// double-decs a buffer nobody reuses, and it takes a freed-and-
-// recycled block for the corruption to become a fault.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

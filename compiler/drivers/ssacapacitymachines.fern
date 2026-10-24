@@ -5,13 +5,10 @@ import "std/string";
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("capacity machine controls failed: " + group);
-    // Native status space is shared with other retained-driver modules.
-    // The module and exact mutation above identify failures on every target.
     exit(180);
   }
 }
 
-// Mutate only the selected dependency inside the actual complete output.
 function change(s: string, from: string, to: string): string {
   let outer = s.split("__fern_capw:\n");
   require(outer.len() == 2, "unique capacity fixture");
@@ -83,10 +80,7 @@ function preserved(s: string): void {
   mutation(s, "popq %rax", "popq %rsp", false);
   mutation(s, "pushq %rdx", "pushq %rdx\npushq %rax", false);
   mutation(s, "popq %rax", "popq %rax\npopq %rcx", false);
-  // Split loads must recover both original halves; MOV32 alone cannot.
   mutation(s, "popq %rdx", "movl (%rsp), %edx\npopq %rdx", true);
-  // PUSH SP saves its pre-decrement value. Restoring SP from that word
-  // returns to S-8 before the original second push; scratch is overwritten.
   mutation(s, "pushq %rcx", "pushq %rsp\nmovq (%rsp), %rsp\npushq %rcx", true);
 }
 

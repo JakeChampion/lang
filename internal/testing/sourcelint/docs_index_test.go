@@ -14,11 +14,6 @@ var (
 	docsTags      = map[string]bool{"policy": true, "reference": true, "tracker": true, "plan": true, "research": true, "record": true}
 )
 
-// TestDocsIndexCoversEveryTopLevelDoc keeps docs/README.md the index of
-// docs/: every top-level doc has exactly one row, every row names a doc that
-// exists, and a row's status is the one the doc's own `Status: [tag]` line
-// gives (#12732). Dated logs live in the topic log directories, which the
-// index lists as directories.
 func TestDocsIndexCoversEveryTopLevelDoc(t *testing.T) {
 	docs := filepath.Join("..", "..", "..", "docs")
 	index, err := os.ReadFile(filepath.Join(docs, "README.md"))
@@ -69,8 +64,6 @@ func TestDocsIndexCoversEveryTopLevelDoc(t *testing.T) {
 	}
 }
 
-// docStatusTag is the tag of a doc's `Status: [tag]` line, or "" when its
-// first 15 lines have none.
 func docStatusTag(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

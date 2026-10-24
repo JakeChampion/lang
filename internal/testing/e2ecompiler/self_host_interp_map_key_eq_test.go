@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// The self-host interpreter compares map keys as the compiled map does, and
-// prints what every compiled target prints for these conformance cases:
-// map_hand_written_eq_hash_keys, whose struct and enum key types each ignore
-// part of the value in a derived or hand-written cmp.Eq (#12650), and
-// char_eq_ord_hash, whose char-keyed maps include a literal (#12809).
 func TestSelfHostInterpMapKeysCompareThroughEq(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, name := range []string{"map_hand_written_eq_hash_keys", "char_eq_ord_hash"} {

@@ -1,19 +1,19 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Transient lookup-key reclamation (wasm). A string K on wasm32 is
-// boxed into a 16-byte cell for EVERY read-method call (get / has /
-// get_or) — the helper reads it for the strcmp but never retains
-// it, so the per-call cell leaked. Now each read frees its
-// transient key cell, and when the key was a FRESH owned temporary
-// (a concat, not an alias the caller still owns) its string buffer
-// is reclaimed too. Mixes aliased keys (the `key` local, which must
-// SURVIVE every lookup — a premature buffer dec would UAF the next
-// use) and fresh-concat keys (whose buffers must be freed exactly
-// once, no double free). Per iter: get_or(alias 7) + get_or(fresh 7)
-// + has(fresh 1) + has(alias 1) + get(fresh 7) + get(alias 7) +
-// key.len()=3 = 33; 500x → 16500. (delete has its own
-// case below — its result tuple now carries an rc header.)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/map";
 import "std/string";
 function mk(): i32 {

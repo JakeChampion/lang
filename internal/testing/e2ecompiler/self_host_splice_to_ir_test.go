@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// selfHostSpliceToSource drives `r.splice_to(w, max)` through the self-host's
-// lowering: the `reader_splice` op and the Fern runtime leaf behind it, which
-// is splice(2) on the two Linux targets, through the pipe __raw_splice_pipe()
-// holds when neither handle is one, and Unsupported on wasm.
-//
-// The program copies with the fallback a caller writes — splice until
-// Unsupported, then read_chunk and write from the same offset — and checks
-// that an appending writer is refused without the reader losing a byte.
-// `spliced` is whether the target must have moved bytes itself, so a leaf that
-// always refused would fail on Linux rather than pass through the fallback.
-// Each failure returns its own exit code.
 func selfHostSpliceToSource(dir string, spliced bool) string {
 	p := func(name string) string {
 		if dir == "" {
@@ -116,9 +105,6 @@ function main(): i32 {
 `, p("data.txt"), p("copy.txt"), want)
 }
 
-// TestSelfHostSpliceToIR is the x86-64 leg: the op lowers to a call into the
-// Fern-compiled __fern_reader_splice with its three operands re-pushed in
-// parameter order, as reader_seek's are.
 func TestSelfHostSpliceToIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -139,8 +125,6 @@ func TestSelfHostSpliceToIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostSpliceToArm64IR is the arm64 leg, through asm_ir_run -target
-// arm64-linux under qemu, whose syscall translation passes splice through.
 func TestSelfHostSpliceToArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -162,8 +146,6 @@ func TestSelfHostSpliceToArm64IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostSpliceToWasmIRUnsupported is the preview-1 leg, where every call
-// is the refusal and the fallback carries the bytes.
 func TestSelfHostSpliceToWasmIRUnsupported(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host splice_to wasm IR e2e")

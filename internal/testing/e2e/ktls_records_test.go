@@ -10,11 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// The kernel's TLS record layer (std/tls/ktls, docs/NET-P4-TLS-PLAN.md):
-// x86-64 only, on a kernel with the tls upper-layer protocol loaded. The
-// x86-64 e2e lane loads it and sets FERN_REQUIRE_KTLS=1, which turns a
-// missing one into a failure; elsewhere the tests skip and say why.
-
 func requireKtls(t *testing.T) {
 	t.Helper()
 	ulps, _ := os.ReadFile("/proc/sys/net/ipv4/tcp_available_ulp")
@@ -41,12 +36,6 @@ func buildKtlsProgram(t *testing.T, name, src string) string {
 	return out
 }
 
-// TestX86_64KtlsRecords hands each suite's keys, from
-// record.Protection.kernel_info, to the kernel in both directions over a
-// loopback pair, from sequence number 5: the record layer opens what the
-// kernel sealed, the kernel opens what the record layer sealed, and an
-// alert the record layer sealed with padding comes back through the
-// kernel's typed read.
 func TestX86_64KtlsRecords(t *testing.T) {
 	requireKtls(t)
 	bin := buildKtlsProgram(t, "ktls_records", ktlsRecordsSource)

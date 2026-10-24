@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// `<` / `<=` / `>` / `>=` on strings are byte-order comparison (#7110), a
-// primitive like `==` on strings rather than an `Ord` dispatch: no impl has
-// to be in scope and nothing has to be imported. `str` views order the same
-// way, and mix with `string` on either side, because the operator reads bytes
-// (the same reason `==` accepts the mix).
 func TestStringOrderingAccepted(t *testing.T) {
 	for _, src := range []string{
 		`function f(): boolean { return "abc" < "abd"; }`,
@@ -28,9 +23,6 @@ func TestStringOrderingAccepted(t *testing.T) {
 	}
 }
 
-// Ordering a string against a non-string is still the E009 operand error —
-// widening the rule to strings must not make the operator accept a mixed
-// pair, in either operand position.
 func TestStringOrderingMixedOperandsRejected(t *testing.T) {
 	for _, src := range []string{
 		`function f(): boolean { return "abc" < 1; }`,
@@ -49,8 +41,6 @@ func TestStringOrderingMixedOperandsRejected(t *testing.T) {
 	}
 }
 
-// The string rule must not leak into the operators that have no string form:
-// arithmetic, bitwise, and shifts stay integer-only.
 func TestStringNonOrderingOperatorsRejected(t *testing.T) {
 	for _, src := range []string{
 		`function f(): i32 { return "a" - "b"; }`,

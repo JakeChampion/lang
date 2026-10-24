@@ -15,23 +15,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestComposeTcpFromWorld proves the world-driven composer
-// (ComposeFromWorldAuto) handles the TCP server shape — the last and most
-// complex built-in capability not yet exercised through the world path
-// (TestComposeStdoutFromWorld covers stdout, TestComposeFsFromWorld the
-// filesystem, and the wit_extern_builtin_{env,udp} tests env/args + UDP).
-// TCP is the hard one: tcp-socket.accept returns
-// `result<tuple<tcp-socket, input-stream, output-stream>, error-code>`, a
-// multi-handle indirect result (KindMem), alongside the listen/bind chain,
-// the io/streams read+write methods, and four resource-drops (tcp-socket
-// ×2, input-stream, output-stream).
-//
-// This is the gate that clears the way to retiring the bespoke native
-// registry: once the world path composes a working TCP server, every
-// non-extern shape the CLI builds is world-composable. The core module is
-// the one the real CLI emits (extracted from the registry-composed
-// component); we recompose it through the world path and run it as a real
-// echo server a Go client connects to.
 func TestComposeTcpFromWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -80,7 +63,6 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("read ref: %v", err)
 	}
-	// Recompose the CLI's own core through the world-driven path.
 	core := componentCoreSection(t, ref)
 	w, err := componenttype.DecodeWorld("fern")
 	if err != nil {

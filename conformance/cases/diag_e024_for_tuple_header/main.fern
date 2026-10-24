@@ -1,5 +1,5 @@
-// A tuple `for` header destructures each element, so the element must be a
-// tuple of that many values; a Map binds a (key, value) pair.
+
+
 import "core/iter";
 import "core/map";
 

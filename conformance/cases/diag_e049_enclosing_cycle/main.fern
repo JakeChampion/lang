@@ -1,8 +1,8 @@
-// Pins E049's enclosing-scope half (#8440). `g` is captured by `f`, so it
-// lives in a cell `f`'s environment shares; storing `f` into it from the
-// enclosing scope would close cell -> closure -> env -> cell, a cycle
-// reference counting cannot collect. Rebinding `g` to a closure that
-// captures nothing stays legal, as does rebinding a captured string.
+
+
+
+
+
 function main(): i32 {
     let g: () => i32 = (): i32 => { return 1; };
     let f: () => i32 = (): i32 => { return g(); };

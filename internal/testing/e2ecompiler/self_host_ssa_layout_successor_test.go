@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Storage order must not force a jump across a ready successor. A preferred
-// successor must still wait for all predecessors and stay in its loop region.
 func TestSelfHostSSALayoutReadySuccessor(t *testing.T) {
 	const src = `import "./ssa";
 import "./ssalayout";

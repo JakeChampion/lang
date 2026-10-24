@@ -10,10 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// errnoSource provokes one errno per line and prints what `errno.of` makes of
-// it, beside Other's message where there is one. The runtime is handed each
-// errno in its host's numbering — Linux's, or preview 1's on both wasm legs —
-// and every leg must print Linux's (#11296).
 const errnoSource = `import "std/errno";
 import "std/i32";
 
@@ -60,10 +56,6 @@ enotempty 39 Directory not empty
 unknown 0
 `
 
-// errnoXattrSource is errnoSource for the self-host interpreter, whose only
-// host calls that fail with an IoError are the xattr family: it reads an
-// attribute through a missing file, through a file used as a directory, and
-// one the file does not carry. The test makes f.txt.
 const errnoXattrSource = `import "std/errno";
 import "std/i32";
 
@@ -117,13 +109,6 @@ func runErrnoProgramWant(t *testing.T, cmd *exec.Cmd, want string) (string, stri
 	return ob.String(), eb.String()
 }
 
-// TestSelfHostErrnoOf runs errnoSource under the interpreter and through the
-// self-host compiler on x86-64, arm64 and wasm (a core module over preview 1
-// and a component over preview 2, whose error-code path translates twice),
-// each compiled leg with the leak census on: Other's box grew a field, and
-// every one the runtime built must still be given back. errnoXattrSource runs
-// under both interpreters: the self-host one hands the program the errno of
-// the IoError its own host call failed with.
 func TestSelfHostErrnoOf(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(errnoSource), 0o644); err != nil {

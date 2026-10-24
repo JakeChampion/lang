@@ -9,30 +9,11 @@ import (
 	"testing"
 )
 
-// strFreshReceiverCases pin the release of a fresh ANONYMOUS RECEIVER at a string
-// builtin method, and the two methods that must not get it.
-//
-// `w(pre).to_ascii_upper()` must release the temp receiver once the method has
-// read it (46 B/round stranded otherwise). Only methods that read the
-// receiver's bytes or allocate a new buffer — handing back neither the
-// receiver's box nor a view of it — qualify. `trim` and `replace` can return the
-// receiver, and `chars` / `lines` / `split` return views into its bytes, so
-// those keep the receiver alive.
-//
-// The flat cases return 98 when the receiver is stranded: 400 rounds of a 170-byte
-// producer is 68 KB against a 32 KB ceiling. The refusal cases are value-exact
-// under same-size-class allocation pressure, so a wrongly released buffer is
-// recycled with different bytes rather than merely freed and left readable.
 var strFreshReceiverCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The shape that led here: a fresh receiver consumed by a copying builtin. The
-	// op allocates a new buffer and the receiver is dead the instant it has been
-	// read, but nothing released it — 46 B/round before, flat after. `.len()` was
-	// always flat because it has its own release path, which is what made this look
-	// like a property of the method rather than a missing site.
 	{"str-fresh-receiver-copy-method-released-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { let u: string = w(pre).to_ascii_upper(); return u.len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -47,10 +28,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// NEGATIVE: `.trim()` returns a zero-copy VIEW over the receiver's buffer, so
-	// releasing the receiver leaves the result pointing at freed bytes. This is the
-	// case that makes the borrowing-method rule essential rather than merely
-	// conservative: it exits 97 under a compiler that releases the receiver anyway.
 	{"str-fresh-receiver-trim-view-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
     let t: str = w(pre).trim();
@@ -63,9 +40,6 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE: `.replace(a, b)` returns the receiver UNCHANGED when the needle is
-	// absent, so the result can be the receiver's own box. Also exits 97 when the
-	// receiver is released.
 	{"str-fresh-receiver-replace-identity-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
     let t: str = w(pre).replace("QQQQ", "R");
@@ -78,9 +52,6 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// A named local is not an anonymous temp, so it keeps its own scope-exit reclaim
-	// and the call site must not release it. Control: both the receiver and the
-	// copy stay readable afterwards.
 	{"str-named-local-receiver-untouched", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
     let b: string = w(pre);
@@ -96,8 +67,6 @@ function round(pre: string): i32 {
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
-// TestSelfHostStrFreshReceiverIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostStrFreshReceiverIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -125,8 +94,6 @@ func TestSelfHostStrFreshReceiverIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrFreshReceiverIRArm64 is the arm64 leg; the admission is shared
-// lowering analysis and the release is a per-backend transcription.
 func TestSelfHostStrFreshReceiverIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -150,8 +117,6 @@ func TestSelfHostStrFreshReceiverIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrFreshReceiverWasmIR is the wasm leg, where the release maps
-// to $__fern_arr_dec on the rc-headered block.
 func TestSelfHostStrFreshReceiverWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping fresh-receiver release wasm IR e2e")

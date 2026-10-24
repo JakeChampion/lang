@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCheckImplConformanceDiagnostics holds the E021s an impl's
-// conformance check reports — a wrong signature, a missing method, a missing
-// supertrait impl, an unbound associated type — to the Go checker's, position
-// and text: each is reported at the `impl`, and a wrong signature spells both
-// function types.
 func TestSelfHostCheckImplConformanceDiagnostics(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)

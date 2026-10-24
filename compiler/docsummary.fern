@@ -1,4 +1,3 @@
-// Module descriptions for a reference page's front matter, and their quoting.
 import "./util";
 import "./docprintable";
 import "std/utf8";
@@ -39,8 +38,6 @@ function capitalize(s: string): string {
   let i: i32 = 0;
   while (i < s.len() && s[i] != b' ') {
     let cp: (i32, i32) = decoded(s, i);
-    // Go's lowercase result replaces an invalid byte, so it differs from
-    // the original first word even when no letter changes case.
     if (cp.1 == 1 && s[i] as i32 >= 128) {
       return s;
     }
@@ -53,8 +50,6 @@ function capitalize(s: string): string {
   if (s.len() == 0) {
     return s;
   }
-  // The reference uppercases the first BYTE, not the first rune. Preserve
-  // even its invalid-UTF8 replacement behavior for a non-ASCII first byte.
   let first: i32 = s[0] as i32;
   if (first >= 128) {
     first = 65533;
@@ -69,7 +64,6 @@ pub function summary(intro: string): string {
     para = slice_unchecked(para, 0, end) + "";
   }
   let s: string = words(para);
-  // U+2014 is part of the reference's module-label syntax.
   let label: i32 = util.index_of_sub(s, " — ");
   if (label >= 0) {
     s = slice_unchecked(s, label + 5, s.len()) + "";

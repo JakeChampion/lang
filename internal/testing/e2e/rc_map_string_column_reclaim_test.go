@@ -4,27 +4,6 @@ import (
 	"testing"
 )
 
-// #2704 class 1 — "map keys and non-array map values are never reclaimed".
-//
-// The column walks existed but did not release on the native single-word ABI:
-// `__drop_map_str_keys` / `__drop_map_str_values` (and the overwrite pre-drop
-// next to them) dec'd each entry with a bare `__fern_rc_dec`, which takes the
-// count to zero and returns nothing to the allocator, so every heap key and
-// value a map ever held was stranded. Three per-lookup temporaries leaked
-// alongside it on one ABI or the other: get_or's boxed fallback cell, the
-// retained get_or result, and the key temp of a get / get_or.
-//
-// The probes below are the issue's own shapes with the strings pushed past the
-// SSO inline threshold — an inline-packed string has no buffer, which is what
-// made an earlier round of these measurements read as clean.
-//
-// FERN_LEAKCHECK is the instrument on the natives (exact block + byte balance);
-// wasm has no leak counter, so it uses the __heap_bump_bytes() high-water
-// probe, which is flat under reclaim and linear under a leak.
-
-// mapStringColumnSrc exercises the whole map surface a string-keyed,
-// string-valued map has — build, three flavours of lookup, and a drop — with
-// every key and value a freshly allocated (non-inline) buffer.
 const mapStringColumnSrc = `import "core/map";
 function main(): i32 {
     let i: i32 = 0;
@@ -42,9 +21,6 @@ function main(): i32 {
     return 0;
 }`
 
-// The same shape as a bump-growth probe: `n` iterations of build-lookup-drop,
-// returning the bytes the bump cursor advanced. Bounded iff every column and
-// every lookup temporary is reclaimed and reused.
 func mapStringColumnBumpSrc(n string) string {
 	return `import "core/map";
 function main(): i32 {
@@ -64,9 +40,6 @@ function main(): i32 {
 }`
 }
 
-// Value correctness + zero over-release on the same surface. 0 iff every
-// lookup read the right string AND no reclaim dec'd past zero — the direction
-// leakcheck cannot see.
 const mapStringColumnUnderflowSrc = `import "core/map";
 function main(): i32 {
     let i: i32 = 0;
@@ -85,9 +58,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A wide-scalar value boxes its get_or fallback into a cell on EVERY ABI —
-// including x86-64, which has no __fern_cell_free — so that cell is its own
-// per-lookup leak, 8 B a time.
 const mapWideValueFallbackSrc = `import "core/map";
 function main(): i32 {
     let i: i32 = 0;
@@ -102,23 +72,6 @@ function main(): i32 {
     return 0;
 }`
 
-// An OVERWRITE under an alias — the shape that says where the release of a
-// replaced value belongs. An IR-side pre-drop runs BEFORE the set's own
-// __map_cow_inplace, so a second handle over the same buffer still names the
-// value it would release: freeing it there is an uncounted-alias free (no rc
-// detector fires, and the fault lands wherever the freelist next hands the
-// block out, which on x86-64 was a SIGSEGV), and gating the pre-drop off
-// instead reclaims nothing. Since #8421 the release lives in __map_dec_value,
-// which the set reaches AFTER the COW, so it is sole-owner-correct by
-// construction and runs on the aliased path too.
-//
-// 0 iff both handles read back what they should AND nothing over-released;
-// the byte census is asserted separately, against the baseline below.
-//
-// ONE ENTRY, which is all this particular probe pins. The second, untouched
-// entry — where both copies' drop walks used to free the same cell and buffer
-// — is mapAliasedTwoEntrySrc below, green since the string value column gained
-// its own claim (#8354).
 const mapAliasedOverwriteSrc = `import "core/map";
 function mk(): i32 {
     let stem: string = "a";
@@ -142,16 +95,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// The DROP-time half, and #8354's own repro. A second entry that is never
-// written still had both copies' drop walks free its value cell and its
-// buffer, because __memcpy'ing the kv buffer shares the value column and
-// nothing claimed it. Unfixed this crashes on every backend — wasm traps on
-// an out-of-bounds read at a string's own bytes read as a pointer, arm64 dies
-// on a signal, x86-64 returns the wrong answer.
-//
-// 0 iff all four reads through both handles are right AND nothing
-// over-released; the byte census is asserted separately, against the
-// two-key baseline below.
 const mapAliasedTwoEntrySrc = `import "core/map";
 function mk(): i32 {
     let stem: string = "a";
@@ -177,18 +120,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// #8277's own shape: a Map READ with an ALIASED key — a `let k` the caller
-// still owns, rather than a fresh concat at the call. On the native
-// single-word ABI the escape analysis used to treat every string argument of
-// a `__method_` call as possibly retained by the callee, which suppressed
-// k's own scope-exit release: the map's key column dec'd its reference to 1
-// and nothing took it to 0. One stranded buffer per MAP, sized by the key,
-// flat in the value length and in the number of reads — and invisible to a
-// probe whose key is a fresh concat, which is why the older probes here
-// never saw it.
-//
-// A Map read hashes and compares its key and retains nothing of it, so all
-// three verbs are the same defect; the probe runs each.
 func mapAliasedKeyReadSrc(verb string) string {
 	read := ""
 	switch verb {
@@ -218,9 +149,6 @@ function main(): i32 {
 }`
 }
 
-// assertMapStringCensus runs `src` under FERN_LEAKCHECK and demands every
-// byte back. `a == 0` is checked too: a probe that stopped building the map
-// would balance trivially.
 func assertMapStringCensus(t *testing.T, name string, run func(string) (string, string, int), src string) {
 	t.Helper()
 	_, stderr, code := run(src)
@@ -338,14 +266,6 @@ func TestWASMMapStringColumnReclaim(t *testing.T) {
 		assertMapStringCensus(t, "aliased key read via "+verb, wasm, mapAliasedKeyReadSrc(verb))
 	}
 }
-
-// #2704 classes 2 and 3 — the generic-enum payload and the non-uniform nested
-// struct field. Both were closed by earlier slices (substituteEnumDecl's
-// recursive ParamType substitution; the per-type __drop_* recursion), and the
-// issue asked for the leak-count assertion that keeps them closed. The class-2
-// shape is the one its own audit named: an Option[Item] built by a helper and
-// consumed by a match ON THE CALL RESULT, which needs the fresh-scrutinee
-// reclaim as well as the substituted payload drop.
 
 const genericEnumPayloadLeakSrc = `struct Item { name: string, v: i32 }
 function mk(i: i32, sfx: string): Option[Item] {

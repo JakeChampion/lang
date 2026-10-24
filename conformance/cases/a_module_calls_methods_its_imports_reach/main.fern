@@ -1,6 +1,6 @@
-// lib does not import std/string itself, but text does, and lib imports text:
-// a module's import closure is transitive, so std/string's `contains` resolves
-// in lib (#12901).
+
+
+
 import "lib";
 
 function main(): i32 {

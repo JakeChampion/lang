@@ -4,12 +4,6 @@ import "std/quic/frames";
 import "std/i64";
 import "core/int";
 
-// tests/stdlib/quic_recovery_test.fern — std/quic/recovery driven in
-// virtual time through RFC 9002's rules: the RTT estimate, loss by packet
-// and by time threshold, the probe timeout and its backoff, the congestion
-// window through slow start, recovery and persistent congestion, and the
-// ACK of a packet never sent.
-
 const MS: i64 = 1000000;
 
 function sent(pn: i64, at: i64): recovery.Sent {
@@ -28,8 +22,6 @@ function pns(ps: recovery.Sent[]): string {
   return out;
 }
 
-// sending records packets `from` through `to` at `at` in the application
-// space.
 function sending(r: recovery.Recovery, from: i64, to: i64, at: i64): recovery.Recovery {
   let cur: recovery.Recovery = r;
   let pn: i64 = from;
@@ -51,8 +43,6 @@ function acked(r: recovery.Recovery, a: frames.Ack, now: i64, largest: i64): rec
   }
 }
 
-// The first sample sets the estimate outright (§5.3); later ones move it
-// by 1/8 and the variation by 1/4.
 function test_rtt(): test.TestOutcome {
   let r: recovery.Recovery = recovery.new(1200, true).confirmed();
   let before: string = (r.pto(recovery.INITIAL) / MS).to_string();
@@ -64,9 +54,6 @@ function test_rtt(): test.TestOutcome {
   return test.assert_eq(before + " | " + first + " | " + (r.smoothed() / MS).to_string(), "999 | 100/300 | 112");
 }
 
-// Five packets, only the last acknowledged: the two three or more below it
-// are lost by packet threshold (§6.1.1), the other two wait on the loss
-// timer, and are lost by time threshold when it fires (§6.1.2).
 function test_thresholds(): test.TestOutcome {
   let r: recovery.Recovery = sending(recovery.new(1200, true).confirmed(), 0 as i64, 4 as i64, 0 as i64);
   let o: recovery.Outcome = acked(r, ack(4 as i64, 4 as i64), 10 * MS, 4 as i64);
@@ -75,8 +62,6 @@ function test_thresholds(): test.TestOutcome {
   return test.assert_eq("acked " + pns(o.acked) + " lost " + pns(o.lost) + " timer " + (timer / 1000).to_string() + "us then lost " + pns(later.lost), "acked 4, lost 0,1, timer 11250us then lost 2,3,");
 }
 
-// With nothing acknowledged the probe timeout fires a PTO after the last
-// ack-eliciting packet, asks for a probe in that space, and doubles.
 function test_probe_timeout(): test.TestOutcome {
   let r: recovery.Recovery = recovery.new(1200, true).on_sent(recovery.INITIAL, sent(0 as i64, 0 as i64));
   let t1: i64 = r.timer();
@@ -86,11 +71,6 @@ function test_probe_timeout(): test.TestOutcome {
   return test.assert_eq((t1 / MS).to_string() + "ms probe " + int.int_to_string(o.probe) + ", then " + (t2 / MS).to_string() + "ms; early " + int.int_to_string(early.probe), "999ms probe 0, then 1998ms; early -1");
 }
 
-// The window opens by each acknowledged packet in slow start, halves once
-// per loss event, and collapses to two datagrams under persistent
-// congestion: ack-eliciting losses spanning more than three PTOs (§7.6).
-// `window` is what may be sent now, the window less what is in flight: 7200
-// halved less 2400 still out, then 2400 collapsed less 2400 still out.
 function test_window(): test.TestOutcome {
   let r: recovery.Recovery = recovery.new(1200, true).confirmed();
   let start: string = r.window().to_string();
@@ -108,8 +88,6 @@ function test_window(): test.TestOutcome {
   return test.assert_eq(start + " " + grown + " " + halved + " " + p.window().to_string(), "12000 13200 4800 0");
 }
 
-// An ACK naming a packet never sent is a PROTOCOL_VIOLATION (RFC 9000
-// §13.1); discarding a space takes its packets out of flight.
 function test_refusal_and_discard(): test.TestOutcome {
   let r: recovery.Recovery = sending(recovery.new(1200, false), 0 as i64, 1 as i64, 0 as i64);
   let bad: string = "";

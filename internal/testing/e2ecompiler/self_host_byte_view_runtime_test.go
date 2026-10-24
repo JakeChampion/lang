@@ -154,9 +154,6 @@ function main(): i32 {
 }
 `
 
-// A sub-range of a string-backed view aliases the source's bytes on the
-// register backends: it is read after the source's last use, through a call,
-// a record, a nested sub-range and a phi, and must balance under the census.
 const byteViewSubRangeProgram = `import "std/i32";
 struct Hold { b: [u8], n: i32 }
 @noinline function join(a: string, b: string): string { return a + b; }
@@ -199,10 +196,6 @@ function main(): i32 {
 }
 `
 
-// A sub-range's allocation does not grow with its length: 0 when both
-// windows allocated under 1 KiB, 7 when the string-backed one copied, 8 when
-// the array-backed one did. Every intermediate stays alive, and the array is
-// one block the size of the string, so no freed block can absorb a copy unseen.
 const byteViewSubRangeCopyProgram = `import "std/string";
 @noinline function window(v: [u8]): [u8] { return v[1:60001]; }
 function main(): i32 {
@@ -224,8 +217,6 @@ function main(): i32 {
 }
 `
 
-// Sub-ranges of an owned u8[] and of a lent one alias the array's bytes: read
-// after the array is rebound, nested, through a call, a record and a phi.
 const byteViewArraySubRangeProgram = `struct Hold { b: [u8] }
 @noinline function mk(n: i32): u8[] {
     let a: u8[] = [];
@@ -305,8 +296,6 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 				assertBalancedCensus(t, stderr)
 			})
 		}
-		// wasm's strings are inline blocks with no data pointer to share, so
-		// there a sub-range copies, as a string slice does.
 		t.Run(target+"/sub-range-zero-copy", func(t *testing.T) {
 			want := 0
 			if target == "wasm32-wasi" {

@@ -14,38 +14,16 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCLIX86_64 exercises compiler/fern.fern — the
-// unified self-hosted `fern` CLI driver. Unlike the single-mode
-// `*_run.fern` shims (asm_load_run = emit, checker_run = check), this is
-// ONE binary that parses argv flags and dispatches mode + output. The
-// test builds it with the Go backend, then drives each mode:
-//
-//   - default            emit x86-64 asm to stdout; assemble + run.
-//   - `-o OUT`           emit to a file; assemble that file + run.
-//   - `-check` (ok)      well-typed program exits 0.
-//   - `-check` (bad)     ill-typed program exits 1.
-//   - usage / errors     no-arg → 2, unknown flag → 2, missing file → 1.
-//
-// It is the first parity slice toward retiring cmd/fern: the
-// flag-dispatch seam the -target / -interp / -fmt modes plug into next.
 func TestSelfHostCLIX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		// The driver takes host filesystem paths as argv; a qemu runner
-		// wouldn't see the same paths. Native-only, like the file driver.
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
-	dir := writeSelfHostAsmProject(t) // the self-host compiler sources
+	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 
-	// Build the CLI driver with the Go backend.
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	// runDriver runs the CLI with args and returns (stdout, exitcode).
-	//
-	// Selects `-emit asm` when the caller names no target, because these
-	// cases assert on GAS TEXT and then hand it to gcc. The default output
-	// form assembles and links in-process and would hand them an ELF.
 	runDriver := func(t *testing.T, args ...string) ([]byte, int) {
 		t.Helper()
 		if !slices.Contains(args, "-target") {
@@ -56,8 +34,6 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		return out, cmd.ProcessState.ExitCode()
 	}
 
-	// `-interp` runs the checker's build gate first, as a compile does: a
-	// program the checker rejects must not run, however it would evaluate.
 	t.Run("interp-runs-the-build-gate", func(t *testing.T) {
 		path := filepath.Join(dir, "interp_ill_typed.fern")
 		if err := os.WriteFile(path, []byte("function main(): i32 { let x: i32 = \"s\"; return 7; }\n"), 0o644); err != nil {
@@ -73,12 +49,6 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
-	// `async function` end-to-end (#6631). printer.fern's own round-trip
-	// assertions cover parse → print → parse; what they cannot show is that
-	// the annotation survives the REAL driver, whose module pipeline runs the
-	// AST-rewrite passes (label resolution, range desugar, defer lowering)
-	// that each rebuild a FuncDecl field by field. A copy site hardcoding
-	// `async: false` drops the bit there and nowhere else.
 	t.Run("async-function-through-the-driver", func(t *testing.T) {
 		src := "async function work(): i32 { return 7; }\nfunction main(): i32 { return work(); }\n"
 		path := filepath.Join(dir, "async_prog.fern")
@@ -92,17 +62,9 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if !strings.HasPrefix(string(out), "async function work") {
 			t.Errorf("-fmt dropped the async modifier; got:\n%s", out)
 		}
-		// And the annotated function still runs — `async` is a marker, so the
-		// body must behave exactly as an unannotated one.
 		if _, code := runDriver(t, "-interp", path); code != 7 {
 			t.Errorf("-interp exit = %d, want 7", code)
 		}
-		// `-check` has to be clean on BOTH channels. A modifier that is not
-		// recognised at the decl dispatch does not fail the parse: it falls
-		// through to `parse_stmt` as a bare identifier expression and the
-		// declaration behind it parses normally, so the run still exits 0
-		// while the checker reports `cannot find "async" in this scope` on stderr.
-		// Exit status alone therefore proves nothing here (#6659).
 		checkCmd := exec.Command(fernBin, "-check", path)
 		var checkErr bytes.Buffer
 		checkCmd.Stderr = &checkErr
@@ -112,7 +74,6 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if checkErr.Len() != 0 {
 			t.Errorf("-check exited 0 but wrote diagnostics:\n%s", checkErr.String())
 		}
-		// Contextual: `async` in any other position stays an identifier.
 		identPath := filepath.Join(dir, "async_ident.fern")
 		identSrc := "function main(): i32 { let async: i32 = 3; return async + 4; }\n"
 		if err := os.WriteFile(identPath, []byte(identSrc), 0o644); err != nil {
@@ -123,15 +84,6 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
-	// A `./` import inside an imported module resolves against THAT module's
-	// directory, as native does, not the entry's. The decoy `b.fern` beside
-	// the entry is what the wrong directory would find, and it answers 7 so
-	// a program that still runs cannot pass by accident. The same file
-	// reached by two spellings (`./lib/b` from the entry, `./b` from lib/)
-	// loads once, so the entry imports it as well.
-	// With no stdlib root argument, a std/ import cannot be loaded. It used
-	// to be skipped silently, so `-check` passed a program importing a module
-	// that does not exist and failed a real one on each use (#10254).
 	t.Run("stdlib-import-without-root", func(t *testing.T) {
 		path := filepath.Join(dir, "unrooted_prog.fern")
 		src := "import \"std/nosuchmod\";\nfunction main(): i32 { return 0; }\n"
@@ -147,8 +99,6 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
-	// A match guard in an imported module calls that module's own function,
-	// so flatten has to mangle the guard as it does the arm's body.
 	t.Run("imported-match-guard", func(t *testing.T) {
 		proj := t.TempDir()
 		writeTree(t, proj, map[string]string{
@@ -182,20 +132,6 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
-	// The u32 decimal formatter is reachable ONLY through this driver. It needs
-	// `import "std/u32"` (or std/string, which uses it), and every other
-	// self-host wasm driver — wasm_run, wasm_ir_run, wasm_modload_run — parses
-	// raw source with no module loader, so the import never resolves there and
-	// the call is never emitted. That is exactly why #5992 recorded this as
-	// "to_lower is not IR-eligible on wasm": a no-modload driver reported `ast`
-	// for a program it could not resolve, and the real failure was one layer
-	// further on.
-	//
-	// The real failure: the register backends compile __fern_u32_to_string from
-	// asmcore.rt_src_u32_to_string, wasm had no body and no name mapping for it,
-	// so the emitted module CALLED a function it never DEFINED. That is an
-	// instantiation error, not a lowering bail — the module compiles clean and
-	// `-decide` says "ir" — so only running it catches the regression.
 	t.Run("wasm-u32-to-string-is-defined", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping u32-to-string wasm check")
@@ -221,9 +157,6 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 		}
-		// The typed lowering produces std/u32's own to_string body. What
-		// this pins is the #5992 invariant: every function the module calls,
-		// it defines or imports.
 		for _, name := range undefinedWatCalls(wat) {
 			t.Errorf("emitted WAT calls $%s, which it neither defines nor imports (#5992)", name)
 		}
@@ -233,21 +166,11 @@ function main(): i32 {
 		}
 		cmd := exec.Command("wasmtime", "run", watPath)
 		out, _ := cmd.CombinedOutput()
-		// 3000000000 has bit 31 set: a signed formatter prints it negative, so
-		// the string compare fails and this returns 7 rather than 42.
 		if got := cmd.ProcessState.ExitCode(); got != 42 {
 			t.Errorf("u32.to_string() on wasm exited %d, want 42\n%s", got, out)
 		}
 	})
 
-	// The semantic lowering the CLI substitutes on the wasm route has to come
-	// from the module the wasm emit entry normalises, which lifts the lambdas
-	// itself. Lifting once more before it renamed every local of the lifted
-	// closure body, so the mutated capture's `$cell$` parameter was no longer
-	// one the lowering refuses to write through: the write was produced as a
-	// value-semantics `with`, landed in a copy, and `bump` answered 11 twice
-	// with `m` still 10. The register backends lift before their entries and
-	// never saw it.
 	t.Run("wasm-semantic-capture-write", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping capture-write wasm check")
@@ -289,15 +212,6 @@ function main(): i32 {
 		}
 	})
 
-	// Two traits may each provide a method of the same name for one type
-	// (#6931). The self-host emits a method as the flat `<Type>.<name>`
-	// symbol, so without disambiguation both providers land on `$P.scale` —
-	// a WAT text module with two `(func $P.scale …)` is rejected outright by
-	// wasmtime ("duplicate func identifier"), and the register backends
-	// silently keep whichever they saw first. parser.claim_method_name
-	// interposes the second provider's trait; these assert the emitted symbol
-	// namespace is injective and that the surviving definition is the FIRST
-	// provider's, which is what every call site resolves to.
 	t.Run("two-traits-one-method-emits-one-symbol", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping duplicate-method-symbol check")
@@ -306,8 +220,6 @@ function main(): i32 {
 		if err != nil {
 			t.Fatalf("abs stdlib root: %v", err)
 		}
-		// Each provider calls a @noinline helper, so neither is inlined away
-		// and both symbols stay in the emit to be counted.
 		src := `import "std/i32";
 
 struct P { x: i32 }
@@ -349,19 +261,11 @@ function main(): i32 {
 		}
 		cmd := exec.Command("wasmtime", "run", watPath)
 		out, _ := cmd.CombinedOutput()
-		// Each generic reaches its bound's provider (#12277): A's `scale` is
-		// `self.x`, so twice gives 5 + 5, and once reaches B's renamed 100.
 		if got := cmd.ProcessState.ExitCode(); got != 110 {
 			t.Errorf("twice(P{x:5}) + once(P{x:5}) on wasm exited %d, want 110\n%s", got, out)
 		}
 	})
 
-	// The cross-module shape of the same collision: std/num's `impl Add for
-	// i32` and a user trait's `add` for i32 both want the symbol `i32.add`.
-	// mangle_module deliberately leaves method NAMES alone, so only
-	// flatten.disambiguate_methods separates them — the first module to claim
-	// the key keeps it, and the entry (bundled last) is interposed with its
-	// namespace.
 	t.Run("cross-module-method-collision-emits-one-symbol", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping cross-module collision check")
@@ -370,8 +274,6 @@ function main(): i32 {
 		if err != nil {
 			t.Fatalf("abs stdlib root: %v", err)
 		}
-		// MyAdd's provider calls a @noinline helper, so its symbol stays in
-		// the emit to be counted.
 		src := `import "std/num";
 
 trait MyAdd { function add(self: Self, o: Self): Self; }
@@ -392,7 +294,6 @@ function main(): i32 { return sum(2, 3) * 10 + mine(2, 3); }
 		if code != 0 {
 			t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 		}
-		// std/num's tiny `add` is inlined at its call, so it may leave no symbol.
 		if got := bytes.Count(wat, []byte("(func $i32.add ")); got > 1 {
 			t.Errorf("emitted WAT defines $i32.add %d times, want at most 1", got)
 		}
@@ -405,20 +306,11 @@ function main(): i32 { return sum(2, 3) * 10 + mine(2, 3); }
 		}
 		cmd := exec.Command("wasmtime", "run", watPath)
 		out, _ := cmd.CombinedOutput()
-		// std/num is bundled before the entry, so its `Add` claims `i32.add`
-		// and `sum`'s `a.add(b)` reaches it: 2 + 3. `mine` is bounded by
-		// MyAdd, so it reaches the interposed provider: 2 + 3 + 1 (#12277).
 		if got := cmd.ProcessState.ExitCode(); got != 56 {
 			t.Errorf("sum(2, 3) * 10 + mine(2, 3) on wasm exited %d, want 56\n%s", got, out)
 		}
 	})
 
-	// `dyn B` over a type whose `m` comes from BOTH A and B. The arm chain is
-	// keyed on the method name, so once B's provider is emitted as `S.B.m` a
-	// search for a bare `m` finds only A's — the trait set travels on
-	// op_dyn_dispatch so the arm resolves to the provider the dyn names. Both
-	// directions are asserted: a fix that merely flips which provider wins
-	// fails the `dyn A` case.
 	t.Run("dyn-picks-the-named-trait-provider", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping dyn provider check")
@@ -434,7 +326,6 @@ impl B for S { function m(self: Self): i32 { return 7; } }
 			dyn  string
 			want int
 		}{
-			// B's provider is the interposed one; A's keeps the bare name.
 			{"dyn-b", "dyn B", 7},
 			{"dyn-a", "dyn A", 3},
 		} {
@@ -459,8 +350,6 @@ impl B for S { function m(self: Self): i32 { return 7; } }
 				}
 			})
 		}
-		// A dyn set whose traits declare DIFFERENT method names must keep
-		// resolving through the bare name — nothing was interposed there.
 		t.Run("multi-trait-distinct-names", func(t *testing.T) {
 			src := `trait A { function m(self: Self): i32; }
 trait B { function n(self: Self): i32; }
@@ -540,11 +429,6 @@ function main(): i32 {
 		}
 	})
 
-	// Constant folding is NOT what `-O` selects, on either compiler. Native
-	// calls constfold.Fold unconditionally on all four of its compile paths and
-	// spends `-O` on eliding asserts; the self-host now matches. So every case
-	// below asserts the DEFAULT build folds, and that `-O` changes nothing —
-	// which is what fails if the pass is ever put back behind a flag.
 	foldCase := func(t *testing.T, name, src string, wantExit int, unwanted ...string) {
 		t.Helper()
 		srcPath := filepath.Join(dir, name+".fern")
@@ -576,27 +460,16 @@ function main(): i32 {
 		}
 	}
 
-	// Arithmetic. The op-list fold in ir.fern reaches this one downstream too,
-	// so the `unwanted` mnemonics are what distinguishes "folded" from "both
-	// paths quietly failed to fold".
 	t.Run("fold-constants", func(t *testing.T) {
 		foldCase(t, "fold", "function main(): i32 { return 2 * 3 + 1; }\n", 7, "imulq", "addq %rcx, %rax")
 	})
 
-	// A literal concat is the shape the op-list fold CANNOT reach — it has no
-	// string vocabulary — so this is the case that actually shows the AST fold
-	// running. It was the open half of #7111: before ungating, a default build
-	// emitted a runtime __fern_str_concat call where native emitted one literal.
 	t.Run("fold-literal-concat", func(t *testing.T) {
 		foldCase(t, "foldconcat",
 			"function main(): i32 { let s: string = \"ab\" + \"cd\"; return s.len(); }\n",
 			4, "call __fn___fern_str_concat")
 	})
 
-	// A match arm's GUARD is stored on the ARM, not the statement's own expressions,
-	// so a rewrite that rebuilt arms field by field had to remember it —
-	// constfold's did not, and copied every guard through unfolded until it was
-	// routed through astwalk's map fold.
 	t.Run("fold-guard-concat", func(t *testing.T) {
 		foldCase(t, "foldguard", "enum E { A(string) }\n"+
 			"function main(): i32 {\n"+
@@ -609,29 +482,15 @@ function main(): i32 {
 			"}\n", 7, "call __fn___fern_str_concat")
 	})
 
-	// i32::MIN. `0 - 2147483647 - 1` is how std/i32 spells it, because it is the
-	// only way to spell it. The folded result must be unary minus over the
-	// magnitude (constfold's lit_int), the shape the parser produces: an
-	// ExprNumber whose TEXT carried the sign reads as an i64, the i32 return
-	// path declines it, and the whole module falls off the IR path.
 	t.Run("fold-i32-min", func(t *testing.T) {
 		foldCase(t, "foldmin", "function f(): i32 { return 0 - 2147483647 - 1; }\n"+
 			"function main(): i32 { if (f() < 0 - 2147483647) { return 11; } return 1; }\n", 11)
 	})
 
-	// A hex operand in a folded binop must carry its value (#4341): as_int_lit
-	// used the decimal-only digits_to_i32, which stops at the `x` and read every
-	// `0x` literal as 0, folding `0x10 + 1` to 1 — a silent wrong answer rather
-	// than a missed optimisation.
 	t.Run("fold-hex-constants", func(t *testing.T) {
 		foldCase(t, "foldhex", "function main(): i32 { return 0x10 + 1; }\n", 17)
 	})
 
-	// `-O` is the release build: it elides every assert() check and nothing
-	// else, which is the one thing native spends the flag on
-	// (constfold.ElideAsserts). assertCase pins both directions — the default
-	// build still checks, `-O` does not — because an elision that fired on
-	// every build would be a silent loss of every assert in the language.
 	assertCase := func(t *testing.T, name, src string, wantDefault, wantOpt int) {
 		t.Helper()
 		srcPath := filepath.Join(dir, name+".fern")
@@ -651,8 +510,6 @@ function main(): i32 {
 			if code != 0 {
 				t.Fatalf("%s: %s emit exited %d, want 0", name, leg.label, code)
 			}
-			// The desugar's message is the only trace an assert leaves in the
-			// emitted code, so its absence is what "elided" means.
 			if n := strings.Count(string(asm), "assertion failed"); (n > 0) != (leg.wantMsg > 0) {
 				t.Errorf("%s: %s build has %d \"assertion failed\" string(s), want %s:\n%s",
 					name, leg.label, n, map[bool]string{true: "at least one", false: "none"}[leg.wantMsg > 0], asm)
@@ -666,8 +523,6 @@ function main(): i32 {
 		}
 	}
 
-	// A failing assert: exit 1 on a default build, gone under `-O` so the
-	// function reaches its return. Native answers 1 / 5 on the same program.
 	t.Run("opt-elides-assert", func(t *testing.T) {
 		assertCase(t, "elide", "function main(): i32 {\n"+
 			"    let n: i32 = 3;\n"+
@@ -676,10 +531,6 @@ function main(): i32 {
 			"}\n", 1, 5)
 	})
 
-	// The shapes a top-level statement filter misses. Each nests an assert one
-	// level deeper than the last; `-O` has to reach all five, which is what
-	// routing the pass through astwalk's splicing fold buys — a lambda body
-	// and a match arm are not in the enclosing statement list at all.
 	t.Run("opt-elides-nested-asserts", func(t *testing.T) {
 		assertCase(t, "elidenest", "enum E { A(i32) }\n"+
 			"function run(f: () => i32): i32 { return f(); }\n"+
@@ -701,11 +552,6 @@ function main(): i32 {
 			"}\n", 1, 5)
 	})
 
-	// Through MONOMORPHISATION. The marker is stored in StmtIf.origin, and the passes
-	// between the parser and the elision rebuild statements field by field —
-	// a copy site that omits `origin` drops it silently and only for cloned
-	// generics, which is the same shape as the async-function case above.
-	// Both instantiations must lose their assert.
 	t.Run("opt-elides-assert-in-generic", func(t *testing.T) {
 		assertCase(t, "elidegen", "function check_it[T](v: T, n: i32): i32 {\n"+
 			"    assert(n > 100, \"generic\");\n"+
@@ -716,13 +562,6 @@ function main(): i32 {
 			"}\n", 1, 5)
 	})
 
-	// Ordering: the elision runs AFTER the gates, so a release build rejects
-	// the same programs a default build does rather than deleting the offending
-	// code unexamined. `-O` must narrow the emitted program, never widen the
-	// set that compiles.
-	//
-	// The target-capability gate (E066) is one of the two shapes this is
-	// pinned with; the checker is the other, below.
 	t.Run("opt-elides-after-the-gates", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "capassert.fern")
 		src := "function main(): i32 {\n    assert(proc_fork() >= 0);\n    return 0;\n}\n"
@@ -740,13 +579,6 @@ function main(): i32 {
 		}
 	})
 
-	// The checker half of the same ordering (#7170). An ill-typed assert
-	// condition is what the elision would otherwise delete unexamined: `-O`
-	// would take the undefined name away with the assert and emit a working
-	// binary for a program the default build — and native, on both settings —
-	// refuses. The checker rejects it first on both legs: E001 for the
-	// undefined name (#8461 made every coded diagnostic gate the build) and
-	// E043 for the unknown field (#7380).
 	t.Run("opt-does-not-widen-what-compiles", func(t *testing.T) {
 		for _, tc := range []struct{ name, src, code string }{
 			{"undefined-name", "function main(): i32 {\n    assert(nosuchname > 1);\n    return 0;\n}\n", "E001"},
@@ -774,9 +606,6 @@ function main(): i32 {
 		}
 	})
 
-	// The negative control the case above needs: a WELL-TYPED assert must still
-	// compile on both builds, and must still be gone under `-O`. A gate that
-	// rejected every `-O` build would satisfy the agreement assertion alone.
 	t.Run("opt-still-elides-a-well-typed-assert", func(t *testing.T) {
 		assertCase(t, "elidecontrol", "function main(): i32 {\n"+
 			"    let n: i32 = 3;\n"+
@@ -796,17 +625,6 @@ function main(): i32 {
 		}
 	})
 
-	// #9042. A struct literal's field value was checked on its own and then
-	// compared to the declared field type by tag-blind equality, rather than
-	// checked AGAINST it. So a value needing the field's type to check —  an
-	// unsuffixed literal at a wide field, a member at a union-typed field —
-	// was refused, and the refusal collapsed the whole literal to unknown,
-	// bailing the module.
-	//
-	// Gated by EXIT STATUS rather than by diagnostic code: the bail is an
-	// uncoded internal error, so the checker-codes differential compares
-	// nothing on these and passes whether or not the rule is right. Native
-	// accepts every program here.
 	t.Run("check-accepts-typed-field", func(t *testing.T) {
 		for _, tc := range []struct {
 			name string
@@ -815,8 +633,6 @@ function main(): i32 {
 			{"untyped-literal-at-i64-field", "struct W { a: i32, b: i64 }\nfunction mk(n: i32): W { return W { a: n, b: 0 }; }\nfunction main(): i32 { return mk(1).a; }\n"},
 			{"member-widens-to-union-field", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction mk(n: i32): Holds { return Holds { t: Lf { v: n }, n: n }; }\nfunction main(): i32 { return mk(1).n; }\n"},
 			{"member-widens-in-struct-update", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction upd(h: Holds, n: i32): Holds { return Holds { ...h, t: Lf { v: n } }; }\nfunction main(): i32 { return upd(Holds { t: Lf { v: 1 }, n: 2 }, 3).n; }\n"},
-			// The control that isolates it to the literal-field position:
-			// the same value through a local already checked before the fix.
 			{"same-value-via-local", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction mk(n: i32): Holds { let t: Node = Lf { v: n }; return Holds { t: t, n: n }; }\nfunction main(): i32 { return mk(1).n; }\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -832,10 +648,6 @@ function main(): i32 {
 		}
 	})
 
-	// A derived associated function (`User.from_json(s)`) has no trait
-	// requirement to read a return type from, so the checker types the call
-	// from its own declaration; typed unknown, `-check` refused every
-	// annotated binding of one with the uncoded catch-all (#10767).
 	t.Run("check-accepts-derived-assoc-call", func(t *testing.T) {
 		stdlibRoot, err := filepath.Abs("../../stdlib")
 		if err != nil {
@@ -852,10 +664,6 @@ function main(): i32 {
 		}
 	})
 
-	// A `use` into a generic callee whose written arguments leave the
-	// callback's parameter unbound (`T` reaches `apply` only through `cb`) has
-	// no binding type to infer: E032, and E038 for the callback that then
-	// fits no parameter, as native reports them (#10833).
 	t.Run("check-refuses-use-with-unbound-callback-parameter", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "use_unbound.fern")
 		src := "function apply[T, I](it: I, cb: (T) => i32): i32 { return 0; }\nfunction main(): i32 {\n    use n <- apply(5);\n    return 1;\n}\n"
@@ -868,9 +676,6 @@ function main(): i32 {
 		}
 	})
 
-	// A clean check lists the entry's remaining `todo` stubs as warnings and
-	// still exits 0, in native's words: the entry is named, `<stdin>` for `-`,
-	// and an imported module's stubs are not tracked (#11351).
 	t.Run("check-warns-about-todo-stubs", func(t *testing.T) {
 		sub := filepath.Join(dir, "todo_check")
 		writeTree(t, sub, map[string]string{
@@ -901,32 +706,14 @@ function main(): i32 {
 		}
 	})
 
-	// #8739. The parser is permissive: where it cannot read the source it
-	// plants an ExprUnknown and carries on, so every later pass reasons about
-	// the MARKER. `-check` never ran the gate that turns those markers back
-	// into P001/P002, so `let x: i32 = ;` surfaced as the #9053
-	// "cannot represent yet" catch-all, and a `= ;` parameter default — which
-	// no walk reached at all — surfaced as E076's non-constant rule, naming a
-	// rule the author had not broken.
-	//
-	// The oracle is the Go front end, because the divergence IS the bug: both
-	// engines must name the same code for the same unreadable source. An exit
-	// code alone would not have caught it, since the old behaviour also
-	// exited 1 — with the wrong diagnostic.
 	t.Run("check-parse-unknown-gate", func(t *testing.T) {
 		for _, tc := range []struct {
 			name string
 			src  string
 		}{
 			{"body-sentinel", "function main(): i32 { let x: i32 = ;\n  return 0; }\n"},
-			// The default cases are the ones the gate was added for: a
-			// default hangs off the declaration, not off a statement, so
-			// neither the body walk nor the top-level one reached it.
 			{"param-default-sentinel", "function f(x: i32 = ;): i32 { return x; }\nfunction main(): i32 { return 0; }\n"},
 			{"param-default-at", "function f(x: i32 = @): i32 { return x; }\nfunction main(): i32 { return 0; }\n"},
-			// An out-of-range float in a default is P002 on both engines and
-			// was already agreed; it is here so the fix cannot regress it
-			// into P001 by treating every marker alike.
 			{"param-default-float-range", "function f(x: f64 = 1e309): f64 { return x; }\nfunction main(): i32 { return 0; }\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -945,7 +732,6 @@ function main(): i32 {
 				}
 			})
 		}
-		// The gate must not fire on a default it CAN read.
 		cleanPath := filepath.Join(dir, "parse_unknown_clean.fern")
 		if err := os.WriteFile(cleanPath, []byte("function f(x: i32 = 41): i32 { return x; }\nfunction main(): i32 { return f(); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -955,18 +741,6 @@ function main(): i32 {
 		}
 	})
 
-	// #8738. `top_stmts` has two uses and only one of them is a feature.
-	// With NO `main` it is the interpreter's script mode — eval_module runs the
-	// statements and answers with the top-level `return`. With a `main`,
-	// eval_module calls that and returns before it ever looks at the bucket,
-	// and the compile path drops it: the statements are unreachable, and the
-	// self-host said nothing, so `let g: i32 = 1;` beside a `main` produced a
-	// clean binary with the initialiser silently discarded.
-	//
-	// Native rejects the source either way, so the accepted-and-dead case is a
-	// divergence in the direction that matters. Script mode is left alone and
-	// is asserted here as the control, because a gate that also killed it
-	// would pass every assertion above.
 	t.Run("check-top-level-stmt-gate", func(t *testing.T) {
 		for _, tc := range []struct {
 			name string
@@ -975,9 +749,6 @@ function main(): i32 {
 			{"let", "let g: i32 = 1;\nfunction main(): i32 { return 0; }\n"},
 			{"call", "print(\"hi\");\nfunction main(): i32 { return 0; }\n"},
 			{"if", "if (1 > 0) { }\nfunction main(): i32 { return 0; }\n"},
-			// The shape #2673's migration turned `function (): i32 {…}` into,
-			// which is how this hole was found: a top-level arrow lambda
-			// parses cleanly and lands in the same dead bucket.
 			{"lambda", "(): i32 => {\n  return 1;\n}\nfunction main(): i32 { return 0; }\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -996,8 +767,6 @@ function main(): i32 {
 				}
 			})
 		}
-		// The control: no `main`, so this IS the script mode, and the gate must
-		// not touch it. `-interp` answers with the top-level return.
 		scriptPath := filepath.Join(dir, "script.fern")
 		if err := os.WriteFile(scriptPath, []byte("let x = 1 + 2 * 3;\nreturn x;\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1008,22 +777,9 @@ function main(): i32 {
 	})
 
 	t.Run("check-str-view-arg-is-a-borrow", func(t *testing.T) {
-		// #7086: a parameter is BORROWED, so lending a `str` view to a
-		// `string` parameter is fine — native's argAssignable accepts it.
-		// The self-host had the carve-out on its diagnostic pass but not on
-		// the four typing-side argument checks, so the call's type collapsed
-		// to unknown and the program was refused with the #9053 catch-all,
-		// i.e. the self-host rejecting what native accepts.
-		//
-		// The gate has to be an EXIT CODE, not a diagnostic code: the
-		// catch-all carries no E0XX, so a row in the codes differential
-		// passes identically before and after the fix and cannot see this.
 		for _, src := range []string{
-			// through a free call, with the view built inline
 			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
-			// through a `str`-typed local
 			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; let v: str = slice_unchecked(t, 0, 3); return g(v); }\n",
-			// and with the callee itself declared `str`
 			"function g(x: str): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
 		} {
 			srcPath := filepath.Join(dir, "strview_arg.fern")
@@ -1035,8 +791,6 @@ function main(): i32 {
 				t.Errorf("-check exited %d, want 0 — a view lent to a parameter is a borrow:\n%s\nsource:\n%s", code, out, src)
 			}
 		}
-		// The owning sinks must still refuse: this widens argument position
-		// only, and a view stored into an owned `string` is still E003.
 		srcPath := filepath.Join(dir, "strview_owned.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { let t: string = \"abcdef\"; let s: string = slice_unchecked(t, 0, 3); return s.len(); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1044,10 +798,6 @@ function main(): i32 {
 		if _, code := runDriver(t, "-check", srcPath); code != 1 {
 			t.Errorf("-check on a view stored into an owned string exited %d, want 1", code)
 		}
-		// An `own` parameter is the boundary this widening runs closest to:
-		// it is spelled like a parameter but OWNS, so the borrow carve-out
-		// must not reach it. It does not — E051 is raised by the separate
-		// owned-argument walk, which the carve-out never consults.
 		ownPath := filepath.Join(dir, "strview_own_param.fern")
 		if err := os.WriteFile(ownPath, []byte("function g(own x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1063,8 +813,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-bad", func(t *testing.T) {
-		// Arity mismatch — the self-host checker rejects it (mirrors
-		// checker.fern's own mt6 self-test).
 		srcPath := filepath.Join(dir, "bad.fern")
 		if err := os.WriteFile(srcPath, []byte("function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(1); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1073,9 +821,6 @@ function main(): i32 {
 		if code != 1 {
 			t.Errorf("-check on ill-typed program exited %d, want 1", code)
 		}
-		// The self-host checker surfaces the stable diagnostic code (the
-		// same E0XX the Go checker emits) on stderr — here E004 for the
-		// arity mismatch.
 		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
 		if !strings.Contains(string(combined), "error[E004]") {
 			t.Errorf("-check diagnostics = %q, want it to contain error[E004]", combined)
@@ -1083,14 +828,6 @@ function main(): i32 {
 	})
 
 	t.Run("payloadless-variant-as-payload-binder", func(t *testing.T) {
-		// #2698: a bare payload-LESS variant name in a payload slot parses as
-		// a BINDER, so `Wrap(Er2)` matched every payload and the arm returned
-		// its answer for every value. Native gained the rejection first; the
-		// self-host did not, which turned a shared bug into a divergence —
-		// native refusing the program while the self-host compiled it and
-		// answered 9 where 1 is correct. Both must now refuse it, with the
-		// same code, and must still accept the two spellings that are fine:
-		// an ordinary binder, and the empty-paren form that tests the tag.
 		decls := "enum Res2 { Ok2(i32), Er2 }\nenum Nest3 { Wrap(Res2), Bare }\n"
 		bad := decls + "function g(w: Nest3): i32 { match (w) { Wrap(Er2) => { return 9; }, _ => { return 1; } } }\nfunction main(): i32 { return g(Nest3.Wrap(Res2.Ok2(5))); }\n"
 		badPath := filepath.Join(dir, "plbinder_bad.fern")
@@ -1108,9 +845,6 @@ function main(): i32 {
 			t.Errorf("diagnostic must name the spelling that works: %q", combined)
 		}
 
-		// An ordinary binder, and a binder whose name belongs to a DIFFERENT
-		// enum, are both untouched — the rule is scoped to the enum the slot
-		// actually holds, as native's is.
 		ok := decls + "enum Other { Zed, Yy(i32) }\nfunction g(w: Nest3): i32 { match (w) { Wrap(x) => { return 1; }, Bare => { return 2; } } }\nfunction h(w: Nest3): i32 { match (w) { Wrap(Zed) => { return 1; }, Bare => { return 2; } } }\nfunction main(): i32 { return g(Nest3.Bare) + h(Nest3.Bare); }\n"
 		okPath := filepath.Join(dir, "plbinder_ok.fern")
 		if err := os.WriteFile(okPath, []byte(ok), 0o644); err != nil {
@@ -1123,12 +857,6 @@ function main(): i32 {
 	})
 
 	t.Run("float-literal-out-of-range", func(t *testing.T) {
-		// #6842: a float literal too large for f64 is rejected by the front
-		// end, as native's parser does, instead of compiling to +Inf. All
-		// three channels have to agree, because they gate independently:
-		// `-check` (the checker's P002), COMPILE (the pre-codegen build gate,
-		// which used to filter the diagnostic set down to the immutability
-		// rules and let this through on every target), and `-interp`.
 		srcPath := filepath.Join(dir, "float_oor.fern")
 		src := "function main(): i32 { let x: f64 = 1e309; if (x > 1.0e308) { return 7; } return 0; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1144,9 +872,6 @@ function main(): i32 {
 				t.Errorf("%v: diagnostics = %q, want error[P002]", mode, out)
 			}
 		}
-		// `-fmt` is the mode that must NOT reject it: a reformat has to return
-		// the text it was handed, so the verbatim parse keeps the literal
-		// (printer.fern pins the round-trip directly).
 		fmtOut, code := runDriver(t, "-fmt", srcPath)
 		if code != 0 {
 			t.Errorf("-fmt exited %d, want 0 (out: %s)", code, fmtOut)
@@ -1154,8 +879,6 @@ function main(): i32 {
 		if !strings.Contains(string(fmtOut), "1e309") {
 			t.Errorf("-fmt lost the literal; got:\n%s", fmtOut)
 		}
-		// The accepted side of the same boundary: underflow is not a range
-		// error on either engine, so this compiles and runs.
 		okPath := filepath.Join(dir, "float_underflow.fern")
 		okSrc := "function main(): i32 { let x: f64 = 1e-400; if (x == 0.0) { return 7; } return 0; }\n"
 		if err := os.WriteFile(okPath, []byte(okSrc), 0o644); err != nil {
@@ -1177,12 +900,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-enum-value-ok", func(t *testing.T) {
-		// #4346 piece 2 (enum-value slice): a bare no-payload enum variant used
-		// as a value (`let c: Color = Red;`) types to its enum's union, so this
-		// native-valid program now passes self-host `-check` (exit 0). Before
-		// the slice `Red` typed to unknown, failed `type_assignable` against the
-		// declared `Color`, and `-check` exited 1 (a silent over-reject). Covers
-		// both the assignment and return positions.
 		srcPath := filepath.Join(dir, "enum_value.fern")
 		src := "enum Color { Red, Green }\n" +
 			"function pick(): Color { return Green; }\n" +
@@ -1196,12 +913,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-option-result-value-ok", func(t *testing.T) {
-		// #4346 piece 2 (Option/Result slice): a builtin `Option[i32]` /
-		// `Result[i32, i32]` annotation resolves to a name-only union, and the
-		// constructors `Some(x)` / `None` / `Ok(x)` / `Err(e)` type to that
-		// union — so this native-valid program passes self-host `-check`
-		// (exit 0). Before the slice each collapsed to unknown and `-check`
-		// exited 1 (a silent over-reject).
 		srcPath := filepath.Join(dir, "option_result_value.fern")
 		src := "function main(): i32 {\n" +
 			"    let a: Option[i32] = Some(3);\n" +
@@ -1219,15 +930,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-generic-body-ok", func(t *testing.T) {
-		// #4346 piece 2 (generic-body slice): a generic function's body operates
-		// on opaque-typed values (`v: T` erases to unknown), which is expected,
-		// not an error — native accepts it. check_func_body no longer marks a
-		// generic body ill-typed on a TypeUnknown statement, so this native-valid
-		// declared-generic program passes self-host `-check` (exit 0) instead of
-		// the prior silent over-reject exit 1 — matching the issue's
-		// "declared-but-unused generic" example. (CALLING a generic and using its
-		// result, `return ident(3)`, still yields unknown at a non-generic call
-		// site: generic-call return-type inference is a separate future slice.)
 		srcPath := filepath.Join(dir, "generic_body.fern")
 		if err := os.WriteFile(srcPath, []byte("function ident[T](v: T): T { return v; }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1238,12 +940,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-generic-call-ok", func(t *testing.T) {
-		// #4346 piece 2 (generic-call slice): CALLING a generic function and
-		// using its result now type-checks — the return type is inferred from
-		// the argument whose parameter shares the return's type-parameter name
-		// (`ident(3)` → i32, so `return ident(3)` matches main's i32 return).
-		// Before the slice the call typed to unknown and a non-generic caller
-		// over-rejected (exit 1).
 		srcPath := filepath.Join(dir, "generic_call.fern")
 		if err := os.WriteFile(srcPath, []byte("function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1254,13 +950,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-generic-struct-ok", func(t *testing.T) {
-		// #4346 piece 2 (generic-struct slice): a user generic-struct
-		// annotation `Box[i32]` resolves to the name-only struct `Box`, and its
-		// literal `Box { v: 3 }` type-checks (the opaque generic field `v: T`
-		// accepts any value), so constructing and binding one passes self-host
-		// `-check` (exit 0) instead of the prior silent over-reject exit 1.
-		// (Field access `b.v` still yields unknown — the field's type parameter
-		// isn't substituted yet — so it's deliberately not exercised here.)
 		srcPath := filepath.Join(dir, "generic_struct.fern")
 		if err := os.WriteFile(srcPath, []byte("struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 3 }; return 0; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1271,11 +960,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-generic-struct-field-ok", func(t *testing.T) {
-		// #4346 piece 2 (generic-struct field slice): reading a type-parameter
-		// field off a concrete instantiation now substitutes the arg, so
-		// `Box[i32].v` is i32 and `return b.v` matches main's i32 return —
-		// the program passes self-host `-check` (exit 0) where the pre-slice
-		// self-host typed `b.v` as unknown and over-rejected.
 		srcPath := filepath.Join(dir, "generic_struct_field.fern")
 		if err := os.WriteFile(srcPath, []byte("struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 3 }; return b.v; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1286,13 +970,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-generic-nested-field-ok", func(t *testing.T) {
-		// #4346 piece 2 (nested generic field spellings): a type-parameter that
-		// appears INSIDE a field's spelling — `items: T[]`, `kv: (K, V)` — is now
-		// substituted throughout, so off a `Wrapper[i32]` the field `items` is
-		// i32[] (its element indexes to i32) and off a `Pair[i32, string]` the
-		// field `kv` is the tuple (i32, string). The program reads both and
-		// returns an i32, passing self-host `-check` (exit 0) where the pre-slice
-		// self-host typed the nested field as unknown and over-rejected.
 		srcPath := filepath.Join(dir, "generic_nested_field.fern")
 		src := "struct Wrapper[T] { items: T[] }\n" +
 			"struct Pair[K, V] { kv: (K, V) }\n" +
@@ -1310,13 +987,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-generic-method-ret-ok", func(t *testing.T) {
-		// #4346 piece 2 (generic-receiver method return): a method whose return
-		// type names a receiver type parameter (`(b: Box[T]) get(): T`, nested
-		// `(w: Wrapper[T]) all(): T[]`) is substituted with the receiver's
-		// concrete instantiation args at the call site — so `Box[i32].get()` is
-		// i32 (feeds main's i32 return) and `Wrapper[i32].all()` is i32[] (its
-		// element indexes to i32). Both pass self-host `-check` (exit 0) where
-		// the pre-slice self-host typed the call unknown and over-rejected.
 		bare := filepath.Join(dir, "generic_method.fern")
 		if err := os.WriteFile(bare, []byte("struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { let b: Box[i32] = Box { v: 5 }; return b.get(); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1334,13 +1004,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-dyn-bind-ok", func(t *testing.T) {
-		// #4346 piece 2 (dyn Trait representation): a `dyn Trait` annotation now
-		// resolves to a real TypeDyn instead of TypeUnknown, so binding a struct
-		// value into a dyn slot (`let d: dyn Greet = Dog { }`) type-checks
-		// (assignment into a dyn slot is lenient) — the program passes self-host
-		// `-check` (exit 0) where the pre-slice self-host bound `d` to unknown
-		// and silently over-rejected. Dispatch through the dyn value is
-		// check-dyn-dispatch-ok below.
 		srcPath := filepath.Join(dir, "dyn_bind.fern")
 		src := "trait Greet { function hi(self: Self): i32; }\n" +
 			"struct Dog { }\n" +
@@ -1355,8 +1018,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-dyn-dispatch-ok", func(t *testing.T) {
-		// A call on a dyn receiver has its trait method's result type (#10421),
-		// so `return d.hi()` type-checks, as it does natively.
 		srcPath := filepath.Join(dir, "dyn_dispatch.fern")
 		src := "trait Greet { function hi(self: Self): i32; }\n" +
 			"struct Dog { }\n" +
@@ -1371,16 +1032,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-selfhost-no-e001", func(t *testing.T) {
-		// The self-host modules are well-typed real code (they compile and
-		// self-host), full of bare-identifier reads — locals, params, loop
-		// variables, match payloads, lambda params, the module's own
-		// functions / consts, enum/union variants, and the builtin Option /
-		// Result / IoError variants. Running the self-host
-		// `-check` over each (which flattens its `./` imports and checks the
-		// whole bundle) must NOT report E001 (undefined name); any E001 here
-		// is a false positive. This is the bundle-wide FP guard the
-		// differential corpus can't express, mirroring the manual
-		// "fern -check over every module" validation prior slices used.
 		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "elf.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
@@ -1390,8 +1041,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-undefined-assign", func(t *testing.T) {
-		// E001 for an undefined assignment target is reported at the target
-		// identifier (Go's errIdent position), not the `=` token.
 		srcPath := filepath.Join(dir, "undef_assign.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { y = 5; return 0; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1403,9 +1052,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position", func(t *testing.T) {
-		// A diagnostic emitted from an AST node that carries a source
-		// position renders `line:col: error[E0XX]: …`, matching the Go
-		// checker's format. An enum redeclared on line 2 → `2:1`.
 		srcPath := filepath.Join(dir, "enum_redecl.fern")
 		if err := os.WriteFile(srcPath, []byte("enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1417,12 +1063,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-array-literal", func(t *testing.T) {
-		// E053 at an array literal is reported at the `[`. parser.ExprArray
-		// carried no line/col at all — alone among the literal nodes — so this
-		// diagnostic rendered at 0:0 and no gate could see it: the codes and
-		// hint-text differentials compare codes and messages, and the driver
-		// they run through prints neither position. Position is checked only
-		// here, and only for the codes these rows name.
 		srcPath := filepath.Join(dir, "fip_array.fern")
 		src := "fip function f(n: i32): i32 {\n    let a: i32[] = [1];\n    return n + a.len();\n}\nfunction main(): i32 { return f(1); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1435,7 +1075,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-struct", func(t *testing.T) {
-		// E007 (duplicate field) is reported at the struct decl position.
 		srcPath := filepath.Join(dir, "dup_field.fern")
 		if err := os.WriteFile(srcPath, []byte("struct P { x: i32, x: i32 }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1447,8 +1086,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-func", func(t *testing.T) {
-		// E018 (dup param) reports at the function decl; E006 (redeclared)
-		// at the redeclaration site.
 		dupParam := filepath.Join(dir, "dup_param.fern")
 		if err := os.WriteFile(dupParam, []byte("function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1468,9 +1105,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-var", func(t *testing.T) {
-		// Statement-level codes are reported at the `let` keyword: E013
-		// (dup var) at the redeclaration, E003 (annotated-var mismatch) and
-		// E020 (empty array, no annotation) at the var.
 		for _, c := range []struct{ name, src, want string }{
 			{"dup_var", "function main(): i32 { let x: i32 = 1; let x: i32 = 2; return x; }\n", "1:40: error[E013]"},
 			{"var_mismatch", "function main(): i32 { let x: i32 = \"no\"; return x; }\n", "1:24: error[E003]"},
@@ -1489,8 +1123,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-return", func(t *testing.T) {
-		// E002 (return-type mismatch) and E012 (return without value) are
-		// reported at the `return` keyword.
 		for _, c := range []struct{ name, src, want string }{
 			{"ret_mismatch", "function main(): i32 { let s: string = \"x\"; return s; }\n", "1:45: error[E002]"},
 			{"ret_no_value", "function f(): i32 { return; }\nfunction main(): i32 { return 0; }\n", "1:21: error[E012]"},
@@ -1507,7 +1139,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-tuple-destructure", func(t *testing.T) {
-		// E024 (destructuring a non-tuple) is reported at the destructure.
 		for _, c := range []struct{ name, src, want string }{
 			{"non_tuple", "function main(): i32 { let n = 5; let (a, b) = n; return a + b; }\n", "1:35: error[E024]"},
 		} {
@@ -1523,8 +1154,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-bad-receiver", func(t *testing.T) {
-		// E021 (method receiver references an unknown type) is reported at
-		// the method declaration.
 		for _, c := range []struct{ name, src, want string }{
 			{"unknown_receiver", "function (r: Nope) m(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "1:1: error[E021]"},
 		} {
@@ -1540,8 +1169,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-missing-return", func(t *testing.T) {
-		// E052 (non-void body can fall off the end) is reported at the
-		// function declaration.
 		for _, c := range []struct{ name, src, want string }{
 			{"falls_off_end", "function f(): i32 { let x = 1; }\nfunction main(): i32 { return 0; }\n", "1:1: error[E052]"},
 		} {
@@ -1557,8 +1184,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-union-collision", func(t *testing.T) {
-		// E016 (union alias collides with a struct) is reported at the
-		// alias's `type` keyword.
 		for _, c := range []struct{ name, src, want string }{
 			{"name_collision", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type B = A | C;\nfunction main(): i32 { return 0; }\n", "4:5: error[E016]"},
 		} {
@@ -1574,8 +1199,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-qualifier-mismatch", func(t *testing.T) {
-		// E029 (variant pattern qualified by the wrong enum) is reported
-		// at the arm.
 		for _, c := range []struct{ name, src, want string }{
 			{"wrong_qualifier", "enum E { A, B }\nenum F { C, D }\nfunction f(e: E): i32 { match (e) { F.A => { return 1; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A); }\n", "3:37: error[E029]"},
 		} {
@@ -1591,8 +1214,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-foreign-variant", func(t *testing.T) {
-		// E014 (variant pattern not part of the scrutinee union) is
-		// reported at the offending arm.
 		for _, c := range []struct{ name, src, want string }{
 			{"foreign_variant", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, C(c) => { return c.z; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", "5:62: error[E014]"},
 		} {
@@ -1608,8 +1229,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-exhaustiveness", func(t *testing.T) {
-		// E030 (non-exhaustive union match) is reported at the `match`
-		// keyword.
 		for _, c := range []struct{ name, src, want string }{
 			{"missing_variant", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", "4:25: error[E030]"},
 			{"enum_missing_variant", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { A => { return 1; } } return 0; }\nfunction main(): i32 { return f(A); }\n", "2:25: error[E030]"},
@@ -1626,8 +1245,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-struct-field-type", func(t *testing.T) {
-		// E043 for a struct-literal field value whose type doesn't match
-		// the declared field type is reported at the value.
 		for _, c := range []struct{ name, src, want string }{
 			{"string_for_i32", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: \"no\" }; return 0; }\n", "2:48: error[E043]"},
 		} {
@@ -1643,8 +1260,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-method-argtype", func(t *testing.T) {
-		// E038 for a primitive method-argument type mismatch is reported
-		// at the offending argument.
 		for _, c := range []struct{ name, src, want string }{
 			{"string_for_i32", "struct P { x: i32 }\nfunction (p: P) add(a: i32): i32 { return p.x + a; }\nfunction main(): i32 { let p: P = P { x: 1 }; let s: string = \"n\"; return p.add(s); }\n", "3:81: error[E038]"},
 		} {
@@ -1660,8 +1275,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-method-arity", func(t *testing.T) {
-		// E004 for a method call with the wrong argument count is reported
-		// at the call's opening paren.
 		for _, c := range []struct{ name, src, want string }{
 			{"method_too_few", "struct P { x: i32 }\nfunction (p: P) add(a: i32, b: i32): i32 { return p.x + a + b; }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.add(5); }\n", "3:59: error[E004]"},
 		} {
@@ -1677,8 +1290,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-match-nonenum", func(t *testing.T) {
-		// E035 (variant pattern on a non-enum scrutinee) is reported at
-		// the offending arm.
 		for _, c := range []struct{ name, src, want string }{
 			{"variant_on_i32", "enum E { A, B }\nfunction main(): i32 { let n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", "2:52: error[E035]"},
 		} {
@@ -1694,8 +1305,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-array-elem", func(t *testing.T) {
-		// E034 (heterogeneous array element) is reported at the offending
-		// element's own position.
 		for _, c := range []struct{ name, src, want string }{
 			{"string_in_i32", "function main(): i32 { let a = [1, \"x\", 3]; return 0; }\n", "1:36: error[E034]"},
 			{"i32_in_string", "function main(): i32 { let a = [\"a\", 1]; return 0; }\n", "1:38: error[E034]"},
@@ -1712,8 +1321,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-type-arity", func(t *testing.T) {
-		// E019 (generic-struct type-arg count mismatch) is reported at
-		// the struct's declaration, not the use site.
 		for _, c := range []struct{ name, src, want string }{
 			{"too_many_args", "struct Box[T] { v: T }\nfunction f(b: Box[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "1:1: error[E019]"},
 		} {
@@ -1729,8 +1336,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-match-arm", func(t *testing.T) {
-		// E026 (non-final wildcard) and E028 (duplicate variant) are
-		// reported at the offending arm (its pattern's first token).
 		for _, c := range []struct{ name, src, want string }{
 			{"wildcard_not_last", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; match (e) { _ => { return 0; }, A => { return 1; } } }\n", "2:52: error[E026]"},
 			{"dup_variant", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; match (e) { A => { return 0; }, A => { return 1; }, B => { return 2; } } }\n", "2:72: error[E028]"},
@@ -1747,8 +1352,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-break-continue", func(t *testing.T) {
-		// E011 (break / continue outside a loop) is reported at the
-		// keyword.
 		for _, c := range []struct{ name, src, want string }{
 			{"break", "function main(): i32 { break; return 0; }\n", "1:24: error[E011]"},
 			{"continue", "function main(): i32 { continue; return 0; }\n", "1:24: error[E011]"},
@@ -1765,8 +1368,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-cond-slice", func(t *testing.T) {
-		// E008 (if/while condition) and E037 (slice bound) are reported
-		// at the offending expression's own position.
 		for _, c := range []struct{ name, src, want string }{
 			{"if_cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", "1:28: error[E008]"},
 			{"while_cond", "function main(): i32 { while (5) { return 1; } return 0; }\n", "1:31: error[E008]"},
@@ -1785,8 +1386,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-cast", func(t *testing.T) {
-		// E033 (invalid cast) is reported at the cast's inner operand,
-		// matching the Go checker's CastExpr position.
 		for _, c := range []struct{ name, src, want string }{
 			{"bool_to_i32", "function main(): i32 { let b: boolean = true; return b as i32; }\n", "1:56: error[E033]"},
 			{"i32_to_bool", "function main(): i32 { let x: i32 = 1; let b: boolean = x as boolean; return 0; }\n", "1:59: error[E033]"},
@@ -1802,8 +1401,7 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("check-position-field-assign", func(t *testing.T) { // E048 (assignment to an immutable field) is reported at the
-		// field-access object, matching the Go checker.
+	t.Run("check-position-field-assign", func(t *testing.T) {
 		for _, c := range []struct{ name, src, want string }{
 			{"field_assign", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 5; return p.x; }\n", "2:48: error[E048]"},
 			{"field_compound", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "2:48: error[E048]"},
@@ -1820,21 +1418,14 @@ function main(): i32 {
 	})
 
 	t.Run("compile-rejects-immutable-mutation", func(t *testing.T) {
-		// The COMPILE path (not just `-check`) must reject the immutable-data
-		// cycle rules before codegen, so the self-host compiler is not MORE
-		// permissive than native — which always type-checks ahead of codegen
-		// (issue #2825: `p.x = v` must not compile+run on the self-host).
-		// A rejection exits non-zero with the coded diagnostic on stderr and
-		// emits NO asm; the sanctioned functional-update form still compiles.
 		for _, c := range []struct {
 			name   string
 			src    string
-			reject string // non-empty ⇒ expect rejection with this on stderr
+			reject string
 		}{
 			{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 9; return p.x; }\n", "error[E048]"},
 			{"field-compound", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "error[E048]"},
 			{"subscript-assign", "function main(): i32 { let a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", "error[E056]"},
-			// Sanctioned replacements compile cleanly (no rejection).
 			{"functional-update-ok", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p = P { ...p, x: 9 }; return p.x; }\n", ""},
 			{"with-ok", "function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(0, 9); return a[0]; }\n", ""},
 		} {
@@ -1864,8 +1455,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-field", func(t *testing.T) {
-		// E043 (no such struct field) and E046 (bad tuple index) are
-		// reported at the field-access dot.
 		for _, c := range []struct{ name, src, want string }{
 			{"no_field", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.y; }\n", "2:55: error[E043]"},
 			{"bad_tuple_idx", "function main(): i32 { let t = (1, 2); return t.foo; }\n", "1:48: error[E046]"},
@@ -1882,9 +1471,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-operator", func(t *testing.T) {
-		// E009 (boolean/numeric operand) and E041 (compare mismatch) are
-		// reported at the operator token: the binary operator, or the
-		// unary `!`.
 		for _, c := range []struct{ name, src, want string }{
 			{"and_nonbool", "function main(): i32 { let b: boolean = true; let x: boolean = b && 5; return 0; }\n", "1:66: error[E009]"},
 			{"not_nonbool", "function main(): i32 { let x: boolean = !5; return 0; }\n", "1:41: error[E009]"},
@@ -1902,8 +1488,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-ident", func(t *testing.T) {
-		// E036 (ambiguous unqualified variant) and the ident-argument
-		// case of E038 are reported at the identifier's own position.
 		for _, c := range []struct{ name, src, want string }{
 			{"ambiguous_variant", "enum A { Foo, Bar }\nenum B { Foo, Baz }\nfunction main(): i32 { let x = Foo; return 0; }\n", "3:32: error[E036]"},
 			{"arg_ident", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { let n: i32 = 5; return f(n); }\n", "2:49: error[E038]"},
@@ -1920,9 +1504,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-number", func(t *testing.T) {
-		// E047 (literal out of range) and the number-argument case of
-		// E038 (argument type mismatch) are reported at the numeric
-		// literal's own position.
 		for _, c := range []struct{ name, src, want string }{
 			{"lit_overflow", "function main(): i32 { let x: i32 = 9999999999; return x; }\n", "1:37: error[E047]"},
 			{"arg_number", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { return f(5); }\n", "2:33: error[E038]"},
@@ -1939,8 +1520,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-call", func(t *testing.T) {
-		// E004 (free-call arity mismatch) is reported at the call's
-		// opening paren, matching the Go parser's Call{P: open.Pos}.
 		for _, c := range []struct{ name, src, want string }{
 			{"call_arity", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return f(1); }\n", "2:32: error[E004]"},
 		} {
@@ -1956,8 +1535,6 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-structlit", func(t *testing.T) {
-		// E005 (struct literal missing field) is reported at the
-		// struct-literal type name.
 		for _, c := range []struct{ name, src, want string }{
 			{"missing_field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.x; }\n", "2:35: error[E005]"},
 		} {
@@ -1973,8 +1550,6 @@ function main(): i32 {
 	})
 
 	t.Run("interp", func(t *testing.T) {
-		// -interp evaluates via the tree-walker; the program's i32
-		// result becomes the exit code (mirrors interp_run.fern).
 		srcPath := filepath.Join(dir, "interp_prog.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { let x = 5; let y = 8; return x * y - 1; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -1986,10 +1561,6 @@ function main(): i32 {
 	})
 
 	t.Run("fmt", func(t *testing.T) {
-		// -fmt formats the entry file to stdout. We assert it produces
-		// non-empty output and is IDEMPOTENT (formatting the formatted
-		// output is a fixed point) — validating the formatter is wired
-		// + stable without pinning its exact style.
 		srcPath := filepath.Join(dir, "messy.fern")
 		messy := "function   main( ):i32{let x=1;let y=2;return x+y;}\n"
 		if err := os.WriteFile(srcPath, []byte(messy), 0o644); err != nil {
@@ -2002,7 +1573,6 @@ function main(): i32 {
 		if len(out1) == 0 {
 			t.Fatal("-fmt produced empty output")
 		}
-		// Re-format the formatted output; must be a fixed point.
 		src2Path := filepath.Join(dir, "formatted.fern")
 		if err := os.WriteFile(src2Path, out1, 0o644); err != nil {
 			t.Fatalf("write formatted: %v", err)
@@ -2014,7 +1584,6 @@ function main(): i32 {
 		if string(out1) != string(out2) {
 			t.Errorf("-fmt is not idempotent:\n--- first ---\n%s\n--- second ---\n%s", out1, out2)
 		}
-		// And the formatted output must still be well-typed.
 		_, checkCode := runDriver(t, "-check", src2Path)
 		if checkCode != 0 {
 			t.Errorf("formatted output failed -check (exit %d)", checkCode)
@@ -2022,11 +1591,6 @@ function main(): i32 {
 	})
 
 	t.Run("fmt-enum", func(t *testing.T) {
-		// An enum is desugared to one struct per variant before the printer
-		// sees it, so a printer with no enum arm emits those structs and the
-		// TYPE disappears — output that no longer compiles, since the
-		// annotations naming it survive. -fmt rewrites source, so that is data
-		// loss rather than a style difference (#6670).
 		srcPath := filepath.Join(dir, "enum_fmt.fern")
 		src := "@must_consume\nenum Shape[T] { Circle(i32), Blank }\n" +
 			"function area(s: Shape): i32 { match (s) { Circle(r) => { return r * r; }, Blank => { return 0; } } return 0; }\n" +
@@ -2039,8 +1603,6 @@ function main(): i32 {
 			t.Fatalf("-fmt exited %d, want 0", code)
 		}
 		got := string(out1)
-		// The payload types, the generic parameter and the attribute all have
-		// to come back, and no variant may surface as a free-standing struct.
 		if !strings.Contains(got, "@must_consume\nenum Shape[T] { Circle(i32), Blank }") {
 			t.Errorf("-fmt did not reconstruct the enum:\n%s", got)
 		}
@@ -2064,17 +1626,6 @@ function main(): i32 {
 	})
 
 	t.Run("fmt-const", func(t *testing.T) {
-		// A `const` desugars to a zero-arg FuncDecl, and print_module skips
-		// decls with no source position so `@derive`'s synthesised methods stay
-		// out of the output. The desugar left the position at zero, so the
-		// declaration was dropped while every reference to it survived —
-		// output naming an undefined symbol (#6688).
-		//
-		// Asserting the `const` SPELLING, not just that the name appears:
-		// emitting the desugar as `function LIMIT(): i32 { … }` also makes the
-		// name resolve and the self-host still compiles it, but native rejects
-		// that form, so it is a silent rewrite into something only one compiler
-		// accepts.
 		srcPath := filepath.Join(dir, "const_fmt.fern")
 		src := "const LIMIT: i32 = 41;\nfunction main(): i32 { return LIMIT + 1; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -2104,11 +1655,7 @@ function main(): i32 {
 	})
 
 	t.Run("emit-target-arm64", func(t *testing.T) {
-		// The driver (x86-64 host binary) emits a runnable arm64 Linux ELF
-		// directly under -target arm64-linux (in-process via arm64_native + elf.fern,
-		// no `.s` + gcc/ld); run it, natively or under qemu-aarch64, and check
-		// the exit code.
-		_, qemu := arm64Tooling(t) // skips only when the cross toolchain is missing
+		_, qemu := arm64Tooling(t)
 		srcPath := filepath.Join(dir, "arm_prog.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -2140,11 +1687,7 @@ function main(): i32 {
 	})
 
 	t.Run("emit-target-arm64-android", func(t *testing.T) {
-		// -target arm64-android emits a static position-independent (ET_DYN)
-		// arm64 ELF (in-process via arm64_native + elf.fern). The mmap'd low
-		// heap lets it run at the kernel-chosen base; check ET_DYN + exit code,
-		// natively or under qemu-aarch64.
-		_, qemu := arm64Tooling(t) // skips only when the cross toolchain is missing
+		_, qemu := arm64Tooling(t)
 		srcPath := filepath.Join(dir, "android_prog.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"droid\"); return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -2176,8 +1719,6 @@ function main(): i32 {
 	})
 
 	t.Run("emit-target-wasm", func(t *testing.T) {
-		// The driver emits a WASI WAT module under -target wasm32-wasi; run it
-		// directly with wasmtime and check exit code + stdout.
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping -target wasm32-wasi")
 		}
@@ -2207,9 +1748,6 @@ function main(): i32 {
 	})
 
 	t.Run("emit-wasm-core-module", func(t *testing.T) {
-		// The driver emits a wasm *binary* module under -target wasm32-wasi -emit core-module
-		// (WAT -> watbin assembler -> .wasm). Validate with wasm-tools and
-		// run it directly with wasmtime; check exit code + stdout.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
 			t.Skip("wasmtime not on PATH; skipping -emit core-module")
@@ -2218,14 +1756,7 @@ function main(): i32 {
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi from a core module\"); return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		// Binary bytes go to a file (-o), not stdout, so they survive
-		// verbatim (incl. 0x00 / high bytes) without text mangling.
 		outPath := filepath.Join(dir, "wasmbin_prog.wasm")
-		// Still `-target wasm32-wasi -emit core-module`: this drives the SELF-HOSTED compiler,
-		// which since #6635 shares cmd/fern's <isa>-<environment> target
-		// vocabulary and `-emit` axis. cmd/fern's move to
-		// `-emit core-module` (#6536) does not reach it; converging the two
-		// vocabularies is separate work.
 		stdout, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "core-module", "-o", outPath, srcPath)
 		if code != 0 {
 			t.Fatalf("-emit core-module emit exited %d, want 0", code)
@@ -2255,14 +1786,6 @@ function main(): i32 {
 		}
 	})
 
-	// watbin's opcode table is the only thing between the emitter's WAT and a
-	// runnable `.wasm`, and a mnemonic missing from it breaks every program
-	// that reaches the instruction — `f64.reinterpret_i64` blocked anything
-	// calling `.to_string()` (#6607). These rows drive one program per opcode
-	// family through `-emit core-module`, so a table gap fails here rather than
-	// in whichever probe happens to need the instruction. The exit code is the
-	// assertion: it comes from the program, so a wrong encoding that still
-	// validates is caught too.
 	t.Run("core-module-opcode-families", func(t *testing.T) {
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
@@ -2278,9 +1801,6 @@ function main(): i32 {
 			exit   int
 			stdout string
 		}{
-			// 0xbc-0xbf reinterprets + 0xb6 demote / 0xbb promote. The f32
-			// forms use a demote/promote pair, since an f32 travels in an
-			// f64 slot on wasm.
 			{"reinterpret-bits", `function main(): i32 {
     let x: f32 = 1.0 as f32;
     let b: i32 = f32_bits(x);
@@ -2291,8 +1811,6 @@ function main(): i32 {
     return 1;
 }
 `, 42, ""},
-			// The #6607 repro: the decimal formatter reaches 0xbf, so a
-			// program that merely prints a number needs it.
 			{"to-string-prints", `import "std/i32";
 
 function main(): i32 {
@@ -2300,7 +1818,6 @@ function main(): i32 {
     return 0;
 }
 `, 0, "41\n"},
-			// 0x67-0x69 / 0x79-0x7b — the i32 and i64 bit counts.
 			{"bit-counts", `import "std/i32";
 import "std/i64";
 
@@ -2311,7 +1828,6 @@ function main(): i32 {
     return 1;
 }
 `, 42, ""},
-			// 0xFC 10 `memory.copy` — `__memcpy`, reached by `string.bytes()`.
 			{"bulk-memory-copy", `import "std/string";
 
 function main(): i32 {
@@ -2323,7 +1839,6 @@ function main(): i32 {
     return 1;
 }
 `, 42, ""},
-			// 0xFC 11 `memory.fill` — `__memset`, core/map's bucket init.
 			{"bulk-memory-fill", `function main(): i32 {
     let p: usize = __alloc(8);
     __memset(p, 65, 8);
@@ -2355,10 +1870,6 @@ function main(): i32 {
 	})
 
 	t.Run("emit-wasm-component", func(t *testing.T) {
-		// The driver emits a Component-Model wasi:cli/run component under
-		// -target wasm32-wasi, picking the no-I/O or stdout framing from
-		// the program's WASI usage. Validate with wasm-tools and run under
-		// wasmtime.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
 			t.Skip("wasmtime not on PATH; skipping the wasm component")
@@ -2372,28 +1883,13 @@ function main(): i32 {
 			name    string
 			src     string
 			wantOut string
-			// stdlib passes the stdlib root so a `core/*` import resolves to its
-			// Fern source. Without it `map_new` still lowers — to the builtin
-			// runtime helpers, which draw no hash seed — so the row would not
-			// reach the import surface it is here to pin.
-			stdlib bool
+			stdlib  bool
 		}{
 			{"no-io", "function main(): i32 { let s = 0; let i = 0; while (i < 7) { s = s + i; i = i + 1; } return s - 21; }\n", "", false},
 			{"hex-immediates", "function main(): i32 { let wide = 0xFFFFFFFF; let upper = 0X80000000; let word: u32 = 0xffffffff; if (wide / 65536 == 65535 && upper > 0 && word + 1 == 0u32) { return 0; } return 1; }\n", "", false},
 			{"stdout", "function main(): i32 { print(\"hi from component\"); return 0; }\n", "hi from component\n", false},
-			// core/map seeds its string hash from the same CSPRNG as random_i32,
-			// so a Map pulls wasi:random/random's get-random-u64 into the core
-			// with no random call in the program. The framing has to be chosen
-			// accordingly: wrapped as plain stdout, this component carries a core
-			// import no instantiation argument satisfies and will not load.
 			{"map", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.contains(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
-			// A value block over an Option of an array: the no-I/O framing
-			// takes the substituted bodies like every other framing.
 			{"typed-only", "function picked(k: i32): i32 { let rows: i32[] = [k, k]; let some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] }); return some.len(); }\nfunction main(): i32 { return picked(4) - 2; }\n", "", false},
-			// A std/array combinator over a wide element under the method
-			// spelling (#9838): the erased `__arrm_map__i64` clone is a
-			// superseded template with no body here, so its wasm verdict
-			// cannot decline the route.
 			{"i64-map-method", "import \"std/array\";\nfunction dbl(x: i64): i64 { return x * (2 as i64); }\nfunction twice(own xs: i64[]): i64[] { return xs.map(dbl); }\nfunction main(): i32 { return twice([1 as i64, 2 as i64]).len() - 2; }\n", "", true},
 		} {
 			srcPath := filepath.Join(dir, "comp_"+c.name+".fern")
@@ -2416,7 +1912,6 @@ function main(): i32 {
 			if err != nil {
 				t.Fatalf("%s: read component: %v", c.name, err)
 			}
-			// Component preamble: "\0asm" + version 0x0d 0x00 + layer 0x01 0x00.
 			if len(bin) < 8 || bin[0] != 0x00 || bin[1] != 0x61 || bin[2] != 0x73 || bin[3] != 0x6d || bin[6] != 0x01 {
 				t.Fatalf("%s: output is not a wasm component: % x", c.name, bin[:min(8, len(bin))])
 			}
@@ -2437,9 +1932,6 @@ function main(): i32 {
 	})
 
 	t.Run("emit-wasm-component-fs", func(t *testing.T) {
-		// Filesystem wasi:cli/run components: read (component_full_io_fs),
-		// write (component_full_io_fs_write), and read+write
-		// (component_full_io_fs_rw). Run under wasmtime with a preopened dir.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
 			t.Skip("wasmtime not on PATH; skipping the wasm component fs")
@@ -2464,7 +1956,6 @@ function main(): i32 {
 			return outPath
 		}
 
-		// read: print a preopened file's contents.
 		fsDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(fsDir, "in.txt"), []byte("hello fs"), 0o644); err != nil {
 			t.Fatalf("write in.txt: %v", err)
@@ -2475,9 +1966,6 @@ function main(): i32 {
 			t.Errorf("read: component stdout = %q, want %q", string(out), "hello fs")
 		}
 
-		// No --dir at all: the host granted no directory, so a path is
-		// NotFound rather than a trap on a handle the host never issued
-		// (native's counterpart is TestWASMNoPreopenIsNotFound).
 		noDirBin := build(t, "nodir", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { return 1; }, Err(e) => { match (e) { NotFound(_) => { write(\"not found\"); return 0; }, _ => { return 2; } } } } }\n")
 		noDirCmd := exec.Command(wasmtime, "run", noDirBin)
 		noDirOut, _ := noDirCmd.Output()
@@ -2485,7 +1973,6 @@ function main(): i32 {
 			t.Errorf("no preopen: component exited %d with stdout %q, want 0 and %q", ec, string(noDirOut), "not found")
 		}
 
-		// write: create a file, then verify its contents.
 		writeBin := build(t, "write", "function main(): i32 { match (write_file(\"out.txt\", \"written\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
 		wDir := t.TempDir()
 		if ec := exec.Command(wasmtime, "run", "--dir", wDir+"::/", writeBin).Run(); ec != nil {
@@ -2495,7 +1982,6 @@ function main(): i32 {
 			t.Errorf("write: out.txt = %q (err %v), want %q", string(got), err, "written")
 		}
 
-		// read+write: copy in.txt -> out.txt.
 		rwBin := build(t, "rw", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (write_file(\"out.txt\", s)) { Err(e) => { return 2; }, Ok(_) => {} } return 0; }, Err(e) => { return 1; } } }\n")
 		rwDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(rwDir, "in.txt"), []byte("copy me"), 0o644); err != nil {
@@ -2508,12 +1994,6 @@ function main(): i32 {
 			t.Errorf("rw: out.txt = %q (err %v), want %q", string(got), err, "copy me")
 		}
 
-		// The preview-2 file bodies must release the own<descriptor> open-at
-		// returned and the stream opened on it; a body that keeps either costs
-		// the process one host fd per call. 200 rounds under a 64-descriptor
-		// limit is far past what a leaking body survives — it reports the
-		// failing builtin instead of the marker. Native's counterpart is
-		// TestWASMFileBuiltinsReleaseDescriptors.
 		fdBin := build(t, "fdloop", `function round(): i32 {
     let s: string = "line\n";
     match (write_file("f.txt", s)) { Ok(_) => {}, Err(_) => { return 1; } }
@@ -2540,8 +2020,6 @@ function main(): i32 {
 	})
 
 	t.Run("emit-wasm-component-wasi", func(t *testing.T) {
-		// Single-category WASI wasi:cli/run shapes: env / args / clock /
-		// random / stderr / exit. Each maps to its component_full_io_* wrap.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
 			t.Skip("wasmtime not on PATH; skipping the wasm component wasi")
@@ -2613,9 +2091,6 @@ function main(): i32 {
 				t.Errorf("exit: exit code = %d, want 0", code)
 			}
 		}
-		// wasi:cli/exit carries one bit, so a code above 1 folds to 1
-		// rather than trapping the host as an invalid discriminant
-		// (native's counterpart is TestWASMExitCodeCollapsesToOne).
 		exit3Bin := build(t, "exit3", "function main(): i32 { write(\"before\"); exit(3); return 0; }\n")
 		{
 			cmd := exec.Command(wasmtime, "run", exit3Bin)
@@ -2630,8 +2105,6 @@ function main(): i32 {
 	})
 
 	t.Run("emit-wasm-component-combos", func(t *testing.T) {
-		// Two-category fs-paired wasi:cli/run shapes: fs-read+env,
-		// fs-rw+env, random+fs-write, fs-read+args, fs-rw+args.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
 			t.Skip("wasmtime not on PATH; skipping the wasm component combos")
@@ -2663,14 +2136,12 @@ function main(): i32 {
 			return d
 		}
 
-		// fs-read + env: print env value then file contents.
 		readEnv := build(t, "read_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Some(v) => { write(v); write(s); return 0; }, None => { write(s); return 0; } } }, Err(e) => { return 1; } } }\n")
 		d1 := mkdir(t)
 		if out, _ := exec.Command(wasmtime, "run", "--dir", d1+"::/", "--env", "P=X-", readEnv).Output(); string(out) != "X-DATA" {
 			t.Errorf("read+env: stdout = %q, want %q", string(out), "X-DATA")
 		}
 
-		// fs read+write + env: copy in.txt -> out.txt prefixed by env.
 		rwEnv := build(t, "rw_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Some(v) => { match (write_file(\"out.txt\", v)) { Err(e) => { return 2; }, Ok(_) => {} } return 0; }, None => { return 3; } } }, Err(e) => { return 1; } } }\n")
 		d2 := mkdir(t)
 		if ec := exec.Command(wasmtime, "run", "--dir", d2+"::/", "--env", "P=ENV", rwEnv).Run(); ec != nil {
@@ -2680,7 +2151,6 @@ function main(): i32 {
 			t.Errorf("rw+env: out.txt = %q, want %q", string(got), "ENV")
 		}
 
-		// random + fs-write: draw a random i32, write a fixed file.
 		rndWrite := build(t, "rnd_write", "function main(): i32 { let x: i32 = random_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
 		d3 := t.TempDir()
 		if ec := exec.Command(wasmtime, "run", "--dir", d3+"::/", rndWrite).Run(); ec != nil {
@@ -2690,14 +2160,12 @@ function main(): i32 {
 			t.Errorf("random+write: out.txt = %q, want %q", string(got), "R")
 		}
 
-		// fs-read + args: print arg count then file contents.
 		readArgs := build(t, "read_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { print_int(args().len()); write(s); return 0; }, Err(e) => { return 1; } } }\n")
 		d4 := mkdir(t)
 		if out, _ := exec.Command(wasmtime, "run", "--dir", d4+"::/", readArgs, "a").Output(); string(out) != "2DATA" {
 			t.Errorf("read+args: stdout = %q, want %q (argv0+1, then DATA)", string(out), "2DATA")
 		}
 
-		// fs read+write + args: copy in.txt -> out.txt, using args.
 		rwArgs := build(t, "rw_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { let n = args().len(); match (write_file(\"out.txt\", s)) { Err(e) => { return 2; }, Ok(_) => {} } return n - n; }, Err(e) => { return 1; } } }\n")
 		d5 := mkdir(t)
 		if ec := exec.Command(wasmtime, "run", "--dir", d5+"::/", rwArgs, "x", "y").Run(); ec != nil {
@@ -2709,9 +2177,6 @@ function main(): i32 {
 	})
 
 	t.Run("wasm-component-multi-wasi-composes", func(t *testing.T) {
-		// A program mixing WASI categories (env + args) has no fixed
-		// wasi:cli/run framing; it composes against the fern world instead
-		// (#11019), and the component has to read both.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
 			t.Skip("wasmtime not on PATH")
@@ -2734,8 +2199,6 @@ function main(): i32 {
 	})
 
 	t.Run("wasm-component-refuses-extern-outside-world", func(t *testing.T) {
-		// An extern to an interface the fern world does not declare cannot be
-		// composed; the CLI refuses it by naming the interface.
 		refused := filepath.Join(dir, "comp_refused.fern")
 		if err := os.WriteFile(refused, []byte("@import(\"local:test/sink@0.1.0\", \"pick\")\nfunction pick(c: i32): i32;\nfunction main(): i32 { return pick(1); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -2747,15 +2210,6 @@ function main(): i32 {
 		}
 	})
 
-	// #6946: a builtin with no wasm meaning must be named by the diagnostic on
-	// the CLI's wasm path too. The pre-emit gate lived only in the standalone
-	// wasm drivers, which the CLI does not go through, so `-target wasm32-wasi`
-	// carried the refusal all the way down to instruction selection: it named an
-	// IR op nobody wrote (`syscall3`), and before that it emitted the op as a WAT
-	// COMMENT, so the assembler blamed the comment marker ("unknown instruction:
-	// ;;"). Both halves are asserted — the exit code and the builtin's name.
-	// Each is refused by the CLI's E066 target gate, on the capability no wasi
-	// profile grants.
 	t.Run("wasm-unsupported-builtin-names-the-builtin", func(t *testing.T) {
 		runtimeBin := e2eharness.RuntimeCLI(t)
 		for _, tc := range []struct {
@@ -2794,9 +2248,6 @@ function main(): i32 {
 			})
 		}
 
-		// The control: the same syscall program still compiles for a register
-		// backend through this very CLI, which is what makes the wasm refusal a
-		// backend limit rather than a rejected program.
 		srcPath := filepath.Join(dir, "unsupported_syscall-floor.fern")
 		out, err := exec.Command(runtimeBin, "-target", "x86-64-linux", "-emit", "asm", srcPath).CombinedOutput()
 		if err != nil {
@@ -2829,9 +2280,6 @@ function main(): i32 {
 		}
 	})
 
-	// A flag the target or the other flags rule out is a usage refusal, exit
-	// 2 like an unknown flag, whether it is caught before the program is read
-	// or, as -export is, after.
 	t.Run("flag-refusals-exit-2", func(t *testing.T) {
 		tmp := t.TempDir()
 		src := filepath.Join(tmp, "main.fern")
@@ -2872,8 +2320,6 @@ var (
 	watFuncRe = regexp.MustCompile(`\(func \$([A-Za-z0-9_.$]+)`)
 )
 
-// undefinedWatCalls lists every function a WAT module calls by name without a
-// definition or an import of that name, deduped in first-seen order.
 func undefinedWatCalls(wat []byte) []string {
 	defined := map[string]bool{}
 	for _, m := range watFuncRe.FindAllSubmatch(wat, -1) {

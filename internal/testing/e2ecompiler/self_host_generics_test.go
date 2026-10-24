@@ -7,47 +7,19 @@ import (
 	"testing"
 )
 
-// genericsCases cover user-defined generics — generic functions
-// (`id[T]`, `fst[A, B]`) and generic structs (`Box[T]`, `Pair[A, B]`).
-// The self-host handles them by type ERASURE rather than
-// monomorphisation: its ABI is a uniform 8-byte stack slot for every
-// value (i32, ptr, …), so one emitted body / field layout is correct
-// for every instantiation. The parser consumes + discards the `[…]`
-// type-parameter list on the declaration. Exit codes cross-checked vs
-// the Go backend (which monomorphises; the observable result is the
-// same).
 var genericsCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The two upstream parity cases (conformance/cases).
 	{"generic-id", "function id[T](x: T): T { return x; } function main(): i32 { let a = id(42); let s = id(\"hi\"); if (s == \"hi\") { return a; } return 0; }", 42},
-	// A variant literal the checker leaves unsettled takes its arguments
-	// from the destination: a bare `Empty` is typed by the enum alone, and
-	// `Tagged(Tag { … })` leaves `T` unbound, and under `Box[Option[i32]]`
-	// each is the whole instantiation, not `Box` or `Box[never]`.
 	{"unit-variant-nested-argument", "struct Tag { id: i32 } enum Box[T] { Full(T), Tagged(Tag), Empty } function wrap[T](f: () => T, mode: i32): Box[T] { let v: T = f(); if (mode == 1) { return Tagged(Tag { id: 7 }); } if (mode == 2) { return Empty; } return Full(v); } function pick(f: () => Option[i32], mode: i32): i32 { match (wrap(f, mode)) { Full(v) => { return 40; }, Tagged(t) => { return t.id; }, Empty => { return 8; } } return 9; } function main(): i32 { let f: () => Option[i32] = (): Option[i32] => Some(40); return pick(f, 0) + pick(f, 1) - pick(f, 2) + 3; }", 42},
 	{"generic-box", "struct Box[T] { value: T } function unbox[T](b: Box[T]): T { return b.value; } function main(): i32 { let b: Box[i32] = Box { value: 42 }; return unbox(b); }", 42},
-	// Multiple type params on a function and a struct.
 	{"two-type-params-fn", "function fst[A, B](a: A, b: B): A { return a; } function main(): i32 { return fst(42, 99); }", 42},
 	{"two-type-params-struct", "struct Pair[A, B] { fst: A, snd: B } function main(): i32 { let p = Pair { fst: 40, snd: 2 }; return p.fst + p.snd; }", 42},
-	// One generic body used at two concrete types in the same program.
 	{"mixed-instantiation", "function id[T](x: T): T { return x; } function main(): i32 { let n: i32 = id(40); let s: string = id(\"hi\"); return n + s.len(); }", 42},
-	// A generic struct literal written as a variant's payload takes its
-	// instantiation from the destination the variant goes to, as one under
-	// `let` does: `Ok(Boxes { … })` under a `Result[Boxes[T], string]`
-	// return, `Some(Box { … })` under an `Option[Box[T]]` one.
 	{"variant-payload-struct-result", "struct Box[T] { n: i32, f: (i32, T) => i32 } struct Boxes[T] { items: Box[T][] } function add_i(a: i32, b: i32): i32 { return a + b; } function (b: Boxes[T]) add(n: i32, f: (i32, T) => i32): Result[Boxes[T], string] { return Ok(Boxes { items: b.items.append(Box { n: n, f: f }) }); } function main(): i32 { let b: Boxes[i32] = Boxes { items: [] }; match (b.add(40, add_i)) { Ok(b2) => { let g: (i32, i32) => i32 = b2.items[0].f; return g(b2.items[0].n, 2); }, Err(e) => { return 1; } } return 1; }", 42},
-	// A chained call whose receiver is the builtin `append` on a record
-	// array still folds its generic array method (#12108): the stamp of
-	// `a.append(…)` is an array of a record, which the monomorphiser's
-	// stamp filter alone drops.
 	{"append-chain-record-array-method", "struct P { x: i32 } function (xs: T[]) count(): i32 { return xs.len(); } function main(): i32 { let a: P[] = [P { x: 1 }]; return a.append(P { x: 2 }).count() * 21; }", 42},
-	// The same chain inside a generic body, where the receiver is `T[]`
-	// until the clone binds `T`: the chain types in the clone, as a
-	// generic call's argument, under `with`, and through a `let`, and the
-	// template keys no clone after a bare variable.
 	{"append-chain-in-generic-body", "struct P { x: i32 } function (xs: T[]) count(): i32 { return xs.len(); } function grow[T](xs: T[], x: T): i32 { return xs.append(x).count(); } function main(): i32 { let a: P[] = [P { x: 1 }]; return grow(a, P { x: 2 }) * 21; }", 42},
 	{"append-arg-to-generic-in-generic-body", "struct P { x: i32 } function count_of[U](ys: U[]): i32 { return ys.len(); } function grow[T](xs: T[], x: T): i32 { return count_of(xs.append(x)); } function main(): i32 { let a: P[] = [P { x: 1 }]; return grow(a, P { x: 2 }) * 21; }", 42},
 	{"with-arg-to-generic-in-generic-body", "struct P { x: i32 } function count_of[U](ys: U[]): i32 { return ys.len(); } function swap[T](xs: T[], x: T): i32 { return count_of(xs.with(0, x)) + 41; } function main(): i32 { let a: P[] = [P { x: 1 }]; return swap(a, P { x: 2 }); }", 42},
@@ -55,8 +27,6 @@ var genericsCases = []struct {
 	{"variant-payload-struct-option", "struct Box[T] { n: i32, f: (i32, T) => i32 } function add_i(a: i32, b: i32): i32 { return a + b; } function boxed[T](n: i32, f: (i32, T) => i32): Option[Box[T]] { if (n < 0) { return None; } return Some(Box { n: n, f: f }); } function main(): i32 { match (boxed(40, add_i)) { Some(b) => { let g: (i32, i32) => i32 = b.f; return g(b.n, 2); }, None => { return 1; } } return 1; }", 42},
 }
 
-// TestSelfHostGenericsX86_64 — user generics (erasure) with the
-// self-hosted x86-64 compiler.
 func TestSelfHostGenericsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -90,10 +60,6 @@ func TestSelfHostGenericsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenericsArm64 — CI-gated arm64 counterpart. The generics
-// support lives entirely in the shared parser, so the arm64 emitter
-// needed no change; this guards that the shared path stays sound on
-// arm64.
 func TestSelfHostGenericsArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range genericsCases {

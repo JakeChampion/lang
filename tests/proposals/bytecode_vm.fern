@@ -1,48 +1,18 @@
-// tests/proposals/bytecode_vm.fern — proposal turn, drawn line 170:
-// "A bytecode compiler and stack VM for arithmetic and control flow."
-//
-// A small imperative language — assignment, `if`/`else`, `while`, integer
-// arithmetic and comparison — compiled to a flat instruction array and run
-// on a stack machine.
-//
-// The oracle is a tree-walking evaluator over the SAME AST, in this file.
-// Every test that checks a program's answer checks it twice, once each way,
-// and fails if they disagree: a compiler bug that produces self-consistent
-// nonsense (a jump off by one, an operand order reversed) survives every
-// hand-written expected value but not this.
-//
-// Two invariants get their own tests because they are what backpatching
-// gets wrong. Every jump target must land inside the code (an unresolved
-// placeholder is a negative or out-of-range target, and a VM that silently
-// clamps it turns a compiler bug into a wrong answer), and the operand
-// stack must be empty between statements — a statement that leaks a value
-// per iteration still computes the right answer until the loop runs long
-// enough.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/i32";
 
-// ------------------------------------------------------------------- AST
-
-// Variables are slots, resolved when the program is built, so neither the
-// compiler nor the evaluator needs a name table at run time.
 enum Expr {
   Num(i32),
   Var(i32),
-  Bin(i32, Expr, Expr),  // op code, left, right
+  Bin(i32, Expr, Expr),
 }
 
 enum Stmt {
-  Assign(i32, Expr),  // slot = expr
+  Assign(i32, Expr),
   If(Expr, Stmt[], Stmt[]),
   While(Expr, Stmt[]),
 }
 
-// Operator codes, shared by the compiler, the VM and the evaluator so the
-// three cannot drift on what `2` means.
 function op_add(): i32 {
   return 0;
 }
@@ -114,12 +84,6 @@ function op_name(op: i32): string {
   return "<=";
 }
 
-// --------------------------------------------------------------- bytecode
-
-// Every instruction carries one i32 operand; the ones that do not need it
-// (arithmetic, Pop, Halt) ignore it. A uniform shape keeps the code array a
-// plain array and the jump arithmetic correct — an instruction index IS an
-// array index, with no variable-width decoding to get wrong.
 enum Instr {
   Push(i32),
   Load(i32),
@@ -130,9 +94,6 @@ enum Instr {
   Halt,
 }
 
-// A jump emitted before its target is known gets this placeholder, which is
-// deliberately out of range for any program: if a backpatch is missed, the
-// static check below names it rather than the VM running into it.
 function unpatched(): i32 {
   return -1;
 }
@@ -163,8 +124,6 @@ function instr_str(ins: Instr): string {
   }
 }
 
-// --------------------------------------------------------------- compiler
-
 function compile_expr(code: Instr[], e: Expr): Instr[] {
   match (e) {
     Num(v) => {
@@ -174,10 +133,6 @@ function compile_expr(code: Instr[], e: Expr): Instr[] {
       return code.append(Load(s));
     },
     Bin(op, l, r) => {
-      // Left before right, so the VM's pop order (right first) puts
-      // them back the way they were written. Reversing this is
-      // invisible for `+` and `*` and wrong for everything else,
-      // which is why the differential runs over `-`, `/` and `%` too.
       let c: Instr[] = compile_expr(code, l);
       c = compile_expr(c, r);
       return c.append(BinOp(op));
@@ -206,9 +161,9 @@ function compile_stmt(code: Instr[], s: Stmt): Instr[] {
       c = compile_block(c, then_body);
       let jmp_at: i32 = c.len();
       c = c.append(Jump(unpatched()));
-      c = c.with(jz_at, JumpIfFalse(c.len()));  // else starts here
+      c = c.with(jz_at, JumpIfFalse(c.len()));
       c = compile_block(c, else_body);
-      return c.with(jmp_at, Jump(c.len()));  // both arms land here
+      return c.with(jmp_at, Jump(c.len()));
     },
     While(cond, body) => {
       let top: i32 = code.len();
@@ -227,11 +182,9 @@ function compile(body: Stmt[]): Instr[] {
   return c.append(Halt);
 }
 
-// --------------------------------------------------------------------- VM
-
 struct Machine {
   vars: i32[],
-  max_depth: i32,  // deepest the operand stack ever got
+  max_depth: i32,
   steps: i32,
 }
 
@@ -287,14 +240,10 @@ function apply_op(op: i32, a: i32, b: i32): Result[i32, string] {
   return Ok(0);
 }
 
-// A step budget, so a compiler bug that builds an unterminated loop fails
-// as a diagnosable error instead of hanging the test suite.
 function step_budget(): i32 {
   return 200000;
 }
 
-// Drop the top `k` values. `std/array`'s `take` would say this, but it is
-// declared for `string[]` only.
 function popped(stack: i32[], k: i32): i32[] {
   let out: i32[] = [];
   for i in 0..stack.len() - k {
@@ -388,10 +337,6 @@ function run(code: Instr[], nvars: i32): Result[Machine, string] {
   return Err("unreachable");
 }
 
-// ---------------------------------------------------------- the oracle
-
-// A direct tree walk over the same AST. Deliberately written without
-// reference to the bytecode: no stack, no program counter, no jumps.
 function eval_expr(vars: i32[], e: Expr): Result[i32, string] {
   match (e) {
     Num(v) => {
@@ -518,33 +463,23 @@ function evaluate(body: Stmt[], nvars: i32): Result[i32[], string] {
   }
 }
 
-// --------------------------------------------------------- test programs
-
-// Every program in the corpus, each with the slot count it needs. They are
-// built once here so the differential, the jump-target check and the stack
-// discipline check all run over the same set.
 function corpus(): Stmt[][] {
   return [
-    // $0 = 6 * 7 - 2
     [Assign(0, Bin(op_sub(), Bin(op_mul(), Num(6), Num(7)), Num(2)))],
-    // Non-commutative operators, where a reversed operand order shows.
     [
       Assign(0, Bin(op_sub(), Num(3), Num(10))),
       Assign(1, Bin(op_div(), Num(100), Num(7))),
       Assign(2, Bin(op_mod(), Num(100), Num(7))),
     ],
-    // Nested arithmetic, mixed precedence already resolved by the AST.
     [Assign(0, Bin(
       op_add(), Bin(op_mul(), Num(2), Num(3)),
       Bin(op_div(), Num(20), Num(4)),
     ))],
-    // if / else, both arms reachable across the corpus.
     [
       Assign(0, Num(5)),
       If(Bin(op_lt(), Var(0), Num(10)), [Assign(1, Num(111))], [Assign(1, Num(222))]),
       If(Bin(op_gt(), Var(0), Num(10)), [Assign(2, Num(111))], [Assign(2, Num(222))]),
     ],
-    // A counting loop: $1 = sum 1..10, $0 the counter.
     [
       Assign(0, Num(0)), Assign(1, Num(0)),
       While(Bin(op_lt(), Var(0), Num(10)), [
@@ -552,12 +487,10 @@ function corpus(): Stmt[][] {
         Assign(1, Bin(op_add(), Var(1), Var(0))),
       ]),
     ],
-    // A loop whose body never runs — the exit jump must skip it.
     [
       Assign(0, Num(99)),
       While(Bin(op_lt(), Var(0), Num(0)), [Assign(1, Num(1))]),
     ],
-    // if nested inside while: even/odd tally over 1..20.
     [
       Assign(0, Num(0)), Assign(1, Num(0)), Assign(2, Num(0)),
       While(Bin(op_lt(), Var(0), Num(20)), [
@@ -569,7 +502,6 @@ function corpus(): Stmt[][] {
         ),
       ]),
     ],
-    // while nested inside while: a multiplication table sum.
     [
       Assign(0, Num(0)), Assign(3, Num(0)),
       While(Bin(op_lt(), Var(0), Num(5)), [
@@ -581,7 +513,6 @@ function corpus(): Stmt[][] {
         ]),
       ]),
     ],
-    // Euclid's algorithm: gcd(1071, 462) = 21 in $0.
     [
       Assign(0, Num(1071)), Assign(1, Num(462)),
       While(Bin(op_ne(), Var(1), Num(0)), [
@@ -590,7 +521,6 @@ function corpus(): Stmt[][] {
         Assign(1, Var(2)),
       ]),
     ],
-    // if inside the ELSE arm — the far side of the second backpatch.
     [
       Assign(0, Num(3)),
       If(
@@ -606,11 +536,6 @@ function slots(): i32 {
   return 4;
 }
 
-// ---------------------------------------------------------------- tests
-
-// THE test. Compile-and-run must agree with the tree walk on every program
-// in the corpus, variable for variable. Neither side is the expected value;
-// their agreement is.
 function test_the_vm_agrees_with_the_evaluator(): test.TestOutcome {
   let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
@@ -648,9 +573,6 @@ function test_the_vm_agrees_with_the_evaluator(): test.TestOutcome {
   return test.pass();
 }
 
-// A handful of closed forms, so the pair above cannot agree on a shared
-// misconception. sum 1..10 = 55, gcd(1071, 462) = 21, and the 5x5
-// multiplication table sums to (1+..+5)^2 = 225.
 function test_known_answers(): test.TestOutcome {
   let progs: Stmt[][] = corpus();
   if (!slot_is(progs[4], 1, 55)) {
@@ -691,17 +613,13 @@ function slot_is(prog: Stmt[], slot: i32, want: i32): boolean {
   }
 }
 
-// Every jump target must be a real instruction index. An unpatched
-// placeholder survives to here, and so does a target one past the end —
-// the classic backpatch off-by-one, which a VM that tolerates pc == len
-// would turn into a silently truncated program.
 function test_every_jump_target_is_in_range(): test.TestOutcome {
   let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
     let code: Instr[] = compile(progs[i]);
     for k in 0..code.len() {
       let t: i32 = jump_target(code[k]);
-      if (t == -2) {  // not a jump
+      if (t == -2) {
         continue;
       }
       if (t < 0) {
@@ -718,8 +636,6 @@ function test_every_jump_target_is_in_range(): test.TestOutcome {
   return test.pass();
 }
 
-// -2 means "not a jump" — distinct from the -1 unpatched placeholder, so a
-// missed backpatch cannot be mistaken for a non-jump and skipped.
 function jump_target(ins: Instr): i32 {
   match (ins) {
     Jump(t) => {
@@ -734,11 +650,6 @@ function jump_target(ins: Instr): i32 {
   }
 }
 
-// Stack discipline: the machine halts with an empty stack (the VM enforces
-// that itself) and never needs more depth than the deepest expression. A
-// statement that leaks one value per iteration still computes the right
-// answer — until the loop is long enough — so depth is the only thing that
-// catches it early.
 function test_the_stack_is_disciplined(): test.TestOutcome {
   let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
@@ -747,7 +658,6 @@ function test_the_stack_is_disciplined(): test.TestOutcome {
         return test.fail("program " + i.to_string() + ": " + e);
       },
       Ok(m) => {
-        // Nothing in the corpus nests operands deeper than 3.
         if (m.max_depth > 3) {
           return test.fail("program " + i.to_string()
             + " reached stack depth " + m.max_depth.to_string()
@@ -759,8 +669,6 @@ function test_the_stack_is_disciplined(): test.TestOutcome {
   return test.pass();
 }
 
-// Compilation is a pure function of the AST: same program in, byte-identical
-// code out, however many times it runs.
 function test_compilation_is_deterministic(): test.TestOutcome {
   let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
@@ -780,13 +688,10 @@ function test_compilation_is_deterministic(): test.TestOutcome {
   return test.pass();
 }
 
-// A fault is an error on both sides, with the same reason — not a crash,
-// and not a zero quietly substituted for an undefined answer.
 function test_faults_are_errors_on_both_sides(): test.TestOutcome {
   let bad: Stmt[][] = [
     [Assign(0, Bin(op_div(), Num(1), Num(0)))],
     [Assign(0, Bin(op_mod(), Num(1), Num(0)))],
-    // A loop that never terminates: both sides must hit their budget.
     [Assign(0, Num(0)), While(Bin(op_eq(), Num(1), Num(1)), [Assign(0, Num(1))])],
   ];
   for i in 0..bad.len() {
@@ -812,7 +717,6 @@ function test_faults_are_errors_on_both_sides(): test.TestOutcome {
       return test.fail("bad program " + i.to_string() + " ran without error");
     }
   }
-  // The division-by-zero message names the fault rather than a location.
   match (run(compile(bad[0]), slots())) {
     Ok(_) => {
       return test.fail("1 / 0 succeeded");
@@ -826,20 +730,16 @@ function test_faults_are_errors_on_both_sides(): test.TestOutcome {
   return test.pass();
 }
 
-// The VM refuses code it cannot run rather than reading past the array or
-// treating a wild slot as zero. These are hand-built instruction sequences
-// the compiler would never emit — the point is that a corrupted or
-// hand-written program is rejected, not mis-run.
 function test_the_vm_refuses_malformed_code(): test.TestOutcome {
   let progs: Instr[][] = [
-    [BinOp(op_add())],  // binary op, empty stack
-    [Push(1), BinOp(op_add())],  // one operand short
-    [Store(0)],  // store, empty stack
-    [Push(1), Store(99)],  // slot out of range
-    [Load(-1)],  // negative slot
-    [Jump(50)],  // target past the end
-    [Push(1), Halt],  // halts with a full stack
-    [JumpIfFalse(0)],  // branch, empty stack
+    [BinOp(op_add())],
+    [Push(1), BinOp(op_add())],
+    [Store(0)],
+    [Push(1), Store(99)],
+    [Load(-1)],
+    [Jump(50)],
+    [Push(1), Halt],
+    [JumpIfFalse(0)],
   ];
   for i in 0..progs.len() {
     match (run(progs[i], slots())) {
@@ -852,8 +752,6 @@ function test_the_vm_refuses_malformed_code(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ---------------------------------------------------------------- app
 
 function main(): i32 {
   eprint("bytecode_vm — a stack machine and its tree-walking oracle");

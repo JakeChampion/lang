@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A port whose TCP side is already taken is given back, and the pair lands on
-// one port both protocols hold. TestSelfHostDnsNat64 failed on the bind this
-// skips, when another test's connection held the TCP side of the free UDP port.
 func TestListenLoopbackPairSkipsATakenTCPPort(t *testing.T) {
 	held, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

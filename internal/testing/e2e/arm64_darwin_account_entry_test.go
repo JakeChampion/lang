@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestArm64DarwinAccountEntry asserts that `__account_entry` reaches
-// libSystem's account database on arm64-darwin (#9815). Darwin keeps regular
-// accounts and groups in Directory Services, not the files, so the files alone
-// answered a uid with no name and `ls -l` printed `501` where GNU prints the
-// user.
-//
-// On every host the image must bind the five libSystem functions the helper
-// calls through. On Apple Silicon the program runs, and each answer must be
-// the one Go's os/user gives for the same question.
 func TestArm64DarwinAccountEntry(t *testing.T) {
 	const prog = `// Every kind of __account_entry (#9815): getpwuid of the uid in argv[1] (0
 // without one) and of one no

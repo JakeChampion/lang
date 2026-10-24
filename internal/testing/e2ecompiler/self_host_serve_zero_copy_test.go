@@ -44,14 +44,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostServeZeroCopy answers bytes bodies across the zero-copy
-// threshold (Config.io_uring_zc_bytes, 3072): 1,000 bytes, exactly 3,072,
-// 64 KiB, 1 MiB and 8 MiB, on one kept connection, on connections the
-// client closes after each response, to HTTP/1.0, to HEAD, and to sixteen
-// clients at once. Every body must come back whole under its head. Under
-// epoll the bodies are copied; under the ring the large ones go out by
-// IORING_OP_SEND_ZC, in as many writes as the socket takes, each body held
-// until the kernel's notification.
 func TestSelfHostServeZeroCopy(t *testing.T)     { runZeroCopy(t, false) }
 func TestSelfHostServeZeroCopyRing(t *testing.T) { runZeroCopy(t, true) }
 
@@ -118,9 +110,6 @@ func runZeroCopy(t *testing.T, ring bool) {
 	}
 }
 
-// ringSubmitted waits up to two seconds for the idle server's rings to
-// hold no submission the kernel was not given: SqHead equal to SqTail. A
-// server holding no ring at all fails, since it never ran on one.
 func ringSubmitted(pgid int) error {
 	var last string
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
@@ -176,9 +165,6 @@ func getPattern(c *http.Client, addr string, n int) error {
 	return checkPattern(body, n)
 }
 
-// ringState is what the kernel says of the server's process group: its
-// release, and for each process its wait channel and every io_uring it
-// holds, by fdinfo (the rings' heads and tails, and their overflow list).
 func ringState(pgid int) string {
 	var b strings.Builder
 	rel, _ := os.ReadFile("/proc/sys/kernel/osrelease")
@@ -193,7 +179,6 @@ func ringState(pgid int) string {
 	return b.String()
 }
 
-// ringInfos is the fdinfo of every io_uring the process group holds.
 func ringInfos(pgid int) []string {
 	var infos []string
 	for _, proc := range groupProcs(pgid) {
@@ -217,7 +202,6 @@ func groupProcs(pgid int) []string {
 	return group
 }
 
-// procRings maps each io_uring descriptor of the process to its fdinfo.
 func procRings(proc string) map[string]string {
 	rings := map[string]string{}
 	fds, _ := filepath.Glob(filepath.Join(proc, "fd", "*"))
@@ -230,7 +214,6 @@ func procRings(proc string) map[string]string {
 	return rings
 }
 
-// http10Pattern asks over HTTP/1.0, which the server answers and closes.
 func http10Pattern(addr string, n int) error {
 	c, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {

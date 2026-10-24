@@ -8,11 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// A method on a concrete receiver binds none of its own type parameters from
-// the receiver. The dispatch used to pair the receiver's element with the
-// method's first parameter, so `(xs: u8[]) total[T: Off]` called with `[]`
-// bound T to u8 and failed the bound, or compiled with T = u8 when u8 met it,
-// where the same call on a struct receiver is E040 (#10991).
 func TestConcreteReceiverDoesNotBindMethodTypeParam(t *testing.T) {
 	cases := []struct{ name, src, display string }{
 		{"array", `trait Off { function off(self: Self): i32; }
@@ -31,8 +26,6 @@ function main(): i32 { let b: Box[i32] = Box { v: 1 }; return b.count([]); }`, "
 			if err == nil {
 				t.Fatal("accepted: the receiver bound the method's own type parameter")
 			}
-			// Exactly one diagnostic: a half-substituted signature would add a
-			// mismatch beside the E040.
 			var errs diag.Errors
 			if !errors.As(err, &errs) || len(errs) != 1 {
 				t.Fatalf("want exactly one diagnostic, got: %v", err)
@@ -48,8 +41,6 @@ function main(): i32 { let b: Box[i32] = Box { v: 1 }; return b.count([]); }`, "
 	}
 }
 
-// What a receiver does declare it still binds, beside the method's own
-// parameters, and an argument or a written list binds those.
 func TestReceiverStillBindsWhatItDeclares(t *testing.T) {
 	src := `function (xs: T[]) first(): T { return xs[0]; }
 function (xs: T[]) mapped[U](f: (T) => U): U[] { let out: U[] = []; for x in xs { out = out.append(f(x)); } return out; }

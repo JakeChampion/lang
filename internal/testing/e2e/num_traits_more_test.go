@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// std/num impls extended to the remaining numeric primitives (u32 / u64 / f32,
-// alongside the i32 / i64 / f64 from #3375). One generic `total[T: num.Num]`
-// runs over a u32[], a u64[], and an f32[]. u: 10+20 = 30; w: 8+4 = 12;
-// f: 0.0 + (rounds to 0 contribution here) — kept integer-clean: 30 + 12 = 42.
 const numTraitsMoreSrc = `import "std/num" as num;
 function (a: T[]) total[T: num.Num](init: T): T {
     let s = init;

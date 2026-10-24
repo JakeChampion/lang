@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// These helpers cannot be inlined, so a kernel in their callers/bodies
-// proves layout propagation across the call rather than local recognition.
 const ndarrayLayoutSrc = `import "std/ndarray";
 
 @noinline function grid(xs: f64[]): ndarray.NdArray[f64] {

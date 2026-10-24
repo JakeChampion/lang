@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer checked_mul helpers — std/i32,
-// std/i64, std/u32, std/u64 — completing the checked_ arithmetic family
-// (add / sub / div already shipped) with the most overflow-prone op.
-// checked_mul returns Some(n*other) on no overflow and None on overflow.
-// The i32 / u32 versions widen to i64 / u64 and range-check (exact); the
-// i64 / u64 versions have no wider type and detect overflow with the inverse
-// division (p/n == other), with i64 rejecting the MIN * -1 wrap explicitly.
-// This exercises the sign edges (MIN * -1), the 2^32 / 2^64 boundaries, and
-// the in-range maxima ((2^16-1)^2, (2^32-1)^2). Returns 42 iff every check
-// holds across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const intCheckedMulProg = `
 import "std/i32";
 import "std/i64" as i64m;

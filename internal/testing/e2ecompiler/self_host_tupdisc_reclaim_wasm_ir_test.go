@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupDiscReclaimWasmIR is the wasm leg of
-// TestSelfHostTupDiscReclaimIRX86_64: the discarded-tuple deep-drop is decided
-// in the target-independent lowering, so wasm must give the same answers. Case
-// table shared with the x86-64 leg.
 func TestSelfHostTupDiscReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupDiscReclaimCases {

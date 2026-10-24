@@ -1,40 +1,14 @@
-// std/headers — HTTP HeaderMap with case-insensitive lookup,
-// multi-valued entries, and insertion-ordered iteration.
-//
-// HeaderMap backs the headers field of HttpRequest and HttpResponse.
-// The WASI HTTP adapter converts it to and from the host's fields resource.
-//
-// Storage: two parallel arrays. `names` holds each name as it was
-// given, and lookups compare names ASCII-case-insensitively (field
-// names are case-insensitive, RFC 9110 §5.1), so nothing is copied
-// to fold them. `values` holds the raw value at the matching index
-// in insertion order. Linear-scan lookup is fine for the typical
-// <20-header request, matches the spirit of hyper's HeaderMap, and
-// avoids the IndexMap indexing-table overhead until profiling says
-// otherwise.
-//
-// Invariants:
-//   - `len(h.names) == len(h.values)`.
-//   - Iteration / append order is insertion order; `.set`
-//     replaces in-place at the existing index, with the spelling
-//     the caller passed, and drops any additional duplicates
-//     further down.
+// This module stores HTTP headers with case-insensitive name lookup and multiple values per name.
 
 import "std/string";
 import "core/map";
 
-// `header_map_new()` — empty HeaderMap. Use when constructing
-// HttpRequest / HttpResponse by hand; a parsed request carries
-// its own.
 pub function header_map_new(): HeaderMap {
   let names: string[] = [];
   let values: string[] = [];
   return HeaderMap { names: names, values: values };
 }
 
-// `.get(name)` — first value for `name`, case-insensitive. Returns
-// None when no entry matches; use `.get_all` when duplicates
-// matter (`Set-Cookie`, `Accept`, `Via`).
 pub function (h: HeaderMap) get(name: string): Option[string] {
   let i: i32 = 0;
   while (i < h.names.len()) {
@@ -46,7 +20,6 @@ pub function (h: HeaderMap) get(name: string): Option[string] {
   return None;
 }
 
-// `.has(name)` — whether any entry is named `name`, case-insensitive.
 pub function (h: HeaderMap) has(name: string): boolean {
   let i: i32 = 0;
   while (i < h.names.len()) {
@@ -58,10 +31,6 @@ pub function (h: HeaderMap) has(name: string): boolean {
   return false;
 }
 
-// `.get_all(name)` — every value for `name` in insertion order.
-// Returns an empty array when no entry matches (callers
-// shouldn't need to special-case "missing" separately from
-// "present but empty list").
 pub function (h: HeaderMap) get_all(name: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -74,9 +43,6 @@ pub function (h: HeaderMap) get_all(name: string): string[] {
   return out;
 }
 
-// `.get_list(name)` — the members of the comma-separated lists in every
-// `name` field line, in order (RFC 9110 §5.6.1): what `split_list` makes
-// of each value.
 pub function (h: HeaderMap) get_list(name: string): string[] {
   let out: string[] = [];
   for v in h.get_all(name) {
@@ -87,10 +53,6 @@ pub function (h: HeaderMap) get_list(name: string): string[] {
   return out;
 }
 
-// `split_list(value)` — the members of a field value's comma-separated
-// list (RFC 9110 §5.6.1): a comma inside a quoted string does not split,
-// the whitespace around a member goes, and an empty member is dropped, as
-// a recipient must.
 pub function split_list(value: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -119,9 +81,6 @@ function __list_member(out: string[], value: string, from: i32, to: i32): string
   return out.append(m);
 }
 
-// `unquote(s)` — the content of the quoted string `s` (RFC 9110 §5.6.4),
-// each `\`-escaped byte taken as itself; `s` unchanged when it is not a
-// quoted string.
 pub function unquote(s: string): string {
   if (s.len() < 2 || s[0] != 34 as u8 || s[s.len() - 1] != 34 as u8) {
     return s;
@@ -142,11 +101,6 @@ pub function unquote(s: string): string {
   return out + s.slice_snap(from, end);
 }
 
-// `.preferred_coding(offers)` — which of `offers`, the content codings a
-// representation is available in with the most preferred first, the
-// `Accept-Encoding` fields rank highest (RFC 9110 §12.5.3). None means the
-// identity coding: no field was sent, none of `offers` is acceptable, or
-// `identity` ranks above them. A tie goes to the earlier offer.
 pub function (h: HeaderMap) preferred_coding(offers: string[]): Option[string] {
   let members: string[] = h.get_list("Accept-Encoding");
   let floor: i32 = __coding_weight(members, "identity");
@@ -162,10 +116,6 @@ pub function (h: HeaderMap) preferred_coding(offers: string[]): Option[string] {
   return best;
 }
 
-// `__coding_weight(members, coding)` — the weight in thousandths that the
-// `Accept-Encoding` members give `coding`: its own member's, else `*`'s,
-// else -1 for a coding the field does not mention. `x-gzip` is `gzip`
-// (§8.4.1.3).
 function __coding_weight(members: string[], coding: string): i32 {
   let star: i32 = -1;
   for m in members {
@@ -180,7 +130,6 @@ function __coding_weight(members: string[], coding: string): i32 {
   return star;
 }
 
-// `__member_token(m)` — a list member's value before its parameters.
 function __member_token(m: string): string {
   let Some(semi) = m.index_of(";") else {
     return m;
@@ -195,9 +144,6 @@ function __same_coding(name: string, coding: string): boolean {
   return name.eq_ignore_ascii_case("x-gzip") && coding.eq_ignore_ascii_case("gzip");
 }
 
-// `weight(member)` — a list member's `q` parameter (RFC 9110 §12.4.2) in
-// thousandths, 0 to 1000: 1000 when it has none, and 0 for a malformed one,
-// so a member nobody can read is never preferred.
 pub function weight(member: string): i32 {
   let params: string[] = member.split(";");
   let i: i32 = 1;
@@ -211,8 +157,6 @@ pub function weight(member: string): i32 {
   return 1000;
 }
 
-// `__qvalue(s)` — `0`, `0.5`, `1.000` and the like as thousandths; 0 for
-// anything outside the grammar.
 function __qvalue(s: string): i32 {
   if (s.len() == 0 || s.len() > 5 || s[0] != 48 as u8 && s[0] != 49 as u8) {
     return 0;
@@ -227,8 +171,6 @@ function __qvalue(s: string): i32 {
   return q;
 }
 
-// `__thousandths(s)` — the digits after `s`'s point as thousandths, or 1001
-// when one is not a digit, so the qvalue reads as out of range.
 function __thousandths(s: string): i32 {
   let q: i32 = 0;
   let scale: i32 = 100;
@@ -244,10 +186,6 @@ function __thousandths(s: string): i32 {
   return q;
 }
 
-// `.append(name, value)` — add an entry without replacing
-// existing entries with the same name. The canonical "I want
-// duplicate-safe insertion" call (`headers.append("Set-Cookie",
-// "...")` keeps each cookie distinct).
 pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
   return HeaderMap {
     ...h,
@@ -256,11 +194,6 @@ pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
   };
 }
 
-// `.set(name, value)` — replace any/all existing entries for
-// `name` with a single new entry. Position-stable: if `name`
-// already existed at index k, the new value lands at index k and
-// further duplicates are dropped; if `name` was absent, the new
-// entry appends.
 pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
   let new_names: string[] = [];
   let new_values: string[] = [];
@@ -286,7 +219,6 @@ pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
   return HeaderMap { ...h, names: new_names, values: new_values };
 }
 
-// `.remove(name)` — every entry for `name` dropped, the rest in order.
 pub function (h: HeaderMap) remove(name: string): HeaderMap {
   let new_names: string[] = [];
   let new_values: string[] = [];
@@ -301,9 +233,6 @@ pub function (h: HeaderMap) remove(name: string): HeaderMap {
   return HeaderMap { ...h, names: new_names, values: new_values };
 }
 
-// `.len()` — total entries (duplicates counted separately).
-// `h = h.set("Set-Cookie", "a"); h = h.append("Set-Cookie",
-// "b"); h.len()` is 2. (set/append are functional — rebind.)
 pub function (h: HeaderMap) len(): i32 {
   return h.names.len();
 }

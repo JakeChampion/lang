@@ -12,8 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// Exercise the runtime ABI directly: ordinary record shapes do not reach the
-// large tier. Keep the emitted allocator, release and diagnostic bodies intact.
 func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 	cli := buildRuntimeCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -111,7 +109,7 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 									count = 1
 								}
 								if tc.cap > 0 && tc.cap != tc.want {
-									count++ // Reallocate the donor's capacity to check its pool.
+									count++
 								}
 								want := fmt.Sprintf("leakcheck: allocs=%d frees=%d live_bytes=0", count, count)
 								if code != 0 || !strings.Contains(stderr, want) || strings.Contains(stderr, "fern-sanitizer:") {

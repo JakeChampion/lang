@@ -12,25 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- read_file / read_file_bytes vs st_size (#9065) ----------------
-//
-// The whole-file builtins used to size their buffer from fstat and
-// report st_size as the length. A kernel pseudo-file generates its
-// contents on the read, so st_size is 0 (/proc) or a page (/sys) and
-// neither half held: every /proc file read back EMPTY and every /sys
-// file as a page of mostly NUL. The interpreter goes through Go's
-// os.ReadFile, which grows, so this was also a native/interp
-// divergence no differential suite caught — they only ever read files
-// the program itself had just written, where st_size is exact.
-//
-// The programs here are self-checking: each compares read_file
-// against a Reader drain (open_reader + read_chunk, an independent
-// path) and returns non-zero with a FAIL line on any disagreement.
-
-// readFilePseudoProgram reads kernel pseudo-files — st_size 0, content
-// generated on the read — and requires read_file / read_file_bytes to
-// agree with the Reader drain and to end in real content rather than
-// NUL padding.
 const readFilePseudoProgram = `
 import "std/i32";
 import "std/array";
@@ -114,9 +95,6 @@ function main(): i32 {
 }
 `
 
-// readFileSizesProgram round-trips ordinary files across the sizes the
-// buffer arithmetic turns on: empty, sub-word, and either side of the
-// 4 KiB page the grow path floors at.
 const readFileSizesProgram = `
 import "std/i32";
 import "std/array";
@@ -165,13 +143,8 @@ function main(): i32 {
 }
 `
 
-// fifoBytes is four doublings past the 4 KiB floor the grow path
-// starts at, so the buffer is re-allocated repeatedly and every copy
-// has to carry the bytes already read.
 const fifoBytes = 30000
 
-// readFileFifoProgram reads a FIFO, whose st_size is 0 however many
-// bytes the writer pushes through it.
 var readFileFifoProgram = fmt.Sprintf(`
 import "std/i32";
 
@@ -207,9 +180,6 @@ func TestArm64ReadFileReadsPseudoFiles(t *testing.T) {
 	checkReadFileMarker(t, "pseudo-read-ok", out, code)
 }
 
-// The wasm legs run with the root preopened, the only way the guest can name
-// a path under /proc at all. Preview 1 reads with path_open and fd_read, the
-// component with open-at and read-via-stream: two bodies, so two runs.
 func TestWASMPreview1ReadFileReadsPseudoFiles(t *testing.T) {
 	stdout, stderr, _ := runWasmArtifact(t, buildWasmCore(t, readFilePseudoProgram), runOpts{workDir: "/"})
 	if !strings.Contains(stdout, "pseudo-read-ok") {
@@ -254,10 +224,6 @@ func TestInterpReadFileRoundTripsEverySize(t *testing.T) {
 	}
 }
 
-// fifoDir makes a directory holding a FIFO named "pipe" and starts a
-// writer that pushes fifoBytes through it and closes. Opening the
-// write end blocks until the program under test opens the read end,
-// so the writer runs in its own goroutine.
 func fifoDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -294,9 +260,6 @@ func TestInterpReadFileGrowsPastStatHint(t *testing.T) {
 	}
 }
 
-// readFileCensusProgram reads argv[1] n times. Run under
-// FERN_LEAKCHECK, the difference between two counts is what one read
-// of that path costs in allocations.
 func readFileCensusProgram(n int) string {
 	return fmt.Sprintf(`
 function main(): i32 {
@@ -313,9 +276,6 @@ function main(): i32 {
 `, n)
 }
 
-// censusRunner compiles the census program for backend with the leak
-// census on and returns a runner that executes it in dir against one
-// path, yielding the census's allocation count.
 func censusRunner(t *testing.T, backend string, reads int) func(dir, path string) int64 {
 	t.Helper()
 	target := e2eharness.TargetX86_64Linux
@@ -344,12 +304,6 @@ func censusRunner(t *testing.T, backend string, reads int) func(dir, path string
 	}
 }
 
-// TestReadFileRegularFileKeepsOneAllocation measures what a read costs
-// rather than asserting a magic number: an ordinary file's per-read
-// allocation count must not depend on its size — one buffer, sized
-// from st_size, is enough — and must be strictly cheaper than a
-// pseudo-file's, which pays for the grow and the re-fit a useless hint
-// forces.
 func TestReadFileRegularFileKeepsOneAllocation(t *testing.T) {
 	for _, backend := range []string{"x86_64", "arm64-linux"} {
 		t.Run(backend, func(t *testing.T) {

@@ -1,8 +1,8 @@
-// A bounded generic called with no written type arguments is instantiated at
-// what the checker binds from its arguments, whatever their shape: a bare or
-// payload variant, a pattern binding, a nested generic call, a literal
-// (#12786). `both` is promoted, so its type parameters run B, A in the
-// monomorphiser, and the written `both[i32, E]` still binds A to i32.
+
+
+
+
+
 import "core/cmp";
 import "std/i32";
 

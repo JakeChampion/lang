@@ -1,5 +1,4 @@
-// Checked decimal integer conversion.
-// A sign is optional. Whitespace and non-ASCII digits are invalid.
+// This module converts decimal strings to integers. A sign is optional. Whitespace and non-ASCII digits are invalid.
 
 import "core/cmp";
 import "std/error";
@@ -7,7 +6,6 @@ import "std/i32";
 
 pub enum IntError {
   Empty,
-  // The payload is the invalid byte offset.
   InvalidDigit(i32),
   Overflow,
 }
@@ -34,7 +32,6 @@ impl error.Error for IntError {}
 
 impl cmp.Display for IntError {}
 
-// Parse the complete string, including the full signed 64-bit range.
 pub function int64(text: string): Result[i64, IntError] {
   if (text.len() == 0) {
     return Err(Empty);
@@ -47,7 +44,6 @@ pub function int64(text: string): Result[i64, IntError] {
   if (at == text.len()) {
     return Err(Empty);
   }
-  // A negative accumulator can represent the magnitude of i64::MIN.
   let limit: i64 = -9223372036854775807;
   if (negative) {
     limit = limit - 1;

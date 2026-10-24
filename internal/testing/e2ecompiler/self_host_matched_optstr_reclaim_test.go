@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// --- A MATCHED Option[string] local releases its payload (#7710) -------------
-//
-// Every Option payload kind is reclaimed whether or not a `match` consumes the
-// local, and the string kind must be too: matching is the ordinary way to
-// consume an Option, and a matched payload left unreleased leaks 72 B/round,
-// linear in the round count. A reassigned local whose every rebind is itself
-// fresh is reclaimed as well (#7712). The `*_control` rows pin the never-matched
-// case and the array payload kinds.
-//
-// THE REFUSALS ARE THE ESSENTIAL HALF. A string assignment BORROWS, so the arm
-// binding takes no retain — which is why freeing a payload the arm hands out
-// would be a use-after-free rather than a double-count. The `refuses_*` rows
-// exercise the handed-out shapes, an aliased rebind and an escaping reassigned
-// local; each must exit its oracle answer, and every row balances.
-//
-// Every want was confirmed against bin/fern -interp, never read off the
-// self-host run under test.
 type matchedOptstrCase struct {
 	name string
 	src  string
@@ -40,7 +23,6 @@ const matchedOptstrW = "function w(a: string): string { return a + \"!\"; }\n"
 func matchedOptstrCases() []matchedOptstrCase {
 	return []matchedOptstrCase{
 		{
-			// THE REPRO: matched, payload read. Was 600/0 live 14400.
 			name: "matched_payload_read",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -50,8 +32,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 19,
 		},
 		{
-			// The binding present but unused — identical leak before, which is
-			// what showed this is the LOCAL's reclaim and not the binding's.
 			name: "matched_binding_unused",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -61,8 +41,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 4,
 		},
 		{
-			// No binding at all. Also leaked before, so the arm binding was never
-			// the releaser.
 			name: "matched_wildcard",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -72,9 +50,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 4,
 		},
 		{
-			// The never-matched quadrant, which already worked. It must stay
-			// working AND must not now be credited twice — a second release here
-			// would be an over-release, caught by the 99 guard.
 			name: "unmatched_control",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -83,8 +58,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 13,
 		},
 		{
-			// The array payload, matched: the quadrant that always worked and the
-			// reason this was diagnosable at all.
 			name: "arr_matched_control",
 			src: `function round(i: i32): i32 {
     let o: Option[i32[]] = Some([i, i + 1]);
@@ -94,8 +67,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 63,
 		},
 		{
-			// The arr-of-arr payload, matched — the OPTARRARR sibling whose
-			// collector this one is modelled on.
 			name: "arrarr_matched_control",
 			src: `function round(i: i32): i32 {
     let o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
@@ -105,9 +76,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 4,
 		},
 		{
-			// THE REBIND QUADRANT (#7712): reassigned, every rebind itself fresh.
-			// Both the superseded box at the rebind and the final one at exit must
-			// be released (900/0 live 21600 when neither was).
 			name: "reassigned_all_rebinds_fresh",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -118,7 +86,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 19,
 		},
 		{
-			// The flat-ARRAY payload reassigned: the control.
 			name: "reassigned_array_control",
 			src: `function round(i: i32): i32 {
     let o: Option[i32[]] = Some([i, i + 1]);
@@ -129,9 +96,6 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 14,
 		},
 		{
-			// A rebind that is NOT fresh — `Some(p)` of a parameter the
-			// caller owns. Admitting reassignment must not admit an aliased rebind,
-			// which would release a live reference at the NEXT rebind.
 			name: "refuses_rebind_aliasing_param",
 			src: matchedOptstrW + `function run(p: string, i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -143,8 +107,6 @@ function round(i: i32): i32 { let s: string = w("zz"); return run(s, i); }` + ma
 			want: 19,
 		},
 		{
-			// Reassigned AND the payload escapes. The escape gate must
-			// still apply once reassignment is admitted.
 			name: "refuses_reassigned_escaping",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let held: string = "";
@@ -156,8 +118,6 @@ function round(i: i32): i32 { let s: string = w("zz"); return run(s, i); }` + ma
 			want: 19,
 		},
 		{
-			// The arm RETURNS the payload, so the caller owns it.
-			// Releasing it here is a use-after-free, not a double count.
 			name: "refuses_returned_payload",
 			src: matchedOptstrW + `function mk(i: i32): string {
     let o: Option[string] = Some(w("ab"));
@@ -168,7 +128,6 @@ function round(i: i32): i32 { let s: string = mk(i); return s.len(); }` + matche
 			want: 19,
 		},
 		{
-			// The payload is stored into a local that outlives the match.
 			name: "refuses_stored_outer",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let held: string = "";
@@ -179,7 +138,6 @@ function round(i: i32): i32 { let s: string = mk(i); return s.len(); }` + matche
 			want: 19,
 		},
 		{
-			// The payload is passed to a callee, which may retain it.
 			name: "refuses_passed_to_callee",
 			src: matchedOptstrW + `function take(s: string): i32 { return s.len(); }
 function round(i: i32): i32 {
@@ -190,7 +148,6 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// The payload goes into a container.
 			name: "refuses_into_container",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let keep: string[] = [];
@@ -201,7 +158,6 @@ function round(i: i32): i32 {
 			want: 34,
 		},
 		{
-			// `v + "z"` BORROWS the payload.
 			name: "refuses_concat_conservative",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -211,10 +167,6 @@ function round(i: i32): i32 {
 			want: 53,
 		},
 		{
-			// A non-fresh payload: `Some(p)` of a PARAMETER the caller owns.
-			// Freshness is required for this family because the payload is stored
-			// uncounted and assignment borrows, so an aliased payload would be
-			// released under a live reference.
 			name: "refuses_aliased_param_payload",
 			src: matchedOptstrW + `function wrap(p: string, i: i32): i32 {
     let o: Option[string] = Some(p);
@@ -227,8 +179,6 @@ function round(i: i32): i32 { let s: string = w("ab"); return wrap(s, i); }` + m
 	}
 }
 
-// TestSelfHostMatchedOptstrReclaimX86_64 — a match-consumed Option[string] local
-// reclaims its payload, and every shape that lets the payload escape does not.
 func TestSelfHostMatchedOptstrReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -262,8 +212,6 @@ func TestSelfHostMatchedOptstrReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMatchedOptstrReclaimWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend.
 func TestSelfHostMatchedOptstrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping matched Option[string] wasm IR e2e")
@@ -302,7 +250,6 @@ func TestSelfHostMatchedOptstrReclaimWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostMatchedOptstrReclaimIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostMatchedOptstrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

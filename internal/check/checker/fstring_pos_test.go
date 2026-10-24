@@ -7,15 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// A diagnostic against an expression inside `f"{…}"` must point at that
-// expression, not at 1:1 of the file (#6989). The interpolant is
-// sub-parsed from raw text by a fresh lexer, and before the rebase every
-// node it produced claimed 1:1 — so `f"{zzz}"` reported E001 with the
-// caret on the first character of the source.
-//
-// Two interpolants pin the second one's offset independently: a rebase
-// that used the f-string token's own position would place the first one
-// plausibly and every later one short.
 func TestFStringDiagnosticPositions(t *testing.T) {
 	cases := []struct {
 		name string

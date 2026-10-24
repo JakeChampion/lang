@@ -1,17 +1,3 @@
-// `signal_catch_interrupting` (#11698) end to end: a signal it catches ends a
-// blocked call, where signal_catch's resumes it.
-//
-// The test is the signal's sender. Each program prints a line when it is
-// about to block, and the test answers that line: it signals the program and
-// waits for the next one. The signal is sent again every 200 ms until the
-// line comes, because one landing before the program reaches its blocking
-// call sets the flag and blocks nothing; the next one interrupts the call.
-//
-// The read program blocks on a pipe the test holds open and never writes to,
-// so only the signal can end the read. Its last leg switches the same signal
-// to signal_catch and checks the read then survives it: the program prints
-// nothing until the test writes a byte. The waitpid program blocks on a child
-// that sleeps until it is killed.
 package e2e
 
 import (
@@ -32,8 +18,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Each failing step returns its own code; a clean run prints the four step
-// lines, the last `done`.
 const signalInterruptReadSource = `function interrupted(r: Reader): i32 {
     match (r.read_chunk_bytes(16)) {
         Ok(b) => { return 1; },
@@ -83,8 +67,6 @@ function main(): i32 {
 }
 `
 
-// The child sleeps until the parent kills it, so the parent's wait can end
-// only by the signal: -4, EINTR.
 const signalInterruptWaitSource = `function main(): i32 {
     let usr1: i32 = 10;
     if (target_os() == "darwin") { usr1 = 30; }
@@ -115,16 +97,11 @@ func usr1() syscall.Signal {
 	return syscall.SIGUSR1
 }
 
-// signalStep is one line the program prints and what the test does on it:
-// signal until the next line (`restart` false), or signal once, check the
-// read survives, then write the byte that ends it.
 type signalStep struct {
 	line    string
 	restart bool
 }
 
-// driveSignalProgram runs cmd through `steps` and returns its stdout lines,
-// its stderr and its exit code.
 func driveSignalProgram(t *testing.T, cmd *exec.Cmd, steps []signalStep) ([]string, string, int) {
 	t.Helper()
 	stdin, err := cmd.StdinPipe()
@@ -215,7 +192,6 @@ var (
 	waitSteps = []signalStep{{line: "ready"}}
 )
 
-// checkCensusRun checks a leak-census run: exit 0, and a census that balances.
 func checkCensusRun(t *testing.T, stderr string, code int) {
 	t.Helper()
 	if code != 0 {
@@ -241,10 +217,6 @@ func TestX86_64SignalCatchInterruptingWait(t *testing.T) {
 	checkCensusRun(t, stderr, code)
 }
 
-// Under qemu-user the host signal reaches the emulator, which delivers it to
-// the guest's handler; a host read or wait4 the emulator is blocked in for
-// the guest fails with EINTR, which qemu passes on unless the guest's
-// sigaction asked for SA_RESTART.
 func TestArm64SignalCatchInterruptingRead(t *testing.T) {
 	qemu := e2eharness.Arm64Runner(t)
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, signalInterruptReadSource, []string{"FERN_LEAKCHECK=1"})
@@ -259,8 +231,6 @@ func TestArm64SignalCatchInterruptingWait(t *testing.T) {
 	checkCensusRun(t, stderr, code)
 }
 
-// The oracle, through `fern -interp` in its own process. The interpreter
-// cannot fork, so only the read program runs here.
 func TestInterpSignalCatchInterruptingRead(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX signal")
@@ -276,9 +246,6 @@ func TestInterpSignalCatchInterruptingRead(t *testing.T) {
 	}
 }
 
-// The Mach-O builds carry the catch with SA_RESTART left out of XNU's flags
-// word, which only an Apple Silicon host can run; anywhere else the builds
-// themselves are what is checked.
 func TestArm64DarwinSignalCatchInterrupting(t *testing.T) {
 	for name, src := range map[string]string{"read": signalInterruptReadSource, "wait": signalInterruptWaitSource} {
 		t.Run(name, func(t *testing.T) {
@@ -298,8 +265,6 @@ func TestArm64DarwinSignalCatchInterrupting(t *testing.T) {
 	}
 }
 
-// wasm: nothing can deliver a signal, so the catch answers 0 as signal_catch
-// does and nothing is ever taken.
 func TestWASMSignalCatchInterruptingTakesNothing(t *testing.T) {
 	src := `function main(): i32 {
     let n: i32 = 40;
@@ -313,8 +278,6 @@ func TestWASMSignalCatchInterruptingTakesNothing(t *testing.T) {
 	}
 }
 
-// The CLI world grants the catch and the proxy world refuses it on `signal`,
-// as for signal_catch.
 func TestWASMSignalCatchInterruptingCapability(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 { return signal_catch_interrupting(2); }`)
 	if err != nil {

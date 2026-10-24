@@ -18,7 +18,7 @@ func TestHTTPHandlerCensusThreadsBoundAcrossBurst(t *testing.T) {
 				}
 				loopStart := strings.Index(source, "function __serve_loop(")
 				burstStart := strings.Index(source, "function __serve_burst[")
-				burstEnd := strings.Index(source, "\n// __serve_loop_with")
+				burstEnd := strings.Index(source, "\nfunction __serve_loop_with[")
 				if loopStart < 0 || burstStart <= loopStart || burstEnd <= burstStart {
 					t.Fatal("bounded production loop/burst boundaries missing")
 				}

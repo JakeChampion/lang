@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A projection of the element RETURNED mid-loop (#8178): `return
-// sd.name` keeps the element borrowed — the string leaves with the
-// Return's own transfer inc — and this is the runtime shape where
-// that inc is essential: the iterand is an owned CALL RESULT, so
-// the sweep at the in-loop return deep-frees the container inside
-// the callee, elements and all, while the caller reads the field it
-// was handed. @noinline keeps the call boundary real. Content compare
-// after same-size churn recycles the freelist; the underflow counter
-// catches the field being released under the caller.
+
+
+
+
+
+
+
+
+
+
+
+
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
 function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },

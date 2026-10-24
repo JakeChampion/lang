@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A driver's cache key has to move with everything that changes its bytes:
-// the compiler that builds it and the stdlib it compiles in, which the
-// self-host compiler reads from disk. Dropping either from the key would
-// reuse a stale driver silently, with every test still passing on it.
 func TestDriverCompilerKeyCoversTheCompilerAndTheStdlib(t *testing.T) {
 	base := driverCompilerKeyFor("compiler-a", "stdlib-1")
 	if driverCompilerKeyFor("compiler-a", "stdlib-1") != base {
@@ -25,16 +21,11 @@ func TestDriverCompilerKeyCoversTheCompilerAndTheStdlib(t *testing.T) {
 	}
 }
 
-// A driver build is cached by its sources and compiler alone, so a FERN_* knob
-// set in the test process must not reach the compiler that builds it:
-// FERN_SANITIZE there once built an instrumented asm_modload_run that every
-// later test in the shard reused.
 func TestCompileWithSelfHostDropsFernKnobs(t *testing.T) {
 	t.Setenv("FERN_SANITIZE", "1")
 	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := t.TempDir()
 	compiler := filepath.Join(dir, "fake-compiler")
-	// The fake compiler writes its environment to the -o path.
 	if err := os.WriteFile(compiler, []byte("#!/bin/sh\nwhile [ \"$1\" != \"-o\" ]; do shift; done\nenv > \"$2\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -129,9 +120,6 @@ func TestDriverBuildWeightIsPerDriver(t *testing.T) {
 	}
 }
 
-// `bootstrap.sh stage0` is what Stage0Compiler parses: the resolved path on
-// stdout and nothing else, progress on stderr. STAGE0=<path> is the
-// override the test uses so no download runs.
 func TestBootstrapStage0PrintsThePathAlone(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "fern-selfhost")
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {

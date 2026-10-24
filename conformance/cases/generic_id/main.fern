@@ -1,4 +1,4 @@
-// A generic identity function instantiated at both i32 and string.
+
 function id[T](x: T): T {
     return x;
 }

@@ -10,11 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A heap arena whose mmap fails is reported as that, with the errno and
-// ExitArenaUnmapped, not as exhaustion's ExitArenaExhausted (#12911). The
-// address space is capped below the arena's 16 GiB: natively with
-// `ulimit -v`, under qemu-user with QEMU_RESERVED_VA, which bounds the guest's
-// address space where RLIMIT_AS would bound qemu itself.
 func TestSelfHostArenaUnmappedExit(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")

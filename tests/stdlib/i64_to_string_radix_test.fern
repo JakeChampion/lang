@@ -1,15 +1,6 @@
 import "std/test";
 import "std/i64";
 
-// tests/stdlib/i64_to_string_radix_test.fern — pure-Fern coverage of
-// std/i64.to_string_radix(base): render an i64 in an arbitrary base (2..36,
-// digits 0-9a-z, signed), the wider counterpart to std/i32's. The magnitude is
-// a u64 (unsigned negation), so it renders i64::MIN cleanly and exercises
-// unsigned u64 div/rem. Covers several bases, sign, zero, values past the i32
-// range, i64::MAX/MIN, and out-of-range bases. Kept as its own suite so the
-// self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
-// The Go-side TestI64ToStringRadix pins these across all four backends.
-
 function test_hex(): test.TestOutcome {
   return test.assert_true((255 as i64).to_string_radix(16) == "ff");
 }
@@ -31,12 +22,10 @@ function test_base36(): test.TestOutcome {
 }
 
 function test_wide(): test.TestOutcome {
-  // 2^32, past the i32 range.
   return test.assert_true((4294967296 as i64).to_string_radix(16) == "100000000");
 }
 
 function test_extremes(): test.TestOutcome {
-  // i64::MAX and i64::MIN in hex (the u64-magnitude path renders MIN cleanly).
   if ((9223372036854775807 as i64).to_string_radix(16) != "7fffffffffffffff") {
     return test.fail("max");
   }

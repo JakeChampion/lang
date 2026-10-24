@@ -1,7 +1,7 @@
-// An `as f64` / `as f32` cast converts the RESULT of its operand; the target
-// type must not reach into the operand's arithmetic. `(7 / 2) as f64` is an
-// integer division (3) converted to float, which the same expression written
-// through variables agrees with on every engine. #8456.
+
+
+
+
 function main(): i32 {
     let a: f64 = (7 / 2) as f64;
     if (a != 3.0) { return 1; }

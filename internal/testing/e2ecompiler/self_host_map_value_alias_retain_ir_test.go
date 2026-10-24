@@ -2,24 +2,10 @@ package e2ecompiler
 
 import "testing"
 
-// mapValueAliasRetainIRCases pin the retain a map insert owes an ALIASED array
-// VALUE on the register backends (#6880).
-//
-// `let a = [...]; m.insert(k, a);` must leave the map holding a unit of `a`:
-// the exit dec-sweep releases every array slot, so a value column naming a
-// buffer the sweep freed reads a recycled block's contents after the next
-// allocation of that size class, and nothing reports an over-release.
-//
-// Each program forces the recycle itself (a same-size-class array literal
-// allocated between the insert and the read) rather than relying on a size
-// class that happens to collide. Exit 0 is correct; each nonzero code names
-// the check that failed.
 var mapValueAliasRetainIRCases = []struct {
 	name string
 	src  string
 }{
-	// The reduced #6880 shape: a helper builds the value array and returns the
-	// map, so the helper's exit sweep is what freed the stored buffer.
 	{"helper-insert", `import "core/map";
 function put(m: Map[string, i32[]], k: string, a: i32, b: i32): Map[string, i32[]] {
     let arr: i32[] = [a, b];
@@ -42,8 +28,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// Loop-scoped value locals — std/url's query_parse shape, where each round's
-	// array is freed at the iteration's sweep and the next round recycles it.
 	{"loop-scoped-value", `import "core/map";
 function main(): i32 {
     let m: Map[i32, i32[]] = Map {};
@@ -68,7 +52,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// The reported column type: Map[string, string[]].
 	{"string-array-value", `import "core/map";
 function put(m: Map[string, string[]], k: string, v: string): Map[string, string[]] {
     let a: string[] = [v];
@@ -90,9 +73,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// Control: a FRESH value literal takes no retain — its sole rc=1 moves into
-	// the map — and must still read back correctly. Passes either side of the
-	// fix, which is its job.
 	{"fresh-value-control", `import "core/map";
 function main(): i32 {
     let m: Map[i32, i32[]] = Map {};
@@ -111,8 +91,6 @@ function main(): i32 {
 `},
 }
 
-// TestSelfHostMapValueAliasRetainIRX86_64 runs each case through the self-hosted
-// CLI for x86-64.
 func TestSelfHostMapValueAliasRetainIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapValueAliasRetainIRCases {
@@ -124,8 +102,6 @@ func TestSelfHostMapValueAliasRetainIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapValueAliasRetainIRArm64 is the arm64 leg: same programs, the
-// arm64 map_set emission, run under qemu.
 func TestSelfHostMapValueAliasRetainIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -138,7 +114,6 @@ func TestSelfHostMapValueAliasRetainIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapValueAliasRetainIRWasm is the wasm leg.
 func TestSelfHostMapValueAliasRetainIRWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapValueAliasRetainIRCases {

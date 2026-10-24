@@ -1,5 +1,3 @@
-// The static server the soak lane holds under load: one five-byte body,
-// so what grows is the loop's own.
 import "std/http";
 import "std/serve";
 import "std/platform";

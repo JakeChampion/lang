@@ -2,8 +2,6 @@ package e2e
 
 import "testing"
 
-// Exercise both precise named growth and the conservative nested-growth
-// summary. The old and new values must remain independent through every call.
 const growBracketNestedFieldsProgram = `
 struct Tables { keys: string[], values: i32[] }
 struct Scope { names: string[], tables: Tables }

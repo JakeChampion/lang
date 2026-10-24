@@ -1,4 +1,4 @@
-// No generic declarations: concrete method folding must run on its own.
+
 function (xs: [u8]) back(): u8 {
   return xs[xs.len() - 1];
 }

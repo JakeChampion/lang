@@ -6,8 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostByteScanArgTempsAreReleased is the self-host twin of
-// internal/testing/e2e's TestByteScanArgTempsAreReleased.
 func TestSelfHostByteScanArgTempsAreReleased(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

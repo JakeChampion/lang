@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// splitEmptySepSrc splits on an empty separator, which cuts a string into
-// codepoints on every backend. The wasm runtime's hand-written
-// $__fern_str_split cut it into bytes, so "héllo" came back as six pieces
-// (#10770). The program prints 42 once every check holds; a lower number
-// names the first that failed.
 const splitEmptySepSrc = `
 import "std/string";
 function main(): i32 {

@@ -198,8 +198,6 @@ function main(): i32 {
 				cmd := runScaleTarget(t, target, bin)
 				out, err := cmd.CombinedOutput()
 				if target == e2eharness.TargetWasm32Wasi {
-					// check_shape calls exit(134); WASI rejects that process exit
-					// code. This differs from the flat kernel's unreachable trap.
 					if err == nil || !strings.Contains(string(out), "invalid exit status") {
 						t.Fatalf("expected rejected shape exit (disabled=%s): %v\n%s", disabled, err, out)
 					}

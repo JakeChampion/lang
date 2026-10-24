@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// The runtime's rc helpers refuse a pointer below 0x10000 before reading its
-// header, and null is one, so none tests for null first. The program releases
-// arrays, strings, a map, an array of arrays and an array of records, which
-// pulls in arr_dec, rc_inc, rc_is_unique, str_free, the deep array free, the
-// map free and the record array's element walk.
 const lowGuardProg = `import "std/i32";
 import "core/map";
 
@@ -38,9 +33,6 @@ function main(): i32 {
 }
 `
 
-// A null test of a register followed by a low-address guard of the same
-// register to the same label, whichever register holds the pointer. Each
-// match is register, label, register, label.
 var (
 	x86NullThenLow   = regexp.MustCompile(`testq (%r\w+), %r\w+\n\s+jz (\S+)\n(?:\s+testb \$1, %\w+\n\s+jnz \S+\n)?\s+cmpq \$0x10000, (%r\w+)\n\s+jb (\S+)\n`)
 	arm64NullThenLow = regexp.MustCompile(`cbz (x\d+), (\S+)\n(?:\s+tbnz x\d+, #0, \S+\n)?\s+(?:mov x9, #0x10000\n\s+cmp (x\d+), x9|cmp (x\d+), #16, lsl #12)\n\s+b\.?lo (\S+)\n`)
@@ -71,8 +63,6 @@ func TestSelfHostRuntimeLowGuardCoversNull(t *testing.T) {
 		}
 		asm := string(raw)
 		for _, m := range c.pair.FindAllStringSubmatch(asm, -1) {
-			// The arm64 pattern names the guarded register in one of two
-			// groups, by which compare form the guard takes.
 			reg, label := m[3], m[len(m)-1]
 			if len(m) == 6 && reg == "" {
 				reg = m[4]

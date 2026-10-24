@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternStringParamCustomProvider is the P4c composite-parameter gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern program passes a `string` to an
-// `@import` extern. There's no non-resource WASI 0.2 function taking a string,
-// so it's tested against a custom provider (the multi-component harness).
-//
-// The provider exports `byte-len: func(s: string) -> u32` returning the SUM of
-// the string's bytes — a single memory-param function with a flat scalar result,
-// wired by the composer's results-carrying trampoline (P4c). The loop reads the
-// lowered `(ptr, len)`, so both halves are exercised. The Fern side passes
-// "hello" (byte sum 532).
 func TestExternStringParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -39,7 +29,6 @@ func TestExternStringParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 byte-len. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -48,8 +37,6 @@ func TestExternStringParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\ninterface sink { byte-len: func(s: string) -> u32; }\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// byte-len receives the lowered (ptr, len) — the caller writes the string
-	// into this module's memory via cabi_realloc — and returns the byte sum.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -76,7 +63,6 @@ func TestExternStringParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom sink iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -111,7 +97,6 @@ func TestExternStringParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: pass "hello" (byte sum 532) to the extern. ---
 	const want = "sum-ok"
 	src := `@import("local:test/sink@0.1.0", "byte-len")
 function byte_sum(s: string): u32;

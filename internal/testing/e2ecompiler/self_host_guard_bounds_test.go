@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// ssabounds.proven_indices marks an index read, or a `with`'s index, unchecked
-// when the branches into its block prove `0 <= i < len`: a guard on both
-// bounds, the length minus a constant, a loop index stepped by one under its
-// guard or stepped down under `i >= 0`, the same field read twice from one
-// value, a constant or a masked index into an array literal shorter than
-// neither, a byte-set scan's result under `< len`, and a guard against the size
-// an `__alloc_*` call built the array at, carried through the `with`s that
-// write it and the phis that loop it. Each case reads in range on every path
-// the program takes, so it must answer what the interpreter answers on every
-// backend.
 var guardBoundsCases = []struct {
 	name string
 	src  string
@@ -84,8 +74,6 @@ function main(): i32 { return look(6) + look(0 - 1) * 10; }`},
     return 7;
 }
 function main(): i32 { return after("ab\tc", 0) + after("abc", 1) * 2 + after("x", 5) * 3 + after("\t", 0 - 4); }`},
-	// An array `__alloc_*` built at size n: a loop under `i < n` writes it
-	// with `with` and reads it back, through the loop's phis and the writes.
 	{"alloc_fill_and_sum", `function fill(n: i32): i32 {
     let xs: i32[] = __alloc_i32(n);
     let i: i32 = 0;
@@ -131,8 +119,6 @@ function main(): i32 { return rows(2, 3) + rows(0, 2) + rows(3, 0); }`},
     return c;
 }
 function main(): i32 { return count([1, 0 - 1, 2, 5]); }`},
-	// grouped_reads: a run at one index plus constants, or at constants, is
-	// checked once.
 	{"grouped_view_reads", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 1) + word(xs, 0); }`},
 	{"grouped_array_reads", `function sum3(xs: i32[], k: i32): i32 { return xs[k + 2] + xs[k] * 0 + xs[k + 1]; }
@@ -150,10 +136,6 @@ function main(): i32 { let s: string = "the quick brown fox"; return ((word(s, 3
 function main(): i32 { let s: string = "the quick brown fox"; let v: str = slice_unchecked(s, 4, 15); return ((word(v, 2) ^ word(slice_unchecked(s, 1, 9), 3)) & 63u32) as i32; }`},
 }
 
-// guardBoundsTwins pairs each proven program with one whose guard proves
-// nothing about the length: the same reads behind a literal bound. The reader
-// stays out of line where splicing it would hand both twins the array
-// literal, whose length proves the read without the guard.
 var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"guard_and",
 		`@noinline function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < xs.len()) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1); }`,
@@ -179,13 +161,9 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"alloc_fill_and_sum",
 		`@noinline function fill(n: i32): i32 { let xs: i32[] = __alloc_i32(n); let i: i32 = 0; while (i < n) { xs = xs.with(i, i * 2); i = i + 1; } let s: i32 = 0; i = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; } function main(): i32 { return fill(5); }`,
 		`@noinline function fill(n: i32): i32 { let xs: i32[] = __alloc_i32(n); let i: i32 = 0; while (i < 5) { xs = xs.with(i, i * 2); i = i + 1; } let s: i32 = 0; i = 0; while (i < 5) { s = s + xs[i]; i = i + 1; } return s; } function main(): i32 { return fill(5); }`},
-	// The array comes back from a call, whose result's length the pass does
-	// not know.
 	{"alloc_through_call",
 		`@noinline function touch(own xs: i64[]): i64[] { return xs; } @noinline function rows(nb: i32, words: i32): i32 { let row: i64[] = __alloc_i64(words); let bi: i32 = 0; while (bi < nb) { let w: i32 = 0; while (w < words) { row = row.with(w, row[w] + 1i64); w = w + 1; } bi = bi + 1; } return row.len(); } function main(): i32 { return rows(2, 3); }`,
 		`@noinline function touch(own xs: i64[]): i64[] { return xs; } @noinline function rows(nb: i32, words: i32): i32 { let row: i64[] = __alloc_i64(words); let bi: i32 = 0; while (bi < nb) { let w: i32 = 0; while (w < words) { row = row.with(w, row[w] + 1i64); w = w + 1; } row = touch(row); bi = bi + 1; } return row.len(); } function main(): i32 { return rows(2, 3); }`},
-	// A division between the reads could abort first, so the twin keeps
-	// every read's check.
 	{"grouped_scrambled_reads",
 		`function word(bs: u8[], off: i32, d: i32): i32 { return bs[off + 3] as i32 + bs[off] as i32 + bs[off + 2] as i32 + bs[off + 1] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 5); }`,
 		`function word(bs: u8[], off: i32, d: i32): i32 { return bs[off + 3] as i32 + bs[off] as i32 / d + bs[off + 2] as i32 / d + bs[off + 1] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 1) + 2; }`},
@@ -200,8 +178,6 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 / d + bs[off + 2] as i32 / d + bs[off + 3] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 1) + 2; }`},
 }
 
-// guardBoundsUnsafe are reads a guard does not cover, each run out of range:
-// the check must remain, so each traps with exit 134.
 var guardBoundsUnsafe = []struct{ name, src string }{
 	{"guard_on_another_array", `function pick(xs: i32[], ys: i32[], k: i32): i32 { if (k >= 0 && k < ys.len()) { return xs[k]; } return 0; }
 function main(): i32 { return pick([1], [1, 2, 3], 2); }`},
@@ -306,8 +282,6 @@ func TestSelfHostGuardBoundsX86_64(t *testing.T) {
 		t.Run("fewer_checks/"+tw.name, func(t *testing.T) {
 			proven := emit(t, tw.proven)
 			unproven := emit(t, tw.unproven)
-			// An array index traps to __fern_oob_abort and a string index to
-			// __fern_str_oob_abort; a guard can prove away either.
 			traps := func(asm string) int {
 				return strings.Count(asm, "__fern_oob_abort") + strings.Count(asm, "__fern_str_oob_abort")
 			}

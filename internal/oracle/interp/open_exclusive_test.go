@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// open_exclusive creates or answers AlreadyExists — it never opens a name
-// that is already taken, and never truncates it (#8776). The interpreter is
-// the oracle the compiled backends are compared against, so it has to give
-// EEXIST the same variant they do.
 func TestOpenExclusiveRefusesAnExistingName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "probe.txt")
@@ -45,19 +41,6 @@ func TestOpenExclusiveRefusesAnExistingName(t *testing.T) {
 	}
 }
 
-// The file open_exclusive creates is not readable by group or other.
-//
-// A caller reaches for this primitive because the CONTENT is not to be
-// disclosed — split's spool of piped input is the caller that drove it — so
-// the mode is part of the contract, not a detail. Every compiled backend
-// passes 0600; the interpreter is the oracle they are diffed against, and it
-// passed 0644 until this test existed, which is a divergence the fixpoint is
-// structurally unable to see and which the e2e cases miss because they are
-// compiled-only.
-//
-// Asserted as "no group and no other bits" rather than as mode == 0600: a
-// umask only ever CLEARS bits, so this property holds under any umask while
-// an exact comparison would pin the one the test happens to run under.
 func TestOpenExclusiveIsNotReadableByGroupOrOther(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "private.txt")

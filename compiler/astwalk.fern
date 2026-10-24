@@ -1,87 +1,26 @@
 import "./ast";
 import "./util";
 
-// astwalk — shared AST traversals for the self-hosted compiler.
-// First home (SH-022): the free-variable collectors used by every
-// backend's closure/capture analysis. asmcore / ssa / vm carried
-// byte-identical copies of these; they now live here once. Imports
-// only parser, so any frontend module can depend on it.
-
-// The accumulator is CONSUMING: the fold hands its unit to the visitor at each
-// step and takes back the one the call returns, so exactly one unit is live at
-// every point and the fold releases nothing. The function type spells it —
-// `(ast.Expr, own T) => T` — so a visitor and the fold agree on who releases
-// the step's old accumulator whether T binds a scalar or a reference;
-// `docs/SEMANTIC-GENERICS.md` has how each lowering compiles the body.
-//
-// fold_expr threads `acc` through every expression reachable from `e`, calling
-// `visit` on each node in pre-order before descending into its children. It is
-// the shared spine the hand-written per-consumer traversals collapse onto: a
-// consumer writes only what one node contributes and inherits the recursion, so
-// a new parser node is covered everywhere the moment it is covered here (#6993).
-//
-// `visit` reaches it as a nested named function closing over whatever context
-// the consumer needs — see collect_qualrefs_stmt. An arrow lambda works too
-// since #6996; the named form is kept because it reads better at the call site.
 pub function fold_expr[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T): T {
   return fold_expr_pruned(e, acc, visit, descend_all);
 }
 
-// fold_stmt is fold_expr's statement half: it visits every EXPRESSION `st`
-// reaches, in source order. The statement nodes themselves are visited by
-// fold_stmt_nodes, or by fold_stmt_spine when the consumer wants statements
-// alone — a binder name, an assignment target — and no expression at all.
 pub function fold_stmt[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T): T {
   return fold_stmt_pruned(st, acc, visit, descend_all);
 }
 
-// descend_all is the unpruned walk's descent rule: every node's children are
-// reachable.
 pub function descend_all(e: ast.Expr): boolean {
   return true;
 }
 
-// fold_expr_pruned is fold_expr with descent control. `visit` still sees every
-// node the walk reaches; `descend` then decides whether that node's CHILDREN
-// are walked, which is what a consumer needs when one node's contribution
-// already accounts for its subtree.
-//
-// collect_idents_expr is the archetype: a nested lambda contributes its FREE
-// variables, computed by subtracting the lambda's own bindings from its body's
-// reads. Descending would instead append every name the body mentions,
-// including the lambda's own params — the bug that made an enclosing closure
-// treat them as unresolvable captures and decline the lift.
-//
-// The rule is a plain predicate over the node rather than a `(T, boolean)`
-// return or a `Visit[T]` box because it is asked once per node on the
-// compiler's hottest walk: a boxed answer would be one allocation per AST node
-// visited, where a predicate is a call.
-//
-// The no-op statement visitor has to be spelled as an arrow lambda: a nested
-// named function keeps its declared `T` verbatim when the enclosing generic is
-// monomorphised, and a top-level generic one cannot be named as a value at all
-// (#7040, #7042). It captures nothing, so it lifts to a plain function —
-// measured identical to passing a top-level named no-op.
 pub function fold_expr_pruned[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
   return fold_expr_nodes(e, acc, (st: ast.Stmt, own a: T) => a, visit, descend);
 }
 
-// fold_stmt_pruned is fold_expr_pruned's statement half. `descend` gates the
-// expressions it reaches exactly as it does inside an expression tree.
 pub function fold_stmt_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
   return fold_stmt_nodes(st, acc, (s: ast.Stmt, own a: T) => a, visit, descend);
 }
 
-// fold_expr_nodes / fold_stmt_nodes are the walk itself, and the only copy of
-// it. They visit BOTH node kinds: `visit_stmt` on each statement in pre-order,
-// `visit_expr` on each expression. Two visitors rather than native's single
-// `fn(Node) bool` (internal/syntax/ast/walk.go) because `Expr` and `Stmt` are separate
-// unions here with no common supertype — wrapping them in one would cost an
-// allocation per node visited.
-//
-// A consumer whose contribution is statement-shaped needs this pair: an
-// assignment TARGET and a `let` / `for` / match-arm BINDER are names carried on
-// the statement, not expressions the expression visitor can ever be handed.
 pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, own T) => T, visit_expr: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
   acc = visit_expr(e, acc);
   if (!descend(e)) {
@@ -252,17 +191,6 @@ pub function fold_stmt_nodes[T](st: ast.Stmt, own acc: T, visit_stmt: (ast.Stmt,
   return acc;
 }
 
-// fold_stmt_spine folds `visit` over the statement subtree rooted at `st` — the
-// statement itself and every statement its control flow encloses — entering no
-// expression, so a lambda body stays out of reach.
-//
-// This is what a statement-shaped consumer wants: an assignment TARGET and a
-// `let` / `for` / match-arm BINDER are names carried on the statement, so the
-// expression half of fold_stmt_nodes contributes nothing and costs two indirect
-// calls plus a match for every expression a statement owns.
-//
-// Every variant is spelled out rather than wildcarded: a new statement kind
-// carrying a block should fail to compile here, not silently drop its body.
 pub function fold_stmt_spine[T](st: ast.Stmt, own acc: T, visit: (ast.Stmt, own T) => T): T {
   acc = visit(st, acc);
   match (st) {
@@ -323,30 +251,10 @@ pub function fold_stmt_spine[T](st: ast.Stmt, own acc: T, visit: (ast.Stmt, own 
   return acc;
 }
 
-// fold_stmt_own visits the expressions the statement ITSELF owns — a `let`'s
-// initialiser, an assignment's value, a `return` / expression statement's
-// value, an `if` / `while` condition, a `for`'s iterated expression, and a
-// `match`'s scrutinee and arm guards — and does NOT enter the statement lists
-// it encloses.
-//
-// fold_stmt is the whole-subtree walk; this is the one level a PER-STATEMENT
-// pass wants when its driver visits the child blocks itself. interp's cellify
-// pre-pass is the archetype: it runs once per statement of a block against that
-// block's reassignment set, and a nested block gets its own pass with its own
-// set — walking into one here would cell a loop-local `let` that has to stay
-// per-iteration.
-//
-// A `defer`'s action is a child statement, so it contributes nothing at this
-// level. Every variant is spelled out rather than wildcarded: a new statement
-// kind should fail to compile here, not silently own no expressions.
 pub function fold_stmt_own[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T): T {
   return fold_stmt_own_pruned(st, acc, visit, descend_all);
 }
 
-// fold_stmt_own_pruned is fold_stmt_own with descent control, on the same terms
-// as fold_expr_pruned: `descend` decides whether a visited node's CHILDREN are
-// walked, which a consumer needs when one node's contribution already accounts
-// for its whole subtree.
 pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
   match (st) {
     ast.StmtVar(v) => {
@@ -395,30 +303,6 @@ pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr,
   return acc;
 }
 
-// ---- the rewriting fold -------------------------------------------------
-//
-// map_expr / map_stmt / map_stmts are fold_expr's rewriting twin: where the
-// fold threads an accumulator out, these thread a NEW TREE out. They are the
-// shared spine for the hand-written `Expr -> Expr` recursions the same way the
-// fold is for the collectors, and they converge on native's
-// ast.RewriteProgramExprs (internal/syntax/ast/walk.go).
-//
-// POST-ORDER, like native's: a node's children are rewritten first, and `visit`
-// then sees the REBUILT node. A consumer that must inspect a child before it is
-// rewritten needs a pre-order variant, which no consumer has needed yet.
-//
-// EXPRESSIONS are replaced; STATEMENTS are rebuilt but never replaced — again
-// native's split. A statement's shape is decided by the parser and the desugars;
-// what a rewrite pass changes is the expressions in its slots.
-//
-// Every node is rebuilt with a functional update (`{ ...x, field: … }`) rather
-// than a field-by-field literal. That is not brevity: a field-by-field rebuild
-// has to be revisited every time a node gains a field, and the hand-written
-// rewriters it replaces spell out between five and nine fields each.
-//
-// The `sugar` fields (StmtIf.sugar, StmtMatch.sugar) are the arms as WRITTEN,
-// which only the printer reads, and they are carried through unrewritten — a
-// rewrite of the compile path must not rewrite the author's source shape.
 pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
   match (e) {
     ast.ExprBytes(_) => {
@@ -480,8 +364,6 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       for field_value in st.field_values {
         fv = fv.append(map_expr(field_value, visit));
       }
-      // `base` is only a real expression when has_base; the slot is
-      // otherwise whatever the parser left there.
       let nb: ast.Expr = st.base;
       if (st.has_base) {
         nb = map_expr(st.base, visit);
@@ -506,9 +388,6 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       return visit(ast.ExprMapLit { ...ml, keys: ks, vals: vs });
     },
     ast.ExprFString(fs) => {
-      // The three arrays are parallel, one entry per PART: a part with
-      // is_expr false is literal text and its `exprs` slot is filler, not
-      // an expression to rewrite.
       let xs: ast.Expr[] = [];
       let q: i32 = 0;
       while (q < fs.exprs.len()) {
@@ -525,8 +404,6 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
   return visit(e);
 }
 
-// map_stmt rebuilds one statement with every expression it reaches rewritten,
-// including the ones inside the blocks it encloses.
 pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
@@ -585,65 +462,6 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
   return out;
 }
 
-// ---- the accumulator-carrying rewriting fold ----------------------------
-//
-// map_expr_acc / map_stmt_acc / map_stmts_acc are map_expr's state-threading
-// twin: the walk hands back a NEW TREE and an accumulator, for the rewrite
-// passes that also build something as they go — lift's env-box lift is the
-// archetype, accumulating the hoisted `$cloN` functions and the counter that
-// names them.
-//
-// PRE-ORDER, claim-or-descend — the opposite of map_expr's post-order, and
-// deliberately: `visit` sees each node BEFORE its children are rewritten and
-// answers `(node, acc, handled)`. handled=true → the visitor owns the whole
-// subtree: its node and acc come back verbatim and the spine does not descend.
-// One flag covers both a rewrite and a prune, because a claiming rewriter
-// needs its policy helpers to receive ORIGINAL children — post-order would
-// hand them already-rewritten ones and double-wrap `__mkclo$` markers.
-// handled=false → the visitor's node is ignored (decline with the node
-// untouched) and the spine walks the children itself, threading the
-// visitor's acc through them. The spine's own third result is whether
-// anything in the subtree was claimed: a node nothing below claimed comes
-// back as it was, so a pass that rewrites little copies little.
-//
-// CHILD ORDER IS CONTRACT here, not an implementation detail: consumers name
-// hoisted helpers `$cloN` / `$wrapN` / `$iifeN` from a counter held in the
-// accumulator, so the visit order is baked into emitted symbol names and the
-// fixpoint's byte-identity with them. The order is source order — a statement's
-// own expressions before its child blocks (if: cond, then, else; match:
-// scrutinee, then per arm the guard before the body) — with one inherited
-// exception: ExprCall walks its ARGUMENTS left-to-right and THEN its callee,
-// the order map_expr and every hand walk this spine absorbs already use.
-// Binary is left then right, Index array then index, Slice array/start/end,
-// StructLit field_values then base, MapLit key before value per entry.
-//
-// Statements are rebuilt, never replaced, on map_stmt's terms: a declined
-// statement with a changed child is rebuilt with a functional update, so line
-// / sugar / origin pass through untouched, and a claiming visitor is expected
-// to hand back the same statement kind it was shown.
-//
-// The result is a TUPLE, not a `Visit[T]` struct, and the constraint is the
-// per-module self-compile, not taste: a generic struct in the signature makes
-// the parser promote `T` to the monomorphiser, and the per-module emit path
-// runs no monomorphiser at all — the un-cloned template reaches the unit emit
-// and fails IR verify. A bare tuple keeps `T` ERASED, the same single-compile
-// treatment the fold spine gets, so the spine takes every path fold does.
-// Like the fold's `T`, an accumulator must be pointer-shaped or i32 — an
-// erased slot cannot carry a bare wide scalar.
-//
-// Unlike map_expr, the expression walk carries the STATEMENT visitor too. A
-// single-visitor wrapper would have to pass a generic no-op statement visitor
-// along, and that value has no expressible spelling: a top-level generic
-// function cannot be named as a value, and a lambda's lifted body does not
-// monomorphise with the enclosing function (#7040, #7042). A consumer with
-// nothing to say about statements writes the no-op itself, at its own
-// concrete T.
-//
-// One tuple per node visited is a bounded constant factor on a walk that
-// may reconstruct every node it touches, so the fold spine's
-// predicate-not-box rule does not bind here — and it still binds THERE: the
-// fold stays allocation-free per node, and a consumer that needs state out of
-// a rewrite belongs on this spine, not on a retrofitted fold.
 pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Expr, T, boolean) {
   let (ve, va, vh) = visit(e, acc);
   if (vh) {
@@ -718,8 +536,6 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       let (fv, fa, fh) = map_exprs_acc(sl.field_values, a, visit_stmt, visit);
       a = fa;
       changed = fh;
-      // `base` is only a real expression when has_base; the slot is
-      // otherwise whatever the parser left there.
       let nb: ast.Expr = sl.base;
       if (sl.has_base) {
         let (be, ba, bh) = map_expr_acc(sl.base, a, visit_stmt, visit);
@@ -765,9 +581,6 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprFString(fs) => {
-      // The three arrays are parallel, one entry per PART: a part with
-      // is_expr false is literal text and its `exprs` slot is filler, not
-      // an expression to rewrite.
       let xs: ast.Expr[] = [];
       let q: i32 = 0;
       while (q < fs.exprs.len()) {
@@ -790,8 +603,6 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
   return (out, a, changed);
 }
 
-// map_exprs_acc maps a list on map_expr_acc's terms, and hands the list back
-// as it was when no element changed. The copy starts at the first change.
 function map_exprs_acc[T](es: ast.Expr[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Expr[], T, boolean) {
   let out: ast.Expr[] = [];
   let changed: boolean = false;
@@ -927,8 +738,6 @@ pub function map_stmts_acc[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, 
   return (out, a);
 }
 
-// map_stmts_acc_changed is map_stmts_acc with map_stmt_acc's third result:
-// whether any statement changed. An unchanged list is handed back as it was.
 function map_stmts_acc_changed[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt[], T, boolean) {
   let out: ast.Stmt[] = [];
   let changed: boolean = false;
@@ -955,24 +764,10 @@ function map_stmts_acc_changed[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.St
   return (out, acc, true);
 }
 
-// splice_stmts is the REMOVING sibling of map_stmts. map_stmt rewrites
-// expressions and can only replace a statement with exactly one statement;
-// `visit` here returns a LIST, so a pass can drop a statement (return []),
-// keep it (return [st]) or expand it. `-O`'s assert elision is the first
-// consumer and needs the dropping direction.
-//
-// Two passes, because statements live in two places. map_stmts reaches the
-// ones inside EXPRESSIONS — a lambda body, including one nested in a call
-// argument or a match-arm guard — and splices each lambda's own tree as it
-// goes; splice_own then walks the statement tree proper. Each statement is
-// visited exactly once: map_expr is bottom-up, so an inner lambda is spliced
-// before the outer one, and splice_own never re-enters an expression.
 pub function splice_stmts(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
   return splice_stmts_with_lambda(stmts, visit, (lm: ast.ExprLambda) => lm);
 }
 
-// Finish each lambda after its statements have been spliced, so a semantic
-// transformation can update its capture contract without rechecking the tree.
 pub function splice_stmts_with_lambda(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[], finish_lambda: (ast.ExprLambda) => ast.ExprLambda): ast.Stmt[] {
   let mapped: ast.Stmt[] = map_stmts(stmts, (x: ast.Expr): ast.Expr => {
     match (x) {
@@ -988,9 +783,6 @@ pub function splice_stmts_with_lambda(stmts: ast.Stmt[], visit: (ast.Stmt) => as
   return splice_own(mapped, visit);
 }
 
-// splice_own applies `visit` down one statement tree, post-order. It does NOT
-// descend into expressions: splice_stmts' map pass has already spliced every
-// lambda body, and descending again would splice a nested one twice.
 function splice_own(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   for stmt in stmts {
@@ -1002,9 +794,6 @@ function splice_own(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stm
   return out;
 }
 
-// splice_own_children rebuilds one statement with each statement list it
-// encloses spliced. It does not visit `st` itself; that is splice_own's job,
-// so children are spliced before their parent is judged.
 function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt {
   match (st) {
     ast.StmtIf(f) => {
@@ -1033,8 +822,6 @@ function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast
   return st;
 }
 
-// ident_of contributes one node's identifier READS. It is the whole of
-// collect_idents_expr that is not the walk.
 function ident_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
     ast.ExprIdent(id) => {
@@ -1050,8 +837,6 @@ function ident_of(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-// not_lambda stops the walk at a lambda: ident_of has already accounted for its
-// whole body.
 pub function not_lambda(e: ast.Expr): boolean {
   match (e) {
     ast.ExprLambda(_) => {
@@ -1064,8 +849,6 @@ pub function not_lambda(e: ast.Expr): boolean {
   return true;
 }
 
-// collect_idents_expr appends every identifier READ in `e` to `acc`
-// (with duplicates; consumers dedup when building capture lists).
 pub function collect_idents_expr(e: ast.Expr, own acc: string[]): string[] {
   return fold_expr_pruned(e, acc, ident_of, not_lambda);
 }
@@ -1079,10 +862,6 @@ function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.E
   return acc;
 }
 
-// Thread declarations in source order. A var's initializer sees the preceding
-// scope; a nested control-flow block cannot bind a name in its enclosing tail.
-// The callback lets the ordinary capture and fn-value-use collectors share the
-// scope rules while disagreeing on whether a direct named callee is a read.
 function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
@@ -1117,9 +896,6 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
     },
     ast.StmtFor(f) => {
       acc = scoped_reads(f.iter, bound, acc, reads);
-      // append_bound_name and pattern_binders CONSUME the list they
-      // extend and can hand the very same buffer back, so a nested scope
-      // extends a fresh copy rather than this frame's borrow.
       let loop_bound: string[] = [];
       loop_bound = util.append_all(loop_bound, bound);
       loop_bound = append_bound_name(loop_bound, f.var_name);
@@ -1166,11 +942,6 @@ function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], re
   return (acc, bound);
 }
 
-// A declaration binds only from its source position onward and only within
-// its block. Subtracting every local name from every read loses captures made
-// before a later shadowing declaration, including reads in nested closures.
-// Capture consumers use this shared ordered walk before testing which free
-// names resolve to slots in the enclosing scope.
 pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): string[] {
   let bound: string[] = [];
   for param in lm.params {
@@ -1180,8 +951,6 @@ pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): strin
   return used;
 }
 
-// collect_free_idents appends every identifier `body` reads that neither
-// `params` nor a declaration inside the body binds.
 pub function collect_free_idents(params: string[], body: ast.Stmt[], own acc: string[]): string[] {
   let bound: string[] = [];
   for p in params {
@@ -1191,21 +960,7 @@ pub function collect_free_idents(params: string[], body: ast.Stmt[], own acc: st
   return used;
 }
 
-// subst_ident_expr returns `e` with every identifier READ named `from`
-// rewritten to `to`. Used to rewrite an `@`-binding reference (`n`) to the
-// cached scrutinee local in a match-arm guard, where the whole-value binding
-// isn't yet in scope.
-//
-// It walks over map_expr, so the rename reaches every node rather than the
-// eight this used to spell out. The five it missed were not exotic: a guard
-// mentioning `n` inside a struct literal, a slice, a map literal, an f-string
-// or a lambda kept the original name, and lowering then failed to resolve it
-// (`FERN_STRICT_IR: function value n not defined`) on a program native
-// compiles and runs.
 pub function subst_ident_expr(e: ast.Expr, from: string, to: string): ast.Expr {
-  // Nested so the rename pair is captured by the closure rather than an extra
-  // parameter on every recursive call — the same spelling the fold's
-  // consumers use.
   function subst_one(x: ast.Expr): ast.Expr {
     match (x) {
       ast.ExprIdent(id) => {
@@ -1223,13 +978,6 @@ pub function subst_ident_expr(e: ast.Expr, from: string, to: string): ast.Expr {
   return map_expr(e, subst_one);
 }
 
-// assign_target_of contributes what a statement reads that is not an
-// expression, which is one name: an assignment's TARGET. A lambda that WRITES
-// a captured outer scalar without ever reading it (`x = 42`) still captures
-// `x`, so the free-variable collector has to see write-only targets (#2850 /
-// SH-057). The target is always a bare name — index and field assigns desugar
-// to __set_index / __set_field calls carried in `value`. Duplicates are fine;
-// capture lists dedup.
 function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
   match (st) {
     ast.StmtAssign(a) => {
@@ -1242,17 +990,10 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
   return acc;
 }
 
-// collect_idents_stmt appends every identifier READ in `st` to `acc`, with
-// duplicates. `not_lambda` stops the walk at a lambda because ident_of has
-// already accounted for its whole body; a `when` guard is walked like an arm
-// body, since a name read only there is still a name the closure must capture.
 pub function collect_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
   return fold_stmt_nodes(st, acc, assign_target_of, ident_of, not_lambda);
 }
 
-// Count one name with the same assignment-target and lambda-scope rules as
-// collect_idents_stmt. A scalar fold avoids retaining every identifier read
-// when a consumer needs only one name's frequency.
 pub function count_ident_expr(e: ast.Expr, name: string): i32 {
   function at_expr(node: ast.Expr, own n: i32): i32 {
     for id in ident_of(node, []) {
@@ -1289,12 +1030,6 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
   return count;
 }
 
-// append_bound_name appends a binder name, splitting the comma-joined form the
-// multi-name binders use — a tuple destructure `let (a, b) = t` ("a,b", #5173)
-// and a two-binding `for (k, v) in m` ("k,v"). Unsplit, neither name is
-// recognised as an enclosing local, so a lambda reading one reads as
-// capture-free: it takes the no-capture `$wrapN` lift and resolves the name
-// against the module instead of capturing it.
 pub function append_bound_name(own acc: string[], name: string): string[] {
   let start: i32 = 0;
   let depth: i32 = 0;
@@ -1318,29 +1053,8 @@ pub function append_bound_name(own acc: string[], name: string): string[] {
   return acc;
 }
 
-// CallSite is one call located at the call, with `method` saying which kind of
-// callee it had: false for a bare identifier, true for a field access
-// (`x.write(…)`). Both are recorded, and the flag matters — the target
-// boundary (platforms.fern) gates BUILTINS, which are free functions, so it
-// reads only the bare-identifier half, while the package boundary (caps.fern)
-// follows the method half as a call-graph edge.
 pub struct CallSite { name: string, line: i32, col: i32, method: boolean }
 
-// call_site_of records the call `e` makes if its callee is NAMED in `want` —
-// the callee's own name for a bare identifier, the field name for a method
-// call. It is one node's contribution; fold_expr / fold_stmt supply the walk.
-//
-// The filter is not a convenience: the only callers look for a handful of names
-// across the whole bundle, and collecting every call first would allocate one
-// CallSite per call site in the program — on the compiler's own sources that is
-// the kind of pass that exhausts the arena on a self-compile. Matching
-// during the walk keeps the allocation proportional to the hits, which is
-// normally none.
-//
-// Unlike collect_idents_expr this sees INTO a lambda body rather than
-// subtracting its bindings: a lambda's calls are part of what the artifact
-// executes, which is the question here, where free-variable analysis asks what
-// the enclosing scope must capture.
 function call_site_of(e: ast.Expr, want: util.NameIndex, own acc: CallSite[]): CallSite[] {
   match (e) {
     ast.ExprCall(c) => {
@@ -1369,7 +1083,6 @@ function call_site_of(e: ast.Expr, want: util.NameIndex, own acc: CallSite[]): C
   return acc;
 }
 
-// collect_calls_stmt appends every wanted call reachable from `st` to `acc`.
 pub function collect_calls_stmt(st: ast.Stmt, want: util.NameIndex, own acc: CallSite[]): CallSite[] {
   function visit(e: ast.Expr, own a: CallSite[]): CallSite[] {
     return call_site_of(e, want, a);
@@ -1377,18 +1090,6 @@ pub function collect_calls_stmt(st: ast.Stmt, want: util.NameIndex, own acc: Cal
   return fold_stmt(st, acc, visit);
 }
 
-// pattern_binders appends every name a match-arm pattern binds: the payload
-// slot, each further slot of a multi-payload variant (`Tag(a, b)`), the `@`
-// whole-value binder of `n @ Tag(x)`, and every binder of a tuple sub-pattern
-// — `tup_binds` directly, `tup_pats` recursed; `tup_lits` are literals, not
-// binders. `nested` and the tup_* fields are parse-time transients — the
-// parser's desugars flatten both before any consumer sees a pattern — but they
-// are recursed anyway so a pattern that does reach here cannot hide a binder.
-//
-// Callers read this list rather than walking the pattern themselves, which is
-// the point: two answers to "what does this pattern bind" is how at_binding
-// came to be missing from one of them (#6993) and the tuple binders from this
-// one (#8607).
 pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
   match (p) {
     ast.PatVariant(pv) => {
@@ -1423,10 +1124,6 @@ pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
   return acc;
 }
 
-// binders_of contributes the names one statement BINDS: a `let`, a `for`'s
-// loop variable, and the patterns of a `match`'s arms. Every one of them is
-// carried on the statement node, which is why this walk needs a statement
-// visitor and cannot be written over fold_stmt alone.
 pub function binders_of(st: ast.Stmt, own acc: string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
@@ -1448,18 +1145,10 @@ pub function binders_of(st: ast.Stmt, own acc: string[]): string[] {
   return acc;
 }
 
-// collect_bound_stmt appends every name `st` binds in the scope it belongs to.
-// Consumers subtract it from collect_idents_stmt's reads to get free variables,
-// so a name missing here is read as a capture of an enclosing local that does
-// not exist.
 pub function collect_bound_stmt(st: ast.Stmt, own acc: string[]): string[] {
   return fold_stmt_spine(st, acc, binders_of);
 }
 
-// collect_bound_stmts is collect_bound_stmt over a body. Callers that want a
-// whole function's binders — the over-approximating "bound anywhere in this
-// body, so a bare reference to it is local throughout" set that shadowing
-// means for bare names — want this one.
 pub function collect_bound_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
   for stmt in stmts {
     acc = collect_bound_stmt(stmt, acc);
@@ -1467,23 +1156,8 @@ pub function collect_bound_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
   return acc;
 }
 
-// --- qualified module references (#6714) ----------------------------------
-//
-// QualRef is one `<qual>.<name>` reference: a MODULE-qualified use, written as
-// such in source. It exists because the distinction is only available BEFORE
-// flatten — bundling rewrites `bigint.__bi_make` and a bare same-module
-// `__bi_make` into the identical ident `bigint____bi_make`, so a rule that
-// needs to tell a cross-module reference from an internal one cannot run on
-// the bundle. The visibility check learned that the expensive way.
 pub struct QualRef { qual: string, name: string, line: i32, col: i32 }
 
-// qualref_of records the module-qualified reference `e` makes, if any: a field
-// access whose object is an ident naming a module in scope. `mod.f(…)`'s callee
-// and a bare `mod.CONST` are the same node, so they are one case.
-//
-// The reference is located at the field access, which the parser positions at
-// the dot — matching native, whose rewriter reports this against `fa.P` and not
-// against the enclosing call.
 function qualref_of(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
   match (e) {
     ast.ExprFieldAccess(fa) => {
@@ -1504,7 +1178,6 @@ function qualref_of(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
   return acc;
 }
 
-// collect_qualrefs_stmt collects the qualified references in a statement.
 pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualRef[]): QualRef[] {
   function visit(n: ast.Expr, own a: QualRef[]): QualRef[] {
     return qualref_of(n, quals, a);
@@ -1512,9 +1185,6 @@ pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualR
   return fold_stmt(st, acc, visit);
 }
 
-// ConstSubst replaces a reference to a named const with the const's value
-// wherever no local binding of that name is in scope. `bound` is the names in
-// scope; `names` and `values` are parallel.
 pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[], types: string[], enums: string[], enum_assoc: string[] }
 
 pub function substitute_consts(stmts: ast.Stmt[], bound: string[], names: string[], values: ast.Expr[]): ast.Stmt[] {
@@ -1531,11 +1201,6 @@ pub function substitute_consts_expr(e: ast.Expr, names: string[], values: ast.Ex
   return cs_expr(e, ConstSubst { names: names, values: values, bound: [], types: [], enums: [], enum_assoc: [] });
 }
 
-// rewrite_assoc_const_reads is substitute_consts's sibling for the reads of
-// associated constants: a field access `Base.NAME` whose object, unshadowed
-// by a binder, names one of `types` becomes the argument-less call of the
-// associated function, its callee marked const_read. An enum's field is a
-// variant unless `enum_assoc` lists `Enum.field` as an associated function.
 pub function rewrite_assoc_const_reads(stmts: ast.Stmt[], bound: string[], types: string[], enums: string[], enum_assoc: string[]): ast.Stmt[] {
   if (types.len() == 0) {
     return stmts;
@@ -1598,8 +1263,6 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
   return (e, c, false);
 }
 
-// cs_call_at walks a call whose callee is `Base.f(…)`: the callee is never a
-// read, so only its object and the arguments are candidates.
 function cs_call_at(e: ast.Expr, call: ast.ExprCall, c: ConstSubst): (ast.Expr, ConstSubst, boolean) {
   if let ast.ExprFieldAccess(cfa) = call.callee {
     let args: ast.Expr[] = [];
@@ -1611,8 +1274,6 @@ function cs_call_at(e: ast.Expr, call: ast.ExprCall, c: ConstSubst): (ast.Expr, 
   return (e, c, false);
 }
 
-// cs_field_read_at turns a field access on an unshadowed type name into the
-// associated-constant read it is (rewrite_assoc_const_reads).
 function cs_field_read_at(e: ast.Expr, fa: ast.ExprFieldAccess, c: ConstSubst): (ast.Expr, ConstSubst, boolean) {
   if (c.types.len() == 0) {
     return (e, c, false);
@@ -1629,9 +1290,6 @@ function cs_field_read_at(e: ast.Expr, fa: ast.ExprFieldAccess, c: ConstSubst): 
   return (e, c, false);
 }
 
-// placed_at gives a substituted value the reference's position, so a
-// diagnostic about it (a literal out of range for its destination) names the
-// use.
 function placed_at(e: ast.Expr, line: i32, col: i32): ast.Expr {
   match (e) {
     ast.ExprNumber(n) => {

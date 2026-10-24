@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A `str[]` destination types its array literal: each element is read at
-// `str`, so a string literal widens beside a view (#10889). With no
-// destination the elements must still agree.
 func TestStrArrayDestinationTypesTheLiteral(t *testing.T) {
 	const pre = `function main(): i32 { let owned: string = "ab" + "cd"; let s: str = slice_unchecked(owned, 1, 3); `
 	for _, lit := range []string{`["x", s]`, `[s, "x"]`, `[s, s]`, `["x", "y"]`} {

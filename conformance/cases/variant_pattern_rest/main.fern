@@ -1,10 +1,10 @@
 import "core/int";
 import "std/i32";
 
-// A trailing `..` lets a named-field variant pattern leave fields out, as a
-// struct pattern's does. `V { .. }` names no field at all. The omitted fields
-// match anything, so an arm using `..` covers its variant: neither match below
-// needs a `_` arm.
+
+
+
+
 enum Shape {
     Circle { r: i32 },
     Rect { w: i32, h: i32 },

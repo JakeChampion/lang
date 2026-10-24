@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/u32 + std/u64 helpers: zero/parity
-// predicates, pow (exponentiation by squaring), and the unsigned
-// overflow-aware saturating_add/sub + checked_add/sub at the
-// u32::MAX / u64::MAX / 0 boundaries.
-//
-// Split by wasmbin lowering: the pure-unsigned parts and the
-// Option[u32]-returning checked_* run on all four backends (an i32-width
-// enum payload lowers fine); the Option[u64] checked_* variants run on
-// interp / x86-64 / arm64 only, since an enum with a u64 payload is the
-// same known wasmbin coverage gap as Option[i64].
 const unsignedHelpersProg = `
 import "std/u32";
 import "std/u64";

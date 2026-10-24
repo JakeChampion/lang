@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIoErrorIRWasm is the wasm leg of #4624 item 2: a program that
-// matches the IoError value (not just Ok/Err) must find a real variant box, not
-// the raw WASI error CODE. Every preview-1 fs helper's error path routes the
-// errno through $__fern_build_io_error (the wasm sibling of the register
-// backends' __fern_io_error): a WASI errno maps to a real IoError variant box
-// ([type_id@0][path@8]) carrying the offending path, so the match binds a
-// well-formed variant + path string.
-//
-// Paths are RELATIVE and resolve against the preopen (the temp dir, mapped to
-// guest / with CWD = temp dir): WASI is capability-sandboxed, so an absolute
-// path is rejected with ENOTCAPABLE rather than the ENOENT the register
-// backends see — the shared absolute-path ioErrorCases can't run verbatim here.
-// A genuinely-missing relative path gives ENOENT(44) -> NotFound, matching the
-// interpreter's semantics for the same operation.
 func TestSelfHostIoErrorIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host io-error wasm IR e2e")
@@ -29,14 +15,11 @@ func TestSelfHostIoErrorIRWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
-	// A known-good file for the success controls ("hello\n" = 6 bytes).
 	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatalf("write ok file: %v", err)
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// "missing-fern-probe" is 18 chars — the length a NotFound(path) payload must
-	// report, proving the path box is well-formed (not a raw errno / NULL).
 	const missing = "missing-fern-probe"
 	const missingLen = 18
 
@@ -45,20 +28,12 @@ func TestSelfHostIoErrorIRWasm(t *testing.T) {
 		src  string
 		want int
 	}{
-		// read_file's Err payload matches the NotFound variant (the #4624 repro:
-		// matching the IoError value, not just Ok/Err).
 		{"read-notfound-variant", `function main(): i32 { match (read_file("` + missing + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } } } return 0; }`, 2},
-		// The NotFound payload is a well-formed string box carrying the path.
 		{"read-notfound-payload-len", `function main(): i32 { match (read_file("` + missing + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, missingLen},
-		// Success path unchanged by the error-path rework.
 		{"read-ok-control", `function main(): i32 { match (read_file("ok.txt")) { Ok(s) => { return s.len(); }, Err(_) => { return 90; } } return 0; }`, 6},
-		// write_file into a missing parent dir -> ENOENT -> Some(NotFound), not NULL.
 		{"writefile-notfound", `function main(): i32 { match (write_file("nodir-fern/x.txt", "hi")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
-		// write_file success still returns None.
 		{"writefile-ok-control", `function main(): i32 { match (write_file("out-fern.txt", "hi")) { Err(_) => { return 90; }, Ok(_) => { return 1; } } return 0; }`, 1},
-		// stat's Err payload carries NotFound(path) with the right length.
 		{"stat-notfound-payload-len", `function main(): i32 { match (stat("` + missing + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, missingLen},
-		// remove_file's Some payload matches NotFound.
 		{"removefile-notfound", `function main(): i32 { match (remove_file("` + missing + `")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
 	}
 

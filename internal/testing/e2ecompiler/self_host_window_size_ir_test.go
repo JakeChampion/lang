@@ -9,27 +9,11 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// `window_size` through the SELF-HOST IR path, on the two backends that
-// provide it. No wasm world has a terminal to measure, so there is no wasm leg
-// here: `tty` is granted by no wasi profile and the refusal is pinned by the
-// capability mirrors.
-//
-// Nothing here can be proved by compiling. A helper that lowered to nothing,
-// read the wrong two bytes of `struct winsize`, or answered a plausible 80x24
-// still links and still returns Ok — so the probe runs against a REAL pty
-// whose size the harness set to a pair no default produces.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and nothing in the
-// compiler asks how wide a terminal is.
-
 const (
 	shWsRows = 13
 	shWsCols = 57
 )
 
-// selfHostWindowSizeSource reports what it found through the exit code: 0 for
-// the size the harness set, and a distinct code per way of being wrong.
 const selfHostWindowSizeSource = `function main(): i32 {
     match (window_size(1)) {
         Ok(ws) => {
@@ -42,8 +26,6 @@ const selfHostWindowSizeSource = `function main(): i32 {
 }
 `
 
-// selfHostWindowSizeNoTtySource asks the same question of a redirected
-// descriptor, where the answer is ENOTTY and has to stay one.
 const selfHostWindowSizeNoTtySource = `function main(): i32 {
     match (window_size(1)) {
         Ok(ws) => { return 24; },
@@ -52,8 +34,6 @@ const selfHostWindowSizeNoTtySource = `function main(): i32 {
 }
 `
 
-// runSelfHostOnPTY runs the command with stdout wired to a pty of the size
-// above and returns its exit code.
 func runSelfHostOnPTY(t *testing.T, cmd *exec.Cmd) int {
 	t.Helper()
 	master, slave, err := tty.OpenPTY()
@@ -79,7 +59,6 @@ func runSelfHostOnPTY(t *testing.T, cmd *exec.Cmd) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostWindowSizeIR is the x86-64 leg.
 func TestSelfHostWindowSizeIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -114,9 +93,6 @@ func TestSelfHostWindowSizeIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostWindowSizeIRArm64 is the same probe through the arm64 IR
-// backend under qemu: a second hand-written call sequence, and the request
-// number comes from the dual table.
 func TestSelfHostWindowSizeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostRunDriverRefusesUnknownTarget pins what the emit drivers do with
-// a `-target` they do not recognise (#6635).
-//
-// They used to do the worst available thing: dispatch by naming the targets
-// they know and letting everything else reach the x86-64 branch, so a stale or
-// misspelled name came back as a SUCCESSFUL emit for the wrong machine. That is
-// how the retired `arm64` spelling survived this rename in one test — the arm64
-// case was handed x86-64 text, and the failure surfaced two layers later as
-// "unknown mnemonic `movq'" from the aarch64 assembler, which reads as a
-// codegen bug rather than a typo.
-//
-// Both halves are asserted. The permissive one is the one that matters: the
-// current spelling must still emit, or this gate would refuse every real call.
 func TestSelfHostRunDriverRefusesUnknownTarget(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -31,16 +18,13 @@ func TestSelfHostRunDriverRefusesUnknownTarget(t *testing.T) {
 	const src = "function main(): i32 { return 7; }\n"
 
 	for _, c := range []struct {
-		name   string
-		target string
-		// wantExit 0 means "emits"; 2 is the refusal.
+		name     string
+		target   string
 		wantExit int
 	}{
 		{"retired-bare-isa", "arm64", 2},
 		{"retired-form-suffix", "arm64-asm", 2},
 		{"never-a-target", "vax-11", 2},
-		// A target this driver has no branch for is refused rather than
-		// silently emitted as x86-64: wasm is a different emitter entirely.
 		{"other-backend", "wasm32-wasi", 2},
 		{"current-arm64", "arm64-linux", 0},
 		{"current-x86-64", "x86-64-linux", 0},
@@ -63,8 +47,6 @@ func TestSelfHostRunDriverRefusesUnknownTarget(t *testing.T) {
 				if !strings.Contains(stderr.String(), "unknown -target: "+c.target) {
 					t.Errorf("-target %s: stderr = %q, want it to name the rejected target", c.target, stderr.String())
 				}
-				// The refusal must not also emit: a caller that ignores the
-				// exit code would otherwise assemble the wrong machine's text.
 				if strings.Contains(stdout.String(), ".globl") {
 					t.Errorf("-target %s: refused but still emitted %d bytes of assembly", c.target, stdout.Len())
 				}

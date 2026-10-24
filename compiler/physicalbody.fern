@@ -1,5 +1,3 @@
-// Physical bodies and the selected metadata from the same lowering invocation.
-// This carrier is not an ownership certificate or a final-emission collection.
 import "./irtables";
 import "./ssasem";
 import "./semrecords";
@@ -7,22 +5,16 @@ import "./typeinfo";
 import "./rccertify";
 import "./semscalarreturn";
 
-// Selected facts from one producer, without retaining its input body graphs.
 pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
 
-// The selected symbol may differ from a method body's bare name.
-// An origin identifies metadata; it does not approve the body's effects.
 pub struct Helper { ty: typeinfo.Type, children_only: boolean }
 
 pub struct Origin { producer: i32, symbol: string, helper: Option[Helper] }
 
 pub struct Origins { producers: Metadata[], declarations: Origin[], extra: Origin[] }
 
-// Rows follow an actual emit cache. A negative producer means no metadata
-// was supplied; it must never resolve to a producer or approve a body.
 pub struct Collection { producers: Metadata[], rows: Origin[] }
 
-// One row selected in the same branch as the body that will be emitted.
 pub struct Selected { producers: Metadata[], origin: Origin }
 
 pub function select(collection: Collection, i: i32): Selected {
@@ -66,11 +58,7 @@ pub function select_origins(rows: Origin[], indices: i32[]): Origin[] {
 
 pub struct Lowered {
   bodies: irtables.LowerResult[],
-  // Selected declaration symbols in body order; helpers follow this prefix.
-  // Method bodies retain their bare names; these symbols include the receiver.
   declarations: string[],
-  // Same body positions after helper selection, including the declaration
-  // prefix. None means construction supplied no nominal helper provenance.
   helper_types: Option[Helper][],
   contracts: ssasem.Contract[],
   records: semrecords.Records,
@@ -98,9 +86,6 @@ pub function lowered_origins(lowered: Lowered, producer: i32): Origin[] {
   return out;
 }
 
-// abis is every producer's contracts as the certifier reads them: one mode
-// per parameter and whether the caller owns the result, which it does for
-// every reference a function returns.
 pub function abis(c: Collection): rccertify.Abis {
   let names: string[] = [];
   let modes: i32[][] = [];
@@ -121,8 +106,6 @@ pub function abis(c: Collection): rccertify.Abis {
   return rccertify.abis_of(names, modes, results, firsts, seconds, words);
 }
 
-// The two words of a paired return (sempair): a pair's first element, or
-// a variant's position, which holds nothing.
 function pair_first(t: typeinfo.Type): boolean {
   if let typeinfo.TypeTuple(tup) = t {
     return tup.elements.len() == 2 && ssasem.reference(tup.elements[0]);
@@ -130,10 +113,6 @@ function pair_first(t: typeinfo.Type): boolean {
   return false;
 }
 
-// Whether the second word carries a unit (rccertify.Abi.pair_second): -1
-// for a pair's reference second element, the set of variant tags whose one
-// payload is a reference as bits, 0 for none, -2 where the type is not one
-// the table describes.
 function pair_second(enums: semrecords.Enum[], t: typeinfo.Type): i32 {
   if (ssasem.is_wide(t)) {
     return 0;

@@ -12,9 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternF32CustomProvider: an f32 crosses an `@import` at its canonical
-// width, as a scalar and as a list element, where the self-host holds it as an
-// f64 (#11030).
 func TestExternF32CustomProvider(t *testing.T) {
 	cases := []struct {
 		name, iface, core, src string
@@ -80,10 +77,6 @@ function main(): i32 {
 	}
 }
 
-// runExternWithProvider builds a provider component exporting
-// local:test/src@0.1.0 (its core written as WAT), composes the program's
-// self-host core against a world importing that interface and wasi stdout,
-// links the two and returns what the program printed under wasmtime.
 func runExternWithProvider(t *testing.T, iface, provCoreWat, src string) []byte {
 	t.Helper()
 	wasmtime, err := exec.LookPath("wasmtime")

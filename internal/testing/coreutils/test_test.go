@@ -9,35 +9,12 @@ import (
 	"time"
 )
 
-// TestTestParity holds coreutils/test.fern to GNU test, and
-// TestBracketParity holds coreutils/[.fern to GNU [. The two share
-// `condCases`, the expression corpus, because the two utilities share
-// their evaluator: `[` is `test` with a closing `]` and with `--help` /
-// `--version` honoured as the sole argument.
-//
-// The corpus follows the grammar: the argument-count table POSIX fixes
-// for one to four arguments and GNU's general parser beyond it, then
-// each operator family — strings, integers (compared as digit strings of
-// any length), the file predicates over a tree the test builds, the
-// file-pair operators, `-t`, and `-l STRING`. Diagnostics quote the
-// offending token, so operands with bytes worth escaping appear on the
-// error paths.
-
-// condTree is the fixture tree the file predicates are asked about. Every
-// kind of file `test` can distinguish is here, so each predicate has a
-// path on which it is true and paths on which it is false.
 type condTree struct {
 	dir, file, empty, subdir, fifo, sock, link, dirlink, dangling string
 	setuid, setgid, sticky, stickydir, exec, noperm, hardlink     string
 	older, newer, sameA, sameB, unread, read, blk, missing        string
 }
 
-// condFixtures builds the tree under t.TempDir().
-//
-// The timestamps are pinned rather than left to the clock: `-nt` / `-ot`
-// compare to the nanosecond, so `sameA` / `sameB` share a second and
-// differ below it, and `unread` is a file whose mtime is past its atime
-// (what `-N` asks) while `read` is the other way round.
 func condFixtures(t *testing.T) condTree {
 	t.Helper()
 	dir := t.TempDir()
@@ -47,7 +24,6 @@ func condFixtures(t *testing.T) condTree {
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
-		// WriteFile applies the umask; Chmod sets every bit asked for.
 		if err := os.Chmod(p, mode); err != nil {
 			t.Fatalf("chmod %s: %v", name, err)
 		}
@@ -120,13 +96,9 @@ func condFixtures(t *testing.T) condTree {
 	return c
 }
 
-// blockDevice returns a block special file for `-b`: one made in `dir`
-// when the process may mknod, else any the system already has. Not
-// having one at all is a missing fixture, not a reason to skip.
 func blockDevice(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, "blk")
-	// Loop device 0 — the major is Linux's; the node only has to exist.
 	if err := syscall.Mknod(p, syscall.S_IFBLK|0o600, 7<<8); err == nil {
 		return p
 	}
@@ -140,13 +112,10 @@ func blockDevice(t *testing.T, dir string) string {
 	return ""
 }
 
-// condCases is the expression corpus both utilities run. `[` appends
-// its `]` in bracketCases.
 func condCases(t *testing.T) []invocation {
 	t.Helper()
 	f := condFixtures(t)
 	return []invocation{
-		// Zero to four arguments: the count picks the reading.
 		{name: "no arguments"},
 		{name: "one string", args: []string{"x"}},
 		{name: "one empty string", args: []string{""}},
@@ -254,8 +223,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "string then less than then string", args: []string{"x", "<", "y"}},
 		{name: "string then greater than then string", args: []string{"x", ">", "y"}},
 
-		// < and > compare in collating order (9.6), which in the C
-		// locale is byte order with a shorter prefix first.
 		{name: "less than the other way", args: []string{"y", "<", "x"}},
 		{name: "greater than the other way", args: []string{"y", ">", "x"}},
 		{name: "less than equal strings", args: []string{"x", "<", "x"}},
@@ -360,7 +327,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "extra empty argument", args: []string{"1", "-eq", "1", ""}},
 		{name: "extra quoted argument", args: []string{"1", "-eq", "1", "it's"}},
 
-		// Strings.
 		{name: "equal strings", args: []string{"x", "=", "x"}},
 		{name: "unequal strings", args: []string{"x", "=", "y"}},
 		{name: "double equals", args: []string{"x", "==", "x"}},
@@ -392,7 +358,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "help equals help", args: []string{"--help", "=", "--help"}},
 		{name: "help not equal version", args: []string{"--help", "!=", "--version"}},
 
-		// Integers: any length, a sign, blanks either side.
 		{name: "eq", args: []string{"1", "-eq", "1"}},
 		{name: "eq unequal", args: []string{"1", "-eq", "2"}},
 		{name: "ne", args: []string{"1", "-ne", "2"}},
@@ -482,7 +447,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "invalid integer under and", args: []string{"x", "-a", "1", "-eq", "a"}},
 		{name: "invalid integer under bang", args: []string{"!", "1", "-eq", "a"}},
 
-		// -l STRING as an integer operand.
 		{name: "length eq", args: []string{"-l", "abc", "-eq", "3"}},
 		{name: "length eq wrong", args: []string{"-l", "abc", "-eq", "4"}},
 		{name: "length ne", args: []string{"-l", "abc", "-ne", "4"}},
@@ -516,7 +480,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "ef length", args: []string{"a", "-ef", "-l", "b"}},
 		{name: "length of a bad token", args: []string{"-l", "a", "b", "c"}},
 
-		// -t FD: pipes on 0-2, a terminal on 3 when the case asks.
 		{name: "t zero", args: []string{"-t", "0"}},
 		{name: "t one", args: []string{"-t", "1"}},
 		{name: "t two", args: []string{"-t", "2"}},
@@ -529,9 +492,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "t three and t zero", args: []string{"-t", "3", "-a", "-t", "0"}, tty: true},
 		{name: "t three or t zero", args: []string{"-t", "3", "-o", "-t", "0"}, tty: true},
 		{name: "t one with a terminal on three", args: []string{"-t", "1"}, tty: true},
-		// A terminal on each of 0, 1 and 2, which is what the pty fields
-		// are for: `-t` is the only predicate whose answer a pipe fixes,
-		// and every case above it answers no by construction.
 		{name: "t zero is a terminal", args: []string{"-t", "0"}, ttyIn: true},
 		{name: "t one is a terminal", args: []string{"-t", "1"}, ttyOut: true},
 		{name: "t two is a terminal", args: []string{"-t", "2"}, ttyErr: true},
@@ -562,7 +522,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "t zero padded one", args: []string{"-t", "00000000000000000000000000000000000001"}},
 		{name: "t zero or string", args: []string{"-t", "0", "-o", "x"}},
 
-		// File predicates over the fixture tree.
 		{name: "e file", args: []string{"-e", f.file}},
 		{name: "e missing", args: []string{"-e", f.missing}},
 		{name: "e empty path", args: []string{"-e", ""}},
@@ -721,7 +680,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "predicate and comparison", args: []string{"-e", f.file, "-a", "1", "-eq", "1"}},
 		{name: "predicate with nothing after", args: []string{"x", "-a", "-e"}},
 
-		// File pairs.
 		{name: "nt newer older", args: []string{f.newer, "-nt", f.older}},
 		{name: "nt older newer", args: []string{f.older, "-nt", f.newer}},
 		{name: "nt same file", args: []string{f.older, "-nt", f.older}},
@@ -763,8 +721,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "pair under bang", args: []string{"!", f.newer, "-nt", f.older}},
 		{name: "pair anded", args: []string{f.newer, "-nt", f.older, "-a", f.file, "-ef", f.hardlink}},
 
-		// --help and --version are strings to test(1), whatever their
-		// position; only `[` without a `]` honours them.
 		{name: "help alone is a string", args: []string{"--help"}},
 		{name: "version alone is a string", args: []string{"--version"}},
 		{name: "abbreviated help is a string", args: []string{"--hel"}},
@@ -781,7 +737,6 @@ func condCases(t *testing.T) []invocation {
 		{name: "help under posix", args: []string{"--help"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "expression under posix", args: []string{"x", "-a", "-o", "y"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Nothing is written to stdout, so a closed one changes nothing.
 		{name: "true with stdout closed", args: []string{"x"}, stdout: stdoutClosed},
 		{name: "false with stdout closed", args: []string{""}, stdout: stdoutClosed},
 		{name: "error with stdout closed", args: []string{"x", "y"}, stdout: stdoutClosed},
@@ -793,8 +748,6 @@ func init() {
 	registerCorpus("test", testCases)
 }
 
-// testCases is test(1)'s corpus: the shared one, with the cases that
-// distinguish it from `[` — `test` reads `]` as a string.
 func testCases(t *testing.T) []invocation {
 	t.Helper()
 	return append(condCases(t),

@@ -1,81 +1,13 @@
-// std/tz — the local time zone as glibc's tzset finds it: a TZif file
-// (RFC 8536) or a POSIX TZ rule, answering the UTC offset and the
-// abbreviation in force at an instant. `std/time` models a zone as a
-// fixed offset; this is the function from instant to that offset, and
-// `at` is the bridge between the two.
-//
-// `who` and `pinky` both render a login time as local wall-clock, which
-// is localtime(3), which is tzset(3) plus a lookup. tzset has two
-// sources and this module is both:
-//
-//   1. The TZ environment variable. An empty value is UTC. Otherwise a
-//      leading `:` is dropped and what is left is tried as a FILE first
-//      — absolute as it stands, relative under $TZDIR (default
-//      /usr/share/zoneinfo) — and only if no file is there is it parsed
-//      as a POSIX rule string. That order is why `TZ=EST5EDT` reads the
-//      zoneinfo file of that name rather than the rule it also spells,
-//      and the two differ before 2007, where the file has the old US
-//      dates and the rule does not.
-//   2. TZ unset: /etc/localtime, the same file format.
-//
-// Anything that fails to parse is UTC, which is what a C program gets
-// when tzset finds nothing it understands.
-//
-// That is glibc. Darwin's tzset is tzcode's, and `zone_from_tz` follows
-// it there; the section at the end of this file says where it differs.
-//
-// `iana_zone` is the one way in that reads no host file: it looks a name
-// up in the IANA table generated into the end of this file.
-//
-// Where this parts from glibc, and why (docs/COREUTILS.md): a TZ string
-// that names a daylight zone but no usable pair of dates — `ABC1DEF`,
-// or `EST5EDT,J0,J300` where the dates are out of range — leaves the
-// dates to the implementation. glibc reads them from
-// /usr/share/zoneinfo/posixrules, a copy of America/New_York that
-// upstream tzdata stopped shipping in 2020 and Debian still carries;
-// this applies the POSIX default dates, which is what glibc itself
-// falls back to where that file is absent.
-//
-// The file is TZif (RFC 8536): a header, a table of transition times
-// with the offset in effect after each, and — from version 2 on — the
-// whole table again with 64-bit times, then a POSIX rule string in a
-// footer that governs every time past the last transition. A zone file
-// ends its table around 2037, so the footer is what answers a question
-// about 2040 and it is not an edge case.
-//
-// What is read off it is the UTC offset and the ABBREVIATION (`EST`,
-// `+0545`) in force at an instant — `pr -D %Z` and `date` both print
-// the latter. The leap-second table and the standard/UT indicators are
-// parsed past.
+// This module resolves local time zones from TZif files and POSIX rules.
 import "std/string";
 import "std/array";
 import "std/time";
 import "std/utf8";
 
-// ---- the zone ---------------------------------------------------------------
-// `Zone` — a transition table plus the rule that takes over past its
-// end. `first` / `first_abbr` / `first_dst` are what stands before the
-// first transition; `times`, `offs`, `abbrs` and `dsts` are the same
-// length, entry `i` being in effect from `times[i]` until
-// `times[i + 1]`.
 pub struct Zone { times: i64[], offs: i32[], abbrs: string[], dsts: boolean[], first: i32, first_abbr: string, first_dst: boolean, rule: Rule }
 
-// `Rule` — a POSIX TZ string: the standard offset, and when DST is
-// observed, the DST offset and the two dates that switch between them.
-// Offsets are SECONDS EAST of Greenwich, the sign localtime adds — the
-// opposite of the sign the TZ string writes, where `EST5` means five
-// hours WEST.
 pub struct Rule { valid: boolean, has_dst: boolean, std_off: i32, dst_off: i32, std_name: string, dst_name: string, start: DateRule, end: DateRule }
 
-// `DateRule` — one of POSIX's three ways to name a day of the year,
-// plus the local time of day the change happens at:
-//
-//   kind 0  `Mm.w.d`  the `d`th weekday of week `w` of month `m`,
-//                     with week 5 meaning the last such weekday
-//   kind 1  `Jn`      day n of the year counting from 1 with February
-//                     29 never counted, so a date keeps its number in
-//                     a leap year
-//   kind 2  `n`       day n counting from 0 WITH February 29 counted
 pub struct DateRule { kind: i32, mon: i32, week: i32, day: i32, n: i32, time: i32 }
 
 pub function utc_rule(): Rule {
@@ -83,8 +15,6 @@ pub function utc_rule(): Rule {
   return Rule { valid: false, has_dst: false, std_off: 0, dst_off: 0, std_name: "", dst_name: "", start: none, end: none };
 }
 
-// `fixed_zone(off, name)` — a zone with no transitions and no rule, so
-// every instant is the same offset under the same name.
 pub function fixed_zone(off: i32, name: string): Zone {
   let t: i64[] = [];
   let o: i32[] = [];
@@ -97,7 +27,6 @@ pub function utc_zone(): Zone {
   return fixed_zone(0, "UTC");
 }
 
-// `local_zone()` — tzset's answer for this process.
 pub function local_zone(): Zone {
   match (env("TZ")) {
     Some(spec) => {
@@ -109,16 +38,10 @@ pub function local_zone(): Zone {
   }
 }
 
-// `zone_from_tz(spec)` — the zone a TZ value names, by tzset's rules:
-// a file first, then a POSIX rule.
 pub function zone_from_tz(spec: string): Zone {
   if (target_os() == "darwin") {
     return darwin_zone_from_tz(spec);
   }
-  // glibc substitutes the NAME `Universal` for an empty TZ and then
-  // runs it through the same two steps, which is why `TZ=` prints
-  // that word as its abbreviation on a machine carrying no
-  // zoneinfo file of that name.
   let name: string = spec;
   if (name.len() == 0) {
     name = "Universal";
@@ -126,8 +49,6 @@ pub function zone_from_tz(spec: string): Zone {
   if (name[0] as i32 == 58) {
     name = slice_unchecked(name, 1, name.len()) + "";
   }
-  // `TZ=:` is the colon and nothing else, which names no file and
-  // leaves glibc on the default one.
   if (name.len() == 0) {
     return default_zone();
   }
@@ -139,16 +60,11 @@ pub function zone_from_tz(spec: string): Zone {
   }
   let r: Rule = parse_posix(name);
   if (!r.valid) {
-    // A TZ that is neither a file nor a rule leaves tzset with the
-    // UTC offset and NO abbreviation, which is what a fresh
-    // process then prints for it.
     return fixed_zone(0, "");
   }
   return rule_zone(r);
 }
 
-// The zone a process with no usable TZ gets: /etc/localtime, and UTC
-// where even that is not there.
 function default_zone(): Zone {
   match (read_zone_file("/etc/localtime")) {
     Some(z) => {
@@ -160,8 +76,6 @@ function default_zone(): Zone {
   }
 }
 
-// A zone that is nothing but a rule: no transitions, so every time is
-// answered by the rule.
 function rule_zone(r: Rule): Zone {
   let t: i64[] = [];
   let o: i32[] = [];
@@ -170,9 +84,6 @@ function rule_zone(r: Rule): Zone {
   return Zone { times: t, offs: o, abbrs: a, dsts: d, first: r.std_off, first_abbr: r.std_name, first_dst: false, rule: r };
 }
 
-// Where a TZ value names a file. An absolute name is itself; a relative
-// one hangs under $TZDIR, which glibc reads and defaults to the compiled
-// -in zoneinfo directory.
 function zone_path(name: string): string {
   if (name.len() == 0) {
     return "";
@@ -192,9 +103,6 @@ function zone_path(name: string): string {
   return dir + "/" + name;
 }
 
-// `(z: Zone) offset_at(sec)` — seconds east of Greenwich at that
-// instant. Before the first transition the zone's opening offset
-// stands; past the last one the footer rule does, when there is one.
 pub function (z: Zone) offset_at(sec: i64): i32 {
   let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
@@ -209,9 +117,6 @@ pub function (z: Zone) offset_at(sec: i64): i32 {
   return z.offs[i];
 }
 
-// `(z: Zone) is_dst_at(sec)` — localtime's tm_isdst at that instant:
-// the table entry's own flag, or which side of the footer rule it
-// falls on.
 pub function (z: Zone) is_dst_at(sec: i64): boolean {
   let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
@@ -223,18 +128,12 @@ pub function (z: Zone) is_dst_at(sec: i64): boolean {
   return z.dsts[i];
 }
 
-// `(z: Zone) is_fixed()` — one offset for all time: no transition and
-// no daylight rule.
 pub function (z: Zone) is_fixed(): boolean {
   return z.times.len() == 0 && !(z.rule.valid && z.rule.has_dst);
 }
 
-// `Entry` — everything a zone says about one instant: the offset, the
-// designation and the DST flag, from one lookup.
 pub struct Entry { off: i32, abbrev: string, dst: boolean }
 
-// `(z: Zone) entry_at(sec)` — the offset, designation and DST flag at
-// that instant, from a single search of the table.
 pub function (z: Zone) entry_at(sec: i64): Entry {
   let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
@@ -249,12 +148,6 @@ pub function (z: Zone) entry_at(sec: i64): Entry {
   return Entry { off: z.offs[i], abbrev: z.abbrs[i], dst: z.dsts[i] };
 }
 
-// `(z: Zone) abbrev_at(sec)` — the zone designation in force at that
-// instant: the table's own string, or the name the footer rule gives
-// the side of the year `sec` falls on.
-// `at(sec)` — the fixed offset in force at `sec` as the `TimeZone` every
-// `std/time` operation takes, named by the abbreviation in force then. A
-// zone is a function from instant to offset; this is one evaluation of it.
 pub function (z: Zone) at(sec: i64): TimeZone {
   let e: Entry = z.entry_at(sec);
   return TimeZone { name: e.abbrev, offset_seconds: e.off };
@@ -274,9 +167,6 @@ pub function (z: Zone) abbrev_at(sec: i64): string {
   return z.abbrs[i];
 }
 
-// Which entry of the table answers `sec`: its index, `-1` for the state
-// before the first transition, or `-2` when the footer rule has taken
-// over past the last one.
 function (z: Zone) index_at(sec: i64): i32 {
   let n: i32 = z.times.len();
   if (n == 0) {
@@ -304,20 +194,6 @@ function (z: Zone) index_at(sec: i64): i32 {
   return lo;
 }
 
-// ---- the embedded IANA table ------------------------------------------------
-// `iana_zone(name)`: the zone an IANA name (`Europe/London`, `Etc/GMT+5`,
-// an alias such as `US/Pacific`) denotes in the tzdata release compiled
-// into this module, `iana_version()`. No file is read, so it answers the
-// same on every target, wasm included. None for a name the release does
-// not have.
-//
-// The table starts at 1970: an instant before the epoch reads the offset
-// in force at the epoch, not its historical one. Past a zone's last
-// transition its POSIX rule governs, so a far-future date follows the
-// zone's current daylight-saving rules.
-//
-// This is not tzset: `local_zone` and `zone_from_tz` still read the
-// host's zoneinfo, as a C program's localtime does.
 pub function iana_zone(name: string): Option[Zone] {
   if (name.len() == 0 || has_table_separator(name)) {
     return None;
@@ -330,7 +206,6 @@ pub function iana_zone(name: string): Option[Zone] {
   return Some(decode_record(iana_records(), off.0));
 }
 
-// A name holding `;` or `=` could match across two entries of the index.
 function has_table_separator(name: string): boolean {
   let i: i32 = 0;
   while (i < name.len()) {
@@ -343,8 +218,6 @@ function has_table_separator(name: string): boolean {
   return false;
 }
 
-// The record at `at`: `footer|types|transitions;`, laid out as
-// internal/tables/tzdata documents.
 function decode_record(s: string, at: i32): Zone {
   let p: i32 = at;
   while (s[p] as i32 != 124) {
@@ -375,11 +248,8 @@ function decode_record(s: string, at: i32): Zone {
   return Zone { times: times, offs: offs, abbrs: abbrs, dsts: dsts, first: ty.offs[0], first_abbr: ty.abbrs[0], first_dst: ty.dsts[0], rule: rule };
 }
 
-// A record's local time types; the first is in force from the epoch to
-// the first transition. `next` is where the transitions start.
 struct TypeTable { offs: i32[], abbrs: string[], dsts: boolean[], next: i32 }
 
-// `abbr:off:dst` entries separated by `,`, ended by `|`.
 function decode_types(s: string, from: i32): TypeTable {
   let offs: i32[] = [];
   let abbrs: string[] = [];
@@ -410,7 +280,6 @@ function decode_types(s: string, from: i32): TypeTable {
   return TypeTable { offs: offs, abbrs: abbrs, dsts: dsts, next: p + 1 };
 }
 
-// The decimal digits at `p`, as (value, next).
 function table_uint(s: string, p: i32): (i32, i32) {
   let i: i32 = p;
   let v: i32 = 0;
@@ -421,8 +290,6 @@ function table_uint(s: string, p: i32): (i32, i32) {
   return (v, i);
 }
 
-// The varint at `p`: five bits per digit, least significant first, 32
-// added to every digit but the last. Answers (value, next).
 function table_varint(s: string, p: i32): (i64, i32) {
   let v: i64 = 0;
   let shift: i64 = 1;
@@ -437,7 +304,6 @@ function table_varint(s: string, p: i32): (i64, i32) {
   return (v, i);
 }
 
-// One digit of `0-9A-Za-z+-`.
 function table_digit(c: i32): i32 {
   if (c <= 57) {
     if (c == 43) {
@@ -454,7 +320,6 @@ function table_digit(c: i32): i32 {
   return c - 61;
 }
 
-// ---- TZif -------------------------------------------------------------------
 function be32(bs: [u8], o: i32): i64 {
   let v: i64 = 0;
   let i: i32 = 0;
@@ -483,8 +348,6 @@ function be64s(bs: [u8], o: i32): i64 {
   return v;
 }
 
-// The six counts of a TZif header, in file order. `-1` in any of them
-// says the header is not there at all.
 struct Counts { isut: i32, isstd: i32, leap: i32, time: i32, type_: i32, chars: i32 }
 
 function read_counts(bs: [u8], off: i32): Counts {
@@ -495,9 +358,6 @@ function read_counts(bs: [u8], off: i32): Counts {
   if (bs[off] as i32 != 84 || bs[off + 1] as i32 != 90 || bs[off + 2] as i32 != 105 || bs[off + 3] as i32 != 102) {
     return bad;
   }
-  // A count with its high bit set is not a count. Reading them through
-  // i64 and refusing the negatives keeps the arithmetic below in range
-  // rather than wrapping into an offset that passes a length check.
   let c: Counts = Counts { isut: clamp(be32(bs, off + 20)), isstd: clamp(be32(bs, off + 24)), leap: clamp(be32(bs, off + 28)), time: clamp(be32(bs, off + 32)), type_: clamp(be32(bs, off + 36)), chars: clamp(be32(bs, off + 40)) };
   if (c.isut < 0 || c.isstd < 0 || c.leap < 0 || c.time < 0 || c.type_ < 0 || c.chars < 0) {
     return bad;
@@ -505,7 +365,6 @@ function read_counts(bs: [u8], off: i32): Counts {
   return c;
 }
 
-// A header count, or -1 for one no file can mean.
 function clamp(v: i64): i32 {
   if (v > 1073741823 as i64) {
     return 0 - 1;
@@ -513,17 +372,10 @@ function clamp(v: i64): i32 {
   return v as i32;
 }
 
-// The byte length of a data block whose transition times are `width`
-// bytes and whose leap records are `width + 4`. Counted in 64 bits: a
-// file whose header claims a billion transitions would overflow the
-// length this is checked against, and the check is what keeps every
-// read below inside the buffer.
 function block_bytes(c: Counts, width: i32): i64 {
   return c.time as i64 * (width as i64) + c.time as i64 + c.type_ as i64 * (6 as i64) + c.chars as i64 + c.leap as i64 * ((width + 4) as i64) + c.isstd as i64 + c.isut as i64;
 }
 
-// `read_zone_file(path)` — the file at `path` as a Zone, or None when it
-// is missing, unreadable or not TZif.
 function read_zone_file(path: string): Option[Zone] {
   if (path.len() == 0) {
     return None;
@@ -538,8 +390,6 @@ function read_zone_file(path: string): Option[Zone] {
   }
 }
 
-// Binary TZif data is accepted only when every returned designation and
-// the POSIX footer are valid UTF-8. Invalid text makes the file unusable.
 pub function parse_tzif(bs: [u8]): Option[Zone] {
   let h1: Counts = read_counts(bs, 0);
   if (h1.isut < 0 || h1.type_ < 1) {
@@ -551,8 +401,6 @@ pub function parse_tzif(bs: [u8]): Option[Zone] {
   let c: Counts = h1;
   let footer: string = "";
   if (version != 0) {
-    // Version 2 and up repeat everything with 64-bit times; the second
-    // block is the authoritative one and the footer follows it.
     let first_block: i64 = off as i64 + block_bytes(h1, 4);
     if (first_block <= bs.len() as i64) {
       let second: i32 = first_block as i32;
@@ -581,11 +429,7 @@ pub function parse_tzif(bs: [u8]): Option[Zone] {
   return read_zone_block(bs, c, off, width, footer);
 }
 
-// The caller has checked the complete block's bounds and selected the
-// authoritative table width. Decode its types and transitions together.
 function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: string): Option[Zone] {
-  // The transition times, then the index into the type table that each
-  // one selects, then the types themselves.
   let idx_off: i32 = off + c.time * width;
   let type_off: i32 = idx_off + c.time;
   let chars_off: i32 = type_off + c.type_ * 6;
@@ -628,8 +472,6 @@ function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: stri
     tdst = tdst.append(isdst[k]);
     i = i + 1;
   }
-  // Before the first transition, localtime uses the first type that is
-  // not daylight saving, and type 0 when every type is.
   let first: i32 = offs[0];
   let first_name: string = names[0];
   i = 0;
@@ -645,8 +487,6 @@ function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: stri
   return Some(Zone { times: times, offs: tofs, abbrs: tabb, dsts: tdst, first: first, first_abbr: first_name, first_dst: false, rule: parse_posix(footer) });
 }
 
-// One entry of the designation table: the NUL-terminated string at
-// `at` bytes into the block of `len` that starts at `base`.
 function designation(bs: [u8], base: i32, len: i32, at: i32): Option[string] {
   if (at < 0 || at >= len) {
     return Some("");
@@ -661,9 +501,6 @@ function designation(bs: [u8], base: i32, len: i32, at: i32): Option[string] {
   return utf8.from_bytes(out);
 }
 
-// The footer of a version-2 file: a newline, the rule, a newline. An
-// empty rule (the two newlines with nothing between) means the file
-// says nothing about times past its table.
 function read_footer(bs: [u8], start: i32): Option[string] {
   if (start >= bs.len() || bs[start] as i32 != 10) {
     return Some("");
@@ -677,14 +514,6 @@ function read_footer(bs: [u8], start: i32): Option[string] {
   return utf8.from_bytes(out);
 }
 
-// ---- the POSIX TZ string ----------------------------------------------------
-// `parse_posix(s)` — `std offset[dst[offset][,start[/time],end[/time]]]`.
-// An unparsable string is `valid: false`, which every caller reads as
-// UTC.
-//
-// The two defaults are the ones that bite: a DST name with no offset of
-// its own means one hour ahead of standard time, and DST with no rules
-// at all means the United States dates, which is what glibc supplies.
 pub function parse_posix(s: string): Rule {
   let r: Rule = utc_rule();
   let std_name: (string, i32) = take_name(s, 0);
@@ -692,13 +521,9 @@ pub function parse_posix(s: string): Rule {
     return r;
   }
   let p: i32 = std_name.1;
-  // The offset POSIX demands is optional to glibc, which reads a bare
-  // name as that name at UTC — `TZ=Universal`, and `TZ=` with it.
   let std: (boolean, i32, i32) = parse_offset(s, p);
   let std_off: i32 = 0;
   if (std.0) {
-    // A TZ string writes the offset to ADD to local time to get UT, so
-    // `EST5` is five hours west and localtime subtracts five.
     std_off = 0 - std.1;
     p = std.2;
   }
@@ -717,9 +542,6 @@ pub function parse_posix(s: string): Rule {
     r = Rule { ...r, dst_off: 0 - d.1 };
     p = d.2;
   }
-  // A rule that does not parse is not fatal: the offsets stand and the
-  // dates fall back to the default, which is what a TZ string naming a
-  // daylight zone and no dates at all gets.
   let fallback: Rule = Rule { ...r, start: us_dst_start(), end: us_dst_end() };
   if (p >= s.len() || s[p] as i32 != 44) {
     return fallback;
@@ -735,9 +557,6 @@ pub function parse_posix(s: string): Rule {
   return Rule { ...r, start: a.1, end: b.1 };
 }
 
-// The POSIX default dates, which are the United States rule in force
-// since 2007: the second Sunday in March and the first in November,
-// both at 02:00 local.
 function us_dst_start(): DateRule {
   return DateRule { kind: 0, mon: 3, week: 2, day: 0, n: 0, time: 7200 };
 }
@@ -746,10 +565,6 @@ function us_dst_end(): DateRule {
   return DateRule { kind: 0, mon: 11, week: 1, day: 0, n: 0, time: 7200 };
 }
 
-// The zone designation at `p`: three or more letters, or three or more
-// of anything but `>` inside angle brackets. Answers the name and the
-// offset past it, or `p` itself when there is no name there — which is
-// how a two-character quoted name refuses the whole string.
 function take_name(s: string, p: i32): (string, i32) {
   if (p >= s.len()) {
     return ("", p);
@@ -782,10 +597,6 @@ function is_digit(c: i32): boolean {
   return c >= 48 && c <= 57;
 }
 
-// `[+-]hh[:mm[:ss]]` at `p`, as (ok, seconds, next). Every field is
-// CLAMPED rather than refused when it is out of range, which is what
-// glibc does: `TZ=AAA+25` is a 24-hour offset and `AAA+25:59:59` is
-// 24:59:59, neither of them the 25 hours written.
 function parse_offset(s: string, p: i32): (boolean, i32, i32) {
   let i: i32 = p;
   let neg: boolean = false;
@@ -836,8 +647,6 @@ function parse_offset(s: string, p: i32): (boolean, i32, i32) {
   return (true, total, i);
 }
 
-// `Mm.w.d`, `Jn` or `n`, each with an optional `/time` whose default is
-// 02:00:00 local.
 function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
   let bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
   let i: i32 = p;
@@ -886,10 +695,6 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
   return (true, out, i);
 }
 
-// The `/time` of a date rule: `[+-]hh[:mm[:ss]]` with hours from -167
-// to 167, so `M3.4.4/26` is 02:00 the day after (Jerusalem) and
-// `M3.5.0/-1` 23:00 the day before (Nuuk). Unlike an offset it is
-// not clamped to 24 hours.
 function parse_rule_time(s: string, p: i32): (boolean, i32, i32) {
   let i: i32 = p;
   let sign: i32 = 1;
@@ -931,23 +736,10 @@ function parse_uint(s: string, p: i32): (boolean, i32, i32) {
   return (true, v, i);
 }
 
-// ---- applying a rule --------------------------------------------------------
-// `rule_dst(r, sec)` — whether the rule has daylight time running at a
-// UTC instant, which is the one decision both the offset and the
-// abbreviation are read off.
-//
-// Which side of a change an instant falls on is decided in LOCAL time,
-// and the two ends use different offsets to get there: the spring date
-// is a standard-time wall clock and the autumn one a daylight-time wall
-// clock, because each names the clock that is running when the change
-// happens.
 function rule_dst(r: Rule, sec: i64): boolean {
   if (!r.has_dst) {
     return false;
   }
-  // The year the dates are computed for is the UTC one, not the local
-  // one, so an instant in the last hours of December is measured
-  // against the NEXT year's dates where the zone is west of Greenwich.
   let year: i32 = year_of(sec);
   let start: i64 = rule_instant(r.start, year) - r.std_off as i64;
   let end: i64 = rule_instant(r.end, year) - r.dst_off as i64;
@@ -955,20 +747,11 @@ function rule_dst(r: Rule, sec: i64): boolean {
   if (start <= end) {
     on = sec >= start && sec < end;
   } else {
-    // A southern-hemisphere zone, where daylight time spans the turn of
-    // the year and the window is everything OUTSIDE the two dates.
     on = sec >= start || sec < end;
   }
   return on;
 }
 
-// The local-time instant a rule names in `year`, as seconds since the
-// epoch with no offset applied.
-//
-// The day is counted forward from the first of January, and that base
-// does not go BACK past the epoch: a year at or before 1970 is measured
-// from 1970-01-01 as glibc measures it, so the dates a rule names in
-// 1969 are the dates it names in 1970.
 function rule_instant(d: DateRule, year: i32): i64 {
   let base: i32 = 0;
   if (year > 1970) {
@@ -978,8 +761,6 @@ function rule_instant(d: DateRule, year: i32): i64 {
   if (d.kind == 0) {
     doy = month_week_day(year, d.mon, d.week, d.day);
   } else if (d.kind == 1) {
-    // February 29 is not counted, so on or after March 1 of a leap year
-    // the calendar day is one later than the number.
     doy = d.n;
     if (doy >= 60 && time.is_leap_year(year)) {
       doy = doy + 1;
@@ -990,8 +771,6 @@ function rule_instant(d: DateRule, year: i32): i64 {
   return (base + doy - 1) as i64 * (86400 as i64) + d.time as i64;
 }
 
-// The day of the year of the `week`th `day`-of-the-week in `mon`, with
-// week 5 meaning the last one in the month.
 function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
   let first: i64 = days_from_civil(year as i64, mon, 1);
   let wd: i32 = floor_mod(first + 4 as i64, 7 as i64) as i32;
@@ -1011,26 +790,17 @@ function year_of(local_sec: i64): i32 {
   return civil_from_days(floor_div(local_sec, 86400 as i64)).0 as i32;
 }
 
-// ---- what a caller prints ---------------------------------------------------
-// `(z: Zone) civil(sec)` — the broken-down local time, which is
-// localtime(3) with the fields nobody here prints left out.
 pub function (z: Zone) civil(sec: i64): DateTime {
   let off: i32 = z.offset_at(sec);
   return time.instant_from_unix(sec).in_zone(time.timezone_fixed_offset(off)).to_datetime();
 }
 
-// `Civil` — localtime(3)'s fields with the year kept in 64 bits, so a
-// timestamp the calendar has a year for is never narrowed on the way
-// to being printed or parsed.
 pub struct Civil { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32 }
 
-// `(z: Zone) local_fields(sec)` — the broken-down local time at `sec`.
 pub function (z: Zone) local_fields(sec: i64): Civil {
   return civil_at(sec + z.offset_at(sec) as i64);
 }
 
-// `civil_at(local)` — the fields of a local-seconds count, which is a
-// UTC instant when the offset is zero.
 pub function civil_at(local: i64): Civil {
   let days: i64 = floor_div(local, 86400 as i64);
   let rem: i32 = (local - days * (86400 as i64)) as i32;
@@ -1052,10 +822,6 @@ pub function floor_mod(a: i64, b: i64): i64 {
   return a - floor_div(a, b) * b;
 }
 
-// `days_from_civil(y, m, d)` — days since 1970-01-01 of a proleptic
-// Gregorian date, Hinnant's algorithm in 64 bits. The month must be
-// 1..12; the day may be anything, which is how a caller normalises
-// `mday` the way mktime does.
 pub function days_from_civil(y: i64, m: i32, d: i32): i64 {
   let yy: i64 = y;
   if (m <= 2) {
@@ -1072,7 +838,6 @@ pub function days_from_civil(y: i64, m: i32, d: i32): i64 {
   return era * (146097 as i64) + doe - 719468 as i64;
 }
 
-// `civil_from_days(z)` — the inverse: (year, month, day).
 pub function civil_from_days(z_in: i64): (i64, i32, i32) {
   let z: i64 = z_in + 719468 as i64;
   let era: i64 = floor_div(z, 146097 as i64);
@@ -1092,24 +857,6 @@ pub function civil_from_days(z_in: i64): (i64, i32, i32) {
   return (y, m, d);
 }
 
-// ---- Darwin's tzset ---------------------------------------------------------
-// Libc's stdtime/FreeBSD/localtime.c, which differs from glibc wherever a TZ
-// value is not a clean answer:
-//
-//   - The zone directory is compiled in; $TZDIR is never read.
-//   - A value that is neither a zone file nor a whole POSIX rule is UTC,
-//     named `UTC`: a bare name with no offset, an empty TZ, a bad date.
-//   - A name is any run up to a digit, `,`, `+` or `-`, or anything between
-//     `<` and `>`, of any length.
-//   - An hour may run to 167, and a field out of range refuses the rule
-//     rather than being clamped.
-//   - A rule is written out as two transitions a year from 1970 until the
-//     1200-entry table is full, which is through 2569, and no rule is kept
-//     past them. So it is standard time before the first, and after the
-//     last it stays in the state the last one set.
-//
-// A daylight zone with no dates takes them from the posixrules file there;
-// this applies the POSIX default dates instead, as it does for glibc.
 function darwin_zone_from_tz(spec: string): Zone {
   if (spec.len() == 0) {
     return utc_zone();
@@ -1130,8 +877,6 @@ function darwin_zone_from_tz(spec: string): Zone {
   return darwin_rule_zone(r);
 }
 
-// tzload's path: a leading `:` dropped, and a relative name under the
-// compiled-in zone directory.
 function darwin_zone_path(spec: string): string {
   let name: string = spec;
   if (name[0] as i32 == 58) {
@@ -1143,8 +888,6 @@ function darwin_zone_path(spec: string): string {
   return "/usr/share/zoneinfo/" + name;
 }
 
-// A rule as tzparse's table: TZ_MAX_TIMES transitions, two a year from
-// 1970.
 function darwin_rule_zone(r: Rule): Zone {
   if (!r.has_dst) {
     return rule_zone(r);
@@ -1173,8 +916,6 @@ function darwin_rule_zone(r: Rule): Zone {
   return Zone { times: times, offs: offs, abbrs: abbrs, dsts: dsts, first: r.std_off, first_abbr: r.std_name, first_dst: false, rule: utc_rule() };
 }
 
-// tzparse: `std offset [dst [offset] [,start,end]]`, where `;` may stand
-// for either comma and anything malformed refuses the whole string.
 function darwin_parse_posix(s: string): Rule {
   let bad: Rule = utc_rule();
   let std_name: (string, i32) = darwin_name(s, 0);
@@ -1193,8 +934,6 @@ function darwin_parse_posix(s: string): Rule {
   return darwin_parse_dst(s, std.2, r);
 }
 
-// What follows the standard offset: the daylight name, its own offset when
-// one is written, and the dates.
 function darwin_parse_dst(s: string, from: i32, std: Rule): Rule {
   let name: (boolean, string, i32) = darwin_dst_name(s, from);
   if (!name.0) {
@@ -1213,8 +952,6 @@ function darwin_parse_dst(s: string, from: i32, std: Rule): Rule {
   return darwin_rule_dates(r, s, p);
 }
 
-// The `,start,end` that ends a rule with DST at `p`, or the US rules when
-// the string ends there instead.
 function darwin_rule_dates(r: Rule, s: string, p: i32): Rule {
   if (p >= s.len()) {
     return Rule { ...r, start: us_dst_start(), end: us_dst_end() };
@@ -1225,7 +962,6 @@ function darwin_rule_dates(r: Rule, s: string, p: i32): Rule {
   return darwin_parse_dates(s, p + 1, r);
 }
 
-// `start,end`, which must end the string.
 function darwin_parse_dates(s: string, from: i32, r: Rule): Rule {
   let a: (boolean, DateRule, i32) = darwin_date_rule(s, from);
   if (!a.0 || a.2 >= s.len() || s[a.2] as i32 != 44) {
@@ -1242,8 +978,6 @@ function is_rule_comma(c: i32): boolean {
   return c == 44 || c == 59;
 }
 
-// The daylight name: getqzname's when it opens with `<`, which then needs its
-// `>`, and getzname's otherwise.
 function darwin_dst_name(s: string, p: i32): (boolean, string, i32) {
   if (s[p] as i32 != 60) {
     let n: (string, i32) = darwin_name(s, p);
@@ -1252,8 +986,6 @@ function darwin_dst_name(s: string, p: i32): (boolean, string, i32) {
   return darwin_quoted(s, p);
 }
 
-// getzname: the quoted form when a `>` follows the `<` anywhere, and
-// otherwise a run of anything but a digit, `,`, `+` or `-`.
 function darwin_name(s: string, p: i32): (string, i32) {
   let q: (boolean, string, i32) = darwin_quoted(s, p);
   if (q.0) {
@@ -1266,7 +998,6 @@ function darwin_name(s: string, p: i32): (string, i32) {
   return (slice_unchecked(s, p, j) + "", j);
 }
 
-// The first `>` at or after `p`, or the string's length.
 function darwin_close(s: string, p: i32): i32 {
   let k: i32 = p;
   while (k < s.len() && s[k] as i32 != 62) {
@@ -1279,7 +1010,6 @@ function ends_name(c: i32): boolean {
   return is_digit(c) || c == 44 || c == 43 || c == 45;
 }
 
-// `<...>` at `p`, as (found, the text between, the index past `>`).
 function darwin_quoted(s: string, p: i32): (boolean, string, i32) {
   if (p >= s.len() || s[p] as i32 != 60) {
     return (false, "", p);
@@ -1291,7 +1021,6 @@ function darwin_quoted(s: string, p: i32): (boolean, string, i32) {
   return (true, slice_unchecked(s, p + 1, k) + "", k + 1);
 }
 
-// getoffset: `[+-]` then getsecs, as (ok, seconds west, next).
 function darwin_offset(s: string, p: i32): (boolean, i32, i32) {
   let i: i32 = p;
   let neg: boolean = false;
@@ -1306,7 +1035,6 @@ function darwin_offset(s: string, p: i32): (boolean, i32, i32) {
   return (true, 0 - t.1, t.2);
 }
 
-// getsecs: `hh[:mm[:ss]]`, hours to 167, minutes to 59 and seconds to 60.
 function darwin_secs(s: string, p: i32): (boolean, i32, i32) {
   let h: (boolean, i32, i32) = darwin_num(s, p, 0, 167);
   if (!h.0) {
@@ -1333,7 +1061,6 @@ function darwin_secs(s: string, p: i32): (boolean, i32, i32) {
   return (true, total, i);
 }
 
-// getnum: one or more digits, refused as soon as the value passes `max`.
 function darwin_num(s: string, p: i32, min: i32, max: i32): (boolean, i32, i32) {
   if (p >= s.len() || !is_digit(s[p] as i32)) {
     return (false, 0, p);
@@ -1353,7 +1080,6 @@ function darwin_num(s: string, p: i32, min: i32, max: i32): (boolean, i32, i32) 
   return (true, v, i);
 }
 
-// The `m.w.d` after an `M`, at `p`.
 function darwin_month_rule(s: string, p: i32): (boolean, DateRule, i32) {
   let bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
   let m: (boolean, i32, i32) = darwin_num(s, p, 1, 12);
@@ -1371,8 +1097,6 @@ function darwin_month_rule(s: string, p: i32): (boolean, DateRule, i32) {
   return (true, DateRule { kind: 0, mon: m.1, week: w.1, day: d.1, n: 0, time: 7200 }, d.2);
 }
 
-// getrule: `Jn` (1-365), `n` (0-365) or `Mm.w.d`, then an optional
-// `/time` that cannot be negative.
 function darwin_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
   let day: (boolean, DateRule, i32) = darwin_rule_day(s, p);
   if (!day.0 || day.2 >= s.len() || s[day.2] as i32 != 47) {
@@ -1398,9 +1122,9 @@ function darwin_rule_day(s: string, p: i32): (boolean, DateRule, i32) {
 }
 
 // ---- BEGIN GENERATED tzdata (go run ./cmd/tzdatagen) ----
-// IANA tzdata 2026c, every zone and alias of the Go toolchain's
-// zoneinfo.zip, from 1970 on: 598 names, 324 distinct records. The
-// encoding is documented in internal/tables/tzdata. Do not edit by hand.
+// The table contains IANA tzdata 2026c from 1970 onward.
+// It has 598 zone names and 324 distinct records.
+// See internal/tables/tzdata for the binary format. Do not edit by hand.
 pub function iana_version(): string {
   return "2026c";
 }

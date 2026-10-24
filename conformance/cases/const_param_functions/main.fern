@@ -1,11 +1,11 @@
-// A const parameter (`const N: i32`) on a generic function. N is an i32 in
-// the body, and each call writes the integer its instance is made for: as
-// the only argument (`filled[4]`), before a type argument (`count[3,
-// string]`), or as a const parameter in scope (`filled[M]`). A lambda in
-// the body reads N as it reads any local. A binder of the same name shadows
-// N: a `let`, a lambda parameter, a loop variable and a match binding each
-// read their own value, and a `let N` initializer still reads the parameter.
-// A const argument can be written in any base and with `_` separators.
+
+
+
+
+
+
+
+
 import "std/i32";
 
 function filled[const N: i32](x: f64): f64[] {

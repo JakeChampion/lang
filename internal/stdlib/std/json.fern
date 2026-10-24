@@ -1,45 +1,14 @@
-// std/json — JSON encode / decode over the `JsonValue` enum,
-// which an importer names `json.JsonValue`.
-//
-// `json_encode(v)` walks the `JsonValue` tree and produces
-// canonical JSON text. `json_parse(s)` is the inverse —
-// recursive descent returning `Option[JsonValue]` (None on any
-// malformed input).
-//
-// Numbers are stored verbatim as `JNumber`'s string payload;
-// the responsibility for valid numeric formatting sits with
-// the caller. String escapes are decoded on parse (`\"`,
-// `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX` for BMP
-// code points). Surrogate pairs aren't combined yet.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/json";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
-
-// === JSON encoding ===
-//
-// `json_encode(v)` walks the `JsonValue` tree and produces
-// the canonical JSON text. Strings are escape-
-// encoded; arrays / objects recurse. Numbers emit their
-// payload string verbatim — the responsibility for valid
-// numeric formatting sits with the caller.
-
-// A large object's index hashes its keys as Map does.
+// This module encodes and decodes JSON values.
 import "core/map";
-// String / byte methods inside the encoder / parser bodies.
 import "std/string";
 import "std/i32";
-// Numeric `to_string` for the `impl Json for <int>` serialisers.
 import "std/i64";
 import "std/u32";
 import "std/u64";
-// Float `to_string` for the `impl Json for f32 / f64` serialisers.
 import "std/f64";
 import "std/error";
 import "core/cmp";
 
-// JsonValue is a JSON document. A number keeps its text, since JSON fixes no
-// precision; `s.parse_int()` / `s.parse_float()` read it.
 pub enum JsonValue {
   JNull,
   JBool(boolean),
@@ -49,20 +18,15 @@ pub enum JsonValue {
   JObject(JsonObject),
 }
 
-// JsonObject is a JSON object's members in document order, one per key. One
-// of more than JSON_LINEAR_MAX members also carries `index`, a power-of-two
-// open-addressed table of member position + 1 (0 is empty) by seeded key
-// hash, sized for half load; a smaller one is searched linearly.
 pub struct JsonObject { names: string[], items: JsonValue[], index: i32[] }
 
 const JSON_LINEAR_MAX: i32 = 8;
 
-// object is the empty JSON object.
 pub function object(): JsonObject {
   return JsonObject { names: [], items: [], index: [] };
 }
 
-// from builds an object from pairs. A repeated key retains its first position and last value.
+// A repeated key retains its first position and last value.
 pub function from(pairs: (string, JsonValue)[]): JsonObject {
   let keys: string[] = [];
   let values: JsonValue[] = [];
@@ -73,8 +37,6 @@ pub function from(pairs: (string, JsonValue)[]): JsonObject {
   return object_of(keys, values);
 }
 
-// object_of is the object of parallel `keys` and `values`. A repeated key keeps
-// its first position and takes its last value, as repeated `insert`s would.
 pub function object_of(keys: string[], values: JsonValue[]): JsonObject {
   let n: i32 = keys.len();
   if (n <= JSON_LINEAR_MAX) {
@@ -101,7 +63,6 @@ pub function object_of(keys: string[], values: JsonValue[]): JsonObject {
   return JsonObject { names: keys, items: values, index: index };
 }
 
-// __json_dedupe rebuilds an object whose keys repeat by inserting each member.
 function __json_dedupe(keys: string[], values: JsonValue[]): JsonObject {
   let o: JsonObject = object();
   let i: i32 = 0;
@@ -112,7 +73,6 @@ function __json_dedupe(keys: string[], values: JsonValue[]): JsonObject {
   return o;
 }
 
-// __json_linear_find is the position of `key` among `keys[0..n)`, or -1.
 function __json_linear_find(keys: string[], n: i32, key: string): i32 {
   let i: i32 = 0;
   while (i < n) {
@@ -124,8 +84,6 @@ function __json_linear_find(keys: string[], n: i32, key: string): i32 {
   return -1;
 }
 
-// __json_index_new is an empty index for `n` members: the least power of two
-// of at least 2n slots.
 function __json_index_new(n: i32): i32[] {
   let cap: i32 = 16;
   while (cap < 2 * n) {
@@ -138,8 +96,6 @@ function __json_index_new(n: i32): i32[] {
   return index;
 }
 
-// __json_index_slot is the slot of `index` that holds `key`, or the empty slot
-// it would take.
 function __json_index_slot(index: i32[], keys: string[], key: string, seed: i32): i32 {
   let mask: i32 = index.len() - 1;
   let h: i32 = __map_fnv_str_seeded(key, seed) & mask;
@@ -153,7 +109,6 @@ function __json_index_slot(index: i32[], keys: string[], key: string, seed: i32)
   return h;
 }
 
-// __json_index_of is `keys[0..n)` indexed.
 function __json_index_of(keys: string[], n: i32): i32[] {
   let index: i32[] = __json_index_new(n);
   let seed: i32 = __map_hash_seed();
@@ -165,7 +120,6 @@ function __json_index_of(keys: string[], n: i32): i32[] {
   return index;
 }
 
-// index_of is where `key` is among the object's members, or None.
 pub function (o: JsonObject) index_of(key: string): Option[i32] {
   let at: i32 = __json_member_at(o, key);
   if (at < 0) {
@@ -174,7 +128,6 @@ pub function (o: JsonObject) index_of(key: string): Option[i32] {
   return Some(at);
 }
 
-// __json_member_at is `index_of` with -1 for absent.
 function __json_member_at(o: JsonObject, key: string): i32 {
   if (o.index.len() == 0) {
     return __json_linear_find(o.names, o.names.len(), key);
@@ -210,8 +163,6 @@ pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue
   return o.items[at];
 }
 
-// insert is the object with `key` bound to `value`: in place of its value when
-// the key is present, as a new last member otherwise.
 pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
   let at: i32 = __json_member_at(o, key);
   if (at >= 0) {
@@ -231,8 +182,6 @@ pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObje
   return JsonObject { names: keys, items: values, index: index };
 }
 
-// remove is the object without `key`, the others keeping their order; the
-// receiver when the key is absent.
 pub function (o: JsonObject) remove(key: string): JsonObject {
   let at: i32 = __json_member_at(o, key);
   if (at < 0) {
@@ -251,15 +200,11 @@ pub function (o: JsonObject) remove(key: string): JsonObject {
   return object_of(keys, values);
 }
 
-// update is the object with `key` bound to `f` of its value, or of `init`
-// when the key is absent.
 pub function (own o: JsonObject) update(key: string, init: JsonValue, f: (JsonValue) => JsonValue): JsonObject {
   let v: JsonValue = f(o.get_or(key, init));
   return o.insert(key, v);
 }
 
-// merge is the object with every member of `other` inserted: on a key in
-// both, `other`'s value wins.
 pub function (own o: JsonObject) merge(other: JsonObject): JsonObject {
   let out: JsonObject = o;
   let i: i32 = 0;
@@ -270,7 +215,6 @@ pub function (own o: JsonObject) merge(other: JsonObject): JsonObject {
   return out;
 }
 
-// keys and values are the members' keys and values, in document order.
 pub function (o: JsonObject) keys(): string[] {
   return o.names;
 }
@@ -279,7 +223,6 @@ pub function (o: JsonObject) values(): JsonValue[] {
   return o.items;
 }
 
-// entries is every `(key, value)` member, in document order.
 pub function (o: JsonObject) entries(): (string, JsonValue)[] {
   let out: (string, JsonValue)[] = [];
   let i: i32 = 0;
@@ -290,7 +233,6 @@ pub function (o: JsonObject) entries(): (string, JsonValue)[] {
   return out;
 }
 
-// filter is the object of the members `pred(key, value)` accepts.
 pub function (o: JsonObject) filter(pred: (string, JsonValue) => boolean): JsonObject {
   let keys: string[] = [];
   let values: JsonValue[] = [];
@@ -305,7 +247,6 @@ pub function (o: JsonObject) filter(pred: (string, JsonValue) => boolean): JsonO
   return object_of(keys, values);
 }
 
-// fold is `f(f(f(init, k0, v0), k1, v1), …)` in document order.
 pub function (o: JsonObject) fold[A](init: A, f: (A, string, JsonValue) => A): A {
   let acc: A = init;
   let i: i32 = 0;
@@ -316,7 +257,6 @@ pub function (o: JsonObject) fold[A](init: A, f: (A, string, JsonValue) => A): A
   return acc;
 }
 
-// map_values is the object with every value replaced by `f(value)`.
 pub function (o: JsonObject) map_values(f: (JsonValue) => JsonValue): JsonObject {
   let values: JsonValue[] = [];
   let i: i32 = 0;
@@ -327,7 +267,6 @@ pub function (o: JsonObject) map_values(f: (JsonValue) => JsonValue): JsonObject
   return JsonObject { ...o, items: values };
 }
 
-// for_each calls `f(key, value)` on every member in document order.
 pub function (o: JsonObject) for_each(f: (string, JsonValue) => void): void {
   let i: i32 = 0;
   while (i < o.names.len()) {
@@ -337,14 +276,12 @@ pub function (o: JsonObject) for_each(f: (string, JsonValue) => void): void {
 }
 
 function __json_hex_lower(d: i32): i32 {
-  if (d < 10) {  // '0' + d
+  if (d < 10) {
     return d + 48;
   }
-  return d + 87;  // 'a' - 10 + d
+  return d + 87;
 }
 
-// JSON_ESCAPES marks the bytes json_escape rewrites: every C0 control, `"`
-// and `\`. A byte past its end is not in it.
 const JSON_ESCAPES: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -354,24 +291,12 @@ const JSON_ESCAPES: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
 ];
 
-// `json.json_escape(s)` — escape a raw string for embedding inside a
-// JSON string literal (the caller supplies the surrounding quotes).
-// Backslash and double-quote are backslash-escaped, newline / carriage-
-// return / tab take their short escapes (\n \r \t), and every other C0
-// control byte (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F) — forbidden bare in a
-// JSON string — is emitted as lowercase `\u00XX`. Everything else
-// passes through byte-for-byte (UTF-8 sequences are >= 0x80, so
-// multi-byte characters are untouched). This is the ONE shared JSON
-// string escaper: the `JsonValue` encoder, `@derive(json.Json)`'s
-// string leaf, and `std/log`'s JSON-lines mode all route through it
-// (#4388 item 4 — it was previously copy-pasted per consumer).
 pub function json_escape(s: string): string {
   let n: i32 = s.len();
   let i: i32 = __scan_set(s, 0, JSON_ESCAPES);
   if (i == n) {
     return s;
   }
-  // An exact-size buffer (#4379): each escaped byte widens to its escape.
   let total: i32 = n;
   while (i < n) {
     total = total + __json_escape_width(s[i] as i32) - 1;
@@ -396,8 +321,6 @@ pub function json_escape(s: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// The escape of a byte JSON_ESCAPES marks is two bytes for `"`, `\`, newline,
-// carriage return and tab, and a six-byte `\u00XX` for any other control.
 function __json_escape_width(b: i32): i32 {
   if (b == 34 || b == 92 || b == 10 || b == 13 || b == 9) {
     return 2;
@@ -405,7 +328,6 @@ function __json_escape_width(b: i32): i32 {
   return 6;
 }
 
-// __json_put_escape writes the escape of `b` into `buf` at `pos`.
 function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
   let out: u8[] = buf.with(pos, 92 as u8);
   if (b == 34 || b == 92) {
@@ -420,7 +342,6 @@ function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
   if (b == 9) {
     return out.with(pos + 1, 116 as u8);
   }
-  // \u00XX with lowercase hex.
   out = out.with(pos + 1, 117 as u8);
   out = out.with(pos + 2, 48 as u8);
   out = out.with(pos + 3, 48 as u8);
@@ -429,8 +350,6 @@ function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
 }
 
 pub function json_encode(v: JsonValue): string {
-  // One `buf` and `i` shared across the match arms: only one
-  // composite arm runs per call, so `buf` needs no reset.
   let buf: u8[] = [];
   let i: i32 = 0;
   match (v) {
@@ -450,17 +369,10 @@ pub function json_encode(v: JsonValue): string {
       return "\"" + json_escape(s) + "\"";
     },
     JArray(arr) => {
-      // Accumulate this level into a LOCAL u8[] (#4379) rather than
-      // `out = out + json_encode(arr[i])`, which recopied the whole
-      // encoded-so-far prefix on every element — O(level²) at each nesting
-      // level. Every append targets the local `buf`, so it grows in place
-      // (amortized O(1)); the child bytes are inlined (not routed through a
-      // helper, whose borrowed-param append would copy per call). Byte-for-
-      // byte identical output.
-      buf = buf.append(91 as u8);  // '['
+      buf = buf.append(91 as u8);
       let n: i32 = arr.len();
       while (i < n) {
-        if (i > 0) {  // ','
+        if (i > 0) {
           buf = buf.append(44 as u8);
         }
         let enc: string = json_encode(arr[i]);
@@ -472,19 +384,17 @@ pub function json_encode(v: JsonValue): string {
         }
         i = i + 1;
       }
-      buf = buf.append(93 as u8);  // ']'
+      buf = buf.append(93 as u8);
       return string_from_bytes_unchecked(buf);
     },
     JObject(o) => {
-      // Same local-u8[] accumulation as JArray (#4379): the old
-      // `out = out + …` recopied the growing object text on every member.
-      buf = buf.append(123 as u8);  // '{'
+      buf = buf.append(123 as u8);
       let mi: i32 = 0;
       while (mi < o.names.len()) {
-        if (mi > 0) {  // ','
+        if (mi > 0) {
           buf = buf.append(44 as u8);
         }
-        buf = buf.append(34 as u8);  // '"'
+        buf = buf.append(34 as u8);
         let ek: string = json_escape(o.names[mi]);
         let ekl: i32 = ek.len();
         let kk: i32 = 0;
@@ -492,8 +402,8 @@ pub function json_encode(v: JsonValue): string {
           buf = buf.append(ek[kk] as u8);
           kk = kk + 1;
         }
-        buf = buf.append(34 as u8);  // '"'
-        buf = buf.append(58 as u8);  // ':'
+        buf = buf.append(34 as u8);
+        buf = buf.append(58 as u8);
         let ev: string = json_encode(o.items[mi]);
         let evl: i32 = ev.len();
         let vk: i32 = 0;
@@ -503,23 +413,12 @@ pub function json_encode(v: JsonValue): string {
         }
         mi = mi + 1;
       }
-      buf = buf.append(125 as u8);  // '}'
+      buf = buf.append(125 as u8);
       return string_from_bytes_unchecked(buf);
     }
   }
 }
 
-// === JSON pretty-printing ===
-//
-// `json_encode_pretty(v, indent)` renders the same JSON as
-// `json_encode` but human-readable: each array element / object member
-// on its own line, nested `indent` spaces deeper per level. Empty
-// arrays / objects stay on one line (`[]` / `{}`). Scalars and string
-// escaping are identical to `json_encode`, so the two agree on every
-// value token — only whitespace differs. `indent` is spaces per level
-// (2 is the common default; 0 yields newlines with no indentation).
-
-// __json_spaces returns a string of `n` spaces.
 function __json_spaces(n: i32): string {
   let b: u8[] = [];
   let i: i32 = 0;
@@ -530,8 +429,6 @@ function __json_spaces(n: i32): string {
   return string_from_bytes_unchecked(b);
 }
 
-// __json_append_str appends `s`'s bytes onto `buf` (the same local-u8[]
-// accumulation json_encode uses to avoid O(n²) string concat).
 function __json_append_str(buf: u8[], s: string): u8[] {
   let i: i32 = 0;
   let out: u8[] = buf;
@@ -567,7 +464,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       let inner: string = __json_spaces((depth + 1) * indent);
       let close: string = __json_spaces(depth * indent);
       let buf: u8[] = [];
-      buf = buf.append(91 as u8);  // '['
+      buf = buf.append(91 as u8);
       buf = __json_append_str(buf, "\n");
       let i: i32 = 0;
       while (i < n) {
@@ -580,7 +477,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       }
       buf = __json_append_str(buf, "\n");
       buf = __json_append_str(buf, close);
-      buf = buf.append(93 as u8);  // ']'
+      buf = buf.append(93 as u8);
       return string_from_bytes_unchecked(buf);
     },
     JObject(o) => {
@@ -590,7 +487,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       let inner: string = __json_spaces((depth + 1) * indent);
       let close: string = __json_spaces(depth * indent);
       let buf: u8[] = [];
-      buf = buf.append(123 as u8);  // '{'
+      buf = buf.append(123 as u8);
       buf = __json_append_str(buf, "\n");
       let mi: i32 = 0;
       while (mi < o.names.len()) {
@@ -598,43 +495,25 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
           buf = __json_append_str(buf, ",\n");
         }
         buf = __json_append_str(buf, inner);
-        buf = buf.append(34 as u8);  // '"'
+        buf = buf.append(34 as u8);
         buf = __json_append_str(buf, json_escape(o.names[mi]));
-        buf = buf.append(34 as u8);  // '"'
+        buf = buf.append(34 as u8);
         buf = __json_append_str(buf, ": ");
         buf = __json_append_str(buf, __json_pretty(o.items[mi], indent, depth + 1));
         mi = mi + 1;
       }
       buf = __json_append_str(buf, "\n");
       buf = __json_append_str(buf, close);
-      buf = buf.append(125 as u8);  // '}'
+      buf = buf.append(125 as u8);
       return string_from_bytes_unchecked(buf);
     }
   }
 }
 
-// `json_encode_pretty(v, indent)` — indented, human-readable JSON.
 pub function json_encode_pretty(v: JsonValue, indent: i32): string {
   return __json_pretty(v, indent, 0);
 }
 
-// === JSON parsing ===
-//
-// `json_parse(s)` is the inverse of `json_encode`. Returns
-// `Option[JsonValue]`; `None` on any malformed input. Recursive descent
-// over `s`: each parser starts at the offset in a shared `Cell[i32]` and
-// leaves it just past what it consumed. A failure stores `-1 - offset`
-// there instead, so a negative cell is a failed parse, and the first
-// failure — the innermost, which describes the document — is never
-// overwritten. Numbers are stored verbatim as `JNumber`'s string payload.
-// String escapes are decoded (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`,
-// `\r`, `\t`, and `\uXXXX`, surrogate pairs combined).
-//
-// Nesting is bounded at 128 containers, serde_json's default limit, so a
-// hostile `[[[[…` body cannot recurse until the stack overflows.
-
-// JSON_NOT_WS marks every byte but the four JSON whitespace bytes, so a scan
-// over it finds the end of a whitespace run.
 const JSON_NOT_WS: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 0u8, 1u8, 1u8, 0u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -654,7 +533,6 @@ const JSON_NOT_WS: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
 ];
 
-// __json_ws is the first offset at or after `i` that is not JSON whitespace.
 function __json_ws(s: string, i: i32): i32 {
   if (i < s.len()) {
     let b: i32 = s[i] as i32;
@@ -665,7 +543,6 @@ function __json_ws(s: string, i: i32): i32 {
   return i;
 }
 
-// __json_byte is the byte at `i`, or 0 past the end.
 function __json_byte(s: string, i: i32): i32 {
   if (i >= s.len()) {
     return 0;
@@ -673,7 +550,6 @@ function __json_byte(s: string, i: i32): i32 {
   return s[i] as i32;
 }
 
-// __json_fail records a failure at `pos` unless one is already recorded.
 function __json_fail(at: Cell[i32], pos: i32): void {
   if (at.get() >= 0) {
     at.set(-1 - pos);
@@ -693,17 +569,12 @@ function __json_hex_value(c: i32): i32 {
   return -1;
 }
 
-// __json_number_end is the offset just past the number starting at `start`,
-// or -1 - offset of the first byte that breaks its grammar, and whether it is
-// an integer. Each digit run is one scan.
 function __json_number_end(s: string, start: i32): (i32, boolean) {
   let n: i32 = s.len();
   let i: i32 = start;
-  if (i < n && s[i] == 45) {  // '-'
+  if (i < n && s[i] == 45) {
     i = i + 1;
   }
-  // RFC 8259's `int` is `zero / digit1-9 *DIGIT`, so a leading zero may not
-  // be followed by another digit: `01` is two tokens, not a number.
   let intStart: i32 = i;
   i = __scan_set(s, i, JSON_NOT_DIGIT);
   if (i == intStart) {
@@ -713,7 +584,6 @@ function __json_number_end(s: string, start: i32): (i32, boolean) {
     return (-2 - intStart, false);
   }
   let whole: boolean = true;
-  // `frac` is `"." 1*DIGIT`.
   if (i < n && s[i] == 46) {
     let fracStart: i32 = i + 1;
     i = __scan_set(s, fracStart, JSON_NOT_DIGIT);
@@ -722,7 +592,6 @@ function __json_number_end(s: string, start: i32): (i32, boolean) {
     }
     whole = false;
   }
-  // `exp` is `[eE][+-]?1*DIGIT`.
   if (i < n && (s[i] == 101 || s[i] == 69)) {
     i = i + 1;
     if (i < n && (s[i] == 43 || s[i] == 45)) {
@@ -738,7 +607,6 @@ function __json_number_end(s: string, start: i32): (i32, boolean) {
   return (i, whole);
 }
 
-// __json_p_number reads the number starting at `start`.
 function __json_p_number(s: string, start: i32, at: Cell[i32]): JsonValue {
   let (end, _) = __json_number_end(s, start);
   if (end < 0) {
@@ -749,8 +617,6 @@ function __json_p_number(s: string, start: i32, at: Cell[i32]): JsonValue {
   return JNumber(slice_unchecked(s, start, end) + "");
 }
 
-// JSON_NOT_DIGIT marks every byte but `0`-`9`, so a scan over it finds the
-// end of a digit run.
 const JSON_NOT_DIGIT: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -770,14 +636,6 @@ const JSON_NOT_DIGIT: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
 ];
 
-// __json_emit_codepoint encodes a single Unicode scalar value
-// as the matching UTF-8 byte sequence (1-4 bytes) and appends
-// it to `out`. Supports the full Unicode range up to
-// U+10FFFF; the caller is expected to have resolved any
-// surrogate pairs into a single code point already.
-// The UTF-8 byte sequence (1–4 bytes) for a Unicode scalar value. Pure — the
-// caller appends the returned bytes to its output buffer, so no growing string
-// is threaded through (see __json_p_string's O(n) u8[] accumulation, #4379).
 function __json_cp_bytes(cp: i32): u8[] {
   if (cp < 128) {
     return [cp as u8];
@@ -803,8 +661,6 @@ function __json_cp_bytes(cp: i32): u8[] {
   ];
 }
 
-// __json_p_uhex is the value of the 4 hex digits at `i`, or -1 after
-// recording a failure at the first that is missing or not hex.
 function __json_p_uhex(s: string, i: i32, at: Cell[i32]): i32 {
   if (i + 4 > s.len()) {
     __json_fail(at, i);
@@ -824,22 +680,17 @@ function __json_p_uhex(s: string, i: i32, at: Cell[i32]): i32 {
   return u;
 }
 
-// __json_p_string reads the string whose opening quote is at `start`.
 function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
   if (__json_byte(s, start) != 34) {
     __json_fail(at, start);
     return "";
   }
   let i: i32 = start + 1;
-  // A string with no escape is one slice of the input.
   let plain: i32 = __scan_set(s, i, JSON_STRING_STOPS);
   if (plain < s.len() && s[plain] == 34) {
     at.set(plain + 1);
     return slice_unchecked(s, i, plain) + "";
   }
-  // The decoded value accumulates in a local u8[], which grows in place
-  // (#4379); codepoint escapes append their 1-4 UTF-8 bytes from the pure
-  // __json_cp_bytes.
   let out: u8[] = [];
   let n: i32 = s.len();
   let b: i32 = 0;
@@ -855,28 +706,20 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
       at.set(i + 1);
       return string_from_bytes_unchecked(out);
     }
-    if (b == 92) {  // '\\'
+    if (b == 92) {
       i = i + 1;
       let esc: i32 = __json_byte(s, i);
       if (esc == 0) {
         __json_fail(at, i);
         return "";
       }
-      if (esc == 117) {  // 'u' — \uXXXX
+      if (esc == 117) {
         i = i + 1;
         let u: i32 = __json_p_uhex(s, i, at);
         if (u < 0) {
           return "";
         }
         i = i + 4;
-        // High surrogate (D800..DBFF): combine with
-        // the following low surrogate (DC00..DFFF) to
-        // form a single astral code point. Lone or
-        // mismatched surrogates fall back to U+FFFD
-        // (REPLACEMENT CHARACTER) — matches Go's
-        // encoding/json + most strict UTF-8 emitters. The branch
-        // funnels to a primary codepoint `cp1` plus, for the
-        // mismatched-low-surrogate case, a second `cp2` (-1 = none).
         let cp1: i32 = 65533;
         let cp2: i32 = -1;
         if (u >= 55296 && u <= 56319) {
@@ -946,12 +789,9 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
       i = stop;
     }
   }
-  return "";  // unreachable
+  return "";
 }
 
-// JSON_STRING_STOPS marks where a string's plain run ends: `"`, `\`, and the
-// C0 controls, which RFC 8259 requires escaped, so one falls through to the
-// loop that rejects it.
 const JSON_STRING_STOPS: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -971,7 +811,6 @@ const JSON_STRING_STOPS: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
 ];
 
-// __json_append_run appends s[from:stop] to out.
 function __json_append_run(out: u8[], s: string, from: i32, stop: i32): u8[] {
   let acc: u8[] = out;
   let i: i32 = from;
@@ -982,11 +821,9 @@ function __json_append_run(out: u8[], s: string, from: i32, stop: i32): u8[] {
   return acc;
 }
 
-// __json_p_array reads the array whose `[` is at `start`; `depth` counts
-// it.
 function __json_p_array(s: string, start: i32, at: Cell[i32], depth: i32): JsonValue {
   let i: i32 = __json_ws(s, start + 1);
-  if (__json_byte(s, i) == 93) {  // ']'
+  if (__json_byte(s, i) == 93) {
     at.set(i + 1);
     let empty: JsonValue[] = [];
     return JArray(empty);
@@ -1002,25 +839,23 @@ function __json_p_array(s: string, start: i32, at: Cell[i32], depth: i32): JsonV
     arr = arr.append(elem);
     i = __json_ws(s, i);
     let b: i32 = __json_byte(s, i);
-    if (b == 44) {  // ','
+    if (b == 44) {
       at.set(i + 1);
       continue;
     }
-    if (b == 93) {  // ']'
+    if (b == 93) {
       at.set(i + 1);
       return JArray(arr);
     }
     __json_fail(at, i);
     return JNull;
   }
-  return JNull;  // unreachable
+  return JNull;
 }
 
-// __json_p_object reads the object whose `{` is at `start`; `depth` counts
-// it.
 function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): JsonValue {
   let i: i32 = __json_ws(s, start + 1);
-  if (__json_byte(s, i) == 125) {  // '}'
+  if (__json_byte(s, i) == 125) {
     at.set(i + 1);
     return JObject(object());
   }
@@ -1033,7 +868,7 @@ function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): Json
       return JNull;
     }
     i = __json_ws(s, i);
-    if (__json_byte(s, i) != 58) {  // ':'
+    if (__json_byte(s, i) != 58) {
       __json_fail(at, i);
       return JNull;
     }
@@ -1047,36 +882,34 @@ function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): Json
     values = values.append(val);
     i = __json_ws(s, i);
     let b: i32 = __json_byte(s, i);
-    if (b == 44) {  // ','
+    if (b == 44) {
       i = __json_ws(s, i + 1);
       continue;
     }
-    if (b == 125) {  // '}'
+    if (b == 125) {
       at.set(i + 1);
       return JObject(object_of(keys, values));
     }
     __json_fail(at, i);
     return JNull;
   }
-  return JNull;  // unreachable
+  return JNull;
 }
 
-// __json_p_value reads the value at or after the offset in `at`, past any
-// leading whitespace, inside `depth` containers.
 function __json_p_value(s: string, at: Cell[i32], depth: i32): JsonValue {
   let i: i32 = __json_ws(s, at.get());
   let b: i32 = __json_byte(s, i);
-  if (b == 34) {  // '"' — string
+  if (b == 34) {
     let str: string = __json_p_string(s, i, at);
     if (at.get() < 0) {
       return JNull;
     }
     return JString(str);
   }
-  if (b == 45 || b >= 48 && b <= 57) {  // '-' or digit
+  if (b == 45 || b >= 48 && b <= 57) {
     return __json_p_number(s, i, at);
   }
-  if (b == 91 || b == 123) {  // '[' or '{'
+  if (b == 91 || b == 123) {
     if (depth >= 128) {
       __json_fail(at, i);
       return JNull;
@@ -1102,7 +935,6 @@ function __json_p_value(s: string, at: Cell[i32], depth: i32): JsonValue {
   return JNull;
 }
 
-// __json_word reports whether `word` is spelled at `i`.
 function __json_word(s: string, i: i32, word: string): boolean {
   if (i + word.len() > s.len()) {
     return false;
@@ -1117,9 +949,6 @@ function __json_word(s: string, i: i32, word: string): boolean {
   return true;
 }
 
-// __json_line_col converts a byte offset into 1-based (line, column),
-// counting a column in BYTES rather than code points — the same unit the
-// offset is in, so the two always agree.
 function __json_line_col(s: string, off: i32): (i32, i32) {
   let line: i32 = 1;
   let col: i32 = 1;
@@ -1140,8 +969,6 @@ function __json_line_col(s: string, off: i32): (i32, i32) {
   return (line, col);
 }
 
-// A syntax error, located. `offset` is the byte index; `line` and `col` are
-// 1-based and derived from it.
 pub struct JsonError {
   message: string,
   offset: i32,
@@ -1161,9 +988,6 @@ pub function (e: JsonError) to_string(): string {
   return e.line.to_string() + ":" + e.col.to_string() + ": " + e.message;
 }
 
-// __json_message describes the failure at `off` from the input alone, so
-// the 20 failure sites stay a single shared helper rather than each
-// carrying its own wording.
 function __json_message(s: string, off: i32): string {
   if (off >= s.len()) {
     return "unexpected end of input";
@@ -1175,14 +999,9 @@ function __json_message(s: string, off: i32): string {
   if (b < 128) {
     return "unexpected byte '" + string_from_bytes_unchecked([s[off]]) + "'";
   }
-  // A non-ASCII byte renders as hex — quoting it alone could split a
-  // multibyte code point.
   return "unexpected byte '\\x" + b.to_hex().pad_start(2, '0') + "'";
 }
 
-// json_parse_result is json_parse plus the position of the failure.
-// Prefer it wherever the input can be malformed and a human will read the
-// result: a config file, a request body, anything hand-edited.
 pub function json_parse_result(s: string): Result[JsonValue, JsonError] {
   let at: Cell[i32] = cell_new(0);
   let v: JsonValue = __json_p_value(s, at, 0);
@@ -1221,24 +1040,6 @@ pub function json_parse(s: string): Option[JsonValue] {
   }
 }
 
-// === Document: a parse that allocates no value ===
-//
-// parse_document reads JSON into a tape: two u64 words per value, in document
-// order, over the source text, so no value is allocated until one is asked for.
-// Word 0 holds the kind in its top byte, flags in bits 32-55 and a field in the
-// low 32 bits; word 1 holds a second field.
-//
-//   array, object   next = the node after the container; count = elements, or
-//                   members for an object
-//   string          start, end = the content's offsets, between the quotes;
-//                   flag 1 when it holds an escape
-//   number          start, end = the text's offsets; flag 1 when it is an
-//                   integer (no fraction or exponent)
-//   null, true, false
-//
-// A scalar's next node is the one after it, and an object's members are a key
-// node then its value. Nodes are named by index; the root is node 0. It accepts
-// exactly what json_parse does and reports a failure at the same offset.
 pub struct Document { text: string, tape: u64[] }
 
 const JSON_T_NULL: i32 = 1;
@@ -1263,15 +1064,11 @@ function __json_t_node(own tape: u64[], kind: i32, flags: i32, a: i32, b: i32): 
   return tape.append(__json_t_word(kind, flags, a)).append((b as u32) as u64);
 }
 
-// __json_t_close fills in the container at `node` now that `tape` ends after
-// it.
 function __json_t_close(own tape: u64[], node: i32, kind: i32, count: i32): u64[] {
   let next: i32 = tape.len() / 2;
   return tape.with(2 * node, __json_t_word(kind, 0, next)).with(2 * node + 1, (count as u32) as u64);
 }
 
-// __json_string_end is the offset just past a string whose first run of plain
-// bytes ends at `plain`, or -1 - offset of what breaks it.
 function __json_string_end(s: string, plain: i32): i32 {
   let i: i32 = plain;
   while (true) {
@@ -1279,7 +1076,7 @@ function __json_string_end(s: string, plain: i32): i32 {
     if (b == 34) {
       return i + 1;
     }
-    if (b == 92) {  // '\\'
+    if (b == 92) {
       i = __json_escape_end(s, i + 1);
     } else if (b < 32) {
       return -1 - i;
@@ -1290,22 +1087,19 @@ function __json_string_end(s: string, plain: i32): i32 {
       return i;
     }
   }
-  return -1;  // unreachable
+  return -1;
 }
 
-// __json_short_escape reports whether `\` then `esc` is a one-letter escape.
 function __json_short_escape(esc: i32): boolean {
   return esc == 34 || esc == 92 || esc == 47 || esc == 110 || esc == 114 || esc == 116 || esc == 98 || esc == 102;
 }
 
-// __json_escape_end is the offset past the escape whose letter is at `i`, or
-// -1 - offset of what breaks it.
 function __json_escape_end(s: string, i: i32): i32 {
   let esc: i32 = __json_byte(s, i);
   if (__json_short_escape(esc)) {
     return i + 1;
   }
-  if (esc != 117) {  // 'u'
+  if (esc != 117) {
     return -1 - i;
   }
   let h: i32 = i + 1;
@@ -1322,14 +1116,12 @@ function __json_escape_end(s: string, i: i32): i32 {
   return h + 4;
 }
 
-// __json_t_scalar parses the scalar at `i` onto the tape and answers the
-// offset past it, or -1 - offset of a failure.
 function __json_t_scalar(s: string, i: i32, own tape: u64[]): (u64[], i32) {
   let b: i32 = __json_byte(s, i);
-  if (b == 34) {  // '"'
+  if (b == 34) {
     return __json_t_string(s, i, tape);
   }
-  if (b == 45 || b >= 48 && b <= 57) {  // '-' or digit
+  if (b == 45 || b >= 48 && b <= 57) {
     let (end, whole) = __json_number_end(s, i);
     if (end < 0) {
       return (tape, end);
@@ -1343,7 +1135,6 @@ function __json_t_scalar(s: string, i: i32, own tape: u64[]): (u64[], i32) {
   return __json_t_literal(s, i, b, tape);
 }
 
-// __json_t_string parses the string whose `"` is at `i`.
 function __json_t_string(s: string, i: i32, own tape: u64[]): (u64[], i32) {
   let plain: i32 = __scan_set(s, i + 1, JSON_STRING_STOPS);
   if (plain < s.len() && s[plain] == 34) {
@@ -1356,8 +1147,6 @@ function __json_t_string(s: string, i: i32, own tape: u64[]): (u64[], i32) {
   return (__json_t_node(tape, JSON_T_STRING, 1, i + 1, end - 1), end);
 }
 
-// __json_t_literal parses the `null`, `true` or `false` whose first byte `b`
-// is at `i`.
 function __json_t_literal(s: string, i: i32, b: i32, own tape: u64[]): (u64[], i32) {
   if (b == 110 && __json_word(s, i, "null")) {
     return (__json_t_node(tape, JSON_T_NULL, 0, 0, 0), i + 4);
@@ -1371,8 +1160,6 @@ function __json_t_literal(s: string, i: i32, b: i32, own tape: u64[]): (u64[], i
   return (tape, -1 - i);
 }
 
-// __json_t_key parses the member key at `i` and the `:` after it onto the tape
-// and answers the offset past the `:`, or -1 - offset of a failure.
 function __json_t_key(s: string, i: i32, own tape: u64[]): (u64[], i32) {
   if (__json_byte(s, i) != 34) {
     return (tape, -1 - i);
@@ -1382,7 +1169,7 @@ function __json_t_key(s: string, i: i32, own tape: u64[]): (u64[], i32) {
     return (t, end);
   }
   let k: i32 = __json_ws(s, end);
-  if (__json_byte(s, k) != 58) {  // ':'
+  if (__json_byte(s, k) != 58) {
     return (t, -1 - k);
   }
   return (t, k + 1);
@@ -1392,11 +1179,9 @@ function __json_t_kind(tape: u64[], node: i32): i32 {
   return (tape[2 * node] >> 56 as u64) as i32;
 }
 
-// __json_t_value parses the value at `i`, inside `depth` containers, onto the
-// tape and answers the offset past it, or -1 - offset of a failure.
 function __json_t_value(s: string, i: i32, own tape: u64[], depth: i32): (u64[], i32) {
   let b: i32 = __json_byte(s, i);
-  if (b != 91 && b != 123) {  // not '[' or '{'
+  if (b != 91 && b != 123) {
     return __json_t_scalar(s, i, tape);
   }
   if (depth >= 128) {
@@ -1408,13 +1193,12 @@ function __json_t_value(s: string, i: i32, own tape: u64[], depth: i32): (u64[],
   return __json_t_object(s, i, tape, depth + 1);
 }
 
-// __json_t_array parses the array whose `[` is at `start`; `depth` counts it.
 function __json_t_array(s: string, start: i32, own tape: u64[], depth: i32): (u64[], i32) {
   let node: i32 = tape.len() / 2;
   tape = __json_t_node(tape, JSON_T_ARRAY, 0, 0, 0);
   let i: i32 = __json_ws(s, start + 1);
   let count: i32 = 0;
-  if (__json_byte(s, i) == 93) {  // ']'
+  if (__json_byte(s, i) == 93) {
     return (__json_t_close(tape, node, JSON_T_ARRAY, 0), i + 1);
   }
   while (true) {
@@ -1429,22 +1213,20 @@ function __json_t_array(s: string, start: i32, own tape: u64[], depth: i32): (u6
     if (b == 93) {
       return (__json_t_close(tape, node, JSON_T_ARRAY, count), i + 1);
     }
-    if (b != 44) {  // ','
+    if (b != 44) {
       return (tape, -1 - i);
     }
     i = __json_ws(s, i + 1);
   }
-  return (tape, -1);  // unreachable
+  return (tape, -1);
 }
 
-// __json_t_object parses the object whose `{` is at `start`; `depth` counts
-// it.
 function __json_t_object(s: string, start: i32, own tape: u64[], depth: i32): (u64[], i32) {
   let node: i32 = tape.len() / 2;
   tape = __json_t_node(tape, JSON_T_OBJECT, 0, 0, 0);
   let i: i32 = __json_ws(s, start + 1);
   let count: i32 = 0;
-  if (__json_byte(s, i) == 125) {  // '}'
+  if (__json_byte(s, i) == 125) {
     return (__json_t_close(tape, node, JSON_T_OBJECT, 0), i + 1);
   }
   while (true) {
@@ -1464,16 +1246,14 @@ function __json_t_object(s: string, start: i32, own tape: u64[], depth: i32): (u
     if (b == 125) {
       return (__json_t_close(tape, node, JSON_T_OBJECT, count), i + 1);
     }
-    if (b != 44) {  // ','
+    if (b != 44) {
       return (tape, -1 - i);
     }
     i = __json_ws(s, i + 1);
   }
-  return (tape, -1);  // unreachable
+  return (tape, -1);
 }
 
-// parse_document reads `s` into a Document, or the JsonError json_parse_result
-// would report for it.
 pub function parse_document(s: string): Result[Document, JsonError] {
   let empty: u64[] = [];
   let (tape, end) = __json_t_value(s, __json_ws(s, 0), empty, 0);
@@ -1503,7 +1283,6 @@ function __json_t_flag(d: Document, n: i32): boolean {
   return (d.tape[2 * n] >> 32u64 & 1u64) == 1u64;
 }
 
-// __json_t_after is the node after `n` and everything inside it.
 function __json_t_after(d: Document, n: i32): i32 {
   let k: i32 = __json_t_kind(d.tape, n);
   if (k == JSON_T_ARRAY || k == JSON_T_OBJECT) {
@@ -1512,7 +1291,6 @@ function __json_t_after(d: Document, n: i32): i32 {
   return n + 1;
 }
 
-// root is the document's top-level value.
 pub function (d: Document) root(): i32 {
   return 0;
 }
@@ -1542,7 +1320,6 @@ pub function (d: Document) is_object(n: i32): boolean {
   return __json_t_kind(d.tape, n) == JSON_T_OBJECT;
 }
 
-// len is an array's element count or an object's member count; 0 otherwise.
 pub function (d: Document) len(n: i32): i32 {
   let k: i32 = __json_t_kind(d.tape, n);
   if (k == JSON_T_ARRAY || k == JSON_T_OBJECT) {
@@ -1551,9 +1328,6 @@ pub function (d: Document) len(n: i32): i32 {
   return 0;
 }
 
-// first is an array's first element or an object's first key, or -1 when it
-// has none or `n` is not a container. `next(n, c)` steps to the one after `c`;
-// an object's member is its key node, and `value(key)` is its value.
 pub function (d: Document) first(n: i32): i32 {
   if (d.len(n) == 0) {
     return -1;
@@ -1576,7 +1350,6 @@ pub function (d: Document) value(key: i32): i32 {
   return key + 1;
 }
 
-// at is an array's element `k`.
 pub function (d: Document) at(n: i32, k: i32): Option[i32] {
   if (__json_t_kind(d.tape, n) != JSON_T_ARRAY || k < 0 || k >= __json_t_b(d, n)) {
     return None;
@@ -1590,8 +1363,6 @@ pub function (d: Document) at(n: i32, k: i32): Option[i32] {
   return Some(c);
 }
 
-// get is the value of an object's member named `key`; the last when the
-// document repeats it, as json_parse keeps.
 pub function (d: Document) get(n: i32, key: string): Option[i32] {
   if (__json_t_kind(d.tape, n) != JSON_T_OBJECT) {
     return None;
@@ -1619,12 +1390,10 @@ function __json_t_key_is(d: Document, k: i32, key: string): boolean {
   return b - a == key.len() && slice_unchecked(d.text, a, b) == key;
 }
 
-// __json_t_slice is the source text node `n` spans.
 function __json_t_slice(d: Document, n: i32): string {
   return slice_unchecked(d.text, __json_t_a(d, n), __json_t_b(d, n)) + "";
 }
 
-// __json_t_text is the string at `n` with any escapes decoded.
 function __json_t_text(d: Document, n: i32): string {
   if (__json_t_flag(d, n)) {
     return __json_t_decode(d, n);
@@ -1632,7 +1401,6 @@ function __json_t_text(d: Document, n: i32): string {
   return __json_t_slice(d, n);
 }
 
-// __json_t_decode is the string at `n` with its escapes decoded.
 function __json_t_decode(d: Document, n: i32): string {
   return __json_p_string(d.text, __json_t_a(d, n) - 1, cell_new(0));
 }
@@ -1648,8 +1416,6 @@ pub function (d: Document) as_bool(n: i32): Option[boolean] {
   return None;
 }
 
-// as_string is a string's value with its escapes decoded; an object's key
-// node answers its key.
 pub function (d: Document) as_string(n: i32): Option[string] {
   if (__json_t_kind(d.tape, n) != JSON_T_STRING) {
     return None;
@@ -1657,7 +1423,6 @@ pub function (d: Document) as_string(n: i32): Option[string] {
   return Some(__json_t_text(d, n));
 }
 
-// number_text is a number as written.
 pub function (d: Document) number_text(n: i32): Option[string] {
   if (__json_t_kind(d.tape, n) != JSON_T_NUMBER) {
     return None;
@@ -1672,8 +1437,6 @@ pub function (d: Document) as_f64(n: i32): Option[f64] {
   return slice_unchecked(d.text, __json_t_a(d, n), __json_t_b(d, n)).parse_float();
 }
 
-// as_i64 is an integer that fits an i64; None for one with a fraction or an
-// exponent, or one out of range.
 pub function (d: Document) as_i64(n: i32): Option[i64] {
   if (__json_t_kind(d.tape, n) != JSON_T_NUMBER || !__json_t_flag(d, n)) {
     return None;
@@ -1684,7 +1447,6 @@ pub function (d: Document) as_i64(n: i32): Option[i64] {
   if (neg) {
     i = i + 1;
   }
-  // Accumulated negative, so i64's minimum fits.
   let acc: i64 = 0;
   let floor: i64 = -922337203685477580;
   while (i < end) {
@@ -1704,7 +1466,6 @@ pub function (d: Document) as_i64(n: i32): Option[i64] {
   return Some(0 - acc);
 }
 
-// to_value is the JsonValue json_parse would build for node `n`.
 pub function (d: Document) to_value(n: i32): JsonValue {
   let k: i32 = __json_t_kind(d.tape, n);
   if (k == JSON_T_NULL) {
@@ -1747,41 +1508,6 @@ function __json_t_members(d: Document, n: i32): JsonObject {
   return object_of(keys, values);
 }
 
-// ============================================================
-// Schema-directed JSON extraction helpers — Tier-C Rec §12
-// (docs/STDLIB-DESIGN-RESEARCH.md Rec §3) Phase 1.
-//
-// The full design is `json_parse[T](bytes) → Result[T,
-// JsonError]` where the compiler generates a per-struct walker
-// for each T. That needs a new IR pass to monomorphise + emit
-// per-T decoder code — multi-week. Phase 1 (this surface)
-// ships typed-field extraction helpers on `JsonValue`:
-// callers parse once with json_parse(), then walk the DOM
-// with these helpers instead of pattern-matching every level.
-//
-// Typical use:
-//
-//   let text: string = req.body_string()?;
-//   match (json_parse(text)) {
-//       Some(v) => {
-//           let name = json_get_string(v, "name");
-//           let age  = json_get_i32(v, "age");
-//           match ((name, age)) {
-//               (Some(n), Some(a)) => return Some(CreateUser { name: n, age: a }),
-//               _ => return None,
-//           }
-//       },
-//       None => return None,
-//   }
-//
-// Phase 2 will let callers skip the manual assembly:
-//
-//   let u: CreateUser = json_parse[CreateUser](req.body_bytes())?;
-// ============================================================
-
-// `json_get(obj, key)` — look up `key` in a JObject. Returns
-// None when `obj` isn't a JObject or `key` isn't present.
-// Foundation for the typed getters below.
 pub function json_get(obj: JsonValue, key: string): Option[JsonValue] {
   match (obj) {
     JObject(m) => {
@@ -1801,9 +1527,6 @@ pub function json_get(obj: JsonValue, key: string): Option[JsonValue] {
   return None;
 }
 
-// `json_get_string(obj, key)` — typed-extract a JString.
-// Returns None when the key is missing or the value isn't
-// a string.
 pub function json_get_string(obj: JsonValue, key: string): Option[string] {
   match (json_get(obj, key)) {
     Some(v) => {
@@ -1823,14 +1546,6 @@ pub function json_get_string(obj: JsonValue, key: string): Option[string] {
   return None;
 }
 
-// `json_get_i32(obj, key)` — typed-extract a JNumber as i32.
-// Returns None when the key is missing, the value isn't a
-// number, the number doesn't parse as an integer (a `.` or `e`
-// makes it a float — use json_get_f64), OR the value doesn't fit
-// in i32. Overflow is a hard None rather than the old silent
-// two's-complement wrap: the magnitude is accumulated in a wider
-// i64 and range-checked, so `2147483648` on an i32 field is
-// rejected instead of coming back as the min value (#4384 item 4).
 pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
   match (json_get(obj, key)) {
     Some(v) => {
@@ -1850,8 +1565,6 @@ pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
   return None;
 }
 
-// __json_number_i32 reads a JNumber's decimal text as an i32: an optional
-// '-' then digits, None for anything else or a value outside the range.
 function __json_number_i32(s: string): Option[i32] {
   let acc: i64 = 0;
   let i: i32 = 0;
@@ -1873,16 +1586,11 @@ function __json_number_i32(s: string): Option[i32] {
       return None;
     }
     acc = acc * 10 + (b - 48) as i64;
-    // 2147483648 == |i32 min|; anything past it can't fit
-    // either sign. Bounding here also keeps `acc` small
-    // enough that it never overflows the i64 itself.
     if (acc > 2147483648) {
       return None;
     }
     i = i + 1;
   }
-  // Negatives reach down to -2147483648; positives top out
-  // one lower at 2147483647.
   if (neg) {
     return Some((0 - acc) as i32);
   }
@@ -1892,16 +1600,6 @@ function __json_number_i32(s: string): Option[i32] {
   return Some(acc as i32);
 }
 
-// `json_get_i64(obj, key)` — typed-extract a JNumber as i64. Like
-// `json_get_i32` but accumulates in 64-bit, for fields wider than i32
-// (timestamps, large ids). A non-numeric value or a non-digit body returns
-// None. Overflow now signals None rather than wrapping silently (#4384
-// item 4): the positive magnitude is accumulated in i64, and a two's-
-// complement wrap past i64 max shows up as a negative accumulator while
-// a >19-digit body can't fit at all — both return None. (Edge: i64 min,
-// -9223372036854775808, has magnitude 2^63 which the positive accumulator
-// can't hold, so it too reads as overflow; callers needing exactly the
-// minimum must special-case it.)
 pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
   match (json_get(obj, key)) {
     Some(v) => {
@@ -1921,9 +1619,6 @@ pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
   return None;
 }
 
-// __json_number_i64 reads a JNumber's decimal text as an i64, None for a
-// non-digit body or a value past i64 max (the wrap shows as a negative
-// accumulator; more than 19 digits cannot fit at all).
 function __json_number_i64(s: string): Option[i64] {
   let n: i64 = 0;
   let i: i32 = 0;
@@ -1955,8 +1650,6 @@ function __json_number_i64(s: string): Option[i64] {
   return Some(n * sign);
 }
 
-// __json_number_u64 reads a JNumber's decimal text as a u64: digits only,
-// None for a sign, a non-digit body or a value past u64 max.
 function __json_number_u64(s: string): Option[u64] {
   let n: u64 = 0;
   let i: i32 = 0;
@@ -1970,7 +1663,6 @@ function __json_number_u64(s: string): Option[u64] {
       return None;
     }
     let d: u64 = (b - 48) as u64;
-    // 1844674407370955161 is u64 max with its last digit (5) dropped.
     if (n > 1844674407370955161) {
       return None;
     }
@@ -1983,14 +1675,6 @@ function __json_number_u64(s: string): Option[u64] {
   return Some(n);
 }
 
-// `json_get_f64(obj, key)` — typed-extract a JNumber as f64. The
-// float accessor JSON needs but lacked: `3.14` parses fine but the
-// integer getters reject it, so before this there was no way to read
-// a fractional field back out (#4384 item 4). Returns None when the
-// key is missing or the value isn't a number; any JSON number (int,
-// fraction, or exponent form) decodes via std/string's parse_float
-// (#5420 — the raw text of a parser-validated JNumber is a valid
-// parse_float input, so the Some/None split falls out for free).
 pub function json_get_f64(obj: JsonValue, key: string): Option[f64] {
   match (json_get(obj, key)) {
     Some(v) => {
@@ -2010,7 +1694,6 @@ pub function json_get_f64(obj: JsonValue, key: string): Option[f64] {
   return None;
 }
 
-// `json_get_bool(obj, key)` — typed-extract a JBool.
 pub function json_get_bool(obj: JsonValue, key: string): Option[boolean] {
   match (json_get(obj, key)) {
     Some(v) => {
@@ -2030,9 +1713,6 @@ pub function json_get_bool(obj: JsonValue, key: string): Option[boolean] {
   return None;
 }
 
-// `json_get_array(obj, key)` — typed-extract a JArray.
-// Returns the array's element list directly so callers can
-// `len()` / index over it without further matching.
 pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
   match (json_get(obj, key)) {
     Some(v) => {
@@ -2052,17 +1732,6 @@ pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
   return None;
 }
 
-// `json_get_object(obj, key)` — typed-extract a JObject as
-// a JsonValue (chain extracts through nested objects).
-// Doesn't unwrap to the JsonObject — the JsonValue
-// shape composes with the other json_get_* helpers, so
-// chains read more naturally as:
-//
-//   let addr = json_get_object(user, "address");
-//   let city = json_get_string(addr.unwrap_or(JNull), "city");
-//
-// (The unwrap_or pattern works around chained-Option
-// unwrapping until Fern grows a `?.` operator.)
 pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
   match (json_get(obj, key)) {
     Some(v) => {
@@ -2082,18 +1751,12 @@ pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
   return None;
 }
 
-// `__json_ptr_unescape(tok)` — decode a single RFC 6901 reference
-// token: `~1` -> `/` and `~0` -> `~`, in one left-to-right pass so
-// `~01` correctly decodes to `~1` (not `/`). A lone `~` not followed
-// by `0`/`1` is passed through literally (lenient). Tokens are short
-// keys, so the `out + …` build is fine and only runs on the rare
-// escape-bearing path (a `~`-free token returns unchanged).
 function __json_ptr_unescape(tok: string): string {
   let n: i32 = tok.len();
   let has: boolean = false;
   let i: i32 = 0;
   while (i < n) {
-    if (tok[i] == 126) {  // '~' = 126
+    if (tok[i] == 126) {
       has = true;
       i = n;
     } else {
@@ -2103,18 +1766,16 @@ function __json_ptr_unescape(tok: string): string {
   if (!has) {
     return tok;
   }
-  // Byte-level rebuild: pass-through bytes of a valid string stay
-  // valid, and the ~0/~1 escapes are ASCII.
   let out: u8[] = [];
   i = 0;
   while (i < n) {
     let c: i32 = tok[i] as i32;
     if (c == 126 && i + 1 < n) {
       let d: i32 = tok[i + 1] as i32;
-      if (d == 49) {  // ~1 -> /
+      if (d == 49) {
         out = out.append(47 as u8);
         i = i + 2;
-      } else if (d == 48) {  // ~0 -> ~
+      } else if (d == 48) {
         out = out.append(126 as u8);
         i = i + 2;
       } else {
@@ -2129,17 +1790,12 @@ function __json_ptr_unescape(tok: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `__json_ptr_index(tok)` — parse an RFC 6901 array-index token to a
-// non-negative i32, or -1 if it isn't a valid index. Per §4 the token
-// must be `0` or `[1-9][0-9]*` — leading zeros, the `-` end-of-array
-// token, non-digits, and out-of-i32 magnitudes all yield -1 (a
-// guaranteed miss).
 function __json_ptr_index(tok: string): i32 {
   let n: i32 = tok.len();
   if (n == 0) {
     return 0 - 1;
   }
-  if (tok[0] == 48 && n > 1) {  // leading zero
+  if (tok[0] == 48 && n > 1) {
     return 0 - 1;
   }
   let acc: i64 = 0;
@@ -2150,7 +1806,7 @@ function __json_ptr_index(tok: string): i32 {
       return 0 - 1;
     }
     acc = acc * 10 + (b - 48) as i64;
-    if (acc > 2147483647) {  // past any real array length
+    if (acc > 2147483647) {
       return 0 - 1;
     }
     i = i + 1;
@@ -2158,29 +1814,17 @@ function __json_ptr_index(tok: string): i32 {
   return acc as i32;
 }
 
-// `json_pointer(doc, pointer)` — resolve an RFC 6901 JSON Pointer
-// against a JsonValue tree. `""` selects the whole document; a
-// non-empty pointer must start with `/`, and each `/`-separated
-// reference token descends one level: a token indexes a JObject by
-// key or a JArray by numeric index (`~1`/`~0` unescape to `/`/`~` in
-// keys). Returns None on a missing key, an out-of-range or malformed
-// array index, a descent into a scalar, or a pointer that doesn't
-// begin with `/`.
-//
-//   json_pointer(doc, "/user/tags/0")   // first tag
-//   json_pointer(doc, "/a~1b")          // key literally "a/b"
 pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue] {
   let n: i32 = pointer.len();
   if (n == 0) {
     return Some(doc);
   }
-  if (pointer[0] != 47) {  // must start with '/' = 47
+  if (pointer[0] != 47) {
     return None;
   }
   let cur: JsonValue = doc;
-  let i: i32 = 1;  // past the leading '/'
+  let i: i32 = 1;
   while (i <= n) {
-    // Token runs from i up to the next '/' (or the end).
     let j: i32 = i;
     while (j < n && pointer[j] != 47) {
       j = j + 1;
@@ -2208,13 +1852,11 @@ pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue] {
         return None;
       }
     }
-    i = j + 1;  // past the terminating '/'
+    i = j + 1;
   }
   return Some(cur);
 }
 
-// `json_is_null(v)` — true iff `v` is JNull. Convenience
-// over the bare match for the common nullability check.
 pub function json_is_null(v: JsonValue): boolean {
   match (v) {
     JNull => {
@@ -2227,26 +1869,6 @@ pub function json_is_null(v: JsonValue): boolean {
   return false;
 }
 
-// === Json trait + @derive(Json) ===
-//
-// `Json` is the structural-serialisation spine: `v.to_json()` returns
-// canonical JSON text. `@derive(Json)` synthesises it field-/variant-
-// wise (the checker's synthJson / synthEnumJson) so a type serialises as
-// soon as its fields do — no per-type encoder. A struct becomes a JSON
-// object (`{"field":<value>}`), an enum is externally tagged (a unit
-// variant is its name as a JSON string; a payload variant is a single-
-// key object, multiple payloads a JSON array). The primitive impls below
-// are the leaves of that composition; string values are escaped through
-// the same `json_escape` the `JsonValue` encoder uses.
-//
-//   @derive(json.Json)
-//   struct User { id: i32, name: string, admin: boolean }
-//   let body: string = User { id: 7, name: "Glóin", admin: true }.to_json();
-//   // {"id":7,"name":"Glóin","admin":true}
-//
-// Floats are leaves too (decimal `to_string`). Arrays serialise via the
-// generic `(xs: T[]) to_json[T: Json]()` below (#2766); map objects are a
-// remaining follow-up.
 pub trait Json {
   function to_json(self: Self): string;
 }
@@ -2284,11 +1906,6 @@ impl Json for boolean {
   }
 }
 
-// Floats serialise as their decimal `to_string`. Like the `JNumber`
-// encoder, valid JSON numeric formatting is the caller's responsibility:
-// a non-finite value (NaN / ±Inf) has no JSON representation and would
-// produce invalid output — guard those before serialising if they can
-// occur.
 impl Json for f64 {
   function to_json(self: f64): string {
     return self.to_string();
@@ -2307,24 +1924,12 @@ impl Json for string {
   }
 }
 
-// Array serialiser: a `T[]` whose element type is `Json` renders as a JSON
-// array `[e0,e1,…]`. Element-polymorphic + method-level bounded, so it works
-// for arrays of scalars, strings, and `@derive(Json)` structs/enums. The
-// monomorphiser folds the method into a free generic and clones it once per
-// element type (`__arrm_`, compiler/parser.fern); `xs[i].to_json()` then
-// dispatches to the element type's impl (the cross-module trait-method
-// visibility this relies on landed in #2774).
 pub function (xs: T[]) to_json[T: Json](): string {
-  // Local growable u8[] accumulation (#4379), like json_encode's JArray arm:
-  // the old `out = out + xs[i].to_json()` recopied the whole encoded-so-far
-  // prefix on every element — O(array²). Every append targets the local `out`,
-  // so it grows in place (amortized O(1)); the per-element bytes are inlined.
-  // Byte-for-byte identical output.
   let out: u8[] = [];
-  out = out.append(91 as u8);  // '['
+  out = out.append(91 as u8);
   let i: i32 = 0;
   while (i < xs.len()) {
-    if (i > 0) {  // ','
+    if (i > 0) {
       out = out.append(44 as u8);
     }
     let e: string = xs[i].to_json();
@@ -2336,36 +1941,14 @@ pub function (xs: T[]) to_json[T: Json](): string {
     }
     i = i + 1;
   }
-  out = out.append(93 as u8);  // ']'
+  out = out.append(93 as u8);
   return string_from_bytes_unchecked(out);
 }
 
-// === FromJson trait + @derive(FromJson) ===
-//
-// `FromJson` is the decode half of `Json`: `T.from_json_value(v)` builds a
-// `T` from a parsed `JsonValue`, `Err(why)` when the value has the wrong
-// shape. `@derive(json.FromJson)` synthesises it field-wise for a struct
-// (the checker's synthFromJsonValue), with the companion `T.from_json(text)`
-// that parses the text first. The primitive impls below are the leaves; a
-// nested struct decodes through its own impl, an array field through
-// `from_json_array`, an `Option` field through `from_json_option`, so a
-// struct decodes as soon as its fields do. A shape error names where it
-// happened: `missing field "id"`, `field "id": expected an integer, got a
-// string`, `field "tags": [1]: expected a string, got null`.
-//
-//   @derive(json.Json, json.FromJson)
-//   struct User { id: i32, name: string, tags: string[], nick: Option[string] }
-//   let u: User = json.decode[User](text)?;      // or User.from_json(text)
-//
-// `decode[T](text)` parses and decodes in one call; a parse failure reads
-// `invalid JSON: <line>:<col>: <why>`. An HTTP handler reaches the same
-// decoder through `http.body_json[T](req)`, which also checks the media
-// type and answers each failure with its own status.
 pub trait FromJson {
   function from_json_value(v: JsonValue): Result[Self, string];
 }
 
-// `json_kind(v)` — what a value is, for a shape error's "got ...".
 pub function json_kind(v: JsonValue): string {
   match (v) {
     JNull => {
@@ -2547,7 +2130,6 @@ impl FromJson for string {
   }
 }
 
-// `decode[T](text)` — parse `text` and decode it as a `T`.
 pub function decode[T: FromJson](text: string): Result[T, string] {
   match (json_parse_result(text)) {
     Ok(v) => {
@@ -2560,16 +2142,10 @@ pub function decode[T: FromJson](text: string): Result[T, string] {
   return Err("");
 }
 
-// `from_json_elem[T](v)` — `v` decoded as a `T`. A derived FromJson decodes
-// each plain field through it, so the field type is named in type position,
-// where an imported module of the same name (`std/i32`, `std/string`) cannot
-// take it for a module-qualified call.
 pub function from_json_elem[T: FromJson](v: JsonValue): Result[T, string] {
   return T.from_json_value(v);
 }
 
-// `from_json_array[T](v)` — every element of a JSON array as a `T`; an
-// element's shape error is prefixed with its index.
 pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
   match (v) {
     JArray(xs) => {
@@ -2595,8 +2171,6 @@ pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
   return Err("");
 }
 
-// `from_json_option[T](v)` — `None` for an absent value, else the value
-// decoded as a `T`. The derive pairs it with `from_json_optional_field`.
 pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], string] {
   match (v) {
     Some(jv) => {
@@ -2616,11 +2190,6 @@ pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[
   return Err("");
 }
 
-// The derive's field readers. `from_json_field(v, name)` is the field's
-// value, `Err` for a value that is not an object or a field that is not
-// there; `from_json_optional_field` answers `Ok(None)` for a field that is
-// missing or null instead; `from_json_at(name, why)` prefixes a field's
-// shape error with its name.
 pub function from_json_field(v: JsonValue, name: string): Result[JsonValue, string] {
   match (v) {
     JObject(m) => {
@@ -2670,16 +2239,10 @@ pub function from_json_at(name: string, why: string): string {
   return "field \"" + name + "\": " + why;
 }
 
-// `from_json_index(i, why)` prefixes element i's shape error with its index.
 pub function from_json_index(i: i32, why: string): string {
   return "[" + i.to_string() + "]: " + why;
 }
 
-// The enum derive's readers. A derived enum's JSON is its variant's name: a
-// string for a unit variant, else an object whose one key is the name and
-// whose value is the payload. `from_json_variant(v)` is that name,
-// `from_json_payload(v)` the payload (null for the string form), and
-// `from_json_in(name, why)` prefixes a payload's shape error with the variant.
 pub function from_json_variant(v: JsonValue): Result[string, string] {
   match (v) {
     JString(s) => {
@@ -2718,9 +2281,6 @@ pub function from_json_unknown_variant(name: string): string {
   return "unknown variant \"" + name + "\"";
 }
 
-// `from_json_item(p, i, n)` is payload i of a variant with n positional
-// payloads: p itself when n is 1, else element i of p, an array of n.
-// `from_json_optional_item` answers `Ok(None)` for a null one instead.
 pub function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonValue, string] {
   if (n == 1) {
     return Ok(p);

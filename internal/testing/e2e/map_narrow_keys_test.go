@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// A narrow integer or boolean map key crosses into core/map's pointer-wide
-// slot, which core/map compares at full width. On a 64-bit target the slot's
-// upper half has to be the widening `as usize` gives, whichever instruction
-// produced the key; otherwise a key computed in a loop and the equal literal
-// are different slots (#10442). Every op that takes a key or a value is
-// crossed both ways here: keys computed in a loop and read by literal, and
-// literal keys read by computed ones.
-//
-// The program prints rather than exits with its verdict because a WASI
-// component reports every non-zero status as 1.
 const mapNarrowKeysSrc = `import "core/map";
 import "std/i32";
 function neg(i: i32): i32 { return 0 - i; }

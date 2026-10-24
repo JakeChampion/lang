@@ -11,18 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternEnumParamCustomProvider is the self-host port of the WIT
-// `enum` parameter (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternEnumParamCustomProvider). A WIT enum flattens to a single i32
-// discriminant (= variant index). A self-host payloadless enum value is a
-// pointer to a `[struct_id@0]` box, but struct_id is a *global* id, not the
-// variant index, so the wrapper maps it via a select-chain comparing the loaded
-// struct_id against each variant's struct_id (extern_plain_enum_disc). The Fern
-// variant order must match the WIT case order.
-//
-// The provider exports `pick: func(c: color) -> s32` over `enum color { red,
-// green, blue }` returning disc + 100. The self-host program passes Green (index
-// 1) and expects 101.
 func TestSelfHostExternEnumParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

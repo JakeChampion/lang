@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A local that takes over an `own` array parameter at its last use (`let a =
-// acc`, `let a = g(acc)` at an `own` position) is threaded exactly as the
-// parameter is, and a reassigned `own` array parameter releases only the
-// replacements its frame minted (#10357). Answers are the interpreter's.
-
 const ownAliasAtNode = `@noinline
 function at_node(n: i32, own a: string[]): string[] {
     if (n % 3 != 1) { return a.append("g" + ""); }
@@ -106,7 +101,6 @@ function fold(own acc: string[], n: i32): string[] {
     return a;
 }
 ` + ownAliasMain},
-	// A call result that hands the parameter back when it keeps it.
 	{"call_handback", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     let out: string[] = at_node(n, acc);
     out = at_node(n + 2, out);
@@ -125,8 +119,6 @@ function fold(own acc: string[], n: i32): string[] {
     return out;
 }
 ` + ownAliasMain},
-	// A local that took the parameter over, passed in a dying position to a
-	// callee that consumes it.
 	{"alias_into_produced_consumer", `@noinline
 function take(n: i32, own a: string[]): string[] {
     if (n % 5 == 0) { return ["r" + ""]; }
@@ -145,7 +137,6 @@ function main(): i32 {
     return pending.len() % 256;
 }
 `},
-	// The same through a call that hands the parameter back.
 	{"call_handback_into_produced_consumer", `@noinline
 function take(n: i32, own a: string[]): string[] {
     if (n % 5 == 0) { return ["r" + ""]; }
@@ -169,7 +160,6 @@ function main(): i32 {
     return pending.len() % 256;
 }
 `},
-	// A call through a fn-typed parameter hands the parameter back.
 	{"fn_value_param_handback", `@noinline
 function at_node(n: i32, own a: string[]): string[] {
     if (n % 3 != 1) { return a.append("g" + ""); }
@@ -187,8 +177,6 @@ function main(): i32 {
     return pending.len() % 256;
 }
 `},
-	// A call through a fn-typed local: the registry reads its `own` positions as
-	// the lowering stamps them, so both take `a` for `acc`.
 	{"fn_value_local_into_produced_consumer", `@noinline
 function at_node(n: i32, own a: string[]): string[] {
     if (n % 3 != 1) { return a.append("g" + ""); }
@@ -213,7 +201,6 @@ function main(): i32 {
     return pending.len() % 256;
 }
 `},
-	// A consuming position's parameter dropped by a return (#10361).
 	{"consuming_param_dropped", `@noinline
 function at_node(n: i32, own a: string[]): string[] {
     if (n % 3 != 1) { return a.append("g" + ""); }
@@ -227,8 +214,6 @@ function main(): i32 {
     return pending.len() % 256;
 }
 `},
-	// #9409: a borrowed alias moved into an `own` callee whose body aliases
-	// the parameter in turn.
 	{"borrowed_outer", `function grow(x: string, own acc: string[]): string[] { return acc.append(x); }
 function inner(x: string, own acc: string[]): string[] {
     let a: string[] = acc;
@@ -246,7 +231,6 @@ function main(): i32 {
     return (out.len() * 10 + seed.len()) % 251;
 }
 `},
-	// The shape #10338's checker.inst_stmts walk takes, over a struct array.
 	{"struct_elem_walk", `struct Inst { name: string, depth: i32 }
 function fold(xs: i32[], own acc: Inst[], f: (i32, own Inst[]) => Inst[]): Inst[] {
     let a: Inst[] = acc;

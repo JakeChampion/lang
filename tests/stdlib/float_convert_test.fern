@@ -1,16 +1,6 @@
 import "std/test";
 import "std/f64";
 
-// tests/stdlib/float_convert_test.fern — pure-Fern coverage of std/f64's
-// convenience methods layered atop the math primitives: signum (sign as a
-// float, zero at zero), lerp (precise a+(b-a)*t linear interpolation, incl.
-// endpoints and extrapolation), and to_radians / to_degrees (degree↔radian
-// conversion via a high-precision π, with the round-trip). f64 and f32
-// receivers. Kept as its own suite rather than folded into float_math_test so
-// the self-host merged bundle stays well under the asm_ir IR budget. The
-// Go-side TestFloatSignumLerp pins these across all four backends; this is the
-// migration-shaped (pure-Fern, std/test-driven) companion.
-
 function test_signum_positive(): test.TestOutcome {
   let x: f64 = 5.0;
   return test.assert_eq_f64_near(x.signum(), 1.0, 0.0);

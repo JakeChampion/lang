@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// A generic trait's default method, inherited by impls that bind the trait's
-// parameter to a concrete type, to their own parameter, and to the second of
-// two (#12109). The inherited copy reads `T` as the impl's argument.
 const genericTraitDefaultSrc = `import "std/i32";
 import "std/i64";
 
@@ -89,10 +86,6 @@ func TestWasmGenericTraitDefault(t *testing.T) {
 	}
 }
 
-// A default with a type parameter of its own (`map[U]`), inherited by an impl
-// that declares a `U` too, keeps the two apart. Taking the impl's `U` for its
-// own made every clone's inherited `map` name a larger instantiation, and
-// monomorphisation never finished.
 const traitDefaultOwnParamSrc = `import "std/i32";
 
 pub trait Iter[T] {
@@ -172,9 +165,6 @@ func TestWasmTraitDefaultOwnParam(t *testing.T) {
 	}
 }
 
-// A required trait method may not declare type parameters of its own, since
-// no impl method could provide it. The self-host parser refuses it as the Go
-// parser does.
 func TestSelfHostTraitRequiredMethodOwnParamsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prog.fern")
 	src := "trait Iter[T] { function map[U](self: Self, f: (T) => U): U; }\nfunction main(): i32 { return 0; }\n"

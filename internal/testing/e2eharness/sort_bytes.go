@@ -125,8 +125,6 @@ func RunSortByteCases(t *testing.T, bin string, runner []string, census func(*te
 				return out.Bytes(), diagnostic.String(), cmd.ProcessState.ExitCode()
 			}
 			normalize := func(diagnostic string) string {
-				// A zero-terminated disorder line has no trailing newline;
-				// the allocation trailer can follow its NUL directly.
 				if census != nil {
 					diagnostic = censusTrailer.ReplaceAllString(diagnostic, "")
 				}
@@ -161,8 +159,6 @@ func RunSortByteCases(t *testing.T, bin string, runner []string, census func(*te
 			}
 			out, stderr, gotCode := run(append(append([]string{}, runner...), bin))
 			if census != nil {
-				// The census reader expects a line boundary, but -z diagnostics
-				// end in NUL. Keep the original bytes for the GNU comparison.
 				census(t, censusTrailer.ReplaceAllString(stderr, "\n$0"))
 			}
 			if gotCode != code || !bytes.Equal(out, want) || normalize(stderr) != diagnostic {

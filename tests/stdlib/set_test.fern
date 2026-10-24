@@ -1,17 +1,7 @@
 import "std/test";
 import "std/set" as set;
 
-// tests/stdlib/set_test.fern — pure-Fern coverage of std/set: the
-// generic, value-semantic Set[T] (membership, add/remove dedup,
-// union/intersect/difference, subset/equals, insertion-order
-// to_array). The most important contract exercised here is VALUE
-// SEMANTICS: an operation returns a new set and never mutates its
-// receiver — asserted explicitly in test_insert_is_pure, the regression
-// guard for the aliasing/CoW hazard a wrapper struct over a heap array
-// is prone to. Both i32 and string element types are covered.
-
 function test_set_of_dedup(): test.TestOutcome {
-  // Duplicates collapse; first occurrence order is kept.
   let s: set.Set[i32] = set.set_of([1, 2, 2, 3, 1]);
   if (s.len() != 3) {
     return test.fail("len " + s.len().to_string() + " != 3");
@@ -28,13 +18,10 @@ function test_insert(): test.TestOutcome {
   let s: set.Set[i32] = set.set_new();
   s = s.insert(1);
   s = s.insert(2);
-  s = s.insert(1);  // dup — no-op
+  s = s.insert(1);
   return test.assert_eq_array(s.to_array(), [1, 2]);
 }
 
-// The value-semantics contract: add returns a NEW set, the receiver is
-// untouched. Regression guard for in-place mutation of a shared array
-// field (the copy-on-write aliasing hazard).
 function test_insert_is_pure(): test.TestOutcome {
   let a: set.Set[i32] = set.set_of([1, 2]);
   let b: set.Set[i32] = a.insert(3);
@@ -60,7 +47,6 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_remove_absent(): test.TestOutcome {
-  // Removing an absent element is a no-op that returns an equal set.
   let s: set.Set[i32] = set.set_of([1, 2]);
   return test.assert_eq_array(s.remove(9).to_array(), [1, 2]);
 }
@@ -68,7 +54,6 @@ function test_remove_absent(): test.TestOutcome {
 function test_union(): test.TestOutcome {
   let a: set.Set[i32] = set.set_of([1, 2, 3]);
   let b: set.Set[i32] = set.set_of([3, 4, 5]);
-  // a's order first, then b's new elements.
   return test.assert_eq_array(a.union(b).to_array(), [1, 2, 3, 4, 5]);
 }
 
@@ -93,7 +78,6 @@ function test_subset_and_equals(): test.TestOutcome {
   if (a.is_subset(sub)) {
     return test.fail("superset wrongly reported subset");
   }
-  // equals is order-insensitive.
   if (!a.equals(set.set_of([3, 2, 1]))) {
     return test.fail("equals ignores order");
   }
@@ -109,7 +93,6 @@ function test_empty(): test.TestOutcome {
   if (a.is_empty()) {
     return test.fail("non-empty set reported empty");
   }
-  // the empty set is a subset of everything and of itself.
   return test.assert_true(e.is_subset(a) && e.is_subset(e));
 }
 
@@ -129,14 +112,12 @@ function test_superset_and_disjoint(): test.TestOutcome {
   let a: set.Set[i32] = set.set_of([1, 2, 3]);
   let sub: set.Set[i32] = set.set_of([2, 3]);
   let e: set.Set[i32] = set.set_new();
-  // is_superset is the mirror of is_subset.
   if (!a.is_superset(sub) || sub.is_superset(a)) {
     return test.fail("superset");
   }
   if (!a.is_superset(e)) {
     return test.fail("superset of empty");
   }
-  // is_disjoint: shares nothing.
   if (a.is_disjoint(sub)) {
     return test.fail("a and sub overlap");
   }
@@ -146,7 +127,6 @@ function test_superset_and_disjoint(): test.TestOutcome {
 function test_symmetric_difference(): test.TestOutcome {
   let a: set.Set[i32] = set.set_of([1, 2, 3]);
   let b: set.Set[i32] = set.set_of([2, 3, 4]);
-  // (a-b) ∪ (b-a) = {1} ∪ {4}, a's uniques first.
   let sd: set.Set[i32] = a.symmetric_difference(b);
   if (!sd.equals(set.set_of([1, 4]))) {
     return test.fail("sym diff value");
@@ -155,7 +135,6 @@ function test_symmetric_difference(): test.TestOutcome {
   if (arr[0] != 1 || arr[1] != 4) {
     return test.fail("sym diff order");
   }
-  // Symmetric difference with self is empty; with empty is identity.
   let e: set.Set[i32] = set.set_new();
   return test.assert_true(a.symmetric_difference(a).is_empty()
     && a.symmetric_difference(e).equals(a));

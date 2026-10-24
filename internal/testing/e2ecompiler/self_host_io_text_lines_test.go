@@ -70,8 +70,6 @@ func TestSelfHostArm64DarwinIOTextLines(t *testing.T) {
 			t.Run("compiled", func(t *testing.T) {
 				config.Check(t, func() *exec.Cmd { return exec.Command(bin) }, true)
 			})
-			// Seven-byte chunks exercise scalar splits and multi-chunk records
-			// without repeating every chunk size in the tree interpreter.
 			if config.Name == "alternating/7" {
 				t.Run("interp", func(t *testing.T) {
 					config.Check(t, func() *exec.Cmd { return exec.Command(cli, "-interp", src, stdlib) }, false)

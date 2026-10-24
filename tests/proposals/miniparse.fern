@@ -1,36 +1,7 @@
-// tests/proposals/miniparse.fern — proposal turn, drawn line 167:
-// "A recursive-descent parser for a small imperative language, producing
-// an AST."
-//
-// Lexer, precedence-climbing expression parser, statement parser, and a
-// printer that renders the AST back to source.
-//
-// The oracle is the printer, not a table of expected trees. `print` fully
-// parenthesises, so reparsing its output must reach the SAME tree — which
-// makes `print(parse(print(parse(s))))` equal to `print(parse(s))` for
-// every source, a fixpoint that a hand-written expected tree cannot state
-// as cheaply and that catches the whole class of precedence and
-// associativity errors at once. A parser that binds `-` to the right, or
-// `*` below `+`, still produces a tree; it does not survive round-tripping
-// through explicit parentheses.
-//
-// Positions are the second thing a parser is for, so every rejection case
-// asserts a line and column, not merely that something failed. An error
-// that points at the end of the file is a parser that has forgotten where
-// it was.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/string";
 import "std/i32";
 
-// --------------------------------------------------------------- tokens
-
-// Token kinds. Punctuation and keywords are distinguished by `text`, so
-// the parser matches on a single kind plus a string rather than on
-// twenty variants that all mean "a fixed spelling".
 function tk_eof(): i32 {
   return 0;
 }
@@ -79,8 +50,6 @@ function is_keyword(w: string): boolean {
   return false;
 }
 
-// The two-character operators, tried before the one-character ones so
-// `<=` never lexes as `<` followed by `=`.
 function two_char_ops(): string[] {
   return ["==", "!=", "<=", ">="];
 }
@@ -109,7 +78,6 @@ function lex(src: string): Lexed {
       i = i + 1;
       continue;
     }
-    // `# …` to end of line.
     if (b == 35) {
       while (i < src.len() && src[i] as i32 != 10) {
         i = i + 1;
@@ -189,8 +157,6 @@ function lex(src: string): Lexed {
   return Lexed { tokens: toks, error: "", line: 0, col: 0 };
 }
 
-// ------------------------------------------------------------------ AST
-
 enum Expr {
   Num(i32),
   Var(string),
@@ -206,10 +172,6 @@ enum Stmt {
   While(Expr, Stmt[]),
 }
 
-// --------------------------------------------------------------- parser
-
-// The parser threads its position through a struct rather than mutating,
-// so a failed alternative cannot leave the cursor moved.
 struct P { toks: Token[], pos: i32, error: string, line: i32, col: i32 }
 
 function failed(p: P): boolean {
@@ -217,7 +179,7 @@ function failed(p: P): boolean {
 }
 
 function fail(p: P, msg: string): P {
-  if (failed(p)) {  // keep the FIRST error
+  if (failed(p)) {
     return p;
   }
   let t: Token = p.toks[p.pos];
@@ -254,9 +216,6 @@ function expect_punct(p: P, s: string): P {
 
 struct ExprResult { p: P, e: Expr }
 
-// Each precedence level is one function taking the level below it, so the
-// grammar's shape is visible in the call chain: equality < comparison <
-// term < factor < unary < primary. All binary levels are LEFT associative.
 function parse_expr(p: P): ExprResult {
   return parse_equality(p);
 }
@@ -458,12 +417,6 @@ function parse(src: string): Parsed {
   return Parsed { body: body, error: "", line: 0, col: 0 };
 }
 
-// -------------------------------------------------------------- printer
-
-// Fully parenthesised, one statement per line, two-space indent. Explicit
-// parentheses are what make the round trip an oracle: the printed form
-// encodes the tree's shape rather than relying on the reader (or the
-// re-parser) to reconstruct it from precedence.
 function print_expr(e: Expr): string {
   match (e) {
     Num(v) => {
@@ -528,11 +481,6 @@ function print_program(p: Parsed): string {
   return print_block(p.body, 0);
 }
 
-// ------------------------------------------------------------ evaluator
-
-// Enough of an interpreter to check that the tree MEANS what the source
-// said. Precedence bugs that survive the printer round trip (because both
-// directions agree on the wrong shape) show up here as wrong arithmetic.
 struct Env { names: string[], values: i32[], output: i32[], steps: i32 }
 
 function env_get(env: Env, name: string): i32 {
@@ -678,8 +626,6 @@ function run(src: string): i32[] {
   return exec_block(env, p.body).output;
 }
 
-// ---------------------------------------------------------- the corpus
-
 function valid_sources(): string[] {
   return [
     "print 1;",
@@ -702,12 +648,6 @@ function valid_sources(): string[] {
   ];
 }
 
-// ---------------------------------------------------------------- tests
-
-// THE test. The printer parenthesises fully, so reparsing its output must
-// land on the same tree — which means printing is a fixpoint after one
-// application. A parser that got precedence or associativity wrong still
-// builds a tree, and still prints it; it does not survive this.
 function test_printing_is_a_fixpoint(): test.TestOutcome {
   let ss: string[] = valid_sources();
   for i in 0..ss.len() {
@@ -733,9 +673,6 @@ function test_printing_is_a_fixpoint(): test.TestOutcome {
   return test.pass();
 }
 
-// The tree also has to MEAN what the source said. Round-tripping proves
-// the parser and printer agree; only running it proves they agree with
-// arithmetic. Both directions must produce identical output.
 function test_the_tree_means_what_the_source_says(): test.TestOutcome {
   let ss: string[] = valid_sources();
   let expected: i32[][] = [
@@ -748,7 +685,6 @@ function test_the_tree_means_what_the_source_says(): test.TestOutcome {
       return test.fail("source " + i.to_string() + " printed ["
         + join_ints(got) + "], wanted [" + join_ints(expected[i]) + "]");
     }
-    // …and the printed form must compute the same thing.
     let reprinted: i32[] = run(print_program(parse(ss[i])));
     if (!same(reprinted, got)) {
       return test.fail("source " + i.to_string()
@@ -782,8 +718,6 @@ function join_ints(xs: i32[]): string {
   return s;
 }
 
-// Whitespace, newlines and comments are not part of the tree. Three
-// spellings of one program must print identically.
 function test_layout_does_not_reach_the_tree(): test.TestOutcome {
   let same_program: string[] = [
     "var x=1+2;print x;",
@@ -804,22 +738,19 @@ function test_layout_does_not_reach_the_tree(): test.TestOutcome {
   return test.pass();
 }
 
-// A rejection must say WHERE. An error that points at the end of input is
-// a parser that lost track of its position, and it is the difference
-// between a usable message and "syntax error".
 function test_errors_carry_a_position(): test.TestOutcome {
   let bad: string[] = [
-    "var = 1;",  // missing name
-    "var x 1;",  // missing =
-    "var x = ;",  // missing expression
-    "var x = 1",  // missing semicolon
-    "print (1 + 2;",  // unclosed paren
-    "if (1) print 2;",  // block required
-    "while 1 { }",  // missing paren
-    "var x = 1 +;",  // dangling operator
-    "}",  // stray close
-    "var x = 1; @",  // unknown character
-    "if (1) { print 1; ",  // unclosed block
+    "var = 1;",
+    "var x 1;",
+    "var x = ;",
+    "var x = 1",
+    "print (1 + 2;",
+    "if (1) print 2;",
+    "while 1 { }",
+    "var x = 1 +;",
+    "}",
+    "var x = 1; @",
+    "if (1) { print 1; ",
   ];
   let want_line: i32[] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
   let want_col: i32[] = [5, 7, 9, 10, 13, 8, 7, 12, 1, 12, 19];
@@ -837,9 +768,6 @@ function test_errors_carry_a_position(): test.TestOutcome {
   return test.pass();
 }
 
-// The FIRST error is the one reported. A parser that keeps going and
-// overwrites its error points at whatever confused it last, which is
-// usually the end of the file.
 function test_the_first_error_wins(): test.TestOutcome {
   let p: Parsed = parse("var x = ; var y = ; var z = ;");
   if (p.error.len() == 0) {
@@ -849,7 +777,6 @@ function test_the_first_error_wins(): test.TestOutcome {
     return test.fail("reported column " + p.col.to_string()
       + ", wanted the first failure at 9");
   }
-  // A later line's error keeps ITS line number.
   let q: Parsed = parse("var x = 1;\nvar y = 2;\nvar z = ;");
   if (q.line != 3 || q.col != 9) {
     return test.fail("multi-line error at " + q.line.to_string() + ":"
@@ -858,9 +785,6 @@ function test_the_first_error_wins(): test.TestOutcome {
   return test.pass();
 }
 
-// Truncating a valid program at any point inside a statement must be
-// rejected. This is the property that catches a parser which accepts an
-// unterminated construct by falling off the end of the token stream.
 function test_truncations_are_rejected(): test.TestOutcome {
   let src: string = "var total = 0; while (total < 10) { total = total + 3; } print total;";
   let accepted: i32 = 0;
@@ -868,8 +792,6 @@ function test_truncations_are_rejected(): test.TestOutcome {
     let head: string = slice_unchecked(src, 0, cut).to_owned();
     let p: Parsed = parse(head);
     if (p.error.len() == 0) {
-      // A prefix ending exactly at a statement boundary IS valid.
-      // Anything else being accepted is the bug.
       let reprinted: string = print_program(p);
       if (reprinted.len() == 0 && head.trim().len() > 0) {
         return test.fail("prefix of length " + cut.to_string()
@@ -878,9 +800,6 @@ function test_truncations_are_rejected(): test.TestOutcome {
       accepted = accepted + 1;
     }
   }
-  // The only valid prefixes are the empty-ish ones and the two full
-  // statement boundaries; anything much larger means the parser is
-  // accepting truncated constructs.
   if (accepted > 20) {
     return test.fail(accepted.to_string()
       + " truncated prefixes were accepted — the parser is falling off"
@@ -889,7 +808,6 @@ function test_truncations_are_rejected(): test.TestOutcome {
   return test.pass();
 }
 
-// Parsing is a pure function of the source text.
 function test_parsing_is_deterministic(): test.TestOutcome {
   let ss: string[] = valid_sources();
   for i in 0..ss.len() {
@@ -901,8 +819,6 @@ function test_parsing_is_deterministic(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------ app
 
 function main(): i32 {
   eprint("miniparse — recursive descent, checked by round-tripping its own output");

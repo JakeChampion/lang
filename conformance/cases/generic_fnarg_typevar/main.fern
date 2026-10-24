@@ -1,41 +1,41 @@
-// A generic whose type parameter is reachable ONLY through a fn-parameter's
-// ARGUMENT position. `filter` below is the shape:
-//
-//     filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[]
-//
-// T appears in no parameter type of its own — `it: I` binds I, and T is only
-// inside `keep`'s argument. The bounded-only substitution left T as a residual
-// in the `T[]` return, full_ret_binds found no binding for it, and the caller
-// kept `T[]` as the element type. A downstream generic then monomorphised at
-// the type PARAMETER: `call to unknown symbol T.cmp`, refusing the module.
-//
-// `map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[]` never had the problem,
-// because U comes back through the RETURN-position clause that already existed.
-// That map/filter split is the diagnosis in one line, so both are pinned here.
-//
-// Positions:
-//   filter_chain — the bail shape: unannotated filter result into a generic.
-//   map_chain    — the sibling that always worked, so a regression on the
-//                  existing return-position recovery is visible too.
-//   annotated    — `let ys: i32[] = filter(...)`, the workaround that
-//                  lowered before this change; it must keep working.
-//   strings      — a non-i32 element, so the fix is not i32-shaped.
-//   floats       — an f64 element, where an unresolved element type is not
-//                  merely a refusal: the annotate pass has no tag for it, the
-//                  backends fall back to an untyped 4-byte read, and every
-//                  element comes back 0 while the length is right (#9485). A
-//                  `string` element cannot catch that — it is pointer-width
-//                  either way. On wasm the residual `T` also reached the
-//                  funcref type a call_indirect dispatches through, so this
-//                  position needed #9488 as well as #9485.
-//   env_lambda   — the predicate held in a LOCAL rather than written at the
-//                  call. Promoting T means the call now REQUIRES a binding for
-//                  it, and a local reaches mono_infer as a name, not a lambda:
-//                  without the env carrying the local's callable shape the key
-//                  comes out empty and the template is dropped outright, which
-//                  is a compile error on a program that used to run.
-//
-// Sentinels are 251-253, above the `% 113` the success path returns.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/iter" as iter;
 import "core/cmp" as cmp;
 
@@ -71,7 +71,7 @@ function map[T, U, I: iter.Iterator[T]](it: I, f: (T) => U): U[] {
     return out;
 }
 
-// The bail shape: filter's result, unannotated, feeding a generic consumer.
+
 function filter_chain(i: i32): i32 {
     let xs: i32[] = [5, 2, 8, 1, 4];
     let evens = filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
@@ -80,7 +80,7 @@ function filter_chain(i: i32): i32 {
     return asc[0];
 }
 
-// The sibling that always worked — U comes from the lambda's declared return.
+
 function map_chain(i: i32): i32 {
     let xs: i32[] = [3, 1, 2];
     let dbl = map(iter.of(xs), (x: i32): i32 => { return x * 2; });
@@ -89,7 +89,7 @@ function map_chain(i: i32): i32 {
     return asc[0];
 }
 
-// The annotated workaround, which lowered before this change.
+
 function annotated(i: i32): i32 {
     let xs: i32[] = [5, 2, 8];
     let evens: i32[] = filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
@@ -97,7 +97,7 @@ function annotated(i: i32): i32 {
     return asc[0];
 }
 
-// A non-i32 element, so the recovery is not i32-shaped.
+
 function strings(i: i32): i32 {
     let ss: string[] = ["pear", "fig", "plum"];
     let keep = filter(iter.of(ss), (s: string): boolean => { return s.len() > 3; });
@@ -106,7 +106,7 @@ function strings(i: i32): i32 {
     return asc[0].len();
 }
 
-// An f64 element: the width an untyped read gets wrong, on every backend.
+
 function floats(i: i32): i32 {
     let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
     let big = filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
@@ -114,7 +114,7 @@ function floats(i: i32): i32 {
     return (big[0] as i32) + (big[1] as i32) + (big[2] as i32);
 }
 
-// The predicate bound to a local: the call site sees a name, not a lambda.
+
 function env_lambda(i: i32): i32 {
     let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
     let keep = (x: f64): boolean => { return x > 3.0; };

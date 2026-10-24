@@ -92,8 +92,6 @@ func IOByteLineCases() []IOByteLineCase {
 		checkIOByteLineOutput(t, command(), []byte{'a', '\n', 255, 0, 128, 'b', '\n', 'c'},
 			bytes.Repeat([]byte("2:a\n\n2:\xff\x00\n3:\x80b\n\n1:c\n"), 2), census)
 	}})
-	// skip_line passes records without returning them, across chunk
-	// boundaries and over an unterminated last record.
 	cases = append(cases, IOByteLineCase{Name: "skip", Source: ioByteLinePrelude + `function main(): i32 {
     let r: Reader = stdin();
     let lr: io.ByteLineReader = io.byte_line_reader_new(r, 10, 4);

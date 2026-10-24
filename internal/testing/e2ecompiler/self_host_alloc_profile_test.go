@@ -76,8 +76,6 @@ func TestSelfHostAllocationProfileCapacity(t *testing.T) {
 		if target == "arm64-linux" {
 			_, qemu = arm64Tooling(t)
 		}
-		// More than 8,192 * 64 allocations, mostly served by the same
-		// freelist slot. Missing the reuse path cannot pass this test.
 		src := strings.ReplaceAll(allocationProfileProgram, "1024", "530000")
 		bin := compileCPUProfile(t, cli, src, target, "alloc")
 		cmd := runX86_64Bin(cli.runner, bin)

@@ -1,7 +1,7 @@
 import "std/string";
-// is_camel_case / is_pascal_case: the classifiers pairing with the
-// camel_case / pascal_case producers. Distinct nonzero exit per failure;
-// 42 = all pass. Runs across interp / x86-64 / arm64 / wasm.
+
+
+
 function main(): i32 {
     if (!"fooBar".is_camel_case()) { return 1; }
     if (!"foo".is_camel_case()) { return 2; }

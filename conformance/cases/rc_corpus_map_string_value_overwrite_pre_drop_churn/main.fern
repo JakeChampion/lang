@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map.set overwrite pre-drop for string V: replacing an existing
-// entry's value must reclaim the old buffer (the runtime's
-// type-erased overwrite-dec is a no-op for valKind 1). Without
-// the pre-drop, each overwrite leaks the old string buffer.
-// Wasm derefs the old cell and __fern_str_dec's it; natives load
-// the data pointer directly and __fern_rc_dec it. Three
-// overwrites per iter; 500x → 500 (just m.len() each iter, the
-// real check is uf=0 — proves the dec is balanced against the
-// drop walk, no over-release of the surviving value).
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

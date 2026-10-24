@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// The IR builds an i64 or f64 constant either from source text or from its
-// value (ir.op_const_i64 / ir.op_const_f64), and every backend read only the
-// text: a value-built constant emitted an empty immediate on x86-64 and arm64
-// and an empty `i64.const` / `f64.const` on wasm (#8996). The driver
-// (compiler/drivers/ir_const_numeric_run.fern) lowers this program through
-// the typed lowering, rebuilds every text constant from its value, and emits
-// through the same substitution seam the CLI uses, so the program must answer
-// exactly as it does compiled normally. The driver also exits 3 when a NaN
-// payload, an infinity or negative zero loses its bits.
 const irConstNumericSrc = `function main(): i32 {
     let big: i64 = 4294967303i64;
     let neg: i64 = 0i64 - 9007199254740993i64;
@@ -48,11 +39,6 @@ func irConstNumericEmit(t *testing.T, runner []string, bin, target string) strin
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("ir_const_numeric_run -target %s: %v\n%s", target, err, errb.String())
 	}
-	// Folding -0.0 flips its sign bit into a value-form constant before the
-	// driver runs. Account for it alongside all nine rebuilt text floats;
-	// the original program below still checks its exact negative-zero bits.
-	// The i64 count is what is left once the optimiser has dropped the stores
-	// of the locals whose every load it propagated (ir.eliminate_dead_stores).
 	if !strings.Contains(errb.String(), "rebuilt i64=10 f64=9 value-f64=1") {
 		t.Fatalf("-target %s: the driver rebuilt a different set of constants: %q", target, errb.String())
 	}

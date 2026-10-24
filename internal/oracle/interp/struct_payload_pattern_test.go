@@ -2,9 +2,6 @@ package interp
 
 import "testing"
 
-// A struct pattern at a payload slot projects the struct's fields. The
-// trailing `..` binds nothing, and a rename projects a field into a
-// differently-named local.
 func TestStructPatternAtPayloadSlotBinds(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -33,9 +30,6 @@ func TestStructPatternAtPayloadSlotBinds(t *testing.T) {
 	}
 }
 
-// A field literal makes the slot refutable, so a struct slot falls to the
-// NEXT ARM exactly as a variant slot does — the property that makes flat
-// arms a pattern matrix rather than a merge.
 func TestStructPatternAtPayloadSlotFallsToNextArm(t *testing.T) {
 	src := `struct Pt { x: i32, y: i32 }
 		enum H { S(Pt), N(i32) }

@@ -2,19 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// tostringFreshRetCases pin a helper whose return is a scalar `.to_string()` —
-// `function util_num(i: i32): string { return i.to_string(); }` — returning a
-// fresh string, so `let sv = util_num(i)` reclaims the box the callee moved
-// out, whether the callee returns the conversion directly or through a local.
-//
-// Only a provably scalar receiver counts as fresh: a struct `to_string` may
-// hand back an alias of a live field.
 var tostringFreshRetCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The gate: a leaked box is 32 B/round.
 	{"freshret-tostring-direct-bind", `function util_num(i: i32): string {
     return i.to_string();
 }
@@ -37,8 +29,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The same helper as a CONCAT OPERAND rather than a direct bind — the shape
-	// the leak was first spotted in.
 	{"freshret-tostring-concat-operand", `function util_num(i: i32): string {
     return i.to_string();
 }
@@ -61,7 +51,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The callee binds the conversion to a LOCAL first and returns it.
 	{"freshret-tostring-via-local", `function util_num(i: i32): string {
     let t: string = i.to_string();
     return t;
@@ -85,8 +74,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// Non-vacuity control on the other side: a callee returning a CONCAT was
-	// already registered and must stay at 0.
 	{"freshret-concat-return-unchanged", `function util_num(i: i32): string {
     return "x" + i.to_string();
 }
@@ -109,9 +96,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// REFUSAL control. The receiver is a STRUCT with a user `to_string`, whose
-	// return is a live field — an alias, not a handover — so the caller must not
-	// release it. Over-release shows as 99.
 	{"freshret-struct-tostring-refused", `struct Tag { s: string }
 function (t: Tag) to_string(): string {
     return t.s;
@@ -137,9 +121,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w % 91;
 }`, 85},
-	// REFUSAL control. `to_string` on a STRING receiver is the identity-ish
-	// builtin, not the decimal-text producer: the result may be the receiver's
-	// own box. A string-typed param is not a scalar, so this stays refused.
 	{"freshret-string-tostring-refused", `function util_s(s: string): string {
     return s.to_string();
 }

@@ -7,8 +7,6 @@ import (
 	"unsafe"
 )
 
-// sysctlMIB asks __sysctl for a MIB twice: once for the size, once for the
-// bytes.
 func sysctlMIB(mib []int32) ([]byte, error) {
 	if len(mib) == 0 {
 		return nil, syscall.EINVAL

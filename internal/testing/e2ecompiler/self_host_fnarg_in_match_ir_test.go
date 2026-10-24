@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFnArgInMatchIR pins a fn-value passed as a call ARGUMENT inside a
-// `match` SCRUTINEE (and an arm body). The closure lift env-boxes a bare
-// fn-name arg into a `$wrap` trampoline so the callee — whose fn-param is a
-// closure local — receives a box and dispatches env-first. Left a BARE fn
-// pointer, as `is_even` in `match (g(arr, is_even)) { … }`, the callee unpacks
-// a box from it and segfaults on the indirect call. std/test programs hit this
-// shape constantly, since every test `match`es assertion results (#3457).
-// Compiled through the asm_ir_run driver.
 func TestSelfHostFnArgInMatchIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -61,10 +53,6 @@ func TestSelfHostFnArgInMatchIR(t *testing.T) {
 		return inner.ProcessState.ExitCode()
 	}
 
-	// count_pred takes a fn-typed param and calls it (the closure-local call
-	// convention). is_even is passed as a BARE fn-name argument inside a match
-	// scrutinee; before the StmtMatch lift arm this passed an unwrapped pointer
-	// and the indirect call segfaulted. Evens in [1..6] = 3 -> the `3` arm.
 	const src = `function count_pred(arr: i32[], pred: (i32) => boolean): i32 {
     let h: i32 = 0; let i: i32 = 0;
     while (i < arr.len()) { if (pred(arr[i])) { h = h + 1; } i = i + 1; }

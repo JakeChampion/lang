@@ -9,15 +9,6 @@ import (
 	"testing"
 )
 
-// Tuple-producing eager iterator adapters `enumerate` / `zip`, written in the
-// inline prelude as bounded generics (#2691). `enumerate` numbers each value
-// into `(i32, T)[]`; `zip` walks two iterators in lockstep into `(T, U)[]`,
-// stopping at the shorter. Despite returning a tuple array from a bounded
-// generic — and the driver reading `p.0` / `p.1` field positions off that
-// generic return — both lower on the self-host IR path (the generic tuple-array
-// field access works; an earlier belief that it didn't was a process-exit-code
-// (u8) truncation artifact in the test oracle, not a codegen limit). All
-// oracles here stay < 256 so the i32 result survives the exit code.
 const iterEnumZipPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -44,22 +35,15 @@ var iterEnumZipCases = []struct {
 	main string
 	want int
 }{
-	// enumerate [10,11,12,13] -> [(0,10),(1,11),(2,12),(3,13)]; sum(i+v)=52, +len 4 = 56.
 	{"enumerate", `function main(): i32 { let e = enumerate(range(10, 14)); let s = 0; for p in e { s = s + p.0 + p.1; } return s + e.len(); }`, 56},
-	// enumerate over an empty range -> []; len 0 + 9 = 9.
 	{"enumerate-empty", `function main(): i32 { let e = enumerate(range(5, 5)); return e.len() + 9; }`, 9},
-	// zip equal lengths: [(0,10),(1,11),(2,12)]; sum(p.0+p.1)=36, +len 3 = 39.
 	{"zip-equal", `function main(): i32 { let z = zip(range(0, 3), range(10, 13)); let s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 39},
-	// zip stops at the shorter (first): [(0,10),(1,11)]; sum=22, +len 2 = 24.
 	{"zip-short-first", `function main(): i32 { let z = zip(range(0, 2), range(10, 99)); let s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 24},
-	// zip stops at the shorter (second): [(0,5),(1,6)]; sum=12, +len 2 = 14.
 	{"zip-short-second", `function main(): i32 { let z = zip(range(0, 99), range(5, 7)); let s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 14},
 }
 
 func iterEnumZipProg(mainBody string) string { return iterEnumZipPrelude + mainBody + "\n" }
 
-// TestNativeIterEnumZip runs the inline enumerate/zip programs on the native
-// interp / x86-64 / wasm backends, oracle-checked.
 func TestNativeIterEnumZip(t *testing.T) {
 	for _, tc := range iterEnumZipCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,7 +61,6 @@ func TestNativeIterEnumZip(t *testing.T) {
 	}
 }
 
-// TestNativeIterEnumZipArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeIterEnumZipArm64(t *testing.T) {
 	for _, tc := range iterEnumZipCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,9 +72,6 @@ func TestNativeIterEnumZipArm64(t *testing.T) {
 	}
 }
 
-// TestNativeIterEnumZipModule exercises the shipped `import "core/iter"`
-// module's lazy enumerate / zip methods over real `range` iterators on the
-// native backends.
 func TestNativeIterEnumZipModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -114,8 +94,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostIterEnumZipIRX86_64 routes each inline case through the
-// self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks it.
 func TestSelfHostIterEnumZipIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -149,7 +127,6 @@ func TestSelfHostIterEnumZipIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIterEnumZipIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostIterEnumZipIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host iter enumerate/zip wasm IR e2e")

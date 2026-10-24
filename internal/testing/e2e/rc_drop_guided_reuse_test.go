@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// The drop-guided reuse shape: the donor is dropped INSIDE a dominated arm,
-// so a reuse pair crosses the arm boundary. It must be value-correct on both
-// the taken and not-taken paths, with no rc over-release.
-
-// dgArmShapeRuntimeSrc exercises the drop-guided-only pairing at runtime:
-// a's last use sits inside the if arm before b's construction (taken
-// path reuses a's box; not-taken path leaves a to the exit sweep — the
-// adversarial double-free alternation), with a pointer field so the old
-// array is deep-freed on the reuse branch.
 const dgArmShapeRuntimeSrc = `struct Holder { id: i32, items: i32[] }
 function run(go_: boolean): i32 {
     let a: Holder = Holder { id: 1, items: [7, 8] };

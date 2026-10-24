@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLiteralArgReclaimWasmIR is the wasm port of
-// TestSelfHostLiteralArgReclaimIRX86_64 (#4355 slice 6). On wasm a string
-// literal is DATA-SECTION (no per-call box), so there was never a leak here —
-// but the reclaim is emitted at the IR layer for every backend, so this pins
-// that the wasm $__fern_str_free mapping ($__fern_arr_dec, heap-base-guarded)
-// no-ops safely on the data-section pointer: boundedness + detector zero +
-// the retained-value safety.
 func TestSelfHostLiteralArgReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host literal-arg-reclaim wasm IR e2e")
@@ -26,13 +19,6 @@ func TestSelfHostLiteralArgReclaimWasmIR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		// The fresh PRODUCER CALL in argument position. No heap-flatness
-		// assertion on this leg — the WAT driver's own allocations sit between
-		// any two probes — so __rc_underflow_count() plus the value is the witness
-		// that the release is balanced rather than over-eager.
-		// The ARRAY sibling. No flatness assertion on this leg — the WAT
-		// driver's own allocations sit between any two probes — so
-		// __rc_underflow_count() plus the values are the witness.
 		{"producer-call-arr-arg-borrowable-wasm", `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
@@ -64,8 +50,6 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
-		// Refused: the callee returns the argument, so the result aliases the
-		// temp and is read back.
 		{"producer-call-arg-returned-safe-wasm", `import "std/i32";
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 @noinline function pick(s: string): string { return s; }
@@ -104,10 +88,6 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
-		// #6544: the same reclaim at a METHOD call. The release lands at the IR
-		// layer, so wasm emits it too — and its literals are data-section, so
-		// what this pins is that the $__fern_arr_dec mapping stays a guarded
-		// no-op there rather than a leak fix.
 		{"method-literal-arg-borrowable-flat-wasm", `function (s: string) readit(nm: string): i32 { return s.len() + nm.len(); }
 function main(): i32 {
     let recv: string = "rr";
@@ -157,10 +137,6 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
-		// The gate that makes the counted-retain STRING tier sound, on the leg
-		// where the release is a $__fern_arr_dec on a data-section pointer: `esc`
-		// disqualifies C from the STRFLDOK scan, so the field is stored with no
-		// retain and the caller's box is its only reference.
 		{"counted-retain-str-arg-uncounted-store-safe-wasm", `struct C { name: string, args: string }
 function mk(name: string, args: string): C { return C { name: name, args: args }; }
 function esc(c: C): string[] { let o: string[] = []; return o.append(c.name); }
@@ -180,9 +156,6 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
-		// The byte-index arm of the string vocabulary — `t[0]` is a value copy,
-		// so the parameter stays credited and the struct's field survives the
-		// release.
 		{"counted-retain-str-arg-index-read-wasm", `struct Q { tag: string, k: i32 }
 function mkq2(t: string, k: i32): Q { return Q { tag: t, k: k + (t[0] as i32) }; }
 function main(): i32 {

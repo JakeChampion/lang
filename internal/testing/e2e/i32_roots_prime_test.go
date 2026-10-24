@@ -2,18 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i32.next_power_of_2 and std/i32.is_prime at the
-// top of the signed 32-bit range, where both used to compute their loop
-// condition in i32 and wrap (#8467). 2^30 is the largest power of two a signed
-// i32 holds, so next_power_of_2 returns the 0 sentinel above it — the same
-// convention as the i64 / u32 / u64 twins — instead of doubling past the sign
-// boundary into an unbreakable loop. is_prime bounds its trial divisor by
-// `i <= n / i`, which cannot overflow, so M31 (2147483647) reports prime while
-// composites whose smallest factor sits at the root (46337 * 46327, 46327^2)
-// still report composite. A regression here HANGS rather than failing, so these
-// legs rely on the package test timeout.
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
-// leg skips itself when its toolchain is absent.
 const i32RootsPrimeProg = `
 import "std/i32" as i32m;
 function main(): i32 {

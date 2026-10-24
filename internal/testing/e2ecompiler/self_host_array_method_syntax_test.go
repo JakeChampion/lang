@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// arrayMethodSyntaxCases exercise std/array methods via METHOD syntax
-// (`xs.sum_squared()`). Before that dispatch existed, a non-codegen-intercepted
-// array method fell through to the -1 sentinel and the program exited 255. [5,3,8,1]: sum_squared = 25+9+64+1 = 99.
 var arrayMethodSyntaxCases = []struct {
 	name string
 	src  string
@@ -16,7 +13,6 @@ var arrayMethodSyntaxCases = []struct {
 }{
 	{"sum_squared", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; return a.sum_squared(); }\n", 99},
 	{"sum_abs", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; return a.sum_abs(); }\n", 17},
-	// reversed returns a fresh i32[]; index it back to a scalar exit code.
 	{"reversed", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; let b: i32[] = a.reverse(); return b[0]; }\n", 1},
 }
 
@@ -45,10 +41,6 @@ func TestSelfHostArrayMethodSyntaxX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrayMethodSyntaxArm64 is the arm64 counterpart: the self-host
-// arm64 backend (asm_arm64_ir.fern) must lower array method syntax the same
-// way. Built by the x86 self-host compiler (the arm64 bundle
-// driver), linked + run under qemu.
 func TestSelfHostArrayMethodSyntaxArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)

@@ -1,20 +1,7 @@
-// #7867 class C, the heap-growth half: a fresh array temp handed to a callee
-// that appends to its parameter and returns the result (`return xs.append(s)`)
-// must be reclaimed, so a loop of such calls recycles its blocks instead of
-// bumping the arena per round. The rc corpus pins the exact byte balance on
-// the natives (append_receiver_param_arg_temp_released and its two siblings);
-// this is the same shape as a bump verdict, which is what wasm — with no leak
-// detector — can gate.
 package e2e
 
 import "testing"
 
-// appendReceiverParamVerdictSrc runs N rounds of the class-C shape, then 2N,
-// and returns bumpVerdictFlat when the second batch bumped the arena no more
-// than the first (every block it needed came back off the freelist) — a
-// leaking round bumps in proportion to N and fails the comparison. The chain
-// callee covers the intermediate release too, and the underflow counter is
-// folded in so an over-release fails the same way.
 func appendReceiverParamVerdictSrc() string {
 	return `@noinline
 function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }

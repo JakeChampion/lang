@@ -1,15 +1,6 @@
 import "std/array";
 import "std/test";
 
-// tests/stdlib/array_structural_verbs_test.fern — generic
-// structural array verbs added to std/array (#2689): `reverse`,
-// `take`, `drop`, `concat` over an arbitrary `T[]`.
-//
-// Unlike the combinators (map/filter/fold), these take NO callback,
-// so they lower cleanly on the AOT + self-host backends (no
-// indirect-call limitation) — hence this file is also exercised
-// through the self-host compiler, not just the interpreter.
-
 function test_reverse(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5];
   let r: i32[] = array.reverse(xs);
@@ -47,7 +38,6 @@ function test_take_zero(): test.TestOutcome {
 }
 
 function test_take_over_len(): test.TestOutcome {
-  // n >= len clamps to a full copy.
   let xs: i32[] = [1, 2, 3];
   return test.assert_eq(array.take(xs, 99).len(), 3);
 }
@@ -72,7 +62,6 @@ function test_drop_zero(): test.TestOutcome {
 }
 
 function test_take_drop_complement(): test.TestOutcome {
-  // take(xs, n) ++ drop(xs, n) == xs, for any n.
   let xs: i32[] = [10, 20, 30, 40];
   let joined: i32[] = array.concat(array.take(xs, 1), array.drop(xs, 1));
   if (joined.len() != 4) {
@@ -107,7 +96,6 @@ function test_concat_empty(): test.TestOutcome {
 }
 
 function test_concat_method(): test.TestOutcome {
-  // Receiver-method form (no collision with a type-specific name).
   let a: i32[] = [1, 2];
   let b: i32[] = [3];
   let c: i32[] = a.concat(b);

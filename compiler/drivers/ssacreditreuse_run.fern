@@ -134,7 +134,6 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
         hits = hits + 1;
       } else if (mode == 8 && op.kind_tag == 40 && op.imm == 8) {
         ops = ops.append(op);
-        // These provenance labels may refer to the same runtime child.
         changed = ssa.SInst { kind_tag: 9, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
         nvals = f.nvals + 1;
         hits = hits + 1;
@@ -151,9 +150,6 @@ function clear_slot(ops: ir.Op[], field: i32, value: i32): ir.Op[] {
   return ops.append(ir.op_load_local(0)).append(ir.op_const_i32(value)).append(ir.op_struct_set(field, 0));
 }
 
-// Start from the real unique-branch old-child release. Clearing first and
-// consuming the transferred local credit is equivalent. The negative controls
-// isolate duplicate transfer, lost credit, shared writes and stale/null reads.
 function clearing_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
   let releases: i32 = 0;
@@ -203,9 +199,6 @@ function clearing_mutation(body: irtables.LowerResult, field: i32, mode: i32): i
   return irtables.LowerResult { ...body, ops: ops };
 }
 
-// Preserve the actual unique/shared CFG. Extract the sibling into a temporary,
-// apply the checked children-only helper, then restore the sibling before the
-// original replacement. The helper must not consume detached local credits.
 function child_drop_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
   let hits: i32 = 0;
@@ -255,8 +248,6 @@ function child_drop_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFun
   }
 }
 
-// Keep the actual old-child release and clear transfer. Save its operand to
-// prove that a detached reference remains readable only while its credit lives.
 function scalar_read_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
   let hits: i32 = 0;
@@ -391,8 +382,6 @@ function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
   while (i < body.ops.len()) {
     let op = body.ops[i];
     if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-      // Release before retaining an already loaded sibling. Its external slot
-      // anchor must survive, without granting another local parent credit.
       ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
     }
     if (mode == 1 && op.kind_tag == ir.kind_id("load_local") && i + 2 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == "__sem_release_Parent") {
@@ -498,8 +487,6 @@ function target_checks(target: string): void {
   }
   require(hits == 1, 32);
   expect(ssa.SFunc { ...f, blocks: wrong_phi }, d, r, false, "unreadable phi operand", 33);
-  // The shared anchor survives an early old-parent release. Retain the
-  // already loaded sibling afterward; no old-parent dereference is moved.
   let early: ir.Op[] = [];
   let inserted: i32 = 0;
   let removed: i32 = 0;
@@ -535,8 +522,6 @@ function target_checks(target: string): void {
 }
 
 function right_checks(target: string): void {
-  // Replacing the other slot is governed by its actual load/store identity,
-  // not a hardcoded assumption that only offset eight can be discharged.
   let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace_right(own p: Parent, child: Leaf): Parent { return Parent { ...p, right: child }; }\nfunction main(): i32 { return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
   let bodies: irtables.LowerResult[] = [];
@@ -620,8 +605,6 @@ function runtime_checks(): void {
   require(runtime_read(same, 155, 144) && overwritten.n == 144, 75);
 }
 
-// Each supplied assertion has the Boolean/i32-to-void ABI in this fixture.
-// The typed adapter proves that caller obligation separately.
 function named_body(rows: irtables.LowerResult[], name: string): ssa.SFunc {
   let matches: irtables.LowerResult[] = [];
   for row in rows {

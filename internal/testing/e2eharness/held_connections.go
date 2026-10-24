@@ -12,35 +12,16 @@ import (
 	"time"
 )
 
-// The per-held-connection heap bound of #9853 and #9854: a serve loop
-// holding N idle connections must grow the heap by under 1 KiB per
-// connection, measured by holding N and then 2N and reading the bump
-// allocator's high-water mark through the server's own handler. A
-// connection is held in one of two shapes: accepted and never used, or
-// kept alive after one served request.
-
-// HeldConnectionsBytesPerConnection is the bound: the bump-allocator growth
-// the second batch of held connections may cost, per connection.
 const HeldConnectionsBytesPerConnection = 1024
 
-// HeldConnectionsBatch is N: the connections held per batch.
 const HeldConnectionsBatch = 64
 
-// HeldConnectionsServerSource is a server whose handler answers
-// the bump allocator's high-water mark in bytes.
 func HeldConnectionsServerSource() string {
 	return heldConnectionsServer("", "serve.config()", `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }`)
 }
 
-// heldConnectionsServer is the held-connection servers' shared shape:
-// `handler` serving under `config` with a read deadline long enough that
-// an idle held connection stays open while it is measured (a parked one
-// holds under the loop's own held deadline instead), no per-client cap,
-// since both batches come from this host and the default cap would close
-// the second on accept, and room in flight for both batches of streams on
-// one HTTP/2 connection.
 func heldConnectionsServer(imports, config, handler string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
@@ -56,21 +37,8 @@ function main(): i32 {
 `, imports, handler, config, 4*HeldConnectionsBatch)
 }
 
-// HeldSuspendedBytesPerHandler is the bound on the bump-allocator growth
-// the second batch of held connections may cost, per connection, when
-// each connection's handler is parked on its upstream: the connection's
-// own cost plus the flight, the task's record and save area, and the
-// fetch client's request, pooled connection and parked frames, which
-// save only their live locals. The self-host's loop costs about 7.0 KiB.
 const HeldSuspendedBytesPerHandler = 8192
 
-// HeldSuspendedServerSource is HeldConnectionsServerSource with a handler
-// that waits on `plat.http` to the fetch upstream's /hold target (through
-// the forward proxy SetFetchProxy names) for every path but /heap, so a
-// connection with a request in flight holds a suspended handler. The
-// request's bounds sit far above the measurement's own guards, so a
-// handler that answers early is the upstream's doing, never the client
-// giving up on the park.
 func HeldSuspendedServerSource() string {
 	return heldConnectionsServer(`import "std/fetch";`, "serve.config()", heldSuspendedHandler)
 }
@@ -86,28 +54,12 @@ const heldSuspendedHandler = `function handle(req: HttpRequest, plat: platform.P
     }
 }`
 
-// HeldStreamsBytesPerStream is the bound on the bump-allocator growth the
-// second batch of streams parked on one HTTP/2 connection may cost, per
-// stream: the flight, task and fetch client a suspended handler costs,
-// without a connection of its own, plus the stream's slot in the state
-// machine and the request it handed over. The self-host's loop costs
-// about 8.0 KiB, of which the state machine's own share is about 2.5 KiB.
 const HeldStreamsBytesPerStream = 12288
 
-// HeldStreamsServerSource is HeldSuspendedServerSource under `with_h2()`,
-// so a prior-knowledge HTTP/2 client parks a handler per stream on one
-// connection.
 func HeldStreamsServerSource() string {
 	return heldConnectionsServer(`import "std/fetch";`, "serve.config().with_h2()", heldSuspendedHandler)
 }
 
-// MeasureHeldStreams opens one HTTP/2 connection to the server at addr
-// and parks two batches of streams on it, each a request whose handler
-// is parked on the upstream's /hold target, and answers the
-// bump-allocator growth the second batch cost, per stream. A batch
-// counts as held once the upstream has every handler's request parked.
-// The upstream is then released and every stream must answer, so the
-// parked handlers are shown to resume as well as to fit.
 func MeasureHeldStreams(t *testing.T, addr string, up *FetchUpstream) (perStream int64, first, second int64) {
 	t.Helper()
 	client, err := DialH2C(addr, 5*time.Second)
@@ -153,13 +105,6 @@ func MeasureHeldStreams(t *testing.T, addr string, up *FetchUpstream) (perStream
 	return second / HeldConnectionsBatch, first, second
 }
 
-// MeasureHeldSuspended holds two batches of connections to the server at
-// addr, each with a request whose handler is parked on the upstream's
-// /hold target, and answers the bump-allocator growth the second batch
-// cost, per suspended handler. A batch counts as held once the upstream
-// has every handler's request parked. The upstream is then released and
-// every held connection must answer its request, so the parked handlers
-// are shown to resume as well as to fit.
 func MeasureHeldSuspended(t *testing.T, addr string, up *FetchUpstream) (perHandler int64, first, second int64) {
 	t.Helper()
 	held := make([]net.Conn, 0, 2*HeldConnectionsBatch)
@@ -210,14 +155,6 @@ func MeasureHeldSuspended(t *testing.T, addr string, up *FetchUpstream) (perHand
 	return second / HeldConnectionsBatch, first, second
 }
 
-// MeasureHeldConnections holds two batches of idle connections to the
-// server at addr and answers the bump-allocator growth the second batch
-// cost, per connection. With served, each connection carries one request
-// and its response before it is left idle, so it is held as a kept-alive
-// connection; without, it is accepted and never used. The first batch's
-// growth includes whatever the connection table and the loop allocate
-// once (the first accept, the table's first growth), which is why the
-// bound is on the second.
 func MeasureHeldConnections(t *testing.T, addr string, served bool) (perConnection int64, first, second int64) {
 	t.Helper()
 	held := make([]net.Conn, 0, 2*HeldConnectionsBatch)
@@ -238,8 +175,6 @@ func MeasureHeldConnections(t *testing.T, addr string, served bool) (perConnecti
 			}
 		}
 	}
-	// Settle: the loop has accepted the batch once a request through it
-	// answers, since accepts and reads are served in one wait.
 	before := heapBumpBytes(t, addr)
 	hold()
 	after1 := heapBumpBytes(t, addr)
@@ -250,8 +185,6 @@ func MeasureHeldConnections(t *testing.T, addr string, served bool) (perConnecti
 	return second / HeldConnectionsBatch, first, second
 }
 
-// serveOnce sends one request on c and reads its response whole, leaving
-// the connection open on keep-alive.
 func serveOnce(t *testing.T, c net.Conn, n int) {
 	t.Helper()
 	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
@@ -270,7 +203,6 @@ func serveOnce(t *testing.T, c net.Conn, n int) {
 	_ = c.SetDeadline(time.Time{})
 }
 
-// heapBumpBytes asks the server for its bump allocator's high-water mark.
 func heapBumpBytes(t *testing.T, addr string) int64 {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -311,10 +243,6 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 	return 0
 }
 
-// BumpPerRequestServerSource is a single-loop server whose handler
-// answers the bump allocator's high-water mark, `__heap_bump_bytes()`,
-// with room for twice BumpPerRequestRounds requests on one connection, so
-// the warm-up CheckBumpPerRequest extends to a Date change fits.
 func BumpPerRequestServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -328,16 +256,8 @@ function main(): i32 {
 `, 2*BumpPerRequestRounds+1)
 }
 
-// BumpPerRequestRounds is #9853's per-request count: 100k requests on
-// one keep-alive connection.
 const BumpPerRequestRounds = 100000
 
-// CheckBumpPerRequest drives BumpPerRequestServerSource over one
-// keep-alive connection: once a tenth of `rounds` requests have warmed the
-// allocator's free lists and the loop has rebuilt its `Date` once, its
-// one piece of per-second work, requests reuse what earlier ones freed,
-// so the bump high-water mark reported then is the one reported nine
-// tenths of `rounds` later (#9853's per-request gate, bump half).
 func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

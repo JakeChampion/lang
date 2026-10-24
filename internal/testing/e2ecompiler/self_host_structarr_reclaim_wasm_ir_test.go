@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrReclaimWasmIR runs the shared struct-array reclaim
-// cases on WASI, exercising the typed release pipeline.
 func TestSelfHostStructArrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host structarr-reclaim wasm IR e2e")

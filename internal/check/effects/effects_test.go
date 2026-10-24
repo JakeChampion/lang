@@ -8,12 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The solver is a monotone bitmask fixpoint over the call graph. These
-// pin the properties the diagnostics depend on: recursion terminates,
-// mutual recursion agrees, an indirect call is charged the union over
-// escaping callables and no more, and every reached effect has a
-// witness chain.
-
 var table = map[string]string{
 	"write_file":    "fs",
 	"read_file":     "fs",
@@ -21,7 +15,7 @@ var table = map[string]string{
 	"random_i32":    "random",
 	"now_unix_ms":   "time",
 	"env":           "env",
-	"print":         "", // an untagged builtin: recorded, carries nothing
+	"print":         "",
 	"len":           "",
 	"exit":          "",
 	"int_to_string": "",
@@ -65,9 +59,6 @@ function main(): i32 { return top("a"); }`)
 	}
 }
 
-// Recursion needs no special case: rows only grow and the lattice is a
-// finite powerset, so the loop terminates on its own. A test that
-// hangs here is the regression.
 func TestSolveTerminatesOnRecursion(t *testing.T) {
 	_, sol := solve(t, `
 function ping(n: i32): i32 { if (n <= 0) { return 0; } return pong(n - 1); }
@@ -78,9 +69,6 @@ function main(): i32 { return ping(3); }`)
 	}
 }
 
-// A call through a value is charged the union over everything a
-// function value could be carrying — and nothing else. `quiet` never
-// escapes, so its effect must not leak into the indirect row.
 func TestIndirectCallChargesOnlyEscapingCallables(t *testing.T) {
 	g, sol := solve(t, `
 function noisy(n: i32): i32 { return n + random_i32(); }
@@ -98,9 +86,6 @@ function main(): i32 { return apply(noisy, 1) + quiet(2); }`)
 	}
 }
 
-// A name in CALL position is not a function value. Getting this wrong
-// makes every called function escape, which charges every indirect
-// call with the whole program's effects.
 func TestCallPositionIsNotAnEscape(t *testing.T) {
 	g, _ := solve(t, `
 function helper(n: i32): i32 { return n + 1; }
@@ -144,9 +129,6 @@ function main(): i32 { return busy("a"); }`)
 	}
 }
 
-// A lambda may be invoked anywhere, so its reach widens the indirect
-// row — but it is also walked as part of its definer, so an
-// immediately-applied one is not undercounted either.
 func TestLambdaReachWidensTheIndirectRow(t *testing.T) {
 	_, sol := solve(t, `
 function apply(f: (i32) => i32, n: i32): i32 { return f(n); }

@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/ansi across backends: the SGR wrap
-// primitive (sgr), representative fg / bright / bg colours and text
-// styles, and strip() — which must remove SGR sequences while
-// preserving surrounding text and multi-byte UTF-8 content. Every check
-// is expressed through strip() (so it doesn't depend on the raw ESC
-// byte in the Go source) plus a length check confirming codes are
-// actually emitted. Returns 42 iff all hold. Each leg skips itself when
-// its toolchain is absent.
 const ansiProg = `
 import "std/ansi" as ansi;
 function main(): i32 {

@@ -13,13 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Under the default --reflink=auto, one refused clone stands for the rest of
-// an operand's tree: cp stops asking, and copies the bytes. The clone
-// creates the destination, asks FICLONE and unlinks the file again when it
-// is refused, so with ioctl and unlinkat both failing the refused attempt
-// leaves its file behind, and the byte copy's exclusive create of that name
-// then fails. Exactly one file of the tree may meet that; a cp that asked
-// for every file would fail them all.
 func TestCpCloneRefusalHoldsForTheTree(t *testing.T) {
 	dir := t.TempDir()
 	const files = 5

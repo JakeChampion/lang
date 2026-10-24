@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// selfHostMapStructuralKeySource keys maps by tuples and arrays, compared and
-// hashed element by element through helpers the lowering generates per key
-// type (#10020). Every probe looks a key up through a value built separately
-// from the one inserted, so a lowering that compared the key's box pointer
-// answers the default. Covered: string, boolean, i64, u8 and char elements, a
-// tuple nested in a tuple, an array of strings, an array of arrays, the empty
-// array, overwrite, has / without, keys() and iteration, and enough entries to
-// grow the columns.
 const selfHostMapStructuralKeySource = `import "core/map";
 import "std/i32";
 
@@ -71,12 +63,8 @@ function main(): i32 {
 }
 `
 
-// The interpreter's answer; the test checks the interpreter still gives it.
 const selfHostMapStructuralKeyWant = "0|sa=799 sb=xy-- sc=213 hc=f had=t after=2 sd=7 total=897 vs=7 len=300\n"
 
-// TestSelfHostMapStructuralKeys compiles the structural-key program for every
-// self-host target and holds it to the interpreter's answer, with the
-// sanitizer leg pinning that every key and value the columns own is released.
 func TestSelfHostMapStructuralKeys(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../stdlib")

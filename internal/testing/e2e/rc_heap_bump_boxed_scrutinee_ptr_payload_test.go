@@ -4,32 +4,6 @@ import (
 	"testing"
 )
 
-// The heap-box match-scrutinee reclaim refused the WHOLE match as soon as any
-// arm bound a pointer-shaped payload, so `match (mk()) { Ok(s) => { … } }` over
-// a fresh call leaked the box and its payload every iteration — the same shape
-// #5339 fixed for the pair-form ABI, on the boxed side.
-//
-// The gate already excused `_`, on the grounds that it "extracts nothing, so no
-// binding outlives the free". A NAMED binding the arm cannot let escape has
-// that property too; it just has to be proven rather than read off the
-// spelling. bindingConfinedToArm is that proof — the same whitelist the
-// pair-form payload release has been gated on.
-//
-// Measured on the discriminator that isolates it, 20 rounds of a three-variant
-// enum with a fresh string payload:
-//
-//	BOk(_)  -> allocs=40 frees=40   (flat: the gate excused it)
-//	BOk(s)  -> allocs=40 frees=0    (everything leaked)
-//
-// The reclaim is a DEEP drop, so admitting the arm releases the payload as well
-// as the box.
-//
-// The sources compare their own two round-blocks and return 98 rather than
-// handing the byte delta back as an exit status: a status is masked to 0..255,
-// and the leak here is 320000 bytes at the larger N — which reads as exactly 0.
-// The first draft of this test did that, and its "N=5000 -> 0" is what gave it
-// away.
-
 func boxedPtrPayloadStrSrc() string {
 	return `enum BxS { BOk(string), BErr(i32), BNone }
 function tag(v: i32): string { if (v == 0) { return "aa"; } if (v == 1) { return "bb"; } return "cc"; }
@@ -75,8 +49,6 @@ function main(): i32 {
 }`
 }
 
-// The expression form of the same shape — a separate call site with its own
-// result-type gate, so it needs its own row.
 func boxedPtrPayloadExprSrc() string {
 	return `enum BxS { BOk(string), BErr(i32), BNone }
 function tag(v: i32): string { if (v == 0) { return "aa"; } if (v == 1) { return "bb"; } return "cc"; }
@@ -103,15 +75,6 @@ function main(): i32 {
 }`
 }
 
-// CRITICAL soundness. Every arm here MUST be refused, and each one escapes the
-// payload by a different route: returned outright, assigned to an outer local,
-// pushed into a container, held by an `@` binding on the box, named in a guard,
-// and — the freshness gate rather than the confinement one — a scrutinee that
-// is a parameter pass-through whose source is read again afterwards.
-//
-// Every escaped value is READ after the match, so freeing any of them is a
-// use-after-free (a wrong length, or a trap) rather than a byte count. The
-// total is pinned against the interpreter, which shares none of this lowering.
 const boxedPtrPayloadEscapeSafe = `import "core/int";
 import "std/i32";
 enum BxS { BOk(string), BErr(i32), BNone }

@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// fern.toml path-dependency resolution (docs/PACKAGE-MANAGEMENT-SOTA.md,
-// manifest slice). A workspace of two sibling packages: the app declares
-// `helper = { path = "../helper" }` and imports it by name — bare
-// `import "helper"` reaches the dependency's lib module, and
-// `import "helper/extra"` reaches a submodule. The dependency's own
-// imports resolve against ITS manifest, and an undeclared bare import
-// is an error naming the manifest (resolver-side isolation).
-
 func writeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -49,14 +41,11 @@ function main(): i32 { return helper.three() + extra.four(); }`,
 	for _, fn := range prog.Funcs {
 		found[fn.Name] = true
 	}
-	// helper/lib.fern's decls are mangled with the module basename (lib__),
-	// the qualified call sites having been rewritten to match.
 	if !found["lib__three"] || !found["extra__four"] {
 		t.Fatalf("dependency decls not loaded/mangled as expected: %v", found)
 	}
 }
 
-// The dependency's lib entry honours ITS manifest's `lib` key.
 func TestLoadManifestDepCustomLib(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -77,8 +66,6 @@ function main(): i32 { return helper.five(); }`,
 	t.Fatal("helper's custom lib module (api.fern) was not loaded")
 }
 
-// Transitive path deps: helper itself depends on textkit, resolved
-// against HELPER's manifest, not the app's.
 func TestLoadManifestTransitiveDep(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -95,9 +82,6 @@ pub function six(): i32 { return textkit.six(); }`,
 	}
 }
 
-// Isolation: an import that is neither a file nor a declared dependency
-// errors, and the error names the governing fern.toml. textkit exists on
-// disk but the APP never declared it.
 func TestLoadManifestUndeclaredDepErrors(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n",
@@ -119,9 +103,6 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// Back-compat inside a manifest package: a bare import that resolves to
-// an existing sibling file keeps loading as a plain module path, and
-// `./relative` + `std/` imports are untouched by the manifest.
 func TestLoadManifestKeepsFileImports(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml":     "[package]\nname = \"app\"\n",
@@ -134,9 +115,6 @@ func TestLoadManifestKeepsFileImports(t *testing.T) {
 	}
 }
 
-// A dependency name shadows nothing: when a declared dep name ALSO
-// matches a sibling file, the declared dependency wins (the manifest is
-// the authority inside its package).
 func TestLoadManifestDepWinsOverSiblingFile(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml":    "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -157,8 +135,6 @@ func TestLoadManifestDepWinsOverSiblingFile(t *testing.T) {
 	t.Fatal("declared dependency should win over the same-named sibling file")
 }
 
-// Manifest-less programs are byte-for-byte unaffected: no fern.toml
-// anywhere up the tree, bare imports stay directory-relative.
 func TestLoadNoManifestUnchanged(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/main.fern":     `import "sub/util";` + "\n" + `function main(): i32 { return util.one(); }`,
@@ -169,8 +145,6 @@ func TestLoadNoManifestUnchanged(t *testing.T) {
 	}
 }
 
-// A malformed manifest fails the load with the manifest path + line in
-// the error, not a silent fallback to manifest-less behaviour.
 func TestLoadManifestParseErrorSurfaces(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = \"1.2\"\n",
@@ -182,9 +156,6 @@ func TestLoadManifestParseErrorSurfaces(t *testing.T) {
 	}
 }
 
-// Hash-addressed url dependencies resolve through the content-addressed
-// package store (FERN_CACHE_DIR/pkgs/<hex>), and an unfetched one errors
-// pointing at `fern -fetch` — the loader itself never touches the network.
 func TestLoadManifestURLDepFromStore(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("FERN_CACHE_DIR", cache)
@@ -225,10 +196,6 @@ func TestLoadManifestURLDepUnfetchedErrors(t *testing.T) {
 	}
 }
 
-// Vendored mode: with a `vendor/<name>/` tree next to the root manifest,
-// a declared dependency resolves out of vendor/ — offline, ignoring the
-// dependency's original path/url entirely (here the path points at a
-// directory that does not even exist).
 func TestLoadVendoredResolution(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml":               "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../gone\" }\n",
@@ -248,9 +215,6 @@ func TestLoadVendoredResolution(t *testing.T) {
 	t.Fatal("vendored dependency's lib module was not loaded from vendor/")
 }
 
-// A vendored dependency resolves ITS OWN declared deps flat in the same
-// top-level vendor/ tree (not a nested vendor/), and isolation still
-// holds: helper reaches textkit only because helper declares it.
 func TestLoadVendoredTransitiveFlat(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml":                "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../gone\" }\n",
@@ -265,8 +229,6 @@ func TestLoadVendoredTransitiveFlat(t *testing.T) {
 	}
 }
 
-// A declared dep missing from an otherwise-vendored tree errors pointing
-// at `fern -vendor`, never falling back to the network or the path.
 func TestLoadVendoredMissingDepErrors(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml":               "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\nother = { path = \"../other\" }\n",
@@ -280,9 +242,6 @@ func TestLoadVendoredMissingDepErrors(t *testing.T) {
 	}
 }
 
-// Workspace member resolution: a member declares `sibling = { workspace
-// = true }` and imports it by name; the workspace root's members list
-// locates the sibling by its package name — no `../sibling` path needed.
 func TestLoadWorkspaceMemberDep(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"fern.toml":       "[workspace]\nmembers = [\"app\", \"lexer\"]\n",
@@ -303,7 +262,6 @@ func TestLoadWorkspaceMemberDep(t *testing.T) {
 	t.Fatal("workspace member 'lexer' was not resolved by name")
 }
 
-// The member is located by its PACKAGE name, not its directory name.
 func TestLoadWorkspaceMemberByPackageName(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"fern.toml":          "[workspace]\nmembers = [\"app\", \"pkgs/lex\"]\n",
@@ -317,8 +275,6 @@ func TestLoadWorkspaceMemberByPackageName(t *testing.T) {
 	}
 }
 
-// A `workspace = true` dep whose name matches no member errors, naming
-// the workspace.
 func TestLoadWorkspaceMemberMissingErrors(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"fern.toml":     "[workspace]\nmembers = [\"app\"]\n",
@@ -331,9 +287,6 @@ func TestLoadWorkspaceMemberMissingErrors(t *testing.T) {
 	}
 }
 
-// Isolation holds: a member can only import a sibling it declares. Here
-// app does NOT declare lexer, so `import "lexer"` is an undeclared-dep
-// error even though lexer is a workspace member.
 func TestLoadWorkspaceIsolation(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"fern.toml":       "[workspace]\nmembers = [\"app\", \"lexer\"]\n",

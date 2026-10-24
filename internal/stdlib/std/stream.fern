@@ -1,58 +1,26 @@
-// std/stream — the byte-stream value behind `HttpRequest.body`. See
-// docs/STDLIB-DESIGN-RESEARCH.md Rec §1.
-//
-// A Stream is a `data: u8[]` buffer with a `pos: i32` read cursor; reads
-// advance the cursor and `.read_all()` / `.read_all_string()` consume
-// the remainder. A Stream made by `stream_from_source` also carries a
-// `BodySource`: when a read exhausts the buffer it asks the source for
-// the next chunk, which replaces the buffer, so a body that arrives as
-// it is read (std/serve's streamed request body,
-// docs/NET-P3-SUSPENSION-PLAN.md §3.9) is never held whole. The source
-// answers None at its end and on every call after, and its `fault` says
-// why the stream ended early. The reader API is the same either way.
-//
-// `bytes` is `u8[]` throughout the codebase (no separate
-// type alias today). Stream constructors / readers all use
-// `u8[]` for the byte-array side.
-
+// This module constructs and combines asynchronous byte streams.
 import "std/string";
 import "std/utf8" as utf8;
 import "core/int";
 
-// `stream_from_bytes(bs)` — wrap a `u8[]` buffer as a
-// Stream. The Stream owns the buffer; subsequent reads
-// advance the cursor.
 pub function stream_from_bytes(bs: u8[]): Stream {
   return Stream { data: bs, pos: 0, source: None };
 }
 
-// `stream_from_string(s)` — wrap a string's bytes as a
-// Stream. Cheap byte conversion (`s.bytes()` returns the
-// fresh `u8[]`).
 pub function stream_from_string(s: string): Stream {
   return Stream { data: s.bytes(), pos: 0, source: None };
 }
 
-// `stream_empty()` — zero-length Stream. Useful as a default
-// / placeholder.
 pub function stream_empty(): Stream {
   let empty: u8[] = [];
   return Stream { data: empty, pos: 0, source: None };
 }
 
-// `stream_from_source(src)` — a Stream over a source that answers the
-// next chunk on demand: the buffer starts empty, and a read that
-// exhausts it asks `src.next()` for more, which replaces the buffer.
-// `None` ends the stream; `(s).fault()` says why it ended early.
 pub function stream_from_source(src: BodySource): Stream {
   let empty: u8[] = [];
   return Stream { data: empty, pos: 0, source: Some(src) };
 }
 
-// `(s: Stream).fault()` — why a sourced stream ended early: an HTTP
-// status (413 past the cap, 408 stalled, 400 malformed or cut short) or
-// `async.cancelled()`; 0 for a stream that reached, or has not reached,
-// its end, and for one with no source.
 pub function (s: Stream) fault(): i32 {
   match (s.source) {
     Some(src) => {
@@ -65,10 +33,6 @@ pub function (s: Stream) fault(): i32 {
   return 0;
 }
 
-// `__fill(s)` — the stream with bytes to read when it can have them: an
-// exhausted buffer is replaced by the source's next chunk, until one has
-// bytes or the source answers None. A stream with no source is answered
-// as it is.
 function __fill(s: Stream): Stream {
   let out: Stream = s;
   while (out.pos >= out.data.len()) {
@@ -91,16 +55,10 @@ function __fill(s: Stream): Stream {
   return out;
 }
 
-// `(s: Stream).len()` — byte count of the Stream's backing buffer
-// (independent of the read cursor): the whole body of an in-memory
-// Stream, the chunk being read of a sourced one.
 pub function (s: Stream) len(): i32 {
   return s.data.len();
 }
 
-// `(s: Stream).remaining()` — bytes between the cursor and
-// the end of the buffer. Zero when the Stream is fully
-// consumed; a sourced Stream may still have chunks to pull.
 pub function (s: Stream) remaining(): i32 {
   let total: i32 = s.data.len();
   if (s.pos >= total) {
@@ -109,19 +67,10 @@ pub function (s: Stream) remaining(): i32 {
   return total - s.pos;
 }
 
-// `(s: Stream).is_empty()` — whether the Stream has any
-// unread bytes left. The dual of `.remaining() == 0`;
-// reads better at call sites that gate on "any more data?"
 pub function (s: Stream) is_empty(): boolean {
   return s.pos >= s.data.len();
 }
 
-// `(s: Stream).read_all()` — consume the remaining bytes, and every
-// chunk a source has still to give, as a fresh `u8[]`, returning
-// `(bytes, advancedStream)` per the cursor idiom (docs/CURSOR-IDIOM.md).
-// The returned Stream's cursor is at the end; rebind it: `let (bytes, s)
-// = s.read_all();`, and `s.fault()` says whether a sourced stream ended
-// early.
 pub function (s: Stream) read_all(): (u8[], Stream) {
   let out: u8[] = [];
   let cur: Stream = __fill(s);
@@ -140,40 +89,11 @@ pub function (s: Stream) read_all(): (u8[], Stream) {
   return (out, cur);
 }
 
-// `(s: Stream).read_all_string()` consumes and validates the remaining bytes.
-// Valid UTF-8 yields Some(text), including Some("") at EOF; malformed bytes
-// yield None. The returned cursor advances to EOF in either case. The original
-// Stream remains unchanged, so callers can still recover its bytes with read_all.
 pub function (s: Stream) read_all_string(): (Option[string], Stream) {
   let (bytes, s2) = s.read_all();
   return (utf8.from_bytes(bytes), s2);
 }
 
-// ============================================================
-// Reader-shape methods — Tier-C Rec §13.
-//
-// These follow the immutable CURSOR IDIOM (docs/CURSOR-IDIOM.md):
-// a read returns `(value, advancedStream)` and the caller
-// rebinds the Stream. Stream is a value-semantic in-memory
-// reader.
-//
-// NOTE — Stream and the fd-backed Reader are DELIBERATELY
-// SEPARATE shapes (the "share method names so they compose"
-// convention that this comment used to describe is RETIRED).
-// The fd-backed Reader is effectful — its position lives in
-// kernel fd state, not a Fern value — so it cannot adopt the
-// value-threaded cursor idiom: `io.read_line(r)` answers a
-// `Result[Option[string], IoError]` and advances the fd as a side effect.
-// Immutable readers (Stream) and effectful readers (fd) are
-// distinct abstractions; unifying them waits on nominal
-// interface types AND a decision on how an effectful reader
-// presents a value-shaped surface (if ever).
-// ============================================================
-
-// `(s: Stream).read_byte()` — read a single byte from the
-// cursor. Returns `(Option[u8], advancedStream)`: Some(b)
-// + a Stream advanced past it, or None + the unchanged
-// Stream when exhausted. Rebind: `let (b, s) = s.read_byte();`.
 pub function (s: Stream) read_byte(): (Option[u8], Stream) {
   let cur: Stream = __fill(s);
   if (cur.pos >= cur.data.len()) {
@@ -183,10 +103,6 @@ pub function (s: Stream) read_byte(): (Option[u8], Stream) {
   return (Some(b), Stream { ...cur, pos: cur.pos + 1 });
 }
 
-// `(s: Stream).read_n(n)` — read up to `n` bytes from the
-// cursor, returning `(bytes, advancedStream)`. The byte array
-// holds the actual bytes consumed (possibly fewer than `n` at
-// EOF); empty when already exhausted or `n <= 0`.
 pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
   let out: u8[] = [];
   if (n <= 0) {
@@ -204,8 +120,6 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
       pos = pos + 1;
     }
     cur = Stream { ...cur, pos: pos };
-    // The source is asked only for bytes still owed: a pull waits for
-    // the peer, and a read satisfied by what arrived must not.
     if (out.len() < n) {
       cur = __fill(cur);
     }
@@ -213,11 +127,6 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
   return (out, cur);
 }
 
-// `(s: Stream).read_some()` — the next bytes the stream has: what its
-// buffer holds past the cursor, or one chunk from its source when the
-// buffer is spent, returning `(bytes, advancedStream)`; empty at the end.
-// Where `read_n` waits for the count it was asked, this answers what has
-// arrived, so a reader can answer a peer's bytes as they come.
 pub function (s: Stream) read_some(): (u8[], Stream) {
   let out: u8[] = [];
   let cur: Stream = __fill(s);
@@ -229,15 +138,6 @@ pub function (s: Stream) read_some(): (u8[], Stream) {
   return (out, Stream { ...cur, pos: pos });
 }
 
-// `(s: Stream).read_line()` — read up to and including the
-// next `\n`, returning `(Option[string], advancedStream)`.
-// The line excludes the trailing newline; a trailing `\r`
-// (Windows line endings) is also stripped. None + unchanged
-// Stream when exhausted at the start of the call (EOF); a
-// final unterminated line returns Some(line) + the advanced
-// Stream, then None on the subsequent call. An ill-formed
-// sequence reads as U+FFFD: this reader's None already means
-// end of input, so it has no arm to refuse into.
 pub function (s: Stream) read_line(): (Option[string], Stream) {
   let cur: Stream = __fill(s);
   if (cur.pos >= cur.data.len()) {
@@ -262,8 +162,6 @@ pub function (s: Stream) read_line(): (Option[string], Stream) {
   return (None, cur);
 }
 
-// `__without_cr(line)` — the line without the `\r` a CRLF ending leaves
-// on it.
 function __without_cr(line: u8[]): u8[] {
   let n: i32 = line.len();
   if (n == 0 || line[n - 1] as i32 != 13) {

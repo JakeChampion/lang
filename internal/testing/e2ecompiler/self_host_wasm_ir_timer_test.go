@@ -9,24 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRTimerPollable is the first real preview2 op lowered on the
-// self-host wasm-IR path (#3457 phase / #4317): the wasm reactor's timer
-// primitives wasm_timer_pollable + wasm_pollable_drop.
-//
-// wasm_timer_pollable(dur_ns: i64) -> pollable subscribes a monotonic-clock
-// timer (wasi:clocks/monotonic-clock.subscribe-duration) and returns the
-// wasi:io/poll pollable handle; wasm_pollable_drop(p) drops it
-// (wasi:io/poll.[resource-drop]pollable). wasm_ir emits these as DIRECT
-// component-model imports, so the emitted core module must be composed with
-// `wasm-tools component new` before it runs (a bare core module can't resolve a
-// preview2 interface) — building on the component-adapter foundation (#4315).
-//
-// The test drives the IR path, asserts the emitted WAT carries the two preview2
-// imports (proving the ops lowered rather than bailing), composes
-// the core into a component, checks it imports wasi:io/poll +
-// wasi:clocks/monotonic-clock, and runs it: the pollable is created and dropped,
-// exit 0. (It does not block on the pollable — wasm_block is not yet an IR op —
-// so it exercises the create+drop resource lifecycle, not the wait.)
 func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -48,9 +30,6 @@ func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
-	// A monotonic-clock timer pollable, created then dropped. The duration is a
-	// typed i64 local (a direct i64 literal in argument position mis-infers to
-	// i32 — a separate pre-existing lowering quirk, unrelated to this op).
 	const src = `function main(): i32 {
     let d: i64 = 200000000i64;
     let p: i32 = wasm_timer_pollable(d);
@@ -69,8 +48,6 @@ func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 		t.Fatalf("wasm_ir_run failed: %v", err)
 	}
 
-	// The emitted WAT must carry the two preview2 imports — proof the ops lowered
-	// on the IR path rather than bailing.
 	for _, want := range []string{
 		`"wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration"`,
 		`"wasi:io/poll@0.2.0" "[resource-drop]pollable"`,
@@ -97,7 +74,6 @@ func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
 	}
 
-	// The component must import the two preview2 interfaces the ops resolve to.
 	wit, _ := exec.Command(wasmtools, "component", "wit", compPath).Output()
 	for _, want := range []string{"wasi:io/poll@0.2", "wasi:clocks/monotonic-clock@0.2"} {
 		if !strings.Contains(string(wit), want) {
@@ -105,7 +81,6 @@ func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 		}
 	}
 
-	// Runs: create + drop the pollable, exit 0.
 	runCmd := exec.Command(wasmtime, "run", compPath)
 	if out, err := runCmd.CombinedOutput(); err != nil {
 		t.Fatalf("wasmtime run timer component: %v\n%s", err, out)

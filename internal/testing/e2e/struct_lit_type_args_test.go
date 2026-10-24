@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// Construction-site type arguments on a generic struct literal —
-// `Box[i32] { val: 42 }` — the `[ TypeArgs ]` of the spec grammar's
-// `StructLit` production (#6812). `Stack[i32] { items: [] }` is the shape
-// that motivates it: no field value can pin `T`, so before this the only
-// spelling was an annotation on the binding. The written arguments win over
-// what the fields would infer: `Box[i64] { val: … }` is not a Box[i32].
 const structLitTypeArgsProg = `struct Box[T] { val: T }
 struct Stack[T] { items: T[] }
 struct Pair[A, B] { a: A, b: B }
@@ -36,8 +30,6 @@ func TestStructLitTypeArgs(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	const want = 20 + 0 + 3 + 2 + 7 + 9 + 5
-	// One subtest per backend: a leg that skips for a missing qemu /
-	// wasmtime must not take the reachable legs down with it.
 	t.Run("interp", func(t *testing.T) {
 		if _, code := runFixtureInterp(t, p, ""); code != want {
 			t.Errorf("interp = %d, want %d", code, want)

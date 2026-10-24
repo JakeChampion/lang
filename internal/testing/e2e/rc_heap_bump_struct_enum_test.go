@@ -4,16 +4,6 @@ import (
 	"testing"
 )
 
-// Struct / enum loop-body deep reclamation (RC-Perceus). Before this
-// slice emitVarReinitDropOld flat-dec'd a struct / enum loop var on
-// re-declaration — which neither frees the box (rc_dec has no free path)
-// nor recurses into rc-tracked fields / payloads. So a `let b = Box{
-// data: [...] }` or `let e = Arr([...])` re-declared in a loop leaked
-// its box AND its nested heap field every iteration but the last. The
-// fix routes the reinit drop through the generated __drop_struct_<N> /
-// __drop_enum_<N> fn (is_unique-gated deep drop + box_free), matching
-// the exit sweep, so the bump high-water stays FLAT regardless of N.
-
 func structFieldBumpSrc(n string) string {
 	return `struct Box { data: i32[], tag: i32 }
 function main(): i32 {
@@ -47,9 +37,6 @@ function main(): i32 {
 }`
 }
 
-// structEnumUnderflowSrc exercises both shapes across many iterations and
-// returns the over-release counter (0 expected) after a value check —
-// guards against a double-free of a box / nested buffer.
 const structEnumUnderflowSrc = `struct Box { data: i32[], tag: i32 }
 enum E { Arr(i32[]), Empty }
 function main(): i32 {

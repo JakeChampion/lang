@@ -4,24 +4,6 @@ import (
 	"testing"
 )
 
-// A fresh collection handed to a CLOSURE call is reclaimed (#6460).
-//
-// The stage-(b) arg-temp reclaim only ever ran for a call to a NAMED function
-// (`calleeIsFunc && !calleeIsLocal`), so the identical argument passed through
-// a function-typed local or param was never released — `frees=0`, none at all,
-// not one short. Passing a freshly built collection to a callback is how you
-// use an iterator body, a comparator, a visitor or a middleware handler.
-//
-// The reclaim is gated on a CONCRETE SCALAR result, exactly as the direct path
-// is. That restriction is what carries the safety and it is the one whose
-// widening to pointer results segfaulted the differential oracle before, so it
-// stays as narrow here; the two extra routes a closure could take are both
-// closed by the checker (E049 makes a reference-typed capture read-only, and
-// `own` cannot appear on a function VALUE's parameter since ast.FuncType
-// carries a bare []Type).
-//
-// All three compiled backends: the temps are stashed in typed scratch slots,
-// so a two-word ABI that stores or reloads one at the wrong width fails here.
 const closureArgChurnSrc = `import "std/i32";
 import "std/string";
 

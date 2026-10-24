@@ -4,13 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostRcEnumCallInitIRArm64 is the arm64 port of
-// TestSelfHostRcEnumCallInitIRX86_64 (#4355): an rc-payload enum local
-// initialised from a call is released at scope exit, payload chain included.
-// The payload's drop calls further helpers, so a box pointer held in a
-// clobbered register across them would release a stale pointer; the cases pin
-// flat churn, no underflow, and live values left intact. Lighter churn under
-// qemu.
 func TestSelfHostRcEnumCallInitIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -32,8 +25,6 @@ func TestSelfHostRcEnumCallInitIRArm64(t *testing.T) {
 		}
 	}
 
-	// CALL-INIT, STRING-field payload struct — churn flat at detector zero
-	// (exercises the str_free x10-clobber reload).
 	run(t, `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
@@ -60,7 +51,6 @@ function main(): i32 {
     return 0;
 }`, "rcenum-call-init-str-flat-arm64", 0)
 
-	// PARAM-EMBED exclusion pin.
 	run(t, `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }, n); }
@@ -78,7 +68,6 @@ function main(): i32 {
     return 0;
 }`, "rcenum-call-init-param-embed-safe-arm64", 0)
 
-	// RETURN-CLOBBER regression pin (direct-init struct payload, detector zero).
 	run(t, `struct Inner { items: i32[] }
 enum Box { Full(Inner), Empty }
 function readit(): i32 {

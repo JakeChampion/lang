@@ -7,12 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/strerror"
 )
 
-// HostErrnoFern is a Fern `host_errno(linux)`: the errno Linux numbers
-// `linux`, as the compile target numbers it, which is what a socket builtin
-// returns. It is generated from internal/tables/strerror, so a probe can fake
-// a builtin's answer, or round-trip `NetError.errno()` through
-// `net.error_from_host`, without copying a table of its own; an errno the
-// target has no number for answers 0.
 func HostErrnoFern() string {
 	var b strings.Builder
 	b.WriteString("function host_errno(linux: i32): i32 {\n    let os: string = target_os();\n")

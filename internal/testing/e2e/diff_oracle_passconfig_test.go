@@ -12,23 +12,15 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// selfHostPassSwitches are the self-host compiler's switches that turn one
-// optimisation off. Each is meant to be invisible to the program, so a
-// generated program must give the interpreter's answer under any subset of
-// them; until the differential legs set them, only hand-written tests did.
 var selfHostPassSwitches = []string{
-	"FERN_SELFHOST_NO_REUSE=1", // no construction builds in a donor's box
-	"FERN_SEM_REUSE=",          // every unit planned and lowered afresh, none replayed
-	"FERN_SEM_INLINE=",         // no inlining in the typed lowering
+	"FERN_SELFHOST_NO_REUSE=1",
+	"FERN_SEM_REUSE=",
+	"FERN_SEM_INLINE=",
 	"FERN_NO_ARRAY_FUSION=1",
 	"FERN_NO_SCALE_KERNEL=1",
 	"FERN_NO_PRODUCT_KERNEL=1",
 }
 
-// selfHostPassConfig is the set of switches seed is compiled under. Half the
-// seeds get none, so the configuration that ships keeps most of the corpus;
-// the rest set each switch with probability one half. It depends on the seed
-// alone, so a failing seed reproduces with the configuration its log names.
 func selfHostPassConfig(seed uint64) []string {
 	x := seed ^ 0x9e3779b97f4a7c15
 	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
@@ -46,8 +38,6 @@ func selfHostPassConfig(seed uint64) []string {
 	return env
 }
 
-// logPassConfig records the switches a seed's compile runs under, so a
-// failure's log carries what reproducing it needs.
 func logPassConfig(t *testing.T, env []string) {
 	t.Helper()
 	if len(env) > 0 {
@@ -55,8 +45,6 @@ func logPassConfig(t *testing.T, env []string) {
 	}
 }
 
-// selfHostCompileCmd runs the self-host CLI with env added to this process's
-// environment.
 func selfHostCompileCmd(fernBin string, env []string, args ...string) *exec.Cmd {
 	cmd := exec.Command(fernBin, args...)
 	if len(env) > 0 {
@@ -87,7 +75,6 @@ func TestSelfHostPassConfigMix(t *testing.T) {
 	}
 }
 
-// passEnv is passes(seed), or no switches when the leg varies none.
 func passEnv(passes func(uint64) []string, seed uint64) []string {
 	if passes == nil {
 		return nil
@@ -95,19 +82,10 @@ func passEnv(passes func(uint64) []string, seed uint64) []string {
 	return passes(seed)
 }
 
-// selfHostBisectBudget caps the seeds one test process bisects: a fault that
-// fails most of a nightly window would otherwise spend the shard's budget on
-// rebuilds that all name the same decision.
 const selfHostBisectBudget = 16
 
 var selfHostBisects atomic.Int64
 
-// bisectSelfHostSeed bisects a seed a differential leg failed over the
-// optimising passes' decisions (compiler/optbisect.fern) and says which one
-// the failure follows, so the report names a pass and a function, not a whole
-// program. agrees builds and judges the seed for target under the env given.
-// pass is the culprit's pass, "none" when no one decision explains the
-// failure, and "unbisected" when the bisect did not run.
 func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, flags, env []string, agrees func(env []string) bool) (report, pass string) {
 	t.Helper()
 	if selfHostBisects.Add(1) > selfHostBisectBudget {
@@ -119,7 +97,6 @@ func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, f
 		t.Fatalf("write src: %v", err)
 	}
 	args := append(append([]string{"-target", target}, flags...), "-emit", "asm", "-o", filepath.Join(dir, "prog.s"), srcPath, stdlibRoot)
-	// A refused compile still lists the decisions it took before refusing.
 	out, hung, _ := compileSelfHostSeed(fernBin, append(append([]string{}, env...), "FERN_OPT_TRACE=1"), args...)
 	if hung {
 		return "decision bisect: the traced compile hung", "unbisected"
@@ -134,8 +111,6 @@ func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, f
 	return fmt.Sprintf("decision bisect: the failure follows `%s` (FERN_OPT_BISECT=%d agrees, FERN_OPT_BISECT=%d does not)", d, d.Hash+1, d.Hash), d.Pass
 }
 
-// seedRunAgrees is the native legs' verdict on one run of a seed: it ran,
-// exited with the interpreter's byte, and the sanitizer said nothing.
 func seedRunAgrees(r *selfHostRun, gap string, want int, src string) bool {
 	if r == nil || gap != "" {
 		return false

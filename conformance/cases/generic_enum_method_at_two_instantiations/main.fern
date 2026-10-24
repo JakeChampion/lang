@@ -1,6 +1,6 @@
-// A generic enum with a receiver method, used at two instantiations: a bare
-// variant in a payload position takes the instantiation its payload names,
-// as an argument takes its parameter's (#12710).
+
+
+
 import "std/i32";
 
 enum Tree[T] {

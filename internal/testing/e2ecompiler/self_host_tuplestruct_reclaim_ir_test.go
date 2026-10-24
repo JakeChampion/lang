@@ -7,23 +7,11 @@ import (
 	"testing"
 )
 
-// tupleStructReclaimCases pin the #4365 tuple-with-STRUCT-element reclaim: a
-// `let t: (i32, P) = (i, P { xs: [..], y: i })` loop-local must release the
-// struct's field buffers, the struct box and the tuple box every iteration, at
-// the loop-rebind and at exit.
-//
-// SOUNDNESS: a scalar read (t.0), a struct scalar-field read (t.1.y), an indexed
-// struct array-field read (t.1.xs[j]) and t.1.xs.len() are borrows; a WHOLE
-// struct extraction (`keep = t.1`, store / return / pass) keeps the element
-// alive and must never over-release. The plain array element (`keep = t.1` on
-// `(i32, i32[])`) is held to the same rule — see the arrtuple-whole-extract
-// case.
 var tupleStructReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: rebuilt per iteration, scalar + struct-scalar-field reads only.
 	{"tuplestruct-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -38,8 +26,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Full borrow set: scalar (t.0), struct scalar field (t.1.y), indexed struct
-	// array field (t.1.xs[j]) and t.1.xs.len() are all admitted — still reclaims.
 	{"tuplestruct-borrow-full", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -58,8 +44,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-STORE negative: `keep = t.1` extracts the WHOLE struct out of the
-	// tuple — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"tuplestruct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let keep: P = P { xs: [0, 0], y: 0 };
@@ -74,8 +58,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-CALL negative: `take(t.1)` passes the whole struct to a call (a
-	// retain) — un-credited, leak-safe, detector zero.
 	{"tuplestruct-escape-call-safe", `struct P { xs: i32[], y: i32 }
 function take(p: P): i32 { return p.y; }
 function main(): i32 {
@@ -90,8 +72,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The WHOLE array element extracted (`keep = t.1` on `(i32, i32[])`) must not
-	// over-release (it once exited 99), like the struct case above.
 	{"arrtuple-whole-extract-safe", `function main(): i32 {
     let keep: i32[] = [0, 0];
     let i: i32 = 0;
@@ -105,8 +85,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// REGRESSION guard: the borrow-only array-element tuple STILL reclaims (the gate
-	// only rejects whole extraction, not `t.1[j]` reads). Heap-bounded, no underflow.
 	{"arrtuple-borrow-reclaims", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -122,8 +100,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostTupleStructReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostTupleStructReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

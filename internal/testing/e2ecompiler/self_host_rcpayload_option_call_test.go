@@ -5,30 +5,6 @@ import (
 	"testing"
 )
 
-// An rc-payload `Option`/`Result` local bound from a CALL is reclaimed
-// (#6360, second half). Bound from a constructor (`Some([..])`) the variant is
-// visible at the init; bound from `mk(i)` it is not, so the payload release
-// has to be guarded on the tag at run time.
-//
-//	payload  init
-//	rc       direct
-//	rc       call     <- the shape these tests pin
-//	scalar   direct
-//	scalar   call     <- #6416
-//
-// These assert `live_bytes` 0 and nonzero allocs rather than a byte count: the
-// number moves with box sizes, and nonzero allocs make a probe that stopped
-// exercising the path fail rather than pass vacuously.
-//
-// WHY NO GATE CAUGHT THIS. From #6360: the rc detector counts over-*releases*,
-// so a pure leak reads as a clean 0; the fixpoint is self-referential and blind
-// to a stable leak; and the alloc differential compares `__heap_bump_bytes()`
-// growth, which the freelist masks. `FERN_LEAKCHECK` is the instrument that
-// sees it, which is why these are leakcheck tests and not exit-code tests.
-
-// rcPayloadOptionCallSrc: `Option[i32[]]` from a producer call — the simplest
-// shape in the class. One payload type, one tag branch, no `Err` arm at all.
-// 100 rounds x 4, so a per-iteration leak is 35200 bytes and unmistakable.
 const rcPayloadOptionCallSrc = `import "core/int";
 
 function make(i: i32): Option[i32[]] {
@@ -52,10 +28,6 @@ function main(): i32 {
 }
 `
 
-// rcPayloadResultCallSrc: the `Result` sibling, with a SCALAR `Err`. That is
-// exactly the admitted shape — the tag guard's else-branch is empty because
-// only the success arm carries anything to release. A `string` Err is refused
-// by admission and is covered by the negative test below.
 const rcPayloadResultCallSrc = `import "core/int";
 
 function make(i: i32): Result[i32[], i32] {
@@ -79,10 +51,6 @@ function main(): i32 {
 }
 `
 
-// rcPayloadOptionDirectSrc is the CONTROL that was already green, and it still
-// matters: it is the row that proves the deep drop was never the missing
-// piece. If a change to the call path ever regresses this, the fix has broken
-// the machinery it was supposed to reuse.
 const rcPayloadOptionDirectSrc = `import "core/int";
 
 function main(): i32 {
@@ -101,8 +69,6 @@ function main(): i32 {
 }
 `
 
-// runRcPayloadOptionCallProbe compiles src through the self-host asm IR driver
-// with leak accounting on, runs it, and returns the parsed summary.
 func runRcPayloadOptionCallProbe(t *testing.T, src string, wantExit int) (allocs, frees, live int64, summary string) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -162,9 +128,6 @@ func TestSelfHostRcPayloadResultFromCallX86_64(t *testing.T) {
 	}
 }
 
-// The direct-construction control. Green before the fix and after it; it fails
-// only if the call path's tag-guarded drop has disturbed the unconditional one
-// it was built to reuse.
 func TestSelfHostRcPayloadOptionDirectX86_64(t *testing.T) {
 	_, _, live, summary := runRcPayloadOptionCallProbe(t, rcPayloadOptionDirectSrc, 3)
 	if live != 0 {

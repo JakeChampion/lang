@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A Map param threaded through `m = m.insert(..)` sits on the borrow
-// baseline (typeDeepDropWired keeps Maps off the consumed promotion).
-// On the cow-copy path its overwrite dec used to release the caller's
-// handle, which the frame never owned: with `g` aliasing `base` after
-// an in-place iteration, the next copy left `base` at rc 1 with two
-// owners and g's re-declaration drop freed it (exit 121 on a plain
-// build, a use-after-free under the sanitizer). The ownership bit
-// (cowMapParams) decs only what the frame owns and releases it at
-// exit, so the shape is value-correct and reclaims fully.
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/map";
 function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
     m = m.insert(k, k * 7);

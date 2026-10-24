@@ -6,12 +6,6 @@ import "std/stream";
 import "std/string";
 import "core/int";
 
-// tests/stdlib/http_multipart_test.fern — std/http/multipart: a body the
-// builder made read back part by part, whole and in pieces, from a buffer
-// and from a stream whose pieces split the delimiter; a preamble and
-// transport padding; the media type and the boundary refused; every cap;
-// `fields`; quoted parameters; and the builder's own output.
-
 function sample(): multipart.Builder {
   return sample_after(multipart.builder_with("xYzBoundary"));
 }
@@ -20,7 +14,6 @@ function sample_after(b: multipart.Builder): multipart.Builder {
   return b.field("name", "ann").field("note", "a\r\n--not a boundary\r\nb").file("photo", "me \"1\".png", "image/png", [0 as u8, 1 as u8, 2 as u8, 13 as u8, 10 as u8, 45 as u8, 45 as u8]).field("name", "bob");
 }
 
-// scripted hands bytes over `k` at a time, as a streamed body would.
 function scripted(bytes: u8[], k: i32): BodySource {
   let at: Cell[i32] = cell_new(0);
   return BodySource {
@@ -68,7 +61,6 @@ function show(bytes: u8[]): string {
   return out;
 }
 
-// dump reads every part whole: name, filename, type and content.
 function dump(req: HttpRequest, limits: multipart.Limits): string {
   match (dump_result(req, limits)) {
     Ok(s) => {
@@ -106,12 +98,6 @@ function test_whole_parts(): test.TestOutcome {
   return test.assert_eq(dump(sample().request("POST", "/upload"), multipart.limits()), EXPECTED);
 }
 
-// The reader pulls the stream 4096 bytes at a time, so a delimiter is
-// split between two pulls when a part's content ends `j` bytes before a
-// multiple of 4096. A file part padded to end there precedes the sample,
-// for every `j` shorter than the delimiter, from a stream handing it over
-// `j` bytes at a time; the parts are read whole, then the file is skipped
-// by `fields`.
 function test_split_delimiter(): test.TestOutcome {
   let got: string = "";
   let j: i32 = 1;
@@ -134,7 +120,6 @@ function test_split_delimiter(): test.TestOutcome {
   return test.assert_eq(got, "");
 }
 
-// head_len is the bytes before the content of the padded file part.
 function head_len(): i32 {
   let empty: u8[] = [];
   return multipart.builder_with("xYzBoundary").file("pad", "pad.bin", "application/octet-stream", empty).body.len() - 2;
@@ -162,9 +147,6 @@ function test_pieces(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// pieces_result reads the first part in two-byte pieces (two reads: the
-// second hands over the last byte and says the part is done), the second
-// in one piece and then the rest, the file whole and the last part whole.
 function pieces_result(req: HttpRequest): Result[string, multipart.MultipartError] {
   let r: multipart.Reader = multipart.open(req, multipart.limits())?;
   let first: string = "";
@@ -257,8 +239,6 @@ function test_fields(): test.TestOutcome {
   return test.assert_eq(field_names(sample().request("POST", "/upload")), "ann,bob absent");
 }
 
-// field_names is `fields` on the request as the "name" values joined and
-// whether "photo" is among them, or the error.
 function field_names(req: HttpRequest): string {
   match (multipart.fields(req, multipart.limits())) {
     Ok(m) => {
@@ -285,9 +265,6 @@ function field_names(req: HttpRequest): string {
   return "unreachable";
 }
 
-// A `;` inside a quoted parameter is part of the value, and a backslash
-// escapes the quote: in the boundary, the name and the filename, raw and
-// as the builder writes them.
 function test_quoted_params(): test.TestOutcome {
   let body: string = "--B;1\r\nContent-Disposition: form-data; filename=\"c;\\\"d\\\\e.txt\"; name=\"a;b\"\r\n\r\n1\r\n--B;1--\r\n";
   let raw: string = dump(buffered("multipart/form-data; charset=utf-8; boundary=\"B;1\"", body), multipart.limits());

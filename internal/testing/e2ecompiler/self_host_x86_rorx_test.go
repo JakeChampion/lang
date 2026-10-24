@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostX86GasRorx pins the in-process assembler's `rorx` against `as`
-// + objdump: both widths, a register source and a memory one, REX-extended
-// registers on either side and an index register.
 func TestSelfHostX86GasRorx(t *testing.T) {
 	runX86GasWasmSelfTest(t, "x86_gas_rorx", x86GasRorxMain)
 }
@@ -31,10 +28,6 @@ function main(): i32 {
 }
 `
 
-// A rotate whose operand stays live is a `rorx` from the operand's home, a
-// register or, spilled, its frame slot, rather than a copy and an in-place
-// `ror`. The SHA-2 rounds are where both happen: each working variable is
-// rotated three times and the schedule spills.
 const rotateProg = `import "std/crypto";
 function main(): i32 {
     if (crypto.sha256_hex("abc".as_bytes()) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 1; }

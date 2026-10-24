@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of internal/testing/e2e's TestReactorFloor*: the reactor floor
-// compiled by the production self-host driver for the native targets and
-// wasm, the probe's verdict read the way the socket twins read it.
 func TestSelfHostReactorFloor(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
@@ -27,8 +24,6 @@ func TestSelfHostArm64DarwinReactorFloor(t *testing.T) {
 	checkSelfHostReactorFloor(t, []string{"arm64-darwin"})
 }
 
-// The signal pollable's twin: SIGUSR1 delivered by a forked shell on the
-// native targets, the -ENOTSUP of wasm.
 func TestSelfHostReactorSignal(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
@@ -43,8 +38,6 @@ func TestSelfHostArm64DarwinReactorSignal(t *testing.T) {
 	checkSelfHostReactorSignal(t, []string{"arm64-darwin"})
 }
 
-// Every host compiles the Darwin reactor, so a Linux-only syscall reached
-// while building its runtime bodies fails here, not first on the macOS runner.
 func TestSelfHostArm64DarwinReactorCompiles(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for name, src := range map[string]string{"floor": e2eharness.ReactorProbe(), "signal": e2eharness.ReactorSignalProbe("native")} {

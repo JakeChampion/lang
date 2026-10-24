@@ -1,15 +1,3 @@
-// `process_alive` (#8767) end to end on every backend that provides it.
-//
-// The probe is written against processes the runner is guaranteed to have an
-// answer about rather than ones it spawns: pid 1 always exists, and a pid
-// above the kernel's own pid_max never has. Both arms of the "yes" — success
-// and EPERM — are reachable that way without the test needing to know whether
-// it runs as root, which is exactly the distinction the primitive must NOT
-// make.
-//
-// wasm has no leg: neither WASI preview has a process table or pids, so the
-// `proc` capability withholds the builtin and E066 refuses the program at
-// check time. TestWASMProcessAliveRefused is that half.
 package e2e
 
 import (
@@ -20,11 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Each failing step returns its own code.
-//
-// 4194304 is 2^22, one above the largest pid_max Linux accepts, so no process
-// can ever hold it — where a pid merely "not in use right now" could be
-// reassigned between the compile and the run.
 const processAliveSource = `function main(): i32 {
     // pid 1 exists on any system this runs on. When the caller is not root
     // the kernel answers EPERM, which is still a live process — a helper
@@ -62,10 +45,6 @@ func TestInterpProcessAlive(t *testing.T) {
 	}
 }
 
-// The wasm answer is a refusal, and it has to arrive from the capability
-// scan rather than as an `unknown callee` out of the emitter — the difference
-// between "this target has no processes" and "the backend forgot one". Both
-// previews, since `proc` is withheld by each.
 func TestWASMProcessAliveRefused(t *testing.T) {
 	prog, err := parser.Parse(processAliveSource)
 	if err != nil {

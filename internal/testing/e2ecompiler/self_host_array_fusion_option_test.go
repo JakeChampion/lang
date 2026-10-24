@@ -8,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The allocation window includes the whole call, while construction of the
-// input and the independent scalar oracle stay outside it.
 func scalarOptionSource() string {
 	var source strings.Builder
 	source.WriteString("import \"std/array\";\n")

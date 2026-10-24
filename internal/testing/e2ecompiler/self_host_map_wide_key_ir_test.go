@@ -9,20 +9,10 @@ import (
 	"testing"
 )
 
-// wideMapKeyCases pin an i64 / u64 key column on the typed lowering (#10005).
-// The register runtimes hold every key at eight bytes, so a wide key takes the
-// integer column; wasm's key cell is four bytes, so there each key is boxed
-// into a cell the map owns and probes through (the `_k64` helpers). Every key
-// is above 2^32 or below -2^32, so a column that kept 32 bits of it would
-// collide or miss. The interpreter and native answer every program 42, and
-// each test runs every program a second time under FERN_LEAKCHECK, whose
-// census has to balance: the key cells wasm boxes are freed by the map alone.
 var wideMapKeyCases = []struct {
 	name string
 	src  string
 }{
-	// Insert, has, get, get_or, keys, pair iteration, without, an i64 value
-	// column beside an i64 key, and a u64 key at the top of its range.
 	{"wide-keys", `import "core/map";
 function main(): i32 {
     let m: Map[i64, i32] = map_new(4);
@@ -58,14 +48,6 @@ function main(): i32 {
     return 42;
 }
 `},
-	// Growth past the initial capacity with cells to rehash, deletes that leave
-	// tombstones and reinserts over them, overwrites that discard the incoming
-	// key, an aliased map copied before its insert, and a u64-keyed map with a
-	// wide value column read back through iteration, keys and get.
-	// Five shared maps rebuilt in one function, their key and value columns
-	// of every width: the rebuild's scratch slots are one per width, so a
-	// narrow column and a wide one never share a slot's declared type
-	// (#10779).
 	{"mixed-width-rebuilds", `import "core/map";
 function main(): i32 {
     let a: Map[string, u8] = map_new(2);
@@ -138,11 +120,6 @@ function main(): i32 {
     return 42;
 }
 `},
-	// A wide key beside a value column the map reclaims: strings, string
-	// arrays and struct boxes, each overwritten, aliased before an insert and
-	// deleted, and an f64 column overwritten. On wasm the key is a cell the
-	// map owns and the value column carries its own release flags, so this is
-	// where the two meet.
 	{"wide-keys-counted-values", `import "core/map";
 struct Item { name: string, n: i32 }
 function w(i: i32): string {
@@ -253,9 +230,6 @@ func TestSelfHostMapWideKeyWasmIR(t *testing.T) {
 	}
 }
 
-// wasmStderr runs wat under wasmtime and answers what it wrote to stderr: a
-// validation error or a trap names the failing site, which the exit code
-// alone does not.
 func wasmStderr(t *testing.T, wat string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "prog.wat")

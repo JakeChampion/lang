@@ -11,14 +11,8 @@ import (
 	"testing"
 )
 
-// A diagnostic names its file, as native's does: the entry's the path the
-// command line gave (#11407), an imported module's its own (#9523). Without
-// one, `1:27` in a sibling module or a stdlib module read as a position in
-// the file being compiled.
-
 var diagPosRE = regexp.MustCompile(`^(?:(\S+):)?(\d+):(\d+): error\[(E\d{3})\]`)
 
-// diagPositions reduces a `-check` transcript to `file:line:col CODE` lines.
 func diagPositions(out string) []string {
 	var got []string
 	for _, line := range strings.Split(out, "\n") {
@@ -32,7 +26,6 @@ func diagPositions(out string) []string {
 	return got
 }
 
-// diagFullLines is diagPositions keeping each diagnostic's whole line.
 func diagFullLines(out string) []string {
 	var got []string
 	for _, line := range strings.Split(out, "\n") {
@@ -65,12 +58,9 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		files map[string]string
-		// exact compares whole diagnostic lines, message text included.
 		exact bool
 	}{
 		{
-			// One error in the entry and one at the same line in a sibling, so
-			// only the file tells them apart.
 			name: "sibling",
 			files: map[string]string{
 				"main.fern": "import \"./lib\";\nfunction main(): i32 {\n    let x: i32 = \"s\"; return lib.bad(); }\n",
@@ -78,7 +68,6 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
-			// E051 is anchored at the argument, not the call.
 			name: "owned_argument",
 			files: map[string]string{
 				"main.fern": "function take(own s: string): i32 { return s.len(); }\n" +
@@ -87,8 +76,6 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
-			// An index argument carries its own position, the `[`, so E051
-			// names the argument's line in a call spread over two.
 			name: "owned_index_argument",
 			files: map[string]string{
 				"main.fern": "function take(own s: string): i32 { return s.len(); }\n" +
@@ -97,16 +84,12 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
-			// A range desugars to core/iter's iter.range, so without the
-			// import E001 names `iter`, at the `..` the program wrote.
 			name: "range_without_iter",
 			files: map[string]string{
 				"main.fern": "function main(): i32 {\n    let n: i32 = 3;\n    let r = 0..n;\n    return 0;\n}\n",
 			},
 		},
 		{
-			// E034 on a value that is not an array names the `[`, and on a
-			// literal index the literal: a `true` carries its column too.
 			name: "index_positions",
 			files: map[string]string{
 				"main.fern": "function f(): i32 {\n    let x: i32 = 5; return x[0];\n}\n" +
@@ -114,8 +97,6 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
-			// E050 quotes the line of the move. In a sibling module that line
-			// is decoded like the position is.
 			name:  "sibling_moved_at",
 			exact: true,
 			files: map[string]string{
@@ -153,9 +134,6 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 	}
 }
 
-// Native reads its stdlib from the binary, so a stdlib module carrying a
-// diagnostic can only be staged for the self-host, which takes the root as an
-// argument. Native's form for one is `stdlib://std/bad.fern:2:5`.
 func TestSelfHostStdlibDiagnosticNamesItsFile(t *testing.T) {
 	driver, runner := selfHostCheckDriver(t)
 	root := t.TempDir()

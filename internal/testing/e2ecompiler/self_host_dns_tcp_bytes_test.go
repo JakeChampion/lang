@@ -10,8 +10,6 @@ import (
 	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Exercise the production send loop with deterministic short writes and
-// failures. Only the three IO calls are replaced by stateful test callbacks.
 func dnsTCPBytesFaultSource(t *testing.T) string {
 	t.Helper()
 	module, err := os.ReadFile("../../stdlib/std/dns.fern")

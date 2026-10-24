@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-// An `own` array accumulator threaded through RECURSION — `acc = into(l,
-// acc); acc = into(r, acc); return acc;` — leaked one buffer per call whenever
-// the recursion's other argument was borrow-tainted: rhsTainted's
-// any-tainted-arg rule tainted the call result, `acc` lost freeEligible, and
-// every `return acc` retained as a borrow does with no sweep dec to balance
-// it. The stranded reference held the buffer at rc 2, so the next append after
-// a call boundary copied the whole accumulator and orphaned the source — one
-// full copy per leaf (128 blocks for 128 leaves; 100 for 100 outer calls of the
-// index-recursive form). The flat-loop accumulator never had the problem, and
-// the same-shaped std/ordmap walker only escaped it because its one-payload
-// enum is owned by default, which left nothing tainted to propagate.
-//
-// findReturnsFreshBox now credits an `own` param that is only ever rebound
-// from owned values, so the recursion's result is the caller's own box and
-// `acc` stays freeEligible.
-//
-// Each round rebuilds the accumulator from scratch, so a per-call leak scales
-// with the round count; three counts tell that apart from a fixed startup
-// cost, and the exit code folds in `__rc_underflow_count()` because a census
-// is blind to an over-release.
 const ownAccRecursionPrelude = `enum N { L(i32), B(N, N) }
 @noinline
 function into(n: N, own acc: i32[]): i32[] {
@@ -43,9 +23,6 @@ function idx(xs: i32[], i: i32, own acc: i32[]): i32[] {
 function build(d: i32): N { if (d == 0) { return L(1); } return B(build(d - 1), build(d - 1)); }
 `
 
-// ownAccTreeBody: the tree walker over a borrowed NON-uniform enum (`L` and
-// `B` boxes differ in size, so N is not owned by default and `l` / `r` carry
-// the scrutinee's borrow taint into the recursion's arguments). 16 leaves.
 const ownAccTreeBody = ownAccRecursionPrelude + `
 function round(i: i32): i32 {
     let t: N = build(4);
@@ -55,8 +32,6 @@ function round(i: i32): i32 {
 }
 `
 
-// ownAccIndexBody: index recursion over a borrowed array — the borrowed `xs`
-// is the tainted argument. 8 elements.
 const ownAccIndexBody = ownAccRecursionPrelude + `
 function round(i: i32): i32 {
     let chunk: i32[] = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -102,9 +77,6 @@ func TestX86_64OwnAccumulatorRecursionReclaim(t *testing.T) {
 	}
 }
 
-// The wasm leg has no alloc census; the bump high-water mark is the same
-// signal — one round's working set, equal for 20 and 200 rounds when every
-// stranded copy is reclaimed.
 func ownAccBumpSrc(body string, rounds int) string {
 	return body + `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);

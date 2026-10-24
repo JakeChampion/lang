@@ -2,23 +2,12 @@ package e2e
 
 import "testing"
 
-// TestErrDefer exercises `errdefer EXPR;` — cleanup that runs only on an
-// ERROR exit: the `?` operator propagating a None/Err, or a `return` of a
-// failure variant (None / Err) from an Option/Result-returning function. A
-// plain success return or fall-off the end must NOT run it.
-//
-// Side effects are observed through a Cell so the whole contract is encoded
-// in the process exit code (no stdout diffing). Each case is run on every
-// backend — the IR layer is target-agnostic, so arm64 / x86-64 / wasm must
-// all agree (and they agree with the interpreter, which the differential
-// harness checks).
 func TestErrDefer(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 		want int
 	}{
-		// Plain success return: errdefer does NOT fire.
 		{"success_no_fire", `function f(out: Cell[i32], x: i32): Result[i32, i32] {
     errdefer out.set(9);
     if (x < 0) { return Err(1); }
@@ -29,7 +18,6 @@ function main(): i32 {
     match (f(a, 5)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 0},
-		// Explicit `return Err(...)`: errdefer fires.
 		{"err_return_fires", `function f(out: Cell[i32], x: i32): Result[i32, i32] {
     errdefer out.set(9);
     if (x < 0) { return Err(1); }
@@ -40,7 +28,6 @@ function main(): i32 {
     match (f(a, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 9},
-		// `?` propagating an Err: errdefer fires.
 		{"try_propagation_fires", `function inner(x: i32): Result[i32, i32] {
     if (x < 0) { return Err(2); }
     return Ok(x);
@@ -55,7 +42,6 @@ function main(): i32 {
     match (outer(a, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 9},
-		// `?` succeeding: errdefer does NOT fire.
 		{"try_success_no_fire", `function inner(x: i32): Result[i32, i32] {
     if (x < 0) { return Err(2); }
     return Ok(x);
@@ -70,7 +56,6 @@ function main(): i32 {
     match (outer(a, 5)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 0},
-		// Option: `return None` fires the errdefer; `return Some` does not.
 		{"option_none_fires", `function opt(out: Cell[i32], x: i32): Option[i32] {
     errdefer out.set(5);
     if (x < 0) { return None; }
@@ -91,9 +76,6 @@ function main(): i32 {
     match (opt(a, 7)) { Some(v) => {}, None => {} }
     return a.get();
 }`, 0},
-		// defer + errdefer together. defer runs on every exit; errdefer only
-		// on the error exit, and after the defer (so the read-modify-writes
-		// compose in a fixed order). Success: 0 -> +1 (defer) = 1.
 		{"defer_and_errdefer_success", `function h(out: Cell[i32], x: i32): Result[i32, i32] {
     defer out.set(out.get() + 1);
     errdefer out.set(out.get() + 10);
@@ -105,7 +87,6 @@ function main(): i32 {
     match (h(a, 5)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 1},
-		// Error: 0 -> +1 (defer) -> +10 (errdefer) = 11.
 		{"defer_and_errdefer_error", `function h(out: Cell[i32], x: i32): Result[i32, i32] {
     defer out.set(out.get() + 1);
     errdefer out.set(out.get() + 10);
@@ -117,8 +98,6 @@ function main(): i32 {
     match (h(a, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 11},
-		// Conditionally-reached errdefer: only fires when the registering
-		// statement actually ran (the per-defer active flag).
 		{"conditional_registered_fires", `function cond(out: Cell[i32], reg: boolean, x: i32): Result[i32, i32] {
     if (reg) { errdefer out.set(7); }
     if (x < 0) { return Err(1); }
@@ -139,10 +118,6 @@ function main(): i32 {
     match (cond(a, false, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 0},
-		// Multiple errdefers fire in LIFO order on error. Each appends its id
-		// digit; reading back the final value pins the order: e1 then e2
-		// registered, so on error e2 runs first, then e1 -> 0*10..; we encode
-		// order by out = out*10 + id so LIFO gives 21.
 		{"lifo_order", `function m(out: Cell[i32], x: i32): Result[i32, i32] {
     errdefer out.set(out.get() * 10 + 1);
     errdefer out.set(out.get() * 10 + 2);

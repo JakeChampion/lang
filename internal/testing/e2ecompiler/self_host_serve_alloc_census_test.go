@@ -1,3 +1,4 @@
+// CI-DARK: FERN_SERVE_ALLOC_CENSUS — This flag reports allocation measurements.
 package e2ecompiler
 
 import (
@@ -16,11 +17,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The census counts the HTTP/3 serve loop's allocations per request by
-// allocation site and the frame above it. The server is built with
-// FERN_RC_TRACE and serves two runs of different lengths. The difference
-// between the two runs, divided by the difference in requests, is the cost
-// of one request with the start-up cost removed.
 const (
 	censusShort = 1000
 	censusLong  = 3000
@@ -29,9 +25,6 @@ const (
 type censusSite struct{ site, caller string }
 
 func TestSelfHostServeAllocsCensusH3(t *testing.T) {
-	// CI-DARK: FERN_SERVE_ALLOC_CENSUS — a measurement tool, not coverage: it
-	// writes the per-site table to the named file for a person to read, and
-	// TestSelfHostServeAllocsPerRequestH3 gates the total.
 	out := os.Getenv("FERN_SERVE_ALLOC_CENSUS")
 	if out == "" {
 		t.Skip("set FERN_SERVE_ALLOC_CENSUS to a file to write the census to")
@@ -85,8 +78,6 @@ func censusRun(t *testing.T, cli *selfHostCLI, mux bool, rounds int) map[censusS
 	return traceSites(t, bin, stderrPath)
 }
 
-// traceSites reads the trace's `rctrace a` lines and names each one's site
-// and caller by the function symbol that holds the address.
 func traceSites(t *testing.T, bin, trace string) map[censusSite]int {
 	t.Helper()
 	syms := textSymbols(t, bin)
@@ -142,8 +133,6 @@ func textSymbols(t *testing.T, bin string) []elf.Symbol {
 	return syms
 }
 
-// writeCensus writes one table: each site's allocations per request, and the
-// same summed by the module of the Fern function that asked for the box.
 func writeCensus(w *strings.Builder, name string, short, long map[censusSite]int, requests int) {
 	type row struct {
 		k censusSite
@@ -194,8 +183,6 @@ func union(a, b map[censusSite]int) map[censusSite]bool {
 	return out
 }
 
-// censusModule is the module of the Fern function that asked for a box: the
-// site, or the caller where the site is a runtime helper.
 func censusModule(k censusSite) string {
 	who := k.site
 	if strings.HasPrefix(who, "__") {

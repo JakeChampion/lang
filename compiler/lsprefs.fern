@@ -1,18 +1,3 @@
-// compiler/lsprefs.fern — what `fern -lsp` answers a references or a rename
-// request from: every place the program a document's check loaded writes the
-// name at a position, read from the same program, view and tokens a hover
-// reads (lspquery.fern).
-//
-// The name at the position is resolved to what it names: a local binding of
-// one function, a module-level function or constant, a struct or an enum, a
-// variant of an enum, a field of a struct, or a method. A name a declaration
-// declares resolves as a use of it does. Then each kind is found where the
-// syntax tree has it — an identifier, a member after a `.`, a struct literal's
-// field, a variant anywhere in a pattern — and placed on the token that spells
-// it, so a node the front end synthesised at a borrowed position is never a
-// place. A type is found among the tokens instead, since the tree keeps no
-// positions for the types a program writes.
-
 import "./ast";
 import "./astwalk";
 import "./checker";
@@ -23,13 +8,8 @@ import "./parser";
 import "./typeinfo";
 import "./util";
 
-// Ref is one place the name is written: the `len` bytes at bundle position
-// `line`, `col`, and whether that is its declaration.
 pub struct Ref { line: i32, col: i32, len: i32, decl: boolean }
 
-// references is every place the program writes what the name at `line`, `col`
-// names, its declaration included, in bundle order; none when it names
-// nothing the program declares or uses.
 pub function references(p: lspquery.Program, line: i32, col: i32): Ref[] {
   let t: Target = target_at(p, line, col);
   if (t.kind == R_NONE) {
@@ -37,8 +17,6 @@ pub function references(p: lspquery.Program, line: i32, col: i32): Ref[] {
   }
   return placed(p, t, uses(p, t));
 }
-
-// ---- What the name names ----
 
 const R_NONE: i32 = 0;
 
@@ -54,11 +32,6 @@ const R_FIELD: i32 = 5;
 
 const R_METHOD: i32 = 6;
 
-// Target is what a name names: a local (`name` its symbol) of function `fd`;
-// a module-level function or constant, or a struct or enum (`name` bundled);
-// variant `name` of enum `owner`; field `name` of struct `owner`; or method
-// `name` declared at `at_line`, `at_col`. `spelled` is how the program writes
-// it, and `decl` its declared name, as a definition request answers.
 struct Target { kind: i32, name: string, owner: string, fd: i32, at_line: i32, at_col: i32, spelled: string, decl: lspquery.Answer }
 
 function no_target(): Target {
@@ -110,8 +83,6 @@ function node_target(p: lspquery.Program, q: lspquery.Query, s: checker.Scope, f
   return no_target();
 }
 
-// global_target is what the module-level name `name` (bundled) names: a
-// variant, a function or constant, a struct or an enum.
 function global_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, name: string): Target {
   let owner: string = checker.variant_enum(s, name);
   if (owner.len() > 0) {
@@ -133,15 +104,11 @@ function type_named(p: lspquery.Program, v: checker.QueryView, name: string): Ta
   return Target { ...no_target(), kind: R_TYPE, name: name, decl: decl };
 }
 
-// variant_target is variant `name` of enum `owner`, named as the enum's own
-// module writes it.
 function variant_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, owner: string, name: string): Target {
   let u: checker.UnionSig = checker.enum_sig(s, owner);
   return Target { ...no_target(), kind: R_VARIANT, name: lspquery.unprefixed(name, u.module), owner: owner, decl: lspquery.variant_def(p, v, owner, name) };
 }
 
-// member_target is what `fa` names after its `.`: an enum's variant, a method
-// when it is called, else a field.
 function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Target {
   let owner: string = lspquery.enum_qualifier(s, fa);
   if (owner.len() > 0) {
@@ -163,8 +130,6 @@ function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sco
   return no_target();
 }
 
-// method_of is the method a call of `fa` calls: one declared on its
-// receiver's type or on an array receiver.
 function method_of(s: checker.Scope, fa: ast.ExprFieldAccess): checker.MethodSig {
   let t: typeinfo.Type = checker.expr_type(fa.obj, s);
   if let typeinfo.TypeArray(a) = t {
@@ -173,8 +138,6 @@ function method_of(s: checker.Scope, fa: ast.ExprFieldAccess): checker.MethodSig
   return checker.method_sig(s, fa.field, checker.receiver_key(t));
 }
 
-// type_target is the first of the bundled `candidates` that names a struct or
-// an enum, or a variant, which a pattern names.
 function type_target(p: lspquery.Program, v: checker.QueryView, candidates: string[]): Target {
   let s: checker.Scope = checker.module_scope(v);
   for c in candidates {
@@ -192,11 +155,6 @@ function type_target(p: lspquery.Program, v: checker.QueryView, candidates: stri
   return no_target();
 }
 
-// ---- A declaration's own name ----
-
-// declared_target is what the declaration whose name the query's site is
-// declares: a function, method or constant, a struct, enum, variant or field,
-// or a local of the function the site is in.
 function declared_target(p: lspquery.Program, q: lspquery.Query): Target {
   if (q.site.dot_col > 0) {
     return no_target();
@@ -228,7 +186,6 @@ function func_declared(q: lspquery.Query, toks: lspquery.Tok[], m: i32): Target 
   return no_target();
 }
 
-// type_declared is the struct, enum, field or variant declared at the site.
 function type_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.Tok[], m: i32): Target {
   for sd in q.v.mod.structs {
     if (lspquery.declared_in(sd.line, m) && sd.enum_owner.len() == 0) {
@@ -281,8 +238,6 @@ function enum_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.To
   return no_target();
 }
 
-// local_declared is the binding of the function the site is in that the site
-// declares.
 function local_declared(q: lspquery.Query, toks: lspquery.Tok[], m: i32): Target {
   let fi: i32 = lspquery.enclosing(q.v.mod, toks, m, q.site.line, q.site.col);
   if (fi < 0) {
@@ -300,8 +255,6 @@ function local_declared(q: lspquery.Query, toks: lspquery.Tok[], m: i32): Target
   return no_target();
 }
 
-// named_after is the first identifier spelled `name` from `line`, `col` on,
-// where a declaration there writes its name.
 function named_after(toks: lspquery.Tok[], line: i32, col: i32, name: string): lspquery.Answer {
   return tok_answer(toks, lspquery.first_ident(toks, lspquery.after(toks, line, col), name));
 }
@@ -317,11 +270,6 @@ function at_site(a: lspquery.Answer, site: lspquery.Site): boolean {
   return a.found && a.line == site.line && a.col == site.name_col;
 }
 
-// ---- Where it is used ----
-
-// Anchor is where a node naming the target stands: at the name, at the
-// qualifier of a qualified one, or at the `.` before a member; or, for a
-// `pattern`, where the pattern naming it starts, at any depth inside it.
 struct Anchor { line: i32, col: i32, pattern: boolean }
 
 function uses(p: lspquery.Program, t: Target): Anchor[] {
@@ -341,8 +289,6 @@ function uses(p: lspquery.Program, t: Target): Anchor[] {
   return [];
 }
 
-// Named is a search for the identifier `name`, and where it was found: each
-// read, and each assignment to it.
 struct Named { name: string, out: Anchor[] }
 
 function named_stmt(st: ast.Stmt, own n: Named): Named {
@@ -370,14 +316,10 @@ function named_in(body: ast.Stmt[], own n: Named): Named {
   return n;
 }
 
-// local_uses is every read of and assignment to the local `symbol` of `fd`.
 function local_uses(fd: parser.FuncDecl, symbol: string): Anchor[] {
   return named_in(lexical.resolve_func(fd).func.body, Named { name: symbol, out: [] }).out;
 }
 
-// global_uses is every read of the module-level `name` in `funcs`: an
-// identifier no local of its function shadows. A function is resolved only
-// when it reads the name at all.
 function global_uses(funcs: parser.FuncDecl[], name: string): Anchor[] {
   let out: Anchor[] = [];
   for fd in funcs {
@@ -388,12 +330,8 @@ function global_uses(funcs: parser.FuncDecl[], name: string): Anchor[] {
   return out;
 }
 
-// VariantFind is a search for variant `name` of enum `owner`, whose module
-// prefixes it with `prefix`, typed by the module scope `s`.
 struct VariantFind { s: checker.Scope, owner: string, name: string, prefix: string, out: Anchor[] }
 
-// variant_uses is every use of the target variant: a bare or module-qualified
-// identifier, an enum-qualified member, and a match arm's pattern.
 function variant_uses(v: checker.QueryView, t: Target): Anchor[] {
   let s: checker.Scope = checker.module_scope(v);
   let f: VariantFind = VariantFind { s: s, owner: t.owner, name: t.name, prefix: checker.enum_sig(s, t.owner).module, out: [] };
@@ -407,8 +345,6 @@ function variant_uses(v: checker.QueryView, t: Target): Anchor[] {
   return f.out;
 }
 
-// names_variant reports whether the bundled `name` names the variant `f`
-// looks for.
 function names_variant(f: VariantFind, name: string): boolean {
   return util.str_has_suffix(name, f.name) && lspquery.unprefixed(name, f.prefix) == f.name && checker.variant_enum(f.s, name) == f.owner;
 }
@@ -443,9 +379,6 @@ function variant_expr(e: ast.Expr, own f: VariantFind): VariantFind {
   return f;
 }
 
-// member_uses is every access to the target field, or call of the target
-// method, typed by the scope its statement is checked in, and for a field,
-// every struct literal of its struct setting it.
 function member_uses(v: checker.QueryView, t: Target): Anchor[] {
   let out: Anchor[] = [];
   for fd in v.mod.funcs {
@@ -460,12 +393,8 @@ function member_uses(v: checker.QueryView, t: Target): Anchor[] {
   return out;
 }
 
-// MemberSite is a place a member `name` is written: an access `fa`, at its
-// `.` at `line`, `col`, `called` when it is a call's callee; or the field of
-// a literal of struct `literal`, at the field's name.
 struct MemberSite { line: i32, col: i32, called: boolean, fa: ast.ExprFieldAccess, literal: string }
 
-// Sites is a search for the places member `name` is written.
 struct Sites { name: string, out: MemberSite[] }
 
 function member_sites(body: ast.Stmt[], name: string): MemberSite[] {
@@ -509,14 +438,10 @@ function no_access(): ast.ExprFieldAccess {
   return ast.ExprFieldAccess { obj: ast.ExprUnknown { kind: "", line: 0, col: 0 }, field: "", line: 0, col: 0, ty: "", const_read: false };
 }
 
-// called_at reports whether the last site recorded is the call `fa` is the
-// callee of: a call is visited just before its callee.
 function called_at(acc: MemberSite[], fa: ast.ExprFieldAccess): boolean {
   return acc.len() > 0 && acc[acc.len() - 1].called && acc[acc.len() - 1].line == fa.line && acc[acc.len() - 1].col == fa.col;
 }
 
-// member_is reports whether `site` in `fd` names the target: the field of its
-// struct, or the method declared where the target is.
 function member_is(v: checker.QueryView, fd: parser.FuncDecl, site: MemberSite, t: Target): boolean {
   if (site.literal.len() > 0) {
     return t.kind == R_FIELD && site.literal == t.owner;
@@ -536,11 +461,6 @@ function member_is(v: checker.QueryView, fd: parser.FuncDecl, site: MemberSite, 
   return false;
 }
 
-// ---- Placing them ----
-
-// placed is the token spelling the target at each anchor, and its
-// declaration, and for a struct or an enum, each token naming it as a type:
-// each once, in bundle order.
 function placed(p: lspquery.Program, t: Target, anchors: Anchor[]): Ref[] {
   let out: Ref[] = [];
   let m: i32 = 0;
@@ -561,8 +481,6 @@ function placed(p: lspquery.Program, t: Target, anchors: Anchor[]): Ref[] {
   return out;
 }
 
-// module_refs adds module `m`'s places to `out`, marked on its tokens so each
-// is added once and in order: 1 for a use, 2 for the declaration.
 function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], quals: string[], own out: Ref[]): Ref[] {
   let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
   let marks: i32[] = [];
@@ -599,7 +517,6 @@ function marked(own marks: i32[], i: i32, mark: i32): i32[] {
   return marks.with(i, mark);
 }
 
-// decl_tok is the index of the token a declaration's name answer is at, or -1.
 function decl_tok(toks: lspquery.Tok[], a: lspquery.Answer): i32 {
   let i: i32 = lspquery.tok_at(toks, a.line, a.col);
   if (i >= 0 && toks[i].ident) {
@@ -608,9 +525,6 @@ function decl_tok(toks: lspquery.Tok[], a: lspquery.Answer): i32 {
   return 0 - 1;
 }
 
-// spelling_at is the index of the token spelling `name` that the node at `a`
-// stands for — the token there, the member after a `.` there, or the name
-// after a qualifier there — or -1.
 function spelling_at(toks: lspquery.Tok[], a: Anchor, name: string): i32 {
   let i: i32 = lspquery.tok_at(toks, a.line, a.col);
   if (i < 0) {
@@ -623,10 +537,6 @@ function spelling_at(toks: lspquery.Tok[], a: Anchor, name: string): i32 {
   return 0 - 1;
 }
 
-// pattern_marks marks each token spelling `name` in the pattern that starts
-// at `a`: a match arm's or an `if let`'s, whose nested sub-patterns the
-// parser flattens into matches that all stand where the pattern does. A
-// name before a `:` is a struct pattern's field.
 function pattern_marks(toks: lspquery.Tok[], a: Anchor, name: string, own marks: i32[]): i32[] {
   let i: i32 = lspquery.tok_at(toks, a.line, a.col);
   if (i < 0) {
@@ -642,8 +552,6 @@ function pattern_marks(toks: lspquery.Tok[], a: Anchor, name: string, own marks:
   return marks;
 }
 
-// named_from is the index of the token a node at token `i` names: past a `.`
-// or past a qualifier and its `.`, else `i` itself.
 function named_from(toks: lspquery.Tok[], i: i32, name: string): i32 {
   if (!toks[i].ident && toks[i].text == ".") {
     return i + 1;
@@ -654,8 +562,6 @@ function named_from(toks: lspquery.Tok[], i: i32, name: string): i32 {
   return i;
 }
 
-// type_quals is how module `m` writes the target type, when it is one: ""
-// for its own module, which writes it bare, and each alias that qualifies it.
 function type_quals(p: lspquery.Program, t: Target, m: i32): string[] {
   let out: string[] = [];
   if (t.kind != R_TYPE) {
@@ -673,10 +579,6 @@ function type_quals(p: lspquery.Program, t: Target, m: i32): string[] {
   return out;
 }
 
-// type_marks marks each token of module `m` that names the target type as
-// one of `quals` writes it. A name after a `.` is a member, one before a `(` a
-// call, and one the tree has as an identifier a value, unless it qualifies a
-// member, as an enum does its variant.
 function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[], quals: string[], own marks: i32[]): i32[] {
   let values: Read[] = [];
   let scanned: boolean = false;
@@ -697,9 +599,6 @@ function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[]
   return marks;
 }
 
-// type_ref_at is, when token `i` names the type as one of `quals` writes it,
-// the index of the token the tree would position a node naming it at — the
-// name, or its qualifier — else -1.
 function type_ref_at(toks: lspquery.Tok[], i: i32, name: string, quals: string[]): i32 {
   if (!toks[i].ident || toks[i].text != name) {
     return 0 - 1;
@@ -716,15 +615,10 @@ function type_ref_at(toks: lspquery.Tok[], i: i32, name: string, quals: string[]
   return 0 - 1;
 }
 
-// Read is an identifier a function reads at `line`, `col`: a value, or the
-// qualifier of a member.
 struct Read { line: i32, col: i32, value: boolean }
 
-// Reads is a search for the identifiers spelled `name` that functions read.
 struct Reads { name: string, out: Read[] }
 
-// value_idents is every identifier spelled `name` module `m`'s functions
-// read.
 function value_idents(funcs: parser.FuncDecl[], m: i32, name: string): Read[] {
   let f: Reads = Reads { name: name, out: [] };
   for fd in funcs {
@@ -741,8 +635,6 @@ function reads_stmt(st: ast.Stmt, own f: Reads): Reads {
   return f;
 }
 
-// reads_expr records an identifier read. A field access is visited just
-// before its object, so a qualifier is known as one when its identifier is.
 function reads_expr(e: ast.Expr, own f: Reads): Reads {
   match (e) {
     ast.ExprIdent(id) => {

@@ -8,8 +8,6 @@ import (
 
 const mainRedFile = "main-red.yml"
 
-// Watch main's entry workflow and old CI runs finishing during the transition.
-// Renaming an entry without updating this observer would lose failure reports.
 func TestMainRedWatchesCI(t *testing.T) {
 	src := workflowSource(t, mainRedFile)
 	on, ok := onBlock(src)
@@ -41,13 +39,6 @@ func TestMainRedWatchesCI(t *testing.T) {
 	}
 }
 
-// The reporter must fire for main's PUSHES and nothing else.
-//
-// A pull_request run is the author's to fix and cancel-on-failure.yml already
-// reaps its siblings; filing an issue per red PR lane would fill the tracker
-// with work that is already assigned. A workflow_dispatch at a commit is
-// someone's deliberate run and may be red on purpose. Both were live mistakes
-// to make here, so the guard names the condition rather than trusting it.
 func TestMainRedFiresOnMainPushesOnly(t *testing.T) {
 	src := workflowSource(t, mainRedFile)
 
@@ -61,10 +52,6 @@ func TestMainRedFiresOnMainPushesOnly(t *testing.T) {
 		}
 	}
 
-	// The verdict is per LANE, read off the job names of the one run, and both
-	// halves are needed: the close half is what stops the tracker filling with
-	// issues for lanes that recovered days ago, and the skipped/cancelled
-	// guards are what stop a lane the filter turned off from "recovering".
 	for _, want := range []struct{ needle, why string }{
 		{`lastIndexOf(" / ")`, "a lane is the caller job's name, the part of a job name before the last ` / `"},
 		{`j.conclusion === "failure"`, "a lane is red when one of its jobs failed"},
@@ -78,10 +65,6 @@ func TestMainRedFiresOnMainPushesOnly(t *testing.T) {
 		}
 	}
 
-	// Identity is the label plus the title. A marker comment would be silently
-	// stripped from the issue body — GitHub deletes anything that reads as an
-	// HTML tag, and everything up to the next `>` with it — so every run would
-	// file a fresh duplicate instead of finding the open one.
 	if strings.Contains(src, "!--") {
 		t.Errorf("%s looks for an HTML-comment marker in the issue body. GitHub "+
 			"strips those, so the lookup finds nothing and each failure opens a "+

@@ -1,23 +1,10 @@
-// yes.fern — repeatedly print a line, like `yes(1)`.
-//
-// With no operands it prints "y" forever; with operands it prints
-// them joined by spaces, forever. As an example program (CI only
-// *builds* these, never runs them unbounded) it also honours an
-// optional `-n COUNT` cap so you can demo it without a pipe to kill:
-//
-//   $ ./yes | head -3        # y / y / y
-//   $ ./yes hello there      # hello there  (until the pipe closes)
-//   $ ./yes -n 3 ok          # ok / ok / ok, then exits
-//
-// Showcases: joining argv into a payload, an unbounded emit loop,
-// and an opt-in bound for safe demonstration.
 import "std/string";
 import "std/i32";
 import "std/array";
 
 function main(): i32 {
   let argv: string[] = args();
-  let limit: i32 = 0 - 1;  // -1 means "no limit"
+  let limit: i32 = 0 - 1;
   let words: string[] = [];
 
   let i: i32 = 1;

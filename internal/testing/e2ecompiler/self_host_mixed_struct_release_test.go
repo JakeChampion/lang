@@ -8,15 +8,10 @@ import (
 	"testing"
 )
 
-// A caller releases a struct a producer returns when every return hands back
-// a box the producer built (#10415). The reads after a rebind follow fresh
-// allocations, so a box released early shows as a wrong answer.
 var mixedStructReleaseCases = []struct {
-	name string
-	src  string
-	want int
-	// balanced: the census closes. A row that is not balanced still has to
-	// run clean under the sanitizer apart from leaks.
+	name     string
+	src      string
+	want     int
 	balanced bool
 }{
 	{"loop_built_field", `struct Ints { n: i32, ys: i32[] }
@@ -72,9 +67,6 @@ function main(): i32 {
     return acc;
 }
 `, 39, true},
-	// Results that are not a box the producer built alone: a parameter handed
-	// back, a choice between two, and a record also stored elsewhere. The
-	// caller must not free a field the other owner still reads.
 	{"shared_results", `struct Ints { n: i32, ys: i32[] }
 @noinline function pass(p: Ints): Ints { return p; }
 function pick(a: Ints, b: Ints, c: boolean): Ints { if (c) { return a; } return b; }
@@ -98,9 +90,6 @@ function main(): i32 {
     return acc + base.ys[3];
 }
 `, 33, false},
-	// A method's verdict must not reach the free function of the same name:
-	// here the method builds its result and the free function hands back its
-	// argument.
 	{"method_name_collision", `struct Ints { n: i32, ys: i32[] }
 @noinline function mk(p: Ints): Ints { return p; }
 function (s: Ints) mk(k: i32): Ints { return Ints { n: k, ys: [k, s.n] }; }
@@ -118,8 +107,6 @@ function main(): i32 {
     return acc + base.ys[1];
 }
 `, 42, false},
-	// A method's results (#10515): the array result's release, the record
-	// results' counted class, and a discarded call's field walk.
 	{"method_array_result", `struct Ints { n: i32, ys: i32[] }
 function (s: Ints) arr(k: i32): i32[] {
     let g: i32[] = s.ys;
@@ -168,8 +155,6 @@ function main(): i32 {
     return acc + base.ys[1];
 }
 `, 39, true},
-	// A free producer's built record is in the counted class too, which is
-	// what releases a read-through array field.
 	{"free_record_read_through", `struct Ints { n: i32, ys: i32[] }
 function looped(s: Ints, k: i32): Ints {
     let t: Ints = Ints { n: 0, ys: [s.n] };

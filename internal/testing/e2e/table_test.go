@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/table across backends: column-aligned
-// render (last column unpadded), short-row padding, code-point-width
-// alignment, and the header variant with its rule. Returns 42 iff every
-// exact-string check holds. Each leg skips itself when its toolchain is
-// absent.
 const tableProg = `
 import "std/table" as table;
 function main(): i32 {

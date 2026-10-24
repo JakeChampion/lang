@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map-value reclamation: string[] values. string elements are
-// not rc-tracked, so string[] is a plain-elem array (valKind 2
-// → arr_dec frees the buffer; the strings themselves leak, as
-// in standalone array reclamation).
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

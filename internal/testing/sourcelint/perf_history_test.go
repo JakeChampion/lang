@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// perfHistoryScript locates scripts/perf-history from this package dir.
 func perfHistoryScript(t *testing.T) string {
 	t.Helper()
 	p, err := filepath.Abs(filepath.Join("..", "..", "..", "scripts", "perf-history"))
@@ -21,11 +20,6 @@ func perfHistoryScript(t *testing.T) string {
 	return p
 }
 
-// gitEnv is ciEnv with every inherited GIT_* variable dropped.
-//
-// GIT_DIR is the one that matters: with it set, the fixture repositories below
-// are never touched and every command runs against the caller's own checkout
-// instead — including the `add` and `commit` that build the fixture.
 func gitEnv(extra ...string) []string {
 	var env []string
 	for _, kv := range ciEnv() {
@@ -37,7 +31,6 @@ func gitEnv(extra ...string) []string {
 	return append(env, extra...)
 }
 
-// gitIn runs git in dir with a fixed identity and fails the test on error.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -52,7 +45,6 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-// runPerfHistory invokes the script in dir and returns exit code + output.
 func runPerfHistory(t *testing.T, dir string, args ...string) (int, string) {
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{perfHistoryScript(t)}, args...)...)
@@ -70,8 +62,6 @@ func runPerfHistory(t *testing.T, dir string, args ...string) (int, string) {
 	return code, string(out)
 }
 
-// perfRepo builds a bare origin with one commit on main and returns it with a
-// clone whose default branch tracks it.
 func perfRepo(t *testing.T) (origin, clone string) {
 	t.Helper()
 	root := t.TempDir()
@@ -97,9 +87,6 @@ func writeReport(t *testing.T, dir, name, body string) string {
 	return p
 }
 
-// Two lanes record against the same commit; the note carries both blocks with
-// the comment and directive lines dropped, `show` reads a metric back, and a
-// re-run of a lane is a no-op rather than a duplicate block.
 func TestPerfHistoryRecordsLanesOnceAndShowsThem(t *testing.T) {
 	origin, clone := perfRepo(t)
 	r1 := writeReport(t, t.TempDir(), "x86.txt", "# header\n# no-valgrind: absent\nx86_64/a.text\t100\nx86_64/a.ir\t2000\n")
@@ -116,7 +103,6 @@ func TestPerfHistoryRecordsLanesOnceAndShowsThem(t *testing.T) {
 		t.Fatalf("second record of the same lane: exit %d, want a no-op\n%s", code, out)
 	}
 
-	// Read the note back from ORIGIN, not the clone: the push is the point.
 	head := strings.TrimSpace(gitIn(t, clone, "rev-parse", "HEAD"))
 	gitIn(t, origin, "update-ref", "refs/notes/perf-check", "refs/notes/perf")
 	note := gitIn(t, origin, "notes", "--ref=refs/notes/perf", "show", head)
@@ -146,9 +132,6 @@ func TestPerfHistoryRecordsLanesOnceAndShowsThem(t *testing.T) {
 	}
 }
 
-// The race the script exists to survive: between one job's fetch and push,
-// another job lands its own block. A pre-push hook in the first clone plays the
-// other job, so the first push is rejected as non-fast-forward exactly once.
 func TestPerfHistorySurvivesAConcurrentLane(t *testing.T) {
 	origin, clone := perfRepo(t)
 	other := filepath.Join(t.TempDir(), "other")
@@ -159,7 +142,6 @@ func TestPerfHistorySurvivesAConcurrentLane(t *testing.T) {
 	if err := os.MkdirAll(hooks, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Fires on the first push only: the marker file is created by the hook.
 	marker := filepath.Join(t.TempDir(), "raced")
 	hook := "#!/usr/bin/env bash\n" +
 		"[ -e '" + marker + "' ] && exit 0\n" +
@@ -191,13 +173,6 @@ func TestPerfHistorySurvivesAConcurrentLane(t *testing.T) {
 	}
 }
 
-// A GIT_DIR in the ambient environment must not reach the fixtures.
-//
-// Every git command below names its repository by working directory, and
-// GIT_DIR outranks that: with one set, `perfRepo` builds nothing, the `add`
-// and `commit` land in whatever repository the variable names, and the script
-// records its note there too. The decoy here is a path that does not exist, so
-// a leak is a failure rather than a write into someone else's checkout.
 func TestPerfHistoryIgnoresAnInheritedGitDir(t *testing.T) {
 	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "decoy.git"))
 	t.Setenv("GIT_WORK_TREE", t.TempDir())

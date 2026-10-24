@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// An array of structs whose elements come from a strict-fresh struct producer
-// (`hs = hs.append(hold(xs))`, `hs = hs.with(i, hold(xs))`, `[hold(a), hold(b)]`)
-// earns the element walk the literal-built form does (#10582), and every row
-// balances, the guards included: a producer that hands back a shared struct,
-// and an element or nested field that outlives the array.
 var arrStructProducerElemCases = []struct {
 	name string
 	src  string
@@ -69,8 +64,6 @@ function main(): i32 {
     return acc;
 }
 `, 21},
-	// A read through a nested field (`os[i].inner.xs[j]`) is a borrow like the
-	// one-link `os[i].xs[j]`, for producer and literal elements alike.
 	{"nested_deep_read", `struct In { xs: i32[], k: i32 }
 struct Out { inner: In, k: i32 }
 @noinline function wrap(xs: i32[], k: i32): Out { return Out { inner: In { xs: xs, k: k }, k: k }; }
@@ -89,8 +82,6 @@ function main(): i32 {
     return acc;
 }
 `, 57},
-	// `with` replaces an element, so the superseded producer element must be
-	// released exactly once as well as the one that stays.
 	{"arrfield_with", `struct H { xs: i32[] }
 @noinline function hold(xs: i32[]): H { return H { xs: xs }; }
 function main(): i32 {

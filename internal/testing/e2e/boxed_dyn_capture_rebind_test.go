@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// A `dyn Trait` local a closure captures and the enclosing scope rebinds
-// lives in a boxcapture cell, and the rebind is an element store into that
-// cell. On wasm a `dyn` is an inline two-word `[data, vtable]`, and the
-// index-assign path chose its store width by hand and knew nothing of that,
-// so the store wrote one word and left the other on the operand stack: the
-// closure kept reading the Sq and answered 9, and the CLI's module failed
-// validation outright (#8797's program). Every engine answers the Ci's 15.
 const boxedDynCaptureRebindSrc = `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }

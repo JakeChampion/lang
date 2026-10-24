@@ -1,32 +1,5 @@
 package e2e
 
-// Coverage for std/math's unbiased bounded random.
-//
-// `random_int` used to map a 32-bit draw with a bare `u % range`, which is
-// biased whenever `range` does not divide 2^32: the first `2^32 mod range`
-// values come up one extra time per 2^32 draws. `rand.shuffle` is Fisher-Yates
-// over `random_int`, so that made shuffles non-uniform permutations. It now
-// uses Lemire's nearly-divisionless method: multiply-shift for the mapping,
-// and reject the surplus zone identified by the product's low half.
-//
-// Two halves, because neither alone is enough:
-//
-//  1. `random_unbiased` checks the real `random_int` behaviourally — every
-//     draw in [lo, hi), every bucket reachable, degenerate/boundary ranges,
-//     and termination on the widest range. It CANNOT observe the bias itself:
-//     the residual is ~2^-32 and no feasible number of samples would show it.
-//
-//  2. `random_unbiased_model` runs the identical multiply-shift-and-reject
-//     formula at an 8-bit word size, where all 256 draws can be enumerated
-//     exhaustively, and asserts perfect uniformity — every bucket landing on
-//     exactly the same count, with exactly `W mod range` draws rejected. That
-//     is what actually pins the algorithm, and because it uses the same u64
-//     multiply / shift / mask operations as the implementation, it also
-//     verifies those lower correctly on each backend (the part most likely to
-//     differ between interp, x86-64, wasm and arm64). For contrast it also
-//     computes the OLD `u % range` mapping and asserts it is measurably
-//     skewed, so the test would fail if someone reverted the fix.
-
 import "testing"
 
 const randomUnbiasedProg = `
@@ -97,8 +70,6 @@ function main(): i32 {
 }
 `
 
-// The same formula at 8-bit word size, enumerated exhaustively. Uses the same
-// u64 multiply / shift / mask the real implementation uses.
 const randomUnbiasedModelProg = `
 function main(): i32 {
     let W: u64 = 256 as u64;

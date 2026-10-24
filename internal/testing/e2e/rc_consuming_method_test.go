@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// Consuming methods (`own self`) — the FBIP recursive traversal written in
-// method form. `function (own xs: List) inc(): List` is an inherent consuming
-// method; the receiver hoists to an `own` Params[0], so it lowers exactly like
-// the free-function consuming map, and the method-call transfer makes the
-// recursive `t.inc()` consume the owned binding `t`. These pin value-correctness
-// + zero over-release on every backend, and a bounded high-water (each input
-// cell reclaimed as the output is built).
-
 const consumingMethodSrc = `enum List { Cons(i32, List), Nil }
 function (own xs: List) inc(): List {
     match (xs) {
@@ -53,12 +45,4 @@ func TestWASMConsumingMethod(t *testing.T) {
 	if got := runWasm(t, consumingMethodSrc); got != 0 {
 		t.Errorf("consuming method: got %d, want 0", got)
 	}
-	// NOTE: no heap-bump (bounded) assertion here. A method's *result/receiver
-	// temporary* is not freed when used inline — `sum(build(6).inc())` leaks the
-	// inc result — a PRE-EXISTING method-call-temp cleanup gap that affects even
-	// a borrowed method (`sum(build(6).dup())` leaks identically) and is
-	// independent of `own` (these changes only touch own-method calls). Tracked
-	// separately; here we pin only the soundness of the consuming method itself
-	// (value-correct + zero over-release), which the free/reuse differential
-	// fixture gates also cover.
 }

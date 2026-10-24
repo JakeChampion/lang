@@ -1,19 +1,3 @@
-// Whole-program dead-code elimination of unreached backend code in a
-// merged multi-module bundle (#4114).
-//
-// A self-host driver links every backend it imports — x86-64, arm64, wasm
-// emitters — but a given driver drives one of them. What the merged bundle
-// must NOT keep is the emitters no path from `main` reaches. These tests
-// pin that in the emitted artifact: an unreached module leaves no trace,
-// and neither does one reachable only through a `dyn Trait` dispatch that
-// is itself unreachable.
-//
-// The assertion is on a per-backend marker STRING rather than a function
-// label, because a label is not evidence either way: a retained emitter
-// that got inlined into its caller has no label of its own, and neither
-// does one that was correctly culled. A string the emitter prints lands in
-// `.rodata` whether or not the code around it was inlined, so its presence
-// tracks the code being in the artifact.
 package e2e
 
 import (
@@ -25,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// emitBackendBundle writes `files` into a temp dir and emits x86-64 asm
-// for main.fern, returning the asm text.
 func emitBackendBundle(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -38,8 +20,6 @@ func emitBackendBundle(t *testing.T, files map[string]string) string {
 	return e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), e2eharness.TargetX86_64Linux, filepath.Join(dir, "main.fern"))
 }
 
-// assertBackends checks that every marker for `present` is in the asm and
-// every marker for `absent` is not.
 func assertBackends(t *testing.T, asm string, present, absent []string) {
 	t.Helper()
 	for _, isa := range present {
@@ -54,9 +34,6 @@ func assertBackends(t *testing.T, asm string, present, absent []string) {
 	}
 }
 
-// The bundle imports three backends and `main` drives one. The other two
-// must leave no trace in the artifact — that is the whole point of linking
-// a multi-backend compiler into a single-target driver.
 func TestUnreachedBackendModulesNotEmitted(t *testing.T) {
 	backend := func(isa string) string {
 		return `pub function emit_module(n: i32): i32 { print("MARKER-` + isa + `"); return n * 3 + 1; }`
@@ -73,11 +50,6 @@ function main(): i32 { return asm_x86.emit_module(7); }`,
 	assertBackends(t, asm, []string{"x86"}, []string{"arm64", "wasm"})
 }
 
-// The same bundle, but a backend is selected through a `dyn Backend`
-// vtable and the selecting function is itself unreachable. A coercion
-// site roots the impl methods its vtable points at — no call site names
-// them — so the root has to die with the site. Rooting every coercion the
-// checker recorded, dead sites included, kept all three backends (#4114).
 func TestUnreachedBackendsBehindDeadDynDispatchNotEmitted(t *testing.T) {
 	backend := func(isa string) string {
 		return `import "./backend";
@@ -93,7 +65,6 @@ pub function make(): dyn backend.Backend { return ` + isa + `Emitter { id: 1 }; 
 		"asm_arm64.fern": backend("arm64"),
 		"asm_wasm.fern":  backend("wasm"),
 	}
-	// Nothing calls select_backend, so no backend is reachable at all.
 	dispatch := `import "./backend";
 import "./asm_x86";
 import "./asm_arm64";
@@ -110,9 +81,6 @@ function select_backend(target: string): i32 {
 function main(): i32 { return 0; }`
 	assertBackends(t, emitBackendBundle(t, files), nil, []string{"x86", "arm64", "wasm"})
 
-	// The gating must not cull a LIVE dispatch's impl methods: only the
-	// vtable cell names them, so culling one leaves it pointing at a
-	// dropped symbol (link failure). Same bundle, dispatch now reached.
 	files["main.fern"] = dispatch + `
 function main(): i32 { return select_backend("wasm"); }`
 	assertBackends(t, emitBackendBundle(t, files), []string{"x86", "arm64", "wasm"}, nil)

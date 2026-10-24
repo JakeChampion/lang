@@ -4,28 +4,6 @@ import (
 	"testing"
 )
 
-// Regression tests for two bugs surfaced while writing the
-// examples/cli/ tools (the CLI command-line utilities).
-//
-// Bug 1 — `break` inside a `match` arm inside a loop was a no-op on
-// every codegen backend (x86-64 / arm64 / wasm), while the interpreter
-// did the right thing. The `match` lowering pushed its own end-label
-// onto the shared break stack, so a user `break` exited the match
-// instead of the enclosing loop — turning `while (true) { match … {
-// … => break } }` into an infinite loop. (`continue` was unaffected;
-// it uses a separate stack the match doesn't touch.)
-//
-// Bug 2 — `(w: Writer).write(s)` on x86-64 corrupted the buffer
-// pointer for SSO (small-string-optimized, <=7 byte) strings: the
-// runtime treated the inline-packed register value as a heap address
-// and the write(2) syscall faulted EFAULT. String constants happened
-// to fold to heap form and masked it; any runtime-built short string
-// (e.g. a stdin chunk) tripped it.
-
-// --- Bug 1: break / continue inside a match arm ---
-
-// `break` at v==3 must exit the WHILE loop. If break only fell out of
-// the match (the bug), `count` would keep incrementing to 100.
 const matchBreakSrc = `function main(): i32 {
     let count: i32 = 0;
     let i: i32 = 0;
@@ -43,8 +21,6 @@ const matchBreakSrc = `function main(): i32 {
     return count;
 }`
 
-// `continue` skips even values; only odds in 1..=10 are counted (5).
-// A broken continue (falling out of the match) would count all 10.
 const matchContinueSrc = `function main(): i32 {
     let odds: i32 = 0;
     let i: i32 = 0;
@@ -104,12 +80,6 @@ func TestWASMMatchBreakContinue(t *testing.T) {
 	}
 }
 
-// --- Bug 2: Writer.write with an SSO (short) string ---
-
-// Writes a 3-byte SSO string then a >7-byte heap string to the stdout
-// Writer. `rc` stays 0 only if BOTH writes report success (None); the
-// pre-fix x86-64 backend returned Some(EFAULT) for the SSO write. The
-// stdout content is checked too.
 const writerSSOSrc = `function main(): i32 {
     let w: Writer = stdout();
     let rc: i32 = 0;
@@ -139,10 +109,3 @@ func TestArm64WriterWriteSSO(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", out, writerSSOWant)
 	}
 }
-
-// NB: the wasm `Writer.write` METHOD path used to corrupt a byte near
-// the end of a heap-string write to the stdout Writer (issue #2550).
-// That was a SEPARATE bug from the x86-64 SSO fix here: the stdout()
-// Writer was allocated without an rc-sentinel header, so __fern_retain
-// underflowed into the static data segment. It is now fixed and guarded
-// by TestWASMWriterWriteStdoutNoCorruption in wasm_e2e_test.go.

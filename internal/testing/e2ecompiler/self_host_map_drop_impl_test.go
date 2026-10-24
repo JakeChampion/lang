@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// core/map's __map_drop_impl frees a handle through __fern_box_free, which
-// the self-host lowers as the raw free of the block 8 bytes before the handle
-// (#9608). The proof it frees the RIGHT block at the right size is that the
-// next 16-byte allocation gets it back: a wrong base or size puts the block in
-// another size class, or nowhere, and the fresh handle lands elsewhere.
-//
-// The handle is built the way map_new_impl lays it out (rc 1 at base, the buf
-// word at base + 8) but with no buffer, so only the handle is released.
 const mapDropImplReuseSrc = `import "core/map";
 function handle(): usize {
     let base: usize = __alloc(16);
@@ -37,9 +29,6 @@ function main(): i32 {
 }
 `
 
-// mapNewImplReuseSrc is the same proof over a real map: map_new_impl with a
-// string key tag, so the typed lowering has to lower its __map_hash_seed
-// draw, and the drop frees the kv buffer before the handle.
 const mapNewImplReuseSrc = `import "core/map";
 function main(): i32 {
     let i: i32 = 0;
@@ -58,10 +47,6 @@ function main(): i32 {
 }
 `
 
-// mapSetGetSrc runs core/map's own insert, lookup, len and drop on a
-// scalar map. The typed lowering produces them only once it has a contract
-// and a lowering for every runtime helper they call by name, including the
-// string and array releases a scalar map never reaches at run time.
 const mapSetGetSrc = `import "core/map";
 function main(): i32 {
     let h: usize = map_new_impl(4, 0, 0);
@@ -82,10 +67,6 @@ function main(): i32 {
 }
 `
 
-// mapColumnsSrc reads a map's key, value and boolean columns through
-// core/map's snapshot builders. They build a typed array rather than writing
-// an array header by hand, so the self-host gets an array in its own layout
-// (header and 8-byte slots) rather than native's (#9608).
 const mapColumnsSrc = `import "core/map";
 function main(): i32 {
     let h: usize = map_new_impl(4, 0, 0);

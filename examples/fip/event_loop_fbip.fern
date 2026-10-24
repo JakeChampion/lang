@@ -1,32 +1,7 @@
-// examples/fip/event_loop_fbip.fern — the FBIP variant of the bounded event
-// loop (#9583).
-//
-// Same workload, same algorithm and the same capacities as
-// `event_loop_fip.fern`; what differs is how the state is held. Here it is an
-// ordinary struct of named arrays, updated functionally — `State { ...s, keys:
-// s.keys.with(i, v) }` — and the annotation is `fbip`, which permits a
-// constructor whose donor is the box the call consumed.
-//
-// This is the variant that tests whether the architecture is ERGONOMIC rather
-// than merely possible. The strict-`fip` variant packs every region into one
-// `i64[]` with hand-written base offsets, because when these were written a
-// `fip` function could not build a struct (#9602, since fixed) and can still
-// return only one owned container. Here the state has field names, the
-// compiler checks them, and a new region is a new field instead of a new
-// constant to derive by hand.
-//
-// What it costs is the guarantee's strength. `fbip` says every construction is
-// reuse-PAIRED, not that none happens: on a unique input the pairing writes the
-// donor box in place, and on a shared one `__alloc_reuse` falls back to a fresh
-// allocation. So this variant's steady state is allocation-free only while the
-// state stays uniquely owned, and the number printed at the end is what says
-// whether it did.
 import "core/cmp";
 import "std/bench";
 import "std/i32";
 import "std/i64";
-
-// ===================== CAPACITIES =====================
 
 fip function max_entries(): i32 {
   return 256;
@@ -40,13 +15,6 @@ fip function out_cap(): i32 {
   return 64;
 }
 
-// ===================== STATE =====================
-//
-// The queue is three parallel arrays rather than one array of event structs:
-// an event struct would be a per-event allocation on the enqueue path, which
-// is the cost this whole experiment is about. Structure-of-arrays is the same
-// shape the `fip` variant packs by hand — the difference is that here the
-// regions have names and the compiler knows their extents.
 struct State {
   q_head: i32,
   q_count: i32,
@@ -97,8 +65,6 @@ fip function rsp_value(): i64 {
   return 4 as i64;
 }
 
-// ===================== INITIALIZATION (allocating, once) =====================
-
 function zeros(n: i32): i64[] {
   let xs: i64[] = [];
   let i: i32 = 0;
@@ -119,7 +85,6 @@ function new_state(): State {
   };
 }
 
-// ===================== THE DATA PLANE (fbip) =====================
 fbip function enqueue(own s: State, kind: i64, id: i64, value: i64): State {
   if (s.q_count >= queue_cap()) {
     return State { ...s, m_dropped: s.m_dropped + 1 as i64 };
@@ -191,13 +156,6 @@ fbip function apply_update(own s: State, id: i64, delta: i64): State {
     s = State { ...s, m_miss: s.m_miss + 1 as i64 };
     return respond(s, rsp_missing());
   }
-  // The read is hoisted out of the update, and stays hoisted although it no
-  // longer has to be. Written the obvious way — `vals: s.vals.with(at,
-  // s.vals[at] + delta)` — this used to copy the whole 2 KB array per update
-  // rather than writing one slot: 127,073 allocations over this run's 1.28M
-  // events, all recycled and so invisible to `__heap_bump_bytes()`. #9605
-  // fixed that, and both spellings now write in place; this file keeps the
-  // shape its measurements were taken on.
   let current: i64 = s.vals[at];
   s = State { ...s, vals: s.vals.with(at, current + delta), m_ok: s.m_ok + 1 as i64 };
   return respond(s, rsp_ok());
@@ -255,11 +213,6 @@ fbip function reset_metrics(own s: State): State {
   return State { ...s, m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64 };
 }
 
-// ===================== THE WORKLOAD =====================
-//
-// Identical to the `fip` variant's, verbatim, so the two runs differ in how
-// state is held and in nothing else.
-
 fip function event_id(n: i64): i64 {
   let x: i64 = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;
@@ -309,16 +262,12 @@ fbip function round(own s: State, seed: i64, batch: i32): State {
   return drain_output(s);
 }
 
-// ===================== DRIVER =====================
-
 function main(): i32 {
   let s: State = new_state();
   s = prefill(s);
   s = round(s, 1 as i64, queue_cap());
   s = reset_metrics(s);
   let rounds: i32 = 20000;
-  // Built before the mark: the sample buffer is part of the instrument, not
-  // of the steady state being measured.
   let samples: i64[] = [];
   let p: i32 = 0;
   while (p < rounds) {
@@ -332,9 +281,6 @@ function main(): i32 {
   while (r < rounds) {
     let t0: i64 = monotonic_ns();
     s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
-    // `.with` on a uniquely-owned array writes in place, so recording a
-    // sample costs the measured region no allocation. The harness pins
-    // that property (internal/testing/e2e/bench_module_test.go).
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
@@ -342,10 +288,6 @@ function main(): i32 {
   let allocs: i64 = bench.allocs_after(at_allocs);
   let fresh: i64 = bench.fresh_bytes_after(at_fresh);
   let events: i64 = rounds as i64 * (queue_cap() as i64);
-  // The per-round samples become a bench.Report, so the percentile and
-  // throughput arithmetic is the harness's and identical across the three
-  // variants. Sorting allocates, which is why it happens down here — after
-  // the allocation figures have already been read.
   let rep: bench.Report = bench.Report {
     name: "fbip",
     iterations: rounds,

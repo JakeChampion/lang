@@ -8,64 +8,45 @@ import (
 	"testing"
 )
 
-// The full core/iter combinator surface on the self-host IR path, driven over a
-// real `iter.of(xs)` (ArrayIter[i32]) — the predicate/closure-taking, value-
-// returning, and array-collecting combinators all in one gate. Every combinator
-// below must route "ir" and match the interpreter. The sharpest shape is a
-// fn-value ARGUMENT to a call in MATCH-SCRUTINEE position
-// (`match (iter.of(xs).find(gt1)) { … }`): a NAMED-function predicate
-// must reach the callee as a closure box; passed as a raw fn-pointer it
-// segfaults.
 var iterCombinatorIRCases = []struct {
 	name string
 	src  string
 }{
-	// find with a NAMED-function predicate in a match scrutinee — the case the
-	// lift's match-scrutinee walk covers; without it this segfaults.
 	{"find-named", `import "core/iter";
 function gt1(x: i32): boolean { return x > 1; }
 function main(): i32 { let xs: i32[] = [1, 2, 3]; match (iter.of(xs).find(gt1)) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// find with a named predicate, no match (returns None → 7).
 	{"find-named-none", `import "core/iter";
 function big(x: i32): boolean { return x > 100; }
 function main(): i32 { let xs: i32[] = [1, 2, 3]; match (iter.of(xs).find(big)) { Some(v) => { return v; }, None => { return 7; } } }`},
-	// find with a lambda predicate (closure box — worked before; guards the path).
 	{"find-lambda", `import "core/iter";
 function main(): i32 { match (iter.of([1, 2, 3]).find((x: i32): boolean => { return x >= 2; })) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// any / all over named predicates.
 	{"any", `import "core/iter";
 function gt2(x: i32): boolean { return x > 2; }
 function main(): i32 { let xs: i32[] = [1, 2, 3]; if (iter.of(xs).any(gt2)) { return 1; } return 0; }`},
 	{"all", `import "core/iter";
 function gt0(x: i32): boolean { return x > 0; }
 function main(): i32 { let xs: i32[] = [1, 2, 3]; if (iter.of(xs).all(gt0)) { return 1; } return 0; }`},
-	// position / count_where (named predicate).
 	{"position", `import "core/iter";
 function gt1(x: i32): boolean { return x > 1; }
 function main(): i32 { let xs: i32[] = [1, 2, 3]; match (iter.position(iter.of(xs), gt1)) { Some(v) => { return v; }, None => { return 9; } } }`},
 	{"count_where", `import "core/iter";
 function gt1(x: i32): boolean { return x > 1; }
 function main(): i32 { let xs: i32[] = [1, 2, 3]; return iter.count_where(iter.of(xs), gt1); }`},
-	// flat_map (named fn returning an array).
 	{"flat_map", `import "core/iter";
 function dup(x: i32): i32[] { return [x, x]; }
 function main(): i32 { let xs: i32[] = [1, 2]; let ys: i32[] = iter.of(xs).flat_map(dup).collect(); return ys.len(); }`},
-	// enumerate / zip → tuple-array collectors.
 	{"enumerate", `import "core/iter";
 function main(): i32 { let xs: i32[] = [5, 6, 7]; let ys: (i32, i32)[] = iter.of(xs).enumerate().collect(); return ys.len(); }`},
 	{"zip", `import "core/iter";
 function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = [3, 4]; let ys: (i32, i32)[] = iter.of(a).zip(iter.of(b)).collect(); return ys.len(); }`},
-	// take / skip, collected.
 	{"take", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.of(xs).take(2).collect(); return ys.len(); }`},
 	{"skip", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.of(xs).skip(2).collect(); return ys.len(); }`},
-	// nth / last → Option in match scrutinee (no fn-value, but match-scrutinee).
 	{"nth", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; match (iter.nth(iter.of(xs), 2)) { Some(v) => { return v; }, None => { return 0; } } }`},
 	{"last", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; match (iter.last(iter.of(xs))) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// index_of / count (Eq-bound Iterator helpers).
 	{"index_of", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; match (iter.index_of(iter.of(xs), 3)) { Some(v) => { return v; }, None => { return 0; } } }`},
 	{"count", `import "core/iter";

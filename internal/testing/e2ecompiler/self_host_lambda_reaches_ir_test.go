@@ -7,19 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLambdaReachesIR pins the artifacts of each lambda position's
-// lowering, and that no tagged-value runtime (release_JNull / …) is emitted:
-//
-//   - A no-capture lambda passed as a fn-typed CALL ARGUMENT uses the uniform
-//     env-box ABI (lift.lift_inline_closures_expr): it is wrapped into an
-//     env-ignoring `<fn>$wrapN` trampoline boxed as [funcval], and the callee
-//     dispatches it env-first via call_indirect. This pass deliberately runs
-//     BEFORE the no-capture __lam_N lift ("there is one fn-arg shape, the
-//     box"), so a lambda argument never becomes a bare __lam_N — the guard
-//     here is the trampoline + call_indirect, not __lam_0.
-//   - A capture-free lambda BOUND TO A LOCAL and called directly is hoisted to
-//     a top-level __lam_<k> and the call rewritten to a direct call
-//     (lift.lift_stmt).
 func TestSelfHostLambdaReachesIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping lambda-reaches-IR guard")
@@ -29,9 +16,6 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// A no-capture lambda passed as a callback — the uniform env-box shape.
-	// `@noinline` keeps apply's call through f, which the inliner otherwise
-	// resolves.
 	src := `@noinline function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 41); }`
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
@@ -55,10 +39,6 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 		t.Errorf("lambda program did not lower through the IR (AST tagged-value runtime present)")
 	}
 
-	// A capture-free lambda BOUND TO A LOCAL and called directly must also
-	// reach the IR path: the lift hoists it to __lam_<k> and rewrites `f(a)` to
-	// a direct call, rather than bailing. (Before, only
-	// lambdas in argument position were lifted.)
 	src2 := `function main(): i32 { let f = (x: i32): i32 => { return x * 2; }; return f(21); }`
 	var cmd2 *exec.Cmd
 	if len(runner) == 0 {

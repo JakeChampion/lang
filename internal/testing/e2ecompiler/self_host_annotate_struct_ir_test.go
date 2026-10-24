@@ -7,32 +7,22 @@ import (
 	"testing"
 )
 
-// annotateStructCases extend the typed-IR annotation (#5531) to struct-valued
-// calls: type_to_irtag emits a struct's NAME as the tag, and the call's struct
-// type is read from it. Each program uses a struct-returning call's result for
-// a FIELD or METHOD access directly on the call, oracle-checked against the
-// interpreter.
 var annotateStructCases = []struct {
 	name string
 	src  string
 }{
-	// field access on a struct-returning call result.
 	{"call_field", `struct P { x: i32, y: i32 }
 function mk(a: i32): P { return P { x: a, y: a * 2 }; }
-function main(): i32 { return mk(7).x + mk(3).y; }`}, // 7 + 6 = 13
-	// method call on a struct-returning call result.
+function main(): i32 { return mk(7).x + mk(3).y; }`},
 	{"call_method", `struct P { x: i32, y: i32 }
 function (p: P) sum(): i32 { return p.x + p.y; }
 function mk(a: i32): P { return P { x: a, y: a + 1 }; }
-function main(): i32 { return mk(10).sum(); }`}, // 10 + 11 = 21
-	// struct-returning call bound to an inferred local, then field read.
+function main(): i32 { return mk(10).sum(); }`},
 	{"call_infer_local", `struct Pt { x: i32, y: i32 }
 function origin(): Pt { return Pt { x: 3, y: 4 }; }
-function main(): i32 { let p = origin(); return p.x * p.y; }`}, // 12
+function main(): i32 { let p = origin(); return p.x * p.y; }`},
 }
 
-// TestSelfHostAnnotateStructIR_X86_64 pins the checker-stamped struct result type
-// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateStructIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateStructCases {

@@ -7,9 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A generic call whose type arguments only its destination supplies is
-// instantiated in argument position, on the interpreter and every target.
-// The self-host twin is TestSelfHostGenericCallArg.
 func TestGenericCallArg(t *testing.T) {
 	main := e2eharness.WriteGenericCallArgProgram(t)
 	t.Run("interp", func(t *testing.T) {

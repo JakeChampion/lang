@@ -20,8 +20,6 @@ func varInit(t *testing.T, src string) ast.Expr {
 	return vd.Init
 }
 
-// `'x'` and `b'x'` parse to one node distinguished by IsByte, carrying
-// the decoded value and the spelling the author used.
 func TestParseCharAndByteLiterals(t *testing.T) {
 	cases := []struct {
 		expr   string
@@ -53,9 +51,6 @@ func TestParseCharAndByteLiterals(t *testing.T) {
 	}
 }
 
-// A literal pattern in match-arm position accepts both forms, so byte
-// dispatch can be written `match (s[i]) { b'[' => …` rather than on
-// decimal codes.
 func TestParseCharLiteralMatchArm(t *testing.T) {
 	prog, err := Parse(`function f(b: u8): i32 {
 	    match (b) {
@@ -84,8 +79,6 @@ func TestParseCharLiteralMatchArm(t *testing.T) {
 	}
 }
 
-// The formatter re-emits the spelling rather than normalising it: an
-// escape the author chose is part of what they wrote.
 func TestFormatCharLiteralRoundTrip(t *testing.T) {
 	src := "function main(): i32 {\n" +
 		"  let a: char = 'x';\n" +

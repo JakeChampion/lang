@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// Three wasm programs the self-host refused or miscompiled where native
-// answers them (#10769): `write_some` and `__store_u8` had no instruction
-// selection, and `flags()` called a `$__fern_build_io_error` the module never
-// defined, which watbin encoded as function index 2^32-1.
 const wasmWriteSomeSrc = `import "std/i64";
 
 function main(): i32 {
@@ -43,8 +39,6 @@ const wasmHandleFlagsSrc = `function main(): i32 {
 }
 `
 
-// wasmStoreU8Src writes bytes into raw memory through both spellings of the
-// byte store and reads them back.
 const wasmStoreU8Src = `function main(): i32 {
     let p: usize = __alloc(8);
     __store_u8(p, 104);
@@ -56,8 +50,6 @@ const wasmStoreU8Src = `function main(): i32 {
 }
 `
 
-// emitCoreModule compiles src to a preview-1 core module, the form watbin
-// assembles, and returns its path.
 func emitCoreModule(t *testing.T, c *strictCLI, src string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -96,8 +88,6 @@ func TestSelfHostWasmHostIselIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostWatbinUndefinedReference pins watbin's refusal of a `$name`
-// nothing defines, run as a program over watbin.fern itself.
 func TestSelfHostWatbinUndefinedReference(t *testing.T) {
 	cli := newStrictCLI(t)
 	watbin, err := os.ReadFile("../../../compiler/watbin.fern")

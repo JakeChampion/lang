@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// A producer that returns a tuple local read through a dead-ended alias
-// (`let a = t; ... a.0 ...; return t;`) still hands the caller an owned result
-// (#7667), so the caller's binding releases it. An alias that is itself
-// returned, chains, extracts a payload, or leaves through a call arg denies
-// that, which is what keeps the caller's deep free from dangling a second live
-// reference.
-//
-// Every want is confirmed against bin/fern -interp — never read off the
-// self-host run under test. Every early arm is dynamically live (a dead arm
-// makes half the shape unverifiable). Each case re-runs under FERN_SANITIZE=1
-// and must exit identically with no over-release / use-after-free report.
-
 func tupleOwnedretAliasCases() []tupleAliasParamCase {
 	const caller = `
 function round(i: i32): i32 {
@@ -26,9 +14,6 @@ function round(i: i32): i32 {
 function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`
 	return []tupleAliasParamCase{
 		{
-			// The matrix cell tuple_mixed__ownedret_alias__bind_local, with a
-			// LIVE early arm: the reader alias no longer sinks the admission,
-			// so every round's box + element array frees.
 			name: "alias_read_admits",
 			src: `function mk(i: i32): (i32, i32[]) {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -39,8 +24,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 31,
 		},
 		{
-			// The alias RETURNED on one path, which would hand the caller
-			// two paths to one box.
 			name: "alias_returned_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -51,7 +34,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 4,
 		},
 		{
-			// A payload extracted through the alias.
 			name: "alias_elem_out_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -63,7 +45,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 58,
 		},
 		{
-			// A chained alias: `let b = a`.
 			name: "alias_chained_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -75,7 +56,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 31,
 		},
 		{
-			// The alias leaves through a call arg.
 			name: "alias_callarg_keeps_refused",
 			src: `function peek(x: (i32, i32[])): i32 { return x.0; }
 function mk(i: i32): (i32, i32[]) {

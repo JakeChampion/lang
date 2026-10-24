@@ -3,8 +3,6 @@ import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
 import "std/string";
 
-// All nonzero native status bytes are occupied in the composed driver.
-// The printed module and case identify a failure even with collapsed status.
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("large-push instruction controls failed: " + group);

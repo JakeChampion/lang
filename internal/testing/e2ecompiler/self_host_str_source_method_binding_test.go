@@ -2,27 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// strSourceMethodBindingCases pin which `let t: string = <expr>.m()` bindings
-// are reclaimed: a user method whose every return is a fresh string (like the
-// builtin `to_ascii_upper` beside it), and not one that can return its
-// receiver or a view of it — a binding has no runtime discriminator, so it may
-// only free a box that is nobody else's.
-//
-// The flat cases return 98 when the bound box is stranded: 400 rounds of a
-// 170-byte producer is 68 KB against a 32 KB ceiling. The refusal cases are
-// value-exact under same-size-class allocation pressure and verify `t` only
-// through borrow positions: comparing it with `!=` would itself be an escape,
-// and the probes would distinguish nothing.
 var strSourceMethodBindingCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The shape that led here, in the stdlib's spelling `(s: string) to_owned()`.
-	// The whole-program freshness registry has proven such a body fresh all along;
-	// the binding collector could not ask, because its method arm needs a receiver
-	// type an AST scan cannot compute. 47 B/round before, flat after — the BUILTIN
-	// spelling beside it was always flat.
 	{"str-source-method-binding-reclaimed", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) owned(): string { return s + ""; }
 function round(pre: string): i32 { let b: string = w(pre); let t: string = b.owned(); return t.len(); }
@@ -38,9 +22,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// Freshness visible only THROUGH a call, the stdlib's `(s: string) to_upper()`
-	// shape (`return unicode.to_upper(s)`): admitting it needs the registry's
-	// fixpoint, not just the local body. 43 B/round before.
 	{"str-source-method-transitive-binding-reclaimed", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function widen(s: string): string { return s + ""; }
 function (s: string) up(): string { return widen(s); }
@@ -57,8 +38,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// The control the two above are measured against: a builtin-method binding, flat
-	// before and after.
 	{"str-builtin-method-binding-reclaimed", `import "std/string";
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function round(pre: string): i32 { let b: string = w(pre); let t: string = b.to_ascii_upper(); return t.len(); }
@@ -74,9 +53,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// NEGATIVE: `return s` hands the RECEIVER's box back, so the binding is an alias
-	// and freeing it double-frees what `b` still owns. Admitting it (the SFRRECV
-	// test, which tolerates a receiver return) exits 99 here.
 	{"str-identity-return-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) same(): string { return s; }
 function round(pre: string): i32 {
@@ -91,10 +67,6 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE: fresh on one path and the receiver on the other. One non-fresh return
-	// is enough to refuse the whole method — a binding has no runtime discriminator
-	// to tell the two apart, which is exactly what separates this from SFRRECV's
-	// consuming-site release. Also exits 99 when admitted.
 	{"str-mixed-path-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) maybe(k: i32): string { if (k > 0) { return s + "!"; } return s; }
 function round(pre: string): i32 {
@@ -109,10 +81,6 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE: a slice return is a VIEW over the receiver's buffer — an alias with a
-	// different box. Correctness only: freeing an immortal view box is not currently
-	// observable, so unlike the two above this case does not fail when the rule is
-	// relaxed. It pins the contract, not a witnessed fault.
 	{"str-view-return-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) rest(): str { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
@@ -127,9 +95,6 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 111) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE: a user type declaring a strictly-fresh `trim` must not license the
-	// string BUILTIN of that name, which returns a view. Same correctness-only
-	// standing as the case above.
 	{"str-builtin-name-collision-binding-refused", "import \"std/string\";\n" + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 struct Box { v: string }
 function (x: Box) trim(): string { return x.v + ""; }
@@ -149,8 +114,6 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
 
 const strSourceMethodBindingExitHint = "98 = the bound box was stranded; 99 = over-release; 97 = value corrupted"
 
-// TestSelfHostStrSourceMethodBindingIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostStrSourceMethodBindingIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strSourceMethodBindingCases {
@@ -162,8 +125,6 @@ func TestSelfHostStrSourceMethodBindingIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrSourceMethodBindingIRArm64 is the arm64 leg; the credit is shared
-// lowering analysis and the release is a per-backend transcription.
 func TestSelfHostStrSourceMethodBindingIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -176,8 +137,6 @@ func TestSelfHostStrSourceMethodBindingIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrSourceMethodBindingWasmIR is the wasm leg, where the release maps
-// to $__fern_arr_dec on the rc-headered block.
 func TestSelfHostStrSourceMethodBindingWasmIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strSourceMethodBindingCases {

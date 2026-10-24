@@ -2,14 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A local that holds a counted reference to a buffer another name still
-// reaches, grown by `.append` (#10367). `let out = acc` over a borrowed
-// parameter retains acc's buffer. The self-append took the sole-owner push,
-// which leaves a shared old buffer alone on a grow, so out's reference to it
-// leaked. `return out.append(v)` kept `out` from the exit sweep without giving
-// its reference to the old buffer back when the push grew. Answers are the
-// interpreter's.
-
 const borrowedAliasMain = `function main(): i32 {
     let pending: string[] = [];
     let fd: i32 = 0;
@@ -61,8 +53,6 @@ function main(): i32 {
     return pending.len() + pending[2];
 }
 `, true},
-	// A sole-owner local returned grown: the superseded buffer is this
-	// frame's alone.
 	{"owned_return_append", `function mk(n: i32): i32[] {
     let a: i32[] = [n, 2, 3, 4];
     return a.append(5);
@@ -74,8 +64,6 @@ function main(): i32 {
     return t;
 }
 `, true},
-	// Counted elements: the buffers balance, and the elements stay with the
-	// threaded accumulator's shallow release (#10420).
 	{"struct_elems", `struct Inst { name: string, depth: i32 }
 function walk(n: i32, acc: Inst[]): Inst[] {
     let out: Inst[] = acc;

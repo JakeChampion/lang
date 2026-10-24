@@ -1,19 +1,5 @@
 package modload_test
 
-// Self-qualified own-enum references inside a non-entry module (#6951):
-// `MyEnum.Variant` where MyEnum is declared by the module doing the
-// referring. It is the same construct that works in a single file and in
-// the entry module, and it broke as soon as the code moved into an
-// import, because the rewriter mangles the enum decl to `<mod>__MyEnum`
-// but left the qualifier spelled as the user wrote it.
-//
-// In expression position the qualifier is a plain Ident target, so the
-// checker looked up `MyEnum` in c.info.Enums, missed, and fell through
-// to E001 "cannot find". In pattern position the qualifier
-// reached checkVariantQualifier unmangled, missed the enum branch the
-// same way, and was diagnosed as a MODULE qualifier: E029 "names module
-// MyEnum, but enum mod__MyEnum lives in module …".
-
 import (
 	"path/filepath"
 	"strings"
@@ -60,10 +46,6 @@ pub enum Visible { Public }`,
 	}
 }
 
-// TestOwnEnumQualifierInImportedModule pins that both positions check
-// clean and that the match arm actually selects — a qualifier that
-// merely stopped erroring but no longer matched its variant would be a
-// worse bug than the one it replaced.
 func TestOwnEnumQualifierInImportedModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"enumlib.fern": ownEnumQualifierLib,
@@ -97,10 +79,6 @@ func TestOwnEnumQualifierInImportedModule(t *testing.T) {
 	}
 }
 
-// TestOwnEnumQualifierStillCaughtWhenWrong pins that mangling the
-// qualifier did not turn the checks it feeds into no-ops: a qualifier
-// naming a DIFFERENT own enum, and a variant the qualified enum does
-// not declare, must both still be rejected.
 func TestOwnEnumQualifierStillCaughtWhenWrong(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"enumlib.fern": `pub enum Kind { Text, Number }

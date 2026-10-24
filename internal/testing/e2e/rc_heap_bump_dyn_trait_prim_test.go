@@ -1,29 +1,9 @@
-// RC of PRIMITIVE/STRING payloads behind `dyn Trait` (#4351). A primitive
-// or string coerced to `dyn Trait` is heap-boxed into a VALUE CELL
-// (boxPrimitiveDynValue) that the fat pointer's `data` word points at.
-// Before this slice the vtable's trailing drop slot for a primitive
-// concrete was the null sentinel, so the cell leaked on every coercion —
-// a churn loop grew the bump high-water linearly on every backend. The
-// generated __drop_dynprim_<prim> destructor now frees exactly that cell
-// (the string BUFFER behind a string payload deliberately stays leak-mode:
-// the coercion takes no retain, so an aliased source must never be freed
-// from the dyn drop; literals are static sentinels and cost nothing).
-//
-// Also pinned here: move-on-return for a swept `dyn` local. The exit
-// sweep's dyn arm drops unconditionally, so `let d: dyn T = ...; return d;`
-// handed the CALLER a freed cell — a segfault on the natives and a garbage
-// dispatch on wasm. The Return lowering now excludes a returned bare dyn
-// local from the sweep (a pure move — dyn cells carry no rc header, so
-// there is no transfer inc to cancel).
 package e2e
 
 import (
 	"testing"
 )
 
-// dynPrimBumpGrowthSrc churns a `dyn Show` over a plain i32: per iteration
-// the coercion allocates the prim value cell (+ the boxed dyn cell on the
-// natives); with the drop-slot fix both free, so the high-water is bounded.
 func dynPrimBumpGrowthSrc(n string) string {
 	return `import "std/i32";
 trait Show {
@@ -45,9 +25,6 @@ function main(): i32 {
 }`
 }
 
-// dynPrimStringBumpGrowthSrc churns a `dyn Show` over a string LITERAL:
-// the value cell frees per iteration and the literal is a static sentinel,
-// so the high-water is bounded.
 func dynPrimStringBumpGrowthSrc(n string) string {
 	return `import "std/i32";
 trait Show {
@@ -69,11 +46,6 @@ function main(): i32 {
 }`
 }
 
-// dynLocalReturnMoveSrc returns a bare dyn LOCAL from mk() and dispatches
-// in the caller — the move-on-return regression (pre-fix: the callee's
-// exit sweep freed the returned cell; the caller's dispatch then read
-// reclaimed memory). Covers both a prim and a struct concrete, plus the
-// no-underflow detector. Want 0.
 const dynLocalReturnMoveSrc = `import "std/i32";
 trait Show {
     function show(self: Self): i32;
@@ -144,12 +116,6 @@ func TestX86_64DynTraitLocalReturnMove(t *testing.T) {
 	}
 }
 
-// dynEnumPayloadBumpGrowthSrc churns a `dyn Show` over a variant
-// construction — the enum concrete reclaims through its generated
-// __drop_enum_<C> vtable drop (plus the boxed cell on the natives), so the
-// high-water is bounded. Pins the enum-concrete arm of the dyn drop
-// (#4351 slice 4's native counterpart, which already existed — this is
-// the missing coverage).
 func dynEnumPayloadBumpGrowthSrc(n string) string {
 	return `import "std/i32";
 trait Show {
@@ -172,12 +138,6 @@ function main(): i32 {
 }`
 }
 
-// The wasm sibling: #4786 — a struct/enum-behind-dyn local dropped at a
-// helper function's exit sweep trapped (memory fault at 0xffffffff), because
-// the Inline pass mis-spliced the two-word inline `dyn` value's exit-sweep
-// reclaim, running it on the slot's pre-init value and stranding the fresh
-// box un-swept → freelist corruption. Fixed by excluding dyn-slot callees
-// from inlining. Now bounded like the natives.
 func TestWASMDynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
 	small := runWasm(t, dynEnumPayloadBumpGrowthSrc("50"))
 	large := runWasm(t, dynEnumPayloadBumpGrowthSrc("5000"))
@@ -194,11 +154,6 @@ func TestX86_64DynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
 	}
 }
 
-// dynStructFnExitBumpGrowthSrc churns a `dyn Show` over a STRUCT concrete
-// through a helper FUNCTION (the dyn local dies at the helper's exit sweep).
-// This is the general #4786 shape — a struct behind dyn dropped at a
-// non-main function exit also tripped the inliner two-word mis-splice on
-// wasm; not enum-specific.
 func dynStructFnExitBumpGrowthSrc(n string) string {
 	return `import "std/i32";
 trait Show {
@@ -245,11 +200,6 @@ func TestArm64DynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
 	}
 }
 
-// dynArrFnExitBumpGrowthSrc churns a `dyn Show[]` local inside a helper
-// FUNCTION — the exit-sweep path. The loop-var reinit path (covered by the
-// container suite) already walked elements via __drop_arr_dyn_<set>, but the
-// exit sweep's array arm gated on arrElemIsRcTracked (false for dyn) and fell
-// to the buffer-only dec, leaking every element per call (#4351). Bounded now.
 func dynArrFnExitBumpGrowthSrc(n string) string {
 	return `import "std/i32";
 trait Show {
@@ -275,13 +225,6 @@ function main(): i32 {
 }`
 }
 
-// TestWASMDynTraitArrFnExitCorrect: wasm deliberately KEEPS the buffer-only
-// dec for function-exit dyn arrays (its inline two-word elements double-drop
-// when an element was bound out — see the exit-sweep arm's wasm caveat in
-// rc_insert.go), so there is no bounded-growth assertion here. This pins the
-// correctness side only: values stay right across the churn. If wasm later
-// gains a sound element walk, promote this to the bounded shape the native
-// siblings use.
 func TestWASMDynTraitArrFnExitCorrect(t *testing.T) {
 	src := `import "std/i32";
 trait Show {

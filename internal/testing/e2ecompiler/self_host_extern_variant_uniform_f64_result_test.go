@@ -11,14 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantUniformF64ResultCustomProvider is the result-side
-// mirror: a uniform-f64 `variant ev { a(f64), b(f64) }` lifted into a self-host
-// enum `Ev { A(f64), B(f64) }`. The f64 join is returned indirectly (disc:u8 @0,
-// payload @8); the wrapper stores it into the box @4 as an f64, and a match reads
-// it back with f64.load (S1 width-aware bind).
-//
-// `classify: func(n: s32) -> ev`: n<10 -> a(2.5), else -> b(1.5). The self-host
-// `match` checks each arm's f64 payload.
 func TestSelfHostExternVariantUniformF64ResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

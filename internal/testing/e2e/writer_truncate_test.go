@@ -6,37 +6,6 @@ import (
 	"testing"
 )
 
-// `Writer.truncate(len)` is ftruncate(2) on a handle, and it is five
-// hand-written implementations: x86-64 and arm64 assembly, wasmbin from two
-// WASI previews, the interpreter's `os.File.Truncate`, and the self-host's
-// generated Fern. Each gets the same
-// probe, because each packs the call itself.
-//
-// Three properties, and the third is the reason the builtin exists:
-//
-//   - shrinking discards the tail and growing extends with a hole that reads
-//     as zeros, so one file walked down and back up is `hello` + four NULs;
-//   - a negative length is the kernel's EINVAL rather than a clamp here,
-//     which a resize that silently did nothing would hide;
-//   - a file the process created under a mode that would REFUSE a fresh open
-//     still resizes, because the permission check happened at the open. That
-//     is what a path-based truncate(2) cannot do and what GNU `truncate`
-//     relies on: `umask 222` leaves a new file 0444.
-//
-// The third is asserted through `open_exclusive`, whose 0600 creation mode
-// this test then chmods to 0444 — rather than through a umask, which is
-// process-global state the suite's other tests would inherit. WASI has no
-// file mode at all and E066 refuses `chmod` there, so the wasm leg runs the
-// first two properties and says so rather than carrying a mode that would
-// describe nothing.
-
-// writerTruncateSource probes the properties above under `dir`, or under the
-// working directory when `dir` is "" (the wasm leg, which runs inside its
-// preopen). `perms` drops the mode property for a target that has no modes.
-// The exit code names the step that failed.
-// `closed` drops the closed-handle property on wasm: `close` there drops the
-// preview-2 descriptor resource, and a dropped handle traps rather than
-// answering EBADF.
 func writerTruncateSource(dir string, perms bool, closed bool) string {
 	at := func(name string) string {
 		if dir == "" {
@@ -46,9 +15,6 @@ func writerTruncateSource(dir string, perms bool, closed bool) string {
 	}
 	locked := ""
 	if perms {
-		// A descriptor already open outlives the mode that would refuse a
-		// new one: this is the whole reason the method exists beside the
-		// path form. 292 is 0444.
 		locked = `    match (open_exclusive(` + at("locked.txt") + `)) {
         Ok(w) => {
             match (w.write("0123456789")) { Err(e) => { return 9; }, Ok(_) => {} }
@@ -62,12 +28,6 @@ func writerTruncateSource(dir string, perms bool, closed bool) string {
 	}
 	shut := ""
 	if closed {
-		// ftruncate(2) of a descriptor that is no longer open is EBADF on
-		// every kernel, so the compiled backends get this from the kernel
-		// for free. The interpreter has no kernel to ask — it resolves the
-		// fd through its own handle table — so this arm is what holds that
-		// table to the same answer instead of aborting the program, the way
-		// stat / seek / the sync family already are.
 		shut = `    match (open_writer(` + at("closed.txt") + `)) {
         Ok(w) => {
             match (w.write("abc")) { Err(e) => { return 13; }, Ok(_) => {} }
@@ -166,9 +126,6 @@ func TestInterpWriterTruncate(t *testing.T) {
 	writerTruncateCheckTree(t, dir, true, true)
 }
 
-// The wasm legs run under a preopen, so their paths are relative. Preview 1
-// resizes with fd_filestat_set_size, the component with descriptor.set-size:
-// two bodies, so two runs.
 func TestWASMPreview1WriterTruncate(t *testing.T) {
 	mod := buildWasmCore(t, writerTruncateSource("", false, false))
 	dir := t.TempDir()

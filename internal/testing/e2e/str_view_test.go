@@ -2,22 +2,6 @@ package e2e
 
 import "testing"
 
-// strViewProgram exercises the `str` borrowed-string view type end-to-end
-// (#4813 / #4297 Option A, slice 1): an owned `string` borrows into a `str`
-// var and a `str` param; a `str` flows into a `string` param (borrowed
-// position); the string method surface dispatches on a view receiver
-// (builtin .len(), std/string .trim() — which returns `str` since the P1
-// producer flip); .to_owned() materialises an owned copy assignable to a
-// `string` sink; `str[]` arrays work element-wise; views compare by
-// CONTENTS against strings, literals, and other views (IsStringCmp — a
-// pointer compare here was the P1 near-miss), concat into fresh owned
-// strings, index as byte reads, and re-slice into sub-views; slicing an
-// OWNED string also yields a view (the P2 producer flip), which
-// materialises into an owning sink via `+ ""`.
-// StrType is erased to StringType at the LowerWith choke point
-// (ir/erase_str.go), so a correct run proves the erasure feeds every
-// backend a plain string program. Exits 0 on success, a distinct code per
-// failed step.
 const strViewProgram = `import "std/string";
 
 function view_len(v: str): i32 {

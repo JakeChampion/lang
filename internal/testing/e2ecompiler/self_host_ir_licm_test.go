@@ -10,14 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRLICM pins the self-hosted stack IR's loop-invariant code motion
-// (compiler/ir.fern's hoist_loop_invariants, #8245) and the slot growth it
-// depends on (#8247).
-//
-// The ir_licm_run driver builds the op list the lowering emits for each `while`
-// shape, runs the pass, and prints the ops AND the frame count. The refusals
-// are the essential half, since
-// each one is a read the original program would not have made.
 func TestSelfHostIRLICM(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -28,41 +20,24 @@ func TestSelfHostIRLICM(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_licm_run.fern", "ir_licm_run")
 
 	const want = "" +
-		// The length is read once, before the loop, into the fresh slot 3, and
-		// the header reads the cache. The frame grows 3 -> 4.
 		"licm_while_cond: block ; load_local 0 ; str_len ; store_local 3 ; loop ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 1 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end ; load_local 1 ; return | n_locals=4\n" +
-		// The body stores to the operand, so its length is not invariant.
 		"licm_mutated_refused: block ; loop ; load_local 1 ; load_local 0 ; str_len ; lt_s ; not ; brif 1 ; load_local 2 ; store_local 0 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=3\n" +
-		// A read from the body rather than the header stays where it is.
 		"licm_body_refused: block ; loop ; load_local 1 ; load_local 2 ; lt_s ; not ; brif 1 ; load_local 3 ; load_local 0 ; str_len ; add ; store_local 3 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=4\n" +
 		"licm_idempotent=1\n" +
-		// Two operands take two slots, in read order, and the prologue is
-		// stack-net-zero.
 		"licm_two_slots: block ; load_local 0 ; str_len ; store_local 3 ; load_local 1 ; str_len ; store_local 4 ; loop ; load_local 2 ; load_local 3 ; load_local 4 ; add ; lt_s ; not ; brif 1 ; load_local 2 ; const_i32 1 ; add ; store_local 2 ; br 0 ; end ; end | n_locals=5\n" +
 		"licm_two_slots_stack_neutral=1\n" +
 		"licm_same_operand_once: block ; load_local 0 ; str_len ; store_local 3 ; loop ; load_local 1 ; load_local 3 ; load_local 3 ; add ; lt_s ; not ; brif 1 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=4\n" +
-		// `&&` branches before the second read: the guarded length stays.
 		"licm_short_circuit: block ; load_local 0 ; str_len ; store_local 4 ; loop ; load_local 2 ; load_local 4 ; lt_s ; store_local 3 ; block ; load_local 3 ; not ; brif 0 ; load_local 2 ; load_local 1 ; str_len ; lt_s ; store_local 3 ; end ; load_local 3 ; not ; brif 1 ; load_local 2 ; const_i32 1 ; add ; store_local 2 ; br 0 ; end ; end | n_locals=5\n" +
 		"licm_short_circuit_stack_neutral=1\n" +
-		// A block between `loop` and the condition does not end the header.
 		"licm_typed_block_header: block ; load_local 0 ; str_len ; store_local 4 ; loop ; block ; load_local 4 ; store_local 3 ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 2 ; end ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=5\n" +
 		"licm_typed_block_header_stack_neutral=1\n" +
-		// `exit` ends the header: the read after it is never reached.
 		"licm_exit_refused: block ; loop ; block ; const_i32 134 ; exit ; load_local 1 ; load_local 0 ; str_len ; lt_s ; not ; brif 2 ; end ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=3\n" +
-		// Later loops first: the inner loop takes slot 4, the outer slot 5, and
-		// each prologue sits directly before its own `loop`.
 		"licm_nested: block ; load_local 0 ; str_len ; store_local 5 ; loop ; load_local 2 ; load_local 5 ; lt_s ; not ; brif 1 ; block ; load_local 1 ; str_len ; store_local 4 ; loop ; load_local 3 ; load_local 4 ; lt_s ; not ; brif 1 ; load_local 3 ; const_i32 1 ; add ; store_local 3 ; br 0 ; end ; end ; load_local 2 ; const_i32 1 ; add ; store_local 2 ; br 0 ; end ; end | n_locals=6\n" +
-		// The body reads bytes of the string the header takes the length of:
-		// its data address is hoisted too, into the next slot.
 		"licm_data_address: block ; load_local 0 ; str_len ; store_local 3 ; load_local 0 ; str_data ; store_local 4 ; loop ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 1 ; load_local 2 ; load_local 4 ; load_local 1 ; raw_load8 ; add ; store_local 2 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=5\n" +
 		"licm_data_address_stack_neutral=1\n" +
-		// No header read of the string, or a store to it: the address stays.
 		"licm_data_unread_refused: block ; loop ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 1 ; load_local 2 ; load_local 0 ; str_data ; load_local 1 ; raw_load8 ; add ; store_local 2 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=4\n" +
 		"licm_data_mutated_refused: block ; loop ; load_local 1 ; load_local 0 ; str_len ; lt_s ; not ; brif 1 ; load_local 2 ; store_local 0 ; load_local 2 ; load_local 0 ; str_data ; load_local 1 ; raw_load8 ; add ; store_local 2 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=3\n" +
 		"licm_unclosed_refused: block ; loop ; load_local 1 ; load_local 0 ; str_len ; lt_s ; not ; brif 1 | n_locals=3\n" +
-		// #8247: against the count the pass returned the ops verify clean;
-		// against the lowering's own count both ops naming the cache slot are
-		// out of range — the refusal a frame one slot short earns.
 		"licm_frame_grown: new=0 old=2\n" +
 		"licm_in_optimize: block ; load_local 0 ; str_len ; store_local 3 ; loop ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 1 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end ; load_local 1 ; return | n_locals=4\n"
 
@@ -79,10 +54,6 @@ func TestSelfHostIRLICM(t *testing.T) {
 	}
 }
 
-// licmPrograms are the hoisting fixtures as whole programs with a main, so
-// the same source is emitted and run. `outside` / `inside` count the
-// string-length reads the pass leaves outside any loop and inside one; the
-// runtime value is what every backend must still compute.
 var licmPrograms = []struct {
 	name, src       string
 	want            int
@@ -91,8 +62,6 @@ var licmPrograms = []struct {
 	{"while-cond",
 		`function scan(s: string): i32 { let i: i32 = 0; let n: i32 = 0; while (i < s.len()) { if (s[i] == b'#') { n = n + 1; } i = i + 1; } return n; } function main(): i32 { return scan("a#b##c"); }`,
 		3, 1, 0},
-	// The operand is reassigned in the body, so the length is re-read each
-	// iteration: the loop runs to the NEW string's length (3), not the old (2).
 	{"mutated-operand",
 		`function grow(a: string): i32 { let s: string = a; let i: i32 = 0; while (i < s.len()) { if (i == 0) { s = a + "x"; } i = i + 1; } return i; } function main(): i32 { return grow("ab"); }`,
 		3, 0, 1},
@@ -107,13 +76,6 @@ var licmPrograms = []struct {
 		2, 1, 1},
 }
 
-// asmLenShape counts string-length reads in the user functions of an x86-64
-// listing, outside and inside loops. Each compiler spells the read and the
-// loop differently, so the caller names both: `marker` is a line that is one
-// read, `loopTop` the label opening a loop, and `loopEnd` whether a line
-// closes the loop that label opened. User functions are the `__fn_*` labels;
-// the self-host also emits its runtime helpers under `__fn___fern_*`, and
-// those read lengths of their own.
 func asmLenShape(asm string, marker func(string) bool, loopTop func(string) (string, bool), loopEnd func(line, label string) bool) (outside, inside int) {
 	inFn := false
 	var open []string
@@ -148,17 +110,8 @@ func asmLenShape(asm string, marker func(string) bool, loopTop func(string) (str
 	return outside, inside
 }
 
-// selfHostLenShape reads the self-host x86-64 backend's listing: a length is
-// the load at offset 8 of a string box, from whichever register the allocator
-// holds the box in, and a loop runs from a `.Lssa_` label to the jump back
-// to it. Labels are only loop tops when a jump
-// later in the function targets them, so every label is opened on sight and
-// closed by its back edge; a forward-only label simply never closes, which is
-// why the set is cleared at each function.
 var selfHostLenRead = regexp.MustCompile(`^movq 8\(%[a-z0-9]+\), %[a-z0-9]+$`)
 
-// selfHostJump is any jump to a local label: a rotated loop's back edge is
-// the conditional branch that re-runs the header's test.
 var selfHostJump = regexp.MustCompile(`^j[a-z]+ (\.Lssa_\S+)$`)
 
 func selfHostLenShape(asm string) (outside, inside int) {
@@ -174,7 +127,6 @@ func selfHostLenShape(asm string) (outside, inside int) {
 		}
 	}
 	return asmLenShape(asm,
-		// A stack entry's parameter load reads 8(%rsp); no string box is there.
 		func(l string) bool { return selfHostLenRead.MatchString(l) && !strings.Contains(l, "(%rsp)") },
 		func(l string) (string, bool) {
 			label := strings.TrimSuffix(l, ":")
@@ -186,9 +138,6 @@ func selfHostLenShape(asm string) (outside, inside int) {
 		})
 }
 
-// TestSelfHostLICMX86_64 is the source-level half: the x86-64 the self-host
-// emits for each fixture is checked for the hoisted shape, and the binary runs
-// to the value the unhoisted program computed.
 func TestSelfHostLICMX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -215,9 +164,6 @@ func TestSelfHostLICMX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLICMArm64 runs the same fixtures through the self-host arm64
-// backend under qemu: the hoisted slot is one past the lowering's count, so
-// this is the frame-size half of #8247 on the second register backend.
 func TestSelfHostLICMArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -241,10 +187,6 @@ func TestSelfHostLICMArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLICMWasmIR runs the fixtures through the self-host wasm backend
-// under wasmtime, where the cache slot is a declared `(local i32)` past the
-// body locals and wasm validation would reject an index the frame did not
-// declare.
 func TestSelfHostLICMWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host LICM wasm IR e2e")

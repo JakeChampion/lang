@@ -1,5 +1,3 @@
-// Linear scalar-record caller relation from SAME-output retained final SSA.
-// This is not an instruction proof, concrete heap trace or production gate.
 import "./ssa";
 import "./ssaprepare";
 import "./ssacredittext" as retained;
@@ -9,11 +7,8 @@ import "./typeinfo";
 import "./ssasem";
 import "./util";
 
-// Values are data: literal, parameter identity, allocation identity, unreadable.
-// Allocation identity is a compact construction index, never a machine address.
 pub struct Value { kind: i32, identity: i32 }
 
-// kind0 constructs with ordered scalar fields; kind1 consumes that allocation.
 pub struct Event { kind: i32, allocation: i32, fields: Value[] }
 
 pub struct Relation { events: Event[], result: Value, words: i32, error: string }
@@ -211,10 +206,6 @@ function body(f: ssa.SFunc, name: string, words: i32): Relation {
   return finished(s, f, last, words);
 }
 
-// Derive this relation afresh inside a future instruction checker. Supplying a
-// Relation cannot authenticate native calls or concrete block generations.
-// The selected constructor's final SSA/schema is checked, but native runtime
-// effects, caller instructions, linking and mapping remain separate obligations.
 pub function derive(output: ssaprepare.Output, caller: string, producer: string): Relation {
   let binding = retained.resolve(output, caller);
   if (binding.error != "" || caller == producer) {

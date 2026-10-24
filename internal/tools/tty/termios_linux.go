@@ -7,31 +7,12 @@ import (
 	"unsafe"
 )
 
-// The kernel's `struct termios` on the asm-generic ABI x86-64 and arm64 both
-// use: four 32-bit flag words, one line-discipline byte, and NCCS = 19
-// control characters. Thirty-six bytes, measured with a TCGETS into an
-// over-long buffer — the bytes past 36 come back untouched.
-//
-// glibc's userspace struct is a DIFFERENT, wider one (32 control characters
-// plus a derived input and output speed), which is why GNU `stty -g` prints
-// 32 of them with the top 13 always zero. Nothing here goes through glibc, so
-// what this reports is the kernel's 19 and the presentation padding belongs to
-// the caller.
 const (
 	termiosNCCS  = 19
 	termiosBytes = 4*4 + 1 + termiosNCCS
-	// The four flags, the line byte, then the control characters: the
-	// length Termios answers with and SetTermios requires.
 	termiosWords = 4 + 1 + termiosNCCS
 )
 
-// Termios reads the line settings of the terminal on the other end of fd as
-// the KERNEL's own words: iflag, oflag, cflag, lflag, the line discipline,
-// then each control character. A caller prints these and reads them back
-// (`stty -g`), so they are not normalised.
-//
-// The error is the kernel's, and ENOTTY is the one that matters: it is the
-// whole of `stty: 'standard input': Inappropriate ioctl for device`.
 func Termios(fd int) ([]int64, error) {
 	if fd < 0 {
 		return nil, syscall.EBADF
@@ -54,13 +35,6 @@ func Termios(fd int) ([]int64, error) {
 	return out, nil
 }
 
-// SetTermios writes the words Termios reports back to fd. `when` is Fern's
-// own: 0 applies the change at once, 1 after the output drains, 2 after
-// draining and discarding pending input — TCSETS, TCSETSW and TCSETSF, which
-// are consecutive from TCSETS.
-//
-// A wrong-length array is EINVAL rather than a partial write: there is a
-// fixed-size struct to fill and no way to guess the rest.
 func SetTermios(fd, when int, words []int64) error {
 	if fd < 0 {
 		return syscall.EBADF

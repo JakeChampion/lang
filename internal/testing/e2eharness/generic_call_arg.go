@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// GenericCallArgProgram calls a generic function whose type arguments come
-// only from the type the call's result is wanted at, in argument position
-// (#12314): an argument to a plain function, to a generic struct's method, to
-// `Result.unwrap_or` and `Option.unwrap_or`, and a generic struct literal's
-// field. main answers 0 when every call was instantiated at the right type,
-// and the sum it got plus ten otherwise.
 const GenericCallArgProgram = `import "std/option";
 import "std/result";
 struct Box[T] { xs: T[] }
@@ -34,8 +28,6 @@ function main(): i32 {
 }
 `
 
-// WriteGenericCallArgProgram writes the program into a fresh directory and
-// returns its path.
 func WriteGenericCallArgProgram(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "main.fern")

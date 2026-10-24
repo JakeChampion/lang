@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// On x86-64 an add, or a subtract of a constant, whose result lands in a
-// register its left operand does not hold is one lea rather than a copy and
-// the two-address op. mix is util.hash_bucket's loop, where the accumulator
-// is read after the loop and so cannot share the product's register; edges
-// subtracts the least 32-bit immediate, whose negation is no displacement.
 const leaAddProg = `@noinline function mix(s: string): i64 {
     let a: i64 = 208357i64;
     let i: i32 = 0;
@@ -40,10 +35,6 @@ function main(): i32 {
 }
 `
 
-// copyThenArith is a copy into a register that the next instruction adds to
-// or subtracts a constant from: the pair a lea replaces. leaPair and leaImm
-// are the two leas that replace it; a frame register as the base is the
-// frame's own lea, not one of them.
 var (
 	copyThenArith = regexp.MustCompile(`movq (%r\w+), (%r\w+)\n\s+(?:addq (?:%r\w+|\$-?\d+)|subq \$-?\d+), (%r\w+)\n`)
 	leaPair       = regexp.MustCompile(`leaq \((%r\w+),%r\w+\), %r\w+\n`)
@@ -84,7 +75,6 @@ func TestSelfHostLeaAdd(t *testing.T) {
 	for _, fn := range []string{"mix", "edges"} {
 		body := selfHostFnBody(t, raw, fn)
 		for _, m := range copyThenArith.FindAllStringSubmatch(body, -1) {
-			// Subtracting the least immediate keeps the two-address form.
 			if m[2] == m[3] && !strings.Contains(m[0], "subq $-2147483648,") {
 				t.Errorf("%s copies and then adds where one lea would do:\n%s", fn, m[0])
 			}

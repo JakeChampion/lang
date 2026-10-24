@@ -1,27 +1,27 @@
 // spec: AL-01
-//
-// A functional-update SELF-ASSIGN — `d = T { ...d, f: v }` — must cost the
-// same fresh memory per iteration as any other rebind. It did not on the
-// self-host: a bare-ident struct-lit BASE counted as an ESCAPE, so the local
-// earned no reclaim credit at all and NOTHING was ever released — neither the
-// box each update superseded nor the final one (allocs=160 frees=0 for the
-// scalar-only shape). The base is a field-COPY, i.e. a borrow of the box; what
-// it does hazard is the DEEP drop, because the copies carry no rc-inc.
-//
-// The four shapes differ in what the copy has to carry:
-//   - scalars only, where the shallow box free is the whole reclamation;
-//   - a string field copied through the base;
-//   - an array field REPLACED by an append, the engine under the nested half
-//     of alloc_flat_array_push_bound_elem;
-//   - a base read by a DIFFERENT local, which must stay box-only: its fields
-//     move into the new value with no counted reference, so deep-dropping the
-//     base would free them out from under it.
-//
-// Every shape reads its values back afterwards, so a release landing under a
-// live reference shows up as a wrong number rather than as a shape change.
-//
-// The case prints the SHAPE, never a byte count — see
-// docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 
@@ -64,8 +64,8 @@ function with_array(k: i32): i32 {
     return sum;
 }
 
-// The base is a DIFFERENT local, and it stays live: `a` still owns nothing
-// exclusively once its fields are copied out, so only its box may be freed.
+
+
 function fork_base(k: i32): i32 {
     let a: Buf = Buf { xs: [k, k + 1], n: k };
     let b: Buf = Buf { ...a, n: a.n + 1 };
@@ -73,16 +73,16 @@ function fork_base(k: i32): i32 {
     return a.n + b.n + c.n + a.xs[0] + b.xs[1] + c.xs[0];
 }
 
-// An array field REPLACED while a sibling nested-struct field is CARRIED
-// through the base. The carried field is pointer-equal in old and new, so the
-// cow guard skipped it — correct as a FREE, wrong as a release: the base copy
-// took an rc-inc for it, paid to the new box's drop, and the superseded box's
-// own reference then died unreleased. That stranded `inner` and the array it
-// owns, once per rebind chain — flat in `k`, so it hid as a per-call constant
-// rather than as growth.
-//
-// `keep` aliases the inner box and is read AFTER the loop, so releasing it one
-// time too many prints a wrong number here instead of failing silently.
+
+
+
+
+
+
+
+
+
+
 function nested_struct(k: i32): i32 {
     let o: Nest = Nest { xs: [1, 2], inner: Inner { tag: 3, data: [9] }, n: 0 };
     let keep: Inner = o.inner;
@@ -112,7 +112,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

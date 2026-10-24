@@ -8,9 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// formatSrc parses src, formats it, and returns the formatted text.
-// Most tests both check the exact string and verify idempotence /
-// round-trip via reparse.
 func formatSrc(t *testing.T, src string) string {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -20,9 +17,6 @@ func formatSrc(t *testing.T, src string) string {
 	return Format(prog)
 }
 
-// A trivial function lays out across multiple lines with two-space
-// indentation; the body opens with `{` on the same line as the
-// signature and closes with `}` aligned to the function's column.
 func TestFormatSimpleFunction(t *testing.T) {
 	got := formatSrc(t, `function f(): i32 { return 42; }`)
 	want := "function f(): i32 {\n  return 42;\n}\n"
@@ -31,9 +25,6 @@ func TestFormatSimpleFunction(t *testing.T) {
 	}
 }
 
-// The contextual function modifiers — `fip` / `fbip` (bare + graded) and
-// `async` — carry checked semantics (E053/E068; the P3 async export), so
-// the formatter must re-emit them rather than drop them silently.
 func TestFormatKeepsFunctionModifiers(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{`fip function f(x: i32): i32 { return x; }`, "fip function f(x: i32): i32 {\n  return x;\n}\n"},
@@ -48,8 +39,6 @@ func TestFormatKeepsFunctionModifiers(t *testing.T) {
 	}
 }
 
-// A `Stream[T]` in an async import's signature is a type of its own; the
-// formatter used to print it as nothing, leaving `body(): ;`.
 func TestFormatKeepsStreamType(t *testing.T) {
 	in := "@import(\"test:dep/d\", \"prod\") async function body(): Stream[u8];\n@import(\"test:dep/d\", \"sink\") async function sink(s: Stream[i32]): i32;\n"
 	want := "@import(\"test:dep/d\", \"prod\")\nasync function body(): Stream[u8];\n\n@import(\"test:dep/d\", \"sink\")\nasync function sink(s: Stream[i32]): i32;\n"
@@ -58,8 +47,6 @@ func TestFormatKeepsStreamType(t *testing.T) {
 	}
 }
 
-// A const parameter prints as declared, and a const argument keeps its
-// spelling.
 func TestFormatConstParams(t *testing.T) {
 	in := "function count[const N: i32, T](x: T): i32 { return N; }\nfunction main(): i32 { return count[0x10, string](\"a\") + count[3, i32](1); }\n"
 	want := "function count[const N: i32, T](x: T): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  return count[0x10, string](\"a\") + count[3, i32](1);\n}\n"
@@ -68,12 +55,6 @@ func TestFormatConstParams(t *testing.T) {
 	}
 }
 
-// An unsigned literal whose magnitude exceeds i64::MAX is stored by
-// the parser as a negative int64 bit pattern (via ParseUint). The
-// formatter must render it back as the unsigned decimal, not via
-// `-x.Value` (which overflowed for the 2^63 / math.MinInt64 pattern
-// and produced a spurious `--`). These are the boundary values: 2^63,
-// (2^32-1)^2, and u64::MAX.
 func TestFormatUnsignedLargeLiteral(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{`function main(): i32 { let a: u64 = 9223372036854775808 as u64; return 0; }`,
@@ -93,8 +74,6 @@ func TestFormatUnsignedLargeLiteral(t *testing.T) {
 	}
 }
 
-// Nested blocks indent further. `if` / `else` chain stays on the
-// same line as the closing brace of the previous arm.
 func TestFormatIfElseIndents(t *testing.T) {
 	got := formatSrc(t, `function f(n: i32): i32 { if (n == 0) { return 1; } else { return n; } }`)
 	want := strings.Join([]string{
@@ -112,8 +91,6 @@ func TestFormatIfElseIndents(t *testing.T) {
 	}
 }
 
-// Empty blocks stay one-liners (`{}`) so an `if (c) {}` doesn't
-// burst into three lines unnecessarily.
 func TestFormatEmptyBlockStaysCompact(t *testing.T) {
 	got := formatSrc(t, `function f(): void {}`)
 	want := "function f(): void {}\n"
@@ -122,9 +99,6 @@ func TestFormatEmptyBlockStaysCompact(t *testing.T) {
 	}
 }
 
-// A function written without a return type prints without one: the parser's
-// void default is not something the source said, and writing it would turn
-// the E081 error into a different program.
 func TestFormatOmittedReturnTypeAsWritten(t *testing.T) {
 	got := formatSrc(t, "function f() {}\nfunction g(): void {}\n")
 	want := "function f() {}\n\nfunction g(): void {}\n"
@@ -133,58 +107,32 @@ func TestFormatOmittedReturnTypeAsWritten(t *testing.T) {
 	}
 }
 
-// Operator precedence drives parenthesisation: `1 + 2 * 3` formats
-// without parens (mul binds tighter), but `(1 + 2) * 3` keeps them
-// because the parser's tree groups + on the left.
 func TestFormatMinimalParens(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`1 + 2 * 3`, `1 + 2 * 3`},
 		{`(1 + 2) * 3`, `(1 + 2) * 3`},
 		{`1 * 2 + 3`, `1 * 2 + 3`},
-		{`1 - 2 - 3`, `1 - 2 - 3`},         // left-assoc, no parens
-		{`1 - (2 - 3)`, `1 - (2 - 3)`},     // right-of-left-assoc keeps parens
-		{`a && b || c`, `a && b || c`},     // && binds tighter than ||
-		{`a && (b || c)`, `a && (b || c)`}, // explicit grouping preserved
+		{`1 - 2 - 3`, `1 - 2 - 3`},
+		{`1 - (2 - 3)`, `1 - (2 - 3)`},
+		{`a && b || c`, `a && b || c`},
+		{`a && (b || c)`, `a && (b || c)`},
 	}
 	for _, tc := range cases {
 		got := formatSrc(t, "function f(a: boolean, b: boolean, c: boolean): i32 { return "+tc.in+"; }")
-		// The relevant fragment is on the second line, between
-		// "  return " and ";".
 		if !strings.Contains(got, "return "+tc.want+";") {
 			t.Errorf("input %q → expected `return %s;` in:\n%s", tc.in, tc.want, got)
 		}
 	}
 }
 
-// Bitwise (& | ^) bind LOOSER than the comparison family (== != < <=
-// > >=), matching Fern's parser hierarchy (parseLogicalAnd → parseBitOr
-// → parseBitXor → parseBitAnd → parseEquality → parseRelational in
-// parser.go). A printer that ranked bitwise tighter would drop parens
-// the parser actually needs on round-trip — the bug that turned
-// `(n & (n - 1)) == 0` (the "is power of 2" idiom) into
-// `n & ((n - 1) == 0)` (ANDing a number with a boolean) when round-
-// tripping internal/stdlib/std/i32.fern. This unit-level guard pins
-// the contract so the same regression can't sneak back in without
-// the corpus sweep noticing.
 func TestFormatBitwiseLooserThanCompare(t *testing.T) {
 	cases := []struct{ in, want string }{
-		// `==` binds tighter → keep the parens around `n & m` so the
-		// AST still groups as `(n & m) == 0` after re-parse.
 		{`(a & b) == 0`, `(a & b) == 0`},
 		{`(a | b) == 0`, `(a | b) == 0`},
 		{`(a ^ b) == 0`, `(a ^ b) == 0`},
-		// `!=` / `<` / `>` family same precedence as `==`.
 		{`(a & b) != 0`, `(a & b) != 0`},
 		{`(a & b) < 16`, `(a & b) < 16`},
-		// The bare `a == b & c` shape (parens already absent in
-		// source) keeps that grouping verbatim: parser reads it as
-		// `(a == b) & c` so a round-trip preserves it without
-		// needing to add parens. Pinned so a future precedence
-		// reshuffle doesn't silently insert them.
 		{`a == b & c`, `a == b & c`},
-		// `&` vs `|` — `&` binds tighter (parseBitOr → parseBitXor
-		// → parseBitAnd), so `a & b | c` drops parens around
-		// `a & b`. `a | b & c` keeps the grouping verbatim.
 		{`a & b | c`, `a & b | c`},
 		{`a | b & c`, `a | b & c`},
 		{`(a | b) & c`, `(a | b) & c`},
@@ -197,8 +145,6 @@ func TestFormatBitwiseLooserThanCompare(t *testing.T) {
 	}
 }
 
-// Negative i32 / float literals format as unary `-` over a
-// positive literal, matching how the parser models them.
 func TestFormatNegativeLiterals(t *testing.T) {
 	got := formatSrc(t, `function f(): i32 { return -7; }`)
 	if !strings.Contains(got, "return -7;") {
@@ -210,8 +156,6 @@ func TestFormatNegativeLiterals(t *testing.T) {
 	}
 }
 
-// Floats with no fractional part get a `.0` so re-lex still
-// classifies them as Float, not Number.
 func TestFormatFloatLiteralKeepsDecimal(t *testing.T) {
 	got := formatSrc(t, `function f(): f32 { return 5.0; }`)
 	if !strings.Contains(got, "5.0") {
@@ -219,7 +163,6 @@ func TestFormatFloatLiteralKeepsDecimal(t *testing.T) {
 	}
 }
 
-// Method declarations preserve the receiver clause.
 func TestFormatMethod(t *testing.T) {
 	got := formatSrc(t, `struct Point { x: i32, y: i32 }
 function (p: Point) sum(): i32 { return p.x + p.y; }`)
@@ -228,9 +171,6 @@ function (p: Point) sum(): i32 { return p.x + p.y; }`)
 	}
 }
 
-// `for (init; cond; step)` keeps its three-clause shape with
-// semicolons separating the slots; init's trailing `;` is part of
-// the Var/ExprStmt, step has no trailing `;`.
 func TestFormatForLoop(t *testing.T) {
 	got := formatSrc(t, `function f(): i32 {
 		let sum = 0;
@@ -242,15 +182,6 @@ func TestFormatForLoop(t *testing.T) {
 	}
 }
 
-// Every `for … in …` surface form reprints as itself rather than as its
-// parse-time desugar (#6770). The desugar writes compiler-synthesised names
-// (`__range_hi_1`, `__foreach_iter_1`) into the block the user wrote, so
-// `-fmt -w` made them permanent and changed what is in scope there.
-//
-// Idempotence is the wrong property to test for this: format → parse →
-// format is a fixed point on the leaked desugar too, because the second pass
-// has nothing left to desugar. What has to hold is source preservation, so
-// each case asserts the formatted text against the input.
 func TestFormatForEachFormsKeepTheirSugar(t *testing.T) {
 	for _, tc := range []struct{ name, loop string }{
 		{"range", "for i in 0..4 {\n    t = t + i;\n  }"},
@@ -268,9 +199,6 @@ func TestFormatForEachFormsKeepTheirSugar(t *testing.T) {
 	}
 }
 
-// A destructuring header prints from its pattern, so a nested element or a `_`
-// discard reprints as written rather than as the synthesised binder the
-// lowering reads (`__nest_1`, `__discard_…`).
 func TestFormatPatternForEachKeepsItsSugar(t *testing.T) {
 	for _, tc := range []struct{ name, loop string }{
 		{"map pair", "for (k, v) in m {\n    t = t + v + k.len();\n  }"},
@@ -287,10 +215,6 @@ func TestFormatPatternForEachKeepsItsSugar(t *testing.T) {
 	}
 }
 
-// An or-pattern arm is a parse-time clone-desugar: `A | B => body` becomes
-// one arm per alternative with the body copied into each. Reprinting that is
-// a real edit to the file — it grows with the alternative count, and a later
-// change to one copy silently diverges from the others.
 func TestFormatKeepsOrPatterns(t *testing.T) {
 	for _, tc := range []struct{ name, arms string }{
 		{"variant", "Col.R | Col.G => {\n      return 1;\n    },\n    Col.B => {\n      return 2;\n    }"},
@@ -305,9 +229,6 @@ func TestFormatKeepsOrPatterns(t *testing.T) {
 	}
 }
 
-// A union written across lines keeps its lines (#10853): members that shared
-// a source line share one, and each later line opens with `|`, wherever the
-// source put it. One written on one line stays there.
 func TestFormatKeepsUnionLines(t *testing.T) {
 	decls := "struct A { n: i32 }\n\nstruct B { n: i32 }\n\nstruct C { n: i32 }\n\n"
 	want := decls + "type U = A | B\n  | C;\n"
@@ -325,7 +246,6 @@ func TestFormatKeepsUnionLines(t *testing.T) {
 	}
 }
 
-// The expression form takes the same path through MatchExpr.Sugar.
 func TestFormatKeepsOrPatternsInExpressionForm(t *testing.T) {
 	src := `enum Col { R, G, B }
 
@@ -339,9 +259,6 @@ function f(c: Col): i32 {
 	}
 }
 
-// A loop label and the `break` / `continue` that target it are the same
-// fact written twice; dropping either half silently retargets the jump to
-// the innermost loop.
 func TestFormatKeepsLoopLabels(t *testing.T) {
 	src := `function f(a: i32[]): i32 {
   let t: i32 = 0;
@@ -365,9 +282,6 @@ func TestFormatKeepsLoopLabels(t *testing.T) {
 	}
 }
 
-// Format → parse → Format is byte-stable: a second pass produces
-// identical output. Idempotence is the contract every formatter
-// honours so editors can run it on every save without churn.
 func TestFormatIsIdempotent(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function (p: Point) magnitude(): i32 { return p.x * p.x + p.y * p.y; }
@@ -386,28 +300,18 @@ function main(): i32 {
 	}
 }
 
-// A single-expression `if`/`match` branch must stay byte-identical to
-// the pre-block-expr formatting (`{ a }` / bare arm body), and a
-// block-expression branch (`{ stmts; tail }`) renders compactly without
-// double-bracing.
 func TestFormatBlockExprBranches(t *testing.T) {
-	// Single-expr `if`-branch — unchanged.
 	if got := formatSrc(t, `function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`); !strings.Contains(got, "if (a < b) { a } else { b }") {
 		t.Errorf("single-expr if-branch changed:\n%s", got)
 	}
-	// Block-expr `if`-branch — leading stmt + tail, no double braces.
 	if got := formatSrc(t, `function f(e: i32): i32 { return if (e > 0) { let k = e + 1; k } else { 0 }; }`); !strings.Contains(got, "if (e > 0) { let k = e + 1; k } else { 0 }") {
 		t.Errorf("block-expr if-branch mis-rendered:\n%s", got)
 	}
-	// Block-expr `match`-arm body; bare wildcard arm unchanged.
 	if got := formatSrc(t, `function f(tag: i32): i32 { return match (tag) { 0 => { let s = tag + 5; s }, _ => 99 }; }`); !strings.Contains(got, "0 => { let s = tag + 5; s }, _ => 99") {
 		t.Errorf("block-expr match-arm mis-rendered:\n%s", got)
 	}
 }
 
-// A branch whose leading statement spans lines — a loop, an `if`, a nested
-// block — is laid out one statement per line, indented against the statement
-// it sits in, rather than inlined with its inner lines at column 0 (#12393).
 func TestFormatBlockExprBranchSpansLines(t *testing.T) {
 	src := `function f(c: boolean): i32 {
   let x: i32 = if (c) { let s = 0; while (s < 3) { s = s + 1; } s } else { 0 };
@@ -441,9 +345,6 @@ func TestFormatBlockExprBranchSpansLines(t *testing.T) {
 	}
 }
 
-// Drive-by regression: a literal-pattern arm in a `match`-EXPRESSION
-// (`0 => …`, `"yes" => …`) must format its pattern. The formatter used
-// to drop it, emitting `=> …`, which then failed to re-parse.
 func TestFormatMatchExprLiteralArm(t *testing.T) {
 	got := formatSrc(t, `function f(n: i32): i32 { return match (n) { 0 => 10, 1 => 20, _ => 30 }; }`)
 	if !strings.Contains(got, "0 => 10, 1 => 20, _ => 30") {
@@ -454,17 +355,12 @@ func TestFormatMatchExprLiteralArm(t *testing.T) {
 	}
 }
 
-// parse → Format → parse must round-trip the AST shape (modulo the
-// known comments-and-blank-lines limitation). The check is "does
-// the formatted output reparse without errors".
 func TestFormatRoundTripsThroughParser(t *testing.T) {
 	srcs := []string{
 		`function f(): i32 { return 1 + 2 * 3; }`,
 		`function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`,
-		// Block-expression branches (slice 1): leading statement + tail.
 		`function f(e: i32): i32 { return if (e > 0) { let k = e + 1; k } else { 0 }; }`,
 		`function f(tag: i32): i32 { return match (tag) { 0 => { let s = tag + 5; s }, _ => 99 }; }`,
-		// Typed numeric literal suffixes — formatter must round-trip.
 		`function f(): i64 { return 42i64; }`,
 		`function f(): u8 { return 7u8; }`,
 		`function f(): f64 { return 1.5f64; }`,
@@ -486,9 +382,6 @@ function f(p: P): i32 { return p.x + p.y; }`,
 	}
 }
 
-// A `resource` declaration (with its `@import` binding) and `own R` /
-// `borrow R` handle types round-trip through the formatter unchanged (P5 —
-// docs/WIT-BRING-YOUR-OWN.md).
 func TestFormatResourceHandle(t *testing.T) {
 	src := `@import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -514,8 +407,6 @@ function ready(h: borrow Pollable): boolean;
 	}
 }
 
-// An `@export("iface", "wit-name")` function binding round-trips through the
-// formatter unchanged (P6 — docs/WIT-BRING-YOUR-OWN.md).
 func TestFormatExportAttr(t *testing.T) {
 	got := formatSrc(t, `@export("wasi:cli/run@0.2.0", "run")
 function run(): i32 { return 0; }
@@ -528,8 +419,6 @@ function run(): i32 { return 0; }
 	}
 }
 
-// Trailing newline at end of file — every editor expects it; many
-// VCSs flag its absence as a diff hazard.
 func TestFormatEndsWithNewline(t *testing.T) {
 	got := formatSrc(t, `function f(): i32 { return 0; }`)
 	if !strings.HasSuffix(got, "\n") {
@@ -537,10 +426,6 @@ func TestFormatEndsWithNewline(t *testing.T) {
 	}
 }
 
-// Leading line comments above a statement re-emit on their own
-// lines at the statement's indent level. The lexer captures them;
-// the parser threads them through prog.Comments; the formatter
-// drains them just before each statement.
 func TestFormatPreservesLeadingComment(t *testing.T) {
 	src := `function main(): i32 {
   // why we return 42
@@ -552,9 +437,6 @@ func TestFormatPreservesLeadingComment(t *testing.T) {
 	}
 }
 
-// Trailing comments on the same source line as a single-line
-// statement re-emit inline, separated by two spaces — the
-// `putchar(70);  // F` shape.
 func TestFormatPreservesTrailingComment(t *testing.T) {
 	src := `function main(): void {
   putchar(70);  // F
@@ -569,8 +451,6 @@ func TestFormatPreservesTrailingComment(t *testing.T) {
 	}
 }
 
-// File-level comments before the first declaration emit at the
-// top of the output at depth 0.
 func TestFormatPreservesFileLeadingComment(t *testing.T) {
 	src := `// program description
 function main(): i32 { return 0; }`
@@ -580,8 +460,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// Comments after the last declaration emit at end-of-file before
-// the trailing newline.
 func TestFormatPreservesTrailingFileComment(t *testing.T) {
 	src := `function main(): i32 { return 0; }
 // outro comment`
@@ -591,8 +469,6 @@ func TestFormatPreservesTrailingFileComment(t *testing.T) {
 	}
 }
 
-// Idempotence still holds with comments — formatting twice
-// produces the same output.
 func TestFormatIdempotentWithComments(t *testing.T) {
 	src := `// header
 function f(): i32 {
@@ -607,22 +483,14 @@ function f(): i32 {
 	}
 }
 
-// Multiple top-level decls are separated by a single blank line so
-// they read clearly without bunching.
 func TestFormatBlankLineBetweenTopLevelDecls(t *testing.T) {
 	got := formatSrc(t, `function a(): i32 { return 1; }
 function b(): i32 { return 2; }`)
-	// Expect two functions separated by exactly one blank line —
-	// `}\n\nfunction b…` (closing brace, newline, blank line,
-	// next function).
 	if !strings.Contains(got, "}\n\nfunction b") {
 		t.Errorf("expected blank line between top-level functions:\n%s", got)
 	}
 }
 
-// `pub` round-trips: the formatter emits it back in front of
-// `function` / `struct` so private vs exported decls stay
-// distinguishable in formatted source.
 func TestFormatPubKeywordRoundTrips(t *testing.T) {
 	got := formatSrc(t, `pub struct Point { x: i32, y: i32 }
 pub function exposed(): i32 { return 1; }
@@ -638,9 +506,6 @@ function hidden(): i32 { return 2; }`)
 	}
 }
 
-// Top-level `const` formats on its own line with the optional type
-// annotation preserved. `pub const` round-trips like other `pub`
-// decls; the resulting source reparses identically.
 func TestFormatConstDeclRoundTrips(t *testing.T) {
 	got := formatSrc(t, `const N: i32 = 42;
 pub const PI: f32 = 3.14;
@@ -655,19 +520,12 @@ function main(): i32 { return N; }`)
 			t.Errorf("expected %q in output:\n%s", want, got)
 		}
 	}
-	// The format should be idempotent — second pass produces the
-	// same text.
 	again := formatSrc(t, got)
 	if got != again {
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
 
-// Generic enum decls and generic instantiations at type
-// positions round-trip through the formatter. The single-line
-// enum form keeps `[T]` next to the name; type positions
-// preserve `Option[i32]` rather than collapsing the
-// brackets.
 func TestFormatGenericEnumRoundTrip(t *testing.T) {
 	got := formatSrc(t, `enum Option[T] { Some(T), None }
 function find(): Option[i32] { return None; }`)
@@ -683,10 +541,6 @@ function find(): Option[i32] { return None; }`)
 	}
 }
 
-// A generic struct declaration keeps its `[T]` type-parameter list.
-// Regression guard: the formatter used to drop the list entirely,
-// turning `struct Set[T]` into a non-generic `struct Set` whose `T`
-// field type no longer resolved (silently un-compilable output).
 func TestFormatGenericStructRoundTrip(t *testing.T) {
 	got := formatSrc(t, `struct Set[T] { xs: T[] }`)
 	if !strings.Contains(got, "struct Set[T] { xs: T[] }") {
@@ -697,8 +551,6 @@ func TestFormatGenericStructRoundTrip(t *testing.T) {
 	}
 }
 
-// A free generic function keeps its post-name type-parameter list,
-// including trait bounds and generic-trait bound arguments.
 func TestFormatGenericFreeFunctionRoundTrip(t *testing.T) {
 	for _, want := range []string{
 		"function id[T](x: T): T",
@@ -716,11 +568,6 @@ func TestFormatGenericFreeFunctionRoundTrip(t *testing.T) {
 	}
 }
 
-// A generic *method* spells its type parameters after its name, the form
-// spec/grammar.ebnf derives and the stdlib is written in; the parser also
-// accepts them before the receiver, and the formatter normalises that
-// spelling. The clause itself must survive: dropping it leaves an
-// unbounded `T` that fails to typecheck.
 func TestFormatGenericMethodRoundTrip(t *testing.T) {
 	src := `struct Box[T] { xs: T[] }
 pub function [T: Eq] (b: Box[T]) has(x: T): boolean { return false; }`
@@ -733,9 +580,6 @@ pub function [T: Eq] (b: Box[T]) has(x: T): boolean { return false; }`
 	}
 }
 
-// An `own` (consuming) receiver keeps its `own` modifier through a
-// formatter pass — dropping it silently turned a consuming method into
-// a borrowing one.
 func TestFormatOwnReceiverRoundTrip(t *testing.T) {
 	got := formatSrc(t, `function (own self: Box) drop(): void {}`)
 	if !strings.Contains(got, "function (own self: Box) drop(): void") {
@@ -746,10 +590,6 @@ func TestFormatOwnReceiverRoundTrip(t *testing.T) {
 	}
 }
 
-// A trait declaration round-trips: type params, supertraits,
-// associated types, abstract signatures, and default-method bodies all
-// survive a formatter pass. Regression guard — the formatter used to
-// omit trait declarations entirely (they weren't in the emit loop).
 func TestFormatTraitRoundTrip(t *testing.T) {
 	src := `pub trait Ord[K]: Eq {
   type Item;
@@ -772,11 +612,6 @@ func TestFormatTraitRoundTrip(t *testing.T) {
 	}
 }
 
-// An impl block round-trips: trait impls, parametric impls, associated
-// functions (no `self`), and associated-type
-// bindings. Regression guard — impls were dropped entirely, and their
-// methods leaked out as top-level receiver functions. Each signature keeps
-// the spelling it was written with, `Self` or the concrete type (#12891).
 func TestFormatImplRoundTrip(t *testing.T) {
 	src := `struct Box[T] { xs: T[] }
 trait Maker { function make(): Self; }
@@ -786,18 +621,15 @@ impl[T] Sized for Box[T] { function size(self: Self): i32 { return self.xs.len()
 	got := formatSrc(t, src)
 	for _, w := range []string{
 		"impl Maker for Box[i32] {",
-		"function make(): Self {",        // assoc fn, no self param
-		"impl[T] Sized for Box[T] {",     // parametric impl
-		"function size(self: Self): i32", // method: params NOT respelled
+		"function make(): Self {",
+		"impl[T] Sized for Box[T] {",
+		"function size(self: Self): i32",
 		"function same(self: Box[T], o: Self): Box[T] {",
 	} {
 		if !strings.Contains(got, w) {
 			t.Errorf("output missing %q; got:\n%s", w, got)
 		}
 	}
-	// The impl methods must NOT leak out as bare top-level functions —
-	// a top-level decl starts at column 0 (`\nfunction …`), an impl
-	// method is indented two spaces (`\n  function …`).
 	if strings.Contains(got, "\nfunction make(") || strings.Contains(got, "\nfunction size(") {
 		t.Errorf("impl method leaked to top level:\n%s", got)
 	}
@@ -806,7 +638,6 @@ impl[T] Sized for Box[T] { function size(self: Self): i32 { return self.xs.len()
 	}
 }
 
-// An associated-type binding in an impl round-trips (`type Item = i32;`).
 func TestFormatImplAssocTypeBinding(t *testing.T) {
 	src := `struct C {}
 trait Iter { type Item; function get(self: Self): i32; }
@@ -820,16 +651,10 @@ impl Iter for C { type Item = i32; function get(self: Self): i32 { return 0; } }
 	}
 }
 
-// f-strings round-trip through parse → format → parse: the
-// surface `f"..."` syntax survives a formatter pass instead of
-// collapsing to its desugared `+`-chain. Covers empty f-string,
-// literal-only, multi-interpolation, brace escapes, escape
-// sequences in literal segments, and an interpolant that
-// contains arithmetic.
 func TestFormatFStringRoundTrip(t *testing.T) {
 	cases := []struct {
 		in   string
-		want string // substring expected in output
+		want string
 	}{
 		{in: `function f(): string { return f""; }`, want: `f""`},
 		{in: `function f(): string { return f"plain"; }`, want: `f"plain"`},
@@ -850,11 +675,6 @@ func TestFormatFStringRoundTrip(t *testing.T) {
 	}
 }
 
-// `defer` statements round-trip through the formatter — for both
-// bare-call expressions and method-call expressions on a receiver.
-// The method-call shape needs its own `case *ast.Defer` arm in the
-// statement printer's switch, or it is eaten silently, leaving an
-// empty line where `defer r.close();` stood.
 func TestFormatDeferRoundTrip(t *testing.T) {
 	srcs := []string{
 		`function f(): void { defer cleanup(); }`,
@@ -876,9 +696,6 @@ defer w.close();
 	}
 }
 
-// Block-shaped `defer { … }` / `errdefer { … }` (#5153) round-trips: the
-// action prints as a brace block with NO trailing `;` (so it re-parses), and
-// the format is idempotent.
 func TestFormatDeferBlockRoundTrip(t *testing.T) {
 	srcs := []string{
 		`function f(): void { let x = 0; defer { x = x + 1; } }`,
@@ -892,7 +709,6 @@ func TestFormatDeferBlockRoundTrip(t *testing.T) {
 		if strings.Contains(got, "};") {
 			t.Errorf("block defer emitted an invalid trailing `;` for %q:\n%s", src, got)
 		}
-		// The formatted output must itself re-parse.
 		if _, err := parser.Parse(got); err != nil {
 			t.Errorf("formatted block defer does not re-parse for %q:\n%s\nerr: %v", src, got, err)
 		}
@@ -902,9 +718,6 @@ func TestFormatDeferBlockRoundTrip(t *testing.T) {
 	}
 }
 
-// `errdefer` statements round-trip through the formatter and keep the
-// `errdefer` keyword (not silently rewritten to `defer`). The printer
-// branches on ast.Defer.OnError.
 func TestFormatErrDeferRoundTrip(t *testing.T) {
 	srcs := []string{
 		`function f(): Result[i32, i32] { errdefer cleanup(); return Ok(0); }`,
@@ -926,20 +739,10 @@ return Ok(0);
 	}
 }
 
-// A lambda used as a call argument must survive formatting. Before the fix
-// formatExpr had no
-// `*ast.Lambda` case, so it fell through to the empty default and
-// dropped the lambda entirely — when the lambda was the last argument
-// the output was `f(xs, )`, which then failed to re-parse. Regression
-// guard: the lambda text survives, and parse → format → parse is
-// stable. Surfaced by the examples-corpus formatter sweep.
 func TestFormatLambdaArgumentRoundTrip(t *testing.T) {
 	srcs := []string{
-		// last-argument lambda — the dangling-comma case
 		`function f(): Option[string] { return check([1, 2, 3], (n: i32): boolean => { return n > 0; }); }`,
-		// lambda bound to a local
 		`function f(): i32 { let g = (x: i32): i32 => { return x + 1; }; return g(41); }`,
-		// multi-statement body (block form, not inlined)
 		`function f(): i32 { let g = (x: i32): i32 => { let y = x * 2; return y + 1; }; return g(20); }`,
 	}
 	for _, src := range srcs {
@@ -957,9 +760,6 @@ func TestFormatLambdaArgumentRoundTrip(t *testing.T) {
 	}
 }
 
-// `enum` decls and `match` statements round-trip through
-// parse → format → parse stably, including payload-carrying
-// variants and `pub enum`.
 func TestFormatEnumAndMatchRoundTrip(t *testing.T) {
 	got := formatSrc(t, `pub enum Status { Ok, Err(string) }
 function f(s: Status): i32 {
@@ -982,10 +782,6 @@ return 0;
 	}
 }
 
-// Imports round-trip through the formatter. A Format loop that walks
-// only structs / enums / unions / consts / funcs drops them silently,
-// so `fern -fmt -w` strips every import line and the fmt-check CI gate
-// fails.
 func TestFormatImportsRoundTrip(t *testing.T) {
 	got := formatSrc(t, `import "std/string";
 import "std/i32";
@@ -1004,11 +800,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// Qualified-variant references (`Color.Red`) round-trip through
-// the multi-line formatter in both expression and match-arm
-// positions. Was IMPROVEMENTS.md #15 — without the printer change
-// `fern -fmt -w` would silently drop the `Color.` prefix users
-// wrote to disambiguate two enums that share a variant name.
 func TestFormatQualifiedVariantsRoundTrip(t *testing.T) {
 	got := formatSrc(t, `enum A { Foo(i32), Bar }
 enum B { Foo(i32), Baz }
@@ -1035,11 +826,6 @@ function main(): i32 {
 	}
 }
 
-// Union types (`type X = A | B | C;`) round-trip through the
-// formatter, which needs a `formatUnionDecl` path or they are dropped
-// silently. Members preserved in source
-// order so the checker desugar's variant-tag assignment stays
-// stable across `fern -fmt -w` edits.
 func TestFormatUnionDeclRoundTrip(t *testing.T) {
 	got := formatSrc(t, `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -1060,8 +846,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// Format round-trips an import alias: `import "p" as a;` prints the
-// `as` clause, and re-parsing the output preserves the alias.
 func TestFormatImportAlias(t *testing.T) {
 	out := formatSrc(t, `import "std/test" as t;
 import "std/string";
@@ -1072,7 +856,6 @@ function main(): i32 { return 0; }`)
 	if !strings.Contains(out, `import "std/string";`) {
 		t.Errorf("formatted output missing plain import:\n%s", out)
 	}
-	// Re-parse the formatted text; the alias must survive.
 	prog, err := parser.Parse(out)
 	if err != nil {
 		t.Fatalf("reparse formatted output: %v\n%s", err, out)
@@ -1082,18 +865,14 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// Blank lines between statements inside a block are preserved as a
-// single separator (runs collapse to one); a leading blank just inside
-// the opening brace is dropped, and no blank is invented where the
-// source had none.
 func TestFormatPreservesBlankLines(t *testing.T) {
 	src := "function f(): i32 {\n\n  let x = 1;\n  let y = 2;\n\n\n  return x + y;\n}\n"
 	got := formatSrc(t, src)
 	want := strings.Join([]string{
 		"function f(): i32 {",
-		"  let x = 1;", // leading blank after `{` dropped
+		"  let x = 1;",
 		"  let y = 2;",
-		"", // the author's separator (two source blanks collapsed to one)
+		"",
 		"  return x + y;",
 		"}",
 		"",
@@ -1101,14 +880,11 @@ func TestFormatPreservesBlankLines(t *testing.T) {
 	if got != want {
 		t.Errorf("got:\n%q\nwant:\n%q", got, want)
 	}
-	// Idempotent: formatting the output again is a no-op.
 	if again := formatSrc(t, got); again != got {
 		t.Errorf("not idempotent:\nfirst:\n%q\nsecond:\n%q", got, again)
 	}
 }
 
-// A blank line above a leading comment counts as the separator for the
-// statement the comment introduces.
 func TestFormatBlankLineAboveComment(t *testing.T) {
 	src := "function f(): i32 {\n  let x = 1;\n\n  // next group\n  return x;\n}\n"
 	got := formatSrc(t, src)
@@ -1126,9 +902,6 @@ func TestFormatBlankLineAboveComment(t *testing.T) {
 	}
 }
 
-// Format must emit an `@import` extern as the attribute + a body-less `;`
-// signature, not silently rewrite it into an empty-body function (which would
-// drop the binding and change semantics).
 func TestFormatExternImport(t *testing.T) {
 	out := formatSrc(t, `@import("wasi:random/random@0.2.0", "get-random-u64") function r(): u64;`)
 	if !strings.Contains(out, `@import("wasi:random/random@0.2.0", "get-random-u64")`) {
@@ -1142,8 +915,6 @@ func TestFormatExternImport(t *testing.T) {
 	}
 }
 
-// Format must preserve `@derive(...)` on structs and enums — dropping it
-// silently removed the derived trait impls (a semantics change).
 func TestFormatDeriveAttr(t *testing.T) {
 	out := formatSrc(t, `@derive(Eq, Display) struct P { x: i32, y: i32 } function main(): i32 { return 0; }`)
 	if !strings.Contains(out, "@derive(Eq, Display)") {
@@ -1155,7 +926,6 @@ func TestFormatDeriveAttr(t *testing.T) {
 	}
 }
 
-// checkRejects reports whether the checker rejects src.
 func checkRejects(t *testing.T, src string) bool {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -1166,12 +936,6 @@ func checkRejects(t *testing.T, src string) bool {
 	return err != nil
 }
 
-// Format must preserve `@must_consume` on structs and enums. Dropping it was
-// not cosmetic: the attribute is what E067's obligation walk keys on, so a
-// formatted file type-checked CLEAN where the original was rejected — the
-// formatter silently disarmed the analysis the annotation exists to drive.
-// Asserted through the CHECKER rather than on the text, because the text is
-// only a proxy for the property that matters.
 func TestFormatMustConsumeAttr(t *testing.T) {
 	for _, src := range []string{
 		"@must_consume struct Res { code: i32 } function main(): i32 { let r: Res = Res { code: 7 }; return r.code; }",
@@ -1181,8 +945,6 @@ func TestFormatMustConsumeAttr(t *testing.T) {
 		if !strings.Contains(out, "@must_consume") {
 			t.Errorf("formatted output dropped @must_consume:\n%s", out)
 		}
-		// The original is rejected; so must the formatted form be. Asserted
-		// through the checker because the text is only a proxy for that.
 		if !checkRejects(t, src) {
 			t.Fatalf("fixture does not trip E067 to begin with, so the round trip proves nothing:\n%s", src)
 		}
@@ -1192,8 +954,6 @@ func TestFormatMustConsumeAttr(t *testing.T) {
 	}
 }
 
-// Format and Print must keep `opaque`: dropping it makes the struct's fields
-// readable from every importing module (E021 stops firing).
 func TestFormatOpaqueStruct(t *testing.T) {
 	for _, src := range []string{
 		"pub opaque struct E { a: i32 }\n",
@@ -1216,11 +976,6 @@ func TestFormatOpaqueStruct(t *testing.T) {
 	}
 }
 
-// `todo;` / `todo("msg");` desugars in the parser to a `loop { eprint;
-// exit(101); }` stub, and the formatter must re-print the todo SUGAR: the
-// marker is a remaining-work inventory (`-check` warns per site) that
-// `fern -fmt` must not erase. Pinned here: both forms survive, the message
-// expression is reproduced verbatim, and formatting is idempotent.
 func TestFormatTodoRoundTrip(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -1245,10 +1000,6 @@ func TestFormatTodoRoundTrip(t *testing.T) {
 	}
 }
 
-// The pipe topic placeholder (`x |> f(a, _)`) must round-trip: the
-// formatter re-renders the LHS from the substituted slot (Call.PipeHole)
-// and puts the `_` back, instead of printing the desugared prepended-arg
-// form. Nested holes and the plain prepended form must survive alongside.
 func TestFormatPipeHoleRoundTrip(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -1257,7 +1008,6 @@ func TestFormatPipeHoleRoundTrip(t *testing.T) {
 		{`function main(): i32 { let x: i32 = 3; return x |> sub(10, _); }`, `x |> sub(10, _)`},
 		{`function main(): i32 { let x: i32 = 3; return x |> sub(_, 1); }`, `x |> sub(_, 1)`},
 		{`function main(): i32 { let x: i32 = 3; return 20 |> sub(_, x |> sub(5, _)); }`, `20 |> sub(_, x |> sub(5, _))`},
-		// No hole: the existing prepended rendering is unchanged.
 		{`function main(): i32 { let x: i32 = 3; return x |> sub(10); }`, `x |> sub(10)`},
 	}
 	for _, c := range cases {
@@ -1272,13 +1022,6 @@ func TestFormatPipeHoleRoundTrip(t *testing.T) {
 	}
 }
 
-// A struct destructure binds BY FIELD NAME. The formatter used to render
-// every *ast.Destructure as the positional tuple form, so `let Point { x:
-// a, y } = p;` came back out as `let (a, y) = p;` — a different program
-// (positional binding, rename lost), and one that fails outright on a
-// partial or reordered bind. Both destructure modes must survive the
-// round trip, including the parameter-pattern desugar that produces a
-// struct-mode Destructure in the body prelude.
 func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 	for _, tc := range []struct{ name, src, want, notWant string }{
 		{
@@ -1292,12 +1035,6 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 			want: "let Point { y } = p;",
 		},
 		{
-			// A destructuring parameter reprints as the pattern the source
-			// wrote. This case used to pin the OPPOSITE — the desugar's leak,
-			// `let Point { x: a, y } = __ptuple_` — as expected output, which
-			// defined the formatter's job as emitting the parser's holder
-			// rather than the program someone typed (#7338). `notWant` is
-			// checked below, so the holder cannot creep back in.
 			name:    "param_pattern_written_form",
 			src:     "struct Point { x: i32, y: i32 }\nfunction f(Point { x: a, y }: Point): i32 { return a + y; }",
 			want:    "function f(Point { x: a, y }: Point): i32 {",
@@ -1309,10 +1046,6 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 			want: "let (a, b) = t;",
 		},
 		{
-			// A nested position prints as its own pattern, not as the
-			// synthesised binder the parser put in Names — that binder is a
-			// lowering detail, and printing it re-parses to a different
-			// program (an undeclared name at the inner level's uses).
 			name: "tuple_nested",
 			src:  "function f(t: (i32, (i32, i32))): i32 { let (a, (b, c)) = t; return a + b + c; }",
 			want: "let (a, (b, c)) = t;",
@@ -1333,13 +1066,9 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
 			}
-			// notWant pins a spelling that must NOT survive into the output —
-			// a lowering detail the source never wrote.
 			if tc.notWant != "" && strings.Contains(got, tc.notWant) {
 				t.Errorf("got:\n%s\nwant it NOT to contain %q", got, tc.notWant)
 			}
-			// Re-parse + re-format: the output must be a valid program that
-			// formats to itself, which is what catches a mode swap.
 			if again := formatSrc(t, got); again != got {
 				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 			}
@@ -1347,9 +1076,6 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 	}
 }
 
-// A `Map { … }` literal had no printer case at all, so Format wrote the field
-// name and its `: ` and then nothing — `Layer { writes: , … }`, source that
-// cannot re-parse. `fern -fmt -w` on such a file destroyed it (#6803).
 func TestFormatMapLiteral(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"empty", "struct S { m: Map[string, i32] }\nfunction f(): S { return S { m: Map { } }; }", "S { m: Map { } }"},
@@ -1371,10 +1097,6 @@ func TestFormatMapLiteral(t *testing.T) {
 	}
 }
 
-// The parser renames a `_` binding to an internal `__discard_<line>_<col>_<n>`
-// so reading it back is an undefined-identifier error. Format printed that
-// name, writing a compiler-internal identifier — position suffix included —
-// back into the user's file (#6803).
 func TestFormatKeepsDiscardBindingAsUnderscore(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"tuple_destructure", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, x) = t(); return x; }", "let (_, x) = t();"},
@@ -1398,9 +1120,6 @@ func TestFormatKeepsDiscardBindingAsUnderscore(t *testing.T) {
 	}
 }
 
-// A literal's base is part of what the author wrote — the arm64 and x86
-// encoders spell every literal as the instruction encoding it is — and Format
-// rewrote `0xd2800000` to `3531603968` (#6803).
 func TestFormatKeepsHexLiteralBase(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"lowercase", "function f(): i32 { return 0xdead; }", "return 0xdead;"},
@@ -1424,10 +1143,6 @@ func TestFormatKeepsHexLiteralBase(t *testing.T) {
 	}
 }
 
-// An arrow lambda parses to the same node as `(…) => { … }`, so Format
-// re-emitted it in that form and had to supply a return type it does not know:
-// `() => e` became `(): void => { return e; }`, asserting `void` over an
-// expression that has a value (#6803).
 func TestFormatKeepsArrowLambda(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"no_params", "function g(f: () => i32): i32 { return f(); }\nfunction main(): i32 { return g(() => 7); }", "g(() => 7)"},
@@ -1443,9 +1158,6 @@ func TestFormatKeepsArrowLambda(t *testing.T) {
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
 			}
-			// The checker is the assertion that matters: `void` over an
-			// expression that has a value is a type error, so a clean check
-			// is what says the round trip preserved the program.
 			if checkRejects(t, got) {
 				t.Errorf("formatted output no longer type-checks:\n%s", got)
 			}
@@ -1456,12 +1168,6 @@ func TestFormatKeepsArrowLambda(t *testing.T) {
 	}
 }
 
-// A negative literal PATTERN must survive a format round trip. The parser
-// used to fold the `-` into NumberLit.Value, which collides with the
-// representation of an unsigned literal above i64::MAX — so the formatter
-// applied the unsigned reading and rewrote `-1 =>` to
-// `18446744073709551615 =>`, producing a file that no longer compiles.
-// Both readings are asserted here so a fix for one cannot re-break the other.
 func TestFormatNegativeLiteralPattern(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"plain", `function f(n: i32): i32 { match (n) { -1 => { return 7; }, _ => { return 0; } } }`, "-1 =>"},
@@ -1485,10 +1191,6 @@ func TestFormatNegativeLiteralPattern(t *testing.T) {
 	}
 }
 
-// A pattern the nested-pattern desugar consumes must still reprint as the
-// source spelled it. Without a written-form carrier the formatter had only the
-// lowering left to render — the merged arm, its inner match and the `__nest`
-// temp — and `-fmt -w` made that the user's file.
 func TestFormatKeepsNestedArmPatterns(t *testing.T) {
 	const decls = "enum Inner { Ok2(i32), Err2(i32) }\nenum Outer { A(Inner), B }\nenum Sm { V(i32), W }\nstruct W2 { e: Outer, n: i32 }\n"
 	for _, tc := range []struct{ name, src, want string }{
@@ -1498,8 +1200,6 @@ func TestFormatKeepsNestedArmPatterns(t *testing.T) {
 			want: "A(Ok2(n)) => {",
 		},
 		{
-			// A literal payload folds into the arm's condition, so without the
-			// carrier this printed the desugar's binder instead of the `0`.
 			name: "literal_payload",
 			src:  decls + "function f(s: Sm): i32 {\n match (s) { V(0) => { return 100; }, V(x) => { return x; }, W() => { return 1; } }\n}",
 			want: "V(0) => {",
@@ -1540,11 +1240,6 @@ func TestFormatKeepsNestedArmPatterns(t *testing.T) {
 	}
 }
 
-// Match-EXPRESSION arms render through the same pattern renderer as
-// statement arms. They used to keep a second, impoverished copy that knew
-// only variant / named-field / wildcard / bare-literal, so it silently
-// dropped range high bounds, `@` bindings, tuple patterns and field
-// renames — rewriting `3..=4 => …` into `3 => …`, a different program.
 func TestFormatMatchExprArmPatterns(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"range", `function f(n: i32): i32 { return match (n) { 3..=4 => 10, _ => 0 }; }`, "3..=4 =>"},
@@ -1579,9 +1274,6 @@ function f(p: P): i32 { return match (p) { P { x: a, y: b } => a + b }; }`, "P {
 	}
 }
 
-// A control byte in a string literal is re-emitted as a hex escape, so a
-// formatted source never carries a raw NUL — which git would read as a
-// binary file — and the escape round-trips to the same byte.
 func TestFormatKeepsControlBytesEscaped(t *testing.T) {
 	got := formatSrc(t, "function f(): string { return \"a\\x00b\\x1f\\x7fc\"; }")
 	want := `return "a\x00b\x1f\x7fc";`
@@ -1596,7 +1288,6 @@ func TestFormatKeepsControlBytesEscaped(t *testing.T) {
 	}
 }
 
-// An f-string's literal segments take the same rule.
 func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
 	got := formatSrc(t, "function f(s: string): string { return f\"a\\x00b\\x1f{s}\\x7fc\"; }")
 	want := `return f"a\x00b\x1f{s}\x7fc";`
@@ -1611,8 +1302,6 @@ func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
 	}
 }
 
-// A \u{...} escape formats as the character it names, the way a raw
-// multi-byte character is kept as itself; a control scalar stays an escape.
 func TestFormatWritesUnicodeEscapesAsCharacters(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
 		{"function f(): string { return \"\\u{7}\\u{e9}é\\u{1F600}\"; }", `return "\x07éé😀";`},
@@ -1628,10 +1317,6 @@ func TestFormatWritesUnicodeEscapesAsCharacters(t *testing.T) {
 	}
 }
 
-// A comment inside a multi-line list stays where it was written (#10143), and a
-// list written across lines keeps its lines (#8475). Either way the list keeps
-// the source's line grouping, so a long table does not turn into one element per
-// line or into one line; a list written on one line stays one line.
 func TestFormatKeepsListInteriorComments(t *testing.T) {
 	src := `struct S { a: i32, b: i32 }
 function g(a: i32, b: i32): i32 { return a + b; }
@@ -1696,9 +1381,6 @@ function f(): i32 {
 	}
 }
 
-// A binary chain written across lines keeps its breaks (#8475), printed with
-// the operator leading the continuation line whichever side of it the source
-// broke; a chain written on one line stays on one line.
 func TestFormatKeepsBinaryLineBreaks(t *testing.T) {
 	src := `function f(a: i32, b: i32): boolean {
   let s: string = "x"
@@ -1806,12 +1488,6 @@ func TestFormatKeepsAssertSugar(t *testing.T) {
 	}
 }
 
-// `use n[: T] <- call(…);` is a parse-time desugar into a synthesised
-// `__use_N` callback plus the return that passes it, so the formatter has to
-// read it back — printing the desugar rewrote the source, and left an
-// unannotated binding as `(n: )`, which does not parse (#8729). Each case
-// must print exactly as written, re-parse, and format to itself; the
-// synthesised name never reaches the output.
 func TestFormatKeepsUseSugar(t *testing.T) {
 	const prelude = "function maybe_double(n: i32, cb: (i32) => Option[i32]): Option[i32] {\n  return cb(n + n);\n}\n\n"
 	cases := []struct{ name, src string }{
@@ -1866,9 +1542,6 @@ func TestFormatKeepsUseSugar(t *testing.T) {
 	}
 }
 
-// A comment above a trait or impl member stays above it, a trailing comment
-// on an abstract signature stays on its line, and a blank line between two
-// members is kept: the member form is the statement form, one level in.
 func TestFormatKeepsTraitAndImplMemberCommentsAndBlanks(t *testing.T) {
 	src := `trait Shape {
   // The area, in whatever unit the shape was measured in.
@@ -1903,7 +1576,6 @@ function main(): i32 {
 	}
 }
 
-// A parametric impl's bound keeps its trait arguments through a format.
 func TestFormatImplBoundArgsRoundTrip(t *testing.T) {
 	src := `trait Iter[T] { function next(self: Self): Option[(T, Self)]; }
 struct W[I, T] { it: I, k: T }
@@ -1917,7 +1589,6 @@ impl[I: Iter[T], T] Iter[T] for W[I, T] { function next(self: Self): Option[(T, 
 	}
 }
 
-// A trait default's own type parameters survive a format.
 func TestFormatTraitDefaultOwnTypeParams(t *testing.T) {
 	src := `trait Iter[T] {
   function next(self: Self): Option[(T, Self)];

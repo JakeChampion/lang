@@ -2,30 +2,6 @@ package e2e
 
 import "testing"
 
-// proc_exec(path, args) — execve(2), the third leg of the crash-only process
-// trio next to proc_fork / proc_waitpid, and the piece that lets a forked child
-// become another program.
-//
-// Two properties are worth pinning, because both were wrong in the first cut:
-//
-//   - argv layout. proc_exec supplies argv[0] itself (the program path), so
-//     callers pass only real arguments. `sh -c SCRIPT name a b` sets $0 from the
-//     first OPERAND after the script, so the assertion below checks $0/$1
-//     against the operands, not against the path.
-//   - the failure path RETURNS. On success execve replaces the process, so the
-//     i32 result only ever reports failure, as -errno. A helper that instead
-//     corrupted the caller's frame on the way back would show up here as a wrong
-//     exit code rather than a crash.
-//
-// The arm64 leg is not redundant with x86-64: arm64 runs the two-word string
-// ABI (docs/SSO-NATIVE-FLIP-STATUS.md) where a `string` occupies TWO argument
-// slots and a `string[]` element is a 16-byte (data, len) pair, while x86-64
-// uses the single-word SSO form. The first version of this helper read arm64's
-// path LENGTH as the args box and segfaulted on every call; only a
-// per-architecture run catches that.
-
-// A successful exec: the child becomes /bin/sh, which exits 23. Reaching the
-// `return 71` after proc_exec would mean exec failed.
 const procExecSpawnSrc = `
 function main(): i32 {
     let pid: i32 = proc_fork();
@@ -37,8 +13,6 @@ function main(): i32 {
     return proc_waitpid(pid);
 }`
 
-// The failure path returns -errno, and argv ordering puts the caller's
-// arguments after the implicit argv[0].
 const procExecFailAndArgvSrc = `
 function main(): i32 {
     let rc: i32 = proc_exec("/nonexistent/binary", ["x"]);
@@ -52,8 +26,6 @@ function main(): i32 {
     return proc_waitpid(pid);
 }`
 
-// An empty argument list still has to produce a well-formed argv
-// ([path, NULL]) — the array-length load runs even when the copy loop does not.
 const procExecEmptyArgsSrc = `
 function main(): i32 {
     let rc: i32 = proc_exec("/nonexistent/binary", []);
@@ -106,9 +78,6 @@ func TestArm64ProcExec(t *testing.T) {
 	})
 }
 
-// Under -interp there is no process control (exec'ing would replace the
-// interpreter itself), so proc_exec answers -38/ENOSYS exactly as proc_fork
-// does, letting a caller detect the absence and degrade rather than vanish.
 func TestInterpProcExecENOSYS(t *testing.T) {
 	src := `
 function main(): i32 {

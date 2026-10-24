@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// The self-host half of internal/testing/e2e's TestFipCallsNonAllocatingBuiltins
-// (#9607): irfipverify's E068 sees what each admitted builtin lowers to, and
-// the calls allocate nothing (90) and answer as native does (3464 % 100).
 const selfHostFipBuiltinsSrc = `fip function scan(s: string, set: u8[]): i32 {
     return __memchr(s, 44, 0) + __rmemchr(s, 44, s.len()) + __ascii_run(s, 0)
         + __count_byte(s, 44) + __sum_bytes(s) + __scan_set(s, 0, set) + __bsd_sum(s, 0)

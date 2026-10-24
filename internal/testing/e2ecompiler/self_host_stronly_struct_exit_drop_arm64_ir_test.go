@@ -4,9 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStrOnlyStructExitDropIRArm64 is the arm64 port of
-// TestSelfHostStrOnlyStructExitDropIRX86_64. Case table shared with the x86-64
-// leg.
 func TestSelfHostStrOnlyStructExitDropIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range strOnlyStructExitDropCases {

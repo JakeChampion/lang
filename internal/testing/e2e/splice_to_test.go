@@ -1,20 +1,3 @@
-// `r.splice_to(w, max)` end to end on every backend: splice(2) between two
-// handles on Linux, through a pipe the runtime caches when neither side is
-// one, and `Unsupported` wherever the kernel cannot move the bytes itself.
-//
-// The contract a caller builds on is that `Unsupported` took NOTHING from the
-// reader, so a read_chunk / write fallback carries on from the same offset.
-// The probe copies with exactly that loop and checks three shapes:
-//
-//   - file to file, where neither side is a pipe, so the bytes go through
-//     the cached pipe; the copy is read back through Go's own read.
-//   - a writer opened for APPEND, which splice(2) refuses: the answer must be
-//     Unsupported, and the next read_chunk must still see the first byte.
-//   - file to stdout, a pipe in these runners, so the direct splice.
-//
-// `spliced` says whether the backend is expected to move bytes itself. On the
-// Linux backends it must, or the kernel path silently never runs; on wasm and
-// in the interpreter every call is the refusal and the fallback does the work.
 package e2e
 
 import (
@@ -25,8 +8,6 @@ import (
 	"testing"
 )
 
-// spliceToData is what the probe builds and writes: 25 bytes doubled 13
-// times, 204,800 bytes, so a copy takes several calls at 64 KiB apiece.
 func spliceToData() string {
 	s := "splice me through a pipe\n"
 	for k := 0; k < 13; k++ {
@@ -121,8 +102,6 @@ function main(): i32 {
 `, p("data.txt"), p("copy.txt"), want)
 }
 
-// spliceToCheckTree reads the file-to-file copy back through Go's read, so a
-// broken Fern reader cannot make the probe agree with itself.
 func spliceToCheckTree(t *testing.T, dir string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "copy.txt"))
@@ -134,7 +113,6 @@ func spliceToCheckTree(t *testing.T, dir string) {
 	}
 }
 
-// spliceToCheckStdout checks the third copy arrived on stdout whole.
 func spliceToCheckStdout(t *testing.T, out string) {
 	t.Helper()
 	if !strings.HasPrefix(out, spliceToData()) {
@@ -161,8 +139,6 @@ func TestArm64SpliceTo(t *testing.T) {
 	spliceToCheckStdout(t, out)
 }
 
-// The interpreter's stdio need not be a descriptor, so it refuses every call
-// and the fallback carries the bytes.
 func TestInterpSpliceToUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	if code := runInterpExit(t, spliceToSource(dir, false)); code != 0 {
@@ -180,8 +156,6 @@ func TestWASMPreview1SpliceToUnsupported(t *testing.T) {
 	spliceToCheckTree(t, dir)
 }
 
-// Both previews share the refusal, but the fallback's reads and writes are
-// separate bodies: preview 2's go through input and output streams.
 func TestWASMSpliceToUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	out := runResultStdout(t, spliceToSource("", false), runOpts{workDir: dir})

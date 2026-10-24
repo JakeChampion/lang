@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// A plain `.fern` program importing a single-root `.fern.md` library
-// tangles the document in memory and runs: greeting() == 42.
 func TestLiterateImportedLibraryRuns(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -30,21 +28,17 @@ func TestLiterateImportedLibraryRuns(t *testing.T) {
 	}
 }
 
-// A type error inside an imported `.fern.md` library is reported against
-// that library's document, at the line the author wrote — the imported-
-// module diagnostic-remap contract.
 func TestLiterateImportedLibraryDiagnosticRemap(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	// The bad return is on document line 6.
-	doc := "# Greeter\n" + // 1
-		"\n" + // 2
-		"```fern\n" + // 3
-		"<<*>>=\n" + // 4
-		"pub function greeting(): i32 {\n" + // 5
-		"    return \"oops\";\n" + // 6  <- error
-		"}\n" + // 7
-		"```\n" // 8
+	doc := "# Greeter\n" +
+		"\n" +
+		"```fern\n" +
+		"<<*>>=\n" +
+		"pub function greeting(): i32 {\n" +
+		"    return \"oops\";\n" +
+		"}\n" +
+		"```\n"
 	if err := os.WriteFile(filepath.Join(dir, "greet.fern.md"), []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}

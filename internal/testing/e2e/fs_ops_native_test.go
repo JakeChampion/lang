@@ -1,24 +1,3 @@
-// Native filesystem-op family coverage (issue #5372, part 2).
-//
-// #5380 lowered `remove_dir_all` on x86-64 so std/test TAP files
-// link, but the SIBLING fs ops had the identical gap one call
-// away: `stat` / `temp_dir` / `read_dir` / `remove_file` had no
-// native lowering on x86-64 (any TAP file touching them failed
-// with `undefined label "stat"` etc.), and the arm64 backend had
-// NONE of the family — even `remove_dir_all`, so on the default
-// target every tests/stdlib/*.fern failed at link through
-// TestRunner.finish()'s cleanup loop. The fix emits the whole
-// family as runtime helpers on both native backends
-// (emitRemoveFileRuntime / emitTempDirRuntime /
-// emitReadDirRuntime / emitStatRuntime on each, plus arm64's
-// emitRemoveDirAllRuntime), sharing the existing
-// __fern_io_error / alloc-box conventions with read_file /
-// write_file.
-//
-// The interpreter is the oracle for the same shapes
-// (TestRunnerFilesystemOpsExample drives the TAP file through
-// -interp); here we pin that the NATIVE binaries link and
-// produce the right filesystem effects on both backends.
 package e2e
 
 import (
@@ -30,12 +9,6 @@ import (
 	"testing"
 )
 
-// fsOpsRoundTripSrc exercises the whole family end-to-end
-// against absolute /tmp paths: temp_dir → write_file → stat
-// (file kind + size, dir kind) → read_dir → remove_file (both
-// the unlink and the missing-target-is-Some contract) →
-// remove_dir_all → stat sees ENOENT. Every failure arm returns a
-// distinct exit code so a regression names its op.
 const fsOpsRoundTripSrc = `function main(): i32 {
     match (temp_dir("fsops-native")) {
         Ok(dir) => {
@@ -78,9 +51,6 @@ func TestX86_64FsOpsRoundTrip(t *testing.T) {
 	}
 }
 
-// read_dir on a host-seeded directory returns exactly the seeded
-// entries (files AND subdirectories, "." / ".." skipped) — the
-// entry count comes back as the exit code.
 func TestX86_64ReadDirListsSeededEntries(t *testing.T) {
 	src := `function main(): i32 {
     match (read_dir("d")) {
@@ -104,8 +74,6 @@ func TestX86_64ReadDirListsSeededEntries(t *testing.T) {
 	}
 }
 
-// stat on a missing path is Err (the NotFound IoError arm), not
-// a crash or a zeroed Ok.
 func TestX86_64StatMissingIsErr(t *testing.T) {
 	src := `function main(): i32 {
     match (stat("no_such_path")) {
@@ -120,14 +88,6 @@ func TestX86_64StatMissingIsErr(t *testing.T) {
 	}
 }
 
-// The class-level TAP pin: filesystem_ops_test.fern — the
-// tests/stdlib suite that exercises temp_dir / read_dir /
-// remove_file / remove_dir_all — must compile through the full
-// CLI pipeline (modload + the in-process assembler) with
-// -target x86-64-linux and pass. Before the fix this failed at link
-// with `undefined label "temp_dir"`. The -interp leg lives in
-// TestRunnerFilesystemOpsExample and stays authoritative for
-// the TAP text contract.
 func TestX86_64FilesystemOpsTapLinksNatively(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	fern := buildFernCLI(t)
@@ -151,8 +111,6 @@ func TestX86_64FilesystemOpsTapLinksNatively(t *testing.T) {
 	}
 }
 
-// ---- arm64 ----
-
 func TestArm64FsOpsRoundTrip(t *testing.T) {
 	out, code := compileAndRunArm64(t, fsOpsRoundTripSrc)
 	if code != 0 {
@@ -160,10 +118,6 @@ func TestArm64FsOpsRoundTrip(t *testing.T) {
 	}
 }
 
-// arm64 remove_dir_all on a host-seeded nested tree: files at
-// every level drive the ENOTDIR-unlink recursion, emptied
-// directories rmdir on the way back up (mirrors
-// TestX86_64RemoveDirAllNestedTree).
 func TestArm64RemoveDirAllNestedTree(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("tree")) {
@@ -186,13 +140,6 @@ func TestArm64RemoveDirAllNestedTree(t *testing.T) {
 	}
 }
 
-// The main arm64 pin for #5372: an unmodified tests/stdlib
-// TAP file must compile on the DEFAULT target through the full
-// CLI pipeline (modload + the in-process arm64 assembler) and
-// pass. std/test's TestRunner.finish() references
-// remove_dir_all unconditionally via its temp-dir cleanup loop,
-// so before the fix EVERY TAP file failed here with
-// `branch to undefined label "remove_dir_all"`.
 func TestArm64ArithmeticTapLinksNatively(t *testing.T) {
 	fern := buildFernCLI(t)
 	qemu := arm64QemuOrEmpty(t)
@@ -211,16 +158,6 @@ func TestArm64ArithmeticTapLinksNatively(t *testing.T) {
 	}
 }
 
-// ---- create_dir_all (#6749) ----
-
-// createDirAllSrc pins the whole `mkdir -p` contract in one
-// program, relative to the process working directory: a missing
-// chain is created top to bottom, the result is a DIRECTORY, a
-// second call over the same path is Ok (EEXIST folded into
-// success), doubled separators and a trailing slash name the same
-// directory rather than an empty component, and a component that
-// is a regular file is a genuine Err. Each failure arm returns a
-// distinct exit code.
 const createDirAllSrc = `function main(): i32 {
     match (create_dir_all("a/b/c")) { Err(e) => { return 10; }, Ok(_) => { } }
     match (stat("a/b/c")) {
@@ -242,16 +179,6 @@ const createDirAllSrc = `function main(): i32 {
     return 0;
 }`
 
-// temp_dir's prefix is a NAME on every backend (#6329). The natives
-// concatenated it straight into "/tmp/<prefix>-<ns>", so a prefix
-// carrying a separator placed the directory wherever the caller's
-// bytes pointed — whenever that parent existed — while the
-// interpreter refused the same call.
-//
-// The parent has to be REAL for the escape to land, and it has to sit
-// under the actual temp root rather than the test's cwd, since that is
-// the only place the concatenation can reach. Without it the escaping
-// call fails with ENOENT and the test passes against the bug.
 func tempDirPrefixIsNameSrc(t *testing.T) string {
 	t.Helper()
 	parent, err := os.MkdirTemp("", "fern-esc")

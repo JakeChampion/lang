@@ -7,9 +7,6 @@ import (
 	"unsafe"
 )
 
-// hostSteerByCPU attaches the classic filter `ld cpu; ret a` to the
-// socket's SO_REUSEPORT group (SO_ATTACH_REUSEPORT_CBPF), so a connection
-// goes to the group's socket whose index is the CPU it arrived on.
 func hostSteerByCPU(fd int) error {
 	type sockFilter struct {
 		code   uint16

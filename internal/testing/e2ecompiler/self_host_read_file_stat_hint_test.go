@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// readFilePseudoSrc reads a kernel pseudo-file, whose st_size is 0 and whose
-// contents the kernel generates on the read. Sizing the buffer from st_size and
-// reporting st_size as the length would make every such read come back EMPTY
-// (#9065), so the self-host runtime sources (asmcore.rt_src_read_file /
-// rt_src_read_file_bytes) grow to EOF and report what they read, like the
-// interpreter.
-//
-// Exit 0 = both builtins reported the same non-zero length.
 const readFilePseudoSrc = `function main(): i32 {
   let a: i32 = 0 - 1;
   let b: i32 = 0 - 2;
@@ -28,10 +20,6 @@ const readFilePseudoSrc = `function main(): i32 {
 }`
 
 func TestSelfHostReadFilePseudoFileX86_64(t *testing.T) {
-	// procfs is a Linux thing. Off Linux there is nothing to read and nothing
-	// to assert, which is a missing host rather than a failure — the Linux
-	// legs are where this gets its coverage. On Linux an unreadable
-	// /proc/self/mounts IS a failure: the subject is gone.
 	if runtime.GOOS != "linux" {
 		t.Skip("no procfs on " + runtime.GOOS + "; this test's whole subject is /proc")
 	}

@@ -1,17 +1,3 @@
-// C-locale `nstrftime` and the broken-down local time it renders.
-//
-// One engine, because seven utilities ask the same question: `ls -l` and
-// `--time-style`, `du --time`, `stat`'s `%x` / `%y` / `%z`, `pr`'s header
-// date, `date` itself, `touch -d`, and `who` / `pinky`. It lived privately in
-// `pr.fern` and a UTC-only second copy lived in `du.fern`; #9076 is the second
-// consumer `coreutils/README.md`'s rule waits for.
-//
-// The zone comes from `./tz`, which is tzset(3): the TZif file $TZ names, the
-// POSIX rule in its footer past the transition table, or a POSIX rule string
-// where $TZ is not a file at all. `break_time` is localtime(3) as a conversion
-// reads it — the broken-down fields, the offset behind them, and the zone
-// designation they are named by — so `%z` and `%Z` read off the same lookup
-// the fields came from rather than a second one.
 import "std/array";
 import "std/string";
 import "std/io_buffered";
@@ -20,9 +6,6 @@ import "std/tz";
 
 pub struct Tm { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32, offset: i32, abbrev: string }
 
-// `break_time(z, t)` — localtime(3) as a conversion reads it: the
-// broken-down fields, the offset behind them and the zone designation
-// they are named by.
 pub function break_time(z: tz.Zone, t: i64): Tm {
   let e: tz.Entry = z.entry_at(t);
   let c: tz.Civil = tz.civil_at(t + e.off as i64);
@@ -37,9 +20,6 @@ function floor_mod(a: i64, b: i64): i64 {
   return tz.floor_mod(a, b);
 }
 
-// ---- strftime ---------------------------------------------------------------
-// Padding: `0` the default, which each conversion reads as it likes; `1`
-// the `0` flag; `2` the `+` flag; `3` the `_` flag; `4` the `-` flag.
 function pad_zero(): i32 {
   return 0;
 }
@@ -60,9 +40,6 @@ function pad_none(): i32 {
   return 4;
 }
 
-// `width_add(h, text, width, pad)` — `text` padded on the left to
-// `width`: with zeros under the `0` and `+` flags, spaces otherwise,
-// and not at all under `-`.
 function width_add(h: usize, text: string, width: i32, pad: i32): void {
   let w: i32 = width;
   if (pad == pad_none() || w < 0) {
@@ -114,7 +91,6 @@ function iso_weeks_in(y: i64): i32 {
   return 52;
 }
 
-// The ISO 8601 week-based year and week number.
 function iso_week(tm: Tm): (i64, i32) {
   let wd: i32 = (tm.wday + 6) % 7;
   let week: i32 = (tm.yday - wd + 10) / 7;
@@ -179,9 +155,6 @@ function abs64(v: i64): i64 {
   return v;
 }
 
-// `digits_of(v, mask)` — the decimal digits of a magnitude, with a
-// colon inserted before the i'th digit from the right for each bit
-// `i` set in `mask`, which is how `%::z` gets its two colons.
 function digits_of(v: i64, mask: i32): string {
   let out: u8[] = [];
   let n: i64 = v;
@@ -206,10 +179,6 @@ function digits_of(v: i64, mask: i32): string {
   return string_from_bytes_unchecked(rev);
 }
 
-// `number(h, digits, negative, sign_always, width, pad, d)` — a
-// number's sign and padding as the original places them: a leading
-// sign, then under `_` the spaces come before the sign and under the
-// rest the zeros come after it.
 function number(h: usize, digits: string, negative: boolean, sign_always: boolean, width_in: i32, pad_in: i32, d: i32): void {
   let width: i32 = number_sign(h, digits.len(), negative, sign_always, width_in, pad_in, d);
   width_add(h, digits, width, pad_or_zero(pad_in));
@@ -222,8 +191,6 @@ function pad_or_zero(pad: i32): i32 {
   return pad;
 }
 
-// `number_sign(h, ndigits, …)` — the sign and the padding that goes
-// before it, answering the width left for the digits.
 function number_sign(h: usize, ndigits: i32, negative: boolean, sign_always: boolean, width_in: i32, pad_in: i32, d: i32): i32 {
   let pad: i32 = pad_or_zero(pad_in);
   let width: i32 = width_in;
@@ -262,8 +229,6 @@ function digit_count(v: i64): i32 {
   return n;
 }
 
-// `plain_number(h, v, negative, sign_always, width, pad, d)` — a
-// number with no colons in it, written straight into the builder.
 function plain_number(h: usize, v: i64, negative: boolean, sign_always: boolean, width_in: i32, pad_in: i32, d: i32): void {
   let n: i32 = digit_count(v);
   let width: i32 = number_sign(h, n, negative, sign_always, width_in, pad_in, d);
@@ -284,11 +249,8 @@ function plain_number(h: usize, v: i64, negative: boolean, sign_always: boolean,
   io_buffered.buf_push_u64(h, v as u64);
 }
 
-// One `%` directive as the loop over a format sees it.
 struct Spec { pad: i32, width: i32, up: boolean, low: boolean, change: boolean, modifier: i32, c: i32, at: i32, end: i32 }
 
-// `parse_spec(fmt, i, upcase, width)` — the flags, width, modifier and
-// conversion letter starting at the `%` at `i`.
 function parse_spec(fmt: u8[], i: i32, upcase: boolean, width: i32): Spec {
   let pad: i32 = pad_zero();
   let up: boolean = upcase;
@@ -318,7 +280,6 @@ function parse_spec(fmt: u8[], i: i32, upcase: boolean, width: i32): Spec {
   }
   let w: i32 = width;
   if (j < fmt.len() && gnu.is_digit(fmt[j] as i32)) {
-    // A width past what an int holds saturates, as the original's does.
     w = 0;
     while (j < fmt.len() && gnu.is_digit(fmt[j] as i32)) {
       let d: i32 = fmt[j] as i32 - 48;
@@ -342,9 +303,6 @@ function parse_spec(fmt: u8[], i: i32, upcase: boolean, width: i32): Spec {
   return Spec { pad: pad, width: w, up: up, low: false, change: change, modifier: modifier, c: c, at: i, end: j };
 }
 
-// `yearish(out, s, v, negative, d, yr_spec)` — `%Y`, `%C`, `%G`, `%g`
-// and `%y`: the `+` flag writes a sign when the value outruns its
-// natural width or the field is wider than that.
 function yearish(h: usize, s: Spec, v: i64, negative: boolean, d: i32, yr_spec: i32): void {
   let pad: i32 = s.pad;
   if (pad == pad_zero()) {
@@ -412,8 +370,6 @@ function tz_offset(h: usize, s: Spec, tm: Tm, colons: i32): void {
   number(h, digits_of(v as i64, mask), negative, true, s.width, s.pad, d);
 }
 
-// `nanoseconds(out, s, nsec)` — `%N`: the leading digits the width has
-// room for, the rest of the field filled on the right.
 function nanoseconds(h: usize, s: Spec, nsec: i64): void {
   let width: i32 = s.width;
   if (width <= 0) {
@@ -448,8 +404,6 @@ function century(tm: Tm): (i64, boolean) {
   return (abs64(c), negative);
 }
 
-// `c_int(v)` — `v` as a C int: wrapped to 32 bits, which is what the
-// C library's own strftime does with a year past its range.
 function c_int(v: i64): i64 {
   let w: i64 = tz.floor_mod(v, 4294967296 as i64);
   if (w >= 2147483648 as i64) {
@@ -458,10 +412,6 @@ function c_int(v: i64): i64 {
   return w;
 }
 
-// `c_year(year)` — the year as the C library's strftime prints `%Y`,
-// which `%c` and the `E` modifier reach. glibc's is `tm_year + 1900` in
-// int arithmetic, with no padding; Apple's is the century and then the
-// year within it, each as `%02d`.
 pub function c_year(year: i64): string {
   if (target_os() == "darwin") {
     return apple_yconv(c_int(year - 1900 as i64), true);
@@ -469,9 +419,6 @@ pub function c_year(year: i64): string {
   return c_int(c_int(year - 1900 as i64) + 1900 as i64).to_string();
 }
 
-// Apple's `_yconv(tm_year, 1900, true, yy)`: C's truncating division
-// splits the year into a century and a remainder of the same sign, and
-// `-0` marks a negative year in the zeroth century.
 pub function apple_yconv(tm_year: i64, yy: boolean): string {
   let trail: i64 = tm_year % (100 as i64);
   let lead: i64 = tm_year / (100 as i64) + 19 as i64;
@@ -492,7 +439,6 @@ pub function apple_yconv(tm_year: i64, yy: boolean): string {
   return out;
 }
 
-// printf's `%02d`: the sign counts toward the width.
 function c_02d(v: i64): string {
   if (v >= 0 as i64 && v < 10 as i64) {
     return "0" + v.to_string();
@@ -500,7 +446,6 @@ function c_02d(v: i64): string {
   return v.to_string();
 }
 
-// `%EC` through the C library: the century alone.
 function c_century(year: i64): string {
   if (target_os() == "darwin") {
     return apple_yconv(c_int(year - 1900 as i64), false);
@@ -528,13 +473,7 @@ function is_o(s: Spec): boolean {
   return s.modifier == 79;
 }
 
-// `subformat(out, s, sub, tm, t, nsec, yr_spec, subwidth)` — a
-// conversion that is itself a format, `%c` or `%T`: rendered with the
-// case flag carried in and padded as a whole.
 function subformat(h: usize, s: Spec, sub: string, tm: Tm, t: i64, nsec: i64, yr_spec: i32, subwidth: i32): void {
-  // `%c`, `%x`, `%X` and `%r` are handed to the C library's own
-  // strftime, which knows none of the flags; the rest are expanded in
-  // place and inherit the padding.
   let subpad: i32 = s.pad;
   if (s.c == 99 || s.c == 120 || s.c == 88 || s.c == 114) {
     subpad = pad_zero();
@@ -543,14 +482,10 @@ function subformat(h: usize, s: Spec, sub: string, tm: Tm, t: i64, nsec: i64, yr
   width_add(h, inner, s.width, s.pad);
 }
 
-// `text(out, s, value, up, low)` — a word: `%a`, `%p`, `%Z` and the
-// rest, padded to the width and cased by the flags.
 function text(h: usize, s: Spec, value: string, up: boolean, low: boolean): void {
   width_add(h, cased(value, up, low), s.width, s.pad);
 }
 
-// `convert(out, fmt, s, tm, t, nsec, yr_spec)` — one conversion, or
-// (false, ...) for one the original copies out as it stands.
 function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): boolean {
   let c: i32 = s.c;
   let year: i64 = tm.year;
@@ -791,8 +726,6 @@ function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): bo
     return true;
   }
   if (c == 89) {
-    // `%OY` is `%Y`: the year takes both modifiers, and only `E` means
-    // anything to it.
     if (e) {
       text(h, s, c_year(year), false, false);
       return true;
@@ -816,15 +749,8 @@ function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): bo
   return false;
 }
 
-// One piece of a compiled format. `kind` 0 is a literal run, 1 a literal
-// padded and cased by `s`, 2 a `%z` with `colons` colons, and 3 a
-// conversion. Literal byte ranges refer to the complete format, including
-// a refused conversion, without constructing partial UTF-8 strings.
 struct Piece { kind: i32, lo: i32, hi: i32, s: Spec, colons: i32 }
 
-// A format parsed once, retaining its complete source for every literal range.
-// OS-supplied formats may contain arbitrary bytes under the D10 contract;
-// the compiled representation stores those bytes without a text conversion.
 pub struct Format { source: u8[], pieces: Piece[] }
 
 function no_spec(): Spec {
@@ -835,9 +761,6 @@ function padded(lo: i32, hi: i32, s: Spec): Piece {
   return Piece { kind: 1, lo: lo, hi: hi, s: s, colons: 0 };
 }
 
-// `compile_with(fmt, upcase, width)` — the format's pieces: `upcase` is a
-// `^` carried in from outside, and `width` the width the first piece
-// starts with, for the compound conversions that re-enter the engine.
 function compile_with(fmt: u8[], upcase: boolean, width0: i32): Format {
   let ps: Piece[] = [];
   let i: i32 = 0;
@@ -869,8 +792,6 @@ function compile_with(fmt: u8[], upcase: boolean, width0: i32): Format {
         i = j + 1;
         continue;
       }
-      // Flags before a second `%` are copied out, and that `%` opens
-      // the next conversion.
       ps = ps.append(padded(i, j, s));
       i = j;
       continue;
@@ -903,8 +824,6 @@ function compile_with(fmt: u8[], upcase: boolean, width0: i32): Format {
   return Format { source: fmt, pieces: ps };
 }
 
-// Literal padding and ASCII case flags operate on bytes, as C-locale
-// nstrftime does. A byte range may end inside a scalar; keep it out of text.
 function literal_add(h: usize, source: u8[], p: Piece): void {
   let width: i32 = p.s.width;
   if (p.s.pad == pad_none() || width < 0) {
@@ -936,8 +855,6 @@ function literal_add(h: usize, source: u8[], p: Piece): void {
   }
 }
 
-// `render(f, tm, t, nsec, yr_spec)` — the pieces written out for one
-// time; `yr_spec` is the padding a year inherits.
 function render_builder(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): usize {
   let h: usize = buf_new(64);
   for p in f.pieces {
@@ -961,39 +878,26 @@ function render(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): string {
   return text;
 }
 
-// `format_with(fmt, tm, t, nsec, upcase, yr_spec, width)` — the engine,
-// re-entered for the compound conversions.
 function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr_spec: i32, width0: i32): string {
   return render(compile_with(fmt.bytes(), upcase, width0), tm, t, nsec, yr_spec);
 }
 
-// `compile(fmt)` — `fmt` parsed once, for `format`.
 pub function compile(fmt: string): Format {
   return compile_bytes(fmt.bytes());
 }
 
-// Raw format bytes are retained once; pieces only store offsets into them.
 pub function compile_bytes(fmt: u8[]): Format {
   return compile_with(fmt, false, -1);
 }
 
-// `format(f, z, t, nsec)` — `strftime` with the format already compiled.
 pub function format(f: Format, z: tz.Zone, t: i64, nsec: i64): string {
   return render(f, break_time(z, t), t, nsec, pad_zero());
 }
 
-// `strftime(fmt, z, t, nsec)` — nstrftime in the C locale: the
-// conversions with gnulib's `-` `_` `0` `+` `^` `#` flags, an optional
-// field width, the `E` / `O` modifiers (C has no alternative
-// representations, so they are skipped where they are allowed and
-// refuse the conversion where they are not) and the `:` repetitions
-// of `%z`. A conversion the original does not know is copied out with
-// its percent, padded like anything else.
 pub function strftime(fmt: string, z: tz.Zone, t: i64, nsec: i64): string {
   return format(compile(fmt), z, t, nsec);
 }
 
-// Byte output preserves raw OS format bytes, including unknown directives.
 pub function format_bytes(f: Format, z: tz.Zone, t: i64, nsec: i64): u8[] {
   let h: usize = render_builder(f, break_time(z, t), t, nsec, pad_zero());
   let bytes: u8[] = buf_take_bytes(h);

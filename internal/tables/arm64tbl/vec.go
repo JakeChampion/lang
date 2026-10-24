@@ -1,19 +1,5 @@
-// Package arm64tbl is the single source of truth for the vocabulary of the
-// self-host arm64 assembler (#7903) — the arm64 twin of x86tbl.
-//
-// The Advanced SIMD classes are the tabular part of the arm64 vocabulary:
-// per mnemonic a U bit, an opcode, and one class-specific extra (the element
-// sizes the encoding has, an szHi bit, a shift direction, a widening flag).
-// cmd/arm64tblgen writes the self-host lookups in
-// compiler/arm64_native.fern from them.
-//
-// Every row is pinned against GNU as: the size sets, and every size
-// deliberately absent (mul/min/max have no .2d, the bitwise ops and cnt are
-// byte-only), are what `aarch64-linux-gnu-as` accepts. A mask that is too
-// wide encodes a different instruction rather than failing.
 package arm64tbl
 
-// Element-size masks: which arrangements an op's encoding has.
 const (
 	ArrB    = 1 << 0
 	ArrH    = 1 << 1
@@ -23,8 +9,6 @@ const (
 	ArrBHSD = ArrBHS | ArrD
 )
 
-// VecOp is one row: the mnemonic, its U bit, its opcode, and the
-// class-specific extra field the table's Aux documents.
 type VecOp struct {
 	Mnemonic string
 	U        bool
@@ -32,20 +16,13 @@ type VecOp struct {
 	Aux      uint32
 }
 
-// VecTable is one Advanced SIMD class. Ops are in the order the self-host
-// lookup is written in — a slice rather than a map, so the generated Fern
-// does not reorder between runs.
 type VecTable struct {
-	// FernFn is the self-host lookup this table generates.
 	FernFn string
-	// Aux says what Ops[i].Aux carries, for the generated comment.
-	Aux string
-	// Doc is the comment above the generated function.
-	Doc string
-	Ops []VecOp
+	Aux    string
+	Doc    string
+	Ops    []VecOp
 }
 
-// VecInt3 is the three-register integer class. Aux is the size mask.
 var VecInt3 = VecTable{
 	FernFn: "arm64_v3int_entry",
 	Aux:    "sizes",
@@ -61,9 +38,6 @@ var VecInt3 = VecTable{
 	},
 }
 
-// VecLogical3 is the bitwise three-register class, which puts the
-// operation in the size field and so exists only in the byte arrangements.
-// Opcode is that operation selector; Aux is the fixed byte-only mask.
 var VecLogical3 = VecTable{
 	FernFn: "arm64_vlogical_entry",
 	Aux:    "sizes",
@@ -77,8 +51,6 @@ var VecLogical3 = VecTable{
 	},
 }
 
-// VecCmpZero is compare-against-zero (two-register misc; #0 is part of the
-// opcode). Aux is the size mask.
 var VecCmpZero = VecTable{
 	FernFn: "arm64_vcmpzero_entry",
 	Aux:    "sizes",
@@ -90,7 +62,6 @@ var VecCmpZero = VecTable{
 	},
 }
 
-// VecInt2Misc is the two-register unary integer class. Aux is the size mask.
 var VecInt2Misc = VecTable{
 	FernFn: "arm64_v2misc_entry",
 	Aux:    "sizes",
@@ -102,9 +73,6 @@ var VecInt2Misc = VecTable{
 	},
 }
 
-// VecFP3 is the lane-wise FP three-register class. Aux is the szHi bit: the
-// encoding reads size as szHi<<1 | (D lanes), so the tables carry szHi where
-// the integer ones carry a mask; the arrangements are 2s/4s/2d throughout.
 var VecFP3 = VecTable{
 	FernFn: "arm64_vfp3_entry",
 	Aux:    "szHi",
@@ -118,7 +86,6 @@ var VecFP3 = VecTable{
 	},
 }
 
-// VecFP2Misc is the lane-wise FP two-register class. Aux is szHi.
 var VecFP2Misc = VecTable{
 	FernFn: "arm64_vfp2_entry",
 	Aux:    "szHi",
@@ -133,8 +100,6 @@ var VecFP2Misc = VecTable{
 	},
 }
 
-// VecFPCmpZero is FP compare against zero (operand spelled #0.0). szHi is
-// always set for the class, so Aux is unused (0).
 var VecFPCmpZero = VecTable{
 	FernFn: "arm64_vfpcmpzero_entry",
 	Aux:    "unused",
@@ -148,7 +113,6 @@ var VecFPCmpZero = VecTable{
 	},
 }
 
-// VecShiftImm is shift-by-immediate. Aux is the direction: 1 = left.
 var VecShiftImm = VecTable{
 	FernFn: "arm64_vshift_entry",
 	Aux:    "left",
@@ -159,7 +123,6 @@ var VecShiftImm = VecTable{
 	},
 }
 
-// VecPermute is zip/uzp/trn. Opcode is the 3-bit opc; U and Aux unused.
 var VecPermute = VecTable{
 	FernFn: "arm64_vpermute_opc",
 	Aux:    "unused",
@@ -170,8 +133,6 @@ var VecPermute = VecTable{
 	},
 }
 
-// VecAcross is the across-lanes reductions. Aux is the widening flag:
-// saddlv/uaddlv produce a result one element size up.
 var VecAcross = VecTable{
 	FernFn: "arm64_across_entry",
 	Aux:    "widen",
@@ -185,18 +146,6 @@ var VecAcross = VecTable{
 	},
 }
 
-// VecPairwiseLong is the widening pairwise-add class: uaddlp/saddlp add
-// ADJACENT LANE PAIRS and write the sum one element size up, and
-// uadalp/sadalp accumulate that sum into the destination instead of
-// replacing it. The size mask is the SOURCE arrangement's, which is what the
-// encoding carries; the destination is a class wider with half the lanes, so
-// unlike every other two-register class here the two operands do NOT share
-// an arrangement.
-//
-// A byte sum needs exactly this pair: uaddlp turns 16 bytes into 8 halves
-// that cannot overflow (2 x 255), and uadalp folds those into a running
-// 32-bit accumulator, so no partial total is ever narrower than the sum it
-// carries.
 var VecPairwiseLong = VecTable{
 	FernFn: "arm64_pairlong_entry",
 	Aux:    "sizes",
@@ -208,26 +157,6 @@ var VecPairwiseLong = VecTable{
 	},
 }
 
-// VecPolyLong is the polynomial (carry-less) multiply-long class. It is the
-// three-register-DIFFERENT shape: the result elements are one size up, so
-// eight byte products fill a .8h and one doubleword product fills the single
-// 128-bit element GNU as spells `.1q`.
-//
-// Aux is the HIGH flag, which is the `2` in the mnemonic. Unlike the
-// narrowing and widening classes, nothing in the operands says which half of
-// the sources is read — pmull and pmull2 differ only in the Q bit, and both
-// write a full-width destination — so the mnemonic is the only carrier.
-//
-// Only the byte and doubleword sizes exist. The .4h/.2s sources that would
-// sit between them encode nothing, which is why the size mask is not a
-// contiguous run and the encoders check the two cases rather than a mask.
-//
-// The .1q form is FEAT_PMULL, not base Advanced SIMD: `aarch64-linux-gnu-as`
-// refuses it without `-march=armv8-a+aes`, and Raspberry Pi 4 is a declared
-// target without it. Encoding it is unconditional here — an assembler that
-// cannot spell an instruction cannot be told to gate it — but a CODE
-// GENERATOR reaching for it needs a HWCAP_PMULL check, which the byte form
-// and every other row in this file do not.
 var VecPolyLong = VecTable{
 	FernFn: "arm64_vpolylong_entry",
 	Aux:    "high",
@@ -240,8 +169,6 @@ var VecPolyLong = VecTable{
 	},
 }
 
-// VecTables is every class, for the gates that enumerate the vocabulary.
 var VecTables = []VecTable{VecInt3, VecLogical3, VecCmpZero, VecInt2Misc, VecFP3, VecFP2Misc, VecFPCmpZero, VecShiftImm, VecPermute, VecAcross, VecPairwiseLong, VecPolyLong}
 
-// Bool is the Aux field read as a flag.
 func (o VecOp) Bool() bool { return o.Aux != 0 }

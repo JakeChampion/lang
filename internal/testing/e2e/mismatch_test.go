@@ -2,24 +2,6 @@ package e2e
 
 import "testing"
 
-// #8791: `__mismatch(a, ao, b, bo, n)` is the offset of the first byte where
-// a[ao..ao+n) and b[bo..bo+n) differ, or n when they are equal.
-//
-// The program is its own oracle. It sweeps every length 0..100 against every
-// difference position, in both operand orders, and compares each answer with a
-// reference loop written in Fern — so a wrong lowering fails on the exact
-// (length, position) that broke rather than on one hand-picked case. The sweep
-// reaches all five bands the native kernels have: the scalar remainder, the
-// 4- and 8-byte overlapping windows, the 16-byte vector loop and (on x86-64)
-// the 32-byte AVX2 loop.
-//
-// The windows are the half worth pinning hardest. A line-oriented utility
-// compares SHORT ranges, and the first draft of this kernel measured 12 ns on
-// the issue's 13-byte case precisely because 13 never reaches a 16-byte loop;
-// the overlapping leading/trailing windows took it to 6 ns. They also carry
-// the subtlest claim in the kernel — that a difference the TRAILING window
-// reports is provably the first one, because the leading window already proved
-// its own range equal — and lengths 8..15 are where a mistake in that shows.
 const mismatchSweepSrc = `function ref(a: string, ao: i32, b: string, bo: i32, n: i32): i32 {
     let i: i32 = 0;
     while (i < n) {
@@ -64,21 +46,18 @@ function main(): i32 {
     return 42;
 }`
 
-// TestX86_64Mismatch drives the sweep through the AVX2 kernel.
 func TestX86_64Mismatch(t *testing.T) {
 	if _, got := compileAndRunX86_64(t, mismatchSweepSrc); got != 42 {
 		t.Errorf("__mismatch sweep on x86-64: exit %d, want 42 (#8791)", got)
 	}
 }
 
-// TestArm64Mismatch drives it through the NEON kernel.
 func TestArm64Mismatch(t *testing.T) {
 	if _, got := compileAndRunArm64(t, mismatchSweepSrc); got != 42 {
 		t.Errorf("__mismatch sweep on arm64: exit %d, want 42 (#8791)", got)
 	}
 }
 
-// TestWASMMismatch drives it through the wasm lowering.
 func TestWASMMismatch(t *testing.T) {
 	if got := runWasm(t, mismatchSweepSrc); got != 42 {
 		t.Errorf("__mismatch sweep on wasm: got %d, want 42 (#8791)", got)

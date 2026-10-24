@@ -14,11 +14,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/http/accesslog behind std/http/router through std/serve's loop, with
-// `Config.trace` on: each request's record is one JSON line on stderr that
-// Go's decoder reads, carrying the route's path and status, the request's
-// span, the connection's peer and a duration in seconds. The interpreter
-// and the x86-64 backend.
 func TestAccessLogServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeAccessLogServeSource(t)

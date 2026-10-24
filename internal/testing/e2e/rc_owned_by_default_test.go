@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// Owned-by-default reader shapes must be rc-balanced (value-correct +
-// __rc_underflow_count()==0): a reader reclaims a fresh argument (build → sum),
-// a multi-use local (each call inc'd), a recursive tree reader, and a
-// passthrough that returns its owned parameter. Consuming methods + iterative
-// build (which lean on explicit `own`, untouched by this slice) stay sound too.
 func TestX86_64OwnedByDefaultSound(t *testing.T) {
 	cases := map[string]string{
 		"read-fresh": `enum L{C(i32,L),N} function sum(l:L):i32{match(l){C(h,t)=>{return h+sum(t);},N=>{return 0;}}} function build(n:i32):L{if(n==0){return N;}return C(n,build(n-1));} function main():i32{if(sum(build(5))!=15){return 100;}return __rc_underflow_count();}`,

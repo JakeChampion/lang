@@ -1,11 +1,11 @@
-// `@derive(Debug)` synthesises a `to_debug(): string` that renders the
-// STRUCTURAL form — `Name { f: <debug f>, … }` for structs, `Variant` /
-// `Variant(<debug payload>)` for enums — composing field/variant-wise
-// through each field's own `Debug`. The one difference from the derived
-// `Display` is that a string renders QUOTED (`label: "hi"`, `Tag("ab")`),
-// so a debug dump is unambiguous. This is the `{:?}` half of the
-// Display/Debug split (#2708). Output is exact across interp / x86-64 /
-// arm64 / wasm.
+
+
+
+
+
+
+
+
 import "core/cmp";
 import "core/int";
 
@@ -21,8 +21,8 @@ function main(): i32 {
     print(Circle(5).to_debug());
     print(Tag("ab").to_debug());
     print(Nested { p: Point { x: 3, y: 4 }, n: 9 }.to_debug());
-    // A string with a quote + backslash exercises the escaping in
-    // `impl Debug for string`.
+
+
     print("a\"b\\c".to_debug());
     return 0;
 }

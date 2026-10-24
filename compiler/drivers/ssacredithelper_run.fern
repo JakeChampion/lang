@@ -51,8 +51,6 @@ function duplicate_call(r: irtables.LowerResult, name: string): irtables.LowerRe
   let hits: i32 = 0;
   for op in r.ops {
     if (op.kind_tag == ir.kind_id("call_direct") && op.str == name) {
-      // Leave the original argument on the stack while releasing the same
-      // subject again through another actual emitted call sequence.
       ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct(name, 1)).append(ir.op_drop());
       hits = hits + 1;
     }
@@ -83,8 +81,6 @@ function target_checks(target: string): void {
   let layout = proof.FlatChild { offset: 8 };
   expect(proof.drop_body(d, layout), true, d.name, 10);
   expect(proof.release_body(r, d, layout), true, r.name, 11);
-  // Mutate actual normal lowering output, then use the production physical
-  // lift. No synthetic helper name is accepted without proving its body.
   let missing = lift(rename_call(drop, "__fern_rc_dec", "__fern_rc_is_unique"));
   expect(proof.release_body(r, missing, layout), false, d.name, 12);
   let wrong_slot: ir.Op[] = [];
@@ -114,7 +110,6 @@ function target_checks(target: string): void {
   expect(proof.release_body(ssa.SFunc { ...r, blocks: reversed }, d, layout), false, r.name, 19);
   expect(proof.release_body(r, d, proof.FlatChild { offset: 16 }), false, d.name, 20);
   expect(proof.release_body(r, d, proof.FlatChild { offset: 0 }), false, d.name, 21);
-  // Names and block storage order are not the proof. Value flow and edges are.
   let renamed = lift(rename_call(release, drop.name, "audited_child_drop"));
   expect(proof.release_body(renamed, ssa.SFunc { ...d, name: "audited_child_drop" }, layout), true, r.name, 22);
   expect(proof.release_body(ssa.register_form(renamed).f, ssa.register_form(ssa.SFunc { ...d, name: "audited_child_drop" }).f, layout), true, r.name, 82);
@@ -151,7 +146,6 @@ function many_expect(p: proof.Proof, ok: boolean, name: string, why: string, id:
 }
 
 function many_checks(target: string): void {
-  // The scalar between reference fields must not be treated as a child slot.
   let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.left; }\nfunction main(): i32 { let p = Parent { left: Leaf { n: 7 }, marker: 9, right: Leaf { n: 8 } }; return extract(p).n; }\n";
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let drops: irtables.LowerResult[] = [];
@@ -171,8 +165,6 @@ function many_checks(target: string): void {
   let layout = proof.FlatChildren { offsets: [8, 24] };
   many_expect(proof.drop_body_many(d, layout), true, d.name, "proved flat-child drop body", 31);
   many_expect(proof.release_body_many(r, d, layout), true, r.name, "proved conditional parent release body", 32);
-  // Layout order and instruction storage order do not change the set of
-  // obligations. Every slot still needs its own release even if children alias.
   expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [24, 8] }), true, d.name, 33);
   let b = d.blocks[0];
   let ops = b.insts;
@@ -188,7 +180,6 @@ function many_checks(target: string): void {
   }
   many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8] }), false, d.name, "unsupported drop effects", 37);
   many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8, 16] }), false, d.name, "child slot mismatch", 38);
-  // Change actual emitted helper operations before the production lift.
   let mutation: i32 = 0;
   while (mutation < 5) {
     let changed: ir.Op[] = [];
@@ -240,7 +231,6 @@ function many_checks(target: string): void {
   many_expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: wrong_child }] }, layout), false, d.name, "child release mismatch", 45);
   let missing = [ops[0], ops[1], ops[2], ops[3], ops[6]];
   many_expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: missing }] }, layout), false, d.name, "unsupported drop effects", 46);
-  // The old boundary cannot silently expand to cover the extra child.
   expect(proof.drop_body(d, proof.FlatChild { offset: 8 }), false, d.name, 47);
   expect(proof.release_body_many(r, d, layout), true, r.name, 48);
   optimized_checks(d, r, layout);
@@ -383,8 +373,6 @@ function optimized_release(r: ssa.SFunc, d: ssa.SFunc, layout: proof.FlatChildre
 }
 
 function optimized_checks(d: ssa.SFunc, r: ssa.SFunc, layout: proof.FlatChildren): void {
-  // Exercise the actual native transformation on each lowering form. This
-  // does not assert that WASI emits register-form SSA.
   let final_drop = ssa.register_form(d).f;
   let final_release = ssa.register_form(r).f;
   expect(proof.drop_body_many(final_drop, layout), true, d.name, 76);

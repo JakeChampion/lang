@@ -2,26 +2,6 @@ package e2e
 
 import "testing"
 
-// These pin #4510: a two-word slot (arm64/wasm strings under the two-word
-// ABI, inline dyn on wasm32) and a one-word match binding sharing a NAME
-// used to make (*builder).bindingSlotScoped allocate a fresh slot and PERMANENTLY
-// remap b.locals[name]. Everything lowered after the arm then resolved the
-// name to the wrong-shaped slot — a later-lowered `let t: string` stored its
-// two words through the binding's one-word slot (operand imbalance /
-// garbage reads), the exit dec sweep swept the wrong slot, and the entry
-// zero-init covered a slot nothing read. Observed in practice as the
-// self-host interp's ExprTuple loop trapping its own arm64 bounds check
-// (exit 134) once a sibling arm gained `let t: string` (#4497). The fix
-// makes the cross-shape remap SCOPED: bindingSlotScoped restores the
-// shadowed mapping right after the arm/Then body is lowered.
-//
-// x86-64 uses one-word strings, so these shapes were never miscompiled
-// there — it runs as the parity leg. arm64 (TwoWordOverride) is the
-// discriminating backend; wasm (ptrW 4, two-word strings) mirrors it.
-
-// bindThenVar puts the ONE-WORD binding arm FIRST, so pre-fix the remap is
-// live when the SECOND arm's two-word `let t: string` lowers — its store
-// went through the binding's one-word slot.
 const bindThenVarSrc = `enum E { Tup(i32[]), Num(i32) }
 function eval(e: E): i32 {
     match (e) {
@@ -45,9 +25,6 @@ function main(): i32 {
     return 0;
 }`
 
-// varThenBind reverses the order: the two-word var's slot is entry-mapped,
-// so the binding arm hits the cross-shape fresh-slot path directly; the
-// var arm lowers AFTER the binding arm's (pre-fix permanent) remap.
 const varThenBindSrc = `enum E { Tup(i32[]), Num(i32) }
 function eval(e: E): i32 {
     match (e) {
@@ -71,12 +48,6 @@ function main(): i32 {
     return 0;
 }`
 
-// bindThenLoopVar is the discriminator: the one-word binding arm lowers
-// FIRST, and a sibling-scoped two-word `let t: string` PLUS a string loop
-// lower AFTER it. Pre-fix, the permanent remap made the var store its
-// two-word concat through the binding's one-word slot and every loop
-// iteration's loads desynchronised the operand stack — SEGFAULT on arm64
-// (reproduced: exit 139 pre-fix, 0 with the scoped restore).
 const bindThenLoopVarSrc = `enum E { Tup(i32[]), Num(i32) }
 function eval(e: E, q: string): string {
     match (e) {
@@ -98,10 +69,6 @@ function main(): i32 {
     return 0;
 }`
 
-// ifLetCross exercises the if-let scoped restore: the binding `t` (one
-// word) collides with a two-word string var in the enclosing function that
-// is READ AFTER the if-let — pre-fix the permanent remap made that read
-// resolve the binding's slot.
 const ifLetCrossSrc = `function pick(o: Option[i32[]], t: string): i32 {
     let n: i32 = 0;
     if let Some(t2) = o {

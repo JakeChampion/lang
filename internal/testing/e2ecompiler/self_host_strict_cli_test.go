@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// strictCLI is the self-hosted CLI (`fern.fern`) built for the x86-64 host,
-// run with no FERN_ variable of the caller's, so a declaration the typed
-// lowering refuses fails the compile.
 type strictCLI struct {
 	bin, stdlib, gcc string
 	runner           []string
@@ -34,8 +31,6 @@ func newStrictRuntimeCLI(t *testing.T) *strictCLI {
 	return &strictCLI{bin: cli.bin, stdlib: cli.stdlib, gcc: cli.gcc, runner: cli.runner}
 }
 
-// tryEmit compiles src for target and returns the assembly, or the CLI's
-// diagnostics and error when it refuses. env is the compile's FERN_ variables.
 func (c *strictCLI) tryEmit(t *testing.T, target, src string, env ...string) (string, string, error) {
 	t.Helper()
 	proj := t.TempDir()
@@ -58,7 +53,6 @@ func (c *strictCLI) tryEmit(t *testing.T, target, src string, env ...string) (st
 	return string(asm), stderr.String(), nil
 }
 
-// emit is tryEmit that fails the test when the CLI refuses.
 func (c *strictCLI) emit(t *testing.T, target, src string, env ...string) string {
 	t.Helper()
 	asm, diags, err := c.tryEmit(t, target, src, env...)
@@ -68,7 +62,6 @@ func (c *strictCLI) emit(t *testing.T, target, src string, env ...string) string
 	return asm
 }
 
-// runX86 links x86-64 assembly and runs it, returning its exit code and stdout.
 func (c *strictCLI) runX86(t *testing.T, asm string) (int, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -90,8 +83,6 @@ func (c *strictCLI) runX86(t *testing.T, asm string) (int, string) {
 	return run.ProcessState.ExitCode(), stdout.String()
 }
 
-// runArm64 assembles arm64 assembly with the aarch64 toolchain and runs it
-// under qemu (or natively), returning its exit code and stdout.
 func runArm64(t *testing.T, gcc, qemu, asm string) (int, string) {
 	t.Helper()
 	bin := buildBinArm64(t, gcc, t.TempDir(), "prog", asm)
@@ -105,8 +96,6 @@ func runArm64(t *testing.T, gcc, qemu, asm string) (int, string) {
 	return run.ProcessState.ExitCode(), stdout.String()
 }
 
-// runWasm runs WAT under wasmtime, returning its exit code and stdout. It
-// skips the test when wasmtime is not on PATH.
 func runWasm(t *testing.T, wat string) (int, string) {
 	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {

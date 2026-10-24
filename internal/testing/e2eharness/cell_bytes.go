@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// CellBytesSource tests byte snapshots through shared cells and containers.
-// Distinct return codes identify the violated value/ownership contract.
 const CellBytesSource = `struct Holder { c: Cell[u8[]] }
 enum Wrapped { Has(Cell[u8[]]), Missing }
 function size(b: u8[]): i32 { return b.len(); }

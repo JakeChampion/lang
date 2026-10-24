@@ -1,6 +1,3 @@
-// array_index — build a fixed array once, then sum it repeatedly. The inner
-// loop is the `i < xs.len()` shape the syntactic bounds-check elision
-// recognises, so this measures indexed load lowering rather than the check.
 function main(): i32 {
   let xs: i32[] = [];
   let n: i32 = 0;

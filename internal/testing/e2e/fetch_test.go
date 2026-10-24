@@ -10,14 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/fetch's client against a scripted loopback origin (#9855): every
-// response shape the parser reads (a length, chunked with trailers, an
-// interim 1xx stepped over, close-delimited, bodiless 204 and HEAD, bytes
-// that are not UTF-8, a body larger than one recv), the request as it
-// goes out (method, target, Host, the caller's header, the body and its
-// length), the host bag's `plat.http`, and each FetchError the client
-// produces. Both native backends (the arm64 binary under qemu connects to
-// the host origin), and the interpreter.
 func TestFetchClient(t *testing.T) {
 	bin := buildFernCLI(t)
 	up := e2eharness.StartFetchUpstream(t)
@@ -66,17 +58,6 @@ func nativeBackends() []nativeBackend {
 	}
 }
 
-// An accumulator with a second reference copies the whole response so
-// far on every append, which the rc==1 cliff counters make observable.
-// Pin them against a 1 MiB body: the blocking client appends each `recv`
-// onto a uniquely owned buffer and must never cross the cliff at all,
-// and the drain's chunk list is captured by `resume` so it does cross,
-// but what it copies is a pointer array, kept three orders of magnitude
-// below the ~137 MB a byte-wise accumulator would have copied for the
-// same body. The counters see only shared-array pushes: a fresh buffer
-// rebuilt from a unique one on every recv is just as quadratic and
-// invisible here, so the client's in-place growth is pinned by reading
-// `__append_bytes`, not by this test.
 func TestFetchAccumulatorStaysLinear(t *testing.T) {
 	bin := buildFernCLI(t)
 	const bodyLen = 1 << 20

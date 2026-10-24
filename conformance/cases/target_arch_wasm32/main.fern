@@ -1,7 +1,7 @@
-// target_arch() is the -target's ISA, never the compiler's host: it is a
-// string literal before the check, so the native arm below is pruned from
-// the module and only the wasm32 arm runs. The other legs' answers are
-// target_arch_x86_64 and target_arch_arm64.
+
+
+
+
 import "core/int";
 
 function main(): i32 {

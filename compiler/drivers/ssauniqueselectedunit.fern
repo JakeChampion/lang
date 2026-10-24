@@ -95,8 +95,6 @@ pub function dotted_output(out: ssaprepare.Output, aligned: boolean): void {
   require(f.name == "Token.first" && row.label_name == f.name);
   require(row.assembly.starts_with("__fn_Token__first:\n") && row.assembly.contains("__fn_Token__first.r:\n"));
   require(caller.check_body(row.assembly, arch, f).ok == !aligned);
-  // arm64's closure entry `.k` sits between the stack entry and `.r`; past
-  // `.r` it is refused.
   let k = "__fn_Token__first.k:\n";
   require(arch != "arm64" || row.assembly.contains(k));
   if (!aligned && row.assembly.contains(k)) {
@@ -147,7 +145,6 @@ function many_rows(out: ssaprepare.Output): void {
   let bad = ssaprepare.Emitted { ...last, body: ssaprepare.Body { ...last.body, selected: selected } };
   check(text, arch, rows.with(64, bad), false);
   check(text, arch, rows.with(64, ssaprepare.Emitted { ...last, label_name: "" }), false);
-  // Distinct exact names at distant positions still share one sanitized name.
   let first = renamed(row, "selected.part");
   let collision = renamed(row, "selected__part");
   let colliding = rows.with(0, first).with(64, collision);
@@ -166,7 +163,6 @@ pub function run(out: ssaprepare.Output): void {
   check(out.text, arch, [row, row], false);
   check(out.text, "wasi", [row], false);
   check(out.text, if (arch == "arm64") { "x86-64" } else { "arm64" }, [row], false);
-  // Retained strings cannot rescue bad output or invalidate good output.
   for text in ["", ".set hidden, 0\n", change(row.assembly, "    ret\n", "")] {
     let stale = ssaprepare.Emitted { ...row, assembly: text };
     require(!caller.check_selected([stale], row.label_name, arch).ok);

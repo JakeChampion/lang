@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Independent test workers may compile repository drivers from one directory.
-// Each invocation must keep assembly and executables out of that directory.
 func TestSelfHostCLIFileEntryIsolation(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

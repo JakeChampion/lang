@@ -9,20 +9,10 @@ import "std/string";
 import "std/utf8";
 import "std/net";
 
-// tests/stdlib/sim_fetch_test.fern — std/fetch's client over the
-// scripted network in std/sim_fetch. Every behaviour of the dialled route
-// runs here unchanged (the client reaches its sockets and clock only
-// through `fetch.Transport`), so each bound is checked at its exact
-// virtual time and each policy against a request the test can read back.
-//
-// Run:  fern -interp tests/stdlib/sim_fetch_test.fern
-
 const ORIGIN: string = "93.184.216.34";
 
 const MS: i64 = 1000000;
 
-// These fixtures send textual requests. Keep their assertions explicit
-// about the conversion from the transport's captured bytes.
 function __sent_text(n: sim_fetch.Net, i: i32): string {
   match (utf8.from_bytes(n.sent(i))) {
     Some(text) => {
@@ -34,21 +24,16 @@ function __sent_text(n: sim_fetch.Net, i: i32): string {
   }
 }
 
-// A forward proxy on a private address, which only the deployment chose.
 const PROXY: string = "10.0.0.9";
 
-// The route `fetch.send` takes, with no proxy to consult.
 function __open(): fetch.Policy {
   return fetch.Policy { public_only: false, proxies: fetch.proxies("", "", ""), roots: None, jar: None, allow: None };
 }
 
-// The route `plat.http` takes: global addresses only.
 function __public(): fetch.Policy {
   return fetch.Policy { public_only: true, proxies: fetch.proxies("", "", ""), roots: None, jar: None, allow: None };
 }
 
-// A network where `example.test` is one origin listening on port 80
-// after 5 ms.
 function __net(d: sim.Sim): sim_fetch.Net {
   return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5);
 }
@@ -84,9 +69,6 @@ function __body(got: Result[HttpResponse, fetch.FetchError]): string {
   return "";
 }
 
-// The answer arrives 20 ms after the request on a connection that took
-// 5 ms, the request carries the fields the client writes, and the
-// connection is closed once the response is read.
 function test_answer_at_its_time(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hello").after(20)]);
@@ -104,7 +86,6 @@ function test_answer_at_its_time(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 25 * MS);
 }
 
-// A body that arrives a byte at a time is read whole.
 function test_chunked_arrival(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "abcdef").in_chunks(1, 2)]);
@@ -112,7 +93,6 @@ function test_chunked_arrival(): test.TestOutcome {
   return test.assert_eq(__body(got), "abcdef");
 }
 
-// A connect slower than the connect bound (10 s) fails at the bound.
 function test_connect_timeout(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 20000);
@@ -123,7 +103,6 @@ function test_connect_timeout(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 10000 * MS);
 }
 
-// An address nothing listens on refuses.
 function test_refused(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]);
@@ -131,9 +110,6 @@ function test_refused(): test.TestOutcome {
   return test.assert_eq(__message(got), "connect: Connection refused");
 }
 
-// A name with two addresses has them raced as `dns.connect_race` does:
-// the second attempt starts 300 ms after the first, and the one that
-// connects first is the one the request goes to.
 function test_addresses_raced(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen(ORIGIN, 80, 20000).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
@@ -144,8 +120,6 @@ function test_addresses_raced(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 305 * MS);
 }
 
-// A refusal hands the race on at once: the address behind a refusing one
-// connects at its own 5 ms, not after the fallback delay.
 function test_refusal_hands_on(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
@@ -156,7 +130,6 @@ function test_refusal_hands_on(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 5 * MS);
 }
 
-// A listener with no connect delay accepts at once rather than refusing.
 function test_listener_at_zero(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 0).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "at once")]);
@@ -167,8 +140,6 @@ function test_listener_at_zero(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 0 as i64);
 }
 
-// A connect bound of zero has passed before any attempt starts, so it
-// times out whether the address refuses or listens.
 function test_zero_connect_bound(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let zero: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), connect: time.duration_millis(0 as i64) };
@@ -181,15 +152,12 @@ function test_zero_connect_bound(): test.TestOutcome {
   return test.assert_eq(__message(listening), "timed out connecting");
 }
 
-// A name the network does not know fails to resolve.
 function test_unknown_name(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(__net(d), fetch.get("http://nowhere.test/"), __open());
   return test.assert_eq(__message(got), "resolve: Name or service not known");
 }
 
-// An origin that never answers is given up on at the inactivity bound
-// (30 s) after the request.
 function test_inactivity_timeout(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.silent()]);
@@ -200,9 +168,6 @@ function test_inactivity_timeout(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 5 * MS + 30000 * MS);
 }
 
-// A body read to the close, from an origin that sends it and then holds
-// the connection open, is given up on at the inactivity bound after the
-// last byte.
 function test_held_open_times_out(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\n\r\npartial").after(10).held()]);
@@ -213,8 +178,6 @@ function test_held_open_times_out(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 15 * MS + 30000 * MS);
 }
 
-// An origin that keeps the inactivity bound but drips its answer is
-// given up on at the total bound (60 s) from the start.
 function test_total_timeout(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "slow").in_chunks(1, 20000)]);
@@ -225,8 +188,6 @@ function test_total_timeout(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 60000 * MS);
 }
 
-// A redirect on the same origin is followed on a new connection, to the
-// path it names.
 function test_redirect_followed(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/a", [sim_fetch.redirect(302, "/b")]).route(ORIGIN, 80, "/b", [sim_fetch.reply(200, "at b")]);
@@ -240,8 +201,6 @@ function test_redirect_followed(): test.TestOutcome {
   return test.assert_eq(n.connects(), 2);
 }
 
-// A redirect to another origin drops the credentials the first request
-// carried, and keeps the rest.
 function test_cross_origin_drops_credentials(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
@@ -259,8 +218,6 @@ function test_cross_origin_drops_credentials(): test.TestOutcome {
   return test.assert_contains(__sent_text(n, 1), "X-Trace: kept");
 }
 
-// More redirects than the request allows is an error, after the allowed
-// number of hops.
 function test_redirect_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "*", [sim_fetch.redirect(302, "/again")]);
@@ -271,7 +228,6 @@ function test_redirect_cap(): test.TestOutcome {
   return test.assert_eq(n.sent_count(), 3);
 }
 
-// A GET the origin resets before answering is sent once more.
 function test_reset_retried_when_idempotent(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reset(), sim_fetch.reply(200, "second")]);
@@ -282,7 +238,6 @@ function test_reset_retried_when_idempotent(): test.TestOutcome {
   return test.assert_eq(n.sent_count(), 2);
 }
 
-// A POST the origin resets is not sent again.
 function test_reset_not_retried_when_not_idempotent(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reset(), sim_fetch.reply(200, "second")]);
@@ -293,9 +248,6 @@ function test_reset_not_retried_when_not_idempotent(): test.TestOutcome {
   return test.assert_eq(n.sent_count(), 1);
 }
 
-// A name resolving to a private address is refused on the route that
-// reaches global addresses only, before any connection, and reached on
-// the open one.
 function test_block_list(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("inside.test", ["10.0.0.7"]).listen("10.0.0.7", 80, 1).route("10.0.0.7", 80, "/", [sim_fetch.reply(200, "inside")]);
@@ -309,7 +261,6 @@ function test_block_list(): test.TestOutcome {
   return test.assert_eq(__body(fetch.send_on(n, fetch.get("http://inside.test/"), __open())), "inside");
 }
 
-// The open route, reaching only what `entries` name.
 function __allowing(entries: string[]): fetch.Policy {
   match (fetch.allow(entries)) {
     Ok(a) => {
@@ -320,8 +271,6 @@ function __allowing(entries: string[]): fetch.Policy {
   return __open();
 }
 
-// Hosts, host:ports, *.domains and bracketed IPv6 addresses are entries;
-// anything that names no host is refused, the entry named.
 function test_allow_list_entries(): test.TestOutcome {
   let ok: string[] = ["api.example.test", "api.example.test:8443", "*.example.test", "10.0.0.7", "[2001:db8::1]:443", "Example.TEST."];
   let bad: string[] = ["", "*", "*.", "*.*.test", "a b", "host:", "host:0", "host:080", "host:65536", "a:b:c", "[::1", "[::1]x", "[example.test]"];
@@ -351,9 +300,6 @@ function test_allow_list_entries(): test.TestOutcome {
   return test.assert_eq(out, "allow-list entry \"a b\" is not a host, a host:port or a *.domain");
 }
 
-// A route with an allow-list reaches only what it names: a *.domain
-// covers the names below it and not the domain, an entry with a port only
-// that port. A refusal comes before any connection.
 function test_allow_list_route(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).host("api.example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).listen("93.184.216.35", 8080, 5).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "api")]).route("93.184.216.35", 8080, "/", [sim_fetch.reply(200, "other")]);
@@ -367,8 +313,6 @@ function test_allow_list_route(): test.TestOutcome {
   return test.assert_eq(apex + "|" + port + "|" + reached, "blocked: example.test:80 is not on the allow-list|blocked: other.test:80 is not on the allow-list|api other");
 }
 
-// A redirect is a hop like the first: one to a host off the list is
-// refused after the redirecting answer, and never sent.
 function test_allow_list_redirect(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
@@ -379,8 +323,6 @@ function test_allow_list_redirect(): test.TestOutcome {
   return test.assert_eq(got, "blocked: other.test:80 is not on the allow-list");
 }
 
-// `body` in a stored (uncompressed) gzip member: the header, one final
-// stored deflate block, then the CRC-32 and length of `body`.
 function __gzip_stored(body: string): u8[] {
   let out: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
   let len: i32 = body.len();
@@ -402,7 +344,6 @@ function __gzip_stored(body: string): u8[] {
   return out;
 }
 
-// A 200 with a gzip `Content-Encoding` and `coded` as its payload.
 function __gzip_answer(coded: u8[]): sim_fetch.Answer {
   let out: u8[] = ("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " + coded.len().to_string() + "\r\n\r\n").bytes();
   for b in coded {
@@ -411,7 +352,6 @@ function __gzip_answer(coded: u8[]): sim_fetch.Answer {
   return sim_fetch.raw_bytes(out);
 }
 
-// A gzip answer to the client's own `Accept-Encoding` is decoded.
 function test_gzip_decoded(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_stored("unzipped text"))]);
@@ -422,13 +362,10 @@ function test_gzip_decoded(): test.TestOutcome {
   return test.assert_eq(__body(got), "unzipped text");
 }
 
-// A thousand `a`s gzipped: 29 bytes on the wire.
 function __gzip_thousand(): u8[] {
   return [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 3 as u8, 75 as u8, 76 as u8, 28 as u8, 5 as u8, 163 as u8, 96 as u8, 20 as u8, 12 as u8, 119 as u8, 0 as u8, 0 as u8, 3 as u8, 218 as u8, 56 as u8, 154 as u8, 232 as u8, 3 as u8, 0 as u8, 0 as u8];
 }
 
-// The body cap bounds what decoding may produce: a member that fits the
-// cap on the wire is refused once it decodes past it.
 function test_decoded_past_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_thousand())]);
@@ -442,7 +379,6 @@ function test_decoded_past_cap(): test.TestOutcome {
   return test.assert_eq(__message(got), "response body past its limit");
 }
 
-// A response body past the cap is refused before it is read whole.
 function test_body_past_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a body longer than eight bytes")]);
@@ -451,9 +387,6 @@ function test_body_past_cap(): test.TestOutcome {
   return test.assert_eq(__message(got), "response body past its limit");
 }
 
-// A kept connection carries the next request to the same origin: one
-// connect for two requests, the second at no connect cost, and the
-// connection open in the pool until `close_idle`.
 function test_pool_reuses_kept(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two").kept()]);
@@ -472,7 +405,6 @@ function test_pool_reuses_kept(): test.TestOutcome {
   return test.assert_eq(n.open(), 0);
 }
 
-// A response that announces `Connection: close` is never kept.
 function test_announced_close_not_kept(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one"), sim_fetch.reply(200, "two")]);
@@ -484,8 +416,6 @@ function test_announced_close_not_kept(): test.TestOutcome {
   return test.assert_eq(n.connects(), 2);
 }
 
-// A redirect back to the same origin is followed on the connection that
-// carried it.
 function test_redirect_reuses(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://example.test/next").kept()]).route(ORIGIN, 80, "/next", [sim_fetch.reply(200, "there")]);
@@ -496,9 +426,6 @@ function test_redirect_reuses(): test.TestOutcome {
   return test.assert_eq(n.connects(), 1);
 }
 
-// A kept connection the origin has since closed answers the next request
-// with a close before any byte, and the request is sent again on a new
-// connection.
 function test_closed_kept_redialled(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reset(), sim_fetch.reply(200, "fresh")]);
@@ -510,8 +437,6 @@ function test_closed_kept_redialled(): test.TestOutcome {
   return test.assert_eq(n.connects(), 2);
 }
 
-// A POST never takes a kept connection: one the origin had closed would
-// fail it after it may have been acted on, and it is not sent twice.
 function test_post_dials_fresh(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "posted")]);
@@ -523,8 +448,6 @@ function test_post_dials_fresh(): test.TestOutcome {
   return test.assert_eq(n.connects(), 2);
 }
 
-// A connection idle past the pool's bound (90 s) is closed rather than
-// reused.
 function test_idle_expired_closed(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
@@ -537,7 +460,6 @@ function test_idle_expired_closed(): test.TestOutcome {
   return test.assert_eq(n.open(), 0);
 }
 
-// A connection idle for exactly the bound is still reused.
 function test_idle_at_bound_reused(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
@@ -550,9 +472,6 @@ function test_idle_at_bound_reused(): test.TestOutcome {
   return test.assert_eq(n.connects(), 1);
 }
 
-// The one retry after a reset dials rather than drawing again: a second
-// kept connection to the same place (here the POST's) is as likely
-// closed as the first.
 function test_retry_dials_fresh(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "get").kept(), sim_fetch.reply(200, "post").kept(), sim_fetch.reset(), sim_fetch.reply(200, "fresh").kept()]);
@@ -565,8 +484,6 @@ function test_retry_dials_fresh(): test.TestOutcome {
   return test.assert_eq(n.connects(), 3);
 }
 
-// A connection with bytes past the response it carried is not kept: they
-// belong to no request the client sent.
 function test_trailing_bytes_not_kept(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhiHTTP/1.1 200 OK\r\n\r\n").held()]);
@@ -577,7 +494,6 @@ function test_trailing_bytes_not_kept(): test.TestOutcome {
   return test.assert_eq(n.open(), 0);
 }
 
-// A pool past its `max` closes the connection idle longest.
 function test_pool_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let other: string = "93.184.216.35";
@@ -591,8 +507,6 @@ function test_pool_cap(): test.TestOutcome {
   return test.assert_eq(n.connects(), 3);
 }
 
-// A connection the open route dialled is never handed to the public
-// route, whose block list judged none of its addresses.
 function test_routes_pool_apart(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two").kept()]);
@@ -604,8 +518,6 @@ function test_routes_pool_apart(): test.TestOutcome {
   return test.assert_eq(n.connects(), 2);
 }
 
-// A route through the proxy at `PROXY:3128` with a user and no password,
-// `no_proxy` as given and, when `cgi`, under a `REQUEST_METHOD`.
 function __via_proxy(public_only: boolean, no_proxy: string, cgi: boolean): fetch.Policy {
   let method: Option[string] = None;
   if (cgi) {
@@ -615,14 +527,10 @@ function __via_proxy(public_only: boolean, no_proxy: string, cgi: boolean): fetc
   return fetch.Policy { public_only: public_only, proxies: env, roots: None, jar: None, allow: None };
 }
 
-// The proxy listening, answering absolute-form requests for `example.test`.
 function __proxy_net(d: sim.Sim, answers: sim_fetch.Answer[]): sim_fetch.Net {
   return sim_fetch.net(d).listen(PROXY, 3128, 5).route(PROXY, 3128, "http://example.test/", answers);
 }
 
-// A request the proxy takes is written to it in absolute form, with the
-// origin's `Host` and the proxy's credentials; the origin's name is the
-// proxy's to resolve.
 function test_proxied(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
@@ -640,12 +548,10 @@ function test_proxied(): test.TestOutcome {
   return test.pass();
 }
 
-// The route through the proxy `spec` names, as the environment gives it.
 function __proxy_spec(spec: string): fetch.Policy {
   return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None, None, None), roots: None, jar: None, allow: None };
 }
 
-// A proxy named with no scheme and no port is an http one on port 80.
 function test_proxy_bare_host(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).listen(PROXY, 80, 5).route(PROXY, 80, "http://example.test/", [sim_fetch.reply(200, "via port 80")]);
@@ -653,8 +559,6 @@ function test_proxy_bare_host(): test.TestOutcome {
   return test.assert_eq(__body(got), "via port 80");
 }
 
-// A caller's own `Proxy-Authorization` is sent in place of the
-// environment's credentials.
 function test_caller_proxy_credentials(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
@@ -666,9 +570,6 @@ function test_caller_proxy_credentials(): test.TestOutcome {
   return test.pass();
 }
 
-// The caller's hop-by-hop fields, the fields its `Connection` names, and
-// its own `Host` and `Content-Length` stay off the wire; the rest go in
-// the caller's order, before the fields the client writes.
 function test_caller_fields_filtered(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "ok")]);
@@ -684,8 +585,6 @@ function test_caller_fields_filtered(): test.TestOutcome {
   return test.assert_eq(sent, "GET / HTTP/1.1\r\nHost: example.test\r\nX-First: 1\r\nX-Last: 2\r\nAccept-Encoding: gzip, zstd, br\r\n\r\n");
 }
 
-// An `http_proxy` that is not an http URL with a host refuses the request
-// rather than dialling around it.
 function test_proxy_spec_refused(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let unparsed: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __proxy_spec("http://[::1"));
@@ -696,7 +595,6 @@ function test_proxy_spec_refused(): test.TestOutcome {
   return test.assert_eq(__message(other), "invalid URL: http_proxy is not an http URL with a host");
 }
 
-// A host `no_proxy` names is dialled directly.
 function test_no_proxy_direct(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "direct")]);
@@ -704,8 +602,6 @@ function test_no_proxy_direct(): test.TestOutcome {
   return test.assert_eq(__body(got), "direct");
 }
 
-// Under a `REQUEST_METHOD` no proxy is read, since a CGI host makes one of
-// the client's request headers into the environment.
 function test_cgi_no_proxy(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "direct")]);
@@ -713,16 +609,12 @@ function test_cgi_no_proxy(): test.TestOutcome {
   return test.assert_eq(__body(got), "direct");
 }
 
-// A proxy that is not listening refuses the request.
 function test_proxy_refused(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __via_proxy(false, "", false));
   return test.assert_eq(__message(got), "connect: Connection refused");
 }
 
-// The public route resolves and judges the origin a proxy would reach,
-// and refuses one on a private address; the proxy's own private address
-// is the deployment's choice and goes unjudged.
 function test_proxied_origin_judged(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]).host("example.test", [ORIGIN]).host("inside.test", ["10.0.0.7"]);
@@ -734,8 +626,6 @@ function test_proxied_origin_judged(): test.TestOutcome {
   return test.assert_eq(__body(got), "via proxy");
 }
 
-// The proxy's connection is kept by the proxy's address, so it carries
-// requests for every origin behind it.
 function test_proxy_connection_kept(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "one").kept()]).route(PROXY, 3128, "http://other.test/", [sim_fetch.reply(200, "two").kept()]);
@@ -840,7 +730,6 @@ function test_raw_write_journal(): test.TestOutcome {
   return test.pass();
 }
 
-// A served handler's view of a request: its method, path and body.
 function __echo(req: HttpRequest): HttpResponse {
   match (req.body_string()) {
     Ok(body) => {
@@ -853,9 +742,6 @@ function __echo(req: HttpRequest): HttpResponse {
   return http.text(500, "body");
 }
 
-// A handler served in memory answers each request the client writes,
-// framed as a serve loop frames it: two GETs ride one kept connection, a
-// POST dials its own, and every request reached the handler whole.
 function test_served_in_memory(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).serve(ORIGIN, 80, __echo);
@@ -874,8 +760,6 @@ function test_served_in_memory(): test.TestOutcome {
   return test.assert_eq(n.connects(), 2);
 }
 
-// A route on the served address answers first; bytes that are not one
-// whole request are answered 400 on a connection the server closes.
 function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).serve(ORIGIN, 80, __echo).route(ORIGIN, 80, "/scripted", [sim_fetch.reply(200, "scripted")]);
@@ -929,15 +813,10 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// A scripted origin whose first two answers to /a differ, and whose /b is
-// gone.
 function __origin_to_tape(d: sim.Sim): sim_fetch.Net {
   return __net(d).route(ORIGIN, 80, "/a", [sim_fetch.raw("HTTP/1.1 200 Status\r\nContent-Type: text/plain\r\nX-Id: 1\r\nContent-Length: 3\r\nConnection: close\r\n\r\none"), sim_fetch.reply(200, "two")]).route(ORIGIN, 80, "/b?v=2", [sim_fetch.reply(404, "gone")]);
 }
 
-// What a client sent through `send_taped` replays on a fresh network: the
-// same answers in the same order, the last repeating, with the fields the
-// resource carried and none of the wire's.
 function test_cassette_round_trip(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __origin_to_tape(d);
@@ -977,7 +856,6 @@ function test_cassette_round_trip(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// A body that is not UTF-8 is taped as hex and replays byte for byte.
 function test_cassette_binary_body(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let payload: u8[] = [255 as u8, 0 as u8, 254 as u8];
@@ -1005,8 +883,6 @@ function test_cassette_binary_body(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// An https exchange replays as plain http on port 80, a blank line is
-// skipped, and a line that is not an exchange names its number.
 function test_cassette_https_and_refusal(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let cassette: string = "{\"method\":\"GET\",\"url\":\"https://api.test/x\",\"status\":201,\"headers\":[],\"body\":\"made\"}\n\n";

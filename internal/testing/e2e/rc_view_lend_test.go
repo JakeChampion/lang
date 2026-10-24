@@ -4,22 +4,6 @@ import (
 	"testing"
 )
 
-// #8502 — the `[T]` view header a call argument materialises had no owner.
-//
-// `checker.lendArrayAsView` rewrites an owned `T[]` argument at a `[T]`
-// parameter into the full-range slice `xs[:]`, and `as_bytes` produces the
-// same shape explicitly. Both lower to `__slice_make`, a two-word
-// `__fern_alloc` block with no rc header — `rcResultRaw` by classification —
-// so nothing in the rc machinery could release it and every call stranded 16
-// bytes on x86-64 and arm64, 8 on wasm.
-//
-// The caller frees it once the call returns. Three things make that sound, and
-// the first two are the language's: the coercion fires only at ARGUMENT
-// positions (E043 rejects it in a struct literal), and fields are immutable
-// after construction (E048), so the callee cannot write the view into storage
-// the caller still reads. That leaves the callee's RETURN, which
-// typeCannotCarrySlice gates.
-
 const viewLendSrc = `function total(src: [u8], n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -44,9 +28,6 @@ function main(): i32 {
     return 0;
 }`
 
-// The `as_bytes` producer of the same header, at the same argument position.
-// This is the half `std/crypto` reaches through `__sha256_absorb`, and the
-// reason audit_std_crypto's census row moved.
 const viewLendAsBytesSrc = `function total(src: [u8], n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -70,14 +51,6 @@ function main(): i32 {
     return 0;
 }`
 
-// The direction leakcheck cannot see. A callee may RETURN its view parameter —
-// `E063` forbids a view of function-local storage leaving the frame, but a
-// view of a PARAMETER may, and the header the lend allocated goes with it. The
-// caller-side free must not fire there, and the value must survive the call.
-//
-// 17 = element 3 of mk(8) (which is 9) plus the length 8. A freed header reads
-// back as whatever the freelist put there, so a wrong answer here is the
-// use-after-free this gate exists for.
 const viewLendEscapeSrc = `@noinline function id(s: [u8]): [u8] { return s; }
 function mk(n: i32): u8[] {
     let a: u8[] = __alloc_u8(n);
@@ -164,8 +137,6 @@ func TestArm64ViewLendHeaderReclaim(t *testing.T) {
 	}
 }
 
-// wasm has no leak counter, so it uses the __heap_bump_bytes() high-water
-// probe: flat under reclaim, linear under a leak.
 func TestWASMViewLendHeaderReclaim(t *testing.T) {
 	small := runWasm(t, viewLendBumpSrc("50"))
 	large := runWasm(t, viewLendBumpSrc("5000"))

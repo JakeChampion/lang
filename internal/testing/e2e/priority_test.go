@@ -1,25 +1,3 @@
-// `priority` / `set_priority` (#8375's primitive) end to end on every backend
-// that provides them.
-//
-// The read cannot assert a fixed number — the nice value is whatever the
-// runner was started with — so the probe SETS one and reads it back. That is
-// the check with teeth AND it keeps the test off the ABI split: Linux's
-// getpriority answers the value biased by 20 while BSD answers it directly,
-// so an expected value computed in Go would be right on one and wrong on the
-// other. Reading back a 19 the probe itself asked for catches a bias left in
-// place (1), a correction applied twice (1 again), and the swapped syscall
-// numbers, which make a read quietly renice and answer 0.
-//
-// The write is then exercised against two measured kernel behaviours. A value
-// outside -20..19 is CLAMPED rather than refused, so `set_priority(1000)`
-// succeeds and leaves 19 behind; and LOWERING the value needs privilege, so
-// the last leg accepts either outcome — Ok with the original read back, or
-// Err with nothing changed. Which one it is depends on whether the suite runs
-// as root, and both are correct.
-//
-// wasm has no leg: neither preview has a scheduler knob, so the `sched`
-// capability withholds both builtins and the program is refused at check
-// time.
 package e2e
 
 import (
@@ -30,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// prioritySource returns 0 when the pair agrees with itself, and a code
-// naming the disagreement otherwise.
 func prioritySource() string {
 	return `function main(): i32 {
     let orig: i32 = priority();
@@ -80,9 +56,6 @@ func TestArm64Priority(t *testing.T) {
 	}
 }
 
-// priorityAloneSource reads the nice value and nothing else. The read's
-// helper is a scalar leaf, so it has to link without the filesystem bundle
-// that a Result-returning call like set_priority pulls in.
 const priorityAloneSource = `function main(): i32 {
     let p: i32 = priority();
     if (p < 0 - 20 || p > 20) { return 1; }
@@ -103,18 +76,12 @@ func TestArm64PriorityAlone(t *testing.T) {
 	}
 }
 
-// The interpreter shares its process with the Go runtime, so the writes move
-// `fern`'s own niceness. That is the same one-process scope a compiled
-// program has, and it is why this probe puts the value back before it ends.
 func TestInterpPriority(t *testing.T) {
 	if code := runInterpExit(t, prioritySource()); code != 0 {
 		t.Fatalf("exit = %d, want 0 (3 = the value set was not the value read back)", code)
 	}
 }
 
-// Both wasm worlds refuse both halves, and the refusal has to come from the
-// capability scan rather than from the emitter: "this target has no scheduler
-// knob" is a different statement from "the backend forgot one".
 func TestWASMPriorityRefused(t *testing.T) {
 	for _, tc := range []struct{ builtin, src string }{
 		{"priority", "function main(): i32 { return priority(); }\n"},

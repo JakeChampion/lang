@@ -1,7 +1,3 @@
-// Native probe: left length, right length, rounds, mode (0 stdlib, 1 scalar,
-// 2 explicit kernel). The explicit kernel probe requires packed inputs.
-// Check every result and both inputs outside the timed region. The packed
-// probe retains the ordinary element-function call and append semantics.
 import "std/ndarray";
 import "std/string";
 import "std/array";

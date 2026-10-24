@@ -1,24 +1,4 @@
-// std/sim_platform — a `platform.Platform` over the simulation: the clock
-// and randomness of a `sim.Sim`, the network of a `sim_fetch.Net`, and a
-// configuration the test supplies. See docs/DST-PLATFORM-BRIEF.md and #9855.
-//
-// A handler generic over its platform runs here as it runs on the host,
-// in virtual time: `plat.now_ms()` is the sim's clock, `plat.random_i32()`
-// its seeded PRNG, `plat.http(req)` the public-only route over the scripted
-// network, with the network's pool keeping a connection for the next
-// request as the host platform's does, through the proxies `env_set`
-// named and never the machine's. `env`, `config`, `secret`, `stat`
-// and `peer` answer what the test set, `deadline` the bound `with_deadline`
-// gave on the sim's clock, which `cancelled` then reports passed once the
-// clock reaches it; and every call is recorded, as a mock
-// platform's is: the table and the log are a `mock_platform.MockPlatform`
-// the sim platform carries, so `calls()` reads back what the handler did.
-//
-//     let d: sim.Sim = sim.new(1);
-//     let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", ["93.184.216.34"]).listen("93.184.216.34", 80, 5);
-//     let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
-//     plat.config_set("REGION", "eu-west");
-//     let resp: HttpResponse = handle(req, plat);
+// This module provides platform capabilities for deterministic simulations.
 
 import "std/platform";
 import "std/sim";
@@ -31,37 +11,24 @@ import "std/http/cookie";
 import "std/async";
 import "std/http/trace";
 
-// `SimPlatform` — the simulated platform: the driver whose clock and PRNG
-// it reads, the network its `http` sends over, and the mock whose canned
-// table and call log it keeps its configuration and record in.
 pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow], deadline: Option[i64], trace: Option[trace.Context] }
 
-// `new(drv, net)` — a sim platform over `drv` and `net`, with nothing set.
 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform {
   return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new(), jar: None, allow: None, deadline: None, trace: None };
 }
 
-// `(p).with_jar(jar)` — the platform with `jar` (std/http/cookie), as
-// `platform.Host.with_jar`: its `http` carries and stores cookies.
 pub function (p: SimPlatform) with_jar(jar: cookie.Jar): SimPlatform {
   return SimPlatform { ...p, jar: Some(jar) };
 }
 
-// `(p).with_allow(a)` — the platform whose `http` reaches only what `a`
-// names, as `platform.Host.with_allow`.
 pub function (p: SimPlatform) with_allow(a: fetch.Allow): SimPlatform {
   return SimPlatform { ...p, allow: Some(a) };
 }
 
-// `(p).with_deadline(at)` — the platform whose request is due by `at`, a
-// reading of the sim's clock in nanoseconds, as `platform.Host.with_deadline`.
 pub function (p: SimPlatform) with_deadline(at: i64): SimPlatform {
   return SimPlatform { ...p, deadline: Some(at) };
 }
 
-// `(p).with_trace(span)` — the platform whose request runs in `span`, as
-// `platform.Host.with_trace`: its `http` sends a child span, the id drawn
-// from the sim's PRNG.
 pub function (p: SimPlatform) with_trace(span: trace.Context): SimPlatform {
   return SimPlatform { ...p, trace: Some(span) };
 }
@@ -106,9 +73,6 @@ impl platform.Platform for SimPlatform {
     let moved: boolean = self.drv.advance_to(self.drv.now_ns() + d.as_nanos());
   }
 
-  // The route the host platform takes, over the scripted network: global
-  // addresses only, the network's pool keeping the connection, and the
-  // proxies the env the test set names, never the machine's.
   function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     self.mock.record("http", req.method + " " + req.url);
     let drv: sim.Sim = self.drv;
@@ -141,53 +105,38 @@ impl platform.Platform for SimPlatform {
   }
 }
 
-// `(p: SimPlatform).env_set(name, value)` — `plat.env(name)` answers
-// `Some(value)` from now on.
 pub function (p: SimPlatform) env_set(name: string, value: string): void {
   p.mock.env_set(name, value);
 }
 
-// `(p: SimPlatform).config_set(name, value)` — `plat.config(name)` answers
-// `Some(value)` from now on.
 pub function (p: SimPlatform) config_set(name: string, value: string): void {
   p.mock.config_set(name, value);
 }
 
-// `(p: SimPlatform).secret_set(name, value)` — `plat.secret(name)` answers
-// `Some(value)` from now on; the log holds the name alone.
 pub function (p: SimPlatform) secret_set(name: string, value: string): void {
   p.mock.secret_set(name, value);
 }
 
-// `(p: SimPlatform).file_set(path, content, mtime)` — `plat.stat(path)`
-// answers a file holding `content`, last modified at `mtime` (Unix
-// seconds), and `materialize` reads it.
 pub function (p: SimPlatform) file_set(path: string, content: string, mtime: i64): void {
   p.mock.file_set(path, content, mtime);
 }
 
-// `(p: SimPlatform).peer_set(addr)` — `plat.peer()` answers `addr`.
 pub function (p: SimPlatform) peer_set(addr: string): void {
   p.mock.peer_set(addr);
 }
 
-// `(p: SimPlatform).dir_set(path)` — `plat.stat(path)` answers a directory.
 pub function (p: SimPlatform) dir_set(path: string): void {
   p.mock.dir_set(path);
 }
 
-// `(p: SimPlatform).materialize(resp)` — `resp` with a file body read from
-// the files the test set, as a mock's `materialize` reads it.
 pub function (p: SimPlatform) materialize(resp: HttpResponse): HttpResponse {
   return p.mock.materialize(resp);
 }
 
-// `(p: SimPlatform).calls()` — the recorded calls, in order, as a mock's.
 pub function (p: SimPlatform) calls(): mock_platform.MockCall[] {
   return p.mock.calls();
 }
 
-// `(p: SimPlatform).reset()` — drop the log, keeping what was set.
 pub function (p: SimPlatform) reset(): void {
   p.mock.reset();
 }

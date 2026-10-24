@@ -6,8 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// exprOfReturn parses `function main(): i32 { return <src>; }` and hands back
-// the returned expression.
 func exprOfReturn(t *testing.T, src string) ast.Expr {
 	t.Helper()
 	prog, err := Parse("function main(): i32 { return " + src + "; }")
@@ -22,8 +20,6 @@ func exprOfReturn(t *testing.T, src string) ast.Expr {
 	return ret.Value
 }
 
-// shape renders a binary expression tree as `(op left right)` so precedence
-// and associativity are asserted structurally rather than by evaluation.
 func shape(e ast.Expr) string {
 	switch x := e.(type) {
 	case *ast.Binary:
@@ -43,29 +39,18 @@ func shape(e ast.Expr) string {
 	return "?"
 }
 
-// The saturating operators (#5542) sit in the existing arithmetic tiers:
-// `+|` / `-|` with `+` / `-`, `*|` with `*` / `/` / `%`, `<<|` with `<<` /
-// `>>`. They lex as single punctuators, so `a +| b` is one operator rather
-// than `a + (|b)` — and `+=` still wins over a `+`-prefixed match, while the
-// three-character `<<|` wins over `<<`.
 func TestSaturatingOperatorPrecedence(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
 		{"a +| b", "(+| a b)"},
 		{"a -| b", "(-| a b)"},
 		{"a *| b", "(*| a b)"},
-		// `*` binds tighter than `+|`.
 		{"a +| b * c", "(+| a (* b c))"},
-		// `*|` binds tighter than `+`.
 		{"a + b *| c", "(+ a (*| b c))"},
-		// Same tier, left-associative.
 		{"a -| b -| c", "(-| (-| a b) c)"},
 		{"a + b -| c", "(-| (+ a b) c)"},
 		{"a *| b / c", "(/ (*| a b) c)"},
-		// Shifts are looser than the additive tier.
 		{"a << b +| c", "(<< a (+| b c))"},
-		// Bitwise-or is looser still, so `a +| b | c` groups as `(a +| b) | c`.
 		{"a +| b | c", "(| (+| a b) c)"},
-		// `<<|` shares the shift tier with `<<` / `>>`.
 		{"a <<| b", "(<<| a b)"},
 		{"a <<| b + c", "(<<| a (+ b c))"},
 		{"a <<| b <<| c", "(<<| (<<| a b) c)"},
@@ -79,8 +64,6 @@ func TestSaturatingOperatorPrecedence(t *testing.T) {
 	}
 }
 
-// TestCompoundAssignStillLexesBeforeSaturating pins that adding `+|` to the
-// multi-character punctuator table did not shadow `+=`.
 func TestCompoundAssignStillLexesBeforeSaturating(t *testing.T) {
 	if _, err := Parse(`function main(): i32 { let a: i32 = 1; a += 2; return a; }`); err != nil {
 		t.Errorf("compound assign after adding +|: %v", err)
@@ -88,8 +71,6 @@ func TestCompoundAssignStillLexesBeforeSaturating(t *testing.T) {
 	if _, err := Parse(`function main(): i32 { let a: i32 = 1; let b: i32 = 2; return a | b; }`); err != nil {
 		t.Errorf("bitwise or after adding +|: %v", err)
 	}
-	// `<<|` sits ahead of `<<` in the punctuator table; `<<=` is longer still
-	// and must keep winning over both.
 	if _, err := Parse(`function main(): i32 { let a: i32 = 1; a <<= 2; return a; }`); err != nil {
 		t.Errorf("shift-assign after adding <<|: %v", err)
 	}

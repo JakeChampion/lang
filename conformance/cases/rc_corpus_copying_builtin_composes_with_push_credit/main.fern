@@ -1,20 +1,20 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The refusal that keeps the credit sound: one copying use
-// does not admit a retaining one. keep both scans its
-// parameter AND stores it in the array it returns, so
-// everyOccurrenceSafe refuses the whole param and the caller
-// keeps its reference alive for the container. Pinned on the
-// answer + the underflow counter because an over-releasing
-// build reads BETTER on live_bytes.
-// Originally the refusal pin from #7867 slice 2: the append store
-// REFUSED the param, and this case pinned the resulting leak to
-// prove the copying-builtin credit did not admit it. The #7914
-// push-element credit made that same append a COUNTED occurrence,
-// so both occurrences are now legitimately safe and the case's job
-// flipped: it proves the two credits COMPOSE and the returned
-// array's element stays live through the caller's read.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @noinline
 function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 

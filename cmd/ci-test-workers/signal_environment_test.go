@@ -16,9 +16,6 @@ import (
 	"time"
 )
 
-// Compare with the caller's dispositions, rather than assuming its shell has
-// default signals. test2json ignores INT and QUIT in its own process; making
-// it the test's parent must not silently change the test environment.
 func TestWorkerSignalEnvironment(t *testing.T) {
 	if _, err := exec.LookPath("gotestsum"); err != nil {
 		t.Skip("gotestsum is required for the subprocess integration test")
@@ -52,8 +49,6 @@ func TestWorkerSignalFixture(t *testing.T) {
 	}
 }
 
-// The stdin converter reports success for this complete PASS stream. The
-// runner must still report the binary's failure if it exits nonzero afterward.
 func TestWorkerStreamExitStatus(t *testing.T) {
 	if _, err := exec.LookPath("gotestsum"); err != nil {
 		t.Skip("gotestsum is required for the subprocess integration test")

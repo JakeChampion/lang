@@ -1,5 +1,3 @@
-// Linux cgroup v2 CPU bandwidth, as observed by GNU nproc 9.12.
-// Unknown, unlimited, or malformed data leaves the affinity count uncapped.
 import "std/string";
 import "std/u64";
 import "./gnu";
@@ -14,8 +12,6 @@ pub function count(text: string): u64 {
   if (quota.1 != 0 || period.1 != 0 || quota.0 == 0 as u64 || period.0 == 0 as u64) {
     return 0 as u64;
   }
-  // GNU rounds to the nearest processor, halves up, with a floor of one.
-  // Quotient/remainder arithmetic avoids overflow from quota + period / 2.
   let n: u64 = quota.0 / period.0;
   if (quota.0 % period.0 >= period.0 / (2 as u64) + period.0 % (2 as u64)) {
     n = n + 1 as u64;

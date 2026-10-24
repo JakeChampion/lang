@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternSingleFieldRecordResultCustomProvider is the P4c single-field
-// record-*result* gate (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern
-// returns a record with exactly one field. Unlike a multi-field record (which
-// flattens to > 1 core value and so returns indirectly through a return-area
-// pointer), a single-field record flattens to exactly one core value — it fits
-// MAX_FLAT_RESULTS=1 — so the canonical ABI returns it *by value*. The raw
-// import returns the field's core valtype directly (no return area, no
-// cabi_realloc), and the wrapper materializes the one-field Fern struct from it
-// (ir.ExternRecordResult.Direct).
-//
-// The provider exports `make-wrapped: func(a: s32) -> record wrapped { v: s32 }`
-// returning {v: a} by value. The Fern side reads w.v and expects 42.
 func TestExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -41,7 +29,6 @@ func TestExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/src@0.1.0 make-wrapped. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -51,9 +38,6 @@ func TestExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// A single-field record result is returned by value (it fits the 1 flat
-	// result slot), so the export is just `(param $a i32) (result i32)` — no
-	// return area, no cabi_realloc.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -68,7 +52,6 @@ func TestExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom src iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -103,7 +86,6 @@ func TestExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: make_wrapped(42) -> Wrapped; check w.v == 42. ---
 	const want = "w-ok"
 	src := `struct Wrapped { v: i32 }
 @import("local:test/src@0.1.0", "make-wrapped")

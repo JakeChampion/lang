@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Values alone do not distinguish a kernel from std/ndarray's scalar walk.
-// Check emitted code at the actual call site as well as immutable aliases,
-// shape and element order. A transpose deliberately produces different order.
 const ndarrayScaleKernelSrc = `import "std/ndarray";
 
 @noinline function packed_scale(xs: f64[]): ndarray.NdArray[f64] {
@@ -122,8 +119,6 @@ func TestSelfHostNdarrayScaleKernelX86_64(t *testing.T) {
 		{"packed_dynamic", true},
 		{"zero_scale", true},
 		{"reversed_scale", false},
-		// The noinline named function is outside this slice's literal-body
-		// proof and remains a scalar map.
 		{"named_scale", false},
 		{"strided_scale", false},
 		{"unknown_scale", false},
@@ -197,7 +192,6 @@ func TestSelfHostNdarrayScaleKernelBenchmark(t *testing.T) {
 				if err := json.Unmarshal(bytes.TrimSpace(out), &report); err != nil {
 					t.Fatalf("benchmark report: %v\n%s", err, out)
 				}
-				// Each round sums 2*i for i in [0, 17).
 				if report.N != 17 || report.Rounds != 2 || report.Checksum != 544 {
 					t.Fatalf("incorrect benchmark result: %+v", report)
 				}

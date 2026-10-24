@@ -1,10 +1,3 @@
-// `@` bindings on variant, struct, and tuple patterns (#5356): `n @ Full(v)`
-// / `w @ Point { x, y }` / `w @ (a, b)` bind the whole matched value to the
-// `@`-name (at the scrutinee's type) alongside the payload / field / element
-// binds. The whole value is a borrowed reference to the scrutinee (box,
-// struct pointer, or tuple pointer). Literal / wildcard sub-patterns stay
-// rejected (v1). These pin the native binaries against the interp oracle; a
-// couple also run through wasm.
 package e2e
 
 import (
@@ -20,7 +13,6 @@ var atBindingCases = []struct {
 	want int
 }{
 	{
-		// `n` is the whole value; `v` is the payload. total(n) re-matches n.
 		name: "stmt_whole_and_payload",
 		src: `enum Box { Full(i32), Empty }
 function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
@@ -32,10 +24,9 @@ function f(b: Box): i32 {
   return 0;
 }
 function main(): i32 { return f(Full(3)); }`,
-		want: 33, // total(Full(3))=3 → 30 + 3
+		want: 33,
 	},
 	{
-		// Expression form + a guard that references the `@` binding.
 		name: "expr_guard_uses_at",
 		src: `enum Box { Full(i32), Empty }
 function is_full(b: Box): boolean { match (b) { Full(v) => { return true; }, Empty => { return false; } } return false; }
@@ -50,8 +41,6 @@ function main(): i32 { return f(Full(3)); }`,
 		want: 5,
 	},
 	{
-		// The `@` binding flows through a nested match without disturbing
-		// the payload binding.
 		name: "at_reused",
 		src: `enum Box { Full(i32), Empty }
 function depth(b: Box): i32 {
@@ -71,8 +60,6 @@ function main(): i32 { return depth(Full(7)); }`,
 		want: 107,
 	},
 	{
-		// `@` on a struct pattern: `w` is the whole struct, `x`/`y` the
-		// fields. w.x + w.y + x + y.
 		name: "struct_whole_and_fields",
 		src: `struct Point { x: i32, y: i32 }
 function f(p: Point): i32 {
@@ -82,10 +69,9 @@ function f(p: Point): i32 {
   return 0;
 }
 function main(): i32 { return f(Point { x: 3, y: 4 }); }`,
-		want: 14, // (3+4) + (3+4)
+		want: 14,
 	},
 	{
-		// Expression form + a guard referencing the struct `@` binding.
 		name: "struct_expr_guard_uses_at",
 		src: `struct P { a: i32, b: i32 }
 function f(p: P): i32 {
@@ -98,16 +84,13 @@ function main(): i32 { return f(P { a: 2, b: 8 }); }`,
 		want: 10,
 	},
 	{
-		// `@` combined with field renaming (`x: nx`) in the same arm.
 		name: "struct_at_with_rename",
 		src: `struct Point { x: i32, y: i32 }
 function f(p: Point): i32 { match (p) { w @ Point { x: nx, y: ny } => { return w.x * 100 + nx * 10 + ny; } } return 0; }
 function main(): i32 { return f(Point { x: 1, y: 2 }); }`,
-		want: 112, // 100 + 10 + 2
+		want: 112,
 	},
 	{
-		// `@` on a tuple pattern: `w` is the whole tuple, `x` the bound
-		// element. w.0 * 10 + x.
 		name: "tuple_whole_and_elems",
 		src: `function f(t: (i32, i32)): i32 {
   match (t) {
@@ -117,10 +100,9 @@ function main(): i32 { return f(Point { x: 1, y: 2 }); }`,
   return 0 - 1;
 }
 function main(): i32 { return f((1, 5)); }`,
-		want: 15, // 1*10 + 5
+		want: 15,
 	},
 	{
-		// Expression form + a guard referencing the tuple `@` binding.
 		name: "tuple_expr_guard_uses_at",
 		src: `function f(t: (i32, i32)): i32 {
   return match (t) {
@@ -169,17 +151,10 @@ func TestAtBindingWasm(t *testing.T) {
 	}
 }
 
-// What an `@` still cannot carry. Literal and range sub-patterns became
-// legal in #2698 (`n @ 1..10` is one of the forms the unified grammar is
-// specified around, and TestAtBindingScalar* covers it), leaving `_` — a
-// wildcard arm is the unconditional default at every downstream stage, with
-// no pattern to bind alongside — and a second, nested `@`.
 func TestAtBindingRejected(t *testing.T) {
 	cases := []string{
-		// `@` on `_`
 		`function f(x: i32): i32 { match (x) { n @ _ => { return 1; } } return 0; }
 function main(): i32 { return 0; }`,
-		// nested `@`
 		`enum Box { Full(i32), Empty }
 function f(b: Box): i32 { match (b) { a @ b2 @ Full(v) => { return v; }, Empty => { return 0; } } return 0; }
 function main(): i32 { return 0; }`,
@@ -187,7 +162,7 @@ function main(): i32 { return 0; }`,
 	for _, src := range cases {
 		prog, _, err := modload.LoadSource(src)
 		if err != nil {
-			continue // a parse error is the expected rejection
+			continue
 		}
 		if _, cerr := checker.Check(prog); cerr == nil {
 			t.Errorf("expected a parse/check error for invalid `@` binding, got none:\n%s", src)

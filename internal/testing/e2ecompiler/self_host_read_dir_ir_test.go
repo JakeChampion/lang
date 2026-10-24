@@ -9,23 +9,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostReadDirIR pins `read_dir(path)` lowering on the self-host x86-64 IR
-// path. read_dir lists a directory's base-name children (openat+getdents64,
-// skipping . / ..) and returns Result[string[], IoError]; std/test's
-// assert_eq_dir_listing is built on it (#3457). It lowers to op_read_dir -> the
-// Fern __fn___fern_read_dir runtime (boxing a string[] via __fern_arr_box). The
-// program makes a temp dir, writes two files, lists it, asserts the count is 2,
-// removes the tree, and exits 0 — exercising temp_dir / write_file / read_dir /
-// remove_dir_all all on the IR path. The test also pins that the runtime was
-// reached (call __fn___fern_read_dir in the asm).
 func TestSelfHostReadDirIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// temp_dir -> write 2 files -> read_dir -> assert 2 entries -> remove. Exit 0
-	// only if every step succeeds and the listing has exactly 2 names.
 	const src = `function main(): i32 {
     match (temp_dir("fern-readdir-ir")) {
         Ok(d) => {
@@ -56,11 +45,6 @@ func TestSelfHostReadDirIR(t *testing.T) {
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v", err)
 	}
-	// The Fern-compiled symbol (#2649): read_dir is asmcore.rt_src_read_dir
-	// now, so op_read_dir calls the stack-ABI __fn___fern_read_dir. The bare
-	// "__fern_read_dir" this used to look for is a SUBSTRING of that, so the
-	// assertion kept passing across the migration without ever proving which
-	// symbol was reached — name the whole thing.
 	if !strings.Contains(string(asm), "call __fn___fern_read_dir") {
 		t.Fatal("read_dir did not reach the Fern IR runtime (no call __fn___fern_read_dir in asm)")
 	}
@@ -77,17 +61,6 @@ func TestSelfHostReadDirIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostReadDirIRWasm is the wasm mirror: read_dir now lowers through the
-// wasm IR path too (it was a wasm_eligible exclusion). The wasm op_read_dir
-// handler calls a fresh runtime ($__fern_read_dir: preview1 path_open + an
-// fd_readdir cookie loop, skipping . / .., building a string[] via
-// $__fern_arr_push, wrapped Result[string[], IoError]). Unlike the x86 test this
-// exercises read_dir alone (temp_dir / write_file are not used — the Go side
-// stages the directory): it lists a directory of three known entries (asserting
-// the count and total name length, order-independent since WASI fd_readdir order
-// is filesystem-defined) and a missing directory (asserting Err), under wasmtime
-// with the temp dir as preopen, exiting 0 only if both resolve. Also pins that
-// the IR path was taken (`call $__fern_read_dir` in the WAT).
 func TestSelfHostReadDirIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host read_dir wasm IR e2e")
@@ -97,9 +70,6 @@ func TestSelfHostReadDirIRWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// Stage a directory "rd_dir" with three entries: a.txt, b.txt, and a subdir
-	// "sub" — names total 5+5+3 = 13 bytes (the order-independent check). The
-	// "." / ".." entries must be filtered by the runtime.
 	rd := filepath.Join(dir, "rd_dir")
 	if err := os.Mkdir(rd, 0o755); err != nil {
 		t.Fatalf("mkdir rd_dir: %v", err)
@@ -167,13 +137,6 @@ func TestSelfHostReadDirIRWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostReadDirAllIR pins `read_dir_all(path)` on the self-host x86-64
-// IR path (#9279): the same drain with the `.` / `..` records kept, so a
-// listing tool sees them where the directory holds them. `ls -f` is what
-// wanted it. The runtime source is read_dir's with the skip clause dropped
-// (asmcore.rt_src_read_dir_like), which is why the program compares the two
-// listings rather than only counting: read_dir_all must hold everything
-// read_dir holds, in the same order, plus exactly the two dot entries.
 func TestSelfHostReadDirAllIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -246,10 +209,6 @@ func TestSelfHostReadDirAllIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostReadDirAllIRWasm is the wasm mirror. Preview 1's fd_readdir
-// yields `.` and `..`, so $__fern_read_dir_all — read_dir's emitted body with
-// the skip clause suppressed — has them to keep: a staged directory of three
-// entries lists as five.
 func TestSelfHostReadDirAllIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host read_dir_all wasm IR e2e")

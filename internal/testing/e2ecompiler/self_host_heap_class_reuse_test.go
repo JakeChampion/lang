@@ -6,21 +6,9 @@ import (
 	"testing"
 )
 
-// The self-host heap's small tier classed every block by its exact size in
-// 8-byte words, so a buffer that grows a little per step asked for a new class
-// every step and never found the block it had just freed: 40,000 one-byte
-// appends to a string bumped ~800 MB of arena for an 80 KB result, with every
-// free accounted for (#8793). Above 2 KiB the classes are now native's
-// 3-significant-bit capacities and a block is bumped at its class's capacity,
-// so each freed buffer serves the next, slightly larger request.
-//
-// Each program measures its own arena with __heap_bump_bytes() and exits 1 when
-// the growth passes 16 MiB, so the observable is the reuse itself. The second
-// shape threads the accumulator through a call, #8785's row, which the
-// self-host OOM-killed at 100k appends.
 var heapClassReuseCases = []struct {
 	name, src string
-	want      int // the result's length % 7 + 10
+	want      int
 }{
 	{"bare_local", `function main(): i32 {
     let b0: i64 = __heap_bump_bytes();

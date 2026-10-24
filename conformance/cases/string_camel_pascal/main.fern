@@ -1,7 +1,7 @@
 import "std/string";
-// camel_case / pascal_case: the inverse of snake_case / kebab_case.
-// Each check returns a distinct nonzero exit on failure; the final 42
-// marks all-pass. Runs across interp / x86-64 / arm64 / wasm.
+
+
+
 function chk(got: string, want: string): boolean { return got == want; }
 function main(): i32 {
     if (!chk("foo_bar_baz".camel_case(), "fooBarBaz")) { return 1; }

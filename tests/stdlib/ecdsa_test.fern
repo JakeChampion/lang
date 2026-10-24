@@ -5,13 +5,6 @@ import "std/string";
 import "std/crypto/ecdsa";
 import "std/crypto/sha2";
 
-// tests/stdlib/ecdsa_test.fern — std/crypto/ecdsa against ECDSA signatures
-// Python's cryptography package made on P-256 over SHA-256 and SHA-384, and
-// on P-384 over SHA-384, SHA-256 and SHA-512 (the digest longer than the
-// order, so cut). Another message, another key, a flipped bit, a malformed
-// DER signature, a point off the curve, in the wrong encoding or on the
-// other curve are refused.
-
 function point_a(): string {
   return "04a23b9022d49b897ce4b6226ea2eaa36dd59f277918f9898473c8ce63303383790df2d39e99356fefe7d0437f100e5db677df12dbbc6676242f6421ac1df486b5";
 }
@@ -145,11 +138,8 @@ const P384_SHA384_SAMPLE: string = "306602310094edbb92a5ecb8aad4736e56c691916b3f
 
 const P384_SHA256_TEST: string = "306402306d6defac9ab64dabafe36c6bf510352a4cc27001263638e5b16d9bb51d451559f918eedaf2293be5b475cc8f0188636b02302d46f3becbcc523d5f1a1256bf0c9b024d879ba9e838144c8ba6baeb4b53b47d51ab373f9845c0514eefb14024787265";
 
-// RFC 6979 A.2.5's P-256 key.
 const P256_D: string = "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721";
 
-// signed is the hex signature `d` makes on `curve` over msg, after checking
-// its public point and that it verifies.
 function signed(curve: ecdsa.Curve, d: string, point: string, h: sha2.Hash, msg: string): string {
   match (ecdsa.private_key(curve, __codec_bytes(hex.decode(d)))) {
     Ok(k) => {
@@ -175,8 +165,6 @@ function signed(curve: ecdsa.Curve, d: string, point: string, h: sha2.Hash, msg:
   return "";
 }
 
-// RFC 6979's deterministic signatures, from A.2.5 and A.2.6 and a
-// reference implementation that reproduces them.
 function test_signing(): test.TestOutcome {
   if (signed(ecdsa.P256, P256_D, P256_POINT, sha2.Sha256, "sample") != P256_SHA256_SAMPLE || signed(ecdsa.P256, P256_D, P256_POINT, sha2.Sha256, "test") != P256_SHA256_TEST) {
     return test.fail("P-256 SHA-256: " + signed(ecdsa.P256, P256_D, P256_POINT, sha2.Sha256, "sample"));
@@ -256,8 +244,6 @@ function ecdh_shown(curve: ecdsa.Curve, d: string, peer: string): string {
   return "";
 }
 
-// ECDH: RFC 5903 §8.1's P-256 exchange both ways, a P-384 exchange against
-// Python's cryptography, and a point off the curve refused.
 function test_ecdh(): test.TestOutcome {
   let gi: string = "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c37725811805271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
   let gr: string = "04d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf6356fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
@@ -293,7 +279,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

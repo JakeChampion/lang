@@ -7,33 +7,18 @@ import (
 	"testing"
 )
 
-// annotateStrCases extend the typed-IR annotation (#5531) to string-valued
-// calls: the annotate pass stamps a string-returning call with its "string"
-// type tag, and the lowering reads the tag. Each program routes a
-// string-returning call's result into a string-typed use (.len() / concat),
-// oracle-checked against the interp.
-//
-// String programs allocate a heap (arena mmap): under binfmt-direct exec in a
-// cross-arch container that SIGSEGVs, but it runs correctly under explicit qemu
-// and native x86_64 — so the binary runs via the X86_64Tooling runner prefix
-// (nil on an x86_64 host).
 var annotateStrCases = []struct {
 	name string
 	src  string
 }{
-	// string-returning call bound to a local, then .len().
 	{"call_len", `function greet(n: string): string { return "hi " + n; }
-function main(): i32 { let g: string = greet("bob"); return g.len(); }`}, // 6
-	// concat of two string-returning call results (each must type as a string).
+function main(): i32 { let g: string = greet("bob"); return g.len(); }`},
 	{"call_concat", `function pfx(n: string): string { return "x" + n; }
-function main(): i32 { let g: string = pfx("ab") + pfx("cde"); return g.len(); }`}, // 3 + 4 = 7
-	// string call result used directly in a concat then measured.
+function main(): i32 { let g: string = pfx("ab") + pfx("cde"); return g.len(); }`},
 	{"call_direct_concat", `function tag(n: string): string { return "[" + n + "]"; }
-function main(): i32 { let g: string = tag("hi") + "!"; return g.len(); }`}, // "[hi]!" = 5
+function main(): i32 { let g: string = tag("hi") + "!"; return g.len(); }`},
 }
 
-// TestSelfHostAnnotateStrIR_X86_64 pins the checker-stamped string result type
-// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateStrIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

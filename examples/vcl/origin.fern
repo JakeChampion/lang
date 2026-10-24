@@ -1,16 +1,3 @@
-// examples/vcl/origin.fern — a tiny origin server to put behind the proxy.
-//
-//   $ fern -target x86-64-linux -o origin origin.fern
-//   $ ./origin 9000
-//
-// It exists to make caching PROVABLE. Every response carries the number of
-// requests this process has actually served, so if the proxy is caching,
-// a second request for the same URL comes back with the SAME counter — the
-// origin was never asked. No amount of reading the proxy's own headers
-// shows that; only the origin can.
-//
-// `Cache-Control: max-age=60` is what a real origin uses to tell a cache
-// how long it may keep the answer, and the proxy reads it.
 import "std/string";
 import "std/i32";
 import "std/http";
@@ -31,7 +18,6 @@ function main(): i32 {
       }
     }
   }
-  // The server holds this cell across requests.
   let served: Cell[i32] = cell_new(0);
   let handler: (HttpRequest, platform.Host) => HttpResponse = (req: HttpRequest, plat: platform.Host): HttpResponse => {
     served.set(served.get() + 1);

@@ -1,13 +1,13 @@
 // spec: IS-14
-//
-// The checked and saturating shifts are rejected on `usize`, like the
-// rest of their families. Whether `a <<? n` loses bits, and where
-// `a <<| n` clamps, both depend on the width, and `usize` is 32 bits on
-// wasm32 and 64 on the natives.
+
+
+
+
+
 function shl_checked(a: usize, n: usize): Option[usize] {
-    return a <<? n;   // error[E009]
+    return a <<? n;
 }
 
 function shl_saturating(a: usize, n: usize): usize {
-    return a <<| n;   // error[E009]
+    return a <<| n;
 }

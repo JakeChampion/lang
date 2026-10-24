@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// --- A fresh STRUCT handed straight to a call argument is freed after the call
-//
-// `take(mk(i))` — a box nothing else can reach — must be released after the
-// call, whether the argument is a struct literal or a producer call and
-// whether the callee is a free function or a method. A leak here is per
-// EVALUATION, exactly 2.0x per doubling of the round count. A struct produced
-// by one call and handed to the next is the largest single leak shape the
-// self-host's own run showed.
-//
-// Every want below was confirmed against bin/fern -interp, never read off the
-// self-host run.
-
 const freshStructArgProlog = "struct Op { a: i32, b: i32 }\n" +
 	"struct St { n: i32 }\n" +
 	"struct Box { o: Op, k: i32 }\n" +
@@ -42,7 +30,6 @@ type freshStructArgCase struct {
 	body string
 }
 
-// wantFor is the program's answer: the sum of the loop counter mod 83.
 func wantFor(rounds int) int {
 	sum := rounds * (rounds - 1) / 2
 	return sum % 83
@@ -50,29 +37,14 @@ func wantFor(rounds int) int {
 
 func freshStructArgCases() []freshStructArgCase {
 	return []freshStructArgCase{
-		// The self-host compiler's own dominant shape: a fresh struct from a
-		// producer call handed to a method. `p.emit(ir.op_load_local(i))`.
 		{name: "method_fresh_call_arg", body: "st = st.count(mkop(i));"},
-		// The literal at a method callee — the half of #7576 that never
-		// reached the method path.
 		{name: "method_struct_lit_arg", body: "st = st.count(Op { a: i, b: i });"},
-		// The producer call at a free callee.
 		{name: "free_fn_fresh_call_arg", body: "st = countf(st, mkop(i));"},
-		// The cell #7576 fixed. Pinned so the extraction into the shared
-		// helper cannot regress it.
 		{name: "free_fn_struct_lit_arg", body: "st = countf(st, Op { a: i, b: i });"},
-		// Bound to a local first — the one position that already worked, and
-		// the one a stash firing twice would over-release.
 		{name: "bound_first", body: "let o: Op = mkop(i); st = st.count(o);"},
 	}
 }
 
-// TestSelfHostFreshStructArgX86_64 — the fresh struct temp at a borrowable
-// argument position is released exactly once.
-//
-// `allocs == frees` at `live_bytes == 0` is the leak assertion; the exit code
-// carries the over-release one, since a doubly-released block returns to the
-// freelist and moves neither count.
 func TestSelfHostFreshStructArgX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -82,8 +54,6 @@ func TestSelfHostFreshStructArgX86_64(t *testing.T) {
 
 	for _, tc := range freshStructArgCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			// Both round counts: a leak here is per evaluation, so the
-			// doubling is what separates it from a bounded per-object loss.
 			for _, rounds := range []int{100, 200} {
 				src := freshStructArgSrc(tc.body, rounds)
 				asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
@@ -113,16 +83,6 @@ func TestSelfHostFreshStructArgX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreshStructArgRefusedX86_64 — a callee that KEEPS the argument
-// must not have it freed underneath.
-//
-// `keepf(o) -> o` hands the box straight back out and `wrapf(o, k) -> Box { o,
-// k }` moves it into a field; releasing after either call frees a box the
-// caller still reads. Both are correctly unborrowable, so no stash fires and
-// both keep their prior safe leak — which is why this asserts the ANSWER and
-// `__rc_underflow_count()` rather than leak counts. Removing the borrowability gate
-// is what these two rows catch, and they catch it as a wrong answer or an
-// underflow, not as a number.
 func TestSelfHostFreshStructArgRefusedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -147,8 +107,6 @@ func TestSelfHostFreshStructArgRefusedX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreshStructArgWasmIR — the wasm sibling. Exit codes only: the
-// leak counters are an x86-64 self-host backend feature.
 func TestSelfHostFreshStructArgWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping fresh struct arg wasm IR e2e")

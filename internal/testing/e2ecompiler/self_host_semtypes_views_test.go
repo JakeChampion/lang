@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Exact semantic identity must distinguish array storage from a borrowed
-// view, including when the distinction occurs inside another type.
 func TestSelfHostSemanticArrayViewIdentity(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

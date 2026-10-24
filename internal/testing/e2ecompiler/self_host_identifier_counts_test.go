@@ -28,8 +28,6 @@ var identifierCountCases = []struct {
 	{"nested lambda binding", "let f = (): i32 => { let x = 1; let g = (): i32 => { return x; }; return g(); }; return f();", "x", 0},
 }
 
-// Both the independently pinned counts and the existing list collector must
-// agree. The expression API is checked against its collector on each node.
 func identifierCountSource() string {
 	var src strings.Builder
 	src.WriteString(`import "./ast";

@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8406: a `[T]` slice header is an rc1 block the IR releases like a
-// tuple box — the exit sweep for a local, the arg-temp release for
-// `f(s.as_bytes())`, the receiver stash for `.len()` / `[i]`, the
-// cast for `as usize` (std/string.bytes), and the parent of a
-// sub-slice. Every consumer shape in one 10k loop; before the
-// header carried an rc it bumped 16 bytes per call that nothing
-// could free. Heap-form strings only: `as_bytes` on an inline
-// string promotes the bytes into an unowned copy, a separate gap.
+
+
+
+
+
+
+
+
+
+
+
 import "std/string";
 function sum_view(b: [u8]): i32 {
     let t: i32 = 0;

@@ -9,44 +9,17 @@ import (
 	"testing"
 )
 
-// withAliasIRCases exercise the in-place `a = a.with(i, v)` self-reassign through
-// the self-host IR path when the array `a` has a lasting LOCAL alias (#3599).
-//
-// An in-place write is UNSOUND once `a` is aliased (`let b = a`, captured into a
-// struct literal, …): it mutates the buffer the alias still reads, so `b` would
-// observe the change. The aliased self-reassign must copy-on-write and leave the
-// alias unchanged, as the interpreter does. The unaliased "no-alias" case may
-// still update in place.
-//
-// The own-caller cases cover #8874: a declared consuming parameter can arrive
-// shared through its caller, so its update must test runtime uniqueness. These
-// also check the counted reference protocol across calls, rebinds and exits.
-//
-// Each case is oracle-checked against the interpreter, routing-pinned to "ir",
-// and returns a non-negative value <= 126.
 var withAliasIRCases = []struct {
 	name string
 	main string
 }{
-	// The issue's minimal repro: a plain `let b = a` alias, mutate a, read both.
-	// In-place mutation made b[0] == 9 too (9+9=18); copy-on-write keeps b[0]==1.
 	{"basic", `function main(): i32 { let a = [1, 2, 3]; let b = a; a = a.with(0, 9); return a[0] + b[0]; }`},
-	// Two live aliases of the same array; neither must see a's later mutation.
 	{"two-alias", `function main(): i32 { let a = [1, 2]; let b = a; let c = a; a = a.with(0, 7); return b[0] + c[0]; }`},
-	// The mutation is conditional (inside an if) but the alias is live across it.
 	{"cond", `function main(): i32 { let a = [1, 2, 3]; let b = a; if (a[0] == 1) { a = a.with(1, 8); } return a[1] + b[1]; }`},
-	// Alias captured into a struct field literal (`H { xs: a }`): the field still
-	// references the original buffer, so the in-place mutate would corrupt it.
 	{"struct-field-alias", `struct H { xs: i32[] }
 function main(): i32 { let a = [1, 2, 3]; let h = H { xs: a }; a = a.with(0, 9); return a[0] + h.xs[0]; }`},
-	// Nested array: `let h = g` aliases the outer array; replacing g[0] must not
-	// disturb h[0][0].
 	{"nested", `function main(): i32 { let g = [[1, 2], [3, 4]]; let h = g; g = g.with(0, [9, 9]); return g[0][0] + h[0][0]; }`},
-	// REGRESSION: no alias — the in-place fast path must still apply and be
-	// correct (a sole-owned array's .with returns the mutated value).
 	{"no-alias", `function main(): i32 { let a = [1, 2, 3]; a = a.with(0, 9); return a[0] + a[1]; }`},
-	// An own parameter transfers one counted reference, not unique storage.
-	// The alias is in the caller, outside the callee's local alias analysis.
 	{"own-caller-snapshot-i32", `@noinline
 function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
 function main(): i32 { let a: i32[] = [1, 2, 3]; let old = a; a = update(a); if (old[0] != 1 || old[1] != 2 || old[2] != 3 || a[0] != 9 || a[1] != 2 || a[2] != 3) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
@@ -112,9 +85,6 @@ function make(n: i32): E { return Data([n, n + 1]); }
 function take(n: i32): i32[] { let e = make(n); match (e) { Data(xs) => { return xs; } } return []; }
 function churn(): i32 { let i = 0; while (i < 32) { let xs = take(i); if (xs[0] != i || xs[1] != i + 1) { return 1; } i = i + 1; } return 0; }
 function main(): i32 { if (churn() != 0) { return 1; } let before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
-	// A fresh initializer is not an ownership fact about a later value of the
-	// same binding. Rebinding this local to a borrowed parent must keep that
-	// parent's payload alive after the returned projection is released.
 	{"own-caller-lifetime-rebound-match-root", `enum E { Full(i32[]), Empty }
 @noinline
 function take(e: E): i32[] { let local = E.Full([91, 92]); local = e; match (local) { Full(xs) => { return xs; }, Empty => { return [0]; } } return []; }
@@ -139,15 +109,10 @@ function main(): i32 { let c = cell_new(0); let xs = [1, 2]; let old = xs; xs = 
 	{"own-caller-indirect", `@noinline
 function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
 function main(): i32 { let f = update; let xs = [1, 2]; let old = xs; xs = f(xs); if (xs[0] != 9 || old[0] != 1) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// The first write copies the static literal, so the snapshot follows it.
 	{"own-caller-lifetime-unique-reuse", `@noinline
 function update(own xs: i32[], n: i32): i32[] { xs = xs.with(0, n); return xs; }
 function churn(): i32 { let xs = update([1, 2, 3], 0); let before: i64 = __heap_bump_bytes(); let i = 0; while (i < 32) { xs = update(xs, i); i = i + 1; } if (xs[0] != 31 || xs[1] != 2 || xs[2] != 3) { return 1; } if (__heap_bump_bytes() != before) { return 2; } return 0; }
 function main(): i32 { if (churn() != 0 || churn() != 0) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// The function type spells the consuming slot, so `apply` and `update`
-	// agree on who releases the argument — and the caller hands over a value
-	// it owns. Written `(i32[]) => i32[]` the two disagreed: the call lent a
-	// reference the callee released.
 	{"own-caller-higher-order", `@noinline
 function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
 @noinline
@@ -209,8 +174,6 @@ function churn(): i32 { let xs = [1, 2, 3]; let i = 0; while (i < 32) { xs = rep
 function main(): i32 { if (churn() != 0) { return 1; } let before: i64 = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 }
 
-// Observe underflows after the fixture's array-owning frame has exited. A
-// counter read inside that frame cannot see a double drop in its exit sweep.
 func withAliasCheckedSource(name, source string) string {
 	if !strings.HasPrefix(name, "own-caller-") && name != "borrowed-to-own-caller-live" {
 		return source
@@ -256,8 +219,6 @@ func TestSelfHostWithAliasIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostWithAliasIRX86_64 routes each case through the self-hosted x86-64 IR
-// driver, oracle-checked, with routing pinned to "ir".
 func TestSelfHostWithAliasIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -299,7 +260,6 @@ func TestSelfHostWithAliasIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostWithAliasIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostWithAliasIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host with-alias wasm IR e2e")

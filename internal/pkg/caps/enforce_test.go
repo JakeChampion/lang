@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// caps.Enforce splits caps.Analyze's rows on the grant table: a governed package
-// errors outside its grant and stays silent inside it, an ungoverned
-// package warns, and the root package is exempt from both.
 func TestEnforce(t *testing.T) {
 	rows := []caps.Row{
 		{Package: "app", Uses: []caps.Use{{Capability: "net", Chain: []string{"main", "tcp_close"}}}},

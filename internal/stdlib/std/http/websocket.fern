@@ -1,50 +1,4 @@
-// std/http/websocket — the WebSocket protocol (RFC 6455) on the server
-// side: the opening handshake, and the session that runs on the upgraded
-// connection, its frames read and written as the peer sends and the
-// handler answers.
-//
-//     import "std/http/websocket";
-//
-//     function echo(c: websocket.Conn, m: websocket.Message): void {
-//       match (m) {
-//         Text(s) => { let r: websocket.SendResult = c.send_text(s); },
-//         Binary(b) => { let r: websocket.SendResult = c.send_binary(b); }
-//       }
-//     }
-//
-//     function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
-//       if (req.path == "/ws") {
-//         return http.respond(websocket.accept(req, websocket.options(), websocket.handlers(echo)));
-//       }
-//       return http.ok("hi");
-//     }
-//
-// `accept` checks the handshake and answers the 101 whose body runs the
-// session: std/serve streams an upgrade request's body as the
-// connection's bytes after the head and keeps the connection for the
-// session once the handler answers 101, the session reading frames
-// through the request's stream (parked between them, so the worker
-// serves its other connections meanwhile) and writing through it. What
-// a handler sends from inside a callback is corked: it leaves in one
-// write when the callback returns, which is where a `SendResult` of
-// `Backpressure` (the cork past `Options.backpressure`) or `Dropped`
-// (past `max_backpressure`, or the connection closing) comes from, and
-// `Handlers.drain` runs once a cork that was past the soft bound has
-// gone out. A connection quiet for `serve.Config.keep_alive_idle` is
-// closed as an idle persistent one is.
-//
-// The session is strict as the protocol asks: a reserved bit, an unknown
-// opcode, a fragmented or oversized control frame, an unmasked frame, a
-// continuation with nothing to continue or a data frame inside a
-// fragmented message close with 1002; text that is not UTF-8, checked as
-// the fragments arrive, with 1007; a message past `max_message` with
-// 1009; a close frame with a one-byte payload, a code outside the
-// registry or a reason that is not UTF-8 with 1002 or 1007. A ping is
-// answered with its pong at once, inside a fragmented message too; a
-// pong is ignored. A close the peer sends is echoed with its code and
-// the session ends; a close the handler sends ends the session once the
-// peer's close, or the end of its bytes, arrives, the messages between
-// read and not delivered.
+// This module implements WebSocket server sessions under RFC 6455.
 
 import "std/http";
 import "std/headers";
@@ -59,35 +13,17 @@ import "std/deflate";
 import "std/error";
 import "core/cmp";
 
-// `Options` — the session's bounds: `max_message`, the largest message
-// taken whole (1009 past it); `backpressure`, the corked bytes past which
-// `send` answers `Backpressure`; `max_backpressure`, past which it drops
-// the message; `protocols`, the subprotocols the server speaks, the
-// first of the client's offers among them chosen; and `compression`,
-// whether to take a client's `permessage-deflate` offer (RFC 7692),
-// the server compressing each message alone and the reader keeping the
-// client's 32 KiB window across messages.
 pub struct Options { max_message: i32, backpressure: i32, max_backpressure: i32, protocols: string[], compression: boolean }
 
-// `options()` — a 1 MiB message, 64 KiB of cork before backpressure, 1
-// MiB before a drop, no subprotocol, no compression.
 pub function options(): Options {
   let none: string[] = [];
   return Options { max_message: 1048576, backpressure: 65536, max_backpressure: 1048576, protocols: none, compression: false };
 }
 
-// `Message` — one message the peer sent: text, decoded, or bytes.
 pub enum Message { Text(string), Binary(u8[]) }
 
-// `SendResult` — what became of a send: corked to go out when the
-// callback returns; corked past `Options.backpressure`, so the handler
-// should slow down; or dropped, past `max_backpressure` or on a
-// connection that is closing.
 pub enum SendResult { Sent, Backpressure, Dropped }
 
-// `UpgradeError` — why `accept` refused the request: not a WebSocket
-// handshake (426, naming the upgrade), a `Sec-WebSocket-Version` other
-// than 13 (426, naming it), no usable `Sec-WebSocket-Key` (400).
 pub enum UpgradeError { NotWebSocket, WrongVersion, KeyMissing }
 
 pub function (e: UpgradeError) to_string(): string {
@@ -127,27 +63,14 @@ impl http.ToResponse for UpgradeError {
   }
 }
 
-// `Handlers` — what the session calls: `open` once the connection is
-// the session's, `message` for each message, `drain` once a cork that
-// was past the soft bound has gone out, `close` as the session ends,
-// with the close code and reason (1005 and "" when none was sent, 1006
-// when the peer's bytes ended without one).
 pub struct Handlers { open: (Conn) => void, message: (Conn, Message) => void, drain: (Conn) => void, close: (Conn, i32, string) => void }
 
-// `handlers(message)` — handlers with `message` and nothing else.
 pub function handlers(message: (Conn, Message) => void): Handlers {
   return Handlers { open: (c: Conn): void => {}, message: message, drain: (c: Conn): void => {}, close: (c: Conn, code: i32, reason: string): void => {} };
 }
 
-// `Conn` — the session's connection as the handler sees it: `protocol`,
-// the subprotocol chosen ("" for none); `path`, the request's; `window`,
-// the LZ77 window bits messages are compressed with, 0 for a connection
-// without compression. What the handler sends is corked in `out` until
-// its callback returns.
 pub struct Conn { protocol: string, path: string, window: i32, opts: Options, out: Cell[u8[]], state: Cell[i32], code: Cell[i32], reason: Cell[string], pressured: Cell[i32], write: (u8[]) => i32 }
 
-// `(c).send_text(s)`, `(c).send_binary(b)` — a message corked for the
-// peer.
 pub function (c: Conn) send_text(s: string): SendResult {
   return __send(c, 1, s.bytes());
 }
@@ -156,15 +79,10 @@ pub function (c: Conn) send_binary(b: u8[]): SendResult {
   return __send(c, 2, b);
 }
 
-// `(c).ping(payload)` — a ping corked for the peer, its pong ignored
-// when it comes; `payload` is at most 125 bytes, cut there.
 pub function (c: Conn) ping(payload: u8[]): SendResult {
   return __send(c, 9, array.take(payload, 125));
 }
 
-// `(c).close(code, reason)` — the close frame corked, after which
-// nothing more is sent; the session ends once the peer's close, or the
-// end of its bytes, arrives. A code of 1005 sends an empty close.
 pub function (c: Conn) close(code: i32, reason: string): void {
   if (c.state.get() != 0) {
     return;
@@ -175,14 +93,10 @@ pub function (c: Conn) close(code: i32, reason: string): void {
   c.out.set(c.out.get().concat(__frame(8, __close_payload(code, reason))));
 }
 
-// `(c).is_open()` — whether the handler may still send.
 pub function (c: Conn) is_open(): boolean {
   return c.state.get() == 0;
 }
 
-// `accept(req, opts, h)` — the request's handshake checked and the 101
-// that runs the session under `h`, or why it was refused. `http.respond`
-// answers an `UpgradeError` with its response.
 pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpResponse, UpgradeError] {
   if (!__is_websocket(req)) {
     return Err(NotWebSocket);
@@ -209,13 +123,6 @@ pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpRe
   return Ok(resp);
 }
 
-// __negotiated(req, opts) — the `permessage-deflate` offer taken, when
-// the server compresses and the client made one it can take: the window
-// bits the server compresses with (the client's `server_max_window_bits`
-// where it named one, 15 otherwise) and the extension's response line,
-// which names no context takeover on the server's side only: the client
-// keeps its window across messages, and the reader decodes against it;
-// `(0, "")` otherwise.
 function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
   if (!opts.compression) {
     return (0, "");
@@ -231,9 +138,6 @@ function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
   return (0, "");
 }
 
-// __deflate_offer(offer) — the window bits one offer asks the server to
-// keep to, 15 for none asked, 0 for an offer that is not
-// permessage-deflate or names a parameter this server cannot take.
 function __deflate_offer(offer: string): i32 {
   let parts: string[] = offer.split(";");
   if (parts.len() == 0 || parts[0].trim() != "permessage-deflate") {
@@ -267,8 +171,6 @@ function __seen(names: string[], name: string): boolean {
   return false;
 }
 
-// __window_value(v) — a window-bits value 8 to 15 (quoted or not), or 0
-// for one outside that range or not a number.
 function __window_value(v: string): i32 {
   match (v.trim().trim_chars("\"").parse_int()) {
     Some(n) => {
@@ -284,14 +186,6 @@ function __window_value(v: string): i32 {
   return 0;
 }
 
-// __deflate_param(name, kv, bits) — the window bits after one parameter of
-// the offer, 0 to decline the whole offer (RFC 7692 §7: an invalid value,
-// a value on a value-less parameter, a duplicate, or a parameter this
-// server does not define). `server_max_window_bits` sets the bits the
-// server compresses with; the takeover parameters and
-// `client_max_window_bits` leave them, the last two value-less or, for
-// `client_max_window_bits`, carrying an advisory value the server need
-// not honour but must still find valid.
 function __deflate_param(name: string, kv: string[], bits: i32): i32 {
   if (kv.len() > 2) {
     return 0;
@@ -315,13 +209,10 @@ function __deflate_param(name: string, kv: string[], bits: i32): i32 {
   return 0;
 }
 
-// `accept_key(key)` — the `Sec-WebSocket-Accept` for a client's key.
 pub function accept_key(key: string): string {
   return base64.encode(crypto.sha1_bytes((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes()));
 }
 
-// `frame(fin, opcode, payload, mask)` — a frame as a client writes one
-// (masked under `mask`'s four bytes) or a server does (`mask` empty).
 pub function frame(fin: boolean, opcode: i32, payload: u8[], mask: u8[]): u8[] {
   let b0: i32 = opcode;
   if (fin) {
@@ -352,10 +243,6 @@ function __frame(opcode: i32, payload: u8[]): u8[] {
   return frame(true, opcode, payload, none);
 }
 
-// __frame_out(c, opcode, payload) — a data frame as the connection sends
-// it: compressed under RSV1 when the connection compresses and there is
-// something to compress, the stream's open tail dropped as RFC 7692 has
-// it; a control frame, or an empty payload, as it is.
 function __frame_out(c: Conn, opcode: i32, payload: u8[]): u8[] {
   if (c.window == 0 || opcode > 2 || payload.len() == 0) {
     return __frame(opcode, payload);
@@ -374,8 +261,6 @@ function __masked(payload: u8[], mask: u8[]): u8[] {
   }
   return out;
 }
-
-// ---- the handshake ---------------------------------------------------
 
 function __is_websocket(req: HttpRequest): boolean {
   if (req.method != "GET") {
@@ -398,7 +283,6 @@ function __version_13(req: HttpRequest): boolean {
   return req.headers.get("sec-websocket-version").unwrap_or("").trim() == "13";
 }
 
-// A key is 16 bytes in base64: 24 characters ending in `==`, decodable.
 function __key_ok(key: string): boolean {
   if (key.len() != 24) {
     return false;
@@ -414,7 +298,6 @@ function __key_ok(key: string): boolean {
   return false;
 }
 
-// The first subprotocol the client offers that the server speaks.
 function __protocol(req: HttpRequest, opts: Options): string {
   for v in req.headers.get_all("sec-websocket-protocol") {
     for tok in v.split(",") {
@@ -441,8 +324,6 @@ function __conn(req: HttpRequest, protocol: string, window: i32, opts: Options):
   return Conn { protocol: protocol, path: req.path, window: window, opts: opts, out: cell_new(none), state: cell_new(0), code: cell_new(1005), reason: cell_new(""), pressured: cell_new(0), write: write };
 }
 
-// ---- sending -----------------------------------------------------------
-
 function __send(c: Conn, opcode: i32, payload: u8[]): SendResult {
   if (c.state.get() != 0) {
     return Dropped;
@@ -460,8 +341,6 @@ function __send(c: Conn, opcode: i32, payload: u8[]): SendResult {
   return Sent;
 }
 
-// __flush(c, h) — the cork written to the peer; false when the peer took
-// none of it (gone, or the write refused), the session then over.
 function __flush(c: Conn, h: Handlers): boolean {
   let out: u8[] = c.out.get();
   if (out.len() == 0) {
@@ -483,25 +362,12 @@ function __flush(c: Conn, h: Handlers): boolean {
   return true;
 }
 
-// ---- the session -------------------------------------------------------
-
-// __Reading — the frame reader's state across frames: the fragmented
-// message under way (`opcode` 0 for none, its bytes so far in the
-// builder `parts`, so a fragment is appended and not copied onto,
-// whether it came compressed, and its UTF-8 check so far), the last
-// 32 KiB the peer's compressed messages decoded to, which its next one may
-// refer back into, and whether the peer sent its close.
 struct __Reading { opcode: i32, parts: usize, compressed: boolean, need: i32, lo: i32, hi: i32, history: u8[], peer_closed: boolean, code: i32, reason: string }
 
-// __Frame — one frame off the wire, `rsv1` its compression bit.
 struct __Frame { fin: boolean, opcode: i32, rsv1: boolean, payload: u8[] }
 
-// __Read — what reading a frame answered: a frame; the peer's bytes
-// ended; a protocol error, with the close code that answers it.
 enum __Read { FrameRead(__Frame), BytesEnded, Violation(i32) }
 
-// __run(i, conn, body, h) — the producer of the 101's body: the session
-// run whole on its first call, nothing on any later one.
 function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
   if (i > 0) {
     return None;
@@ -524,8 +390,6 @@ function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
   return None;
 }
 
-// The code the session ended with: the peer's close when it sent one, the
-// handler's otherwise, 1006 when the bytes just ended.
 function __final_code(c: Conn, r: __Reading): i32 {
   if (r.peer_closed) {
     return r.code;
@@ -546,8 +410,6 @@ function __final_reason(c: Conn, r: __Reading): string {
   return "";
 }
 
-// __step(c, h, r, s) — one frame read and acted on: the reader after it,
-// the stream after it, and whether the session goes on.
 function __step(c: Conn, h: Handlers, r: __Reading, s: Stream): (__Reading, Stream, boolean) {
   let read: (__Read, Stream) = __read_frame(s, c.opts.max_message, c.window > 0);
   s = read.1;
@@ -569,8 +431,6 @@ function __step(c: Conn, h: Handlers, r: __Reading, s: Stream): (__Reading, Stre
   return (r, s, false);
 }
 
-// __on_frame(c, h, r, f) — the frame acted on: the reader after it and
-// whether the session goes on.
 function __on_frame(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean) {
   if (f.opcode == 9) {
     let pong: u8[] = __frame(10, f.payload);
@@ -586,8 +446,6 @@ function __on_frame(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading,
   return __on_data(c, h, r, f);
 }
 
-// A close from the peer: its code and reason checked, echoed unless the
-// handler's close went out already, and the session over.
 function __on_close(c: Conn, r: __Reading, payload: u8[]): (__Reading, boolean) {
   let parsed: (i32, string, i32) = __parse_close(payload);
   if (parsed.2 != 0) {
@@ -605,9 +463,6 @@ function __on_close(c: Conn, r: __Reading, payload: u8[]): (__Reading, boolean) 
   return (closed, false);
 }
 
-// __parse_close(payload) — `(code, reason, violation)`: 1005 and "" for
-// an empty payload; the violation's close code (1002, 1007) when the
-// payload breaks the rules, 0 otherwise.
 function __parse_close(payload: u8[]): (i32, string, i32) {
   if (payload.len() == 0) {
     return (1005, "", 0);
@@ -630,8 +485,6 @@ function __parse_close(payload: u8[]): (i32, string, i32) {
   return (0, "", 1007);
 }
 
-// The close codes a peer may send: the registered ones and the private
-// range; not the reserved 1004 to 1006 and 1015, nor anything below.
 function __close_code_ok(code: i32): boolean {
   if (code >= 3000 && code <= 4999) {
     return true;
@@ -651,9 +504,6 @@ function __close_payload(code: i32, reason: string): u8[] {
   return [(code >> 8) as u8, (code & 255) as u8].concat(array.take(reason.bytes(), cut));
 }
 
-// A data frame: the start of a message, a fragment of one, or its end,
-// the text checked as UTF-8 as it arrives; the handler called with a
-// message complete.
 function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean) {
   let opcode: i32 = __message_opcode(r, f);
   if (opcode < 0) {
@@ -677,10 +527,6 @@ function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, 
   return __message_done(c, h, next, opcode);
 }
 
-// __message_done(c, h, r, opcode) — the message complete: decompressed
-// when it came compressed (1009 past the cap, 1007 for a stream the
-// decoder refuses, or text that is not UTF-8 once decoded), delivered
-// unless the handler closed, and the reader cleared for the next.
 function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Reading, boolean) {
   let data: u8[] = buf_take_bytes(r.parts);
   let history: u8[] = r.history;
@@ -704,10 +550,6 @@ function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Rea
   return (__Reading { ...r, opcode: 0, compressed: false, need: 0, lo: 128, hi: 191, history: history }, true);
 }
 
-// __inflated(c, history, parts) — a compressed message decoded after
-// `history`: the stream closed with the tail the sender dropped and a
-// final empty block, under the message cap; the close code for one that
-// cannot be.
 function __inflated(c: Conn, history: u8[], parts: u8[]): Result[u8[], i32] {
   let closed: u8[] = parts.concat([0 as u8, 0 as u8, 255 as u8, 255 as u8, 1 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8]);
   match (deflate.inflate_after(history, closed, c.opts.max_message)) {
@@ -728,10 +570,6 @@ function __inflated(c: Conn, history: u8[], parts: u8[]): Result[u8[], i32] {
   return Err(1007);
 }
 
-// __message_opcode(r, f) — the opcode of the message the frame belongs
-// to: the frame's for a first frame, the message's for a continuation;
-// -1 for a continuation with nothing to continue or a first frame inside
-// a fragmented message.
 function __message_opcode(r: __Reading, f: __Frame): i32 {
   if (f.opcode == 0) {
     if (r.opcode == 0) {
@@ -745,9 +583,6 @@ function __message_opcode(r: __Reading, f: __Frame): i32 {
   return f.opcode;
 }
 
-// __text_checked(r, f) — the reader's UTF-8 check carried over the
-// frame's bytes; false when they break it, or the message ends inside a
-// sequence.
 function __text_checked(r: __Reading, f: __Frame): (__Reading, boolean) {
   let checked: (__Reading, boolean) = __utf8_feed(r, f.payload);
   if (!checked.1) {
@@ -773,12 +608,6 @@ function __violated(c: Conn, r: __Reading, code: i32): (__Reading, boolean) {
   return (r, false);
 }
 
-// ---- UTF-8, a byte at a time ------------------------------------------
-
-// __utf8_feed(r, bytes) — the reader's UTF-8 state carried over `bytes`
-// (Unicode's well-formed byte sequences, table 3-7): `need` continuation
-// bytes still owed, the first of them within `lo`..`hi`; false on the
-// first byte that breaks the sequence.
 function __utf8_feed(r: __Reading, bytes: u8[]): (__Reading, boolean) {
   let need: i32 = r.need;
   let lo: i32 = r.lo;
@@ -805,9 +634,6 @@ function __utf8_feed(r: __Reading, bytes: u8[]): (__Reading, boolean) {
   return (__Reading { ...r, need: need, lo: lo, hi: hi }, true);
 }
 
-// __utf8_lead(v) — for a lead byte, how many continuation bytes follow
-// and the range the first of them must fall in; -1 for a byte that
-// leads nothing.
 function __utf8_lead(v: i32): (i32, i32, i32) {
   if (v < 128) {
     return (0, 128, 191);
@@ -824,8 +650,6 @@ function __utf8_lead(v: i32): (i32, i32, i32) {
   return (0 - 1, 0, 0);
 }
 
-// The lower bound of the first continuation byte: raised after the lead
-// that would otherwise encode an overlong sequence.
 function __utf8_lo(v: i32, lead: i32, raised: i32): i32 {
   if (v == lead) {
     return raised;
@@ -833,8 +657,6 @@ function __utf8_lo(v: i32, lead: i32, raised: i32): i32 {
   return 128;
 }
 
-// The upper bound of the first continuation byte: lowered after the lead
-// that would otherwise reach a surrogate or past U+10FFFF.
 function __utf8_hi(v: i32, lead: i32, lowered: i32): i32 {
   if (v == lead) {
     return lowered;
@@ -842,10 +664,6 @@ function __utf8_hi(v: i32, lead: i32, lowered: i32): i32 {
   return 191;
 }
 
-// ---- reading frames ----------------------------------------------------
-
-// __read_frame(s, max) — one frame off the stream: the frame, the end of
-// the bytes, or the violation that refuses it, with the stream after.
 function __read_frame(s: Stream, max: i32, compressing: boolean): (__Read, Stream) {
   let head: (u8[], Stream) = s.read_n(2);
   s = head.1;
@@ -878,9 +696,6 @@ function __read_frame(s: Stream, max: i32, compressing: boolean): (__Read, Strea
   return (FrameRead(__Frame { fin: fin, opcode: opcode, rsv1: (b0 & 64) != 0, payload: __masked(array.slice(rest.0, 4, rest.0.len()), array.take(rest.0, 4)) }), s);
 }
 
-// __head_ok(b0, b1, compressing) — no reserved bit set, but RSV1 on a
-// message's first data frame when the connection compresses; an opcode
-// the protocol defines; and the mask bit a client must set.
 function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {
   let opcode: i32 = b0 & 15;
   if ((b0 & 48) != 0 || (b1 & 128) == 0) {
@@ -892,11 +707,6 @@ function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {
   return opcode <= 2 || opcode >= 8 && opcode <= 10;
 }
 
-// __read_length(s, len7, max) — the payload length past the 7-bit one:
-// `(length, stream, violation)`, -1 for bytes that ended, 1002 for a
-// length not encoded in the minimal number of bytes or an 8-byte form
-// with the most significant bit set (RFC 6455 §5.2), and 1009 for a
-// length past `max`.
 function __read_length(s: Stream, len7: i32, max: i32): (i32, Stream, i32) {
   if (len7 < 126) {
     return (len7, s, 0);

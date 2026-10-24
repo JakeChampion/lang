@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// #4357 (string-field sibling of #4733): a reclaimable struct loop-local carrying
-// a `string` field set from a FRESH string (`while { let t: S = S { x: i, name:
-// pre + "x" }; }`) releases that string with the struct at each loop rebind, so
-// nothing leaks per iteration. An aliased bare-ident string field must not be
-// over-released; strdrop-two-alias-detector in TestSelfHostRcPreciseDropX86IR
-// covers that.
-//
-// Gated on the self-host x86-64 IR path: FIXPOINT (bump growth equal at N=50 /
-// N=5000) + OVER-RELEASE (the freshly-built string is read each iteration).
-
 func stringFieldLoopLocalFreshSrc(n string) string {
 	return `struct S { x: i32, name: string }
 function main(): i32 {
@@ -29,8 +19,6 @@ function main(): i32 {
 }`
 }
 
-// A struct carrying BOTH an rc-array and a fresh-string field: the loop-rebind must
-// free both the xs buffer and the name box each iteration.
 func stringAndArrayFieldLoopLocalSrc(n string) string {
 	return `struct S { x: i32, xs: i32[], name: string }
 function main(): i32 {
@@ -43,18 +31,6 @@ function main(): i32 {
 }`
 }
 
-// stringFieldLoopLocalRetainedSrc is the fixpoint check's positive control: the
-// same shape, but every struct is kept alive in an array, so the boxes cannot be
-// recycled and the bump MUST move. It answers 1/0 rather than a byte count
-// because the value leaves as a process exit code, which is masked to 8 bits — a
-// magnitude would compare mod 256.
-//
-// It replaces an earlier `small != 0` guard on the bounded cases. That guard read
-// "the measurement is live", but what it actually measured was the one-time boxing
-// of the `"n"` / `"x"` literals: since #7080 a literal is static data and allocates
-// nothing, so a fully-reclaiming loop legitimately reports a high-water of 0 and
-// the old guard fired on the fix. This control tests the property the guard was
-// reaching for, and does it on a shape where a zero answer is unambiguously wrong.
 func stringFieldLoopLocalRetainedSrc(n string) string {
 	return `struct S { x: i32, name: string }
 function main(): i32 {
@@ -69,9 +45,6 @@ function main(): i32 {
 }`
 }
 
-// The freshly-built `name` (pre + "cd" = "abcd", len 4) is read every iteration; a
-// wrong free of the live string corrupts the sum or trips __rc_underflow_count. sum x =
-// 0..199 = 19900; + 4*200 = 800 -> 20700.
 const stringFieldLoopLocalDetectorSrc = `struct S { x: i32, name: string }
 function main(): i32 {
     let pre: string = "ab";
@@ -127,9 +100,6 @@ func TestSelfHostStringFieldLoopLocalReclaimIRX86_64(t *testing.T) {
 		})
 	}
 
-	// Non-vacuity for the two cases above: a bounded high-water is only evidence
-	// of reclaim if the bump would have moved without it. Retaining every struct
-	// is the same allocation pattern with the frees removed, and it must be seen.
 	t.Run("fixpoint-bounded/retained-control-grows", func(t *testing.T) {
 		if got := run(t, "stringfield-retained-5000", stringFieldLoopLocalRetainedSrc("5000")); got != 1 {
 			t.Errorf("retaining 5000 structs must move the heap bump, got %d (9=length mismatch, 0=bump did not move, so the bounded cases above prove nothing)", got)

@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i64.is_multiple_of / next_power_of_2 /
-// ceil_div / log2_floor — scalar integer helpers ported from std/i32, exact
-// into the i64 range. next_power_of_2 caps at 2^62 (the largest power of two a
-// signed i64 holds) and returns 0 above it; log2_floor counts halvings (i64
-// has no leading_zeros). Returns 42 iff every check holds across interp /
-// x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const i64IntdivProg = `
 import "std/i64" as i64m;
 function main(): i32 {

@@ -11,16 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternSumTypeResultCustomProvider is the self-host port of the
-// sum-type `@import` result (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm
-// backend materializes a self-host Option/Result from a canonical result. The
-// host writes (disc:u8 @0, payload:i32 @4) into the return area; the wrapper
-// allocs a self-host enum box [tag:i32 @0][payload @4], remapping the
-// discriminant back (1-disc for option since canonical none=0/some=1 reverses
-// Fern's Some=0/None=1; result matches). Tested via the custom-provider harness:
-// div(a,b) -> result<s32,s32> (b≠0 → ok(a/b), else err) and half(n) ->
-// option<s32> (even → some(n/2), else none). Mirror of the Go
-// TestExternSumTypeResultCustomProvider.
 func TestSelfHostExternSumTypeResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

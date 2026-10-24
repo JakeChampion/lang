@@ -1,35 +1,14 @@
-// tests/proposals/traffic.fern — proposal turn, drawn line 111:
-// "A traffic simulation on a one-lane loop, reporting throughput against
-// density."
-//
-// Nagel-Schreckenberg on a ring: accelerate, brake to the gap ahead,
-// randomise, move. The interesting output is the FUNDAMENTAL DIAGRAM —
-// throughput against density — which is not monotone: it rises to a peak
-// in the free-flowing regime and falls away as jams form. That shape is an
-// external oracle, so `test_flow_peaks_then_falls` fails if the model
-// drifts into something merely self-consistent.
-//
-// This app deliberately reaches for surface the earlier turns did not:
-// a trait + impl, the `|>` pipe, `let … else`, a labelled loop with
-// `continue`, and `defer`.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/i32";
 import "std/i64";
 
-// A named summary of one run, so the report and the tests read the same
-// numbers rather than recomputing them differently.
 struct Flow {
   cells: i32,
   cars: i32,
   steps: i32,
-  moves: i32,  // total cell-crossings over the run
+  moves: i32,
 }
 
-// Rendered as "density -> flow", both in per-mille to stay in integers.
 trait Describe {
   function describe(self: Self): string;
 }
@@ -45,8 +24,6 @@ function density_permille(f: Flow): i32 {
   return f.cars * 1000 / f.cells;
 }
 
-// Flow is crossings per cell per step — the standard normalisation, so
-// runs of different length and size are comparable.
 function flow_permille(f: Flow): i32 {
   if (f.steps == 0 || f.cells == 0) {
     return 0;
@@ -70,7 +47,6 @@ function xs_below(s: i64, m: i32): i32 {
   return (v % (m as i64)) as i32;
 }
 
-// Positions of `cars` vehicles spread as evenly as the ring allows.
 function initial_positions(cells: i32, cars: i32): i32[] {
   let pos: i32[] = [];
   let i: i32 = 0;
@@ -81,8 +57,6 @@ function initial_positions(cells: i32, cars: i32): i32[] {
   return pos;
 }
 
-// Gap ahead of the car at index i, on a ring. Cars are kept sorted by
-// position, so the next car is the next index, wrapping.
 function gap_ahead(pos: i32[], i: i32, cells: i32): i32 {
   let n: i32 = pos.len();
   if (n == 1) {
@@ -96,8 +70,6 @@ function gap_ahead(pos: i32[], i: i32, cells: i32): i32 {
   return g;
 }
 
-// One Nagel-Schreckenberg step. Returns the new positions, the new
-// speeds, the number of cells crossed, and the advanced RNG state.
 function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32, seed: i64): (i32[], i32[], i32, i64) {
   let pos: i32[] = pos0;
   let spd: i32[] = spd0;
@@ -108,16 +80,13 @@ function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32, s
   let i: i32 = 0;
   while (i < n) {
     let v: i32 = spd[i];
-    // 1. accelerate
     if (v < vmax) {
       v = v + 1;
     }
-    // 2. brake to the gap ahead
     let g: i32 = gap_ahead(pos, i, cells);
     if (v > g) {
       v = g;
     }
-    // 3. randomise: dawdle with probability brake_pct
     s = xs_next(s);
     if (v > 0 && xs_below(s, 100) < brake_pct) {
       v = v - 1;
@@ -126,8 +95,6 @@ function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32, s
     i = i + 1;
   }
 
-  // 4. move — after every speed is settled, so the update is parallel
-  // rather than letting a car see its neighbour's new position.
   let j: i32 = 0;
   while (j < n) {
     pos = pos.with(j, (pos[j] + spd[j]) % cells);
@@ -137,9 +104,6 @@ function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32, s
   return (pos, spd, moved, s);
 }
 
-// Run the ring and summarise. `warmup` steps are simulated but not
-// counted, so the measurement describes the steady state rather than the
-// artificial evenly-spaced start.
 function simulate(cells: i32, cars: i32, steps: i32, warmup: i32, vmax: i32, brake_pct: i32, seed: i64): Flow {
   if (cars <= 0) {
     return Flow { cells: cells, cars: 0, steps: steps, moves: 0 };
@@ -169,12 +133,9 @@ function simulate(cells: i32, cars: i32, steps: i32, warmup: i32, vmax: i32, bra
   return Flow { cells: cells, cars: cars, steps: steps, moves: total };
 }
 
-// A jammed ring: every cell occupied, so nothing can move at all.
 function gridlock(cells: i32): Flow {
   return simulate(cells, cells, 20, 5, 5, 0, 99);
 }
-
-// ---------------------------------------------------------------- tests
 
 function densities(): i32[] {
   return [2, 5, 10, 20, 30, 40, 60, 80];
@@ -184,8 +145,6 @@ function run_at(cars: i32): Flow {
   return simulate(100, cars, 200, 50, 5, 20, 20260806);
 }
 
-// A completely full ring cannot move: every gap is zero, so every speed
-// brakes to zero. Flow must be exactly zero, not merely small.
 function test_a_full_ring_has_no_flow(): test.TestOutcome {
   let f: Flow = gridlock(40);
   if (f.moves != 0) {
@@ -197,7 +156,6 @@ function test_a_full_ring_has_no_flow(): test.TestOutcome {
   return test.pass();
 }
 
-// An empty ring has no cars and therefore no flow — the other endpoint.
 function test_an_empty_ring_has_no_flow(): test.TestOutcome {
   let f: Flow = run_at(0);
   if (flow_permille(f) != 0) {
@@ -209,8 +167,6 @@ function test_an_empty_ring_has_no_flow(): test.TestOutcome {
   return test.pass();
 }
 
-// Cars are conserved: the ring neither creates nor destroys them, and
-// every position stays on the ring.
 function test_cars_are_conserved_and_stay_on_the_ring(): test.TestOutcome {
   let cells: i32 = 50;
   let pos: i32[] = initial_positions(cells, 12);
@@ -238,8 +194,6 @@ function test_cars_are_conserved_and_stay_on_the_ring(): test.TestOutcome {
   return test.pass();
 }
 
-// No car may exceed vmax, and none may move further than the gap it had —
-// that is the collision-freedom property, stated as a speed bound.
 function test_speeds_respect_vmax_and_the_gap(): test.TestOutcome {
   let cells: i32 = 60;
   let vmax: i32 = 5;
@@ -272,10 +226,6 @@ function test_speeds_respect_vmax_and_the_gap(): test.TestOutcome {
   return test.pass();
 }
 
-// The external oracle: the fundamental diagram is not monotone. Flow must
-// rise to a peak somewhere in the free-flowing regime and fall away as
-// jams form. A model that got the dynamics wrong but stayed
-// self-consistent would pass every other test here.
 function test_flow_peaks_then_falls(): test.TestOutcome {
   let ds: i32[] = densities();
   let flows: i32[] = [];
@@ -305,8 +255,6 @@ function test_flow_peaks_then_falls(): test.TestOutcome {
   return test.pass();
 }
 
-// In the free-flow regime, adding cars adds throughput: below the peak
-// the diagram climbs.
 function test_flow_rises_in_free_flow(): test.TestOutcome {
   let Some(low) = some_flow(2) else {
     return test.fail("no flow measured at density 2");
@@ -321,8 +269,6 @@ function test_flow_rises_in_free_flow(): test.TestOutcome {
   return test.pass();
 }
 
-// A deliberately Option-returning helper, so `let … else` above has
-// something to destructure.
 function some_flow(cars: i32): Option[i32] {
   if (cars <= 0) {
     return None;
@@ -330,8 +276,6 @@ function some_flow(cars: i32): Option[i32] {
   return Some(flow_permille(run_at(cars)));
 }
 
-// Determinism: the same seed must reproduce the same run exactly, on
-// every backend. Without it none of the numbers above mean anything.
 function test_runs_are_deterministic(): test.TestOutcome {
   let a: Flow = run_at(25);
   let b: Flow = run_at(25);
@@ -342,8 +286,6 @@ function test_runs_are_deterministic(): test.TestOutcome {
   return test.pass();
 }
 
-// ----------------------------------------------------------------- app
-
 function main(): i32 {
   defer eprint("(simulation complete)");
   eprint("traffic — Nagel-Schreckenberg on a one-lane ring");
@@ -351,7 +293,6 @@ function main(): i32 {
   let ds: i32[] = densities();
   for i in 0..ds.len() {
     let f: Flow = run_at(ds[i]);
-    // `|>` for the render, so the pipe is exercised alongside the trait.
     eprint(f.describe() |> indent_by("  "));
   }
 
@@ -366,8 +307,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// The pipe feeds its left-hand value in as the FIRST argument, so the
-// text being indented is the receiver and the padding is the parameter.
 function indent_by(body: string, pad: string): string {
   return pad + body;
 }

@@ -1,6 +1,3 @@
-// std/constmap with the same keys and values as map_string_lookup: the Rust
-// half's `constmap::ConstMap` and `constmap::VerifiedConstMap` rows, with
-// the build time beside them.
 import "std/bench";
 import "std/constmap";
 import "std/i32";
@@ -9,7 +6,6 @@ import "std/u64";
 import "std/result";
 import "./shared";
 
-// The values 0..n as u64.
 function values_of(n: i32): u64[] {
   let values: u64[] = [];
   let i: i32 = 0;

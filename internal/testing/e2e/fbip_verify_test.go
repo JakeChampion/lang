@@ -4,17 +4,6 @@ import (
 	"testing"
 )
 
-// E2' — `fbip` verify-and-enable, end to end (docs/NICHE-BORROWS-PLAN.md;
-// IR side in compiler/irfipverify.fern). The canonical fbip function — a
-// consuming map over an `own` list, the R4 shape of docs/REUSE-CONTRACT.md —
-// passes the checker's relaxed E053 walk AND the IR's E068 verification
-// (every Cons construction is reuse-paired with the consumed scrutinee box),
-// then executes correctly on every backend. On the unique-input path it
-// allocates NOTHING: the bump cursor must not move across 100 whole-list
-// maps (5000 Cons rebuilds), which is the enabled guarantee the annotation
-// now makes visible. The interpreter leg pins value-correctness only (its
-// __heap_bump_bytes stub reads 0, so the same program runs unchanged).
-
 const fbipMapSrc = `enum List { Cons(i32, List), Nil }
 fbip function map_inc(own xs: List): List {
     match (xs) {

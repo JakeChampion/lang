@@ -8,15 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `isatty(fd)` answers a yes/no question, so it is declared `boolean` rather
-// than the 0/1 number every other syscall-shaped builtin returns. That makes
-// `if (isatty(1))` legal and `isatty(1) + 1` an error, which is the whole
-// reason to spend a distinct return type on it.
 func TestIsattyIsTypedAsAPredicate(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // "" = must type-check
+		want string
 	}{
 		{"used as a condition", `function main(): i32 { if (isatty(1)) { return 1; } return 0; }`, ""},
 		{"assigned to a boolean", `function main(): i32 { let b: boolean = isatty(0); if (b) { return 1; } return 0; }`, ""},

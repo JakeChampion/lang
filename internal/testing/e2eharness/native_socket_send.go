@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// NativeSocketSendProbe checks accepted-byte counts and errno after shutdown.
 func NativeSocketSendProbe(payload string, shut bool) string {
 	result, rounds := len(payload), 1
 	if shut {
@@ -33,8 +32,6 @@ func NativeSocketSendProbe(payload string, shut bool) string {
 }`, int(syscall.SIGPIPE), payload, int(syscall.EBADF), rounds, result)
 }
 
-// CheckNativeSocketSend inherits a real TCP socket as descriptor 3. Shutting
-// down its write half makes EPIPE deterministic without a peer-close race.
 func CheckNativeSocketSend(t *testing.T, command *exec.Cmd, payload string, shut bool) {
 	t.Helper()
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})

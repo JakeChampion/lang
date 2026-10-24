@@ -1,7 +1,3 @@
-// A QUIC client over UDP: handshake with a server on ALPN fern-echo, send
-// SIZE bytes on a bidirectional stream, check they come back with the
-// stream's end, close, and exit 0 when they did.
-//   client PORT NAME CA.pem SIZE
 import "std/net";
 import "std/quic/conn";
 import "std/tls/verify";
@@ -92,12 +88,8 @@ function same(a: u8[], b: u8[]): boolean {
   return true;
 }
 
-// Echo — the stream sent, once the handshake is confirmed, and what has
-// come back on it.
 struct Echo { id: i64, sent: u8[], got: u8[], matched: boolean, closing: boolean }
 
-// echoed opens the stream and writes the payload once the handshake is
-// confirmed, reads what came back, and closes once its end has.
 function echoed(c: conn.Conn, e: Echo): (conn.Conn, Echo) {
   if (!c.confirmed() || e.closing) {
     return (c, e);
@@ -127,8 +119,6 @@ function echoed(c: conn.Conn, e: Echo): (conn.Conn, Echo) {
   return (r.0.close(0 as i64, "fern done", true, now()), Echo { ...e, got: got, matched: matched, closing: true });
 }
 
-// ran drives the connection until it is done or twenty seconds pass; true
-// when the echo came back whole.
 function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean {
   let buf: u8[] = __alloc_u8(65536);
   let c: conn.Conn = c0;

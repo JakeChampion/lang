@@ -11,11 +11,6 @@ import (
 	"time"
 )
 
-// StreamingBodyServerSource is a server whose handler answers
-// the file at `path` on /big, five chunks from a producer on /chunks, and
-// a producer whose first chunk is empty on /sparse: the bodies the serve
-// loop produces as the socket takes them, a file under its length and
-// chunks under chunked transfer coding.
 func StreamingBodyServerSource(path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -46,9 +41,6 @@ function main(): i32 {
 `, path)
 }
 
-// StreamingBodyContent is what the file StreamingBodyServerSource serves
-// holds: three million bytes, more than a socket buffer takes in one
-// write, so the loop produces the body over several waits.
 func StreamingBodyContent() []byte {
 	out := make([]byte, 3_000_000)
 	for i := range out {
@@ -57,17 +49,8 @@ func StreamingBodyContent() []byte {
 	return out
 }
 
-// StreamingBodyChunks is the body /chunks answers, the producer's five
-// chunks joined.
 const StreamingBodyChunks = "chunk 0\nchunk 1\nchunk 2\nchunk 3\nchunk 4\n"
 
-// CheckStreamingBody drives StreamingBodyServerSource on one keep-alive
-// connection: /big answers the file whole under its length, /chunks
-// answers the producer's chunks under chunked transfer coding, /sparse
-// skips the empty chunk, a HEAD of /chunks answers no body, and /ok
-// still answers after them; then, over HTTP/1.0, /chunks is
-// close-delimited with no transfer coding and the connection closed
-// behind it.
 func CheckStreamingBody(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -117,8 +100,6 @@ func CheckStreamingBody(t *testing.T, addr string) {
 		t.Fatal(err)
 	}
 	resp = readResponseFrom(t, reader, "/trailed")
-	// net/http moves the head's Trailer field into resp.Trailer's keys,
-	// and fills their values once the body has been read.
 	if _, ok := resp.Trailer["X-Chunks"]; !ok || len(resp.Trailer) != 2 {
 		t.Fatalf("/trailed: announced trailers %v, want X-Chunks and X-Done", resp.Trailer)
 	}
@@ -155,8 +136,6 @@ func CheckStreamingBody(t *testing.T, addr string) {
 	}
 }
 
-// readResponseFrom reads one response off a reader that persists across
-// the requests of a connection.
 func readResponseFrom(t *testing.T, reader *bufio.Reader, label string) *http.Response {
 	t.Helper()
 	resp, err := http.ReadResponse(reader, nil)
@@ -172,7 +151,6 @@ func readResponseFrom(t *testing.T, reader *bufio.Reader, label string) *http.Re
 	return resp
 }
 
-// rawRequestVersion is rawRequest with the request's HTTP version chosen.
 func rawRequestVersion(t *testing.T, addr, path, version string) net.Conn {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)

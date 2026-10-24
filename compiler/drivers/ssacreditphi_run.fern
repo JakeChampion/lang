@@ -58,8 +58,6 @@ function sparse_id(id: i32, nvals: i32): i32 {
   return id * 17;
 }
 
-// Replay every original case with sparse physical IDs and reversed storage.
-// Return the dense result so the original assertions and diagnostics stay intact.
 function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32): phi.Joined {
   let dense = phi.merge(a, block, edges, nvals);
   let ids: i32[] = [];
@@ -157,20 +155,16 @@ function unit_checks(): void {
   let partial = must(both(negative.arena, block, [yes, unreadable], 3), 20);
   require(partial.path == u.id && partial.bindings[0].value.available == u.id, 21);
   require(phi.is_null(partial.arena, partial.bindings[0].value, one.id).error == "unavailable null-test operand", 22);
-  // Nonzero scalars are fine for scalar phis, but cannot become references.
   let scalar_yes = phi.Edge { ...yes, values: unique_values.with(0, value(0, old.id, u.id)) };
   let scalars = must(both(partial.arena, block, [scalar_yes, scalar], 3), 23);
   require(scalars.bindings[0].value.kind == 0 && scalars.bindings[0].value.identity == old.id, 24);
   require(phi.is_null(scalars.arena, scalars.bindings[0].value, one.id).error == "reference null test required", 25);
-  // Two phis read different predecessor snapshots. Neither writes into the
-  // other's inputs; reordering the phi instructions leaves both facts intact.
   let pair = ssa.SBlock { ...block, insts: [inst(2, [0, 1]), inst(3, [1, 0])] };
   let pair_yes = phi.Edge { ...yes, values: blank(4).with(0, value(1, old.id, u.id)).with(1, value(1, fresh.id, u.id)) };
   let pair_no = phi.Edge { ...no, values: blank(4).with(0, value(1, old.id, shared.id)).with(1, value(1, fresh.id, shared.id)) };
   let pairs = must(both(scalars.arena, pair, [pair_yes, pair_no], 4), 26);
   let swapped = must(both(pairs.arena, ssa.SBlock { ...pair, insts: [pair.insts[1], pair.insts[0]] }, [pair_no, pair_yes], 4), 27);
   require(pairs.bindings[0].value.identity == swapped.bindings[1].value.identity && pairs.bindings[1].value.identity == swapped.bindings[0].value.identity, 28);
-  // A planted same-block dependency must not read a newly assigned phi.
   reject(both(swapped.arena, ssa.SBlock { ...pair, insts: [pair.insts[0], inst(3, [2, 0])] }, [pair_yes, pair_no], 4), "invalid acyclic phi operand", 29);
   reject(both(swapped.arena, block, [phi.Edge { ...yes, values: blank(2) }, no], 3), "invalid phi predecessor", 30);
   reject(both(swapped.arena, block, [phi.Edge { ...yes, predecessor: -1 }, no], 3), "invalid phi predecessor", 31);
@@ -180,7 +174,6 @@ function unit_checks(): void {
   reject(both(swapped.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(1, old.id, old.id)) }, no], 3), "non-Boolean guarded mask", 34);
   require(phi.is_null(swapped.arena, value(1, -1, one.id), one.id).error != "", 35);
   require(phi.is_null(swapped.arena, value(1, negative.id, one.id), one.id).error == "invalid reference identity", 36);
-  // Disjoint extremes must not overflow as an intermediate subtraction.
   let min = guard.constant(swapped.arena, -2147483648);
   let max = guard.constant(min.arena, 2147483647);
   let extremes = must(both(max.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(0, min.id, u.id)) }, phi.Edge { ...no, values: shared_values.with(1, value(0, max.id, shared.id)) }], 3), 37);
@@ -221,9 +214,6 @@ function actual_checks(target: string): void {
   let donor_op = donor_block.insts[0];
   let result_op = result_block.insts[0];
   require(donor_op.args.len() == 2 && donor_op.args[0] == 0 && result_op.args.len() == 2 && result_op.args[0] == fresh_value && result_op.args[1] == donor_op.result, 44);
-  // These edge/value facts come from this fixture's known branch shape.
-  // The merger checks phi semantics, not the intervening RC operations. A
-  // later credit-flow proof must independently establish and consume them.
   let zero = guard.constant(guard.empty(), 0);
   let one = guard.constant(zero.arena, 1);
   let u = guard.predicate(one.arena, 71);
@@ -246,9 +236,6 @@ function actual_checks(target: string): void {
     let got = guard.evaluate(result_null.arena, result.bindings[0].value.identity, [71], [unique]);
     require(got.ok && (unique && got.value == 17 || !unique && got.value == 29), 49);
   }
-  // Swapped predecessor identities cannot use values only defined on the
-  // opposite predecessor. Removing a phi input or forging its availability
-  // is a structural/fact error even when the other branch is valid.
   let wrong = ssa.SBlock { ...result_block, preds: [result_block.preds[1], result_block.preds[0]] };
   reject(both(result_null.arena, wrong, [reused, allocated], graph.nvals), "unreadable phi operand", 50);
   let bad_allocated = phi.Edge { ...allocated, values: allocated.values.with(fresh_value, value(1, fresh.id, u.id)) };

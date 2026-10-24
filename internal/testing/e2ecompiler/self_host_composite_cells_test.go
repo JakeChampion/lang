@@ -12,12 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Cells over composite elements (#2679): the state a long-running server keeps
-// across requests. Each program asserts its own results and exits 0, and runs
-// under the leak census, which is what proves the cell co-owns its element:
-// a `get` that forgot to retain over-releases, a `set` that forgot to release
-// leaks the value it replaced, and a final drop that freed only the box
-// strands everything the element held.
 var compositeCellSources = []struct{ name, source string }{
 	{"server-session-table", `import "core/map";
 
@@ -137,9 +131,6 @@ function main(): i32 {
 `},
 }
 
-// The refused half: a struct holding a closure could capture the very cell
-// it is stored in — `tie` builds exactly that loop — so the compiler must
-// reject the program rather than compile a leak.
 const compositeCellCycle = `struct Handler { name: string, run: () => i32 }
 function tie(c: Cell[Handler]): void {
   c.set(Handler { name: "loop", run: () => c.get().run() });
@@ -201,9 +192,6 @@ func TestSelfHostCompositeCells(t *testing.T) {
 	})
 }
 
-// The interpreter the compiler builds of itself holds a composite element as
-// encoded text; this runs that build, not the -interp of the CLI, so the
-// codec runs compiled.
 func TestSelfHostInterpreterCompositeCells(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -213,8 +201,6 @@ func TestSelfHostInterpreterCompositeCells(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile interpreter: %v\n%s", err, out)
 	}
-	// interp_run reads one program on stdin and resolves no imports, so the
-	// case is the import-free one.
 	cmd = runX86_64Bin(cli.runner, bin)
 	cmd.Stdin = bytes.NewBufferString(compositeCellSources[1].source)
 	if out, err := cmd.CombinedOutput(); err != nil {

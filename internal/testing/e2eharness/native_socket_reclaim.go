@@ -17,8 +17,6 @@ func NativeSocketConnectError(t *testing.T) int {
 	}
 	syscall.CloseOnExec(fd)
 	defer syscall.Close(fd)
-	// A stream socket cannot connect to a broadcast address. Measure the
-	// host errno: Darwin and Linux reject it with different error classes.
 	err = syscall.Connect(fd, &syscall.SockaddrInet4{Addr: [4]byte{255, 255, 255, 255}, Port: 1})
 	errno, ok := err.(syscall.Errno)
 	if !ok || errno == 0 {

@@ -12,10 +12,6 @@ import (
 	"testing"
 )
 
-// TestArm64DarwinStackOverflow is TestSelfHostStackOverflow on Apple Silicon,
-// where the handler has its own sigaction and sigaltstack layouts, reads the
-// context through uc_mcontext and returns through a sigreturn trampoline.
-// Every host builds the three programs; only darwin/arm64 runs them.
 func TestArm64DarwinStackOverflow(t *testing.T) {
 	bin := buildFernCLI(t)
 	report := regexp.MustCompile(`^fern: stack overflow\nbacktrace:\n(  0x[0-9a-f]{16}\n)+$`)

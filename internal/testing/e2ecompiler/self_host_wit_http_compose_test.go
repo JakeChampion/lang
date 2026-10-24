@@ -16,18 +16,6 @@ import (
 	"time"
 )
 
-// TestSelfHostComposeHttpFromProxyWorld gates the self-host composer's
-// incoming-handler shape (wit_compose.compose_http): a hand-written reactor
-// core that exports `wasi:http/incoming-handler@0.2.0#handle` and imports the
-// wasi:http/types constructors, the outparam setter (a memory lowering) and a
-// `[resource-drop]` is composed against the embedded proxy world by the
-// self-host, validates under wasm-tools, and answers a request under
-// `wasmtime serve` with the 200 it sets. The drop is what the cli/run shape
-// never needed: the resource has to be surfaced as a component type for the
-// canon resource.drop, and this is the first composition to do so. The
-// component imports wasi:http/types alone: the core touches no stream, so
-// wasi:io/streams, which only the body methods it never calls read, is not
-// declared either.
 func TestSelfHostComposeHttpFromProxyWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -75,9 +63,6 @@ func TestSelfHostComposeHttpFromProxyWorld(t *testing.T) {
 			t.Errorf("component WIT lacks %q:\n%s", want, wit)
 		}
 	}
-	// The world's imports bound the component's: an interface the core
-	// never reaches is not declared, so `wasmtime serve` without `-S
-	// config` takes the component.
 	for _, unused := range []string{"wasi:config/store", "wasi:cli/stdout", "wasi:random/random", "wasi:io/streams"} {
 		if strings.Contains(string(wit), unused) {
 			t.Errorf("component imports %s, which the core never reaches:\n%s", unused, wit)
@@ -89,11 +74,6 @@ func TestSelfHostComposeHttpFromProxyWorld(t *testing.T) {
 	}
 }
 
-// minimalHttpHandlerCore answers every request with an empty 200: drop the
-// request, build a response over fresh fields, and hand it to the outparam
-// as `ok`. response-outparam.set's `result<own<outgoing-response>,
-// error-code>` flattens to the nine core params (the i64 from error-code's
-// option<u64> arm).
 const minimalHttpHandlerCore = `(module
   (import "wasi:http/types@0.2.0" "[resource-drop]incoming-request" (func $req_drop (param i32)))
   (import "wasi:http/types@0.2.0" "[constructor]fields" (func $fields_new (result i32)))
@@ -106,9 +86,6 @@ const minimalHttpHandlerCore = `(module
       (i32.const 0) (i64.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
 `
 
-// selfHostComposeHttpDriver composes core.bin against the embedded proxy
-// world and prints the component as decimal bytes; a refusal is exit 3 with
-// the reason on stderr.
 const selfHostComposeHttpDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
@@ -129,23 +106,17 @@ function main(): i32 {
 }
 `
 
-// serveComponent serves a wasi:http component under `wasmtime serve` on a
-// free port, sends one request, and returns its status, headers and body.
 func serveComponent(t *testing.T, wasmtime, component, method, path, body string) (int, http.Header, string) {
 	t.Helper()
 	return serveComponentHeaders(t, wasmtime, component, method, path, body, nil)
 }
 
-// serveComponentHeaders is serveComponent with request headers.
 func serveComponentHeaders(t *testing.T, wasmtime, component, method, path, body string, headers map[string]string) (int, http.Header, string) {
 	t.Helper()
 	status, hdr, got, _ := serveComponentLogged(t, wasmtime, component, method, path, body, headers, "")
 	return status, hdr, got
 }
 
-// serveComponentLogged is serveComponentHeaders that also returns what
-// `wasmtime serve` wrote, once that holds `logged`: the guest's stderr
-// arrives on its own stream, after the response it was written before.
 func serveComponentLogged(t *testing.T, wasmtime, component, method, path, body string, headers map[string]string, logged string) (int, http.Header, string, string) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -198,7 +169,6 @@ func serveComponentLogged(t *testing.T, wasmtime, component, method, path, body 
 	return resp.StatusCode, resp.Header, string(got), slog.String()
 }
 
-// lockedBuffer is a buffer `wasmtime serve` writes while the test reads it.
 type lockedBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer

@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// The self-host COMPILE PATH enforces the `fip` / `fbip` allocation budget
-// (#9623): a claim is checked against what the lowering actually emitted, not
-// just for SHAPE (E053), so an un-paired construction is refused with E068.
-//
-// The check (`ircore.check_fip_claims`, over `irfipverify.fern`) runs from
-// each backend's emit entry on the bodies the emit reads, so it costs no
-// second pass. A function carrying neither annotation returns before a single
-// op is examined.
 const (
 	fipUnpairedFbipSrc = `struct State { count: i32, total: i64, label: string }
 fbip function make(n: i32): State {
@@ -30,29 +22,18 @@ fip function make(n: i32): State {
 }
 function main(): i32 { return make(3).count; }
 `
-	// The rebuild reuses the box it was handed, so the claim holds and the
-	// module compiles. Without this case the test would pass just as well
-	// against a compiler that refused every constructor, which is the bug
-	// #9602 fixed.
 	fipPairedSrc = `struct State { count: i32, total: i64 }
 fip function bump(own s: State): State {
 	return State { ...s, count: s.count + 1 };
 }
 function main(): i32 { let s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }
 `
-	// A graded claim buys exactly the fresh site it names, so the same body
-	// the bare claim is refused for is accepted here. This is what keeps the
-	// refusal from being a blanket one.
 	fipGradedSrc = `struct State { count: i32, total: i64 }
 fip(1) function make(n: i32): State {
 	return State { count: n, total: 0 as i64 };
 }
 function main(): i32 { return make(3).count; }
 `
-	// An `own` struct with an ARRAY field, rebuilt by a spread on two
-	// branches. The self-host found no donor for this shape and reported
-	// E068 where native pairs both sites (#9700); examples/fip/
-	// event_loop_fbip.fern, below, is the program that found it.
 	fipArrayFieldSpreadSrc = `struct S { xs: i64[], n: i32 }
 fbip function two(own s: S, k: i32): S {
 	if (k > 0) { return S { ...s, n: s.n + k }; }
@@ -66,11 +47,6 @@ function make(n: i32): State {
 }
 function main(): i32 { return make(3).count; }
 `
-	// `xs.map(f)` on an `own` array passes E053 on both compilers (#9733),
-	// but R7 writes a map through its donor only over a 64-bit element, on
-	// both, so this i32 map is materialized by the combinator and E068 says
-	// so rather than letting the annotation read as a guarantee.
-	// self_host_fip_inplace_reuse_test.go holds the i64 map the claim holds for.
 	fipOwnedMapSrc = `import "std/array";
 fip function dbl(x: i32): i32 { return x * 2; }
 fip function twice(own xs: i32[]): i32[] { return xs.map((x: i32): i32 => dbl(x)); }
@@ -105,10 +81,6 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 		return string(out), cmd.ProcessState.ExitCode()
 	}
 
-	// One emitter per target, one hook each, and the refusal is a compile-time
-	// diagnostic — so the target is what varies and nothing here runs the
-	// output. Without the arm64 and wasm legs, deleting either emitter's hook
-	// left CI green (#9655).
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			for _, tc := range []struct{ name, src, kw string }{
@@ -124,13 +96,9 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 					if !strings.Contains(out, "E068") {
 						t.Errorf("refusal is not E068:\n%s", out)
 					}
-					// The keyword must be the one the author wrote: a `fip` body
-					// told it violated `fbip` names a claim it did not make.
 					if !strings.Contains(out, tc.kw) {
 						t.Errorf("refusal does not name %s:\n%s", tc.kw, out)
 					}
-					// And it must name the construct, not just the function, or
-					// the author has nothing to act on in a body with several.
 					if !strings.Contains(out, "un-reused allocation site") {
 						t.Errorf("refusal does not name the un-paired site:\n%s", out)
 					}
@@ -148,9 +116,6 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 				{"graded claim", fipGradedSrc},
 				{"scalar result holds fip without a donor", strings.Replace(fipNoClaimSrc, "function make", "fip function make", 1)},
 				{"scalar result holds fbip without a donor", strings.Replace(fipNoClaimSrc, "function make", "fbip function make", 1)},
-				// Guard against the check becoming a blanket refusal of
-				// anything that allocates: an unannotated function may
-				// construct freely.
 				{"no claim, no budget", fipNoClaimSrc},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -167,17 +132,12 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 	}
 }
 
-// The per-unit and per-module emit entries enforce the budget themselves
-// (#9655). These are the drivers the staged and bootstrap flows use, which is
-// exactly where an unverified claim would go unnoticed.
 func TestSelfHostPerUnitEmitEnforcesFipBudget(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
-	// `-ir-unit entry|lib` is asm_ir.emit_module_ir_unit, the per-module emit
-	// with no gate pass in front of it; the source arrives on stdin.
 	for _, unit := range []string{"entry", "lib"} {
 		t.Run(unit, func(t *testing.T) {
 			var cmd *exec.Cmd
@@ -197,11 +157,6 @@ func TestSelfHostPerUnitEmitEnforcesFipBudget(t *testing.T) {
 	}
 }
 
-// A routing probe lowers a module only to answer a question about it, so it
-// must not be killed by a claim it was merely asked about: `wasm_run -decide`
-// answers for a module that the same driver's emit path refuses (#9655). Both
-// halves are asserted here: one driver, one program, two invocations that must
-// answer differently.
 func TestSelfHostRoutingProbeAnswersWhereEmitRefuses(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

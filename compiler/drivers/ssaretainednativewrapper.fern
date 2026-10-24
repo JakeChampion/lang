@@ -84,8 +84,6 @@ function helper_schema(rows: ssaprepare.Emitted[], arch: string): void {
     if (row.label_name == "replace") {
       let cs = selected.contracts(row);
       require(cs.len() == 1 && cs[0].params.len() == 2, 91);
-      // The two helpers agree with each other and their raw effects prove.
-      // Their shared incompatible child schema must not override the consumer.
       let pair = bound.release(changed, "__sem_release_Parent", "__sem_drop_Parent", arch, cs[0].params[0]);
       require(pair.error == "" && pair.rows.len() == 2, 92);
       hits = hits + 1;

@@ -11,19 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantParamCustomProvider is the self-host port of the
-// general-`variant` parameter (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternVariantParamCustomProvider). A uniform-payload variant flattens to
-// (disc, payload). A self-host payloaded variant value is a `[struct_id@0]
-// [payload@4]` box and a payloadless one is `[struct_id@0]`; struct_id is a
-// global id, so the wrapper maps it to the variant index via the
-// extern_plain_enum_disc select-chain (the disc) and reads the payload from
-// the box's first field. For a payloadless-case value the payload read is ignored
-// garbage (the host drops it for that disc).
-//
-// The provider exports `describe: func(s: shape) -> s32` over
-// `variant shape { circle(s32), square(s32), empty }`: circle→p, square→p*10,
-// empty→999. The self-host program passes Circle(7)/Square(7)/Empty → 7/70/999.
 func TestSelfHostExternVariantParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

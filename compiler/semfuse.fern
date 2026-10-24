@@ -1,30 +1,3 @@
-// Producer-consumer fusion of std/array pipelines (#11072): a chain of `map`,
-// `filter`, `take`, `take_while` and `flat_map` stages ending in `fold`,
-// `reduce` or `scan` becomes one loop, with an inner loop per `flat_map`.
-// Intermediate arrays are never built; scan reserves its output once. A lazy
-// core/iter chain (#6795) fuses the same way: `iter.of(xs)` or
-// `iter.range(lo, hi)`, then `map`, `filter`, `take` and `flat_map` adapters,
-// ending in `fold` or `len`. Its adapter calls take the place of stages, and
-// its root is replaced by the array or the integers the loop runs over. This
-// runs on the typed semantic graphs every backend lowers from, before
-// ownership planning accounts for the output.
-//
-// docs/ARRAY-FUSION-OPERATORS.md is the contract: each stage contributes a
-// step (pass through, rebind, skip, stop, or loop over many), the fused body
-// is the steps concatenated. Each sink seeds and finishes its accumulator; scan also appends
-// each prefix to its output. docs/ARRAY-ALGEBRA.md §1 is the purity boundary: every
-// element function is a closure built here whose body reaches no effect, since
-// fusing interleaves the stages' calls.
-//
-// A chain is refused, and left exactly as it was, unless:
-//   - each intermediate has one use, the next stage, so nothing else reads
-//     the array the loop never builds;
-//   - the stages and the sink sit in one block with nothing but inert values
-//     between them, so no effect moves relative to the stages' calls;
-//   - every element and the accumulator is a scalar, and a `flat_map`'s
-//     function returns an array of them;
-//   - no stage ahead of a `take` or `take_while` can abort, since the stop
-//     skips the applications the eager chain would make past it.
 import "./ssa";
 import "./ssasem";
 import "./semtypes";
@@ -32,30 +5,16 @@ import "./typeinfo";
 import "./util";
 import "./semarrayreport";
 
-// What the pass made of each function, and whether it rewrote the graph.
 pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayreport.Site[] }
 
-// `index` finds a body by the name a call carries; `verbs[i]` is the std/array
-// combinator body i is, or ""; `bad[i]` says body i can reach an effect. A
-// body that was not produced is no combinator and counts as effectful. `any`
-// says the module holds a combinator at all.
-// `aborts[i]` says body i may abort.
 struct Context { index: util.NameIndex, verbs: string[], report_verbs: string[], bad: boolean[], aborts: boolean[], any: boolean }
 
-// One recognised chain. `stages` are instruction positions in `block`, head
-// first, with `verbs` and the element function values `fns` beside them.
-// `roots` holds the position of the core/iter call the chain starts from, when
-// it does, which goes with the stages: `of(xs)`, after which `base` is `xs`,
-// or `range(lo, hi)`, after which `base` is `lo` and `hi` its bound. `hi` is
-// -1 for a chain over an array.
 struct Chain { ok: boolean, block: i32, sink: i32, verb: string, stages: i32[], verbs: string[], fns: i32[], base: i32, roots: i32[], hi: i32 }
 
 struct Def { block: i32, pos: i32 }
 
 struct Decision { reason: i32, stage: i32 }
 
-// `usable[i]` says body i was produced and may be read and rewritten.
-// `stdlib` and `iter_lib` name the bodies std/array and core/iter supplied.
 pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boolean[], stdlib: string[], iter_lib: string[], enabled: boolean, report: boolean): Fused {
   let cx: Context = context(funcs, names, usable, util.name_index(stdlib), util.name_index(iter_lib), report);
   let out: ssasem.Func[] = [];
@@ -108,16 +67,12 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
     any = any || v != "" || report && report_verbs[i] != "";
     i = i + 1;
   }
-  // A module with no combinator body has no chain, and is spared the effect
-  // analysis.
   if (!any) {
     return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: [], aborts: [], any: false };
   }
   return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), aborts: may_abort(funcs, usable, index), any: true };
 }
 
-// fn_verb is the combinator a usable body from std/array or core/iter
-// implements, by its name.
 function fn_verb(usable: boolean, name: string, trusted: util.NameIndex, iter_trusted: util.NameIndex): string {
   if (!usable) {
     return "";
@@ -131,12 +86,6 @@ function fn_verb(usable: boolean, name: string, trusted: util.NameIndex, iter_tr
   return "";
 }
 
-// ---- recognition ----------------------------------------------------------
-
-// Name recognition follows the loader-origin check in context. Neither a
-// basename nor a call to a stdlib function proves a user's wrapper equivalent
-// to that function. The trusted free functions and array-method wrappers keep
-// these names through instantiation, with `__` or `$` suffixes.
 function verb_of(name: string): string {
   if (!util.str_has_prefix(name, "__arrm_") && !util.str_has_prefix(name, "array__")) {
     return "";
@@ -148,12 +97,6 @@ function verb_of(name: string): string {
   return "";
 }
 
-// The core/iter body a trusted name is: `of` or `range`, which start an
-// iterator over an array or a run of integers, or a lazy adapter or sink of
-// the Iterator trait. An adapter or sink
-// with no type parameter of its own is a method, `Recv.verb`; one with its own
-// is folded to `__smm_<Recv>_<verb>`, and a type name is never a lower-case
-// verb, so the first `_<verb>` there that a suffix or the end follows is it.
 function iter_verb_of(name: string): string {
   let verbs: string[] = ["map", "filter", "take", "flat_map", "skip", "enumerate", "zip", "fold", "len", "collect", "find", "any", "all"];
   let n: string = slice_unchecked(name, 0, dollar_at(name)) + "";
@@ -180,8 +123,6 @@ function iter_verb_of(name: string): string {
   return smm_verb(n, verbs);
 }
 
-// smm_verb is the verb a folded method's name `__smm_<Base>_<verb>...` ends
-// its base with, the earliest one when several match.
 function smm_verb(n: string, verbs: string[]): string {
   let best: i32 = n.len();
   let found: string = "";
@@ -195,7 +136,6 @@ function smm_verb(n: string, verbs: string[]): string {
   return found;
 }
 
-// Where `_verb` first stands in `n` followed by `__` or the end, or -1.
 function verb_end(n: string, tag: string): i32 {
   let at: i32 = 6;
   while (at + tag.len() <= n.len()) {
@@ -224,7 +164,6 @@ function dollar_at(name: string): i32 {
   return i;
 }
 
-// Where the instance suffixes start: the first `$` or `__` at or after `from`.
 function suffix_at(name: string, from: i32): i32 {
   let end: i32 = from;
   while (end < name.len() && name[end] != b'$' && !(name[end] == b'_' && end + 1 < name.len() && name[end + 1] == b'_')) {
@@ -249,19 +188,6 @@ function report_verb(cx: Context, callee: string): string {
   return cx.report_verbs[at];
 }
 
-// ---- the purity boundary --------------------------------------------------
-
-// The kinds that compute a value and nothing else. Everything outside the
-// list counts as an effect: a call through a function value (its target is
-// not known here), a cell write, a map iterator's cursor, and any kind added
-// later until it is placed here on purpose. A direct call is pure when its
-// callee is, which `effectful` settles over the whole module.
-//
-// The semantic kinds are numbered downward without gaps, so the pure ones are
-// two runs: `array_new` through `arr_slice` less the call through a value and
-// the cell write, and `dyn_up` through `dyn_as`, and then `arr_concat`. The
-// map iterator kinds sit between the runs; the holes and anything newer
-// sit past the second.
 function pure_kind(k: i32): boolean {
   if (k >= 1) {
     return k <= 10;
@@ -283,9 +209,6 @@ function direct_effect(f: ssasem.Func): boolean {
   return false;
 }
 
-// A body is effectful when it holds an effect or calls anything that is not a
-// pure body of this module: a builtin, an unproduced body, or an effectful
-// one. Recursion between pure bodies stays pure: the walk only ever marks.
 function effectful(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex): boolean[] {
   let bad: boolean[] = [];
   let i: i32 = 0;
@@ -296,10 +219,6 @@ function effectful(funcs: ssasem.Func[], usable: boolean[], index: util.NameInde
   return through_calls(funcs, bad, index);
 }
 
-// docs/ARRAY-ALGEBRA.md §2: what aborts is an index or slice out of range and
-// an allocation that does not fit; integer division is total and float
-// arithmetic does not trap. So a body that only computes scalars, converts
-// them, and reads its captures cannot abort, and anything else may.
 function aborting_kind(k: i32): boolean {
   if (k >= 1) {
     return k > 10;
@@ -318,7 +237,6 @@ function direct_abort(f: ssasem.Func): boolean {
   return false;
 }
 
-// A `+` that yields text joins two strings into a fresh allocation.
 function concatenates(f: ssasem.Func, ins: ssa.SInst): boolean {
   return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_text(f.values[ins.result]);
 }
@@ -333,7 +251,6 @@ function may_abort(funcs: ssasem.Func[], usable: boolean[], index: util.NameInde
   return through_calls(funcs, bad, index);
 }
 
-// Spreads `bad` from callee to caller until nothing changes.
 function through_calls(funcs: ssasem.Func[], bad: boolean[], index: util.NameIndex): boolean[] {
   let i: i32 = 0;
   let changed: boolean = true;
@@ -365,8 +282,6 @@ function calls_bad(f: ssasem.Func, bad: boolean[], index: util.NameIndex): boole
   return false;
 }
 
-// ---- finding a chain ------------------------------------------------------
-
 function no_chain(): Chain {
   return Chain { ok: false, block: 0, sink: 0, verb: "", stages: [], verbs: [], fns: [], base: 0, roots: [], hi: 0 - 1 };
 }
@@ -390,8 +305,6 @@ function find_chain(f: ssasem.Func, cx: Context): Chain {
   return no_chain();
 }
 
-// The chain whose sink is the instruction at (bi, k), walked back from the
-// sink through every intermediate that only its next stage reads.
 function chain_at(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32, k: i32): Chain {
   let sink: ssa.SInst = f.graph.blocks[bi].insts[k];
   let verb: string = sink_verb(sink, cx);
@@ -411,8 +324,6 @@ function chain_at(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32
   return Chain { ...c, ok: admissible(f, cx, defs, c) };
 }
 
-// with_root takes a lazy chain's `of(xs)` or `range(lo, hi)` root at `pos` into
-// the chain, whose base becomes the root's array or lower bound.
 function with_root(c: Chain, cx: Context, r: ssa.SInst, pos: i32): Chain {
   if (r.kind_tag != ssasem.call()) {
     return c;
@@ -445,8 +356,6 @@ function decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision 
   if (c.stages.len() == 0 && c.roots.len() == 0) {
     return absent_producer(f, cx, defs, c);
   }
-  // A lazy chain is fused over the array an `of` iterates or the integers a
-  // `range` counts, and no other iterator.
   if (c.hi < 0 && !is_array(f.values[c.base])) {
     return Decision { reason: semarrayreport.fusion_no_producer(), stage: first_pos(c) };
   }
@@ -493,9 +402,6 @@ function stage_verb(ins: ssa.SInst, cx: Context): string {
   return "";
 }
 
-// Between the first stage and the sink, only values that read nothing but
-// their operands: the closures and the seed the stages are handed. A call
-// there would run before stages it used to follow.
 function effect_between(b: ssa.SBlock, c: Chain): i32 {
   let p: i32 = first_pos(c) + 1;
   while (p < c.sink) {
@@ -508,11 +414,6 @@ function effect_between(b: ssa.SBlock, c: Chain): i32 {
   return 0 - 1;
 }
 
-// Every element function, and the sink's, is a closure built in this body
-// whose own body reaches no effect. A stage ahead of a `take` or `take_while`
-// loses the applications past the stop, so its function must also be unable
-// to abort.
-// A `take`'s operand is its count, not a function.
 function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
   let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
   let last_take: i32 = last_take_of(c.verbs);
@@ -533,8 +434,6 @@ function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): De
   return Decision { reason: semarrayreport.fusion_fused(), stage: c.sink };
 }
 
-// checked_fns is every stage's operand and the sink's function; a len has
-// none of its own.
 function checked_fns(c: Chain, sink: ssa.SInst): i32[] {
   if (c.verb == "len") {
     return c.fns;
@@ -554,8 +453,6 @@ function last_take_of(verbs: string[]): i32 {
   return last;
 }
 
-// fn_decision judges one element function: a closure built in this body whose
-// own body reaches no effect, and that cannot abort when a take follows it.
 function fn_decision(f: ssasem.Func, cx: Context, d: Def, stage: i32, before_take: boolean): Decision {
   if (d.block < 0) {
     return Decision { reason: semarrayreport.fusion_element_fn_unresolved(), stage: stage };
@@ -574,9 +471,6 @@ function fn_decision(f: ssasem.Func, cx: Context, d: Def, stage: i32, before_tak
   return Decision { reason: semarrayreport.fusion_fused(), stage: stage };
 }
 
-// Successful entries are captured immediately before their actual rewrite.
-// Refusals are read from the final graph, so a partially fused chain cannot
-// claim that its retained prefix was eliminated too.
 function stage_name(ins: ssa.SInst): string {
   let name: string = ins.str;
   if (name == "") {
@@ -603,7 +497,6 @@ function fused_site(f: ssasem.Func, c: Chain, name: string): semarrayreport.Site
   if (c.verb == "scan") {
     storage = "no-intermediate-arrays/one-output-buffer";
   }
-  // A flat_map can yield more elements than the input has, past the reserve.
   if (c.verb == "scan" && util.has_str(c.verbs, "flat_map")) {
     storage = "no-intermediate-arrays/grown-output-buffer";
   }
@@ -647,8 +540,6 @@ function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
   return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[bi].insts[why.stage]), plan: plan + "; not fused", reason: why.reason, storage: "deferred-to-ownership" };
 }
 
-// A sink's verdict covers all single-use producers in its chain, including
-// refused chains. Those stages must not independently claim to lack a sink.
 function covered_stages(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32): i32[] {
   let covered: i32[] = [];
   let k: i32 = 0;
@@ -698,11 +589,6 @@ function element(t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// The array the chain starts from, every intermediate, and the accumulator
-// are all scalars, so no value in the loop carries a count. A stage's element
-// is read off what the stage does, since a lazy stage yields an iterator
-// rather than an array: a `map` yields its function's result, a `flat_map`
-// the elements of the array its function returns, and the rest pass theirs on.
 function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
   let b: ssa.SBlock = f.graph.blocks[c.block];
   let sink: ssa.SInst = b.insts[c.sink];
@@ -729,8 +615,6 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
   return 0 - 1;
 }
 
-// sink_not_scalar: a len's result is not an integer, or a fold's or scan's
-// accumulator is not a scalar of its seed's type.
 function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean {
   if (verb == "len") {
     return !ssasem.is_integer(f.values[sink.result]);
@@ -744,8 +628,6 @@ function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean
   return false;
 }
 
-// What the loop's cursor yields: an element of the array, or for a range the
-// cursor itself.
 function base_element(f: ssasem.Func, c: Chain): typeinfo.Type {
   if (c.hi >= 0) {
     return int32();
@@ -753,7 +635,6 @@ function base_element(f: ssasem.Func, c: Chain): typeinfo.Type {
   return element(f.values[c.base]);
 }
 
-// The first instruction the chain removes, and whether it removes `p`.
 function first_pos(c: Chain): i32 {
   if (c.roots.len() > 0) {
     return c.roots[0];
@@ -764,8 +645,6 @@ function first_pos(c: Chain): i32 {
 function removed(c: Chain, p: i32): boolean {
   return index_of(c.stages, p) >= 0 || index_of(c.roots, p) >= 0;
 }
-
-// ---- graph helpers --------------------------------------------------------
 
 function use_counts(g: ssa.SFunc): i32[] {
   let out: i32[] = __alloc_i32(g.nvals);
@@ -862,13 +741,10 @@ function term_targets(t: ssa.STerm): i32[] {
   return [];
 }
 
-// ---- building the loop ----------------------------------------------------
-
 function int32(): typeinfo.Type {
   return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
-// The blocks built so far, the open block, and the next free block id.
 struct Build { values: typeinfo.Type[], blocks: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next: i32 }
 
 struct Emitted { s: Build, v: i32 }
@@ -879,8 +755,6 @@ function emit(s: Build, kind: i32, t: typeinfo.Type, args: i32[], imm: i32, str:
   return Emitted { s: Build { ...s, values: s.values.append(t), insts: s.insts.append(ins) }, v: v };
 }
 
-// An instruction defining a value that already has an id and a type: the
-// sink's result, so every later reader of it is left as it was.
 function emit_at(s: Build, kind: i32, args: i32[], result: i32): Build {
   return Build { ...s, insts: s.insts.append(ssa.SInst { kind_tag: kind, result: result, args: args, imm: 0, str: "" }) };
 }
@@ -897,14 +771,6 @@ function fresh(s: Build, n: i32): Build {
   return Build { ...s, next: s.next + n };
 }
 
-// One level of the fused loop: the outer loop over the base array, or the
-// inner loop a `flat_map` runs over each array its function returns. Besides
-// its cursor, a level carries `vars`: the accumulator, then an arrival flag
-// for an unpeeled reduce at `seen_at`, an output array for scan at `out_at`,
-// and one count per `take` from `count_at` on. `vars` are the header's phis,
-// `inits` what the entry edge supplies, `cur` the values on the path being
-// built, and `rows` what each back edge supplies, one row per edge. `exits`
-// are the blocks a stop leaves the pipeline from, with `exit_rows` beside.
 struct Loop { head: i32, i: i32, next_i: i32, start: i32, entry: i32, vars: i32[], inits: i32[], cur: i32[], backs: i32[], rows: i32[], exits: i32[], exit_rows: i32[], seen_at: i32, out_at: i32, count_at: i32 }
 
 function no_loop(): Loop {
@@ -919,16 +785,8 @@ function stop(l: Loop, from: i32): Loop {
   return Loop { ...l, exits: l.exits.append(from), exit_rows: util.append_all(l.exit_rows, l.cur) };
 }
 
-// `outer` are the levels around `l`, outermost first.
 struct Stepped { s: Build, l: Loop, e: i32, outer: Loop[] }
 
-// The stages' steps, concatenated: a `map` rebinds the element, a `filter`
-// whose predicate says no skips straight back to the header, a `take`
-// counts the element, a `take_while` whose predicate says no leaves the
-// pipeline, and a `flat_map` opens an inner level over the array its
-// function returns, in which the later stages and the sink run. A take's
-// stop is the guard `guards` puts ahead of the fetch of the level it runs
-// in, so no stage runs on an element past it.
 function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
   let st: Stepped = Stepped { s: s, l: l, e: e, outer: [] };
   let j: i32 = 0;
@@ -979,9 +837,6 @@ function pipeline_exit(st: Stepped): i32 {
   return st.l.head + 2;
 }
 
-// A `flat_map` calls its function on the element and loops over the array it
-// returns. The inner level carries everything the outer one does, entering
-// with the outer path's values; `unwind` makes its exit an outer back edge.
 function inner(f: ssasem.Func, c: Chain, st: Stepped, j: i32): Stepped {
   let fn: i32 = c.fns[j];
   let arr_t: typeinfo.Type = ssasem.func_result(f.values[fn]);
@@ -1005,8 +860,6 @@ function inner(f: ssasem.Func, c: Chain, st: Stepped, j: i32): Stepped {
   return Stepped { s: fetched.s, l: h.l, e: fetched.v, outer: st.outer.append(o) };
 }
 
-// Closes the inner levels, innermost first: each header gets its phis, and
-// each exit branches back to the level around it with the header's values.
 function unwind(st: Stepped): Stepped {
   let s: Build = st.s;
   let l: Loop = st.l;
@@ -1023,9 +876,6 @@ function unwind(st: Stepped): Stepped {
   return Stepped { ...st, s: s, l: l, outer: [] };
 }
 
-// The sink's step. `fold` combines into the accumulator; `reduce` takes the
-// first element to arrive as the accumulator and combines the rest, so its
-// combining function never sees a lone element.
 function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i32): Stepped {
   let s: Build = st.s;
   let l: Loop = st.l;
@@ -1057,9 +907,6 @@ function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i
 
 struct Ended { s: Build, finals: i32[] }
 
-// What the pipeline ends with, in the exit block: the outer header's values,
-// unless a stop leaves an inner level with values of its own, when each
-// takes a phi over the exit's predecessors. Counts end with the loop.
 function exit_values(s: Build, l: Loop): Ended {
   let w: i32 = l.vars.len();
   let same: boolean = true;
@@ -1091,8 +938,6 @@ function exit_values(s: Build, l: Loop): Ended {
   return Ended { s: s, finals: finals };
 }
 
-// The sink's finish, left in the sink's own result: fold's accumulator, or
-// reduce's `Some(acc)`, `None` when nothing arrived.
 function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, finals: i32[], result: i32): Build {
   if (c.verb == "scan") {
     return emit_at(s, 7, [finals[l.out_at]], result);
@@ -1111,7 +956,6 @@ function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, finals: i32[], resu
   return emit_at(open(s, some + 2, [some, some + 1]), 8, [vs.v, vn.v], result);
 }
 
-// A level's header phis, completed once every back edge is known.
 function header(s: Build, l: Loop): Build {
   let at: i32 = 0;
   while (s.blocks[at].id != l.head) {
@@ -1142,13 +986,8 @@ function header(s: Build, l: Loop): Build {
   return Build { ...s, blocks: s.blocks.with(at, full) };
 }
 
-// `yes` is the constant an unpeeled reduce records an arrival with.
 struct Opened { s: Build, l: Loop, yes: i32 }
 
-// What runs once before the loop: the invariant length, cursor and seed, and
-// scan's output, reserved at the input's length. A peeled reduction starts at
-// one; other sinks start at zero, as every take's count does, since a chain
-// with a take is never peeled.
 function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i32): Opened {
   let i32t: typeinfo.Type = int32();
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
@@ -1202,10 +1041,6 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
   return loop_head(Opened { s: open(close(s, br(head)), head, []), l: l, yes: yes }, n.v);
 }
 
-// seed_inits gives the accumulator its starting values: the seed of a peeled
-// reduction, a fold's or scan's own initial value, a len's zero start, or
-// zero and a "no element yet" flag for a reduce, whose `yes` constant records
-// an arrival.
 function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Type, seed: i32, start: i32): Opened {
   if (seed >= 0) {
     return Opened { s: s, l: Loop { ...no_loop(), inits: [seed] }, yes: 0 - 1 };
@@ -1223,10 +1058,6 @@ function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Typ
   return Opened { s: y.s, l: Loop { ...no_loop(), inits: [z.v, no.v] }, yes: y.v };
 }
 
-// The header tests the cursor against the level's length, and the body
-// advances it first. The dominating bound also proves the increment cannot
-// overflow, which the physical SSA pass uses to remove the redundant
-// signed32 wrap without changing integer semantics.
 function loop_head(o: Opened, n: i32): Opened {
   let head: i32 = o.l.head;
   let more: Emitted = emit(o.s, 9, typeinfo.TypeBool { tag: 0 }, [o.l.i, n], 0, "<");
@@ -1236,10 +1067,6 @@ function loop_head(o: Opened, n: i32): Opened {
   return Opened { ...o, s: step.s, l: Loop { ...o.l, next_i: step.v } };
 }
 
-// Each `take` in a level stops the pipeline once its count reaches its
-// operand, before the level fetches an element. A count at or below zero
-// stops it before the first. A level runs the stages from `from` to the next
-// `flat_map`.
 function guards(c: Chain, o: Opened, from: i32, exit: i32): Opened {
   let s: Build = o.s;
   let l: Loop = o.l;
@@ -1261,9 +1088,6 @@ function guards(c: Chain, o: Opened, from: i32, exit: i32): Opened {
   return Opened { ...o, s: s, l: l };
 }
 
-// A reduction whose stages cannot skip is seeded from index zero, behind a
-// non-empty guard. The same stage fragments run there and in the loop; the
-// combining callback runs only in the loop. Filters retain the arrival flag.
 struct Peeled { s: Build, seed: i32, empty: i32, none: i32, join: i32 }
 
 function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
@@ -1300,10 +1124,6 @@ function finish_seeded(f: ssasem.Func, c: Chain, e: Ended, l: Loop, p: Peeled, r
   return emit_at(open(close(some.s, br(p.join)), p.join, [p.empty, from]), 8, [p.none, some.v], result);
 }
 
-// Replaces the chain with one loop. The block holding it is split: what came
-// before the sink (less the stages) runs first, the loop follows, and what
-// came after the sink continues from the loop's exit under the old
-// terminator.
 @noinline
 function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
   let g: ssa.SFunc = f.graph;
@@ -1355,8 +1175,6 @@ function kept_before(b: ssa.SBlock, c: Chain): ssa.SInst[] {
   return out;
 }
 
-// The old block's place takes the first built block; the rest go last. A
-// successor of the old block now follows the block its terminator moved to.
 function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
   let old: ssa.SBlock = g.blocks[at];
   let last: i32 = built[built.len() - 1].id;
@@ -1394,7 +1212,6 @@ function renamed(xs: i32[], from: i32, to: i32): i32[] {
   return out;
 }
 
-// The call table less the combinators the fusion removed the last call to.
 function still_called(calls: ssasem.Contract[], gone: string[], g: ssa.SFunc): ssasem.Contract[] {
   let named: string[] = [];
   for b in g.blocks {

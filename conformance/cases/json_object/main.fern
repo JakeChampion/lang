@@ -1,6 +1,6 @@
 import "std/json";
-// std/json from the prelude (bare names): parse an object and read
-// two integer fields. 40 + 2 = 42.
+
+
 function main(): i32 {
     match (json.json_parse("{\"a\": 40, \"b\": 2}")) {
         Some(v) => {

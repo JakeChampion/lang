@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// badHashes are the shapes that must never reach pkgcache.Dir, which
-// joins the hex part onto the store root: a traversing hash escapes the
-// store AND skips verification (nothing is downloaded, so nothing is
-// checked).
 var badHashes = map[string]string{
 	"traversal":     "sha256:../../../../etc/fern-pkgs/evil",
 	"absolute":      "sha256:/tmp/evil",
@@ -58,8 +54,6 @@ func TestParseIndexRejectsMalformedHash(t *testing.T) {
 	}
 }
 
-// The wording is the self-hosted reader's too (compiler/drivers/mvs_run.fern
-// pins its side), so a lock both compilers refuse is refused in the same words.
 func TestReadLockMalformedHashMessage(t *testing.T) {
 	dir := t.TempDir()
 	lock := "[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/x.tar.gz\"\nhash = \"sha256:../../outside/evil\"\n"

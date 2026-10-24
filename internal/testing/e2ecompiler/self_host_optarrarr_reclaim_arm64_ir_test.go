@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptArrArrReclaimIRArm64 runs the shared optional nested-array reclaim
-// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostOptArrArrReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optArrArrReclaimCases {

@@ -22,8 +22,6 @@ func TestResolvedArrayAppendIntrinsic(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Rechecking a rewritten call must resolve the same identity and
-			// concrete type, not depend on the original method-call syntax.
 			for round := 0; round < 2; round++ {
 				info, err := Check(prog)
 				if err != nil {

@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array.scale_f64 / add_f64 — the element-wise
-// vector combinators: scalar multiply and element-wise sum (to the shorter
-// length on a mismatch). Both return an f64[] (scalar payload), so they lower
-// on all four backends including wasmbin. Returns 42 iff every check holds
-// across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const arrayScaleAddProg = `
 import "std/array" as array;
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

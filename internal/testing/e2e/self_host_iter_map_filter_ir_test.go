@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// Eager iterator transforms `map` / `filter`, written in the inline prelude as
-// bounded generics — closure-taking adapters that consume an Iterator and
-// collect into a fresh array (#2691). Like the predicate adapters, the closure
-// is applied inside a `match` arm, and the whole driver is called in a `let` /
-// `for-in` position; both lower on the self-host IR path now that the #2686
-// condition-lift gap is fixed. The module test runs core/iter's lazy methods.
 const iterMapFilterPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -41,21 +35,14 @@ var iterMapFilterCases = []struct {
 	main string
 	want int
 }{
-	// map x -> x*x over [0,4): [0,1,4,9]; sum 14 + len 4 = 18.
 	{"map-square", `function main(): i32 { let sq = map(range(0, 4), (x: i32): i32 => { return x * x; }); let s = 0; for v in sq { s = s + v; } return s + sq.len(); }`, 18},
-	// filter even over [0,8): [0,2,4,6]; sum 12 + len 4 = 16.
 	{"filter-even", `function main(): i32 { let ev = filter(range(0, 8), (x: i32): boolean => { return x % 2 == 0; }); let t = 0; for v in ev { t = t + v; } return t + ev.len(); }`, 16},
-	// map to a DIFFERENT element type (U ≠ T): i32 → boolean (is-even) over [0,5)
-	// = [T,F,T,F,T]; count the trues → 3.
 	{"map-to-bool", `function main(): i32 { let bs = map(range(0, 5), (x: i32): boolean => { return x % 2 == 0; }); let c = 0; for b in bs { if (b) { c = c + 1; } } return c; }`, 3},
-	// map over an empty range yields an empty array → len 0; +7 = 7.
 	{"map-empty", `function main(): i32 { let e = map(range(3, 3), (x: i32): i32 => { return x + 1; }); return e.len() + 7; }`, 7},
 }
 
 func iterMapFilterProg(mainBody string) string { return iterMapFilterPrelude + mainBody + "\n" }
 
-// TestNativeIterMapFilter runs the inline map/filter programs on the native
-// interp / x86-64 / wasm backends, oracle-checked.
 func TestNativeIterMapFilter(t *testing.T) {
 	for _, tc := range iterMapFilterCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,7 +60,6 @@ func TestNativeIterMapFilter(t *testing.T) {
 	}
 }
 
-// TestNativeIterMapFilterArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeIterMapFilterArm64(t *testing.T) {
 	for _, tc := range iterMapFilterCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,9 +71,6 @@ func TestNativeIterMapFilterArm64(t *testing.T) {
 	}
 }
 
-// TestNativeIterMapFilterModule exercises the shipped `import "core/iter"`
-// module's `map` / `filter` methods over real `range` iterators on the native
-// backends.
 func TestNativeIterMapFilterModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -110,8 +93,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostIterMapFilterIRX86_64 routes each inline case through the
-// self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks it.
 func TestSelfHostIterMapFilterIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -145,7 +126,6 @@ func TestSelfHostIterMapFilterIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIterMapFilterIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostIterMapFilterIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host iter map/filter wasm IR e2e")

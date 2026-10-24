@@ -1,16 +1,3 @@
-// The gate that keeps spec/diagnostics.md accurate.
-//
-// The index claims, per diagnostic code, that some conformance case
-// produces it. That claim is the whole value of the document — it is
-// what says a rejection rule will still be checked after the native
-// freeze, when Go-side checker tests can no longer measure the
-// implementation that matters. A claim nobody verifies is worth less
-// than no claim, because it reads like coverage.
-//
-// So this test derives the truth (run every compile-error case, collect
-// the codes it emits) and requires the document to match it exactly, in
-// both directions: an unbacked claim fails, and so does a `—` on a code
-// that some case does in fact emit.
 package e2e
 
 import (
@@ -30,11 +17,8 @@ const (
 )
 
 var (
-	indexRowRe = regexp.MustCompile(`^\|\s*` + "`" + `([A-Z]\d+)` + "`" + `\s*\|(.*)\|\s*(.*?)\s*\|$`)
-	codeRe     = regexp.MustCompile(`error\[([A-Z]\d+)\]`)
-	// A lowering-stage diagnostic is not formatted through diag.Format —
-	// it comes out of the IR pass as `LINE:COL: E0NN: …`, so the code is
-	// bare rather than wrapped in `error[…]`.
+	indexRowRe     = regexp.MustCompile(`^\|\s*` + "`" + `([A-Z]\d+)` + "`" + `\s*\|(.*)\|\s*(.*?)\s*\|$`)
+	codeRe         = regexp.MustCompile(`error\[([A-Z]\d+)\]`)
 	loweringCodeRe = regexp.MustCompile(`^\s*\d+:\d+: ([A-Z]\d+):`)
 	countRe        = regexp.MustCompile(`\*\*(\d+) of (\d+)\*\* codes are pinned`)
 )
@@ -47,7 +31,6 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 	rows, nPin, nAll := parseDiagnosticsIndex(t)
 	emitted := codesByCase(t)
 
-	// Which codes some conformance case actually produces.
 	producedBy := map[string][]string{}
 	for name, codes := range emitted {
 		for _, c := range codes {
@@ -55,10 +38,6 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 		}
 	}
 
-	// 1. The index and the explanation catalogue must describe the same
-	//    set of codes. An explanation with no row is undocumented here; a
-	//    row with no explanation means `fern -explain` cannot answer for a
-	//    code the index claims exists.
 	explained := explanationCodes(t)
 	inIndex := map[string]bool{}
 	for _, r := range rows {
@@ -79,7 +58,6 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 		}
 	}
 
-	// 2. Every claimed pin must hold, and every `—` must be accurate.
 	for _, r := range rows {
 		switch {
 		case r.pin == "—":
@@ -101,8 +79,6 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 		}
 	}
 
-	// 3. The stated coverage count must be the real one, so that moving it
-	//    in either direction is a visible edit rather than a silent drift.
 	var gotPin int
 	for _, r := range rows {
 		if r.pin != "—" {
@@ -115,10 +91,6 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 	}
 }
 
-// codesByCase runs every rejection case in the corpus through the real
-// CLI and records the codes it reports. The CLI is used rather than the
-// in-process front end because only the formatted output carries the
-// codes — the aggregate error value does not.
 func codesByCase(t *testing.T) map[string][]string {
 	t.Helper()
 	bin := buildLangBinForInterp(t)
@@ -135,11 +107,6 @@ func codesByCase(t *testing.T) map[string][]string {
 		dir := filepath.Join(conformanceCases, e.Name())
 		main := filepath.Join(dir, "main.fern")
 
-		// A compile-error case is rejected by the front end, so `-check`
-		// reaches it. A lowering-error case is accepted by the front end
-		// and rejected during codegen, so it needs a real compile —
-		// `-check` would report nothing and the case would read as
-		// emitting no code at all.
 		var cmd *exec.Cmd
 		switch {
 		case fileExists(filepath.Join(dir, "expected.error")):

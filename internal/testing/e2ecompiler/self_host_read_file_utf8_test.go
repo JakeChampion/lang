@@ -10,12 +10,6 @@ import (
 	"unicode/utf8"
 )
 
-// readFileUTF8Cases are byte strings for read_file's well-formedness check,
-// which checks whole vector blocks past the first three bytes and walks the
-// rest, passing 32 ASCII bytes at a time as four words: multibyte sequences,
-// invalid bytes and truncated sequences on each side of a block boundary in
-// ASCII and in two-byte text, every lead byte against the second bytes that
-// bound its ranges, and seeded runs of mostly-ASCII and of multibyte strings.
 func readFileUTF8Cases() [][]byte {
 	ascii := func(n int) []byte { return []byte(strings.Repeat("a", n)) }
 	with := func(n, at int, b []byte) []byte {
@@ -27,9 +21,9 @@ func readFileUTF8Cases() [][]byte {
 		cases = append(cases, ascii(n))
 	}
 	for _, b := range [][]byte{
-		[]byte("é"), []byte("€"), []byte("🙂"), // valid
-		{0xff}, {0x80}, {0xc0, 0x80}, {0xe0, 0x80, 0x80}, {0xed, 0xa0, 0x80}, // invalid
-		{0xe2, 0x82}, {0xf0, 0x9f, 0x99}, {0xc3, 'a'}, // truncated or broken
+		[]byte("é"), []byte("€"), []byte("🙂"),
+		{0xff}, {0x80}, {0xc0, 0x80}, {0xe0, 0x80, 0x80}, {0xed, 0xa0, 0x80},
+		{0xe2, 0x82}, {0xf0, 0x9f, 0x99}, {0xc3, 'a'},
 	} {
 		for at := 0; at <= 68; at++ {
 			cases = append(cases, with(68, at, b))
@@ -86,8 +80,6 @@ func readFileUTF8Cases() [][]byte {
 	return cases
 }
 
-// readFileUTF8Program reads each case's file and prints 1 for Ok, 0 for
-// InvalidUtf8.
 func readFileUTF8Program(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()

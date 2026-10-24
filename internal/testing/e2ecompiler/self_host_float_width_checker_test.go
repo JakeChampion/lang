@@ -29,9 +29,6 @@ func TestSelfHostFloatTypeContracts(t *testing.T) {
 	}
 }
 
-// Build the actual checker directly with Go while the typed-match parser and
-// lowering are still being integrated. This runs its complete diagnostic walk,
-// not just check_expr or a model of its result rules.
 func TestSelfHostFloatWidthCheckerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

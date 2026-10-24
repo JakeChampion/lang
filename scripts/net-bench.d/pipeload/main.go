@@ -1,11 +1,3 @@
-// pipeload — the pipelined profile scripts/net-bench records: -c
-// connections, each sending -depth GETs of / in one write and reading
-// their responses before the next batch, for -d. A connection the server
-// closes between responses (its keep-alive limit) is dialled again, the
-// batch's unanswered requests dropped, as a client would. It prints the
-// responses read per second, whole, and how many connections failed
-// otherwise. oha sends one request at a time per connection and so cannot
-// drive this load.
 package main
 
 import (
@@ -71,8 +63,6 @@ func main() {
 	fmt.Printf("rps %d failed %d\n", int64(float64(n)/elapsed.Seconds()), failed.Load())
 }
 
-// pipeline sends batches on c until stop: closed when the server closed
-// the connection between two responses, an error for anything else.
 func pipeline(c net.Conn, batch []byte, depth int, done *atomic.Int64, stop chan struct{}) (bool, error) {
 	r := bufio.NewReaderSize(c, 64<<10)
 	for {
@@ -96,8 +86,6 @@ func pipeline(c net.Conn, batch []byte, depth int, done *atomic.Int64, stop chan
 	}
 }
 
-// readResponse reads one response: its status line and headers, then the
-// body its Content-Length gives.
 func readResponse(r *bufio.Reader) error {
 	length := -1
 	line, err := r.ReadSlice('\n')

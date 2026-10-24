@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// The expected permutations were checked against GNU shuf 9.12 with the
-// counting random source below. Keep arbitrary input bytes out of strings in
-// the generated program, including reservoir records and random-source reads.
 func TestSelfHostShufBytes(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src, err := filepath.Abs("../../../coreutils/shuf.fern")

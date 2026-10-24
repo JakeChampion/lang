@@ -12,15 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestComposeFromUserWorld is P3: bring-your-own WIT. A user-authored world
-// (here a minimal stdout and stderr one) is embedded with wasm-tools, decoded
-// from its raw component-type bytes (not an embedded fern/http payload), and
-// used to compose a stdout program, which imports stderr for an abort's cause
-// lines. The resulting component imports *only* the interfaces the user's
-// world declares (io/error + io/poll + io/streams + cli/stdout + cli/stderr —
-// five, since a stream's subscribe names a pollable, vs the fern world's
-// fourteen), and runs under wasmtime. This proves the import
-// surface is driven by the supplied WIT, not hardcoded.
 func TestComposeFromUserWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -32,10 +23,8 @@ func TestComposeFromUserWorld(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// A user's WIT directory: the wasi deps + a custom minimal world.
 	witDir := filepath.Join(dir, "wit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(witDir, "deps")).CombinedOutput(); err != nil {
-		// cp -r needs the parent to exist
 		_ = os.MkdirAll(witDir, 0o755)
 		if out2, err2 := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(witDir, "deps")).CombinedOutput(); err2 != nil {
 			t.Fatalf("copy deps: %v / %v\n%s%s", err, err2, out, out2)
@@ -47,7 +36,6 @@ func TestComposeFromUserWorld(t *testing.T) {
 		t.Fatalf("write byo.wit: %v", err)
 	}
 
-	// Embed the world into an empty core and pull out the component-type payload.
 	emptyWat := filepath.Join(dir, "empty.wat")
 	emptyWasm := filepath.Join(dir, "empty.wasm")
 	embedded := filepath.Join(dir, "embedded.wasm")
@@ -66,7 +54,6 @@ func TestComposeFromUserWorld(t *testing.T) {
 	}
 	payload := extractComponentType(t, embeddedBytes)
 
-	// Decode the user world from its raw bytes — the bring-your-own entry point.
 	w, err := componenttype.DecodeWorldBytes(payload)
 	if err != nil {
 		t.Fatalf("DecodeWorldBytes: %v", err)
@@ -75,7 +62,6 @@ func TestComposeFromUserWorld(t *testing.T) {
 		t.Errorf("user world has %d interfaces, want 5", got)
 	}
 
-	// Compile a stdout program and compose it against the user world.
 	const want = "hi from a user world"
 	progPath := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(progPath, []byte(`function main(): i32 { write("`+want+`"); return 0; }`), 0o644); err != nil {
@@ -103,7 +89,6 @@ func TestComposeFromUserWorld(t *testing.T) {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
 	}
 
-	// The component imports only the user world's five interfaces.
 	wit, err := exec.Command(wasmtools, "component", "wit", mine).CombinedOutput()
 	if err != nil {
 		t.Fatalf("wasm-tools component wit: %v\n%s", err, wit)

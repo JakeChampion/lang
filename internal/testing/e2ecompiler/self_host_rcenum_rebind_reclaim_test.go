@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-// --- Rebound rc-payload enum reclaim (#6127) --------------------------------
-//
-// A REBOUND rc-payload enum local (`let e = Nothing; while { e = Text(…) }`)
-// must release every chain it orphans and its final value, exactly as the
-// re-declared form (`while { let e = Text(…); match (e) … }`) does.
-//
-// This is a DEEP drop, so the hazard set below matters: releasing a chain that
-// something else still references frees the payload too.
-
-// `ids` hides the literal payload from the static-box plan, so each Text is a
-// heap box.
 const rcenumRebindSrc = `enum T { Text(string), Nothing }
 @noinline function ids(s: string): string { return s; }
 
@@ -35,15 +24,6 @@ function main(): i32 {
     return t % 7;
 }`
 
-// TestSelfHostRcEnumRebindReclaimX86_64 — a rebound rc-payload enum local frees
-// every chain it orphans AND its final value. allocs == frees is the essential
-// assertion: frees short of allocs is the leak this closes, frees ABOVE allocs
-// would mean the rebind release and the consuming-match free both claimed the
-// same chain (a double free).
-//
-// The match arms deliberately do NOT `return`. The consuming-match free is
-// emitted after the match statement, which a returning arm never reaches (#6219),
-// so returning arms here would measure that separate gap instead of this one.
 func TestSelfHostRcEnumRebindReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -54,8 +34,6 @@ func TestSelfHostRcEnumRebindReclaimX86_64(t *testing.T) {
 	asm := hevCompile(t, runner, driverBin, rcenumRebindSrc, []string{"FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "rcenum_rebind", asm)
 	stderr, exit := hevRun(t, runner, progBin)
-	// 3: confirmed against both oracles (bin/fern -interp and native -target
-	// x86-64), not read off the self-host run this test exists to check.
 	if exit != 3 {
 		t.Fatalf("exited %d, want 3", exit)
 	}
@@ -86,11 +64,6 @@ func TestSelfHostRcEnumRebindReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcEnumRebindHazardsX86_64 — rebind shapes whose old chain is still
-// referenced. A wrongly-granted drop releases a payload something else still
-// reads, so the first failure is a wrong answer or a crash; the census must
-// balance as well. Every `want` was confirmed against both the interpreter and
-// the native x86-64 backend. `ids` keeps each Text a heap box.
 func TestSelfHostRcEnumRebindHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -103,8 +76,6 @@ func TestSelfHostRcEnumRebindHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// Stored into a container before being overwritten: the old chain is
-			// still reachable through the array.
 			name: "escapes_to_container",
 			src: `enum T { Text(string), Nothing }
 @noinline function ids(s: string): string { return s; }
@@ -127,7 +98,6 @@ function main(): i32 {
 			want: 60,
 		},
 		{
-			// Passed to a call before being overwritten — the callee may retain it.
 			name: "passed_to_call",
 			src: `enum T { Text(string), Nothing }
 @noinline function ids(s: string): string { return s; }
@@ -148,8 +118,6 @@ function main(): i32 {
 			want: 60,
 		},
 		{
-			// Aliased into a second local that still reads the old chain after the
-			// rebind.
 			name: "aliased_to_local",
 			src: `enum T { Text(string), Nothing }
 @noinline function ids(s: string): string { return s; }
@@ -171,9 +139,6 @@ function main(): i32 {
 			want: 18,
 		},
 		{
-			// The match arm MOVES the string payload out into a container that
-			// outlives the enum, so dropping the chain must not free a string the
-			// array still points at.
 			name: "arm_moves_payload_out",
 			src: `enum T { Text(string), Nothing }
 @noinline function ids(s: string): string { return s; }
@@ -196,9 +161,6 @@ function main(): i32 {
 			want: 45,
 		},
 		{
-			// The payload is a PARAM string, not a freshly produced one, so the
-			// caller still owns it after the callee's chain is dropped: the caller
-			// reads `owned` again after build() returns.
 			name: "payload_is_param_string",
 			src: `enum T { Text(string), Nothing }
 function build(p: string, n: i32): i32 {

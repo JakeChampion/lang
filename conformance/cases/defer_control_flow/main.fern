@@ -1,16 +1,16 @@
-// `defer`, a labelled `continue`, `let … else`, the `|>` pipe and a trait
-// impl each had exactly one conformance case, and no case combined them.
-// Interaction is where these break, so this one runs them together.
-//
-// The contract being pinned:
-//   - defers run LIFO when the scope that registered them finishes: at
-//     function exit for a defer in the function body, and at the end of the
-//     iteration that executed it for a defer in a loop body;
-//   - a defer fires on an early return;
-//   - a labelled `continue` ends its iteration, so the iteration's pending
-//     defer runs there;
-//   - `let … else` binds for the rest of the block and its else diverges;
-//   - `|>` feeds its left-hand value in as the FIRST argument.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/i32";
 
@@ -26,18 +26,18 @@ impl Describe for Tag {
 
 function indent_by(body: string, pad: string): string { return pad + body; }
 
-// Returns None for a non-positive input, so `let … else` has a refutable
-// binding to work with.
+
+
 function checked(n: i32): Option[i32] {
     if (n <= 0) { return None; }
     return Some(n * 2);
 }
 
-// The function-body defer is LIFO at function exit, after the body. The
-// loop-body defer belongs to its iteration: four executions, four runs, each
-// at the end of its own iteration — so all four print BEFORE `body-end`, and
-// the one whose iteration leaves through the labelled `continue` still runs
-// (#6379, #6836).
+
+
+
+
+
 function run(): i32 {
     defer print("outer-last");
     let i: i32 = 0;
@@ -59,7 +59,7 @@ function early(x: i32): i32 {
 }
 
 function main(): i32 {
-    // 1 + 3 + 4 = 8; i == 2 is skipped by the labelled continue.
+
     let seen: i32 = run();
     if (seen != 8) { return 1; }
 
@@ -70,7 +70,7 @@ function main(): i32 {
     if (v != 42) { return 5; }
 
     let Some(_) = checked(0) else {
-        // The else branch must be reached for a None.
+
         let t: Tag = Tag { n: 7 };
         let line: string = t.describe() |> indent_by(">> ");
         if (line != ">> tag7") { return 6; }

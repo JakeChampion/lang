@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The same for a TUPLE parameter, the other arm the switch was
-// missing. A tuple has no nominal declaration, so only the slot
-// / argument / return rules can credit it — the projection arms
-// never fire. Before: 8 allocs / 4 frees, 128 bytes.
+
+
+
+
+
+
+
 struct Node { ty: (i32, string), n: i32 }
 
 @noinline

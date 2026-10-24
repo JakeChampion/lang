@@ -13,8 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// selfHostWasmFetch builds src into a component with the self-host CLI and
-// runs it under wasmtime with the host's network and env, returning stdout.
 func selfHostWasmFetch(t *testing.T, src string, env ...string) []byte {
 	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -46,8 +44,6 @@ func selfHostWasmFetch(t *testing.T, src string, env ...string) []byte {
 	return sout.Bytes()
 }
 
-// The self-host twin of TestAsyncWasmFetchFutureFanout: two fetch_future
-// reads gathered on wasm come back in input order.
 func TestSelfHostWasmFetchFutureFanout(t *testing.T) {
 	pSlow := e2eharness.StartDelayedUpstream(t, "AAA", 200*time.Millisecond)
 	pFast := e2eharness.StartDelayedUpstream(t, "BBB", 10*time.Millisecond)
@@ -59,8 +55,6 @@ func TestSelfHostWasmFetchFutureFanout(t *testing.T) {
 	}
 }
 
-// The self-host twin of TestAsyncWasmRaceFetchDropsLoser: race drops the
-// loser's pollable, so the component exits cleanly with the winner's body.
 func TestSelfHostWasmRaceFetchDropsLoser(t *testing.T) {
 	pA := e2eharness.StartDelayedUpstream(t, "AAA", 10*time.Millisecond)
 	pB := e2eharness.StartDelayedUpstream(t, "BBB", 40*time.Millisecond)

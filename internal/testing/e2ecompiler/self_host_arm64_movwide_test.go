@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// An arm64 constant one shifted halfword spells loads with one move-wide
-// instead of a literal-pool load (#12558): movz when the other halfwords are
-// zero, movn when they are all ones, and a 32-bit movn when the high word is
-// zero and the low word is one halfword short of all ones. A constant that
-// needs two halfwords, k11, stays in the pool. Every value prints the same
-// as the interpreter's on each target.
 const movwideProg = `import "std/u64";
 
 @noinline function k1(): u64 { return 0xffffffffffffffffu64; }

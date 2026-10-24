@@ -64,9 +64,6 @@ graph = ssa.SFunc { name: "duplicate", nparams: 1, nvals: 2, entry: 7, takes_env
 ] };
 `
 
-// A borrowed record's array field handed to a callee: alone it is handed
-// without a bracket; beside the record itself in the same call it is not,
-// since the callee reads the field through the record too (#11212).
 const unitRecordHanded = `
 let recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i32t] };
 records = [semrecords.Record { views: false, nests_func: false, ty: recordType, fields: [
@@ -81,16 +78,11 @@ graph = ssa.SFunc { name: "handed", nparams: 1, nvals: 3, entry: 7, takes_env: f
 
 func unitRecordCases() []unitCase {
 	return []unitCase{
-		// The rebuilt record dies at its field read, so the read takes the
-		// field's unit: the record is dropped there and the field after the
-		// element read.
 		{"record-borrowed-replacement", semanticRecord + "modes = [2];", `
 let created = find(p, 7, 3, 0 - 1);
 if (!supply(created, 0, 1, 0, ssaunits.retain_unit()) || !drops(created, [])) { return 40; }
 if (!drops(find(p, 7, 4, 0 - 1), [3]) || !drops(find(p, 7, 6, 0 - 1), [4])) { return 41; }
 `, "", ""},
-		// A counted parameter's field read takes too, so the parameter is
-		// released there and the field moves into the new record.
 		{"record-counted-replacement", semanticRecord + "modes = [3];", `
 if (!drops(find(p, 7, 1, 0 - 1), [0])) { return 42; }
 let created = find(p, 7, 3, 0 - 1);

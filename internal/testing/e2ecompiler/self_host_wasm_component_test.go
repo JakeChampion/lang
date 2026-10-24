@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmComponent exercises the first slice of the self-hosted
-// Component-Model wrapper (wat_component.fern): the core-module encoder
-// produces a (preview1) core module, and component_wrap embeds it in the
-// binary component envelope (preamble + core-module section). The result
-// must be a valid `(component (core module …))` per wasm-tools.
-//
-// The assembler here is the binary-encoder modules + wat_component + a
-// driver that read_file()s a target WAT, runs tokenize -> parse ->
-// emit_binary -> component_wrap, and prints the bytes; the test reassembles
-// them and validates the component.
 func TestSelfHostWasmComponent(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -34,7 +24,6 @@ func TestSelfHostWasmComponent(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// Assembler = encoder modules + wat_component + a wrapping driver.
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
@@ -81,7 +70,6 @@ func TestSelfHostWasmComponent(t *testing.T) {
 				}
 				bs = append(bs, byte(n))
 			}
-			// Component preamble: \0asm + version 13, layer 1.
 			if len(bs) < 8 || bs[0] != 0 || bs[1] != 97 || bs[2] != 115 || bs[3] != 109 || bs[4] != 13 || bs[6] != 1 {
 				t.Fatalf("not a component preamble: %v", bs[:min(8, len(bs))])
 			}
@@ -103,8 +91,6 @@ func TestSelfHostWasmComponent(t *testing.T) {
 	}
 }
 
-// componentWrapDriver reads target.wat, assembles the core module, wraps it
-// in the component envelope, and prints the bytes as decimals.
 const componentWrapDriver = `
 function main(): i32 {
     match (read_file("target.wat")) {
@@ -121,13 +107,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentFull exercises the full Component-Model framing
-// (wat_component.fern's component_full): given a core module that exports
-// `_lang_run`, it emits the core-instance / alias / type / canon-lift /
-// instance / `wasi:cli/run` sections around it. The framing is constant for
-// this fixed shape, so the test feeds the core module of a `fern -target
-// wasm32-wasi` component build to component_full and asserts the result is
-// byte-identical to — and runs the same as — that component.
 func TestSelfHostWasmComponentFull(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -145,8 +124,6 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 
-	// Build the self-host component assembler once (program-independent): it
-	// read_file()s a core module and wraps it with component_full.
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
@@ -168,8 +145,6 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 		t.Fatalf("write casm wat: %v", err)
 	}
 
-	// Cover both run-result paths: main()==0 → run() ok (exit 0),
-	// main()!=0 → run() err (exit 1).
 	for _, tc := range []struct {
 		name   string
 		source string
@@ -207,8 +182,6 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 				got = append(got, byte(n))
 			}
 
-			// The self-host component must be byte-identical to the Go
-			// reference (same core + the same constant wasi:cli/run framing).
 			if !bytesEqual(got, ref) {
 				t.Fatalf("component differs from Go reference: got %d bytes, want %d", len(got), len(ref))
 			}
@@ -219,8 +192,6 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 			if vout, err := exec.Command(wasmtools, "validate", myPath).CombinedOutput(); err != nil {
 				t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
 			}
-			// Run mine + the Go reference; their exit codes must match (the
-			// run() result convention: ok → 0, err → 1).
 			mineExit := exec.Command(wasmtime, "run", myPath).Run()
 			refExit := exec.Command(wasmtime, "run", refPath).Run()
 			if (mineExit == nil) != (refExit == nil) {
@@ -242,8 +213,6 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-// componentFullDriver reads a core module's bytes (core.bin) and wraps them
-// with component_full into a complete wasi:cli/run component.
 const componentFullDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
@@ -262,12 +231,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentEndToEnd compiles a program to a wasi:cli/run
-// component entirely through the self-host: source -> wasm_ir in run mode
-// (preview2 core WAT) -> emit_binary (core) -> component_full (component).
-// It then runs the component and checks the run() result convention
-// (main()==0 -> ok -> exit 0; main()!=0 -> err -> exit 1). No-I/O programs
-// only — the preview2 core is import-free.
 func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -281,8 +244,6 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	// A preview1 driver (to compile the component assembler) and a preview2
-	// driver (to emit the run-core WAT for a program).
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
@@ -292,7 +253,6 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	p2Bin := buildSelfHostBin(t, gcc, dir, "wasm_run_p2.fern", "wasm_run_p2")
 
-	// Component assembler: read a core WAT, emit_binary, component_full.
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
@@ -315,20 +275,16 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		source string
-		ok     bool // run() ok (main()==0) → exit 0
+		ok     bool
 	}{
 		{"return0", "function main(): i32 { return 0; }", true},
 		{"return42", "function main(): i32 { return 42; }", false},
 		{"compute-zero", "function main(): i32 { let x: i32 = 5; let y: i32 = 5; return x - y; }", true},
 		{"compute-nonzero", "function main(): i32 { let n: i32 = 3; return n * 7; }", false},
-		// Allocating no-I/O programs: the mode-1 core carries the heap + RC
-		// runtime with no imports at all to reach it, the one shape where a
-		// missing allocator surfaces as a trap rather than a link error.
 		{"alloc-string", `function main(): i32 { let s: string = "ab" + "cd"; if (s.len() == 4) { return 0; } return 1; }`, true},
 		{"alloc-array", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + xs[i]; i = i + 1; } return t - 6; }", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// source -> preview2 core WAT
 			coreWat := runCapture(t, gcc, runner, p2Bin, []byte(withPrintInt(tc.source)))
 			if len(coreWat) == 0 {
 				t.Fatal("preview2 core WAT empty")
@@ -336,7 +292,6 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "core.wat"), coreWat, 0o644); err != nil {
 				t.Fatalf("write core.wat: %v", err)
 			}
-			// core WAT -> component bytes
 			out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
 			if err != nil {
 				t.Fatalf("run component assembler: %v", err)
@@ -353,7 +308,6 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 			if err := os.WriteFile(compPath, comp, 0o644); err != nil {
 				t.Fatalf("write component: %v", err)
 			}
-			// must validate as a component exporting wasi:cli/run
 			if vout, err := exec.Command(wasmtools, "validate", compPath).CombinedOutput(); err != nil {
 				t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
 			}
@@ -364,7 +318,6 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 			if !strings.Contains(string(pout), "wasi:cli/run") {
 				t.Errorf("expected a wasi:cli/run export, got:\n%s", pout)
 			}
-			// run it: ok → exit 0, err → exit 1
 			runErr := exec.Command(wasmtime, "run", compPath).Run()
 			if tc.ok && runErr != nil {
 				t.Errorf("expected run() ok (exit 0), got %v", runErr)
@@ -406,8 +359,6 @@ function main(): i32 {
 }
 `
 
-// componentCompileDriver reads a (preview2 run) core WAT, assembles it to a
-// binary core module, and wraps it into a wasi:cli/run component.
 const componentCompileDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
@@ -424,8 +375,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentFullIO checks the fixed stdout template.
-// A scalar putchar program needs no abort reporter or stderr import.
 func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -509,8 +458,6 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	}
 }
 
-// componentFullIODriver reads a (preview2 stdout) core and wraps it into a
-// wasi:cli/run I/O component via component_full_io.
 const componentFullIODriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
@@ -529,12 +476,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentStdout exercises the fully self-hosted preview2
-// stdout I/O path: source -> wasm_ir in run-I/O mode (a run core importing
-// wasi:cli/stdout + wasi:io/streams, with a $__fern_fd_write shim over the stream)
-// -> emit_binary -> component_full_io -> a wasi:cli/run component that
-// prints under wasmtime. Asserts both stdout and the run() result
-// (main()==0 -> exit 0; main()!=0 -> exit 1).
 func TestSelfHostWasmComponentStdout(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -632,8 +573,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentFullIOFS composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -697,7 +636,6 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	if vout, err := exec.Command(wasmtools, "validate", myPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
 	}
-	// Run it reading a preopened file.
 	if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("file contents here"), 0o644); err != nil {
 		t.Fatalf("write in.txt: %v", err)
 	}
@@ -710,11 +648,6 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentReadFile exercises the fully self-hosted preview2
-// read_file path: source -> emit_module_run_io_fs (a run core importing the
-// wasi:filesystem read interfaces + the stdout shim, with a preview2
-// $__fern_read_file + cabi_realloc) -> emit_binary -> component_full_io_fs ->
-// a wasi:cli/run component that reads a preopened file under wasmtime.
 func TestSelfHostWasmComponentReadFile(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -795,10 +728,6 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 		}
 	})
 
-	// The Err payload must be a real, matchable IoError variant carrying the
-	// path — the same thing every other target produces, not the RAW wasi
-	// error code. The sibling missing-file-err case above cannot see that: it
-	// takes the Err branch but never inspects `e` (#5795).
 	t.Run("missing-file-err-variant", func(t *testing.T) {
 		comp := build(t, `function main(): i32 {
 			match (read_file("nope.txt")) {
@@ -827,8 +756,6 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 		}
 	})
 
-	// The same Err variant in a module padded past 512 functions: the variant
-	// box layout must not depend on the module's size (#5795).
 	t.Run("missing-file-err-variant-ast", func(t *testing.T) {
 		var pad strings.Builder
 		for i := 0; i < 520; i++ {
@@ -890,8 +817,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentFullIOFSWrite composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -955,8 +880,6 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	if vout, err := exec.Command(wasmtools, "validate", myPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
 	}
-	// Run it; it should create out.txt with the written contents and print
-	// "wrote it" to stdout.
 	stdout, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", myPath).Output()
 	if err != nil {
 		t.Fatalf("wasmtime run io-fs-write component: %v", err)
@@ -973,12 +896,6 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentWriteFile exercises the fully self-hosted preview2
-// write_file path: source -> emit_module_run_io_fs (a run core importing the
-// wasi:filesystem write interfaces + the stdout shim, with a preview2
-// $__fern_write_file + cabi_realloc) -> emit_binary ->
-// component_full_io_fs_write -> a wasi:cli/run component that writes a
-// preopened file under wasmtime.
 func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1052,7 +969,6 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	})
 
 	t.Run("truncate-existing", func(t *testing.T) {
-		// Pre-create with longer content; write_file must truncate.
 		if err := os.WriteFile(filepath.Join(dir, "t.txt"), []byte("OLD LONGER CONTENT HERE"), 0o644); err != nil {
 			t.Fatalf("seed t.txt: %v", err)
 		}
@@ -1070,7 +986,6 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	})
 
 	t.Run("large-write-loop", func(t *testing.T) {
-		// 10000 bytes forces multiple <=4096-byte blocking-write chunks.
 		comp := build(t, `function main(): i32 { let s: string = ""; let i: i32 = 0; while (i < 10000) { s = s + "x"; i = i + 1; } match (write_file("big.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } return 0; }`)
 		if _, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output(); err != nil {
 			t.Fatalf("run: %v", err)
@@ -1085,8 +1000,6 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOFSRW composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1150,7 +1063,6 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	if vout, err := exec.Command(wasmtools, "validate", myPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
 	}
-	// Run it: copies in.txt -> out.txt and prints "done".
 	if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("copy me over"), 0o644); err != nil {
 		t.Fatalf("write in.txt: %v", err)
 	}
@@ -1170,12 +1082,6 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentReadWriteFile exercises the fully self-hosted
-// preview2 read+write path: source -> emit_module_run_io_fs (a run core
-// importing both the wasi:filesystem read and write interfaces + the stdout
-// shim, with preview2 $__fern_read_file + $__fern_write_file + cabi_realloc)
-// -> emit_binary -> component_full_io_fs_rw -> a wasi:cli/run component that
-// copies one preopened file to another under wasmtime.
 func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1252,10 +1158,6 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	})
 
 	t.Run("missing-src-err", func(t *testing.T) {
-		// A missing read source short-circuits before any write. The
-		// wasi:cli/run convention collapses any nonzero main() to an err
-		// result (exit 1), so the "ERR" marker on stdout is the signal
-		// that the Err arm ran, not the specific return value.
 		comp := build(t, `function main(): i32 { match (read_file("nope.txt")) { Ok(s) => { match (write_file("dst.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } return 0; }, Err(e) => { write("ERR"); return 9; } } return 3; }`)
 		cmd := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp)
 		out, _ := cmd.Output()
@@ -1268,8 +1170,6 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIORandom composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1342,11 +1242,6 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentRandom exercises the fully self-hosted preview2
-// random path: source -> wasm_ir in run-I/O mode (a run core importing
-// wasi:random/random's get-random-u64 + the stdout shim, with a preview2
-// $__fern_random_bytes) -> emit_binary -> component_full_io_random -> a
-// wasi:cli/run component that draws randomness under wasmtime.
 func TestSelfHostWasmComponentRandom(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1405,7 +1300,6 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	}
 
 	t.Run("len", func(t *testing.T) {
-		// random_bytes(16) returns 16 elements; print the count.
 		comp := build(t, `function main(): i32 { let b: u8[] = random_bytes(16); print_int(b.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "16" {
@@ -1414,7 +1308,6 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	})
 
 	t.Run("byte-range", func(t *testing.T) {
-		// Every drawn byte must be in 0..255 (the shift+mask is correct).
 		comp := build(t, `function main(): i32 { let b: u8[] = random_bytes(64); let i: i32 = 0; while (i < b.len()) { if ((b[i] as i32) < 0) { return 1; } if ((b[i] as i32) > 255) { return 2; } i = i + 1; } write("inrange\n"); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "inrange\n" {
@@ -1423,7 +1316,6 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	})
 
 	t.Run("non-multiple-of-8", func(t *testing.T) {
-		// A length that isn't a multiple of 8 must still return exactly n.
 		comp := build(t, `function main(): i32 { let b: u8[] = random_bytes(13); print_int(b.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "13" {
@@ -1432,8 +1324,6 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOEnv composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1507,11 +1397,6 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentEnv exercises the fully self-hosted preview2 env
-// path: source -> wasm_ir in run-I/O mode (a run core importing
-// wasi:cli/environment's get-environment + the stdout shim + cabi_realloc,
-// with a preview2 $__fern_env) -> emit_binary -> component_full_io_env -> a
-// wasi:cli/run component that reads environment variables under wasmtime.
 func TestSelfHostWasmComponentEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1579,7 +1464,6 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 
 	t.Run("absent-none", func(t *testing.T) {
 		comp := build(t, `function main(): i32 { match (env("NOPE_VAR")) { Some(v) => { write(v); return 0; }, None => { write("MISS"); return 0; } } return 2; }`)
-		// No --env for NOPE_VAR; the None arm must run.
 		out, _ := exec.Command(wasmtime, "run", "--env", "OTHER=1", comp).Output()
 		if string(out) != "MISS" {
 			t.Errorf("absent: stdout = %q, want %q", string(out), "MISS")
@@ -1587,8 +1471,6 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 	})
 
 	t.Run("prefix-not-confused", func(t *testing.T) {
-		// A var whose name is a prefix of another must not match (the
-		// preview1 NAME= scan bug class); exact key compare required.
 		comp := build(t, `function main(): i32 { match (env("FOO")) { Some(v) => { write(v); return 0; }, None => { write("MISS"); return 0; } } return 2; }`)
 		out, _ := exec.Command(wasmtime, "run", "--env", "FOOBAR=wrong", "--env", "FOO=right", comp).Output()
 		if string(out) != "right" {
@@ -1597,8 +1479,6 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOArgs composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1666,17 +1546,11 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wasmtime run io-args component: %v", err)
 	}
-	// argv[0] is the program name; then the two passed args.
 	if !strings.HasSuffix(string(stdout), "alpha\nbeta\n") {
 		t.Errorf("io-args component stdout = %q, want suffix %q", string(stdout), "alpha\nbeta\n")
 	}
 }
 
-// TestSelfHostWasmComponentArgs exercises the fully self-hosted preview2 args
-// path: source -> wasm_ir in run-I/O mode (a run core importing
-// wasi:cli/environment's get-arguments + the stdout shim + cabi_realloc, with
-// a preview2 $__fern_args) -> emit_binary -> component_full_io_args -> a
-// wasi:cli/run component that reads its argv under wasmtime.
 func TestSelfHostWasmComponentArgs(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1735,7 +1609,6 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 	}
 
 	t.Run("count", func(t *testing.T) {
-		// argv[0] (program name) + 3 passed = 4.
 		comp := build(t, `function main(): i32 { let a: string[] = args(); print_int(a.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp, "one", "two", "three").Output()
 		if string(out) != "4" {
@@ -1744,7 +1617,6 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 	})
 
 	t.Run("values", func(t *testing.T) {
-		// Print every arg after argv[0] (the program name).
 		comp := build(t, `function main(): i32 { let a: string[] = args(); let i: i32 = 1; while (i < a.len()) { write(a[i]); write("|"); i = i + 1; } return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp, "x", "yy", "zzz").Output()
 		if string(out) != "x|yy|zzz|" {
@@ -1753,8 +1625,6 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOClock composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1827,11 +1697,6 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentClock exercises the fully self-hosted preview2
-// wall-clock path: source -> wasm_ir in run-I/O mode (a run core importing
-// wasi:clocks/wall-clock's now + the stdout shim, with preview2 now_unix_ms /
-// now_ns) -> emit_binary -> component_full_io_clock -> a wasi:cli/run
-// component that reads the wall clock under wasmtime.
 func TestSelfHostWasmComponentClock(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1890,8 +1755,6 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	}
 
 	t.Run("now-positive", func(t *testing.T) {
-		// now_unix_ms must be a large positive epoch-ms value (> year 2020
-		// in ms = 1577836800000), proving seconds*1000 + nanos/1e6 is right.
 		comp := build(t, `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 1577836800000) { write("recent\n"); return 0; } write("bad\n"); return 1; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "recent\n" {
@@ -1900,8 +1763,6 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	})
 
 	t.Run("now-ns-bigger-than-ms", func(t *testing.T) {
-		// now_ns (seconds*1e9 + nanos) must exceed now_unix_ms by ~1e6x;
-		// a coarse check that the two wall-clock readings use distinct math.
 		comp := build(t, `function main(): i32 { let ns: i64 = now_ns(); let ms: i64 = now_unix_ms(); if (ns > ms) { write("ns>ms\n"); return 0; } return 1; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "ns>ms\n" {
@@ -1910,8 +1771,6 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOClockMono composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1984,11 +1843,6 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentClockMono exercises the fully self-hosted preview2
-// monotonic-clock path: source -> wasm_ir in run-I/O mode (a run core
-// importing wasi:clocks/monotonic-clock's now + the stdout shim, with a
-// preview2 monotonic_ns) -> emit_binary -> component_full_io_clock_mono -> a
-// wasi:cli/run component that reads the monotonic clock under wasmtime.
 func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2047,8 +1901,6 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	}
 
 	t.Run("monotonic-advances", func(t *testing.T) {
-		// Two monotonic reads with a busy loop between them: the second
-		// must be >= the first (monotonic never goes backwards).
 		comp := build(t, `function main(): i32 { let a: i64 = monotonic_ns(); let s: i64 = 0i64; let i: i32 = 0; while (i < 100000) { s = s + 1i64; i = i + 1; } let b: i64 = monotonic_ns(); if (b >= a) { write("monotonic\n"); return 0; } return 1; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "monotonic\n" {
@@ -2057,8 +1909,6 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOFSReadEnv composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2134,12 +1984,6 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentReadEnv exercises the fully self-hosted preview2
-// read_file+env path end to end: source -> emit_module_run_io_fs (a run core
-// importing both env's get-environment and the fs read chain + the stdout
-// shim) -> emit_binary -> component_full_io_fs_read_env -> a wasi:cli/run
-// component that reads a config file AND an env var under wasmtime. The
-// canonical edge-handler shape.
 func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2210,7 +2054,6 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 
 	t.Run("missing-env-falls-back", func(t *testing.T) {
 		comp := build(t, `function main(): i32 { match (read_file("cfg.txt")) { Ok(c) => { match (env("TOKEN")) { Some(tok) => { write(c); write("|"); write(tok); return 0; }, None => { write(c); write("|none"); return 0; } } }, Err(e) => { write("ERR"); return 1; } } return 2; }`)
-		// cfg.txt exists from the prior subtest; no TOKEN passed.
 		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", "--env", "OTHER=x", comp).Output()
 		if string(out) != "host=localhost|none" {
 			t.Errorf("missing-env: stdout = %q, want %q", string(out), "host=localhost|none")
@@ -2218,8 +2061,6 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOFSRWEnv composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2302,9 +2143,6 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentReadWriteEnv exercises the fully self-hosted
-// preview2 read+write+env path end to end -- the full edge-handler shape:
-// read a config file, read an env var, write an output file, respond.
 func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2363,7 +2201,6 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 	}
 
 	t.Run("read-transform-write", func(t *testing.T) {
-		// Read in.txt, append env PREFIX-derived text, write out.txt, respond.
 		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { let o: string = c; match (env("TAG")) { Some(tg) => { o = o + "[" + tg + "]"; }, None => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Err(e) => { return 1; }, Ok(_) => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
 		if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("payload"), 0o644); err != nil {
 			t.Fatalf("write in.txt: %v", err)
@@ -2382,8 +2219,6 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIORandomWrite composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2463,9 +2298,6 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentRandomWrite exercises the fully self-hosted preview2
-// random+write path end to end -- the token-generating handler shape: draw a
-// random id, persist it to a file, respond.
 func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2524,7 +2356,6 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	}
 
 	t.Run("gen-and-persist", func(t *testing.T) {
-		// Draw 16 random bytes (a u8[]), write them, report the count.
 		comp := build(t, `function main(): i32 { let id: u8[] = random_bytes(16); match (write_file("token.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
 		if string(out) != "16" {
@@ -2540,8 +2371,6 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOEprint composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2620,11 +2449,6 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentEprint exercises the fully self-hosted preview2
-// eprint path end to end: source -> wasm_ir in run-I/O mode (a run core
-// importing wasi:cli/stderr's get-stderr + the stdout pair, with a preview2
-// $__fern_eprint stderr shim) -> emit_binary -> component_full_io_eprint -> a
-// wasi:cli/run component that logs to stderr (and stdout) under wasmtime.
 func TestSelfHostWasmComponentEprint(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2697,7 +2521,6 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 	})
 
 	t.Run("eprint-only", func(t *testing.T) {
-		// No stdout output: the unused stdout import is harmless; stderr works.
 		comp := build(t, `function main(): i32 { eprint("just-err\n"); return 0; }`)
 		cmd := exec.Command(wasmtime, "run", comp)
 		var eb strings.Builder
@@ -2712,8 +2535,6 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOExit composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2790,11 +2611,6 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentExit exercises the fully self-hosted preview2 exit
-// path end to end: source -> wasm_ir in run-I/O mode (a run core importing
-// wasi:cli/exit + the stdout pair, with a preview2 $__fern_exit) ->
-// emit_binary -> component_full_io_exit -> a wasi:cli/run component that
-// terminates early under wasmtime.
 func TestSelfHostWasmComponentExit(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2853,7 +2669,6 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 	}
 
 	t.Run("exit-zero-early", func(t *testing.T) {
-		// exit(0) terminates before the second write; stdout shows only "a".
 		comp := build(t, `function main(): i32 { write("a"); exit(0); write("b"); return 0; }`)
 		cmd := exec.Command(wasmtime, "run", comp)
 		out, _ := cmd.Output()
@@ -2866,7 +2681,6 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 	})
 
 	t.Run("exit-one", func(t *testing.T) {
-		// exit(1) -> err discriminant -> exit code 1, after printing "x".
 		comp := build(t, `function main(): i32 { write("x"); exit(1); return 0; }`)
 		cmd := exec.Command(wasmtime, "run", comp)
 		out, _ := cmd.Output()
@@ -2879,8 +2693,6 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOFSArgsRead composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2956,9 +2768,6 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentArgsRead exercises the fully self-hosted preview2
-// args+read path end to end -- the canonical CLI-tool shape: read a filename
-// from argv, read that file, print it.
 func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3029,7 +2838,6 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 
 	t.Run("missing-arg-usage", func(t *testing.T) {
 		comp := build(t, `function main(): i32 { let a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`)
-		// argv[0] only (program name); the usage arm runs, exit 1.
 		cmd := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp)
 		out, _ := cmd.Output()
 		if string(out) != "usage\n" {
@@ -3041,8 +2849,6 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	})
 }
 
-// TestSelfHostWasmComponentFullIOFSRWArgs composes a reference core in Wasm.
-// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3125,9 +2931,6 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmComponentArgsReadWrite exercises the fully self-hosted
-// preview2 args+read+write path end to end -- the file-transform CLI shape:
-// read a file named in argv[1], write it to argv[2].
 func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3204,8 +3007,6 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 	})
 }
 
-// componentCompileIOFSRWArgsDriver reads an args+read+write+stdout core WAT,
-// assembles it, and wraps it via component_full_io_fs_rw_args.
 const componentCompileIOFSRWArgsDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {

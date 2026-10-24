@@ -8,23 +8,10 @@ import (
 	"testing"
 )
 
-// std/array's element-polymorphic method forms of the cmp.Ord / cmp.Eq verbs
-// (`xs.is_sorted()`, `xs.equal(ys)`, `xs.starts_with(p)`, `xs.ends_with(s)`,
-// `xs.index_of_last(t)`) on the self-host IR path. These are bounded-receiver
-// generic array methods — `(xs: T[]) is_sorted[T: cmp.Ord]()` etc. — so they
-// exercise the fold that routes a bounded receiver through IR. Each is read-only
-// over its inputs, so it is correct on the self-host IR path as well as native;
-// the assertions below would catch both a wrong result and an accidental bail
-// (the `-decide` check).
-//
-// One element type per program here; the folded-method monomorphiser emits one
-// clone per (generic name, element type), and the multi-element-type case is
-// covered by TestSelfHostArrayMethodMultiElemIR.
 var ordEqArrayMethodIRCases = []struct {
 	name string
 	src  string
 }{
-	// is_sorted: [1,2,3] sorted, [3,1,2] not — both checks pass → 3.
 	{"is_sorted", `import "std/array";
 function main(): i32 {
     let a: i32[] = [1, 2, 3];
@@ -34,7 +21,6 @@ function main(): i32 {
     if (!b.is_sorted()) { r = r + 2; }
     return r;
 }`},
-	// equal: structural element-wise equality over string[].
 	{"equal", `import "std/array";
 function main(): i32 {
     let a: string[] = ["x", "y"];
@@ -45,7 +31,6 @@ function main(): i32 {
     if (!a.equal(c)) { r = r + 2; }
     return r;
 }`},
-	// starts_with over i32[].
 	{"starts_with", `import "std/array";
 function main(): i32 {
     let a: i32[] = [1, 2, 3, 4];
@@ -56,7 +41,6 @@ function main(): i32 {
     if (!a.starts_with(q)) { r = r + 2; }
     return r;
 }`},
-	// ends_with over string[].
 	{"ends_with", `import "std/array";
 function main(): i32 {
     let a: string[] = ["a", "b", "c"];
@@ -64,7 +48,6 @@ function main(): i32 {
     if (a.ends_with(s)) { return 1; }
     return 0;
 }`},
-	// index_of_last: last index of 5 in [5,3,5,1] is 2.
 	{"index_of_last", `import "std/array";
 function main(): i32 {
     let a: i32[] = [5, 3, 5, 1];
@@ -72,8 +55,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostOrdEqArrayMethodIR — the read-only Ord/Eq array method forms route
-// the self-host IR path and run correctly, cross-checked against the interpreter.
 func TestSelfHostOrdEqArrayMethodIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)

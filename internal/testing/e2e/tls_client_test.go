@@ -29,15 +29,6 @@ import (
 	"time"
 )
 
-// std/tls/client and std/fetch's https against Go's crypto/tls: a server
-// per leaf key type (ECDSA P-256, RSA, Ed25519) under a P-384 CA, one that
-// takes only X25519 so the client's X25519MLKEM768 share draws a
-// HelloRetryRequest, one under a CA the client does not trust, a CONNECT
-// proxy, and a line-echo server for the socket client. The client trusts
-// the CA through SSL_CERT_FILE, and on one held transport through the
-// policy's own roots, then an empty store the kept connection must not
-// satisfy, then its own roots again. Both native backends and the
-// interpreter.
 func TestTLSClientAgainstGo(t *testing.T) {
 	bin := buildFernCLI(t)
 	w := startTLSWorld(t)
@@ -132,8 +123,6 @@ func startTLSWorld(t *testing.T) *tlsWorld {
 	return w
 }
 
-// env is the environment the client runs in: the test CA as its root store,
-// and no proxy from the host's own environment.
 func (w *tlsWorld) env() []string {
 	var out []string
 	for _, kv := range os.Environ() {
@@ -374,11 +363,9 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 	if got != want {
 		t.Errorf("output:\n%s\nwant:\n%s", got, want)
 	}
-	// first and again share one connection; address and tunnel open their own.
 	if mainConns != 3 {
 		t.Errorf("the main server took %d connections, want 3", mainConns)
 	}
-	// h2 and h2 again share one HTTP/2 connection.
 	if n := w.h2Conns.Swap(0); n != 1 {
 		t.Errorf("the HTTP/2 server took %d connections, want 1", n)
 	}
@@ -402,9 +389,6 @@ func serveTLS(t *testing.T, cert tls.Certificate, curves []tls.CurveID, state fu
 	return s.Listener.Addr().(*net.TCPAddr).Port
 }
 
-// serveTLSH2 is serveTLS offering h2 by ALPN, Go's HTTP/2 server behind
-// it: the handler names the path, the protocol spoken, the ALPN protocol,
-// the request body's length and the X-Fern header's value.
 func serveTLSH2(t *testing.T, cert tls.Certificate, state func(net.Conn, http.ConnState)) int {
 	t.Helper()
 	s := httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -423,9 +407,6 @@ func serveTLSH2(t *testing.T, cert tls.Certificate, state func(net.Conn, http.Co
 	return s.Listener.Addr().(*net.TCPAddr).Port
 }
 
-// serveEcho answers each line on a TLS connection with "echo " and the
-// line, "resumed-echo " on a resumed session; with clients set it requires
-// a client certificate under them and names its subject.
 func serveEcho(t *testing.T, cert tls.Certificate, clients *x509.CertPool) int {
 	t.Helper()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"fern-echo"}}
@@ -469,8 +450,6 @@ func serveEcho(t *testing.T, cert tls.Certificate, clients *x509.CertPool) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// serveProxy opens a tunnel for each CONNECT to the asked-for port on
-// loopback, whatever the host, and records the request line.
 func (w *tlsWorld) serveProxy(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -575,7 +554,6 @@ func newTestCA(t *testing.T, key crypto.Signer, name string) *testCA {
 	return &testCA{cert: cert, key: key, pem: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
 }
 
-// clientLeaf is a client certificate with the common name given.
 func (ca *testCA) clientLeaf(t *testing.T, key crypto.Signer, name string) tls.Certificate {
 	t.Helper()
 	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
@@ -594,7 +572,6 @@ func (ca *testCA) clientLeaf(t *testing.T, key crypto.Signer, name string) tls.C
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-// leaf is a server certificate for names, and for 127.0.0.1 when withIP.
 func (ca *testCA) leaf(t *testing.T, key crypto.Signer, names []string, withIP bool) tls.Certificate {
 	t.Helper()
 	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))

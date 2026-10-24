@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostUnwindData is the self-host end of #7901: a binary the
-// self-host compiler built carries the unwind data its emitters describe,
-// placed where a runtime unwinder finds it. That means PT_GNU_EH_FRAME over
-// an .eh_frame_hdr whose eh_frame_ptr resolves to the .eh_frame, and one FDE
-// per user function starting exactly at the function's symbol — the symbol
-// table (-g) being the oracle, by a different path from the CFI offsets.
-//
-// Both Linux targets, structurally, on any host: nothing here runs the
-// binary. The bytes themselves are pinned to GNU as and ld's by
-// TestSelfHostCfiMatchesGas*.
 func TestSelfHostUnwindData(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -65,7 +55,6 @@ func TestSelfHostUnwindData(t *testing.T) {
 				if got := string(hdr[:4]); got != "\x01\x1b\x03\x3b" {
 					t.Fatalf(".eh_frame_hdr opens % x, want 01 1b 03 3b", got)
 				}
-				// File offsets equal vaddr offsets from the base in these images.
 				base := f.Progs[0].Vaddr - f.Progs[0].Off
 				ehVAddr := uint64(int64(hdrSeg.Vaddr+4) + int64(int32(binary.LittleEndian.Uint32(hdr[4:]))))
 				ehOff := ehVAddr - base
@@ -73,7 +62,6 @@ func TestSelfHostUnwindData(t *testing.T) {
 				if n == 0 || uint64(len(hdr)) != uint64(12+8*n) {
 					t.Fatalf(".eh_frame_hdr is %d bytes for %d FDEs", len(hdr), n)
 				}
-				// Walk .eh_frame: [len][id]; id 0 is the CIE; a zero length ends it.
 				fdes := map[uint64]uint64{}
 				for off := ehOff; ; {
 					ln := uint64(binary.LittleEndian.Uint32(img[off:]))
@@ -106,9 +94,6 @@ func TestSelfHostUnwindData(t *testing.T) {
 						t.Errorf("%s at %#x has no FDE — unwinding stops there", s.Name, s.Value)
 						continue
 					}
-					// An FDE ends at .cfi_endproc; the arm64 literal pool sits
-					// between that and the next symbol, so the symbol's extent
-					// bounds it rather than equalling it.
 					if end <= s.Value || (s.Size > 0 && end > s.Value+s.Size) {
 						t.Errorf("%s [%#x,%#x): its FDE ends at %#x", s.Name, s.Value, s.Value+s.Size, end)
 					}

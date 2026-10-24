@@ -9,9 +9,6 @@ func reactorCreate() (int, error) {
 	return syscall.Kqueue()
 }
 
-// kqueue keeps one entry per filter: EV_ADD with EV_ENABLE for a filter
-// wanted, EV_DELETE for one not, where deleting an absent filter is
-// ENOENT and not an error.
 func (r *reactor) watch(raw int, interest int) error {
 	filters := []struct {
 		filter int16
@@ -59,9 +56,6 @@ func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 	return out, nil
 }
 
-// watchParent raises SIGTERM, which the SIGTERM watch reports, once the
-// parent exits: a kqueue of its own holds the EVFILT_PROC NOTE_EXIT. A
-// parent already gone is ESRCH.
 func watchParent() error {
 	ppid := os.Getppid()
 	if ppid == 1 {

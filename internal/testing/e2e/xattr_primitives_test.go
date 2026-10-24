@@ -1,12 +1,3 @@
-// getxattr and lgetxattr (#9098), setxattr and lsetxattr (#9154) end to end
-// on every backend that has them: the value's bytes verbatim (a NUL inside it
-// included), a final symlink followed by one call and not the other, and the
-// Err an absent attribute or a missing path gives. The host sets the
-// attribute the probe reads, and reads back the ones the probe writes, so
-// neither half is checked only against itself.
-//
-// WASI has no extended attributes; E066 refuses all four there (capability
-// `xattr`), which TestWASMXattrRefused pins.
 package e2e
 
 import (
@@ -20,8 +11,6 @@ import (
 
 const xattrProbeValue = "hello\x00world"
 
-// xattrFixture makes `f` carrying user.fern and a symlink `l` to it, and
-// returns the probe source. Every failure returns its own exit code.
 func xattrFixture(t *testing.T, dir string) string {
 	t.Helper()
 	f := filepath.Join(dir, "f")
@@ -71,7 +60,6 @@ func xattrFixture(t *testing.T, dir string) string {
 `, p("f"), p("l"), p("missing"), xattrAbsentText)
 }
 
-// checkXattrWrites reads the probe's writes back through the host.
 func checkXattrWrites(t *testing.T, dir string) {
 	t.Helper()
 	f := filepath.Join(dir, "f")
@@ -110,8 +98,6 @@ func TestArm64XattrPrimitives(t *testing.T) {
 	checkXattrWrites(t, dir)
 }
 
-// Darwin's getxattr and setxattr are one call each with an options word,
-// and XATTR_NOFOLLOW is what makes them the `l` forms.
 func TestArm64DarwinXattrPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	buildAndRunDarwin(t, dir, xattrFixture(t, dir))

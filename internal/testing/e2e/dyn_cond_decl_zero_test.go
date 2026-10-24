@@ -1,11 +1,3 @@
-// #4495: a `dyn Trait` local declared inside a branch that doesn't run (or a
-// loop-var dyn on its FIRST iteration's reinit drop) must be swept as NULL,
-// not as stack garbage. The exit dec sweep visits every declared local
-// whether or not its `let` ran, and native stack slots hold garbage — the
-// per-set __drop_dyn_<set> helper NULL-guards the cell precisely on the
-// assumption the entry safety-zero covers dyn slots, which it didn't:
-// pre-fix, both programs segfault on x86-64 whenever the stack region is
-// dirty (the `dirty()` call below makes that deterministic).
 package e2e
 
 import (
@@ -54,7 +46,6 @@ func runDynZeroProg(t *testing.T, name, src string, wantExit int) {
 	}
 }
 
-// Conditionally-declared dyn local: the false path still sweeps the slot.
 func TestX86_64DynCondDeclSweepsNull(t *testing.T) {
 	runDynZeroProg(t, "dyn_cond", dynZeroPrelude+`
 function f(cond: boolean): i32 {
@@ -73,8 +64,6 @@ function main(): i32 {
 `, 7)
 }
 
-// Loop-let dyn: the FIRST iteration's re-declaration reinit drop reads the
-// slot before anything was ever stored to it.
 func TestX86_64DynLoopVarFirstReinitSweepsNull(t *testing.T) {
 	runDynZeroProg(t, "dyn_loop", dynZeroPrelude+`
 function g(): i32 {

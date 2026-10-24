@@ -1,11 +1,5 @@
 package e2e
 
-// Differential coverage for std/array `take_last` / `drop_last` — the
-// back-of-the-array mirrors of `take` / `drop`. `take_last(xs, n)` keeps the
-// last n elements, `drop_last(xs, n)` keeps all but them; `n` is clamped so
-// `n <= 0` and `n >= len` are the empty / whole-array cases, never a fault.
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64.
-
 import "testing"
 
 const arrayTakeDropLastProg = `

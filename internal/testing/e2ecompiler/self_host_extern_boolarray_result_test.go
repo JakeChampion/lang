@@ -11,17 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternBoolArrayResultCustomProvider is the self-host port of the Go
-// bool[] result (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm backend lifts a
-// canonical `list<bool>` into a self-host `boolean[]`. The self-host already
-// stores u8 AND boolean array elements one-per-4-byte-slot, so a boolean[] result
-// reuses the u8[]-result byte-expansion wrapper verbatim (each canonical 0/1 byte
-// into a 4-byte slot) — only the is_extern_composite_ret gate + the wrapper's
-// ret-type check needed to accept "boolean[]". Mirror of the Go
-// TestExternBoolArrayResultCustomProvider.
-//
-// The provider exports `bits: func(n: u32) -> list<bool>` with element i =
-// (i % 2 == 0); the self-host side requests 4 -> [true,false,true,false].
 func TestSelfHostExternBoolArrayResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

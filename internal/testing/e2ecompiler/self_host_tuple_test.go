@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// tupleTypeCases exercise tuple TYPE annotations — `(T1, T2)` as a
-// return/var type and nested inside a generic (`Option[(i32, i32)]`).
-// The self-host parser must not stall (OOM) on the leading `(` of a tuple
-// type; these confirm it parses and the i32-tuple values work.
-// (Tuple element TYPES are still coarse — e.g. `.len()` on a string
-// tuple field mis-infers — a separate inference limitation.)
 var tupleTypeCases = []struct {
 	name string
 	src  string
@@ -22,18 +16,11 @@ var tupleTypeCases = []struct {
 	{"var-tuple-type", "function main(): i32 { let p: (i32, i32) = (5, 6); return p.0 * p.1; }", 30},
 	{"option-of-tuple", "function f(): Option[(i32, i32)] { return Some((10, 20)); } function main(): i32 { match (f()) { Some(p) => { return p.0 + p.1; }, None => { return 0; } } return 0; }", 30},
 	{"tuple-param", "function add(p: (i32, i32)): i32 { return p.0 + p.1; } function main(): i32 { return add((19, 23)); }", 42},
-	// Tuple literal with an i32[] element (leak mode): the array pointer occupies
-	// one tuple slot and `t.N` recovers it via tuple_get — `(t.0)[i]`, a bound
-	// `let a = t.0; a[i]`, and `a.len()` all work without extra element-tag
-	// plumbing (array ops only need the pointer the tuple_get produces).
 	{"tuple-arr-elem", "function main(): i32 { let t = ([10, 20, 30], 9); let a = t.0; return a[0] + a[2] + t.1; }", 49},
 	{"tuple-arr-len", "function main(): i32 { let t = ([10, 20, 30], 9); let a = t.0; return a.len() + t.1; }", 12},
 	{"tuple-arr-direct-index", "function main(): i32 { let t = ([10, 20, 30], 9); return (t.0)[1] + t.1; }", 29},
 }
 
-// TestSelfHostTupleTypeX86_64 compiles tuple-type programs with the
-// self-hosted compiler and checks the exit codes (cross-checked vs the
-// Go backend).
 func TestSelfHostTupleTypeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -67,7 +54,6 @@ func TestSelfHostTupleTypeX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleTypeArm64 is the ARM64 counterpart (CI-gated, qemu).
 func TestSelfHostTupleTypeArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupleTypeCases {

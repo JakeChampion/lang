@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// selfHostClassifyDriver prints the lowering kind the self-host composer
-// derives for three functions of the proxy world: `outgoing-handler.handle`,
-// whose `error-code` result a `use` brings in from wasi:http/types;
-// `future-incoming-response.get`, which reads the same variant from inside
-// that interface; and `outgoing-request.set-method`, whose only heap data is
-// a parameter.
 const selfHostClassifyDriver = `
 function main(): i32 {
     let tbody: i32[] = wit_section_body(hex_to_bytes(proxy_world_payload()), 7);
@@ -26,11 +20,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostClassifyUsedTypeFromAnotherInterface pins the self-host mirror
-// of componenttype's TestClassifyUsedTypeFromAnotherInterface: a type a WIT
-// `use` brings in from another interface classifies as what it is, so the
-// host's `handle` lowers with realloc (2) like `get` (2), and `set-method`
-// is a memory lowering (1) for its string parameter.
 func TestSelfHostClassifyUsedTypeFromAnotherInterface(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

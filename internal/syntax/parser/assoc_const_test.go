@@ -6,10 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// An associated constant parses in a trait body (abstract, or with a
-// default) and in an impl body, each as an associated function with no
-// parameters marked const; `f64.LANES` parses as a field access on the
-// primitive keyword, which the formatter round-trips (see docs/ASSOCIATED-TYPES.md).
 func TestAssocConstParse(t *testing.T) {
 	prog, err := Parse(`trait Lanes {
     const LANES: i32;
@@ -62,7 +58,6 @@ function chunk[T: Lanes](n: i32): i32 { return n / T.LANES + f64.LANES; }`)
 	}
 }
 
-// An impl's const needs its value; a trait's abstract const takes none.
 func TestAssocConstParseErrors(t *testing.T) {
 	for _, src := range []string{
 		`trait Lanes { const LANES: i32; }

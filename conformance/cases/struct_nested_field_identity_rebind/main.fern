@@ -1,11 +1,11 @@
-// `h = bump(h, i)` where bump takes `own h` and updates it in place hands the
-// SAME box back, so the rebind's __field_reclaim_Holder sees old == new. Its
-// nested-struct arm (#6605) releases the carried `inner` without the
-// copy-on-write compare — right when a base copy retained it for the new
-// box, wrong when there was no copy: the field's only reference went, and
-// the next read of inner.xs was of freed memory. The helper now skips the
-// field walk when old and new are one box. Every inner element reads back
-// after churn.
+
+
+
+
+
+
+
+
 struct Inner { xs: i32[], n: i32 }
 struct Holder { code: i32[], inner: Inner, len: i32 }
 

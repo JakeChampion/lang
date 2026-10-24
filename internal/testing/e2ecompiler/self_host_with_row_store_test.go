@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// A `.with` that stores a bare array local as a row of a nested array retains
-// it, as the append does (#4702). `units` stores a local `chain` that its next
-// rebind releases; `through` then binds each row to a local and clones the
-// table row by row. Without the retain the rebind freed the stored row and
-// `through` touched it (#10219). Built under the sanitizer, which quarantines
-// a freed block.
 const withRowStoreProg = `@noinline
 function through(deps: i32[][]): i32[][] {
     let out: i32[][] = deps;

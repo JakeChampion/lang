@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Same hole, array spelling and no pin to hide behind: `.append`
-// grows the captured cell's buffer IN PLACE, so the store sees the
-// pointer it already held — and still owes the buffer dec that
-// pairs with push's non-retaining copy. Zero at exit both before
-// and after #8833; a pointer-identity guard applied to every RHS
-// shape strands 6000 bytes.
+
+
+
+
+
+
+
+
+
 function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let f: () => i32 = (): i32 => { return a.len(); };

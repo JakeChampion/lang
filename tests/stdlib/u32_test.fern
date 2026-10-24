@@ -1,16 +1,6 @@
 import "std/test";
 import "std/u32";
 
-// tests/stdlib/u32_test.fern — pure-Fern coverage of std/u32's
-// unsigned-32-bit receiver methods beyond the wrapping-arithmetic
-// contract pinned in u32_arith_test.fern: the zero/parity predicates,
-// pow (exponentiation by squaring), and the overflow-aware
-// saturating_add/sub + checked_add/sub. Unsigned overflow clamps to
-// u32::MAX / 0 (saturating) or yields None (checked). Boundary cases
-// use `!=` operators rather than the generic assert_eq, which degrades
-// the all-ones value to signed.
-
-// 2^32 - 1, the all-ones wraparound value.
 function umax(): u32 {
   return 0 as u32 - 1 as u32;
 }

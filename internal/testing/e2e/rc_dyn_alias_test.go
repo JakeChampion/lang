@@ -1,19 +1,7 @@
-// A borrowed dyn value stored where it outlives the borrow (#10073,
-// docs/DYN-TRAITS.md §4.5). A dyn parameter written into an array element or
-// captured by a closure copied the caller's `{data, vtable}` cell pointer and
-// took no retain, so the holder's release freed what the caller still held,
-// and `[l, l]` released one cell twice: a use-after-free on x86-64. A dyn
-// alias is now retained like every other reference (emitAliasInc →
-// emitDynRetain), which is what retired the borrowed-view bookkeeping
-// (`dynBorrowedViews`). A struct field holds its unit the same way, so the
-// struct's or tuple's drop releases it, and a spread copy or a destructured
-// binding retains it (#10082).
 package e2e
 
 import "testing"
 
-// dynAliasSrc stores a dyn parameter in a struct field, twice in an array
-// literal, and in a local alias. Each trip contributes 2 + 2 + 2 + 2 + 2 = 10.
 func dynAliasSrc(n string) string {
 	return `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -36,9 +24,6 @@ function main(): i32 {
 }`
 }
 
-// dynAliasBumpSrc churns every holder — a struct field, an array, a local
-// alias, a closure — so a cell one fails to release shows as growing
-// high-water.
 func dynAliasBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
@@ -101,8 +86,6 @@ func TestDynAliasStoredPastTheBorrow(t *testing.T) {
 	}
 }
 
-// A closure that captures a dyn parameter and escapes. Each trip contributes
-// 2 + 2 = 4. On wasm the env holds the capture's two words (#10075).
 func TestDynCaptureStoredPastTheBorrow(t *testing.T) {
 	src := `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -136,9 +119,6 @@ function main(): i32 {
 	})
 }
 
-// A closure whose only counted capture is a dyn value, built and dropped in
-// the loop body: its precise drop reaches the closure's own drop thunk on
-// every backend, so the env's unit of the dyn value is released each trip.
 func TestDynOnlyCaptureDroppedLocallyBounded(t *testing.T) {
 	src := `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -183,11 +163,6 @@ function main(): i32 {
 	})
 }
 
-// Dyn captures beside other captures. On wasm each dyn capture is two words
-// of the env, so a capture after it was read from the wrong offset (#10075).
-// A coerced dyn argument's cell is the call's own however the callee's other
-// parameters are summarised; beside a string it leaked 16 B a call on the
-// natives. Each trip contributes 2443.
 func TestDynCaptureBesideOtherCaptures(t *testing.T) {
 	src := `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -235,11 +210,6 @@ func TestDynAliasStoredPastTheBorrowBounded(t *testing.T) {
 	})
 }
 
-// dynFieldSrc builds structs holding a dyn field every way a field gets one —
-// a fresh concrete, a local, a primitive, a parameter through a callee —
-// copies one by spread, and destructures a struct and a tuple holding a dyn
-// (#10082). Each trip contributes
-// 2 + 2 + i + 2 + 2 + 2 + 1 + 3 + 2 + 2 + 1 = 19 + i.
 const dynFieldPrelude = `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
 impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }

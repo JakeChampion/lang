@@ -1,50 +1,21 @@
-// examples/vcl/check.fern — static validation of a VCL program.
-//
-// The evaluator enforces VCL's scoping as it runs, which means a policy's
-// mistakes surface only on the request that reaches them: a `req.url` read
-// in `vcl_backend_response` is fine until something misses the cache. This
-// module moves those checks to compile time, where `varnishd -C` puts
-// them, and reports every problem in one pass rather than the first one to
-// execute.
-//
-// It is also the front half of compiling VCL to Fern source. Generated
-// code should read `t.req.url` as a struct field rather than look "req.url"
-// up in a table — and it may only do that once something has proven the
-// name is legal in that subroutine. That proof is this module.
-//
-// The walk is per ENTRY POINT, not per subroutine, because VCL's scoping
-// is contextual: a `call`ed subroutine runs in its caller's context. A
-// helper reachable from both `vcl_recv` and `vcl_backend_response` is
-// therefore checked twice, once in each, which is what catches a helper
-// that is correct for one caller and illegal for the other. No
-// per-subroutine walk can see that.
 import "std/string";
 import "std/i64";
 import "./ast";
 import "./vars";
 import "./eval";
 
-// One problem, with the entry point whose context it was found in. The
-// same helper reported under two entry points is not a duplicate: those
-// are different findings about different call paths.
 pub struct Problem { msg: string, line: i32, col: i32, entry: string }
 
-// The walk's context: the program, and the entry point supplying scope.
 struct Ck { decls: ast.Decl[], entry: string }
 
 function problem(c: Ck, msg: string, line: i32, col: i32): Problem {
   return Problem { msg: msg, line: line, col: col, entry: c.entry };
 }
 
-// The subroutines Varnish calls. A `sub` whose name starts with `vcl_`
-// but is not one of these is a typo that would silently never run, so it
-// is reported rather than treated as a custom subroutine.
 pub function entry_points(): string[] {
   return ["vcl_init", "vcl_recv", "vcl_pipe", "vcl_pass", "vcl_hash", "vcl_purge", "vcl_miss", "vcl_hit", "vcl_deliver", "vcl_synth", "vcl_backend_fetch", "vcl_backend_response", "vcl_backend_error", "vcl_fini"];
 }
 
-// The return actions each entry point may use. Getting this wrong is a
-// VCL error that Varnish catches at load time, so it is checked here.
 // fern-lint: allow cyclomatic-complexity
 function actions_for(entry: string): string[] {
   if (entry == "vcl_recv") {
@@ -111,10 +82,6 @@ function join(items: string[], sep: string): string {
   return out;
 }
 
-// ------------------------------------------------------------ name checks
-// check_name validates one identifier appearing in an expression. A name
-// is a variable, a declared backend, or a declared ACL; anything else is
-// a typo, and reading it as empty is how a policy silently stops working.
 function check_name(c: Ck, name: string, line: i32, col: i32, out: Problem[]): Problem[] {
   match (vars.find_spec(name)) {
     Some(s) => {
@@ -135,8 +102,6 @@ function check_name(c: Ck, name: string, line: i32, col: i32, out: Problem[]): P
   return out.append(problem(c, "unknown name '" + name + "'", line, col));
 }
 
-// check_call validates a function call: the name must be one the
-// evaluator implements, and `hash_data` only means anything in `vcl_hash`.
 function check_call(c: Ck, callee: string, line: i32, col: i32, out: Problem[]): Problem[] {
   if (!eval.is_builtin(callee)) {
     return out.append(problem(c, "unknown function '" + callee + "'", line, col));
@@ -147,7 +112,6 @@ function check_call(c: Ck, callee: string, line: i32, col: i32, out: Problem[]):
   return out;
 }
 
-// ------------------------------------------------------------ expressions
 function check_exprs(c: Ck, es: ast.Expr[], out: Problem[]): Problem[] {
   let acc: Problem[] = out;
   let i: i32 = 0;
@@ -158,11 +122,6 @@ function check_exprs(c: Ck, es: ast.Expr[], out: Problem[]): Problem[] {
   return acc;
 }
 
-// check_expr walks an expression. The right operand of `~` needs no
-// special case: a bare ACL name resolves through the same check as any
-// other identifier, and a regex is a string literal with nothing to
-// resolve. An ACL that was never declared is reported as the unknown name
-// it is.
 function check_expr(c: Ck, e: ast.Expr, out: Problem[]): Problem[] {
   match (e) {
     EVar(v) => {
@@ -188,7 +147,6 @@ function check_expr(c: Ck, e: ast.Expr, out: Problem[]): Problem[] {
   }
 }
 
-// ------------------------------------------------------------- statements
 function check_set(c: Ck, s: ast.SetStmt, out: Problem[]): Problem[] {
   let acc: Problem[] = check_expr(c, s.value, out);
   match (vars.find_spec(s.target)) {
@@ -224,9 +182,6 @@ function check_unset(c: Ck, s: ast.UnsetStmt, out: Problem[]): Problem[] {
   }
 }
 
-// check_return validates a return action against the entry point's set. A
-// bare `return;` is how a custom subroutine ends early; in a `vcl_*`
-// subroutine it names no action and is rejected.
 function check_return(c: Ck, s: ast.ReturnStmt, in_custom: boolean, out: Problem[]): Problem[] {
   let acc: Problem[] = check_exprs(c, s.args, out);
   if (s.action == "") {
@@ -256,9 +211,6 @@ function check_if(c: Ck, s: ast.IfStmt, in_custom: boolean, depth: i32, out: Pro
   return acc;
 }
 
-// check_call_stmt follows a `call` into the callee, still in this entry
-// point's context. The depth guard stops a recursive subroutine pair from
-// walking forever; the evaluator bounds the same cycle at run time.
 function check_call_stmt(c: Ck, s: ast.CallStmt, depth: i32, out: Problem[]): Problem[] {
   let ctx: eval.Ctx = eval.Ctx { decls: c.decls };
   match (eval.find_sub(ctx, s.name)) {
@@ -323,9 +275,6 @@ function check_block(c: Ck, b: ast.Block, in_custom: boolean, depth: i32, out: P
   return acc;
 }
 
-// --------------------------------------------------------------- program
-// check_declarations validates the top level: duplicate subroutines, and a
-// `vcl_`-prefixed name that Varnish will never call.
 function check_declarations(decls: ast.Decl[], out: Problem[]): Problem[] {
   let acc: Problem[] = out;
   let seen: string[] = [];
@@ -349,13 +298,10 @@ function check_declarations(decls: ast.Decl[], out: Problem[]): Problem[] {
   return acc;
 }
 
-// max_call_depth bounds the walk through `call` chains.
 function max_call_depth(): i32 {
   return 32;
 }
 
-// check validates a whole program: the declarations, then each entry point
-// the program defines, walked in its own scope.
 pub function check(decls: ast.Decl[]): Problem[] {
   let out: Problem[] = [];
   out = check_declarations(decls, out);
@@ -375,9 +321,6 @@ pub function check(decls: ast.Decl[]): Problem[] {
   return out;
 }
 
-// unreachable_subs lists custom subroutines no entry point can reach. Not
-// an error — a policy may keep one deliberately — but worth reporting,
-// since the usual cause is a `call` that was removed or misspelled.
 pub function unreachable_subs(decls: ast.Decl[]): string[] {
   let reached: string[] = [];
   let ctx: eval.Ctx = eval.Ctx { decls: decls };

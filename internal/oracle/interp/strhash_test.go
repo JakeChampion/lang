@@ -2,9 +2,6 @@ package interp
 
 import "testing"
 
-// The pins were computed by an independent implementation of
-// compiler/ir.fern's str_hash definition, so every engine is held to the
-// definition rather than to each other.
 func TestStrHashPins(t *testing.T) {
 	high := make([]byte, 0, 56)
 	for c := 200; c < 256; c++ {

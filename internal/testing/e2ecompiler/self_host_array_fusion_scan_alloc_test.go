@@ -6,8 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Count just the pipeline call, excluding input construction and verification.
-// Cross byte-capacity boundaries and exercise each physical element layout.
 const arrayFusionScanAllocationSrc = `import "std/array";
 @noinline function narrow(xs: i32[]): i32[] {
   return xs.map((x: i32): i32 => x + 1).scan(0, (a: i32, x: i32): i32 => a + x);

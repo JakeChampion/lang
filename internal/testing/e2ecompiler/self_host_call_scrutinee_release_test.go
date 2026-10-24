@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// --- Enum payload positions consumed straight off a producer call (#7910 (d)) --
-//
-// `match (mk(i)) { … }` over a fresh Option / Result / rc-enum producer must
-// release the returned box and everything in it, exactly as when the same value
-// is BOUND to a local first. The payloads cover a string[] success payload, a
-// nested Option over an rc payload (the two-level guarded release), and
-// payloads built by a fresh-string producer.
-//
-// The x86-64 and arm64 legs are the leak-matrix rows of the same names
-// (census and sanitize legs); this file is the wasm leg, which asserts a
-// balanced census and the interpreter's exit code.
-
 const callScrutResultStrArrSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mk(i: i32): Result[string[], string] {
     if (i % 2 == 0) { return Ok([w(i)]); }

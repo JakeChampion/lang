@@ -1,4 +1,3 @@
-// Usage: broker subscribers occupancy turns flow|full unique|shared [samples]
 import "./broker_core";
 import "core/cmp";
 import "std/bench";

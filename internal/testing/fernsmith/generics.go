@@ -5,25 +5,10 @@ import (
 	"strings"
 )
 
-// declareGenerics writes a program-declared generic struct and enum, methods
-// over each, and a generic constructor:
-//
-//	struct G0[T] { v: T, n: i32 }
-//	function (g: G0[T]) get(): T { ... }
-//	function (g: G0[T]) bump(k: i32): G0[T] { return G0 { ...g, n: ... }; }
-//	enum GO0[T] { __G0_Nil, __G0_Has(T, i32) }
-//	function (o: GO0[T]) or(d: T): T { match ... }
-//	function (o: GO0[T]) count(): i32 { match ... }
-//	function gmk0[T](v: T, n: i32): G0[T] { ... }
-//
-// The cluster instantiates them at a type drawn from main's pool, boxed ones
-// included, so each program monomorphises them at a different payload layout
-// and the functional update inside bump copies a box it shares.
 func (g *Generator) declareGenerics(b *strings.Builder) {
 	if !g.on(featGenericDecl) {
 		return
 	}
-	// Exhaustion convention: `true` here = no declarations.
 	if g.flip(0.5) || g.ch.exhausted() {
 		return
 	}
@@ -37,25 +22,10 @@ func (g *Generator) declareGenerics(b *strings.Builder) {
 	b.WriteString("function gmk0[T](v: T, n: i32): G0[T] { return G0 { v: v, n: n }; }\n")
 }
 
-// maybeEmitGenericCluster writes a statement group over the generic
-// declarations at an element type E:
-//
-//	let __gen_x0: E = <E expr>;
-//	let __gen_a0: G0[E] = gmk0(__gen_x0, <i32>);
-//	let __gen_b0: G0[E] = __gen_a0.bump(<i32>);       // or G0 { ...__gen_a0, n: <i32> }
-//	let __gen_o0: GO0[E] = __G0_Nil;
-//	if (<bool>) { __gen_o0 = __G0_Has(__gen_b0.get(), __gen_a0.n); }
-//	let __gen_e0: E = __gen_o0.or(__gen_a0.get());
-//	let __gen_r0: i32 = ((__gen_a0.n ^ __gen_b0.n) + __gen_o0.count());
-//
-// __gen_e0 and __gen_r0 join the scope. The others stay out of it, so no
-// later closure captures the reassigned __gen_o0.
 func (g *Generator) maybeEmitGenericCluster(b *strings.Builder, sc *scope) bool {
 	if !g.generics {
 		return false
 	}
-	// Exhaustion convention: `true` here = no cluster; every choice is drawn
-	// before anything is written, as in maybeEmitOwnershipCluster.
 	if g.flip(0.8) {
 		return false
 	}

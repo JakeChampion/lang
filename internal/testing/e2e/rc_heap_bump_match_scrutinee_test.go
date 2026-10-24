@@ -5,28 +5,6 @@ import (
 	"testing"
 )
 
-// Match-on-fresh-enum-scrutinee reclamation (value-consuming-position sibling
-// of index-of-fresh / .len()-of-fresh; docs/RC-PERCEUS-PLAN.md). A match
-// consumes its scrutinee — the arms read payload fields out of the box, then
-// it's dead — but the box was never dec'd, so `match (mk(i)) { … }` over a
-// per-iteration-fresh `mk(i)` leaked one box every iteration.
-//
-// The Match / MatchExpr lowering now reclaims a FRESH owned enum scrutinee
-// (freshOwnedBoxType) once the match completes. The drop routes through the
-// generated `__drop_enum_<Name>` fn (emitEnumDropViaGenFn → is_unique-gated
-// variant-plan + exact-size box_free) — the wasm-correct path: a box_free
-// inside a generated drop FUNCTION returns the box to the freelist on every
-// backend, where the same box_free emitted INLINE in the match body does not
-// reuse on wasm. Gated on every arm binding being non-pointer (and, for the
-// expression form, the result too), so no payload escapes the freed box.
-//
-// The enum here is THREE-variant (A(i32) / B(i32) / C) so it's genuinely
-// heap-boxed: a two-variant `Val(i32) | Empty` enum is pair-form (Option[i32]
-// shape), returned as an unboxed (tag, payload) pair the callee never heap-
-// allocates — ownedCallResultType excludes pair-form callees, so this feature
-// correctly leaves them to the pair-form machinery.
-
-// Expression-form scrutinee: `let r = match (mk(i)) { A(x) => x, … }`.
 func matchScrutineeExprBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function mk(v: i32): E3 { return A(v); }
@@ -44,7 +22,6 @@ function main(): i32 {
 }`
 }
 
-// Statement-form scrutinee: `match (mk(i)) { A(x) => {…}, … }`.
 func matchScrutineeStmtBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function mk(v: i32): E3 { return A(v); }
@@ -65,8 +42,6 @@ function main(): i32 {
 }`
 }
 
-// A variant LITERAL scrutinee (#10200): `match (A(i))` builds a fresh box the
-// match alone owns, the same as a fresh call result.
 func matchScrutineeLiteralBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function main(): i32 {
@@ -84,8 +59,6 @@ function main(): i32 {
 }`
 }
 
-// A literal scrutinee carrying the caller's live string: the drop releases the
-// reference construction counted, so keep survives every iteration.
 const matchScrutineeLiteralAliasedPayloadSafe = `enum S3 { P(string), Q(i32), R }
 function main(): i32 {
     let keep: string = "abc" + "def";
@@ -101,11 +74,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// CRITICAL soundness: pass(b) returns its param (aliased; rc>=2 via the
-// return-transfer inc), so matching pass(b) must only DEC (is_unique false),
-// never free — `b` stays a valid box, re-read after the loop. acc = 7*200 =
-// 1400; final read of b must still be 7. Returns __rc_underflow_count() (0 iff
-// value-correct AND no over-release / UAF).
 const matchScrutineeAliasedSafe = `enum E3 { A(i32), B(i32), C }
 @noinline function pass(b: E3): E3 { return b; }
 function main(): i32 {

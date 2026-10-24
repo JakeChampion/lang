@@ -4,16 +4,8 @@ import "std/http/trace";
 import "std/option";
 import "std/i32";
 
-// tests/stdlib/http_trace_test.fern — std/http/trace: W3C Trace Context's
-// own `traceparent` example read and written back; the malformed forms
-// refused (uppercase, all-zero ids, version ff, a version-00 field with a
-// tail, a later version whose tail is not a field); `tracestate` kept when
-// well formed and dropped otherwise; a server's span continuing the
-// caller's trace, or starting one; ids drawn from the caller's randomness.
-
 const EXAMPLE: string = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
-// A deterministic randomness: 1, 2, 3, ... per draw.
 function counter(): () => i32 {
   let n: Cell[i32] = cell_new(0);
   return (): i32 => {

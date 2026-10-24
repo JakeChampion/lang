@@ -4,16 +4,6 @@ import (
 	"testing"
 )
 
-// Nested-call owned-temp reclamation. A fresh owned temporary passed as a
-// borrowed argument to a POINTER-returning callee — `sum(dup(build(n)))`, and
-// its method form `sum(build(n).dup())` — used to leak the temp every call: the
-// stage-(b) reclaim was gated to concrete-scalar-returning enclosing calls (a
-// pointer result might alias the arg via an identity/projection return). The
-// `returnsNoParamEscape` analysis proves the callee never lets a parameter
-// escape into its result, so the temp is provably dead the instant the call
-// returns and can be reclaimed. These pin value + zero over-release + a flat
-// high-water on all backends.
-
 const nestedFreeSrc = `enum List { Cons(i32, List), Nil }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
@@ -60,9 +50,6 @@ func TestWASMNestedCallTemp(t *testing.T) {
 			t.Errorf("nested-call temp: got %d, want 0", got)
 		}
 	}
-	// Bounded: the inner build(n) temp is reclaimed after the pointer-returning
-	// dup, so the pipeline holds a flat high-water instead of leaking a list per
-	// call. (Without the fix: 128 B/iter.)
 	bump := func(n string) string {
 		return `enum List { Cons(i32, List), Nil }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }

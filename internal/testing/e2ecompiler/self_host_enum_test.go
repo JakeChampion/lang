@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// enumCases exercise the self-host compiler's Rust-style `enum` support:
-// declarations, call-style payload constructors (Circle(x)), no-payload
-// variants (Empty), and match arms that bind the payload (Circle(r))
-// vs. unit arms (Empty). Each variant lowers to a synthesized struct
-// with a "__ev" marker field for payload variants; construction/match
-// reuse the shape-pointer machinery. Exit codes cross-checked vs the
-// Go backend.
 var enumCases = []struct {
 	name string
 	src  string
@@ -25,8 +18,6 @@ var enumCases = []struct {
 	{"three-variants", "enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; }, Empty => { return 0; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }", 73},
 }
 
-// TestSelfHostEnumX86_64 compiles enum programs with the self-hosted
-// x86-64 compiler and checks exit codes.
 func TestSelfHostEnumX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -60,7 +51,6 @@ func TestSelfHostEnumX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumArm64 — CI-gated arm64 counterpart.
 func TestSelfHostEnumArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range enumCases {

@@ -9,20 +9,11 @@ import (
 	"testing"
 )
 
-// closureAliasIRCases pin #4557: `let d = c` where c is a closure local must
-// make d a closure local too, so `d()` dispatches env-first instead of calling
-// the raw env-box pointer as a call-table index (a SIGSEGV on every backend).
-// Both names share one env box, so the release must happen once, by the last
-// owner.
-//
-// self_host_closure_capture_borrow_ir_test.go pins the RC detector at zero on
-// these shapes; these cases pin values + crash-freedom.
 var closureAliasIRCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The filed repro: scalar-capture closure, aliased, called via the alias.
 	{"bare-alias-call",
 		`function main(): i32 {
     let k: i32 = 3;
@@ -30,7 +21,6 @@ var closureAliasIRCases = []struct {
     let d = c;
     return d();
 }`, 4},
-	// Array capture, called through BOTH names — same env box, same values.
 	{"alias-both-names-array-capture",
 		`function go(k: i32): i32 {
     let xs: i32[] = [k, k + 1];
@@ -42,13 +32,9 @@ var closureAliasIRCases = []struct {
     return a;
 }
 function main(): i32 { return go(3); }`, 7},
-	// fn-typed PARAM alias: params are closure locals too — `let g = f`
-	// inside the callee segfaulted the same way pre-fix.
 	{"param-alias",
 		`function apply1(f: (i32) => i32): i32 { let g = f; return g(4); }
 function main(): i32 { let k: i32 = 5; let c = (x: i32) => x * k; return apply1(c); }`, 20},
-	// Chained aliases (e = d = c) and a REASSIGN alias in a branch: every
-	// name dispatches env-first and yields the same closure.
 	{"chained-and-branch-alias",
 		`function main(): i32 {
     let k: i32 = 2;
@@ -63,8 +49,6 @@ function main(): i32 { let k: i32 = 5; let c = (x: i32) => x * k; return apply1(
 }`, 77},
 }
 
-// TestSelfHostClosureAliasIRX86_64 cross-checks the interpreter, pins the
-// "ir" routing, then runs the self-host-compiled binary.
 func TestSelfHostClosureAliasIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -104,8 +88,6 @@ func TestSelfHostClosureAliasIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostClosureAliasWasmIR runs the same cases through the wasm IR
-// backend.
 func TestSelfHostClosureAliasWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping closure-alias wasm IR e2e")
@@ -144,8 +126,6 @@ func TestSelfHostClosureAliasWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostClosureAliasIRArm64 runs the repro and the param-alias case
-// under qemu via `asm_ir_run -target arm64-linux`.
 func TestSelfHostClosureAliasIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTimeIR covers std/time's pure-i32 calendar helpers (is_leap_year,
-// days_in_month) through the self-hosted x86-64 IR path (a "self-host pending"
-// audit gap). These are pure integer arithmetic (no Date struct), so they lower
-// directly. The Date/Instant methods (struct receivers, Option returns) are a
-// separate widening effort and aren't covered here. Cross-checked against the
-// reference interpreter.
 func TestSelfHostTimeIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -54,7 +48,6 @@ func TestSelfHostTimeIR(t *testing.T) {
 		return inner.ProcessState.ExitCode()
 	}
 
-	// std/time's pure-i32 helpers, verbatim.
 	const helpers = `
 function is_leap_year(y: i32): boolean {
     if (y % 4 != 0) { return false; }

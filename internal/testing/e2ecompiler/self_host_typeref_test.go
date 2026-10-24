@@ -2,38 +2,12 @@ package e2ecompiler
 
 import "testing"
 
-// TestSelfHostTypeRef exercises the self-hosted parser's structured type
-// reference (compiler/parser.fern's TypeRef / parse_type_ref /
-// render_type_ref — the SH-021 foundation slice that unblocks #4394 lever 1,
-// replacing the dozen ad-hoc byte-scan type-string decoders with one structured
-// tree the consumers can pattern-match on).
-//
-// The typeref_run driver round-trips a corpus covering every shape the type-
-// string grammar produces (scalars, named + qualified names, multi-depth arrays,
-// nested generics, nested tuples, tuples inside generics, arrays of tuples, and
-// the opaque `dyn` spelling), asserting render_type_ref(parse_type_ref(s)) == s
-// for each, then spot-checks the decoded STRUCTURE (base / arg-count /
-// array_depth / is_tuple) so a tree that round-trips but decodes wrongly is
-// still caught. Function types need that structure half more than any other
-// shape: an unrecognised spelling survives whole as `base` and renders back
-// byte-identical, so `(A, B) => C` round-trips just the same when it is not
-// understood at all — only the arg count and `is_fn` separate the two.
-//
-// It prints a deterministic report and exits with the round-trip failure count
-// (0 on a clean sweep). This pins the parse/render contract end-
-// to-end through the self-host -> native pipeline (proving it compiles + round-
-// trips, not just type-checks); a byte-scan regression fails the golden here.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the
-// report and its exit code is the round-trip failure count.
 func TestSelfHostTypeRef(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/typeref_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/typeref_run.fern", "typeref_run")
 
-	// Golden report — locks the round-trip of every corpus spelling and the
-	// decoded structure of the representative nested/tuple/array cases.
 	const want = "ok   i32\n" +
 		"ok   u32\n" +
 		"ok   string\n" +
@@ -106,8 +80,6 @@ func TestSelfHostTypeRef(t *testing.T) {
 	if got := string(out); got != want {
 		t.Errorf("typeref report mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
-	// Exit code is the round-trip failure count — 0 proves every corpus spelling
-	// round-tripped, an independent check of round_trip_failures in the report.
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("typeref_run exit code = %d, want 0 (round-trip failures)", code)
 	}

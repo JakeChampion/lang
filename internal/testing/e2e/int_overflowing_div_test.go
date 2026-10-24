@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer overflowing_div / overflowing_rem
-// helpers — std/i32, std/i64, std/u32, std/u64 — completing the overflowing_
-// family for `/` and `%`. Each returns the wrapped quotient / remainder paired
-// with a did-overflow boolean; the one overflowing pair on the signed types is
-// MIN / -1 (quotient wraps to MIN, remainder is 0), and unsigned division never
-// overflows. Checks a normal divide, the MIN/-1 overflow (signed), and the
-// always-false unsigned flag. Returns 42 iff every check holds across interp /
-// x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const intOverflowingDivProg = `
 import "std/i32";
 import "std/i64" as i64m;

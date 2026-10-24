@@ -1,8 +1,3 @@
-// The TLS server scripts/net-tls-fuzz runs tlsfuzzer against: everything a
-// connection sends is answered with one HTTP response, or echoed under
-// MODE=echo, until it ends. TLS_CERT and TLS_KEY are its identity,
-// TLS_CLIENT_CA the roots a client certificate must reach, when it is to
-// require one, and PORT where it listens on the loopback.
 import "std/net";
 import "std/time";
 import "std/tls/identity";
@@ -40,9 +35,6 @@ function identity_of(cert_path: string, key_path: string): Result[identity.Ident
   return Err("identity");
 }
 
-// serve_one answers every request on one connection until the client
-// ends it: with the HTTP response, or, under MODE=echo, with the bytes
-// it sent.
 function serve_one(fd: i32, cfg: server.Config, echo: boolean): string {
   match (server.accept(fd, cfg, time.duration_seconds(5 as i64))) {
     Ok(c) => {
@@ -99,9 +91,6 @@ function setting(name: string, fallback: string): string {
   return fallback;
 }
 
-// configured is the server config the environment names: TLS_CERT and
-// TLS_KEY's identity, requiring a client certificate under TLS_CLIENT_CA
-// when that is set.
 function configured(): Result[server.Config, string] {
   let id: identity.Identity = identity_of(setting("TLS_CERT", "leaf.pem"), setting("TLS_KEY", "leaf.key"))?;
   let cfg: server.Config = server.config(id).with_alpn(["http/1.1"]);

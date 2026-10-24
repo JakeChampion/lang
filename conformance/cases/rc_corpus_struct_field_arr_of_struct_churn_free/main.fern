@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Transitive reclamation — array-of-struct as a struct FIELD
-// (the `struct Grid { rows: Row[] }` shape). Stage B deep-dropped
-// array-of-struct LOCALS; a nested field now routes through the
-// same __drop_arr_struct_<Elem> loop (each element box + buffer)
-// instead of the flat dec that leaked them. Churned 100x.
-// sum_{0..99}(i+1) = 5050.
+
+
+
+
+
+
+
+
+
 import "core/int";
 struct Row { cells: i32[] }
 struct Grid { rows: Row[], tag: i32 }

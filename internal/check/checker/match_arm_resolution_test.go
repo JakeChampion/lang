@@ -7,17 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The checker resolves each enum match arm against the SCRUTINEE's enum and
-// stamps the answer on the arm (#6964). Before that, it computed both facts
-// while validating the arm and discarded them, so the IR recovered them from
-// the scrutinee's static type at every arm site — routing one resolution
-// through a second fact.
-//
-// Two enums sharing a variant name at DIFFERENT ordinals is the shape that
-// makes a wrong answer observable: it is #6950's miscompile, where a global
-// scan over a Go map returned whichever enum the randomised iteration order
-// reached first. Asserting the stamped ordinal is that hazard pinned at the
-// point the answer is decided, rather than at the emitted tag test.
 func TestMatchArmCarriesItsResolution(t *testing.T) {
 	const src = `enum A { Red, Green, Blue }
 enum B { Blue, Red }
@@ -70,9 +59,6 @@ function main(): i32 { return a(A.Blue) + b(B.Red); }
 			case *ast.Match:
 				for _, arm := range x.Arms {
 					if arm.IsWildcard {
-						// A wildcard belongs to no variant, so it must stay
-						// unstamped — otherwise "" could not be read as
-						// "not an enum-variant arm".
 						if arm.EnumName != "" {
 							t.Errorf("wildcard arm stamped %q", arm.EnumName)
 						}
@@ -106,7 +92,6 @@ function main(): i32 { return a(A.Blue) + b(B.Red); }
 			return true
 		})
 	}
-	// Without this the test passes vacuously if the walk stops finding arms.
 	if stmtSeen != len(stmtWant) || exprSeen != len(exprWant) {
 		t.Fatalf("visited %d stmt / %d expr arms, want %d / %d",
 			stmtSeen, exprSeen, len(stmtWant), len(exprWant))

@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// The saturating operators `+|` / `-|` / `*|` / `<<|` (#5542) clamp to the operand
-// type's [MIN, MAX] instead of wrapping. `+` / `-` / `*` keep their wrapping,
-// never-trapping semantics (docs/INTEGER-SEMANTICS.md) — this is purely
-// additive surface.
-//
-// The program returns 0 when every case holds and the index of the first
-// failing case otherwise, so a regression names itself in the exit code. Each
-// backend runs the identical source; the clamp bounds are baked in at the
-// operand width, so i32 / i64 / u8 / u32 / u64 are all exercised.
-//
-// `i32min` / `i64min` are spelled `0 - MAX - 1` because a bare `-2147483648`
-// literal is rejected (E047: the magnitude is checked before the unary minus).
 const saturatingArithProgram = `
 function main(): i32 {
     let i32min: i32 = 0 - 2147483647 - 1;
@@ -111,8 +99,6 @@ function main(): i32 {
 }
 `
 
-// saturatingPrecedenceProgram pins the precedence tier of each new operator:
-// `+|` / `-|` bind like `+` / `-`, `*|` binds like `*`.
 const saturatingPrecedenceProgram = `
 function main(): i32 {
     // 2 +| 3 * 4 == 2 +| 12 == 14 -- multiplication binds tighter.

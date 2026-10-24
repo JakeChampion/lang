@@ -7,32 +7,11 @@ import (
 	"testing"
 )
 
-// containerReadAliasCases pin the #3457 container-read alias-inc: an
-// array-typed `let` binding whose init READS the buffer out of a container it
-// does not own — a struct field (`let vn: string[] = h.names;`), a tuple
-// element (`let xs: i32[] = t.0;`), or an array-of-array element
-// (`let row: i32[] = g[i];`) — is a second reference to a buffer the container
-// still points at. The self-host IR exit sweep decs every is_arr slot, so
-// without a retain at the binding that dec frees the field out from under its
-// owner: the buffer is released while the container still reads it, and the
-// next allocation recycles it.
-//
-// Found by routing the self-host CHECKER through the IR path (the #3457
-// AST-emitter retirement): `let vn: string[] = mod.enums[en].variant_names;`
-// freed the enum table's variant-name buffer, after which unit-variant lookups
-// read recycled memory — a bogus E001 on `return (A, 1)` and a missing E030 on
-// a guarded-only match. The binding now takes the same Perceus dup the
-// bare-ident alias (`let b = a;`) has always taken, so the sweep dec is
-// balanced; a borrowed source leaks one count (sound), never over-frees.
 var containerReadAliasCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Struct-field read: the checker's own shape. Each call to `total` binds
-	// h.names into an annotated array local; the un-retained exit dec used to
-	// free the literal's buffer on the FIRST call, so the loop's junk
-	// allocations recycled it and later reads returned garbage.
 	{"container-read-struct-field", `struct Holder { names: string[] }
 function total(h: Holder): i32 {
     let vn: string[] = h.names;
@@ -56,8 +35,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Array-of-array element read and tuple-element read — the same alias, via
-	// ExprIndex and a numeric ExprFieldAccess respectively.
 	{"container-read-index-and-tuple", `function pick(g: i32[][], i: i32): i32 {
     let row: i32[] = g[i];
     return row[0] + row[1];
@@ -84,10 +61,6 @@ function main(): i32 {
     if (acc < 0) { return 96; }
     return 0;
 }`, 0},
-	// The REASSIGN sibling: `vn = h.names` over an already-array slot takes the
-	// same alias, so the assignment needs the matching retain — for a
-	// string[], tuple-element or array-of-array field as much as for a
-	// scalar- / struct- / enum-element one.
 	{"container-read-reassign", `struct Holder { names: string[] }
 function total(h: Holder, seed: string[]): i32 {
     let vn: string[] = seed;
@@ -114,8 +87,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostContainerReadAliasIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler (asm_run), underflow-guarded.
 func TestSelfHostContainerReadAliasIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

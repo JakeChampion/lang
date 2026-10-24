@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/f64.cbrt — the real cube root, defined for
-// negative inputs (unlike pow with a fractional exponent). Built on pow around
-// a peeled-off sign. Tolerance-banded. Both f64 and f32. Returns 42 iff every
-// check holds across interp / x86-64 / wasm / arm64; each leg skips itself when
-// its toolchain is absent.
 const floatCbrtProg = `
 import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }

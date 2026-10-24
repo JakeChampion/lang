@@ -1,37 +1,7 @@
-// examples/array_pipeline/own_map_inplace.fern — pipeline 3 of #9728.
-//
-// Not a fusion question. The result of a same-shape `map` has to exist, so
-// what is being asked is whether it can BE the input's buffer: an `own` array
-// in, a same-shape transform, an array of the same length back out. Pipelines
-// 1 and 2 ask whether an intermediate can disappear; this one asks whether the
-// donor can be taken over.
-//
-// Three variants, threaded the same way — `xs = transform(xs)` each round, so
-// the argument dies at the call and reaches the callee unique:
-//
-//   map_own        `own xs` handed straight to `xs.map(f)`
-//   with_own       the hand-written same-shape loop, `xs = xs.with(i, f(xs[i]))`
-//   with_borrowed  the same loop over a BORROWED parameter, which is what
-//                  `.with` costs when the receiver is not uniquely owned
-//
-// The answer is yes: #9733 rewrites `map_own` to write through the donor's
-// buffer, and it reaches with_own's zero.
-//
-// with_borrowed is the control. Without it "with_own allocates nothing" is
-// satisfiable by a `.with` that never copies for anyone, and the reuse would
-// not have been demonstrated to depend on ownership at all.
-//
-// `with_own` is annotated `fip`, so the E068 pass is asserting the space claim
-// at compile time rather than the measurement asserting it after the fact.
-// internal/testing/e2e/array_inplace_fip_test.go is `map_own` annotated `fip`.
 import "core/cmp";
 import "std/bench";
 import "std/string";
 
-// `fip` all the way down: E053 requires a `fip` function to call only `fip`
-// functions, so the element transform and the modulus it reads are annotated
-// too. Neither allocates, so the annotation is describing them, not
-// constraining them.
 fip function modulus(): i64 {
   return 1000003 as i64;
 }
@@ -50,16 +20,10 @@ function build_input(n: i32): i64[] {
   return xs;
 }
 
-// The combinator spelling. `own` licenses the callee to consume `xs`, and R7
-// writes the result through its buffer; `std/array`'s `map` itself builds its
-// result from `[]` and appends, which is what the off build measures.
 function via_map_own(own xs: i64[]): i64[] {
   return xs.map((x: i64): i64 => elem_f(x));
 }
 
-// The hand-written same-shape loop. `fip` is a compile-time claim that this
-// function allocates nothing at all, checked by E068 on the native compiler —
-// not a comment, and not something the benchmark has to discover.
 fip function via_with_own(own xs: i64[], n: i32): i64[] {
   let i: i32 = 0;
   while (i < n) {
@@ -69,11 +33,6 @@ fip function via_with_own(own xs: i64[], n: i32): i64[] {
   return xs;
 }
 
-// The same loop with nothing owned. The receiver is live in the caller,
-// which reads `xs` after the call, so `.with` takes the copy-on-write path on
-// the first write and the function pays for a whole fresh buffer. A caller
-// done with the array would let it write in place. It stays a call so its
-// receiver is a borrowed parameter rather than `apply`'s own value.
 @noinline
 function via_with_borrowed(xs: i64[], n: i32): i64[] {
   let out: i64[] = xs;
@@ -85,9 +44,6 @@ function via_with_borrowed(xs: i64[], n: i32): i64[] {
   return out;
 }
 
-// One place the variant is chosen, so the warm round and the timed round
-// cannot drift apart — and so `main` has one branch on it rather than two
-// copies of three.
 function apply(variant: i32, own xs: i64[], n: i32): i64[] {
   if (variant == 0) {
     return via_map_own(xs);
@@ -144,14 +100,6 @@ function main(): i32 {
     p = p + 1;
   }
 
-  // One untimed warm round. It also advances the data by one application of
-  // `f`, identically in all three variants, so the checksums still agree.
-  // The COLD mark: the first pass over the data, before the freelist holds
-  // anything to hand back. The steady-state counters below cannot see what
-  // an intermediate array costs in BYTES — by then the allocator is
-  // recycling the same blocks and the bump cursor never moves
-  // (docs/ALLOCATION-OBSERVABLE.md: a reclaiming loop is flat in bytes and
-  // linear in calls). This is the reading that answers "by how much".
   let cold_a0: i64 = bench.alloc_count();
   let cold_b0: i64 = bench.bump_bytes();
   xs = apply(variant, xs, n);

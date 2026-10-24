@@ -1,14 +1,6 @@
 import "std/test";
 import "std/i64" as i64m;
 
-// tests/stdlib/i64_intdiv_test.fern — pure-Fern coverage of std/i64's
-// is_multiple_of / next_power_of_2 / ceil_div / log2_floor: scalar integer
-// helpers ported from std/i32, exact into the i64 range. next_power_of_2 caps
-// at 2^62 (largest power of two a signed i64 holds) and returns 0 above it;
-// log2_floor counts halvings since i64 has no leading_zeros. The Go-side
-// TestI64Intdiv pins these across all four backends; this is the
-// migration-shaped companion. Scalar-only, so self-host clean.
-
 function test_is_multiple_of(): test.TestOutcome {
   if (!(12 as i64).is_multiple_of(4 as i64)) {
     return test.fail("12 % 4");
@@ -33,14 +25,12 @@ function test_next_power_of_2(): test.TestOutcome {
 }
 
 function test_next_power_of_2_cap(): test.TestOutcome {
-  // 2^62 is the largest representable power; above it returns 0.
   if ((4611686018427387904 as i64).next_power_of_2() != 4611686018427387904 as i64) {
     return test.fail("2^62 unchanged");
   }
   if ((4611686018427387904 as i64 + 1).next_power_of_2() != 0 as i64) {
     return test.fail("2^62 + 1 -> 0");
   }
-  // i64::MAX must reach the guard, not spin in the doubling loop.
   return test.assert_true((9223372036854775807 as i64).next_power_of_2() == 0 as i64);
 }
 
@@ -55,7 +45,6 @@ function test_ceil_div(): test.TestOutcome {
 }
 
 function test_log2_floor(): test.TestOutcome {
-  // 2^39 < 10^12 < 2^40, so floor(log2) is 39.
   if ((1000000000000 as i64).log2_floor() != 39) {
     return test.fail("10^12 -> 39");
   }

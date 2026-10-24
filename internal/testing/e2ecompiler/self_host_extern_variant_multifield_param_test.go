@@ -11,18 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantMultiFieldParamCustomProvider is the self-host port of
-// the Go-side TestExternVariantMultiFieldParamCustomProvider (docs/WIT-BRING-YOUR-OWN.md):
-// a multi-field `variant ev { click(tuple<u32, u32>), key(u32), close }` @import
-// parameter (a WIT case wraps >1 value in a tuple). The canonical join is
-// SlotCount=2 i32 slots, so the flattened param is (disc:i32, s0:i32, s1:i32). The
-// self-host wrapper pushes the disc then each slot via a disc-branching if/else
-// chain (extern_variant_multifield_slot): the matched arm's field j, or 0 to pad a
-// shorter arm. Requires S4 multi-payload variants to represent Ev { Click(i32,
-// i32), … }.
-//
-// `take: func(e: ev) -> s32`: click(a,b) -> a + b*1000, key(k) -> 100000+k,
-// close -> -1. The self-host passes Click(3,4)/Key(7)/Close -> 4003/100007/-1.
 func TestSelfHostExternVariantMultiFieldParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,7 +38,6 @@ func TestSelfHostExternVariantMultiFieldParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, slot0:i32, slot1:i32).
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $s0 i32) (param $s1 i32) (result i32)

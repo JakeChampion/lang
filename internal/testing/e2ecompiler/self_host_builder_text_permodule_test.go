@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// A library module owns the builder calls; the entry must supply and export
-// text extraction even when it has no direct builder operation itself.
 func TestSelfHostBuilderTextPerModule(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

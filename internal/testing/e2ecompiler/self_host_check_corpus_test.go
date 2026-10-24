@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCheckAgreesWithGo* hold the self-host compiler's `-check`, the
-// one `fern -check` runs, to the Go checker's verdict on every program the
-// repository keeps that is meant to compile: the conformance cases without an
-// expected error, tests/ and examples/. A program one accepts and the other
-// refuses fails here, in either direction (#12382). The corpus is split so the
-// sharder can place the parts apart; together they are more than half a
-// shard's budget, and tests/stdlib is two thirds of it.
-//
-// The expected.error cases are internal/testing/e2e's TestFernFixturesSelfHostCheck's.
 func TestSelfHostCheckAgreesWithGoOnConformance(t *testing.T) {
 	checkAgreesWithGo(t, conformanceCorpus(t), 500)
 }
@@ -36,9 +27,6 @@ func TestSelfHostCheckAgreesWithGoOnExamples(t *testing.T) {
 	checkAgreesWithGo(t, treeCorpus(t, "examples", ""), 100)
 }
 
-// checkAgreesWithGo checks each program, paths relative to the repository
-// root, under both checkers. Fewer than `least` programs means the corpus
-// moved and the gate proves little.
 func checkAgreesWithGo(t *testing.T, progs []string, least int) {
 	if len(progs) < least {
 		t.Fatalf("found only %d corpus programs — the corpus moved and this gate proves little", len(progs))
@@ -60,7 +48,6 @@ func checkAgreesWithGo(t *testing.T, progs []string, least int) {
 	}
 }
 
-// conformanceCorpus is the conformance cases that are meant to compile.
 func conformanceCorpus(t *testing.T) []string {
 	t.Helper()
 	var out []string
@@ -79,8 +66,6 @@ func conformanceCorpus(t *testing.T) []string {
 	return out
 }
 
-// treeCorpus is every .fern file under the repository directory `top`, less
-// those under `skip` when it is not empty.
 func treeCorpus(t *testing.T, top, skip string) []string {
 	t.Helper()
 	var out []string
@@ -109,7 +94,6 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
-// checkVerdict runs a `-check` and reports its output and whether it accepted.
 func checkVerdict(cmd *exec.Cmd) (string, bool) {
 	out, err := cmd.CombinedOutput()
 	return string(out), err == nil

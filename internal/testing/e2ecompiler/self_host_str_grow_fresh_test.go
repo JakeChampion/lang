@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// strGrowFreshSrc appends one byte at a time past the small tier's exact
-// classes, appends a range of a source the same way, and appends to an
-// accumulator a snapshot shares. A self-append whose block has no room used
-// to build an exact box through the concatenation, so an accumulator
-// re-copied its prefix once per allocator class; it now builds a grown box
-// with headroom (__fern_str_grow_fresh, #8770), which the next append grows
-// in place while its capacity holds. 3000 single-byte appends and 1000
-// three-byte range appends took 523 blocks; they take 26.
 const strGrowFreshSrc = `import "std/i32";
 
 function build(n: i32): string {
@@ -76,10 +68,6 @@ function main(): i32 {
 }
 `
 
-// strGrowFreshAllocs is the ceiling on the program's blocks: one per
-// doubling of each accumulator, one per copy the shared accumulator's
-// snapshots force, and a handful of boxes, where the exact joins cost one
-// per allocator class step.
 const strGrowFreshAllocs = 80
 
 func TestSelfHostStrGrowFreshX86_64(t *testing.T) {

@@ -8,21 +8,6 @@ import (
 	"testing"
 )
 
-// --- A struct-literal `string[]` field costs the SOURCE its element walk -----
-//
-// `let src: string[] = mkv(i); if (..) { let p: P = P { f: src, n: i }; .. }`
-// must free every element box whether or not the holder is built: the source's
-// own release walks its elements, rather than leaving the walk to a holder that
-// may never exist. Skipping the holder on half the rounds is the repro.
-//
-// __fern_str_arr_free is rc-gated — rc>1 decs and leaves the elements to the
-// other owner, and only the LAST owner at rc 1 walks — so the walk cannot run
-// twice. Exit 99 is reserved for __rc_underflow_count().
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. A pre-fusion number quoted in a row note below is
-// twice its pin.
-
 type strArrFieldSourceCase struct {
 	name   string
 	src    string
@@ -47,7 +32,6 @@ const safsMain = `function main(): i32 {
 func strArrFieldSourceCases() []strArrFieldSourceCase {
 	return []strArrFieldSourceCase{
 		{
-			// THE REPRO: the holder is built on half the rounds. Base 650/450.
 			name: "conditional_holder",
 			src: safsPrelude + `function round(i: i32): i32 {
     let src: string[] = mkv(i);
@@ -59,9 +43,6 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			want: 63, allocs: 350, frees: 350,
 		},
 		{
-			// The same, with the source READ after the conditional — which for
-			// `string` was the whole discriminator and here changes nothing.
-			// Base 650/450, identical to the row above.
 			name: "conditional_holder_source_read_after",
 			src: safsPrelude + `function round(i: i32): i32 {
     let src: string[] = mkv(i);
@@ -73,12 +54,6 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			want: 30, allocs: 350, frees: 350,
 		},
 		{
-			// THE ROW THAT CARRIES THE SOUNDNESS. The danger here is not a leak
-			// but a DOUBLE element walk — the holder's field drop and the
-			// source's sweep both walking. So this reads the source's ELEMENTS
-			// back after the holder has died, with two fresh string arrays
-			// allocated in between: a box freed twice is reused before the read
-			// and the answer stops matching native's. Base 1850/1650.
 			name: "elements_read_back_after_churn",
 			src: safsPrelude + `function round(i: i32): i32 {
     let src: string[] = mkv(i);
@@ -92,10 +67,6 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			want: 96, allocs: 950, frees: 950,
 		},
 		{
-			// CONTROL, and the row that says the move axis is NOT the
-			// discriminator for this type: the unconditional store was already
-			// clean at 700/700 before this change. If it ever exceeds 700 the
-			// forgiveness has reached a store whose retain was elided.
 			name: "unconditional_holder_unchanged",
 			src: safsPrelude + `function round(i: i32): i32 {
     let src: string[] = mkv(i);
@@ -106,9 +77,6 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			want: 71, allocs: 400, frees: 400,
 		},
 		{
-			// CONTROL: an `if` whose condition happens to always hold. Same
-			// statement kind as the repro, same emitted code, and already clean
-			// — which is what rules out "it is the StmtIf arm" as the cause.
 			name: "always_entered_if_unchanged",
 			src: safsPrelude + `function round(i: i32): i32 {
     let src: string[] = mkv(i);
@@ -120,10 +88,6 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			want: 70, allocs: 400, frees: 400,
 		},
 		{
-			// The holder ESCAPES by return, so it earns no struct credit and the
-			// source is refused. Already clean at 700/700 — pinned so that a
-			// forgiveness which ignored the credited-holder condition would show
-			// up as frees running ABOVE 700 rather than passing unnoticed.
 			name: "escaping_holder_unchanged",
 			src: safsPrelude + `function mk(i: i32): P {
     let src: string[] = mkv(i);
@@ -141,7 +105,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostStrArrFieldSourceX86_64 is the leak-accounting leg.
 func TestSelfHostStrArrFieldSourceX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -179,8 +142,6 @@ func TestSelfHostStrArrFieldSourceX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldSourceWasmIR — exit codes only, so what this leg
-// catches is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostStrArrFieldSourceWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping strarr field-source wasm IR e2e")
@@ -219,7 +180,6 @@ func TestSelfHostStrArrFieldSourceWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldSourceIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStrArrFieldSourceIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

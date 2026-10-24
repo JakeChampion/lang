@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCreateDirAllIRWasm pins `create_dir_all(path)` on the wasm IR
-// path (#6749) — the builtin that lets a Fern program BUILD a directory tree,
-// which is what `fern -vendor` is gated on.
-//
-// WASI takes an explicit path length, so $__fern_create_dir_all walks the chain
-// by calling path_create_directory with a shorter length per component rather
-// than rewriting separators the way the native helpers do. That divergence is
-// what this pins: the program creates a two-deep chain under the preopen and
-// writes into the leaf, so a walk that created only the last component (or
-// mis-sliced a prefix) fails at the write rather than silently passing.
 func TestSelfHostCreateDirAllIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host create_dir_all wasm IR e2e")

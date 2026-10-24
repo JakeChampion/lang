@@ -1,14 +1,3 @@
-// Package diag renders compiler errors against the original source. It
-// turns a position+message pair (which lexer, parser and checker errors
-// already carry) into output like:
-//
-//	path/foo.fern:3:9: error: cannot find "x" in this scope
-//	    return x + 1;
-//	           ^
-//	    note: did you mean "y"?
-//
-// Errors aggregates multiple per-error diagnostics so the type checker
-// can report several problems at once.
 package diag
 
 import (
@@ -19,71 +8,31 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// Positioned is satisfied by every error in this codebase that has a
-// source location. Renderers use it to extract the line/column, fall
-// back to the wrapped error's message via Error(), and pretty-print.
 type Positioned interface {
 	error
 	Position() ast.Position
 }
 
-// Spanned is optionally satisfied by errors that know the length of
-// the offending token. When present the underline becomes `^~~~~`
-// covering the whole span instead of a single caret.
 type Spanned interface {
 	Positioned
 	Length() int
 }
 
-// Hinted is optionally satisfied by errors that want to attach a
-// follow-up note to the diagnostic — typically a "did you mean foo?"
-// suggestion. The hint is rendered on its own line with a `note:`
-// prefix.
 type Hinted interface {
 	error
 	Hint() string
 }
 
-// Filed is optionally satisfied by errors that know which source
-// file they were emitted against. modload stamps this on parser /
-// lexer errors after each module's parse so cross-file diagnostics
-// can be routed back to the right URI in workspace-mode LSP. The
-// checker fills it from `c.current.BodyModule()` whenever the
-// emitting context is a known FuncDecl. Empty string means
-// "unknown" — callers should fall back to the entry file.
 type Filed interface {
 	error
 	File() string
 }
 
-// Coded is optionally satisfied by errors that carry a stable
-// error code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4). The code
-// is rendered in the header — `error[E001]: …` — so users can
-// search for it and look up the long-form explanation via
-// `fern -explain E001`. Codes are stable identifiers; the
-// rendered phrasing of the error message can evolve without
-// breaking the search.
-//
-// Empty Code() means "no stable code assigned" — the renderer
-// falls back to the plain `error:` prefix. Existing errors
-// stay unaffected until they opt in.
 type Coded interface {
 	error
 	Code() string
 }
 
-// LabelKind tags a Label's role in a multi-label diagnostic
-// (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §1).
-//
-//	Primary   — the "error happens here" pointer; rendered with `^`.
-//	Secondary — context that informs the primary (e.g. "declared
-//	            with this type" pointing at the original decl);
-//	            rendered with `--` underline + "note:" prefix.
-//	Help      — actionable explanation or suggested fix; rendered
-//	            with `--` + "help:" prefix. Distinct from
-//	            Secondary so the IDE can surface help labels as
-//	            CodeAction candidates while leaving Secondary as
-//	            plain `relatedInformation`.
 type LabelKind int
 
 const (
@@ -92,10 +41,6 @@ const (
 	LabelHelp
 )
 
-// Label is one source-location annotation in a multi-label
-// diagnostic. Spans use the (Position, Length) shape already
-// established by the Spanned interface — a length of 0 means
-// "single caret at the position."
 type Label struct {
 	Pos     ast.Position
 	Length  int
@@ -103,13 +48,6 @@ type Label struct {
 	Kind    LabelKind
 }
 
-// Suggestion is a machine-applicable fix (docs/DIAGNOSTIC-UX-RESEARCH.md
-// Rec §3): replacing Length bytes of source at Pos with Replacement is
-// guaranteed BY THE EMITTER to produce a program that re-parses — an
-// unsound suggestion is worse than none, so only exact rewrites (e.g. an
-// identifier respelling) attach one. Title is the human-readable line the
-// renderer prints after `help:`; the span/replacement pair is the machine
-// half (the future LSP CodeAction seed).
 type Suggestion struct {
 	Pos         ast.Position
 	Length      int
@@ -117,31 +55,16 @@ type Suggestion struct {
 	Title       string
 }
 
-// Suggested is satisfied by errors carrying a machine-applicable fix.
-// A nil Suggestion means none.
 type Suggested interface {
 	error
 	Suggestion() *Suggestion
 }
 
-// Labeled is satisfied by errors that carry multiple source
-// annotations (typically primary-at-use plus secondary-at-decl).
-// The renderer falls back to the Positioned / Spanned single-
-// label path when an error implements only those.
-//
-// Convention: Labels() should return the primary label FIRST.
-// The renderer uses the primary's position for the header
-// `path:L:C: error: msg` line; secondary / help labels render
-// below with their own line/caret pair.
 type Labeled interface {
 	error
 	Labels() []Label
 }
 
-// WithFile walks err and stamps `filename` on every entry that
-// implements FileSetter. Used by modload to attribute parser /
-// lexer errors to the module they came from. Single errors and
-// diag.Errors slices are both handled.
 func WithFile(err error, filename string) error {
 	if err == nil {
 		return nil
@@ -156,17 +79,6 @@ func WithFile(err error, filename string) error {
 	return err
 }
 
-// FileSetter is the mutator half of Filed: an error that knows its
-// source file and lets a loader tell it which one. The method name
-// has to be exported — an interface naming an unexported method can
-// only ever be satisfied inside the package that declares it, so a
-// package-private mutator here would match nothing and make WithFile
-// a no-op.
-//
-// Implementations assert conformance at compile time
-// (`var _ diag.FileSetter = (*Error)(nil)`): a missed stamp is
-// invisible, and leaves the diagnostic rendering against the entry
-// file instead of its own.
 type FileSetter interface {
 	error
 	SetFile(filename string)
@@ -178,13 +90,8 @@ func stampFile(err error, filename string) {
 	}
 }
 
-// Errors is a flat collection of errors. Useful when a pass (e.g. the
-// type checker) wants to report many problems in one go.
 type Errors []error
 
-// SortedByPosition is es ordered by file, then line and column, as the
-// compiler orders them: the entry's (file "" or entry) first, an error with no
-// position first in its file, and errors at one position in the order given.
 func (es Errors) SortedByPosition(entry string) Errors {
 	out := append(Errors(nil), es...)
 	key := func(e error) (string, int, int) {
@@ -228,7 +135,6 @@ func (es Errors) Error() string {
 	return b.String()
 }
 
-// As lets `errors.As` traverse Errors. It picks the first match.
 func (es Errors) As(target any) bool {
 	for _, e := range es {
 		if as, ok := e.(interface{ As(any) bool }); ok && as.As(target) {
@@ -238,24 +144,10 @@ func (es Errors) As(target any) bool {
 	return false
 }
 
-// Format renders err with the relevant source line and a caret. If err
-// is an Errors, every entry is rendered. Errors that don't satisfy
-// Positioned fall back to plain Error() output. The filename is
-// included in the header (Unix-tool style) when non-empty; it's
-// otherwise omitted so unit tests can render without a path prefix.
 func Format(filename, src string, err error) string {
 	return format(filename, src, nil, err)
 }
 
-// FormatRemapped is Format with a position-remapping hook. Every source
-// position (the primary location and any secondary/help labels) is
-// passed through `remap` before rendering, and the source line is
-// looked up in `displaySrc` using the *remapped* line number. It exists
-// for literate programs: the checker reports positions in the tangled
-// (generated) source, but diagnostics should point at the line the
-// author wrote in the `.fern.md` document. Pass the literate source as
-// displaySrc and a closure built from the tangle line map as remap. A
-// nil remap behaves exactly like Format.
 func FormatRemapped(filename, displaySrc string, remap func(ast.Position) ast.Position, err error) string {
 	return format(filename, displaySrc, remap, err)
 }
@@ -285,10 +177,6 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 	}
 	line := pickLine(src, pos.Line)
 	if line == "" && pos.Line == 0 {
-		// Position-less but code-carrying errors (capability enforcement
-		// — E066 reached via an imported module, E070's cross-package
-		// chains) still get the `error[EXXX]:` header; the message body
-		// carries the attribution a caret cannot.
 		if cd, ok := err.(Coded); ok {
 			if code := cd.Code(); code != "" {
 				return diagnosticText(paint(ansiRedBld, "error["+code+"]") + ": " + stripPrefix(pe.Error()))
@@ -297,10 +185,6 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 		return diagnosticText(err.Error())
 	}
 
-	// `error[E001]: …` shape when the error carries a stable
-	// code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4). Plain
-	// `error: …` otherwise — keeps every non-Coded error
-	// rendering unchanged.
 	prefix := "error"
 	if cd, ok := err.(Coded); ok {
 		if code := cd.Code(); code != "" {
@@ -318,7 +202,6 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 	pad := strings.Repeat(" ", clamp(pos.Col-1, 0, len(line)))
 	mark := "^"
 	if sp, ok := err.(Spanned); ok && sp.Length() > 1 {
-		// Cap the squiggle to what fits on the line so it never wraps.
 		room := len(line) - (pos.Col - 1) - 1
 		if room < 0 {
 			room = 0
@@ -330,10 +213,6 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 		mark = "^" + strings.Repeat("~", span-1)
 	}
 
-	// Rich (colour) mode renders a right-aligned line-number gutter with a
-	// box-drawing separator (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7); the
-	// classic path is byte-for-byte unchanged so every non-interactive
-	// caller sees the historical layout. The note aligns under the gutter.
 	coloredMark := paint(ansiRed, mark)
 	var out, notePrefix string
 	if enableColor {
@@ -351,18 +230,11 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 			out += "\n" + notePrefix + paint(ansiBlue, "note:") + " " + hint
 		}
 	}
-	// Machine-applicable fix (Rec §3): an actionable `help:` line. The
-	// structured span/replacement stays on the error for machine
-	// consumers; the emitter guarantees applying it re-parses.
 	if sg, ok := err.(Suggested); ok {
 		if fix := sg.Suggestion(); fix != nil && fix.Title != "" {
 			out += "\n" + notePrefix + paint(ansiBlue, "help:") + " " + fix.Title
 		}
 	}
-	// Multi-label diagnostic (docs/DIAGNOSTIC-UX-RESEARCH.md
-	// Rec §1). Labels()[0] is the primary; the header above
-	// already rendered it. Render the remaining labels with
-	// their own line/underline pair and a kind-tagged prefix.
 	if lb, ok := err.(Labeled); ok {
 		labels := lb.Labels()
 		for i, l := range labels {
@@ -378,13 +250,6 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 	return out
 }
 
-// renderSecondaryLabel formats one Secondary/Help label below
-// the primary diagnostic. Each carries its own `file:L:C:`
-// header so cross-file labels (e.g. "declared in lib/foo.fern"
-// pointing at the original decl) route correctly under
-// workspace-mode LSP. The underline uses `--` instead of `^~`
-// to visually distinguish secondaries from the primary's
-// caret.
 func renderSecondaryLabel(filename, src string, l Label) string {
 	word := "note:"
 	markColor := ansiBlue
@@ -417,10 +282,6 @@ func renderSecondaryLabel(filename, src string, l Label) string {
 	if mark == "" {
 		mark = "-"
 	}
-	// Rich mode gives the secondary its own line-number gutter, matching
-	// the primary (#4413 Rec §7) so a multi-label diagnostic reads as one
-	// consistently-guttered block. Classic keeps the 8-space indent so the
-	// plain layout is unchanged.
 	if enableColor {
 		num := fmt.Sprintf("%d", l.Pos.Line)
 		blank := strings.Repeat(" ", len(num))
@@ -430,12 +291,8 @@ func renderSecondaryLabel(filename, src string, l Label) string {
 	return fmt.Sprintf("%s\n        %s\n        %s%s", header, line, pad, paint(markColor, mark))
 }
 
-// stripPrefix removes any "<kind> error at L:C: " prefix that the
-// concrete error type may have included, so Format's own header isn't
-// duplicated.
 func stripPrefix(msg string) string {
 	if i := strings.Index(msg, ": "); i >= 0 {
-		// Only strip if the prefix looks like "X error at L:C".
 		head := msg[:i]
 		if strings.Contains(head, " error at ") {
 			return msg[i+2:]
@@ -444,8 +301,6 @@ func stripPrefix(msg string) string {
 	return msg
 }
 
-// pickLine returns line `n` (1-based) from src, with tabs replaced by a
-// single space so the caret aligns visually.
 func pickLine(src string, n int) string {
 	if n <= 0 {
 		return ""
@@ -483,10 +338,6 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
-// Suggest returns the entry in candidates closest to name within an
-// edit-distance budget that scales with name length. An empty result
-// means no good suggestion was found and callers should not emit a
-// hint at all.
 func Suggest(name string, candidates []string) string {
 	if name == "" || len(candidates) == 0 {
 		return ""

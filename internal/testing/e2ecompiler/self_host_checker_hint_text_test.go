@@ -14,13 +14,8 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// typeErrPrefixRE strips the `type error at L:C: ` a checker error wears
-// in its Error(), leaving the message body — the same thing the self-host
-// driver prints, and what `error[EXXX]: ` is followed by on screen.
 var typeErrPrefixRE = regexp.MustCompile(`^type error at \d+:\d+: `)
 
-// goCheckerDiags runs the native checker over src and returns its
-// diagnostics as code/message pairs.
 func goCheckerDiags(t *testing.T, dir, src string) []driverDiag {
 	t.Helper()
 	p := filepath.Join(dir, "gocheck_input.fern")
@@ -35,7 +30,6 @@ func goCheckerDiags(t *testing.T, dir, src string) []driverDiag {
 	return checkErrDiags(err)
 }
 
-// checkErrDiags splits a checker error into code/message pairs.
 func checkErrDiags(err error) []driverDiag {
 	if err == nil {
 		return nil
@@ -55,10 +49,6 @@ func checkErrDiags(err error) []driverDiag {
 	return out
 }
 
-// byCode groups diagnostics into code → sorted unique messages. Order and
-// multiplicity are dropped for the same reason the code gates drop them:
-// the two checkers walk in different orders and may report a shape once or
-// twice, and neither is a text difference.
 func byCode(ds []driverDiag) map[string][]string {
 	out := map[string][]string{}
 	for _, d := range ds {
@@ -81,10 +71,6 @@ func slicesCompact(in []string) []string {
 	return out
 }
 
-// hintTextCase is one program whose diagnostic tells the reader what to
-// write. `spelling` is a fragment of that advice which must appear in the
-// native message — it keeps the corpus explicit about why each row is here,
-// so a case cannot decay into pinning arbitrary prose.
 type hintTextCase struct {
 	name     string
 	src      string
@@ -123,9 +109,6 @@ function main(): i32 { let b = B { v: 1 }; let n = b.ap[i32, i32]((v: i32): i32 
 		code:     "E040",
 		spelling: "B.ap takes 1 type argument",
 	},
-	// A generic struct literal's clash names the field that breaks what the
-	// earlier ones bound, and what to write there (#10453): a typed integer
-	// binds ahead of a literal, nothing else does.
 	{
 		name: "E043 generic struct literal clash names the later field",
 		src: `struct Same[T] { a: T, b: T }
@@ -145,8 +128,6 @@ function main(): i32 {
 		code:     "E043",
 		spelling: `field "b": expected i32, got i64`,
 	},
-	// The message names the struct's type parameter, which the self-host
-	// respells internally (#9577); it must read as written.
 	{
 		name: "E040 uninferred struct type parameter",
 		src: `struct Box[T] { xs: T[] }
@@ -184,9 +165,6 @@ function main(): i32 {
 		code:     "E056",
 		spelling: "`arr = arr.with(i, value)`",
 	},
-	// A borrowed `str` view at an owning `string` sink (#7293): the hint names
-	// the materialiser to write. slice_unchecked is the import-free `str`
-	// producer, so the single-module driver reaches it.
 	{
 		name: "E003 str view into owned string",
 		src: `function main(): i32 {
@@ -197,8 +175,6 @@ function main(): i32 {
 		code:     "E003",
 		spelling: "add `.to_owned()`",
 	},
-	// An array view at an owning `T[]` sink (#9944): the message spells the
-	// view `[T]` apart from the owned `T[]` it cannot become.
 	{
 		name: "E003 array view into owned array",
 		src: `function main(): i32 {
@@ -209,8 +185,6 @@ function main(): i32 {
 		code:     "E003",
 		spelling: "expected string[], got [string]",
 	},
-	// A `[T]` view of a local array returned from a `[T]` function (#9944):
-	// the hint names the two shapes that do not dangle.
 	{
 		name: "E063 view of local storage returned",
 		src: `function middle(): [string] {
@@ -244,9 +218,6 @@ function main(): i32 {
 		spelling: "or a `_` arm",
 	},
 	{
-		// The one hint that ECHOES the reader's own spelling rather than
-		// hardcoding one, so it is the row that pins the echo staying an
-		// echo on both sides.
 		name: "E021 underivable field",
 		src: `trait Ord { function cmp(self: Self, other: Self): i32; }
 @derive(Ord)
@@ -280,10 +251,6 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		spelling: "`@derive(cmp.Eq, cmp.Hash)`",
 	},
 	{
-		// `bool` is the cross-language slip a Fern reader is likeliest to
-		// write, so this row pins it being REJECTED rather than quietly taken
-		// as a synonym for `boolean` — which is what the self-host's five
-		// type-name resolvers did while native errored.
 		name:     "E064 bool for boolean",
 		src:      `function main(): i32 { let b: bool = true; return 0; }`,
 		code:     "E064",
@@ -302,76 +269,48 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		spelling: "did you mean `string`?",
 	},
 	{
-		// #7417's sibling: a method that does not exist on an ARRAY. The
-		// bare "field access on non-struct value of type i32[]" names
-		// neither the method nor the receiver's actual API, which is the
-		// worst case for the two situations that produce it — a typo and a
-		// spelling that was deliberately retired (#7442).
 		name:     "E043 unknown array method lists the API",
 		src:      `function main(): i32 { let a: i32[] = [1]; return a.sum(); }`,
 		code:     "E043",
 		spelling: "it has: append, len, with",
 	},
 	{
-		// The retired in-place spelling. `push` resolves to nothing now, so
-		// without the replacement name the reader is left guessing at a
-		// rename they never saw.
 		name:     "E043 retired collection spelling names the replacement",
 		src:      `function main(): i32 { let a: i32[] = [1]; a.push(2); return a.len(); }`,
 		code:     "E043",
 		spelling: `use "append"`,
 	},
 	{
-		// The typo half of the same message, which needs the candidate SET
-		// and not just the receiver — the two checkers have to agree on
-		// what they are suggesting from, not only on the suggester.
 		name:     "E043 near-miss method name suggests the real one",
 		src:      `function main(): i32 { let a: i32[] = [1]; return a.lenn(); }`,
 		code:     "E043",
 		spelling: `did you mean "len"?`,
 	},
 	{
-		// The scalar receiver whose module was not imported, reached
-		// WITHOUT a method call in the source: an f-string desugars
-		// `f"{n}"` to `n.to_string()`, so the bare message talked about
-		// struct field access on code the reader never wrote.
 		name:     "E043 f-string to_string names the import",
 		src:      `function main(): i32 { let n: i32 = 1; let s: string = f"x{n}y"; return s.len(); }`,
 		code:     "E043",
 		spelling: "add `import \"std/i32\"`",
 	},
 	{
-		// The string receiver, where the advice is conditional on the
-		// reader's own import list: with std/string present the message
-		// lists the surface instead, so a checker that cannot see its
-		// imports cannot say either thing correctly.
 		name:     "E043 a string method from std/string names the import",
 		src:      `function main(): i32 { let s: string = "ab"; return s.trim().len(); }`,
 		code:     "E043",
 		spelling: "— add `import \"std/string\"`",
 	},
 	{
-		// A method no stdlib module declares gets no import advice: adding
-		// one would change nothing (#13064).
 		name:     "E043 a method no module declares names no import",
 		src:      `function main(): i32 { let s: string = "ab"; return s.frobnicate(); }`,
 		code:     "E043",
 		spelling: `no method "frobnicate" on string, and no stdlib module declares one`,
 	},
 	{
-		// A field READ rather than a method call. Native says the same
-		// thing at both sites; this checker had two messages for one
-		// mistake.
 		name:     "E043 field read on a non-struct gets the method advice",
 		src:      `function main(): i32 { let s = "a"; return s.foo; }`,
 		code:     "E043",
 		spelling: `no method "foo" on string, and no stdlib module declares one`,
 	},
 	{
-		// The type NAME a message renders is advice to write as much as a
-		// hint is: it must be `boolean`, not the internal "bool" tag, a type
-		// the reader cannot spell. This is the second of the two E042 sites
-		// (#7251).
 		name: "E042 non-Option operand names boolean",
 		src: `function f(): i32 { let b: boolean = true; let c = b?; return 0; }
 function main(): i32 { return 0; }`,
@@ -379,8 +318,6 @@ function main(): i32 { return 0; }`,
 		spelling: "got boolean",
 	},
 	{
-		// `?` on an Option in a function returning Result: the message names
-		// the declared return with its arguments.
 		name: "E042 Option operand in a Result function names the return",
 		src: `function a(): Result[i32, IoError] {
   let x: Option[i32] = Some(1);
@@ -392,8 +329,6 @@ function main(): i32 { return 0; }`,
 		spelling: "got Result[i32, IoError]",
 	},
 	{
-		// A Map builtin's arity is stated at the call, with the count the
-		// reader has to write.
 		name: "E004 Map get with no key",
 		src: `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.get(); return 0; }`,
@@ -401,8 +336,6 @@ function main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.get(); re
 		spelling: "takes 1 argument but was given 0",
 	},
 	{
-		// `?` into a `dyn` error names the impl the error type lacks
-		// (#12668).
 		name: "E042 dyn residual names the missing impl",
 		src: `import "std/error";
 struct Oops { code: i32 }
@@ -413,8 +346,6 @@ function main(): i32 { return 0; }`,
 		spelling: "`?` cannot box Oops into dyn error.Error: Oops does not implement error.Error",
 	},
 	{
-		// Between two concrete error types the missing piece is the
-		// function's error type's `from` constructor.
 		name: "E042 concrete residual names the from constructor",
 		src: `struct A { code: i32 }
 struct B { code: i32 }
@@ -432,9 +363,6 @@ function main(): i32 { return 0; }`,
 		spelling: "got void",
 	},
 	{
-		// The message spells out the call that DOES work, so the reader is
-		// not left to guess that a receiver-less trait requirement is
-		// reached through the type parameter rather than through a value.
 		name: "E021 associated function called as a method",
 		src: `trait Show { function show(): i32; }
 struct P { v: i32 }
@@ -445,10 +373,6 @@ function main(): i32 { return pick(P { v: 42 }); }`,
 		spelling: "call it as T.show(...)",
 	},
 	{
-		// The dyn twin of the row above: a receiver-less requirement reached
-		// through a value that has erased its concrete type. The advice is
-		// the only thing that gets the reader out, so the two compilers
-		// must give the same one.
 		name: "E021 associated function called through dyn",
 		src: `struct Box { v: i32 }
 trait Mk { function make(own b: Box): i32; }
@@ -467,44 +391,8 @@ function main(): i32 { return 0; }`,
 	},
 }
 
-// hintTextDivergences records the rows where the two checkers are meant to
-// say different things, keyed `<case>/<code>`. Not every difference is
-// drift, and forcing these into lockstep would be the #6990 bug all over
-// again: a hint must not name a fix the checker printing it still refuses.
-//
-// E045's two rows used to be the example — the self-host accepted only
-// i32/string map keys, so repeating native's derive advice would have been
-// exactly that bug. #7001 taught it the derived-key rule, the texts converged,
-// and this table pruned them, which is the mechanism working rather than an
-// exception to it.
-//
-// The table is exact in BOTH directions. A listed row that converges fails
-// too, because the reason it was listed has gone away and nobody would
-// otherwise notice.
-// A row is also listed when the self-host checker does not report the
-// diagnostic at all: "says nothing" is a difference in what the reader is
-// told, and leaving it as a test SKIP would hide it. Listing it makes the
-// self-host port's remaining hint gaps enumerable from one place.
 var hintTextDivergences = map[string]string{}
 
-// TestSelfHostCheckerHintTextDifferential is the message-TEXT half of the
-// checker differential, and the gap #7018 opened on: every existing gate
-// extracts `E\d{3}` and compares CODE SETS, and checkStatusLines drops
-// explanation text outright, so the two checkers were free to say
-// arbitrarily different things — or the same wrong thing — while agreeing
-// perfectly on what they reported. #6990 is what that cost: four hints
-// named a spelling that does not compile, in both compilers, for a long
-// time, with every differential green.
-//
-// It is deliberately narrow. Comparing ALL message text would pin prose
-// that is allowed to differ and would fight the partial self-host checker;
-// this corpus holds only diagnostics that tell the reader what to WRITE,
-// which is the text where a difference is a bug rather than a style. Each
-// row states the spelling it is about, and a row whose two sides are meant
-// to differ is listed above with its reason.
-//
-// It runs the driver under the native interpreter — no cross toolchain, so
-// unlike its x86_64-suffixed neighbours it runs on every host.
 func TestSelfHostCheckerHintTextDifferential(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	driver, err := filepath.Abs("../../../compiler/drivers/checker_codes_run.fern")
@@ -547,9 +435,6 @@ func TestSelfHostCheckerHintTextDifferential(t *testing.T) {
 	}
 }
 
-// The corpus is only worth its runtime if it covers the hints that carry a
-// spelling. This holds it against the native checker's own set: every
-// message naming `@derive(` has to be represented by a case.
 func TestHintTextCorpusCoversTheDeriveHints(t *testing.T) {
 	want := map[string]bool{"E038": false, "E041": false, "E045": false}
 	for _, tc := range hintTextCases {

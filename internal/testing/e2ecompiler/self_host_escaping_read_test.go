@@ -2,14 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A string or string[] read out of a field that leaves the frame — returned,
-// stored by a callee, reassigned over a local, bound and outliving a rebind of
-// its source, iterated, lent, captured, indexed — is a counted reference the
-// typed lowering retains at the read and releases at its consumer (#5338). Each
-// row lets the source die, churns the freelist with blocks of the same sizes
-// and other bytes, then reads the value back, so an over-release reads
-// recycled memory (exit 100) as well as the census seeing a leak.
-
 const escapingReadDecl = `struct S { name: string, n: i32 }
 struct Q { f: string[] }
 struct H { s: string }

@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// A call through a function-typed field of a generic struct instance types
-// the field at the instance's arguments. The self-host checker read the
-// declared field type, the bare parameter `A`, and refused `p.a(p.b)` with
-// E038 ("calling non-function value of type unknown") where the Go checker
-// accepts it (#12286).
 const genericFnFieldCallSrc = `import "std/i32";
 struct P[A, B] { a: A, b: B }
 struct G[T] { v: T, n: i32 }

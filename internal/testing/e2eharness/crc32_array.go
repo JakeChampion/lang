@@ -36,8 +36,6 @@ func CRC32ArraySource(compiled bool) string {
 	for _, seed := range seeds {
 		fmt.Fprintf(&ss, "%di64 as i32,", int64(int32(seed)))
 	}
-	// Keep every reference value, but distribute constants across functions
-	// so this fixture does not exhaust the ARM assembler's literal pool.
 	values := strings.Split(strings.TrimSuffix(expected.String(), ","), ",")
 	var batches, dispatch strings.Builder
 	for start := 0; start < len(values); start += 100 {

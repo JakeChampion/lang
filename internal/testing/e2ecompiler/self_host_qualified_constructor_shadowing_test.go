@@ -75,8 +75,6 @@ function main(): i32 {
 }
 `
 
-// Qualified calls select the enum, while bare calls and values retain their
-// lexical bindings, including after generic instantiation rechecks the AST.
 func TestSelfHostQualifiedConstructorShadowing(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	path := filepath.Join(t.TempDir(), "qualified.fern")

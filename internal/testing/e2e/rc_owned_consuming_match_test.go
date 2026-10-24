@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-// Koka-style consuming match on an OWNED-BY-DEFAULT enum parameter (#4400) —
-// the counted-model sibling of the `own`-param consuming match
-// (rc_own_match_test.go). `step` repacks its input list's head, so its param
-// escapes (borrow inference leaves it OWNED) and the match consumes it: each
-// arm releases the scrutinee box in place of the exit sweep — shallow-freed
-// when unique (the extracted bindings inherit the payload counts), dup'd +
-// dec'd when shared — and the arm bindings become counted owners reclaimed by
-// the exit sweep. These programs are the feature's correctness gates: the
-// UNIQUE path must stay garbage-free (bounded high-water), and the SHARED
-// path must dup the binding (without the dup the binding's exit-sweep dec
-// over-releases the tail a live list still holds → the underflow detector
-// trips).
-
 const ownedConsumingSrc = `enum List { Cons(i32, List), Nil }
 function step(l: List): List {
     match (l) {
@@ -70,10 +57,6 @@ func TestWASMOwnedConsumingMatch(t *testing.T) {
 	if got := runWasm(t, ownedConsumingSrc); got != 0 {
 		t.Errorf("owned consuming match: got %d, want 0", got)
 	}
-	// Heap-bump bound: the consuming step frees each head box in the arm
-	// (recycled into the repack) and drain consumes the rest, so the
-	// build-step-drain loop holds a bounded high-water instead of growing
-	// with the iteration count.
 	bump := func(n string) string {
 		return `enum List { Cons(i32, List), Nil }
 function step(l: List): List { match (l) { Cons(h, t) => { return Cons(h + 1, t); }, Nil => { return Nil; } } }

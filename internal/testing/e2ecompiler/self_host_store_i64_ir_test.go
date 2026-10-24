@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// storeI64Src is a __store_i64 / __load_i64 round-trip witness. It stores a
-// value whose high 32 bits are non-zero (5000000005 = 0x1_2A05F205) so a store
-// that truncated to the low 32 bits (the store_ptr / store_i32 4-byte width)
-// would read back 0x2A05F205 and fail the first check. A negative i64 covers the
-// sign-bit path. Success returns 42. The address comes from __alloc (a raw usize
-// bump-heap pointer, like core/map's packed-entry buffer users).
-// storeI64Want is the round-trip's answer. It is pinned rather than asked of
-// the interpreter, which has no __store_i64 / __load_i64.
 const storeI64Want = 42
 
 const storeI64Src = `function main(): i32 {
@@ -25,13 +17,6 @@ const storeI64Src = `function main(): i32 {
     return 42;
 }`
 
-// TestSelfHostStoreI64IRX86_64 pins __store_i64 on the self-host x86-64 IR path
-// (#4375 item 2), the store half of the 8-byte raw-memory pair: it lowers to
-// op_store_i64 and the x86 backend emits an 8-byte movq.
-//
-// The answer is pinned (storeI64Want): the interpreter has no __store_i64, and
-// a truncating store would diverge from the full-width round-trip, so the
-// pinned answer also proves the program took the IR path.
 func TestSelfHostStoreI64IRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -65,14 +50,6 @@ func TestSelfHostStoreI64IRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStoreI64IRArm64 runs the same witness through the self-host arm64
-// IR path (asm_ir_run -target arm64-linux) under qemu (#4375 item 2). Unlike x86,
-// the NATIVE arm64 compiler does not implement __store_i64 (it emits an
-// "undefined label __store_i64"), so — like udp_send on arm64 (item 3) — the
-// self-host arm64 IR path is intentionally AHEAD of native here. The oracle is
-// therefore self-consistency: the store/load round-trip must recover the exact
-// 64-bit value (exit 42), which a 32-bit-truncating store would fail. On arm64
-// __store_i64 shares store_ptr's 8-byte `str x1` arm. CI-gated arm64 (qemu).
 func TestSelfHostStoreI64IRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -92,7 +69,6 @@ func TestSelfHostStoreI64IRArm64(t *testing.T) {
 		t.Fatalf("driver failed: %v", err)
 	}
 	if !bytes.Contains(asm, []byte("__store_i64")) && !bytes.Contains(asm, []byte("str x1")) {
-		// The op lowered inline (no runtime label), so just assert we got asm.
 		t.Logf("note: store_i64 lowered inline (expected)")
 	}
 	bin := buildBinArm64(t, arm64gcc, dir, "store_i64_arm64", string(asm))

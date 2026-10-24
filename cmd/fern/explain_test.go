@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// An empty code lists the codes; a known code prints its explanation and an
-// unknown one fails with the list.
 func TestRunExplain(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := runExplain("", &out, &errOut); code != 0 || !strings.Contains(out.String(), "E048") {
@@ -25,8 +23,6 @@ func TestRunExplain(t *testing.T) {
 	}
 }
 
-// The command line as the self-host spells it: a bare -explain lists, and the
-// code follows the flag as its next argument or after `=`.
 func TestExplainCommandLine(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "fern")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {

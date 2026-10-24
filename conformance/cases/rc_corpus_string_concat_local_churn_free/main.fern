@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// String-local reclamation (wasm). A fresh concat result (always a
-// fresh headered heap buffer) in an owned local frees via
-// __fern_str_dec at scope exit. The aliased `s2 = s1` now retains
-// the shared buffer via the two-word __fern_str_inc, so both locals
-// reach the dec sweep; the rc==1 / is-unique gate frees once. Churned
-// 300x — a double-free / UAF / underflow on the freed concat
-// buffer would trip the checksum or the underflow detector. (On
-// native backends string reclamation is gated off; the checksum
-// is backend-independent.) s.len() = 2 each; 300*(2+2)=1200.
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 function mk(seed: i32): i32 {

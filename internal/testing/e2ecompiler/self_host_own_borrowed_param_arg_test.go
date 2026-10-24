@@ -8,35 +8,11 @@ import (
 	"testing"
 )
 
-// #8429: a frame may not transfer a reference it BORROWED.
-//
-// A declared `own` position consumes one reference, and this compiler has no
-// caller-side retain — a parameter that is not itself `own` is a borrow the
-// caller still holds. #4873's self-reassign admission lets such a name reach an
-// `own` position anyway (`h = absorb(h, …)` inside a plain-receiver method
-// kills THIS binding, not the caller's). Unless the caller's reference is
-// retained first, the callee's __fern_rc_is_unique gate reads the caller's sole
-// count as its own and rewrites the caller's box in place:
-// `let keep = h; let forked = h.update(c)` must fork, as `-interp` does.
-//
-// The lowering buys the reference the callee is about to spend, so the guard
-// sees rc >= 2 and degrades to a fresh box. The results check values and
-// __rc_underflow_count(). Each expected
-// result is pinned independently of the interpreter, so agreement cannot hide
-// both engines returning the same wrong value.
-//
-// The controls are the leak direction, which no exit code reports: an `own`
-// source and a dying local source are both already owned by the frame, and a
-// retain there would strand a box per call. TestSelfHostOwnBorrowedParamArgLeakCheck
-// runs every row against native's verdict.
 var ownBorrowedParamArgCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
-	// The reported shape, minimised: a plain-receiver method threads its
-	// receiver through an `own` consumer while the caller keeps two names on
-	// the box. Before the fix all three read n == 1 (111); the fork is 100.
 	{name: "receiver-fork-under-alias", expected: 100, src: `struct S { buf: u8[], n: i32 }
 @noinline
 function zero(n: i32): u8[] {
@@ -55,9 +31,6 @@ function main(): i32 {
     return b.n * 100 + keep.n * 10 + a.n + __rc_underflow_count();
 }`},
 
-	// The same fork with NO second name: `a` alone stays live across the call,
-	// which is enough — the count the callee reads is the caller's one
-	// reference either way.
 	{name: "receiver-fork-single-name", expected: 10, src: `struct S { buf: u8[], n: i32 }
 @noinline
 function zero(n: i32): u8[] {
@@ -75,9 +48,6 @@ function main(): i32 {
     return b.n * 10 + a.n + __rc_underflow_count();
 }`},
 
-	// The hasher the issue was split from: a u64 counter carried through 100
-	// rebinds and then forked. `keep` must still hold the pre-fork total, so
-	// the difference is 1 and not 0.
 	{name: "hasher-state-fork", expected: 7, src: `struct St { a: u32, buf: u8[], buf_len: i32, total: u64 }
 @noinline
 function zero(n: i32): u8[] {
@@ -101,12 +71,6 @@ function main(): i32 {
     return (forked.total as i32) - (keep.total as i32) + __rc_underflow_count();
 }`},
 
-	// A struct with an ARRAY field, aliased and then consumed-updated through
-	// two frames. The array is untouched by the update — the box is what forks
-	// — so this row isolates the box reuse from the field-own-move next door.
-	// The aggregate rows compare full state and return a portable 0/1 status.
-	// Their former large checksums were truncated by native process exits, but
-	// rejected by WASI. Do not mask the checksum: that could hide a wrong field.
 	{name: "array-field-struct-fork", expected: 0, src: `struct P { xs: i32[], k: i32 }
 @noinline
 function mk(n: i32): i32[] {
@@ -126,10 +90,6 @@ function main(): i32 {
     return 0;
 }`},
 
-	// A struct with a STRING field, same shape. Correct before the fix (the
-	// string limb of the alias ladder already retains at the bind), and here so
-	// the retain landing on the wrong side shows up as a leak rather than
-	// silently.
 	{name: "string-field-struct-fork", expected: 0, src: `struct T { name: string, n: i32 }
 @noinline
 function cat(own s: string, x: string): string { s = s + x; return s; }
@@ -144,10 +104,6 @@ function main(): i32 {
     return 0;
 }`},
 
-	// Control, and the perf-shaped one: the pure REBIND idiom with no alias.
-	// The retain still fires (the frame still borrows), so the reuse guard sees
-	// rc 2 and forks a box per call — the documented cost of this compiler's
-	// missing caller-side retain. It must stay CORRECT and must not leak.
 	{name: "rebind-loop-no-alias", expected: 50, src: `struct S { buf: u8[], n: i32, total: u64 }
 @noinline
 function zero(n: i32): u8[] {
@@ -166,9 +122,6 @@ function main(): i32 {
     return h.n + (h.total as i32) - 50 + __rc_underflow_count();
 }`},
 
-	// Control: the source is this frame's own `own` parameter. The caller
-	// transferred it (E051), so the frame HOLDS a reference and passing it on
-	// is a move — a retain here strands one box per call.
 	{name: "own-param-source-control", expected: 12, src: `struct S { xs: i32[], n: i32 }
 @noinline
 function bump(own s: S): S { return S { ...s, n: s.n + 1 }; }
@@ -181,9 +134,6 @@ function main(): i32 {
     return a.n + a.xs.len() * 10 + __rc_underflow_count();
 }`},
 
-	// Control: the source is a plain LOCAL dying at its own self-reassign — the
-	// #4873 shape the admission was written for. The frame owns the value, so
-	// this stays a move and the in-place reuse survives.
 	{name: "dying-local-source-control", expected: 12, src: `struct S { xs: i32[], n: i32 }
 @noinline
 function bump(own s: S): S { return S { ...s, n: s.n + 1 }; }
@@ -194,9 +144,6 @@ function main(): i32 {
     return a.n + a.xs.len() * 10 + __rc_underflow_count();
 }`},
 
-	// Control: a SCALAR parameter at an `own` position. Nothing rc-tracked is
-	// handed over, and a retain on an i32 is a compiler bug that SIGSEGVs
-	// rather than no-opping.
 	{name: "scalar-own-param-control", expected: 3, src: `struct S { xs: i32[], n: i32 }
 @noinline
 function twice(own n: i32): i32 { n = n * 2; return n; }
@@ -208,8 +155,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostOwnBorrowedParamArgX86_64 — the production x86-64 IR path against
-// the interpreter oracle. The three fork rows disagree before the fix.
 func TestSelfHostOwnBorrowedParamArgX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -242,9 +187,6 @@ func TestSelfHostOwnBorrowedParamArgX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOwnBorrowedParamArgArm64 — the same cases through the arm64 emit.
-// The retain comes out of shared lowering analysis rather than per-backend
-// emission, so this leg is what catches it landing on one register backend.
 func TestSelfHostOwnBorrowedParamArgArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -273,8 +215,6 @@ func TestSelfHostOwnBorrowedParamArgArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOwnBorrowedParamArgWasmIR — the wasm-IR leg, named in the issue as
-// disagreeing with the x86-64 one. It emits its own call-argument sequence.
 func TestSelfHostOwnBorrowedParamArgWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")
@@ -318,13 +258,6 @@ func TestSelfHostOwnBorrowedParamArgWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostOwnBorrowedParamArgLeakCheck runs every case under FERN_LEAKCHECK,
-// on BOTH compilers, and requires both to be clean.
-//
-// The exit-code legs above see only the wrong-answer direction. A retain landing
-// where the frame already owns its value — the `own`-param and dying-local
-// controls — strands one box per call instead: same answer, same counter, live
-// bytes at exit.
 func TestSelfHostOwnBorrowedParamArgLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)

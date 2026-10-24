@@ -10,23 +10,6 @@ import (
 	"testing"
 )
 
-// --- A nested Option/Result local is reclaimed (#7218) ----------------------
-//
-// One level of Option is fully reclaimed, and nesting one inside another must
-// keep the reclaim. Missing it frees nothing at all, not merely too little:
-//
-//	Option[Option[i32]]  Some(Some(i))   allocs=400 frees=0 live_bytes=16000
-//	Option[i32]          Some(i)         allocs=200 frees=200 live_bytes=0
-//
-// The arm's nested `match (inner)` is a borrow, not an escape.
-//
-// A SCALAR inner box holds a by-value scalar and NOTHING else, so one
-// __fern_rc_dec releases it whole. An RC inner owns a payload of its own, so the
-// drop is two levels deep: free the inner box's payload, the inner box, then
-// the outer. Both halves are here; the rc one also needs the NESTED match's own
-// binding not to escape (a pointer can outlive its arm where a scalar copy
-// cannot).
-
 func nestedOptChurn(prelude, body string, rounds int) string {
 	return fmt.Sprintf(`%sfunction churn(n: i32): i32 {
     let acc: i32 = 0;
@@ -41,10 +24,6 @@ function main(): i32 { return churn(%d) + __rc_underflow_count() * 100; }
 `, prelude, body, rounds)
 }
 
-// nestedOptFlatCases must reach live_bytes == 0 with allocs == frees — both
-// boxes released every round, exactly as native does. Both `want`s of every case
-// were adjudicated against BOTH oracles (`bin/fern -interp` and the native
-// x86-64 backend), never read off the self-host run under test.
 var nestedOptFlatCases = []struct {
 	name    string
 	body    string
@@ -52,9 +31,6 @@ var nestedOptFlatCases = []struct {
 	want200 int
 }{
 	{
-		// The shape itself. `inner` is consumed by a nested match, which is a
-		// BORROW — it reads the tag and payload and retains nothing — where the
-		// coarse walker called any bare ident an escape.
 		name: "option_inner",
 		body: `        let o: Option[Option[i32]] = Some(Some(i));
         match (o) {
@@ -65,10 +41,6 @@ var nestedOptFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// A RESULT inner. Both arms must be scalar, because the drop runs after
-		// the match and does not read the tag — an Err arm carrying a pointer
-		// would be stranded by the very same dec that fully releases a scalar
-		// one.
 		name: "result_inner",
 		body: `        let o: Option[Result[i32, i32]] = Some(Ok(i));
         match (o) {
@@ -79,8 +51,6 @@ var nestedOptFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// No binding at all (`Some(_)`). Pins that the credit depends on the
-		// declaration, not some use of the payload.
 		name: "unused_binding",
 		body: `        let o: Option[Option[i32]] = Some(Some(i));
         match (o) { Some(_) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`,
@@ -88,9 +58,6 @@ var nestedOptFlatCases = []struct {
 		want200: 18,
 	},
 	{
-		// The rc-inner half: THREE allocations a round — the array buffer, the
-		// inner box, the outer box — and the two-level drop must free all three.
-		// allocs == frees is what says it did.
 		name: "rc_inner_array_literal",
 		body: `        let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
         match (o) {
@@ -101,10 +68,6 @@ var nestedOptFlatCases = []struct {
 		want200: 7,
 	},
 	{
-		// The same with the buffer coming from a LIVE LOCAL. Construction
-		// rc_inc's an array slot, so the buffer is at rc 2 and the drop's dec is
-		// the second — the interlock, not a double free. The underflow term in
-		// the exit code is what proves that rather than the byte count.
 		name: "rc_inner_array_ident",
 		body: `        let xs: i32[] = [i, i + 1];
         let o: Option[Option[i32[]]] = Some(Some(xs));
@@ -116,9 +79,6 @@ var nestedOptFlatCases = []struct {
 		want200: 36,
 	},
 	{
-		// A string inner, released by the rc-aware __fern_str_free (immortal
-		// skips, shared decs, unique frees) rather than the array dec — on asm a
-		// string box's data buffer is separate and its block class differs.
 		name: "rc_inner_string",
 		body: `        let o: Option[Option[string]] = Some(Some("ab"));
         match (o) {
@@ -129,8 +89,6 @@ var nestedOptFlatCases = []struct {
 		want200: 36,
 	},
 	{
-		// A string[] inner: __fern_str_arr_free walks the elements, where the
-		// flat dec would strand every element box.
 		name: "rc_inner_string_array",
 		body: `        let o: Option[Option[string[]]] = Some(Some(["a", "b"]));
         match (o) {
@@ -142,20 +100,12 @@ var nestedOptFlatCases = []struct {
 	},
 }
 
-// nestedOptHazardCases are the shapes that must keep leaking. Each asserts the
-// ANSWER, not bytes: freeing any of these would release a box a second owner
-// still reads, which is an over-release rather than a leak — and every `want` is
-// well under 100, so the `__rc_underflow_count() * 100` term in `main` cannot be
-// mistaken for one.
 var nestedOptHazardCases = []struct {
 	name string
 	src  string
 	want int
 }{
 	{
-		// The arm binding is MOVED OUT to an outer local. The nested-match
-		// reading relaxes the scrutinee position and nothing else, so this is
-		// still an escape.
 		name: "binding_escapes",
 		src: nestedOptChurn("", `        let keep: Option[i32] = None;
         let o: Option[Option[i32]] = Some(Some(i));
@@ -164,9 +114,6 @@ var nestedOptHazardCases = []struct {
 		want: 62,
 	},
 	{
-		// The inner box comes from a LIVE LOCAL rather than a construction. That
-		// local's own scalar-Option reclaim already frees it; this drop would be
-		// the second.
 		name: "inner_is_local",
 		src: nestedOptChurn("", `        let inner0: Option[i32] = Some(i);
         let o: Option[Option[i32]] = Some(inner0);
@@ -177,7 +124,6 @@ var nestedOptHazardCases = []struct {
 		want: 62,
 	},
 	{
-		// Bound from a CALL, so the box is not this frame's to free.
 		name: "bound_from_call",
 		src: nestedOptChurn("function mk(i: i32): Option[Option[i32]] { let q: Option[Option[i32]] = Some(Some(i)); return q; }\n",
 			`        let o: Option[Option[i32]] = mk(i);
@@ -188,10 +134,6 @@ var nestedOptHazardCases = []struct {
 		want: 62,
 	},
 	{
-		// THE rc-inner trap. The NESTED match's binding is carried out of its
-		// arm — a pointer, which a scalar inner's copy could never be — so the
-		// two-level drop would free a buffer `held` still names. The outer arm
-		// alone looks clean.
 		name: "inner_payload_escapes",
 		src: nestedOptChurn("", `        let held: i32[] = [];
         let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
@@ -203,25 +145,18 @@ var nestedOptHazardCases = []struct {
 		want: 36,
 	},
 	{
-		// A `None` INNER under an rc-inner annotation. The two-level drop reads
-		// offset 8 of the inner box unconditionally, and a None box never stored
-		// one, so this must stay refused.
 		name: "inner_none_under_rc_type",
 		src: nestedOptChurn("", `        let o: Option[Option[i32[]]] = Some(None);
         match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
 		want: 18,
 	},
 	{
-		// THREE levels. The drop is two levels deep by construction, so an
-		// Option inner is refused rather than recursed into.
 		name: "triple_nested",
 		src: nestedOptChurn("", `        let o: Option[Option[Option[i32]]] = Some(Some(Some(i)));
         match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
 		want: 18,
 	},
 	{
-		// The INNER BOX itself extracted to an outer local, so the outer arm's
-		// binding escapes under the scrutinee-borrow reading too.
 		name: "inner_box_extracted",
 		src: nestedOptChurn("", `        let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
         let keep: Option[i32[]] = None;
@@ -231,13 +166,6 @@ var nestedOptHazardCases = []struct {
 	},
 }
 
-// TestSelfHostNestedOptionReclaimX86_64 is the leak gate. live_bytes == 0 with
-// allocs == frees is the essential assertion: frees short of allocs is the
-// leak this closes, and frees ABOVE allocs would mean two paths claimed the same
-// box, which is a double free rather than a leak.
-//
-// Non-vacuity: all three cases fail this against the parent commit, at
-// frees=0 / live_bytes=16000 per 200 rounds.
 func TestSelfHostNestedOptionReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -288,9 +216,6 @@ func TestSelfHostNestedOptionReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedOptionHazardsX86_64 pins the refusals. A wrong answer or a
-// crash here means a box was freed while its construction site, an extracted
-// local, or the caller still owned it. Each `want` came from the interpreter.
 func TestSelfHostNestedOptionHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -309,10 +234,6 @@ func TestSelfHostNestedOptionHazardsX86_64(t *testing.T) {
 	}
 }
 
-// nestedOptAllCases is every case above for the backend legs, which check the
-// ANSWER and the over-release counter rather than bytes: the self-host x86-64
-// emitter is the only one carrying the leakcheck census (asm_ir.fern's
-// leak_check_on has no arm64 or wasm sibling).
 func nestedOptAllCases() []struct {
 	name string
 	src  string
@@ -340,8 +261,6 @@ func nestedOptAllCases() []struct {
 	return out
 }
 
-// TestSelfHostNestedOptionReclaimArm64 runs them through the self-host arm64
-// backend, which emits, assembles and links the finished binary itself.
 func TestSelfHostNestedOptionReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -365,8 +284,6 @@ func TestSelfHostNestedOptionReclaimArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedOptionReclaimWasm is the wasm leg. Every `want` is well under
-// WASI's 126 ceiling, so an over-release (+100) is still expressible.
 func TestSelfHostNestedOptionReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host nested-option wasm IR e2e")

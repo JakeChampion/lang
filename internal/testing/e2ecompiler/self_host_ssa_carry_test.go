@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// The branch-free carry out of a 64-bit add and borrow out of a subtract are
-// read off the flags (ssa.fuse_carries, #12558): with and without an
-// incoming carry known to be 0 or 1, with the formula's operands commuted,
-// chained through four limbs as multi-word addition does, and in a body busy
-// enough to spill. An incoming carry that may exceed 1 keeps the formula, as
-// the flags would answer differently. A carry or borrow whose one reader is
-// the add or subtract right after it never leaves the flags
-// (ssa.carry_triple). Every input pair runs from 0 to all ones through the
-// top bit's edges.
 const ssaCarryProg = `import "std/u64";
 
 const ALL: u64 = 0xffffffffffffffffu64;
@@ -166,7 +157,6 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 				t.Errorf("%s: %s's carry should stay in the flags for the add or subtract that reads it:\n%s", c.target, name, fn)
 			}
 		}
-		// addc_top's incoming carry is itself a shift by 63.
 		if fn := functionListing(string(asm), "__fn_addc_top"); !c.flags.MatchString(fn) {
 			t.Errorf("%s: addc_top should read its carry off the flags:\n%s", c.target, fn)
 		}

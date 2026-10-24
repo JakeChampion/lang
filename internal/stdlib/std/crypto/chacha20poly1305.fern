@@ -1,26 +1,7 @@
-// std/crypto/chacha20poly1305 — the ChaCha20-Poly1305 AEAD of RFC 8439,
-// and the ChaCha20 stream cipher and Poly1305 one-time authenticator it is
-// built from.
-//
-//   let sealed: u8[] = chacha20poly1305.seal(key, nonce, plaintext, aad)?;
-//   let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
-//
-// The key is 32 bytes and the nonce 12. `seal` answers the ciphertext with
-// the 16-byte tag after it; `open` checks the tag before it decrypts, and a
-// sealed message whose tag does not verify, or that is shorter than a tag,
-// is `Forged`. A nonce must never be used twice under one key.
-//
-// Constant time by construction: the cipher is additions, rotations and
-// exclusive ors on `u32`, Poly1305 is 26-bit limbs multiplied as `u64` and
-// reduced with masks, and the tag is compared with no early exit. Nothing
-// branches on, or indexes memory with, a secret; only the lengths, which are
-// public, steer the loops, and `open` branches on whether the tag matched.
-// The valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
+// This module provides ChaCha20-Poly1305 authenticated encryption.
 
 import "std/crypto/aead";
 
-// The key and the nonce as the cipher reads them: eight and three
-// little-endian words.
 struct Key { k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u32, k6: u32, k7: u32, n0: u32, n1: u32, n2: u32 }
 
 function __le32(b: [u8], at: i32): u32 {
@@ -31,8 +12,6 @@ function __put_le32(own d: u8[], at: i32, v: u32): u8[] {
   return d.with(at, (v & 255) as u8).with(at + 1, (v >> 8 & 255) as u8).with(at + 2, (v >> 16 & 255) as u8).with(at + 3, (v >> 24 & 255) as u8);
 }
 
-// __xor_word writes the four bytes of src at `at`, each exclusive-ored with
-// a byte of the keystream word w, into out at the same place.
 function __xor_word(own out: u8[], src: [u8], at: i32, w: u32): u8[] {
   return out.with(at, src[at] ^ (w & 255) as u8).with(at + 1, src[at + 1] ^ (w >> 8 & 255) as u8).with(at + 2, src[at + 2] ^ (w >> 16 & 255) as u8).with(at + 3, src[at + 3] ^ (w >> 24 & 255) as u8);
 }
@@ -47,8 +26,6 @@ function __key(key: [u8], nonce: [u8]): Result[Key, aead.AeadError] {
   return Ok(Key { k0: __le32(key, 0), k1: __le32(key, 4), k2: __le32(key, 8), k3: __le32(key, 12), k4: __le32(key, 16), k5: __le32(key, 20), k6: __le32(key, 24), k7: __le32(key, 28), n0: __le32(nonce, 0), n1: __le32(nonce, 4), n2: __le32(nonce, 8) });
 }
 
-// __xor_block exclusive-ors src[at, at+len), len at most 64, with the
-// keystream block `counter` and writes it into out at the same place.
 function __xor_block(own out: u8[], src: [u8], at: i32, len: i32, k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u32, k6: u32, k7: u32, counter: u32, n0: u32, n1: u32, n2: u32): u8[] {
   let x0: u32 = 0x61707865;
   let x1: u32 = 0x3320646e;
@@ -211,9 +188,6 @@ function __xor_block(own out: u8[], src: [u8], at: i32, len: i32, k0: u32, k1: u
   return out;
 }
 
-// __xor_stream is src[from, from+len) exclusive-ored with the keystream
-// that starts at block `counter`, followed by `room` bytes left for the
-// caller to fill.
 function __xor_stream(k: Key, counter: u32, src: [u8], from: i32, len: i32, room: i32): u8[] {
   let out: u8[] = __alloc_u8(len + room);
   let view: [u8] = src[from:from + len];
@@ -231,15 +205,11 @@ function __xor_stream(k: Key, counter: u32, src: [u8], from: i32, len: i32, room
   return out;
 }
 
-// chacha20_xor(key, nonce, counter, data) — data exclusive-ored with the
-// ChaCha20 keystream that starts at block `counter` (RFC 8439 §2.4):
-// encryption and decryption alike.
 pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError] {
   let k: Key = __key(key, nonce)?;
   return Ok(__xor_stream(k, counter, data, 0, data.len(), 0));
 }
 
-// Poly1305's state: r and r*5 in 26-bit limbs, and the accumulator h.
 struct Poly { r0: u32, r1: u32, r2: u32, r3: u32, r4: u32, h0: u32, h1: u32, h2: u32, h3: u32, h4: u32 }
 
 function __poly_new(k0: u32, k1: u32, k2: u32, k3: u32): Poly {
@@ -253,11 +223,6 @@ function __poly_new(k0: u32, k1: u32, k2: u32, k3: u32): Poly {
   };
 }
 
-// __poly_blocks absorbs b[from, from+len). A last block shorter than 16
-// bytes is completed with zeros; with `pad_one` a 1 byte follows the
-// message first and the block carries no 2^128 bit, which is Poly1305 over
-// that exact message (RFC 8439 §2.5), and without it the zeros are part
-// of the message, which is how the AEAD pads its two parts (§2.8).
 function __poly_blocks(p: Poly, b: [u8], from: i32, len: i32, pad_one: boolean): Poly {
   let r0: u64 = p.r0 as u64;
   let r1: u64 = p.r1 as u64;
@@ -338,8 +303,6 @@ function __poly_blocks(p: Poly, b: [u8], from: i32, len: i32, pad_one: boolean):
   return Poly { ...p, h0: h0, h1: h1, h2: h2, h3: h3, h4: h4 };
 }
 
-// __poly_finish is the tag: h fully reduced mod 2^130 - 5, chosen against
-// h - p by a mask rather than a branch, plus s, mod 2^128.
 function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[] {
   let h0: u32 = p.h0;
   let h1: u32 = p.h1;
@@ -374,7 +337,6 @@ function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[] {
   c = g3 >> 26;
   g3 = g3 & 0x3ffffff;
   let g4: u32 = h4 + c - (1 << 26);
-  // All ones when h - p did not go negative, so g is the reduced value.
   let keep_g: u32 = (g4 >> 31) - 1;
   let keep_h: u32 = keep_g ^ 0xffffffff;
   h0 = h0 & keep_h | g0 & keep_g;
@@ -401,8 +363,6 @@ function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[] {
   return __put_le32(tag, 12, w3);
 }
 
-// poly1305(key, msg) — the 16-byte Poly1305 tag of msg under a 32-byte
-// one-time key (RFC 8439 §2.5). A key authenticates one message only.
 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
   if (key.len() != 32) {
     return Err(aead.KeyLength(key.len()));
@@ -412,10 +372,6 @@ pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
   return Ok(__poly_finish(p, __le32(key, 16), __le32(key, 20), __le32(key, 24), __le32(key, 28)));
 }
 
-// __aead_tag is the AEAD's tag over aad and the ciphertext ct[from,
-// from+len) (RFC 8439 §2.8): Poly1305 keyed by the first half of keystream
-// block 0, over each part padded with zeros to 16 bytes and then the two
-// lengths as 64-bit little-endian words.
 function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
   let zero: u8[] = __alloc_u8(32);
   let i: i32 = 0;
@@ -436,8 +392,6 @@ function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
   return __poly_finish(p, __le32(otk, 16), __le32(otk, 20), __le32(otk, 24), __le32(otk, 28));
 }
 
-// seal(key, nonce, plaintext, aad) — the plaintext encrypted, with the
-// 16-byte tag over it and the additional data `aad` after it.
 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   let k: Key = __key(key, nonce)?;
   let n: i32 = plaintext.len();
@@ -451,9 +405,6 @@ pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8
   return Ok(sealed);
 }
 
-// open(key, nonce, sealed, aad) — the plaintext of a message `seal` made
-// with the same key, nonce and aad, or `Forged`. The tag is checked, in
-// constant time, before anything is decrypted.
 pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   let k: Key = __key(key, nonce)?;
   if (sealed.len() < 16) {
@@ -467,7 +418,6 @@ pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[],
     diff = diff | want[i] ^ sealed[n + i];
     i = i + 1;
   }
-  // The verdict is the one secret-derived value allowed to steer a branch.
   let verdict: u8[] = __alloc_u8(1);
   verdict = verdict.with(0, diff);
   __ct_public(verdict);

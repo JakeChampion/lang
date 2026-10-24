@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// --- A string[]-field FORWARDER is read at its call sites, not at its return --
-//
-// `function (h: Holder) get(): string[] { return h.xs; }` is a read of `h.xs`.
-// Declaring such a method must not stop Holder's string[] field from being
-// released anywhere else in the program — whether or not the method ever runs.
-// Kept at the type, that verdict cost 288 B/round, unbounded, on a loop that
-// only constructs the struct (#7417).
-//
-// What matters is how a CALL's result is used. Read for its ELEMENTS —
-// indexed, sliced or iterated — it is the escape `keep.xs[0]` already is; bound
-// or handed on whole, it is a counted reference (#9187). So `keep.get()[0]`
-// escapes and `let g = keep.get()` does not.
-//
-// Every want was confirmed against `bin/fern -interp`. Exit 99 is reserved for
-// __rc_underflow_count(). Every row balances.
-
 type strArrFwdCase struct {
 	name   string
 	src    string
@@ -35,9 +19,6 @@ type strArrFwdCase struct {
 func strArrFwdCases() []strArrFwdCase {
 	return []strArrFwdCase{
 		{
-			// The main shape. `keep.get().len()` is a whole-array borrow
-			// one step further out than `keep.xs.len()`, and it now reads as
-			// one. Base: 800/100, 288 B/round unbounded.
 			name: "forwarder_called_len",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -56,10 +37,6 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// #7417's finding, and what made it worth its own issue: the
-			// method is DECLARED and never runs, `main` does nothing to the
-			// struct at all, and the declaration alone cost every Holder in
-			// the program its field reclaim. Base: 800/100.
 			name: "forwarder_declared_never_called",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -79,9 +56,6 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// The same forwarder as a FREE function taking the struct by
-			// parameter. Registered under "f:", marked at the call by name.
-			// Base: 800/100.
 			name: "free_fn_forwarder_called_len",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -100,12 +74,6 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// THE SOUNDNESS ROW for the admitted case. `live` is built once
-			// and borrowed through the forwarder on every round while 100
-			// admitted Holders are deep-freed around it. A field reclaim that
-			// reached a borrowed buffer would show up in the answer, which is
-			// native's 1, or in __rc_underflow_count() as a 99. Base:
-			// 806/101.
 			name: "forwarder_holder_outlives_churn",
 			src: `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
@@ -126,9 +94,6 @@ function main(): i32 {
 			want: 1, allocs: 504, frees: 504,
 		},
 		{
-			// The control that was already clean: the identical field read
-			// with no forwarder declared anywhere. Flat before and after, so
-			// the rows above are about the forwarder and not about the read.
 			name: "no_forwarder_direct_read",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -146,9 +111,6 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// The result is BOUND. The forwarding return retains the
-			// buffer, so the binding holds a count of its own; every block
-			// is freed.
 			name: "forwarder_result_bound",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -168,7 +130,6 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// `keep.get()[0]` binds an ELEMENT, reached through a call.
 			name: "forwarder_element_read",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -188,7 +149,6 @@ function main(): i32 {
 			want: 18, allocs: 500, frees: 500,
 		},
 		{
-			// `for s in keep.get()` binds every element in turn.
 			name: "forwarder_iterated",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -207,7 +167,6 @@ function main(): i32 {
 			want: 16, allocs: 500, frees: 500,
 		},
 		{
-			// The free-function half of forwarder_result_bound.
 			name: "free_fn_forwarder_result_bound",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -227,9 +186,6 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// The element leaves through a second function's return. Native
-			// leaks this shape (500/400), so only the exit code is an
-			// oracle here.
 			name: "forwarder_element_escapes_by_call",
 			src: `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
@@ -250,7 +206,6 @@ function main(): i32 {
 			want: 18, allocs: 500, frees: 500,
 		},
 		{
-			// A body whose returns forward two DIFFERENT fields.
 			name: "two_field_forwarder_not_registered",
 			src: `struct Holder { xs: string[], ys: string[] }
 function (h: Holder) get(pick: boolean): string[] { if (pick) { return h.xs; } return h.ys; }
@@ -269,7 +224,6 @@ function main(): i32 {
 			want: 15, allocs: 600, frees: 600,
 		},
 		{
-			// A bare-ident element shared by two literals.
 			name: "shared_element_two_holders",
 			src: `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
@@ -293,9 +247,6 @@ function main(): i32 {
 			want: 4, allocs: 700, frees: 700,
 		},
 		{
-			// A forwarder borrow and a direct element read in one body; the
-			// values read back as native's 6 after three allocations of
-			// churn.
 			name: "forwarder_len_plus_direct_element",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -321,7 +272,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostStrArrFieldForwarderX86_64 is the leak-accounting leg.
 func TestSelfHostStrArrFieldForwarderX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -357,8 +307,6 @@ func TestSelfHostStrArrFieldForwarderX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldForwarderWasmIR — exit codes only, so what this leg
-// catches is a reclaim that frees a LIVE buffer on wasm, the 99 included.
 func TestSelfHostStrArrFieldForwarderWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping string[]-field forwarder wasm IR e2e")
@@ -397,7 +345,6 @@ func TestSelfHostStrArrFieldForwarderWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldForwarderIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStrArrFieldForwarderIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

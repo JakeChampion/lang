@@ -6,8 +6,6 @@ import (
 	"unsafe"
 )
 
-// HostClockResolution is the host kernel's clock_getres(CLOCK_REALTIME) in
-// nanoseconds.
 func HostClockResolution(t testing.TB) int64 {
 	t.Helper()
 	var ts syscall.Timespec

@@ -8,24 +8,6 @@ import (
 	"testing"
 )
 
-// --- Aliasing a param does not hand it out ----------------------------------
-//
-// A callee that only ALIASES its string parameter (`let q = p`, or
-// `let q = p; q = o;`) does not take ownership of it, so the CALLER still
-// releases the strings it passed. Each row runs one caller over 20 rounds and
-// pins allocs == frees; a "Base:" figure in a row note is the caller-side leak
-// measured before aliasing a param was admitted as a borrow.
-//
-// The row that carries the soundness is the CALLER-side value probe. Freeing a
-// borrowed param's box corrupts memory the CALLER owns while the callee exits
-// clean, so that row reads the caller's own strings back after the call with
-// three fresh allocations in between. Exit 99 is reserved for
-// __rc_underflow_count().
-//
-// Counts are ONE block per heap string: the box shares the buffer's reserved
-// header (#7351). A "Base:" figure in a row note predates that, at two blocks
-// per string.
-
 type aliasedParamCase struct {
 	name   string
 	src    string
@@ -52,37 +34,24 @@ const apbCaller = `function round(i: i32): i32 {
 func aliasedParamCases() []aliasedParamCase {
 	return []aliasedParamCase{
 		{
-			// The control that was already flat: params read directly, no alias.
-			// It is what establishes the other rows are about the ALIAS and not
-			// about passing a string at all.
 			name: "params_read_directly",
 			src: `function consume(p: string, o: string): i32 { return p.len() + o.len(); }
 ` + apbCaller + apbMain,
 			want: 63, allocs: 40, frees: 40,
 		},
 		{
-			// One param aliased into a local. Base: 80/40 — the caller reclaims
-			// `b` (whose param is only read) and leaks `a`.
 			name: "param_aliased_to_local",
 			src: `function consume(p: string, o: string): i32 { let q: string = p; return q.len() + o.len(); }
 ` + apbCaller + apbMain,
 			want: 63, allocs: 40, frees: 40,
 		},
 		{
-			// Both params aliased — one by the bind, one by the reassign. Base:
-			// 80/0, the caller reclaiming neither. This is the row that needs the
-			// reassign sites; with the bind arm alone it sits at 80/40.
 			name: "param_aliased_then_reassigned",
 			src: `function consume(p: string, o: string): i32 { let q: string = p; q = o; return q.len() + p.len(); }
 ` + apbCaller + apbMain,
 			want: 63, allocs: 40, frees: 40,
 		},
 		{
-			// THE SOUNDNESS ROW. The caller reads ITS OWN strings back after the
-			// call, with three fresh allocations in between so a freed box would
-			// be reused before the read. If the callee ever released a borrowed
-			// param's box this is the only place it shows — the callee exits
-			// clean either way. Native returns 7. Base: 200/120.
 			name: "caller_reads_params_back_after_churn",
 			src: `function consume(p: string, o: string): i32 {
     let q: string = p;
@@ -103,10 +72,6 @@ function round(i: i32): i32 {
 			want: 7, allocs: 100, frees: 100,
 		},
 		{
-			// The alias escapes by return, so the callee hands `p` back to
-			// its caller. The typed lowering reclaims every string; the
-			// exit code guards the value the caller reads through the
-			// returned alias.
 			name: "escaping_alias_keeps_param_refused",
 			src: `function consume(p: string, o: string): string {
     let q: string = p;
@@ -122,9 +87,6 @@ function round(i: i32): i32 {
 			want: 46, allocs: 40, frees: 40,
 		},
 		{
-			// The string-builder accumulator: no param is involved, and it must
-			// stay balanced. One box per round: the first append onto the empty
-			// literal allocates it and the other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
     let s: string = "";
@@ -138,7 +100,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostAliasedParamBorrowX86_64 is the leak-accounting leg.
 func TestSelfHostAliasedParamBorrowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -172,8 +133,6 @@ func TestSelfHostAliasedParamBorrowX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAliasedParamBorrowWasmIR — exit codes only, so what this leg
-// catches is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostAliasedParamBorrowWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping aliased-param borrow wasm IR e2e")
@@ -212,7 +171,6 @@ func TestSelfHostAliasedParamBorrowWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostAliasedParamBorrowIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostAliasedParamBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -1,31 +1,29 @@
-// std/hex encodes bytes as hexadecimal text and checks text before decode.
-// Decode accepts either case. Invalid bytes and odd lengths return typed errors.
-// Encode borrows bytes. Decode returns an owned byte array.
+// This module encodes and decodes hexadecimal data.
 
 import "std/codec";
 
 function __hex_lower_char(d: i32): i32 {
-  if (d < 10) {  // '0' + d
+  if (d < 10) {
     return d + 48;
   }
-  return d + 87;  // 'a' - 10 + d
+  return d + 87;
 }
 
 function __hex_upper_char(d: i32): i32 {
-  if (d < 10) {  // '0' + d
+  if (d < 10) {
     return d + 48;
   }
-  return d + 55;  // 'A' - 10 + d
+  return d + 55;
 }
 
 function __hex_value(c: i32): i32 {
-  if (c >= 48 && c < 58) {  // 0-9
+  if (c >= 48 && c < 58) {
     return c - 48;
   }
-  if (c >= 97 && c < 103) {  // a-f
+  if (c >= 97 && c < 103) {
     return c - 87;
   }
-  if (c >= 65 && c < 71) {  // A-F
+  if (c >= 65 && c < 71) {
     return c - 55;
   }
   return 0 - 1;
@@ -47,10 +45,6 @@ pub function encode(bs: [u8]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `encode_upper(b)` — like `encode` but emits uppercase
-// `0-9A-F`. Useful where a protocol / display convention calls for
-// uppercase hex (MAC addresses, some checksums, fingerprints). Decodes
-// with the same `decode` (which accepts either case).
 pub function encode_upper(bs: [u8]): string {
   let n: i32 = bs.len();
   if (n == 0) {
@@ -67,7 +61,6 @@ pub function encode_upper(bs: [u8]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// Decode requires complete hexadecimal input. Error offsets count bytes.
 pub function decode(input: string): Result[u8[], codec.DecodeError] {
   let i: i32 = 0;
   while (i < input.len()) {

@@ -1,17 +1,5 @@
 package e2eharness
 
-// ReactorSignalProbe exercises the signal pollable of the Driver's reactor
-// (#9853): SIGUSR1 watched, delivered by a child shell to this process and
-// reported as the pair (-signal, 1), consumed, delivered and reported
-// again, then unwatched and watched once more. `mode` is how the child is
-// run: "interp" through subprocess, which only the interpreter provides,
-// "native" through proc_fork and proc_exec, and "wasm" checks the -ENOTSUP
-// a target without signals answers. Natively the parent's exit is reported
-// too: a grandchild watches its parent, which exits a second after forking
-// it, and connects back to the probe's listener once its wait reports the
-// exit as (-15, 1); the interpreter, which cannot fork, checks the watch
-// is taken. Exit 42 and "ok" on stdout iff every
-// check holds, else the number of the first failing check.
 func ReactorSignalProbe(mode string) string {
 	deliver := `function deliver(): i32 {
     let p = subprocess("/bin/sh", ["-c", "kill -USR1 $PPID"], "");

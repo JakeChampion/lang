@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// genericJsonArraySrc derives Json on generic types with a payload or field
-// of type `R[]` (#12092), whose encoder calls the generic array method
-// `to_json`, and round-trips the enum through its derived decoder.
 const genericJsonArraySrc = `import "std/json";
 
 @derive(json.Json, json.FromJson)

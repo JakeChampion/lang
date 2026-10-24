@@ -4,17 +4,6 @@ import (
 	"testing"
 )
 
-// Ownership transfer for `own` (consuming) parameters: the caller transfers an
-// owned argument into an `own` parameter (no inc, and the caller's drop is
-// suppressed) and the callee reclaims it. These churn loops force transfer to
-// fire every iteration; the value is correct only if every transfer/drop
-// balanced, and __rc_underflow_count() == 0 proves no over-release (no double
-// free, no use-after-free). `own` is opt-in and unused elsewhere, so these are
-// the primary correctness gate for the feature.
-
-// ownTransferFreshSrc: a fresh array temp is transferred into consume's `own`
-// param each iteration; consume owns + drops it (the caller's stage-(b) reclaim
-// is suppressed). No leak, no double free.
 const ownTransferFreshSrc = `function consume(own xs: i32[]): i32 { return xs[0] + xs[1]; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -28,9 +17,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// ownTransferChainSrc: a two-hop transfer — a fresh temp into relay's `own ys`,
-// then ys onward into consume's `own xs` (move-on-call: relay skips its drop).
-// consume is the sole owner and frees it once.
 const ownTransferChainSrc = `function consume(own xs: i32[]): i32 { return xs[0] + xs[1]; }
 function relay(own ys: i32[]): i32 { return consume(ys); }
 function main(): i32 {
@@ -77,9 +63,6 @@ func TestWASMOwnTransfer(t *testing.T) {
 			}
 		})
 	}
-	// Heap-bump bound: the transferred array is freed by the callee each turn,
-	// so the loop holds a bounded high-water (N=5000 == N=50000) rather than
-	// leaking one array per iteration.
 	bumpSrc := func(n string) string {
 		return `function consume(own xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {

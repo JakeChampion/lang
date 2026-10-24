@@ -1,29 +1,12 @@
-// compiler/mvs_run.fern — driver for the self-host's Minimum
-// Version Selection (mvs.fern, #6640).
-//
-// Every case here is one native `internal/pkg/mvs` test restated: the same
-// index, the same demands, the same expected selection or the same error
-// text. MVS is pure computation, so the two implementations have no excuse
-// to differ, and the resolution a project gets must not depend on which
-// compiler ran it.
-//
-// Exit code 0 means every assertion held; a non-zero code identifies the one
-// that failed, so a regression names its own case without a stdout diff.
-
 import "../mvs";
 import "../fern_toml";
 import "../util";
 
-// Outcome is one resolution: the selection rendered as `name version`
-// pairs, or the error text.
 struct Outcome {
   text: string,
   err: string,
 }
 
-// resolve_with drives mvs's step loop over a fixed dependency table: four
-// parallel arrays spelling `dpkg@dver depends on ddep >= dmin`. This is the
-// caller half native passes as a `DepsOf` closure.
 function resolve_with(roots: mvs.Req[], bans: mvs.Ban[], ix: mvs.Index, dpkg: string[], dver: string[], ddep: string[], dmin: string[]): Outcome {
   let st: mvs.State = mvs.begin(roots, bans, ix);
   while (st.err.len() == 0 && !mvs.done(st)) {
@@ -67,35 +50,24 @@ function req(pkg: string, min: string): mvs.Req {
   return mvs.Req { pkg: pkg, min: min };
 }
 
-// hex64 is a well-formed digest: 64 lowercase hex digits, the only spelling
-// either compiler accepts after `sha256:`.
 function hex64(): string {
   return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 }
 
-// index_hash_err parses a one-entry index whose source carries `hash` and
-// returns the diagnostic, or "" when the index was accepted.
 function index_hash_err(hash: string): string {
   return mvs.parse_index("[evil]\n\"1.0.0\" = { url = \"https://example.invalid/x.tar.gz\", hash = \""
     + hash + "\" }\n").err;
 }
 
-// lock_hash_err parses a one-package fern.lock and returns the diagnostic, or
-// "" when the lock was accepted. The hash sits on line 5.
 function lock_hash_err(hash: string): string {
   return fern_toml.parse_lock("[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\n"
     + "url = \"https://example.invalid/x.tar.gz\"\nhash = \"" + hash + "\"\n").err;
 }
 
-// bad_hash names what a hash must be — the wording both compilers use, so a
-// change to one that is not made to the other fails here.
 function bad_hash(hash: string): string {
   return "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \"" + hash + "\"";
 }
 
-// check reports a failed assertion and returns the case's exit code. The
-// report goes to stdout: the exit code is the signal, and stderr is one of
-// the WASI imports the self-host's component wrapper does not carry.
 function check(code: i32, what: string, got: string, want: string): i32 {
   if (got == want) {
     return 0;
@@ -105,7 +77,6 @@ function check(code: i32, what: string, got: string, want: string): i32 {
 }
 
 function main(): i32 {
-  // ---- 1. version parsing + precedence -------------------------------
   let rc: i32 = check(
     1, "1.2.0 vs 1.10.0",
     util.i32_to_string(mvs.version_cmp(mvs.parse_version("1.2.0"), mvs.parse_version("1.10.0"))), "-1",
@@ -127,8 +98,6 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  // A two-part spelling is rejected, and the part-count failure words
-  // differently from a non-numeric one.
   if (mvs.parse_version("1.2").ok) {
     return 4;
   }
@@ -144,7 +113,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 2. the index --------------------------------------------------
   let ix1: mvs.Index = mvs.parse_index("# registry\n[foo]\n\"1.0.0\" = { path = \"../foo-1.0.0\" }\n\"1.2.0\" = { url = \"https://x/foo.tar.gz\", hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }  # newest\n[bar]  # a second package\n\"2.1.0\" = { path = \"bar\" }\n");
   rc = check(7, "index parse", ix1.err, "");
   if (rc != 0) {
@@ -161,8 +129,6 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  // A relative path entry resolves against the index's own directory, `..`
-  // and all — the lock records the resolved directory.
   rc = check(10, "foo 1.0.0 path", mvs.index_source(ix1, "foo", "1.0.0").path, "/pkgs/foo-1.0.0");
   if (rc != 0) {
     return rc;
@@ -171,7 +137,6 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  // A malformed entry is a diagnostic, not a silently dropped row.
   rc = check(
     12, "malformed source", mvs.parse_index("[foo]\n\"1.0.0\" = { }\n").err,
     "line 2: 1.0.0: a version needs `path` or `url`+`hash`",
@@ -187,9 +152,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 3. max of the minimums ----------------------------------------
-  // root wants foo>=1.1.0 and bar>=1.0.0; foo@1.1.0 requires bar>=2.0.0,
-  // so bar is raised to 2.0.0.
   let ix2: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n[bar]\n\"1.0.0\" = { path = \"bar1\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
   let roots2: mvs.Req[] = [req("foo", "1.1.0"), req("bar", "1.0.0")];
   let o2: Outcome = resolve_with(roots2, no_bans(), ix2, ["foo"], ["1.1.0"], ["bar"], ["2.0.0"]);
@@ -198,8 +160,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 4. the diamond -------------------------------------------------
-  // Two deps demand different minimums of a shared dep; MVS takes the higher.
   let ix3: mvs.Index = mvs.parse_index("[a]\n\"1.0.0\" = { path = \"a\" }\n[b]\n\"1.0.0\" = { path = \"b\" }\n[c]\n\"1.0.0\" = { path = \"c1\" }\n\"1.5.0\" = { path = \"c15\" }\n\"2.0.0\" = { path = \"c2\" }\n");
   let roots3: mvs.Req[] = [req("a", "1.0.0"), req("b", "1.0.0")];
   let o3: Outcome = resolve_with(roots3, no_bans(), ix3, ["a", "b"], ["1.0.0", "1.0.0"], ["c", "c"], ["1.5.0", "2.0.0"]);
@@ -208,7 +168,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 5. an absent version is a precise error ------------------------
   let ix4: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
   let roots4: mvs.Req[] = [req("foo", "1.2.0")];
   let o4: Outcome = resolve_with(roots4, no_bans(), ix4, no_edges(), no_edges(), no_edges(), no_edges());
@@ -219,8 +178,6 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  // A package with no rows at all reports `available: none`, and a demand
-  // reached through a dependency carries the `via` frame that located it.
   let ix5: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
   let roots5: mvs.Req[] = [req("foo", "1.0.0")];
   let o5: Outcome = resolve_with(roots5, no_bans(), ix5, ["foo"], ["1.0.0"], ["ghost"], ["1.0.0"]);
@@ -232,10 +189,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 6. excludes ----------------------------------------------------
-  // A top-level exclude on the demanded version rounds up to the next
-  // higher non-excluded indexed version, whether the demand comes from the
-  // root or a transitive dep.
   let ix6: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n[bar]\n\"1.9.0\" = { path = \"bar19\" }\n\"1.9.1\" = { path = \"bar191\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
   let bans6: mvs.Ban[] = [mvs.Ban { pkg: "bar", ver: "1.9.0" }, mvs.Ban { pkg: "bar", ver: "1.9.1" }];
   let roots6: mvs.Req[] = [req("foo", "1.0.0")];
@@ -244,7 +197,6 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  // Excluding every version at or above the demand is a precise error.
   let bans7: mvs.Ban[] = [mvs.Ban { pkg: "foo", ver: "1.0.0" }];
   let o7: Outcome = resolve_with(roots5, bans7, ix5, no_edges(), no_edges(), no_edges(), no_edges());
   rc = check(
@@ -254,7 +206,6 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  // An exclude on a version nothing demands is a no-op.
   let ix8: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n");
   let bans8: mvs.Ban[] = [mvs.Ban { pkg: "foo", ver: "1.0.0" }];
   let roots8: mvs.Req[] = [req("foo", "1.1.0")];
@@ -264,7 +215,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 7. the lock ----------------------------------------------------
   let lsel: mvs.Sel[] = [
     mvs.Sel { name: "bar", ver: "2.0.0", src: mvs.Source { path: "/pkgs/bar", url: "", hash: "" } },
     mvs.Sel { name: "foo", ver: "1.2.0", src: mvs.Source { path: "", url: "https://x/foo.tar.gz", hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
@@ -279,7 +229,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 8. path joining ------------------------------------------------
   rc = check(22, "join ..", mvs.join_path("/a/b/c", "../d"), "/a/b/d");
   if (rc != 0) {
     return rc;
@@ -297,11 +246,6 @@ function main(): i32 {
     return rc;
   }
 
-  // ---- 9. package hash validation (#8464) -----------------------------
-  // A `hash` is joined onto the content-addressed store root, so a hash that
-  // is also a path escapes the store AND skips verification — nothing is
-  // downloaded, so nothing is checked. Both parse boundaries reject every
-  // shape native rejects, with a diagnostic naming the field.
   let bad: string[] = [
     "sha256:../../../../etc/fern-pkgs/evil",
     "sha256:/tmp/evil",
@@ -330,8 +274,6 @@ function main(): i32 {
     }
     bi = bi + 1;
   }
-  // The wording spelled out once, so bad_hash cannot drift with the code it
-  // is meant to pin.
   rc = check(
     28, "traversal message", lock_hash_err("sha256:../../outside/evil"),
     "fern.lock line 5: hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \"sha256:../../outside/evil\"",
@@ -339,7 +281,6 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  // A well-formed hash still resolves, through both boundaries.
   let okix: mvs.Index = mvs.parse_index("[evil]\n\"1.0.0\" = { url = \"https://example.invalid/x.tar.gz\", hash = \"sha256:"
     + hex64() + "\" }\n");
   rc = check(29, "index accepts a valid hash", okix.err, "");

@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// A read of a `const` array allocates nothing (#11471).
-//
-// constfold substitutes a copy of the literal for every use of a constant, and
-// each copy lowered to a fresh heap array: 100 reads of a four-element u8[]
-// constant cost 100 allocations, and std/http's byte-set scans paid it per
-// header. A constant is now one static array under the immortal rc, so a read
-// is its address, and every write path has to see it as shared: a push grows
-// into a fresh buffer, a `.with` copies, and the constant reads the same
-// afterwards. The scan buffer is built from a runtime value, so the census
-// has an allocation to balance.
 func TestConstArrayReadsDoNotAllocate(t *testing.T) {
 	shapes := []struct{ name, src string }{
 		{"reads", `

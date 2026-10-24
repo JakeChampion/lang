@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostClofldDropWasmIR is the wasm port of
-// TestSelfHostClofldDropIRX86_64: a struct with a closure field releases the
-// closure's env box when it dies, at exit and in a loop that stays BALANCED at
-// scale (the WAT carries the $__sem_release_H call); a bare closure IDENT
-// field value and a BASE COPY keep their aliases callable.
 func TestSelfHostClofldDropWasmIR(t *testing.T) {
 	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -25,10 +20,9 @@ func TestSelfHostClofldDropWasmIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	cases := []struct {
-		name string
-		src  string
-		want int
-		// substring the emitted WAT must contain ("" skips the check).
+		name    string
+		src     string
+		want    int
 		wantWat string
 	}{
 		{"clofld-drop-fires",

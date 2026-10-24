@@ -8,15 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `signal_catch(sig)` answers the sigaction return signal_ignore does, and
-// `signal_taken(sig)` a boolean a caller can branch on (#9243).
-// `signal_catch_interrupting(sig)` answers what signal_catch does, and
-// `signal_raise(sig)` kill(2)'s i32 (#11698).
 func TestSignalCatchSignatures(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // "" = must type-check
+		want string
 	}{
 		{"catch answers an i32", `function main(): i32 { let r: i32 = signal_catch(10); return r; }`, ""},
 		{"catch is not a boolean", `function main(): i32 { if (signal_catch(10)) { return 1; } return 0; }`, "boolean"},

@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// auditStdArrayCases broaden the self-host std/array coverage beyond the
-// single gcd_all case in self_host_array_test.go: each compiles the real
-// std/array bundle with a different reduction `main` through the self-hosted
-// compiler and asserts the exit code. The FULL transitive closure is resolved
-// (via compileSourceModload) so array's cmp-delegating methods — `sorted_asc` /
-// `sorted_desc` route to core/cmp's generic `sort` / `sort_desc` (#5397) — pull
-// core/cmp into the bundle and its generic bodies monomorphise correctly.
-// Self-host arm of the §D std/array audit (docs/FEATURE-AUDIT.md); the
-// conformance arm is the `audit_std_numeric` case.
 var auditStdArrayCases = []struct {
 	name string
 	main string
@@ -27,8 +18,6 @@ function main(): i32 { let xs: i32[] = [3, 1, 2]; return xs.product(); }`, 6},
 function main(): i32 { let xs: i32[] = [3, 1, 2]; match (xs.max()) { Some(m) => { return m; }, None => { return 0; } } }`, 3},
 }
 
-// TestSelfHostAuditStdArrayX86_64 compiles each std/array reduction bundle
-// through the self-hosted x86-64 driver and asserts the exit code.
 func TestSelfHostAuditStdArrayX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

@@ -1,10 +1,5 @@
 package e2e
 
-// A map whose key boxes into a cell (an i64 key on wasm32) freed its value
-// cells, buffer and handle at drop but not its key cells, one per entry, on
-// the native wasm backend (#11295). Each drop site is here: a local, a struct
-// field, and a Map[] element.
-
 import "testing"
 
 const mapWideKeyDropProg = `

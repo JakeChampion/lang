@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// RunBaseByteCases checks the shared codec through each public utility.
-// Expected bytes and error prefixes come from GNU, including malformed input.
 func RunBaseByteCases(t *testing.T, utility, bin string, runner []string, census func(*testing.T, string)) {
 	t.Helper()
 	name := utility

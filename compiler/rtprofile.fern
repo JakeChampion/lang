@@ -1,5 +1,3 @@
-// Self-contained native profiling. The signal path uses only the raw-memory
-// floor; file I/O and symbolization run after sampling stops (#5547).
 import "./util";
 import "./rtprofilemacho";
 import "std/string";
@@ -55,7 +53,6 @@ function file_error(mode: i32): string {
   return "";
 }
 
-// Keep command-line policy separate from the target emitters.
 pub function error(mode: i32, target: string, shared: boolean): string {
   if (mode < 0) {
     return "fern: FERN_PROFILE must be cpu, alloc, cpu-pprof, alloc-pprof, 0 or empty";

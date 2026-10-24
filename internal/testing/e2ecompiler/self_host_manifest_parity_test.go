@@ -14,8 +14,6 @@ import (
 
 const parityHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-// manifestParityCases are fern.toml sources both manifest parsers must agree
-// on: every diagnostic manifest.Parse can give, and the forms it accepts.
 var manifestParityCases = []struct{ name, src string }{
 	{"minimal", "[package]\nname = \"app\"\n"},
 	{"full", "# leading comment\n[package]\nname = \"app\"  # trailing\nversion = \"0.1.0\"\nlib = \"api.fern\"\nindex = \"idx/index.toml\"\n" +
@@ -76,9 +74,6 @@ var manifestParityCases = []struct{ name, src string }{
 	{"exclude bad version", "[package]\nname = \"app\"\n[exclude]\nv = [\"1.0\"]\n"},
 }
 
-// TestSelfHostManifestParseParity holds compiler/fern_toml.fern's parser to
-// internal/pkg/manifest's: the same manifests accepted, the same refused, with
-// the same message (#12647).
 func TestSelfHostManifestParseParity(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -115,9 +110,6 @@ func TestSelfHostManifestParseParity(t *testing.T) {
 	}
 }
 
-// TestSelfHostManifestStrictCheck: `-check` refuses a malformed manifest with
-// the oracle loader's diagnostic, so a misspelt `capabilities` key cannot
-// leave a dependency ungoverned and turn E070 into a warning (#12647).
 func TestSelfHostManifestStrictCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

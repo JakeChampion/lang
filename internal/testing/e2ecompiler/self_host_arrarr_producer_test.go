@@ -8,32 +8,12 @@ import (
 	"testing"
 )
 
-// --- A nested array from a producer that returns a LOCAL (#7335) -------------
-//
-// `let g: T[][] = mk(..)` must reclaim the whole structure — the outer buffer
-// and both inner arrays — whether mk returns the literal directly or a local
-// bound from it:
-//
-//	function mk(): i32[][] { return [[1,2],[3,4]]; }
-//	function mk(): i32[][] { let a: i32[][] = [[1,2],[3,4]]; return a; }
-//
-// Returning a local is the form real code has: anything that builds rows
-// before handing them back cannot use the literal form.
-//
-// The sibling_alias cases guard the other direction: a same-named `v` bound to
-// a borrowed parameter must not inherit the producer binding's release. A
-// double free there moves no byte count, so the exit code carries it.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the native
-// x86-64 backend agreed on each — never read off the self-host run under test.
-
 type arrarrProdCase struct {
 	name string
 	src  string
 	want int
 }
 
-// `id` hides a row from the static-box plan, so the outer array is a heap box.
 const arrarrProdID = "\nfunction id(xs: i32[]): i32[] { return xs; }"
 
 const arrarrProdMain = arrarrProdID + "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
@@ -43,31 +23,23 @@ const arrarrProdMain = arrarrProdID + "\nfunction main(): i32 { let t: i32 = 0; 
 func arrarrProdCases() []arrarrProdCase {
 	return []arrarrProdCase{
 		{
-			// The repro: the producer returns a LOCAL bound from the literal.
 			name: "producer_returns_local",
 			src: `function mk(): i32[][] { let a: i32[][] = [id([1,2]),[3,4]]; return a; }
 function round(i: i32): i32 { let v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
 			want: 68,
 		},
 		{
-			// The same producer returning the literal directly — admitted before
-			// this change, and the one-statement diff that isolated the cause.
 			name: "producer_returns_literal",
 			src: `function mk(): i32[][] { return [id([1,2]),[3,4]]; }
 function round(i: i32): i32 { let v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
 			want: 68,
 		},
 		{
-			// No producer at all: the literal bound straight into the local. This
-			// path was always credited and must stay so.
 			name: "literal_init",
 			src:  `function round(i: i32): i32 { let v: i32[][] = [id([1,2]),[3,4]]; return v.len(); }` + arrarrProdMain,
 			want: 68,
 		},
 		{
-			// THE OVER-RELEASE GUARD. Two same-named `v`, one from the producer and
-			// one a bare alias of a parameter. With the registry widened but the
-			// credit still name-keyed this is 99, and no byte count shows it.
 			name: "sibling_alias",
 			src: `function mk(): i32[][] { let a: i32[][] = [id([1,2]),[3,4]]; return a; }
 function round(base: i32[][], i: i32): i32 {
@@ -80,9 +52,6 @@ function main(): i32 { let b: i32[][] = [id([7,8]),[9,10]]; let t: i32 = 0; let 
 			want: 34,
 		},
 		{
-			// The string-inner sibling, which takes the STRICT "ARRARRS:" credit and
-			// the per-element __fern_str_arr_free walk — a different credit, the same
-			// collision.
 			name: "sibling_alias_strings",
 			src: `function w(a: string): string { return a + "!"; }
 function mk(): string[][] { let a: string[][] = [[w("p")],[w("q")]]; return a; }
@@ -96,7 +65,6 @@ function main(): i32 { let b: string[][] = [[w("a")],[w("b")]]; let t: i32 = 0; 
 			want: 34,
 		},
 		{
-			// The literal and an alias of it in ONE body.
 			name: "local_alias",
 			src:  `function round(i: i32): i32 { let a: i32[][] = [id([1,2]),[3,4]]; let v: i32[][] = a; return v.len(); }` + arrarrProdMain,
 			want: 68,
@@ -104,8 +72,6 @@ function main(): i32 { let b: string[][] = [[w("a")],[w("b")]]; let t: i32 = 0; 
 	}
 }
 
-// TestSelfHostArrArrProducerX86_64 — a nested array from a local-returning
-// producer is reclaimed, and no same-named sibling inherits its credit.
 func TestSelfHostArrArrProducerX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -142,8 +108,6 @@ func TestSelfHostArrArrProducerX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrArrProducerWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend.
 func TestSelfHostArrArrProducerWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping arrarr producer wasm IR e2e")
@@ -182,7 +146,6 @@ func TestSelfHostArrArrProducerWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrArrProducerIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostArrArrProducerIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

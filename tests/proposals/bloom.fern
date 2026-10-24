@@ -1,30 +1,12 @@
-// tests/proposals/bloom.fern — proposal turn, drawn line 54:
-// "A bloom filter with configurable bits and hash count, reporting the
-// false-positive rate."
-//
-// A bloom filter is a set that answers "definitely not present" or
-// "probably present". The property that makes it useful — and the one
-// worth testing hardest — is that it has NO false negatives: whatever was
-// inserted must always be reported present, however saturated the filter
-// gets. A false positive is a design cost; a false negative is a bug.
-//
-// The filter reports two rates, and the tests require them to agree: the
-// MEASURED rate over a disjoint probe set, and the rate ESTIMATED from the
-// fill ratio as `fill^k`. Two independent routes to the same number is a
-// stronger check than either against a hard-coded constant.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/string";
 import "std/i32";
 import "std/u32";
 
 struct Bloom {
-  words: u32[],  // nbits rounded up to a multiple of 32
+  words: u32[],
   nbits: i32,
-  k: i32,  // hash count
+  k: i32,
   added: i32,
 }
 
@@ -39,9 +21,6 @@ function bloom_new(nbits: i32, k: i32): Bloom {
   return Bloom { words: w, nbits: nwords * 32, k: k, added: 0 };
 }
 
-// Kirsch-Mitzenmacher: two independent hashes generate k derived ones,
-// h_i = h1 + i*h2, which is as good as k independent hashes for a filter
-// and costs two hash evaluations instead of k.
 function bit_index(b: Bloom, s: string, i: i32): i32 {
   let h1: u32 = s.hash_fnv32();
   let h2: u32 = s.hash_djb2();
@@ -70,7 +49,6 @@ function bloom_add(b0: Bloom, s: string): Bloom {
   return Bloom { ...b, added: b.added + 1 };
 }
 
-// "Probably present" — every one of the k bits is set.
 function might_contain(b: Bloom, s: string): boolean {
   let i: i32 = 0;
   while (i < b.k) {
@@ -82,7 +60,6 @@ function might_contain(b: Bloom, s: string): boolean {
   return true;
 }
 
-// Set bits, via popcount per word.
 function popcount_bits(b: Bloom): i32 {
   let total: i32 = 0;
   let i: i32 = 0;
@@ -93,8 +70,6 @@ function popcount_bits(b: Bloom): i32 {
   return total;
 }
 
-// The same count the slow way, one bit at a time. Used only to check the
-// popcount path — an intrinsic and a loop must not disagree.
 function count_bits_by_hand(b: Bloom): i32 {
   let total: i32 = 0;
   let i: i32 = 0;
@@ -107,13 +82,10 @@ function count_bits_by_hand(b: Bloom): i32 {
   return total;
 }
 
-// Fill ratio in per-mille, to stay in integer arithmetic.
 function fill_permille(b: Bloom): i32 {
   return popcount_bits(b) * 1000 / b.nbits;
 }
 
-// Estimated false-positive rate in per-mille: fill^k, since a false
-// positive is k independent bits all landing on set ones.
 function estimated_fp_permille(b: Bloom): i32 {
   let fill: i32 = fill_permille(b);
   let acc: i32 = 1000;
@@ -125,7 +97,6 @@ function estimated_fp_permille(b: Bloom): i32 {
   return acc;
 }
 
-// Measured rate over a probe set disjoint from what was inserted.
 function measured_fp_permille(b: Bloom, probes: string[]): i32 {
   let hits: i32 = 0;
   let i: i32 = 0;
@@ -148,10 +119,6 @@ function keys(prefix: string, n: i32): string[] {
   return out;
 }
 
-// ---------------------------------------------------------------- tests
-
-// The defining property. A false positive is a design cost; a false
-// negative is a bug, at any saturation.
 function test_no_false_negatives(): test.TestOutcome {
   let sizes: i32[] = [64, 256, 1024];
   let ks: i32[] = [1, 3, 7];
@@ -174,7 +141,6 @@ function test_no_false_negatives(): test.TestOutcome {
   return test.pass();
 }
 
-// An empty filter has nothing set, so nothing can be "probably present".
 function test_empty_filter_contains_nothing(): test.TestOutcome {
   let b: Bloom = bloom_new(256, 3);
   if (popcount_bits(b) != 0) {
@@ -189,9 +155,6 @@ function test_empty_filter_contains_nothing(): test.TestOutcome {
   return test.pass();
 }
 
-// count_ones() and a hand-rolled loop must agree. If the intrinsic is
-// wrong, every rate this filter reports is wrong with it — and both
-// numbers would still be self-consistent.
 function test_popcount_agrees_with_a_manual_count(): test.TestOutcome {
   let b: Bloom = bloom_new(512, 4);
   let ins: string[] = keys("x-", 30);
@@ -208,8 +171,6 @@ function test_popcount_agrees_with_a_manual_count(): test.TestOutcome {
   return test.pass();
 }
 
-// More bits for the same load means fewer collisions, so the fill ratio
-// must fall monotonically as the filter grows.
 function test_more_bits_means_lower_fill(): test.TestOutcome {
   let sizes: i32[] = [128, 256, 512, 1024, 2048];
   let prev: i32 = 1001;
@@ -230,9 +191,6 @@ function test_more_bits_means_lower_fill(): test.TestOutcome {
   return test.pass();
 }
 
-// The two routes to a false-positive rate must broadly agree: measured
-// over a disjoint probe set, and estimated as fill^k. A wide band, since
-// one is a sample — the point is that they track, not that they match.
 function test_measured_and_estimated_rates_agree(): test.TestOutcome {
   let b: Bloom = bloom_new(512, 3);
   let ins: string[] = keys("in-", 60);
@@ -248,8 +206,6 @@ function test_measured_and_estimated_rates_agree(): test.TestOutcome {
   if (diff < 0) {
     diff = 0 - diff;
   }
-  // Allow 150 per-mille of slack plus the estimate itself — a sample of
-  // 400 probes is noisy, and both numbers are small.
   if (diff > 150 + estimated) {
     return test.fail("measured " + measured.to_string()
       + " and estimated " + estimated.to_string()
@@ -258,7 +214,6 @@ function test_measured_and_estimated_rates_agree(): test.TestOutcome {
   return test.pass();
 }
 
-// Insertion is idempotent: adding the same key twice sets no new bits.
 function test_reinsert_sets_no_new_bits(): test.TestOutcome {
   let b: Bloom = bloom_new(256, 3);
   b = bloom_add(b, "hello");
@@ -273,8 +228,6 @@ function test_reinsert_sets_no_new_bits(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ----------------------------------------------------------------- app
 
 function main(): i32 {
   eprint("bloom — a bloom filter over ()[] configurable bits and hash count");

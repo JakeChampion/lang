@@ -8,30 +8,23 @@ import (
 	"testing"
 )
 
-// Functional struct updates preserve the unchanged fields and apply every
-// override through the typed lowering, without the retired struct-copy helper.
 var structUpdateArrayFieldCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
-	// Repeated scalar overrides preserve both array fields.
 	{"scalar-override-threaded",
 		`struct S { a: i32[], b: i32, c: i32[] } function bump(s: S, v: i32): S { return S { ...s, b: s.b + v }; } function main(): i32 { let s: S = S { a: [1, 2], b: 0, c: [9] }; let i: i32 = 0; while (i < 10) { s = bump(s, i); i = i + 1; } return s.b + s.a.len() + s.c.len(); }`,
 		48},
-	// Replacing an array field preserves the scalar alongside it.
 	{"array-override",
 		`struct S { a: i32[], b: i32 } function push(s: S, v: i32): S { return S { ...s, a: s.a.append(v) }; } function main(): i32 { let s: S = S { a: [1, 2], b: 5 }; let i: i32 = 0; while (i < 6) { s = push(s, i); i = i + 1; } return s.a.len() + s.b; }`,
 		13},
-	// Two overrides retain both untouched arrays.
 	{"multi-override",
 		`struct S { a: i32[], b: i32, c: i32[], d: i32 } function mk(s: S): S { return S { ...s, b: 7, d: 100 }; } function main(): i32 { let s: S = S { a: [1, 2, 3], b: 0, c: [9], d: 0 }; s = mk(s); return s.a.len() + s.b + s.c.len() + s.d; }`,
 		111},
-	// String-array elements survive repeated scalar updates.
 	{"string-array-field",
 		`struct S { names: string[], count: i32 } function inc(s: S): S { return S { ...s, count: s.count + 1 }; } function main(): i32 { let s: S = S { names: ["x", "y"], count: 0 }; let i: i32 = 0; while (i < 3) { s = inc(s); i = i + 1; } return s.names.len() + s.count; }`,
 		5},
-	// A bare string remains shared with the updated value.
 	{"bare-string-field",
 		`struct S { tag: string, n: i32 } function bump(s: S): S { return S { ...s, n: s.n + 1 }; } function main(): i32 { let s: S = S { tag: "hi", n: 0 }; let i: i32 = 0; while (i < 4) { s = bump(s); i = i + 1; } return s.tag.len() + s.n; }`,
 		6},

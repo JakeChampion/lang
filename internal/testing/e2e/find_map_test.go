@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array.find_map across backends: the
-// first-Some result, None when nothing maps, the empty array, an
-// always-None projection, and short-circuiting at the first Some.
-// Returns 42 iff every check holds. Each leg skips itself when its
-// toolchain is absent.
 const findMapProg = `
 import "std/array" as array;
 function even_x10(n: i32): Option[i32] {

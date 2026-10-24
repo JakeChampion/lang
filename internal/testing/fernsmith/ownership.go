@@ -5,7 +5,6 @@ import (
 	"strings"
 )
 
-// isScalar reports whether t is held inline rather than in a refcounted box.
 func isScalar(t gtype) bool {
 	switch t {
 	case tI32, tI64, tU32, tU64, tU8, tBool, tF32, tF64, tColor, tStatus:
@@ -14,22 +13,6 @@ func isScalar(t gtype) bool {
 	return false
 }
 
-// maybeEmitOwnershipCluster writes a statement group that puts a nested
-// value through every ownership transition Perceus has to get right, on a
-// program-declared struct with at least one boxed field:
-//
-//	let __own_a0: S = <literal>;              // fresh, unique
-//	let __own_b0: S = __own_a0;               // now shared
-//	let __own_c0: S = S { ...__own_a0, fK: <expr> };  // update while shared: must copy
-//	let __own_d0: F = __own_b0.fJ;            // a boxed field projected out
-//	__own_a0 = <S expr>;                      // the old value dropped while b and d hold it
-//
-// All four names join the scope, so later expressions read through them and
-// the state fold observes what they hold. A reuse that wrote into the shared
-// box, a projection that skipped its retain, or a reassignment that released
-// the whole value instead of one reference each changes a value the oracle
-// sees — and a leak or an over-release in any of them is what the sanitizer
-// leg reports.
 func (g *Generator) maybeEmitOwnershipCluster(b *strings.Builder, sc *scope) bool {
 	if !g.on(featNested) {
 		return false
@@ -43,11 +26,6 @@ func (g *Generator) maybeEmitOwnershipCluster(b *strings.Builder, sc *scope) boo
 	if len(cands) == 0 {
 		return false
 	}
-	// Exhaustion convention: `true` here = no cluster. Every structural
-	// choice is drawn before anything is written, and a stream that runs out
-	// among them falls back to the caller's plain statement: a cluster whose
-	// struct or field changed with truncation would change the types the rest
-	// of the program sees, and could grow it.
 	if g.flip(0.8) {
 		return false
 	}
@@ -56,9 +34,6 @@ func (g *Generator) maybeEmitOwnershipCluster(b *strings.Builder, sc *scope) boo
 	f := sh.fields[g.ch.intN(len(sh.fields))]
 	boxed := boxedFields(sh)
 	pf := boxed[g.ch.intN(len(boxed))]
-	// The reassignment is E049 when a closure later captures `a` and the
-	// value can reach a function, and nothing here knows what later code
-	// captures; a type that reaches no function is legal either way.
 	reassign := !g.reachesFn(st, nil) && !g.flip(0.5)
 	if g.ch.exhausted() {
 		return false
@@ -91,8 +66,6 @@ func (g *Generator) maybeEmitOwnershipCluster(b *strings.Builder, sc *scope) boo
 	return true
 }
 
-// reachesFn reports whether a value of type t can hold a function value —
-// the checker's typeReachesFunc, over the generator's types.
 func (g *Generator) reachesFn(t gtype, seen map[gtype]bool) bool {
 	if seen[t] {
 		return false
@@ -127,7 +100,6 @@ func (g *Generator) reachesFn(t gtype, seen map[gtype]bool) bool {
 	return false
 }
 
-// boxedFields lists sh's fields that own a box.
 func boxedFields(sh *structShape) []structField {
 	var out []structField
 	for _, f := range sh.fields {
@@ -138,18 +110,8 @@ func boxedFields(sh *structShape) []structField {
 	return out
 }
 
-// maxFoldTerms bounds how many values the state fold reads.
 const maxFoldTerms = 24
 
-// emitStateFold writes an i32 expression that folds every i32 and boolean
-// value reachable from an in-scope var — the var itself or a projection
-// through it — into one checksum, the way Csmith prints a checksum of all
-// global state at exit. Without it the oracle sees only what the return
-// expression happened to read, and a wrong value anywhere else in the
-// program, which is most of where a miscompile lands, passes unseen.
-//
-// Integers wrap, so the fold never traps. Writes `0i32` when there is
-// nothing to read.
 func (g *Generator) emitStateFold(b *strings.Builder, sc *scope) {
 	terms := g.foldTerms(sc)
 	if len(terms) == 0 {
@@ -163,7 +125,6 @@ func (g *Generator) emitStateFold(b *strings.Builder, sc *scope) {
 	}
 }
 
-// foldTerms lists the i32-valued reads emitStateFold combines.
 func (g *Generator) foldTerms(sc *scope) []string {
 	var out []string
 	add := func(s string) bool {
@@ -193,25 +154,10 @@ func (g *Generator) foldTerms(sc *scope) []string {
 	return out
 }
 
-// maybeEmitClosureCluster writes a closure whose parameter and first capture
-// share a type, under an operator that tells them apart, and calls it:
-//
-//	let __clo_c0: i32 = <expr>;
-//	let __clo_f0: (i32) => i32 = ((__lam_x5: i32) => ((__lam_x5 - __clo_c0) <op> <expr>));
-//	let __clo_r0: i32 = __clo_f0(<expr>);                  // the lifted, call-only path
-//	let __clo_r0: i32 = [__clo_f0, ...][0i32](<expr>);     // or the boxed one
-//
-// A lowering that hands the closure its capture where the argument belongs,
-// or its argument where the capture belongs — the environment/argument mix-up
-// the #5001 / #5007 / #5009 / #5026 cluster was made of — changes __clo_r0,
-// which the state fold reads. Random generation reaches this shape too, but
-// at a rate where a planted swap could go uncaught for a thousand programs.
 func (g *Generator) maybeEmitClosureCluster(b *strings.Builder, sc *scope) bool {
 	if !g.on(featClosure) {
 		return false
 	}
-	// Exhaustion convention: `true` here = no cluster, and every choice is
-	// drawn before anything is written, as in the ownership cluster.
 	if g.flip(0.85) {
 		return false
 	}

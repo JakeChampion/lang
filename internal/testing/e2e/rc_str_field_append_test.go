@@ -4,34 +4,6 @@ import (
 	"testing"
 )
 
-// #8785 — the in-place string append through a STRUCT FIELD. These pin what
-// the emitted runtime does, and above all that the uniqueness gate is
-// the BOX's and not the string's.
-
-// strFieldAppendAliasSrc is the test that separates a correct fix from the
-// tempting wrong one.
-//
-// The struct's box is aliased (rc 2) while its buffer is not: only the box
-// holds a reference to `buf`, so the STRING is at rc 1 and a gate on the
-// string's uniqueness would grow it in place — mutating a value the
-// second alias still reads through the old box, which the non-unique arm
-// leaves pointing at it.
-//
-// Both alias and original then append, so the corruption is visible on the
-// two-word ABI as well as the single-word one: on the single-word ABI the
-// shared [rc][len] header makes the alias read the longer string straight
-// away, and on the two-word one — where the alias carries its own length —
-// the SECOND append overwrites the byte the first one wrote, so `b` reads
-// back the alias's tail.
-//
-// Two details make the program discriminating rather than accidentally
-// green, and both were found by mutating the fix and watching this test still
-// pass. The accumulator starts as a HEAP string (`heap()`) because
-// __fern_str_append refuses to grow a .rodata literal whatever the rc says.
-// And twenty bytes plus one keeps the grown length inside the same allocator
-// class, which is the other condition for growing in place: a growth that
-// crossed a class boundary would take the copy path for a reason that has
-// nothing to do with the gate under test.
 const strFieldAppendAliasSrc = `struct B { buf: string, n: i32 }
 
 function heap(s: string): string { return s + ""; }
@@ -66,11 +38,6 @@ const strFieldAppendAliasWant = `0123456789abcdefghij
 jihgfedcba9876543210
 jihgfedcba9876543210Z`
 
-// strFieldAppendGrowSrc is the accumulator itself: 2000 two-byte appends into
-// a struct field, the shape that was quadratic. It also exercises the pieces
-// around the append — a second replaced pointer field (whose displaced value
-// step 4 still deep-drops), a carried field, appending the empty string, and
-// the field appended to itself.
 const strFieldAppendGrowSrc = `struct Acc { buf: string, xs: i32[], n: i32 }
 
 function grow(n: i32, piece: string): Acc {
@@ -96,9 +63,6 @@ function main(): i32 {
     return 0;
 }`
 
-// TestX86_64StrFieldAppendAliasedBoxIsNotMutated is the important one: it
-// fails if the in-place field append is gated on anything but the box's own
-// runtime uniqueness.
 func TestX86_64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendAliasSrc)
@@ -114,8 +78,6 @@ func TestX86_64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// The two-word (wasm) sibling. strAppendAvailable covers ptrW==4, so the
-// field load fans out to (data, len) and the helper consumes both words.
 func TestWASMStrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 
 	if got := runWasmCapturingStdout(t, strFieldAppendAliasSrc); got != strFieldAppendAliasWant {
@@ -123,7 +85,6 @@ func TestWASMStrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// The two-word NATIVE sibling, where the pair is carried in registers.
 func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendAliasSrc)
@@ -139,13 +100,6 @@ func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// TestX86_64StrFieldAppendAllocsBounded pins the collapse: 2265 allocations,
-// one array per update for `xs` plus the size-class steps of `buf`. A fresh
-// box and one whole-buffer copy per append, the quadratic, cost 8022.
-//
-// The assertions are the invariants rather than the exact numbers: well under
-// one allocation per append, and a balanced heap at exit, which catches an
-// over-release as firmly as a leak.
 func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendGrowSrc)
@@ -153,10 +107,6 @@ func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
 		t.Fatalf("field-append accumulator exited %d (a check inside it failed); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	// 2000 appends over 4000 bytes cross ~250 size classes, `xs` costs one
-	// array per update, and the 2000 boxes collapse to one reused box.
-	// Anything near 4000 means the site went back to a fresh box and a full
-	// copy per update.
 	if allocs > 3000 {
 		t.Errorf("allocs = %d for 2000 field appends, want well under 3000; the in-place field append is not firing", allocs)
 	}
@@ -165,9 +115,6 @@ func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
 	}
 }
 
-// The arm64 half of the collapse, on the same program: without the helper the
-// site was not placeable at all, so every update allocated a fresh box AND
-// copied the whole buffer.
 func TestArm64StrFieldAppendAllocsBounded(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendGrowSrc)
@@ -183,7 +130,6 @@ func TestArm64StrFieldAppendAllocsBounded(t *testing.T) {
 	}
 }
 
-// The same program on wasm, for the answers rather than the counts.
 func TestWASMStrFieldAppendCorrect(t *testing.T) {
 
 	if code := runWasm(t, strFieldAppendGrowSrc); code != 0 {
@@ -191,13 +137,6 @@ func TestWASMStrFieldAppendCorrect(t *testing.T) {
 	}
 }
 
-// strFieldAppendChainSrc is the field accumulator written as a CHAIN — the
-// shape a record-update builder takes when it emits a separator in the same
-// statement. The pieces here cover what the fold has to get right: a box
-// aliased across a chained update (the buffer must not move), a chain whose
-// operands are owned temps, a chain reading the field again from the right
-// (which must decline to fuse and still answer correctly), and the empty
-// piece.
 const strFieldAppendChainSrc = `struct Acc { buf: string, xs: i32[], n: i32 }
 
 function heap(s: string): string { return s + ""; }
@@ -244,10 +183,6 @@ jihgfedcba9876543210
 jihgfedcba9876543210ZW
 ab-ab`
 
-// TestX86_64StrFieldAppendChainCorrect covers all four shapes at once on the
-// single-word ABI, under the leak detector so an over-release shows as
-// frees > allocs. The aliased-box and aliased-buffer lines are the ones that
-// separate a correct fold from one that grew a buffer someone else reads.
 func TestX86_64StrFieldAppendChainCorrect(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainSrc)
@@ -262,7 +197,6 @@ func TestX86_64StrFieldAppendChainCorrect(t *testing.T) {
 	}
 }
 
-// TestArm64StrFieldAppendChainCorrect is the two-word NATIVE sibling.
 func TestArm64StrFieldAppendChainCorrect(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendChainSrc)
@@ -277,7 +211,6 @@ func TestArm64StrFieldAppendChainCorrect(t *testing.T) {
 	}
 }
 
-// TestWASMStrFieldAppendChainCorrect is the wasm sibling.
 func TestWASMStrFieldAppendChainCorrect(t *testing.T) {
 
 	want := strFieldAppendChainWant
@@ -286,9 +219,6 @@ func TestWASMStrFieldAppendChainCorrect(t *testing.T) {
 	}
 }
 
-// strFieldAppendChainAllocSrc is the chain alone, sized so the allocation
-// count is the whole signal: 500 iterations of three joins growing to 3000
-// bytes.
 const strFieldAppendChainAllocSrc = `struct B { buf: string, n: i32 }
 function main(): i32 {
     let b: B = B { buf: "", n: 0 };
@@ -301,10 +231,6 @@ function main(): i32 {
     return 0;
 }`
 
-// TestX86_64StrFieldAppendChainAllocsBounded pins the collapse: allocs=256
-// frees=256 live_bytes=0, one per size-class step over the 3000 bytes. A
-// join that copied the accumulator instead would cost one allocation per
-// join, 1500 here.
 func TestX86_64StrFieldAppendChainAllocsBounded(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainAllocSrc)

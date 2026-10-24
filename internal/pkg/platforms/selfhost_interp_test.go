@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostInterpImplementsHostedBuiltins holds compiler/interp.fern, the
-// interpreter `fern -interp` runs, to every builtin a hosted target provides:
-// each core builtin, and each gated one whose capability a hosted profile
-// grants. A builtin missing there is `fern: interp: undefined function` at run
-// time in a program every hosted build runs (#12662).
-//
-// It reads the dispatch as data, the names interp.fern compares a callee
-// against, so it builds nothing and fails the moment a builtin is classified
-// here without being taught to the interpreter.
 func TestSelfHostInterpImplementsHostedBuiltins(t *testing.T) {
 	const path = "../../../compiler/interp.fern"
 	b, err := os.ReadFile(path)

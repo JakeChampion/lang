@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostNthTupleElem pins the wasm backend's tuple-element decoder
-// (compiler/wasm_ir.fern's nth_tuple_type_elem — SH-021,
-// docs/SELF-HOST-AUDIT.md T2). It returns the idx-th element type of a tuple
-// spelling "(A, B, …)", or "" when the spelling isn't a tuple / idx is out of
-// range, and now decodes via the structured TypeRef (parser.parse_type_ref)
-// instead of a hand-rolled bracket/paren depth scan.
-//
-// The corpus × indices span plain tuples, tuples with nested-generic / nested-
-// tuple elements (whose inner commas the scan must not split on), non-tuples, and
-// a tuple-array "(i32, i32)[]". On every non-array spelling the result matches the
-// former scan exactly; the tuple-array row resolves to "" (array_depth > 0 is a
-// value of array type, not a tuple) — the former scan keyed only off a leading
-// "(" and mis-read the trailing "[]", wrongly reporting (i32, i32)[] as a flat
-// extern tuple param. The three x86 self-compile fixpoints confirm no such
-// tuple-array spelling reaches this on the self-host sources, so the extern-param
-// codegen is unchanged.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostNthTupleElem(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

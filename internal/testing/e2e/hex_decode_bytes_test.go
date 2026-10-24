@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// hexDecodeBytesProgram pins that `std/hex`'s decoders yield `u8[]`
-// rather than `string` (#5730, the D9 follow-up).
-//
-// The point is not the type per se: decoding arbitrary hex produces
-// arbitrary bytes, and a `string` is supposed to mean well-formed
-// UTF-8. `decode("ff")` is a single 0xFF byte, which is not valid
-// UTF-8 in any position — so as long as that came back as a `string`,
-// the D9 invariant was false by construction for every caller.
-//
-// Exits 0 on success, a distinct code per failed step.
 const hexDecodeBytesProgram = `
 import "std/hex" as hex;
 import "std/codec";

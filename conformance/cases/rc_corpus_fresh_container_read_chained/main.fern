@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A read out of a fresh container, consumed as a call argument or
-// chained into another read, is now reclaimed (#6401). The reclaim
-// retains what it hands on and deep-drops what it came out of, so an
-// over-claim here frees a live container rather than leaking one.
-//
-// `passthru` returns its own parameter, so `live` is what the reads
-// in the control loops project out of — nothing there may be freed,
-// and `live` is read again afterwards to say so.
-// 8 + 8 + 8 + 8 + 20 + 8 + 36 + 23.
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 struct P { a: i32, b: i32 }

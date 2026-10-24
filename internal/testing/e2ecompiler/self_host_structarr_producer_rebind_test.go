@@ -8,14 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A struct-array local reassigned from a producer call (#10360). The credit
-// that frees a struct array's element boxes refused every reassignment but the
-// self-append, so `pending = mk(1)` released the buffer alone and stranded each
-// element box. A producer rebind now keeps the credit, and the rebind store
-// frees the superseded array whole. Answers are the interpreter's.
-
-// leakRow is one program held to the census. balanced false holds it to the
-// sanitizer only: a leak is allowed, any other report is not.
 type leakRow struct {
 	name, src string
 	balanced  bool
@@ -84,7 +76,6 @@ function main(): i32 {
     return t + pending.len();
 }
 `, true},
-	// An element bound out of the old array keeps it from the credit.
 	{"bound_elem", structArrRebindInst + `function main(): i32 {
     let pending: Inst[] = [];
     pending = mk(3);

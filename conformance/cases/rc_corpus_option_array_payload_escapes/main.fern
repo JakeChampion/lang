@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Option[array] that ESCAPES (returned): the box + array must
-// survive the constructor. Churn forces same-size reuse.
+
+
+
+
+
 import "core/int";
 function mk(n: i32): Option[i32[]] { return Some([n, n + 1, n + 2]); }
 function main(): i32 {

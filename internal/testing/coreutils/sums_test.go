@@ -9,34 +9,10 @@ import (
 	"testing"
 )
 
-// The corpus md5sum, sha1sum, sha224sum, sha256sum, sha384sum,
-// sha512sum and b2sum share, because the seven are one program
-// (`coreutils/lib/digest.fern`) parameterised by its digest.
-//
-// Running the same cases against all seven is not redundancy: each one
-// carries its own word in the BSD tag and in `improperly formatted %s
-// checksum line`, its own digest length — which is what the check-line
-// grammar measures a line against — and, for b2sum, a length that the
-// line itself declares. A case that passes for md5sum and fails for
-// sha512sum is exactly the class of bug this shape catches.
-//
-// Checksum files that are supposed to be VALID are produced by running
-// the reference binary, never by writing a digest down: the oracle
-// makes them the same way it makes everything else here.
-
-// digestSpec is what the seven do not share.
 type digestSpec struct {
-	util string
-	// tag is the BSD-style prefix, and the word in the
-	// improperly-formatted diagnostic.
-	tag string
-	// bits is the digest length nothing overrides. For b2sum it is also
-	// the maximum `-l` accepts.
-	bits int
-	// variable marks b2sum: `-l BITS` resizes the digest, a checksum
-	// line's own length is read off the hex run or off the `-NNN` of
-	// `BLAKE2b-NNN`, and the tag names the length whenever it is not
-	// the default.
+	util     string
+	tag      string
+	bits     int
 	variable bool
 }
 
@@ -52,9 +28,6 @@ func digestSpecs() map[string]digestSpec {
 	}
 }
 
-// refOutput runs the GNU binary for `util` and returns its stdout. It is
-// how a checksum file that must be well formed is built: whatever the
-// reference writes is by definition what it accepts back.
 func refOutput(t *testing.T, util string, args ...string) string {
 	t.Helper()
 	bin := referenceBin(t, util)
@@ -69,16 +42,11 @@ func refOutput(t *testing.T, util string, args ...string) string {
 	return string(out)
 }
 
-// digestTree is the files one utility's corpus is asked about, plus the
-// checksum files built over them.
 type digestTree struct {
-	dir string
-	// The inputs.
+	dir                                                              string
 	a, empty, big, backslash, newline, carriage, spaced, quoted, raw string
 	missing, subdir                                                  string
-	// hex is a digest-length run of '0': a well-formed line that cannot
-	// match, for the FAILED paths.
-	hex string
+	hex                                                              string
 }
 
 func digestFile(t *testing.T, dir, name, content string) string {
@@ -94,13 +62,9 @@ func newDigestTree(t *testing.T, spec digestSpec) digestTree {
 	t.Helper()
 	dir := t.TempDir()
 	tr := digestTree{
-		dir: dir,
-		a:   digestFile(t, dir, "a", "hello\n"),
-		// Empty is its own digest, and the padding path for every one of
-		// these algorithms differs at zero bytes.
-		empty: digestFile(t, dir, "e0", ""),
-		// Longer than one read block and not a multiple of any of the
-		// block sizes, so the tail padding is exercised too.
+		dir:       dir,
+		a:         digestFile(t, dir, "a", "hello\n"),
+		empty:     digestFile(t, dir, "e0", ""),
 		big:       digestFile(t, dir, "big", strings.Repeat("0123456789abcdef", 12345)+"tail"),
 		backslash: digestFile(t, dir, `back\slash`, "x\n"),
 		newline:   digestFile(t, dir, "new\nline", "x\n"),
@@ -118,12 +82,6 @@ func newDigestTree(t *testing.T, spec digestSpec) digestTree {
 	return tr
 }
 
-// digestCases is the corpus of one checksum utility.
-// digestRawName writes the not-valid-UTF-8 fixture for the seven checksum
-// utilities, which share one tree. Where the filesystem refuses the name it
-// creates nothing and returns the path: the CLI-argument case carries
-// rawByteName and skips. Checksum-file names instead have explicit D10
-// boundary-error coverage in TestDigestCheckBytes.
 func digestRawName(t *testing.T, dir, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, rawByteNameFixture)
@@ -149,8 +107,6 @@ func digestCases(t *testing.T, util string) []invocation {
 	return cases
 }
 
-// The compute half: digests, the two modes, --tag, -z, escaping, and
-// the operand diagnostics.
 func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	return []invocation{
@@ -166,7 +122,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "stdin and a file", args: []string{"-", tr.a}, stdin: "hello\n"},
 		{name: "stdin spanning read blocks", stdin: strings.Repeat("z", 200000)},
 
-		// Binary and text mode, and the marker between them.
 		{name: "binary", args: []string{"-b", tr.a}},
 		{name: "text", args: []string{"-t", tr.a}},
 		{name: "long binary", args: []string{"--binary", tr.a}},
@@ -176,7 +131,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "binary from stdin", args: []string{"-b"}, stdin: "hello\n"},
 		{name: "binary cluster", args: []string{"-bb", tr.a}},
 
-		// --tag, and its two refusals.
 		{name: "tag", args: []string{"--tag", tr.a}},
 		{name: "tag binary", args: []string{"--tag", "-b", tr.a}},
 		{name: "tag from stdin", args: []string{"--tag"}, stdin: "hello\n"},
@@ -188,7 +142,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "tag with check and quiet", args: []string{"--tag", "-c", "--quiet", tr.a}},
 		{name: "tag text with check", args: []string{"--tag", "-t", "-c", tr.a}},
 
-		// -z: NUL terminators, and no escaping at all.
 		{name: "zero", args: []string{"-z", tr.a}},
 		{name: "zero two files", args: []string{"-z", tr.a, tr.empty}},
 		{name: "zero tag", args: []string{"-z", "--tag", tr.a}},
@@ -200,8 +153,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "zero with a backslash name", args: []string{"-z", tr.backslash}},
 		{name: "zero with a newline name", args: []string{"-z", tr.newline}},
 
-		// Escaped names, which is the detail most implementations get
-		// wrong: the `\` leads the LINE, ahead of the tag.
 		{name: "name with a backslash", args: []string{tr.backslash}},
 		{name: "name with a newline", args: []string{tr.newline}},
 		{name: "name with a carriage return", args: []string{tr.carriage}},
@@ -215,7 +166,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "tag with a carriage return name", args: []string{"--tag", tr.carriage}},
 		{name: "binary with a backslash name", args: []string{"-b", tr.backslash}},
 
-		// Operands and their diagnostics.
 		{name: "missing file", args: []string{tr.missing}},
 		{name: "missing then present", args: []string{tr.missing, tr.a}},
 		{name: "present then missing", args: []string{tr.a, tr.missing}},
@@ -230,16 +180,12 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "dashdash then a name", args: []string{"--", tr.a}},
 		{name: "dashdash then a dash", args: []string{"--", "-"}, stdin: "hello\n"},
 
-		// The five check-only options outside check mode.
 		{name: "ignore-missing without check", args: []string{"--ignore-missing", tr.a}},
 		{name: "quiet without check", args: []string{"--quiet", tr.a}},
 		{name: "status without check", args: []string{"--status", tr.a}},
 		{name: "strict without check", args: []string{"--strict", tr.a}},
 		{name: "warn without check", args: []string{"-w", tr.a}},
 		{name: "long warn without check", args: []string{"--warn", tr.a}},
-		// --status, --warn and --quiet are one setting with three
-		// values: each clears the other two, so which one is reported
-		// depends on the order they were given in.
 		{name: "quiet then warn", args: []string{"--quiet", "-w", tr.a}},
 		{name: "warn then quiet", args: []string{"-w", "--quiet", tr.a}},
 		{name: "status then quiet", args: []string{"--status", "--quiet", tr.a}},
@@ -250,7 +196,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "ignore-missing then status", args: []string{"--ignore-missing", "--status", tr.a}},
 		{name: "warn then ignore-missing", args: []string{"-w", "--ignore-missing", tr.a}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x", tr.a}},
 		{name: "invalid short option in a cluster", args: []string{"-bx", tr.a}},
 		{name: "unrecognized long option", args: []string{"--foo", tr.a}},
@@ -274,7 +219,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "posix operand then option", args: []string{tr.a, "-b"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-b", tr.a}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{tr.a}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{tr.a}, stdout: stdoutFull},
 		{name: "stdout closed with a missing file", args: []string{tr.missing}, stdout: stdoutClosed},
@@ -282,7 +226,6 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	}
 }
 
-// The check half: the report, its summaries, and their exit statuses.
 func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	dir := tr.dir
@@ -312,15 +255,11 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	missFail := mk("c.missfail", tr.hex+"  "+tr.missing+"\n"+tr.hex+"  "+tr.a+"\n")
 	dirOk := mk("c.dirok", tr.hex+"  "+tr.subdir+"\n"+refOutput(t, spec.util, tr.a))
 	comment := mk("c.comment", "# a comment\n"+refOutput(t, spec.util, tr.a))
-	// A comment and an empty line still advance the line number the
-	// improperly-formatted diagnostic reports.
 	numbering := mk("c.numbering", "# a comment\n\ngarbage\n"+refOutput(t, spec.util, tr.a))
 	notComment := mk("c.notcomment", "  # a comment\n"+refOutput(t, spec.util, tr.a))
 	blanks := mk("c.blanks", "\n"+refOutput(t, spec.util, tr.a)+"\n")
 	crlf := mk("c.crlf", strings.ReplaceAll(refOutput(t, spec.util, tr.a), "\n", "\r\n"))
 	noNewline := mk("c.nonl", strings.TrimRight(refOutput(t, spec.util, tr.a), "\n"))
-	// `a` holds exactly what the stdin cases feed, so its digest is the
-	// one a line naming `-` has to match.
 	digestOfA := strings.Fields(refOutput(t, spec.util, tr.a))[0]
 	dash := mk("c.dash", digestOfA+"  -\n")
 	stdinName := refOutput(t, spec.util, tr.a)
@@ -362,7 +301,6 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "check an empty operand", args: []string{"-c", ""}},
 		{name: "check with dashdash", args: []string{"-c", "--", ok}},
 
-		// --quiet, --status, --warn and --strict over the same reports.
 		{name: "check quiet ok", args: []string{"-c", "--quiet", ok}},
 		{name: "check quiet mixed", args: []string{"-c", "--quiet", mix}},
 		{name: "check quiet missing", args: []string{"-c", "--quiet", miss}},
@@ -378,7 +316,6 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "check strict malformed with warn", args: []string{"-c", "--strict", "-w", mix}},
 		{name: "check strict only malformed", args: []string{"-c", "--strict", mal}},
 
-		// --ignore-missing.
 		{name: "check ignore-missing all missing", args: []string{"-c", "--ignore-missing", miss}},
 		{name: "check ignore-missing with one ok", args: []string{"-c", "--ignore-missing", missOk}},
 		{name: "check ignore-missing with one failure", args: []string{"-c", "--ignore-missing", missFail}},
@@ -387,7 +324,6 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "check ignore-missing quiet", args: []string{"-c", "--ignore-missing", "--quiet", missOk}},
 		{name: "check ignore-missing status", args: []string{"-c", "--ignore-missing", "--status", miss}},
 
-		// The combinations check mode refuses.
 		{name: "check with binary", args: []string{"-b", "-c", ok}},
 		{name: "check with text", args: []string{"-t", "-c", ok}},
 		{name: "check with binary and quiet", args: []string{"-b", "-c", "--quiet", ok}},
@@ -396,7 +332,6 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "check with zero and binary", args: []string{"-z", "-b", "-c", ok}},
 		{name: "check then zero", args: []string{"-c", "-z", ok}},
 
-		// Write failures in check mode.
 		{name: "check with stdout closed", args: []string{"-c", ok}, stdout: stdoutClosed},
 		{name: "check with stdout full", args: []string{"-c", ok}, stdout: stdoutFull},
 		{name: "check status with stdout closed", args: []string{"-c", "--status", ok}, stdout: stdoutClosed},
@@ -404,9 +339,6 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	}
 }
 
-// The check-line grammar, which is looser than what the utility writes:
-// the separator rules, the length rules, the two shapes, and the three
-// escapes a name may carry.
 func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	dir := tr.dir
@@ -420,13 +352,10 @@ func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		}
 		return p
 	}
-	// The true digest of `a`, so a grammar case can be a MATCH rather
-	// than only a well-formed miss.
 	good := strings.Fields(refOutput(t, spec.util, tr.a))[0]
 	name := tr.a
 
 	cases := []invocation{
-		// The separator between the digest and the name.
 		{name: "grammar one blank", args: []string{"-c", "-w", line(h + " " + name + "\n")}},
 		{name: "grammar two blanks", args: []string{"-c", "-w", line(h + "  " + name + "\n")}},
 		{name: "grammar three blanks", args: []string{"-c", "-w", line(h + "   " + name + "\n")}},
@@ -447,7 +376,6 @@ func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "grammar name with a trailing blank", args: []string{"-c", "-w", line(h + "  " + name + " \n")}},
 		{name: "grammar name with an inner blank", args: []string{"-c", "-w", line(h + "  " + tr.spaced + "\n")}},
 
-		// Leading blanks, and the `\` that marks an escaped name.
 		{name: "grammar leading blank", args: []string{"-c", "-w", line(" " + h + "  " + name + "\n")}},
 		{name: "grammar leading tab", args: []string{"-c", "-w", line("\t" + h + "  " + name + "\n")}},
 		{name: "grammar leading blanks too short", args: []string{"-c", "-w", line(" " + h + " \n")}},
@@ -463,7 +391,6 @@ func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "grammar escaped with no backslash in the name", args: []string{"-c", "-w", line("\\" + h + "  plain\n")}},
 		{name: "grammar unescaped backslash in the name", args: []string{"-c", "-w", line(h + "  " + `na\me` + "\n")}},
 
-		// The digest itself.
 		{name: "grammar uppercase digest", args: []string{"-c", "-w", line(strings.ToUpper(good) + "  " + name + "\n")}},
 		{name: "grammar mixed case digest", args: []string{"-c", "-w", line(strings.ToUpper(good[:4]) + good[4:] + "  " + name + "\n")}},
 		{name: "grammar one digit too long", args: []string{"-c", "-w", line(h + "0  " + name + "\n")}},
@@ -471,7 +398,6 @@ func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "grammar a non-hex digit", args: []string{"-c", "-w", line("z" + h[1:] + "  " + name + "\n")}},
 		{name: "grammar a non-hex digit at the end", args: []string{"-c", "-w", line(h[1:] + "z  " + name + "\n")}},
 
-		// The BSD-style shape.
 		{name: "grammar tagged", args: []string{"-c", "-w", line(spec.tag + " (" + name + ") = " + good + "\n")}},
 		{name: "grammar tagged no space", args: []string{"-c", "-w", line(spec.tag + "(" + name + ") = " + good + "\n")}},
 		{name: "grammar tagged two spaces", args: []string{"-c", "-w", line(spec.tag + "  (" + name + ") = " + good + "\n")}},
@@ -489,8 +415,6 @@ func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "grammar tagged escaped", args: []string{"-c", "-w", line("\\" + spec.tag + " (" + `na\\me` + ") = " + good + "\n")}},
 		{name: "grammar tagged word then digest", args: []string{"-c", "-w", line(spec.tag + good + "  " + name + "\n")}},
 
-		// A NUL ends the line as a C string, but the too-short rule
-		// still counts the bytes after it.
 		{name: "grammar NUL first", args: []string{"-c", "-w", line("\x00" + h + "  " + name + "\n")}},
 		{name: "grammar NUL after the name", args: []string{"-c", "-w", line(h + "  a\x00b\n")}},
 		{name: "grammar NUL where the name would be", args: []string{"-c", "-w", line(h + "  \x00\n")}},
@@ -499,7 +423,6 @@ func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	return cases
 }
 
-// b2sum alone: -l, and the digest length a checksum line declares.
 func lengthCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	dir := tr.dir
@@ -557,8 +480,6 @@ func lengthCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "length before a tag refusal", args: []string{"-l", "4", "--tag", "-t", tr.a}},
 		{name: "length after an operand", args: []string{tr.a, "-l", "4"}},
 
-		// A checksum line carries its own length, and -l does not
-		// override it.
 		{name: "check a short digest", args: []string{"-c", line(short + "  " + name + "\n")}},
 		{name: "check a short digest with a length", args: []string{"-c", "-l", "512", line(short + "  " + name + "\n")}},
 		{name: "check a tagged short digest", args: []string{"-c", line("BLAKE2b-8 (" + name + ") = " + short + "\n")}},

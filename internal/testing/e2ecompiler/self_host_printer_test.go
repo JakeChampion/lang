@@ -5,19 +5,6 @@ import (
 	"testing"
 )
 
-// Fifth self-host milestone after the lexer (#609), parser (#611 /
-// #617), checker (#619), and interp (#623). `printer.fern` is a
-// tree-to-source emitter: walks a parser.Module and emits a
-// re-parseable string. Validates the round-trip property —
-// parse → print → parse → same AST shape — so printer bugs
-// can't silently drop or mangle nodes.
-//
-// Covers every Expr / Stmt variant the parser currently handles:
-// numbers (with suffix), idents, strings (with `\n` / `\"` / `\\`
-// re-escape), bools, binary / unary / call / array / index /
-// unknown; var / return / expr / if / while / assign / unknown
-// stmts; function decls; full Module top-level.
-
 func writeSelfHostPrinterProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

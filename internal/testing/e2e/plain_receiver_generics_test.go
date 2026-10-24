@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// Generic methods of a plain receiver, instantiated per call like a free
-// function's. `C.wrap[U]`'s `Box[U]` is the clone at the call's type, so the
-// program calls through it to a method with type parameters of its own
-// (`twice` calls `apply[A]`, #12118), and binds and passes it at its written
-// type `Box[string]` (#12120). `C.first_of[U, J: It[U]]` binds U only through
-// J's bound, read off the impl the argument resolves to, and `zip[U, J:
-// It[U]]`, inherited by the plain `Upto`, returns a struct whose T and U no
-// field holds (#12119).
 const plainReceiverGenericsSrc = `import "std/i32";
 import "std/i64";
 

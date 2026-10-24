@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer unsigned_abs helpers — std/i32 (→ u32)
-// and std/i64 (→ u64). unsigned_abs returns |n| in the same-width unsigned type,
-// where the one magnitude the signed abs / checked_abs cannot represent — MIN,
-// whose |n| is 2^(w-1) — fits exactly. Checks a negative, a positive, zero, and
-// the MIN boundary that only the unsigned result can hold. Returns 42 iff every
-// check holds across interp / x86-64 / wasm / arm64; each leg skips itself when
-// its toolchain is absent.
 const intUnsignedAbsProg = `
 import "std/i32";
 import "std/i64" as i64m;

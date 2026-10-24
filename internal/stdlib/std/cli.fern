@@ -1,90 +1,34 @@
-// std/cli — command-line argument parsing.
-//
-// A small, spec-driven parser for the shape the examples/cli tools
-// hand-roll today (grep, head, …): valued options (`--output F`,
-// `--output=F`, `-o F`), boolean flags (`--verbose` / `-v`),
-// positional operands, the `--` end-of-options terminator, and
-// subcommands, each a spec of its own. One spec also yields the
-// usage text, a roff man page, shell completions for bash, zsh and
-// fish, and a KDL usage spec (usage.jdx.dev), so a tool describes its
-// interface once. Pure library — no compiler changes.
-//
-// Build a spec, parse argv, query the result:
-//
-//   import "std/cli" as cli;
-//   let spec: cli.CliSpec = cli.new("greet", "print a greeting");
-//   spec = spec.option("name", "n", "who to greet");
-//   spec = spec.flag("shout", "s", "upper-case the greeting");
-//   let a: cli.CliArgs = spec.parse(args());
-//   if (a.is_error()) { print(a.error_text()); print(spec.usage()); return 2; }
-//   let who: string = a.value_or("name", "world");
-//   if (a.is_set("shout")) { ... }
-//   let rest: string[] = a.operands();
-//
-// Flags are queried by their LONG name (the canonical key) whether
-// the caller passed `-n` or `--name`. Short aliases are single
-// characters and support the usual clustering: bundled booleans
-// (`-abc` == `-a -b -c`), a glued value (`-n5` == `-n 5`), and a
-// bundle ending in a valued option (`-vn5` == `-v -n 5`).
-//
-// Subcommands: `.command(sub)` attaches another spec under its name.
-// The first operand of a spec with commands must name one; the flags
-// before it belong to the parent, everything after it is parsed by
-// the sub-spec, and `.subcommand()` on the result says which one ran.
+// This module parses command-line arguments.
 import "std/string";
 import "std/utf8" as utf8;
 import "core/map";
 
-// A single declared flag. `takes_value` distinguishes a valued
-// option (`--output F`) from a boolean flag (`--verbose`). `short`
-// is "" when the flag has no single-character alias.
 struct CliFlag { long: string, short: string, takes_value: boolean, help: string }
 
-// The parser spec: a program name + one-line description for the
-// usage text, the declared flags, and the subcommand specs. Built up
-// immutably via `.option` / `.flag` / `.command` (each returns an
-// updated spec to rebind).
 pub struct CliSpec { name: string, about: string, flags: CliFlag[], commands: CliSpec[] }
 
-// The parse result. `opts` maps each set flag's long name to its
-// value (a valued option's argument, or "true" for a boolean flag
-// that appeared); `positionals` is the operand list in order;
-// `command` is the subcommand that ran, or "" for none; `error` is
-// "" on success or a human-readable message on failure.
 pub struct CliArgs { opts: Map[string, string], positionals: string[], command: string, error: string }
 
-// One token's worth of parse progress: the options after it, the
-// argv index to continue from, and the error ("" when none).
 struct CliStep { opts: Map[string, string], next: i32, error: string }
 
-// `new(name, about)` — start a spec with no flags.
 pub function new(name: string, about: string): CliSpec {
   let fs: CliFlag[] = [];
   let cs: CliSpec[] = [];
   return CliSpec { name: name, about: about, flags: fs, commands: cs };
 }
 
-// `.option(long, short, help)` — declare a valued option, matched
-// as `--long V`, `--long=V`, or `-short V`. Pass "" for `short` to
-// give it no single-character alias.
 pub function (s: CliSpec) option(long: string, short: string, help: string): CliSpec {
   return CliSpec { ...s, flags: s.flags.append(CliFlag { long: long, short: short, takes_value: true, help: help }) };
 }
 
-// `.flag(long, short, help)` — declare a boolean flag, matched as
-// `--long` or `-short`. Its presence is queried with `is_set`.
 pub function (s: CliSpec) flag(long: string, short: string, help: string): CliSpec {
   return CliSpec { ...s, flags: s.flags.append(CliFlag { long: long, short: short, takes_value: false, help: help }) };
 }
 
-// `.command(sub)` — declare a subcommand. `sub.name` is the word
-// that selects it, `sub.about` its one-line description; its flags
-// apply after that word.
 pub function (s: CliSpec) command(sub: CliSpec): CliSpec {
   return CliSpec { ...s, commands: s.commands.append(sub) };
 }
 
-// Find a declared flag by its long name.
 function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
   let i: i32 = 0;
   while (i < s.flags.len()) {
@@ -96,7 +40,6 @@ function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
   return None;
 }
 
-// Find a declared flag by its (single-byte) short alias.
 function __cli_find_short_byte(s: CliSpec, b: i32): Option[CliFlag] {
   let i: i32 = 0;
   while (i < s.flags.len()) {
@@ -108,7 +51,6 @@ function __cli_find_short_byte(s: CliSpec, b: i32): Option[CliFlag] {
   return None;
 }
 
-// Find a declared subcommand by name.
 function __cli_find_command(s: CliSpec, name: string): Option[CliSpec] {
   let i: i32 = 0;
   while (i < s.commands.len()) {
@@ -120,9 +62,6 @@ function __cli_find_command(s: CliSpec, name: string): Option[CliSpec] {
   return None;
 }
 
-// Render the flag name at cluster[j] for an error message: the ASCII
-// byte itself, the whole code point when the byte starts a multibyte
-// character, or U+FFFD for an invalid byte.
 function __cli_short_name_at(cluster: string, j: i32): string {
   let b: i32 = cluster[j] as i32;
   if (b < 128) {
@@ -138,7 +77,6 @@ function __cli_short_name_at(cluster: string, j: i32): string {
   }
 }
 
-// Build a failed CliArgs, preserving the operands parsed so far.
 function __cli_err(positionals: string[], msg: string): CliArgs {
   let empty: Map[string, string] = map_new(1);
   return CliArgs { opts: empty, positionals: positionals, command: "", error: msg };
@@ -148,12 +86,10 @@ function __cli_step_err(opts: Map[string, string], i: i32, msg: string): CliStep
   return CliStep { opts: opts, next: i, error: msg };
 }
 
-// Consume argv[i], a `--name`, `--name=V` or `--name V` token.
 function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
   let a: string = argv[i];
   let body: str = slice_unchecked(a, 2, a.len());
   let name: str = body;
-  // The value joins `opts`, which outlives this token, so it is copied.
   let inline_val: string = "";
   let inline: boolean = false;
   if let Some(eq) = body.index_of("=") {
@@ -183,10 +119,6 @@ function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i3
   }
 }
 
-// Consume argv[i], a short cluster `-abc`. Each character is a
-// single-char short flag: a boolean flag continues the cluster, and a
-// valued option consumes the rest of the token as its value (`-n5`)
-// or, when it's the last character, the next argv token (`-n 5`).
 function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
   let a: string = argv[i];
   let cluster: str = slice_unchecked(a, 1, a.len());
@@ -198,7 +130,6 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
           opts = opts.insert(f.long, "true");
           j = j + 1;
         } else {
-          // A valued option consumes the token tail.
           let glued: str = slice_unchecked(cluster, j + 1, cluster.len());
           if (glued.len() > 0) {
             return CliStep { opts: opts.insert(f.long, glued + ""), next: i + 1, error: "" };
@@ -217,8 +148,6 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
   return CliStep { opts: opts, next: i + 1, error: "" };
 }
 
-// Parse argv[start..] against `s`, starting from the options a parent
-// spec has already collected.
 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs {
   let positionals: string[] = [];
   let i: i32 = start;
@@ -229,11 +158,9 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       positionals = positionals.append(a);
       i = i + 1;
     } else if (a == "--") {
-      // Everything after `--` is a positional, even `-`-prefixed.
       no_more = true;
       i = i + 1;
     } else if (a.starts_with("--") || a.len() >= 2 && a[0] == 45) {
-      // A lone "-" falls through to positionals (stdin convention).
       let st: CliStep = __cli_long(s, opts, argv, i);
       if (!a.starts_with("--")) {
         st = __cli_cluster(s, opts, argv, i);
@@ -244,8 +171,6 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       opts = st.opts;
       i = st.next;
     } else if (s.commands.len() > 0 && positionals.len() == 0) {
-      // The first operand of a spec with commands names one, and
-      // that spec parses the rest on top of the flags seen so far.
       match (__cli_find_command(s, a)) {
         Some(sub) => {
           let r: CliArgs = __cli_parse(sub, argv, i + 1, opts);
@@ -266,33 +191,23 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
   return CliArgs { opts: opts, positionals: positionals, command: "", error: "" };
 }
 
-// `.parse(argv)` — parse `argv` (argv[0] is the program name and is
-// skipped) against this spec. On the first malformed token the
-// result carries a non-empty `error`; otherwise `opts` / operands /
-// `command` are populated.
 pub function (s: CliSpec) parse(argv: string[]): CliArgs {
   let opts: Map[string, string] = map_new(8);
   return __cli_parse(s, argv, 1, opts);
 }
 
-// `.is_error()` — true when parsing failed.
 pub function (a: CliArgs) is_error(): boolean {
   return a.error.len() > 0;
 }
 
-// `.error_text()` — the failure message, or "" on success.
 pub function (a: CliArgs) error_text(): string {
   return a.error;
 }
 
-// `.value(name)` — the value of a valued option by its long name,
-// or None if it wasn't set.
 pub function (a: CliArgs) value(name: string): Option[string] {
   return a.opts.get(name);
 }
 
-// `.value_or(name, fallback)` — the value of a valued option, or
-// `fallback` when it wasn't set.
 pub function (a: CliArgs) value_or(name: string, fallback: string): string {
   match (a.opts.get(name)) {
     Some(v) => {
@@ -304,18 +219,14 @@ pub function (a: CliArgs) value_or(name: string, fallback: string): string {
   }
 }
 
-// `.is_set(name)` — true if the flag (bool or valued) appeared,
-// queried by its long name.
 pub function (a: CliArgs) is_set(name: string): boolean {
   return a.opts.contains(name);
 }
 
-// `.operands()` — the positional arguments in order.
 pub function (a: CliArgs) operands(): string[] {
   return a.positionals;
 }
 
-// `.operand(idx)` — the positional at `idx`, or None if out of range.
 pub function (a: CliArgs) operand(idx: i32): Option[string] {
   if (idx < 0 || idx >= a.positionals.len()) {
     return None;
@@ -323,8 +234,6 @@ pub function (a: CliArgs) operand(idx: i32): Option[string] {
   return Some(a.positionals[idx]);
 }
 
-// `.subcommand()` — the name of the subcommand that ran, or None
-// when the spec has none or argv named none.
 pub function (a: CliArgs) subcommand(): Option[string] {
   if (a.command.len() == 0) {
     return None;
@@ -332,8 +241,6 @@ pub function (a: CliArgs) subcommand(): Option[string] {
   return Some(a.command);
 }
 
-// The aligned flag list shared by the usage text and each command's
-// section of it.
 function __cli_usage_flags(flags: CliFlag[], indent: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -358,9 +265,6 @@ function __cli_usage_flags(flags: CliFlag[], indent: string): string {
   return out;
 }
 
-// `.usage()` — a formatted help string: a usage line, the optional
-// description, an aligned list of the declared flags, and the
-// subcommands with their descriptions.
 pub function (s: CliSpec) usage(): string {
   let shape: string = " [options] [args]\n";
   if (s.commands.len() > 0) {
@@ -388,25 +292,6 @@ pub function (s: CliSpec) usage(): string {
   return out;
 }
 
-// ============================================================
-// Man page (roff) output.
-//
-// The same spec `.usage()` and `.completion()` read, rendered as a
-// section-N troff man page. A tool writes `spec.manpage("1")` to
-// `name.1` (or ships it) so `man name` documents the interface the
-// CliSpec already describes — one source, no drift.
-// ============================================================
-// Escape a user string for roff text. Two vectors, both of which would
-// let help or about text inject a formatting request into the page:
-//
-//   - a lone backslash introduces a roff escape sequence, so double
-//     every one (`replace` returns the receiver unchanged when there is
-//     none — the identity-return fast path #8409 fixed for a fresh arg);
-//   - a `.` or `'` as the FIRST character of a text line makes the whole
-//     line a roff CONTROL line, not text. Every escaped value can land
-//     at column 0 (right after a section's newline), so a leading
-//     control character is neutralised with the zero-width
-//     dummy-character escape `\&`, keeping `./build` literal text.
 function __cli_roff(s: string): string {
   let out: string = s.replace("\\", "\\\\");
   if (out.len() > 0 && (out[0] as i32 == 46 || out[0] as i32 == 39)) {
@@ -415,9 +300,6 @@ function __cli_roff(s: string): string {
   return out;
 }
 
-// Render the OPTIONS section: one `.TP` tagged paragraph per flag — the
-// tag is the bold dash spelling (`\-s`, `\-\-long`) plus an italic
-// `<value>` for a valued option, the body its help.
 function __cli_man_flags(flags: CliFlag[]): string {
   let out: string = "";
   let i: i32 = 0;
@@ -441,9 +323,6 @@ function __cli_man_flags(flags: CliFlag[]): string {
   return out;
 }
 
-// `.manpage(section)` — a section-`section` man page in roff. `section`
-// is the numeric string a man page carries in its `.TH` header and its
-// filename suffix (`"1"` for a user command, `"8"` for an admin tool).
 pub function (s: CliSpec) manpage(section: string): string {
   let out: string = ".TH \"" + __cli_roff(s.name) + "\" \"" + __cli_roff(section) + "\"\n";
   out = out + ".SH NAME\n" + __cli_roff(s.name);
@@ -477,35 +356,18 @@ pub function (s: CliSpec) manpage(section: string): string {
   return out;
 }
 
-// ============================================================
-// Shell completions.
-//
-// One spec, three shells. Each script is self-contained and is meant
-// to be written to the shell's completion directory (or `eval`ed /
-// `source`d) by the tool's own `--completion SHELL` handling. Help
-// text is quoted for the shell it lands in, so a description holding
-// a quote or a bracket cannot break the script.
-// ============================================================
-// A shell-safe identifier for the program: bash and zsh function
-// names cannot carry `-` or `.`.
 function __cli_ident(name: string): string {
   return name.replace("-", "_").replace(".", "_");
 }
 
-// POSIX single-quoting, for bash and fish descriptions.
 function __cli_sq(s: string): string {
   return "'" + s.replace("'", "'\\''") + "'";
 }
 
-// zsh `_arguments` spec text sits in single quotes and treats `]`
-// and `:` as structure; both are escaped, and a `'` is closed and
-// reopened around a double-quoted one.
 function __cli_zsh_desc(s: string): string {
   return s.replace("\\", "\\\\").replace("]", "\\]").replace(":", "\\:").replace("'", "'\"'\"'");
 }
 
-// Every completable word of a spec: its long and short flags, then
-// its subcommand names — the bash `compgen -W` word list.
 function __cli_words(s: CliSpec): string {
   let out: string = "";
   let i: i32 = 0;
@@ -532,8 +394,6 @@ function __cli_completion_bash(s: CliSpec): string {
   let out: string = fn + "() {\n";
   out = out + "    local cur=\"${COMP_WORDS[COMP_CWORD]}\" words=" + __cli_sq(__cli_words(s)) + "\n";
   if (s.commands.len() > 0) {
-    // The word list narrows to a subcommand's once its name has
-    // appeared earlier on the line.
     out = out + "    local i\n";
     out = out + "    for ((i = 1; i < COMP_CWORD; i++)); do\n";
     out = out + "        case \"${COMP_WORDS[i]}\" in\n";
@@ -548,13 +408,10 @@ function __cli_completion_bash(s: CliSpec): string {
   }
   out = out + "    COMPREPLY=($(compgen -W \"$words\" -- \"$cur\"))\n";
   out = out + "}\n";
-  // `-o default` falls back to filenames when no word matches, so
-  // operands and option values still complete as paths.
   out = out + "complete -o default -F " + fn + " " + s.name + "\n";
   return out;
 }
 
-// One spec's flags as zsh `_arguments` entries, one per line.
 function __cli_zsh_opts(s: CliSpec, indent: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -611,8 +468,6 @@ function __cli_completion_zsh(s: CliSpec): string {
   return out;
 }
 
-// One spec's flags as fish `complete` lines, each under `cond`
-// (a `-n` condition, or "" for none).
 function __cli_fish_flags(prog: string, s: CliSpec, cond: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -653,8 +508,6 @@ function __cli_completion_fish(s: CliSpec): string {
   return out;
 }
 
-// `.completion(shell)` — a completion script for "bash", "zsh" or
-// "fish", or None for any other shell name.
 pub function (s: CliSpec) completion(shell: string): Option[string] {
   if (shell == "bash") {
     return Some(__cli_completion_bash(s));
@@ -668,42 +521,6 @@ pub function (s: CliSpec) completion(shell: string): Option[string] {
   return None;
 }
 
-// ============================================================
-// ANSI colour helpers (#4385 — "zero hits for ansi|tty").
-//
-// The colourisers wrap text in an SGR escape sequence and reset,
-// but only when colour is enabled: writing to anything that is not
-// a terminal degrades to plain text automatically, so piping a
-// coloured CLI tool into a file or `less` needs no per-call guard
-// at the use site. FORCE_COLOR overrides that, NO_COLOR
-// (no-color.org) and TERM=dumb force it off; see color_enabled
-// below for the precedence.
-// ============================================================
-// `color_enabled()` — the gate every coloriser consults.
-//
-// Four signals, in precedence order:
-//
-//   1. FORCE_COLOR (any value)  -> colour ON, whatever else says.
-//      The escape hatch for CI logs and for piping into a pager that
-//      renders SGR; without it there would be no way to ask for colour
-//      on a non-terminal, which clause 4 otherwise refuses.
-//   2. NO_COLOR (any value)     -> colour OFF (no-color.org).
-//   3. TERM=dumb                -> colour OFF. Emacs shell-mode, `M-x
-//      compile`, and plenty of CI runners set it precisely to say "I
-//      display text, not escapes", and a tool that ignores it prints
-//      `ESC[31m` at the reader.
-//   4. stdout is not a terminal -> colour OFF. The primary signal, and
-//      the only one that needs no cooperation from the user: a redirect
-//      to a file, a pipe into a pager, or a target with no terminal at
-//      all all land here.
-//
-// FORCE_COLOR wins over NO_COLOR because it is the more specific, more
-// deliberate signal: NO_COLOR is usually exported once in a profile,
-// FORCE_COLOR is set for a particular run.
-//
-// The tty test comes last among the four rather than first because the
-// three environment variables are overrides — a user who exported one
-// has said something more specific than the stream shape has.
 pub function color_enabled(): boolean {
   match (env("FORCE_COLOR")) {
     Some(_) => {
@@ -728,8 +545,6 @@ pub function color_enabled(): boolean {
   return isatty(1);
 }
 
-// Wrap `s` in the SGR `code` and a reset, or return it unchanged
-// when colour is disabled.
 function __cli_sgr(code: string, s: string): string {
   if (!color_enabled()) {
     return s;
@@ -737,7 +552,6 @@ function __cli_sgr(code: string, s: string): string {
   return "\x1b[" + code + "m" + s + "\x1b[0m";
 }
 
-// Foreground colours.
 pub function red(s: string): string {
   return __cli_sgr("31", s);
 }
@@ -762,7 +576,6 @@ pub function cyan(s: string): string {
   return __cli_sgr("36", s);
 }
 
-// Text attributes.
 pub function bold(s: string): string {
   return __cli_sgr("1", s);
 }
@@ -771,23 +584,10 @@ pub function dim(s: string): string {
   return __cli_sgr("2", s);
 }
 
-// ============================================================
-// Usage spec (KDL) output.
-//
-// The same spec, as a `usage` document (https://usage.jdx.dev): one KDL
-// node per flag, argument and command, which `usage generate` turns into
-// completions, man pages and Markdown for any shell, and which a packslip
-// can ship as the tool's CLI spec. A tool writes `spec.usage_spec()` to
-// `name.usage.kdl`.
-// ============================================================
-// Quote a user string as a KDL string: backslash and double quote escaped,
-// a newline written as its escape so one node stays on one line.
 function __cli_kdl(s: string): string {
   return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\"";
 }
 
-// One `flag` node: the dash spellings, a `<long>` placeholder for a valued
-// option, and the help.
 function __cli_kdl_flag(f: CliFlag): string {
   let names: string = "";
   if (f.short.len() > 0) {
@@ -804,8 +604,6 @@ function __cli_kdl_flag(f: CliFlag): string {
   return out;
 }
 
-// The nodes inside a spec: its flags, then its operands or its commands,
-// each command a `cmd` block holding its own.
 function __cli_kdl_body(s: CliSpec, indent: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -829,7 +627,6 @@ function __cli_kdl_body(s: CliSpec, indent: string): string {
   return out;
 }
 
-// `.usage_spec()` — the spec as a KDL `usage` document.
 pub function (s: CliSpec) usage_spec(): string {
   let out: string = "bin " + __cli_kdl(s.name) + "\n";
   if (s.about.len() > 0) {

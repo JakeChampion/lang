@@ -11,14 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternStringParamCustomProvider is the self-host P4c
-// composite-parameter gate (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm
-// backend lowers a `string` extern parameter to the canonical (ptr, len) — a
-// self-host string is a pointer to [len][bytes], so the wrapper forwards
-// (ptr+4, load(ptr)). Tested via the custom-provider harness (no non-resource
-// WASI 0.2 string-param target): a `byte-len: func(s: string) -> u32` provider
-// sums the bytes of "hello" (532). Mirror of the Go
-// TestExternStringParamCustomProvider.
 func TestSelfHostExternStringParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -37,7 +29,6 @@ func TestSelfHostExternStringParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 byte-len. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -69,7 +60,6 @@ func TestSelfHostExternStringParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom sink iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -98,7 +88,6 @@ func TestSelfHostExternStringParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the string-param program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

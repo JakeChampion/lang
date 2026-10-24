@@ -1,10 +1,3 @@
-// false.fern — GNU-compatible `false`.
-//
-// The mirror of true.fern: exits 1, ignores its arguments, and answers
-// `--help` / `--version` as the sole argument. Both of those write to
-// STDOUT and still exit 1 — false(1) exits with its own status from
-// every path, which is why the help text is not on stderr the way a
-// usage error would be.
 import "std/string";
 import "./lib/gnu";
 

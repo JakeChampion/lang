@@ -43,7 +43,6 @@ function bindings(row: ssaprepare.Emitted): void {
 
 function contexts(row: ssaprepare.Emitted): void {
   let c = row.context;
-  // The same actual release lowering changes selection when debug changes.
   stale(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...c, rc_free_debug: !c.rc_free_debug } });
   if (row.release_entry.unique_drop != "") {
     stale(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...c, reg_entries: irtables.sig_reg_of([]) } });
@@ -69,8 +68,6 @@ function selectors(r: irtables.LowerResult): void {
     select(irtables.LowerResult { ...r, name: "ordinary" }, arch, false, [drop], false, "");
     let n = r.ops.len();
     select(irtables.LowerResult { ...r, ops: r.ops.with(n - 4, ir.op_call_direct("different", 1)) }, arch, false, [drop], false, "");
-    // The counted suffix alone permits a kept/shared entry, but a changed
-    // prefix must disable the special count-one Drop shortcut.
     select(irtables.LowerResult { ...r, ops: util.append_all([ir.op_const_i32(0), ir.op_drop()], r.ops) }, arch, false, [drop], true, "");
   }
   let dotted = "__sem_drop_Token.value";

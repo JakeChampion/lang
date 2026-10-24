@@ -4,16 +4,6 @@ import (
 	"testing"
 )
 
-// Large-block size-class integrity. The large tier rounds a >2048 B request up
-// to 3 significant bits and bins it by that rounded capacity; alloc and free
-// must compute the SAME class, and a popped block must be at least as large as
-// the request. A wrong class (e.g. an off-by-one in the bsr/clz mantissa math)
-// would hand back a too-small block and corrupt the next array's contents — so
-// this builds arrays of many sizes spanning the large tier and its class
-// boundaries, in a reuse-heavy loop, and verifies every element. It returns 0
-// iff every read matches what was written.
-//
-// Guards both the x86-64 (bsr) and arm64 (clz) large-tier class arithmetic.
 const largeClassIntegritySrc = `
 function build(n: i32): i32[] {
     let a: i32[] = [];

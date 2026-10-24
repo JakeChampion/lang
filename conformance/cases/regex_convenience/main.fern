@@ -1,21 +1,21 @@
-// std/regex (#2680) convenience entry points across the native backends:
-// regex_full_match (whole-string), regex_count (number of matches), and
-// regex_replace (first match only). Each check sets a bit; all eight hold
-// -> 255.
+
+
+
+
 import "std/regex";
 
 function main(): i32 {
   let r: i32 = 0;
-  if (regex.regex_full_match("a|aa", "aa")) {  // shorter alt exists; full still true
+  if (regex.regex_full_match("a|aa", "aa")) {
     r = r + 1;
   }
   if (regex.regex_full_match("[0-9]+", "12345")) {
     r = r + 2;
   }
-  if (!regex.regex_full_match("[0-9]+", "12a45")) {  // not whole-string
+  if (!regex.regex_full_match("[0-9]+", "12a45")) {
     r = r + 4;
   }
-  if (!regex.regex_full_match("cat", "category")) {  // prefix only
+  if (!regex.regex_full_match("cat", "category")) {
     r = r + 8;
   }
 
@@ -26,10 +26,10 @@ function main(): i32 {
     r = r + 32;
   }
 
-  if (require_regex_text(regex.regex_replace("a", "banana", "X")) == "bXnana") {  // first only
+  if (require_regex_text(regex.regex_replace("a", "banana", "X")) == "bXnana") {
     r = r + 64;
   }
-  if (require_regex_text(regex.regex_replace("z", "banana", "X")) == "banana") {  // no match → unchanged
+  if (require_regex_text(regex.regex_replace("z", "banana", "X")) == "banana") {
     r = r + 128;
   }
   return r;

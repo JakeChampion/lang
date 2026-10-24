@@ -2,28 +2,6 @@ package e2e
 
 import "testing"
 
-// strTypeArgsProgram pins the `str` erasure reaching ast.Call.TypeArgs —
-// the third checker-stamped type slot on an expression, and the one the
-// ArrayLit / Index / SliceExpr fix (#5695, the sibling
-// str_array_erasure_test.go) did not cover.
-//
-// The checker rewrites the container builtins into calls that carry the
-// container's element / key / value types on TypeArgs:
-// `__method_Array_push` for `xs.append(v)`, the `__method_Map_*` family
-// for the map methods. The lowering reads those as RUNTIME-SHAPE
-// classifiers — which grow helper retains the copied elements, which
-// width the tail store uses, whether a value needs boxing across the Map
-// helper boundary — and every one of those tests is a `.(ast.StringType)`
-// type assertion. An unerased `str` falls through all of them, so the
-// element is stored without the retain an owned `string` element gets and
-// the container is left holding pointers whose storage is freed
-// underneath it.
-//
-// Same use-after-free as the literal case, reached through `append` and
-// through `Map.insert` instead of through a literal. Both were segfaults
-// on arm64 and quiet passes on x86-64, so this runs on every backend.
-//
-// Exits 0 on success, a distinct code per failed step.
 const strTypeArgsProgram = `
 import "core/map";
 

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// Cell reads must retain the runtime scalar representation as well as its
-// bits. Unsigned division and f32 arithmetic distinguish values whose bits
-// happen to survive storage under the wrong interpreter tag.
 func TestSelfHostScalarCellValues(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	reference := buildLangBinForInterp(t)

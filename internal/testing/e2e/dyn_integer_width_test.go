@@ -1,7 +1,3 @@
-// An integer behind `dyn Trait` dispatches to the impl for its own type
-// (#10194). The interpreter's integers carry no width, so before the coercion
-// site recorded the type it called the i32 impl for every integer: silently,
-// where an i32 impl existed, and with "no impl" where none did.
 package e2e
 
 import "testing"
@@ -11,8 +7,6 @@ var dynIntegerWidthCases = []struct {
 	src      string
 	expected int
 }{
-	// Both impls exist: the i64 one must win, with no diagnostic to say
-	// otherwise.
 	{"i64-beside-i32", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return 100; } }
 impl Show for i64 { function show(self: Self): i32 { return 200; } }
@@ -21,8 +15,6 @@ function main(): i32 {
     let a: dyn Show = n;
     return a.show() - 150;
 }`, 50},
-	// Each width in one array, through a parameter, with the receiver's own
-	// value reaching the i64 impl.
 	{"every-width", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return 1; } }
 impl Show for i64 { function show(self: Self): i32 { return (self as i32) * 10; } }

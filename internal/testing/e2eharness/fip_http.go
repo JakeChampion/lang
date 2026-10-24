@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// The HTTP/1.1 codec of #9853 (experiment 3) in its two memory disciplines:
-// the request parse and response serialise through `std/http` as a handler
-// uses them today, and the same parse and serialise as a strict `fip` data
-// plane over owned buffers (`examples/fip/http_{baseline,fip}.fern`).
-// `docs/FIP-HTTP-CODEC.md` reports what they measure; CheckFipHttpReports
-// pins the claims that would make that report false.
-
-// FipHttpReport is the JSON line each variant prints.
 type FipHttpReport struct {
 	Variant          string `json:"variant"`
 	Requests         int64  `json:"requests"`
@@ -31,7 +23,6 @@ type FipHttpReport struct {
 	P999             int64  `json:"round_p999_ns"`
 }
 
-// ParseFipHttpReport reads the report `variant` printed.
 func ParseFipHttpReport(t *testing.T, variant string, out []byte) FipHttpReport {
 	t.Helper()
 	var got FipHttpReport
@@ -47,23 +38,8 @@ func ParseFipHttpReport(t *testing.T, variant string, out []byte) FipHttpReport 
 	return got
 }
 
-// CheckFipHttpReports pins the experiment's claims:
-//
-//  1. The `fip` variant allocates NOTHING in steady state, over 128,000
-//     requests, and the baseline does allocate. Without the second half the
-//     comparison is between two things that are the same.
-//  2. Both agree, request for request AND byte for byte: the same served and
-//     refused counts and the same digest over every response byte, so a
-//     variant that framed a different answer is caught rather than reporting
-//     a throughput win for doing less work.
-//  3. Every refusal class fires in the steady state. The workload corrupts
-//     every 17th request, cycling through all six, so the validation ladder
-//     is exercised by the thing being measured rather than by a separate
-//     test.
-//  4. Both report a tail, so the latency half cannot silently go missing.
 func CheckFipHttpReports(t *testing.T, baseline, fip FipHttpReport) {
 	t.Helper()
-	// 1. The disciplined variant allocates nothing; the control allocates.
 	if fip.SteadyAllocs != 0 {
 		t.Errorf("fip: %d allocations over %d requests, want 0 — the steady state is no longer allocation-free",
 			fip.SteadyAllocs, fip.Requests)
@@ -72,7 +48,6 @@ func CheckFipHttpReports(t *testing.T, baseline, fip FipHttpReport) {
 		t.Errorf("baseline allocated nothing: the experiment has lost its control, and the fip variant's zero means nothing")
 	}
 
-	// 2. Both agree, request for request and byte for byte.
 	if fip.Requests != baseline.Requests || fip.Ok != baseline.Ok || fip.Rejected != baseline.Rejected {
 		t.Errorf("fip disagrees with the baseline:\n  fip: %+v\n  baseline: %+v", fip, baseline)
 	}
@@ -81,7 +56,6 @@ func CheckFipHttpReports(t *testing.T, baseline, fip FipHttpReport) {
 			fip.Digest, fip.ResponseBytes, baseline.Digest, baseline.ResponseBytes)
 	}
 
-	// 3. Every refusal class fires, and together they are every refusal.
 	classes := []struct {
 		name string
 		n    int64
@@ -101,7 +75,6 @@ func CheckFipHttpReports(t *testing.T, baseline, fip FipHttpReport) {
 		t.Errorf("the six classes sum to %d refusals, the report says %d refused and %d served", sum, fip.Rejected, fip.Ok)
 	}
 
-	// 4. Both report a tail, so the latency half cannot silently go missing.
 	for _, r := range []FipHttpReport{baseline, fip} {
 		if r.P50 <= 0 || r.P999 < r.P50 {
 			t.Errorf("%s: round p50 %d ns, p99.9 %d ns — the latency report is not a report", r.Variant, r.P50, r.P999)

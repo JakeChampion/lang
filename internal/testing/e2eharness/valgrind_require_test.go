@@ -1,3 +1,4 @@
+// CI-DARK: FERN_VALGRIND_VERDICT_CHILD — The test uses this flag to identify its child process.
 package e2eharness
 
 import (
@@ -7,11 +8,6 @@ import (
 	"testing"
 )
 
-// Both of Valgrind's verdicts, observed in a subprocess because each ends the
-// test it is given; PATH is emptied so the lookup misses.
-//
-// CI-DARK: FERN_VALGRIND_VERDICT_CHILD — this names the re-exec'd child of this
-// test, not a lane's coverage knob.
 func TestValgrindMissingVerdict(t *testing.T) {
 	if os.Getenv("FERN_VALGRIND_VERDICT_CHILD") == "1" {
 		Valgrind(t)

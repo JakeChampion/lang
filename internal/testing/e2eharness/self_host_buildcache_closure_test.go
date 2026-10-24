@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// The build cache keys a driver binary on the contents of its transitive local
-// import closure. Two properties have to hold or the cache hands back a stale
-// binary — and a stale self-host driver is the worst failure this repo has,
-// because a fix looks applied while every test still exercises the old
-// compiler.
-//
-//  1. Every file the driver compiles is IN the key. A local import that does
-//     not resolve must not be skipped in silence, which would drop it.
-//  2. Changing any file in the closure changes the key.
-
 func writeClosure(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -28,10 +18,6 @@ func writeClosure(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// TestImportClosureCoversTransitiveLocalImports — the closure is the entry plus
-// everything it reaches, not just its direct imports, and it excludes local
-// `.fern` files nobody imports (the invariance two tests sharing a cache entry
-// rely on).
 func TestImportClosureCoversTransitiveLocalImports(t *testing.T) {
 	dir := writeClosure(t, map[string]string{
 		"entry.fern":     "import \"std/io\";\nimport \"./mid\";\nfunction main(): i32 { return 0; }\n",
@@ -54,9 +40,6 @@ func TestImportClosureCoversTransitiveLocalImports(t *testing.T) {
 	}
 }
 
-// TestImportClosureFollowsParentImports — an entry in a subdirectory that
-// imports `../sibling` (the multicall dispatcher's shape) keeps the sibling in
-// its key.
 func TestImportClosureFollowsParentImports(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "multicall")
@@ -88,9 +71,6 @@ func TestImportClosureFollowsParentImports(t *testing.T) {
 	}
 }
 
-// TestImportClosureKeyChangesWhenAnyClosureFileChanges — the property the cache
-// exists to have. Asserted at the LEAF, the file furthest from the entry, since
-// a key that only tracked direct imports would still pass at depth 1.
 func TestImportClosureKeyChangesWhenAnyClosureFileChanges(t *testing.T) {
 	files := map[string]string{
 		"entry.fern": "import \"./mid\";\nfunction main(): i32 { return 0; }\n",
@@ -112,10 +92,6 @@ func TestImportClosureKeyChangesWhenAnyClosureFileChanges(t *testing.T) {
 	}
 }
 
-// TestImportClosureIgnoresUnrelatedFileChanges — the other half: a `.fern` the
-// entry does not import must NOT move the key, or two tests that stage
-// different extra drivers alongside the same stock one stop sharing a cache
-// entry and each pays a cold multi-GB build.
 func TestImportClosureIgnoresUnrelatedFileChanges(t *testing.T) {
 	dir := writeClosure(t, map[string]string{
 		"entry.fern": "function main(): i32 { return 0; }\n",
@@ -133,10 +109,6 @@ func TestImportClosureIgnoresUnrelatedFileChanges(t *testing.T) {
 	}
 }
 
-// TestImportClosureExternalImportClassification — `std/…` and `core/…` are
-// deliberately outside the key; `./x` and a bare `x` are local and must
-// resolve. Leaving that distinction implicit in "the path happens not to
-// exist" makes a MISSING local source look exactly like a stdlib import.
 func TestImportClosureExternalImportClassification(t *testing.T) {
 	for _, c := range []struct {
 		imp      string
@@ -156,9 +128,6 @@ func TestImportClosureExternalImportClassification(t *testing.T) {
 	}
 }
 
-// TestImportClosureFailsOnMissingLocalImport — the hazard itself. A local
-// import naming a file the project dir does not have must be a hard error, not
-// a silent omission from the cache key.
 func TestImportClosureFailsOnMissingLocalImport(t *testing.T) {
 	dir := writeClosure(t, map[string]string{
 		"entry.fern": "import \"./gone\";\nfunction main(): i32 { return 0; }\n",
@@ -174,9 +143,6 @@ func TestImportClosureFailsOnMissingLocalImport(t *testing.T) {
 	}
 }
 
-// TestImportClosureAllowsMissingExternalImport — the flip side: `std/io` never
-// resolves under a project dir and must stay a no-op, or every real driver
-// fails to hash.
 func TestImportClosureAllowsMissingExternalImport(t *testing.T) {
 	dir := writeClosure(t, map[string]string{
 		"entry.fern": "import \"std/io\";\nimport \"core/int\";\nfunction main(): i32 { return 0; }\n",
@@ -187,8 +153,6 @@ func TestImportClosureAllowsMissingExternalImport(t *testing.T) {
 	}
 }
 
-// Import layout cannot hide a compiler dependency from the binary cache key.
-// In particular, several valid imports can occupy a single physical line.
 func TestImportClosureTracksSameLineImports(t *testing.T) {
 	dir := writeClosure(t, map[string]string{
 		"entry.fern": `import "std/io"; import "./first"; import "./second" as second;

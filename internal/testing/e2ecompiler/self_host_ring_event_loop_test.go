@@ -62,7 +62,6 @@ function main():i32 {
 	}
 }
 
-// Dictionary and slice queues deliberately do not reproduce the ring or table layout.
 func TestSelfHostRingEventLoop(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ entries, capacity int }{{1, 1}, {3, 3}, {7, 17}} {
@@ -79,7 +78,7 @@ func TestSelfHostRingEventLoop(t *testing.T) {
 				if i < 60 {
 					action = i % 3
 					if action != 0 {
-						action = 7 // Drain input while deliberately retaining output.
+						action = 7
 					}
 					event = [3]int64{int64((i/12)%4 + 1), int64(i / 3 % 9), int64(i)}
 				}

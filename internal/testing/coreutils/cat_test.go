@@ -22,17 +22,6 @@ func init() {
 	registerCorpus("cat", catCases)
 }
 
-// catCases is cat(1)'s corpus.
-//
-// The copy is the easy half. What the corpus has to pin is the line
-// rewriter: `%6d\t` numbering that widens past a million and skips
-// blank lines under -b, squeezing that remembers a blank line across a
-// file boundary, an unterminated file continuing its line into the
-// next, and the -v spelling of every byte class. Then the two fstat
-// checks — a closed stdout is refused before anything is read, and a
-// regular file that is its own output is refused with bytes still to
-// copy — which are reachable only through the harness's file-backed
-// stdin and stdout.
 func catCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	ab := catFile(t, dir, "ab", "a\nb\n")
@@ -43,12 +32,7 @@ func catCases(t *testing.T) []invocation {
 	startsBlank := catFile(t, dir, "startsblank", "\n\nb\n")
 	oneBlank := catFile(t, dir, "oneblank", "\n")
 	empty := catFile(t, dir, "e0", "")
-	// Every byte class -v distinguishes: printable, tab, a control,
-	// DEL, then the same four with the high bit set, plus CR and ESC.
 	ctrl := catFile(t, dir, "ctrl", "x\ty\x01\x7f\x80\x89\x8a\x9f\xa0\xfe\xff\r\x1b\n\x00\n")
-	// -E shows a CR that ends a line as ^M, and only that CR: across a
-	// file boundary and a read boundary it waits on the next byte, and one
-	// that ends the input is copied as it is.
 	crlf := catFile(t, dir, "crlf", "a\r\nb\r\r\nc\rd\n\r\n")
 	crEnd := catFile(t, dir, "crend", "a\r")
 	nlStart := catFile(t, dir, "nlstart", "\nb\n")
@@ -62,19 +46,13 @@ func catCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	// Past one read block, so the line state crosses a chunk boundary
-	// in every mode, and past a million lines for the number width.
 	big := catFile(t, dir, "big", strings.Repeat("line\n\n", 30000))
 	million := catFile(t, dir, "million", strings.Repeat("\n", 1000002))
-	// Numbered twice, 1 to 300: each file crosses a hundred on its own,
-	// and the count continues across the boundary.
 	hund := catFile(t, dir, "hund", strings.Repeat("x\n", 150))
-	// Its own output: the harness appends the run to it.
 	self := catFile(t, dir, "self", "s\n")
 	selfEmpty := catFile(t, dir, "selfempty", "")
 
 	return []invocation{
-		// The copy.
 		{name: "one file", args: []string{ab}},
 		{name: "two files", args: []string{ab, nonl}},
 		{name: "no operand reads stdin", stdin: "p\nq\n"},
@@ -87,7 +65,6 @@ func catCases(t *testing.T) []invocation {
 		{name: "large stdin", stdin: strings.Repeat("0123456789\n", 40000)},
 		{name: "u is ignored", args: []string{"-u", ab}},
 
-		// -n / -b.
 		{name: "number", args: []string{"-n", ab}},
 		{name: "number long", args: []string{"--number", ab}},
 		{name: "number blanks", args: []string{"-n", blanks}},
@@ -108,7 +85,6 @@ func catCases(t *testing.T) []invocation {
 		{name: "nonblank a large file", args: []string{"-b", big}},
 		{name: "number stdin", args: []string{"-n"}, stdin: "p\n\nq"},
 
-		// -s.
 		{name: "squeeze", args: []string{"-s", blanks}},
 		{name: "squeeze long", args: []string{"--squeeze-blank", blanks}},
 		{name: "squeeze leading blanks", args: []string{"-s", leading}},
@@ -122,7 +98,6 @@ func catCases(t *testing.T) []invocation {
 		{name: "squeeze only blanks", args: []string{"-s"}, stdin: "\n\n\n"},
 		{name: "squeeze with an unterminated blank", args: []string{"-s", endsBlank, nonl}},
 
-		// -E / -T / -v and the combinations.
 		{name: "show ends", args: []string{"-E", ctrl}},
 		{name: "show ends long", args: []string{"--show-ends", nonl}},
 		{name: "show tabs", args: []string{"-T", ctrl}},
@@ -156,7 +131,6 @@ func catCases(t *testing.T) []invocation {
 		{name: "a high tab under v", args: []string{"-v"}, stdin: "\x89\n"},
 		{name: "a high newline under v", args: []string{"-v"}, stdin: "\x8a\n"},
 
-		// Operands and their diagnostics.
 		{name: "empty operand", args: []string{""}},
 		{name: "missing file", args: []string{missing}},
 		{name: "missing then present", args: []string{missing, ab}},
@@ -176,8 +150,6 @@ func catCases(t *testing.T) []invocation {
 		{name: "regular file on stdin", stdinPath: ab},
 		{name: "regular file on stdin with numbers", args: []string{"-n"}, stdinPath: nonl},
 
-		// Its own output. With bytes still to read the copy is refused;
-		// an empty input has nothing to loop on and is not.
 		{name: "input file is output file", args: []string{self}, stdoutPath: self},
 		{name: "input file is output file among others", args: []string{ab, self, ab}, stdoutPath: self},
 		{name: "stdin is the output file", args: []string{"-"}, stdinPath: self, stdoutPath: self},
@@ -185,7 +157,6 @@ func catCases(t *testing.T) []invocation {
 		{name: "another file appended to one", args: []string{ab}, stdoutPath: self},
 		{name: "input is output with numbers", args: []string{"-n", self}, stdoutPath: self},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x", ab}},
 		{name: "invalid short option in a cluster", args: []string{"-nx", ab}},
 		{name: "unrecognized long option", args: []string{"--foo", ab}},
@@ -207,9 +178,6 @@ func catCases(t *testing.T) []invocation {
 		{name: "posix operand then option", args: []string{ab, "-n"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-n", ab}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures. A closed stdout is found by the fstat before
-		// any input is opened, so even a missing file or an empty input
-		// reports it; a full one is met by the first write.
 		{name: "stdout closed", args: []string{ab}, stdout: stdoutClosed},
 		{name: "stdout closed with numbers", args: []string{"-n", ab}, stdout: stdoutClosed},
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
@@ -239,8 +207,6 @@ func TestCatHelpVersion(t *testing.T) {
 	requireVersion(t, "cat", []string{"--vers"}, 0)
 }
 
-// A /proc file has size 0 and its content is made on read; an older kernel's
-// copy_file_range answers 0 for it, which must not end the copy.
 func TestCatProcFile(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/proc is Linux's")

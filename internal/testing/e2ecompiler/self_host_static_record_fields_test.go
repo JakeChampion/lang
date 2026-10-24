@@ -8,13 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A record whose fields are constants is one static box even when a field is
-// itself a static box, an empty array, a constant array, a None or another
-// such record, so `HeaderMap { names: [], values: [] }` costs nothing to build.
-// The box behaves as one built per call: an update copies it, an append to a
-// field grows a box of its own, and nested reads see the nested constants. A
-// Some is not a record, so one around a constant record stays an Option box.
-// x86-64's leakcheck stays balanced.
 func TestSelfHostRecordOfStaticBoxesIsStatic(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "static_record.fern")

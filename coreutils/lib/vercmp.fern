@@ -1,15 +1,3 @@
-// coreutils/lib/vercmp.fern — gnulib's filevercmp, the comparison
-// `sort -V` and `ls -v` both order by. It is NOT strcmp with the digit
-// runs read as numbers: `aB` and `aa` land BEFORE `a b` under it,
-// because the non-alphanumeric bytes carry their own order.
-//
-// Three layers: the leading-dot special cases, a file suffix matching
-// `(\.[A-Za-z~][A-Za-z0-9~]*)*$` cut off the end, and dpkg's version
-// comparison over what is left — digits compared as numbers, `~`
-// sorting before everything including the end of a string.
-//
-// The range form is the primary one because `sort` holds every line in
-// one buffer and never cuts a string out of it to compare.
 import "std/string";
 import "./gnu";
 import "./byte_input";
@@ -18,10 +6,6 @@ function is_alnum_b(c: i32): boolean {
   return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122;
 }
 
-// `compare(a, b)` — the two strings whole, for a caller that has them
-// as strings already. It does NOT concatenate them: `ls -v` calls this
-// once per comparison of a sort, and the join was an allocation and a
-// copy of both names per call.
 pub function compare(a: string, b: string): i32 {
   return compare_texts(a, 0, a.len(), b, 0, b.len());
 }
@@ -85,18 +69,6 @@ function verrevcmp[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0: i32,
   return 0;
 }
 
-// Where the file suffix starts, or `end` when there is none: the
-// longest tail matching `(\.[A-Za-z~][A-Za-z0-9~]*)*` that is not the
-// whole of a non-empty string.
-//
-// Asking forward, per position, whether everything from here to the end
-// is a chain of segments re-walks the tail — and `ls -v` asks it twice
-// per COMPARISON, which is a third of that sort's cost. A single
-// backward pass over the segments was written and MEASURED, and it lost
-// by 20% on a listing of names with one dot each: the forward scan
-// stops at the first dot where the backward one walks the whole prefix,
-// and the names a sort sees look like that. The cost is the per-byte
-// call, not the shape.
 function file_prefixlen[T: byte_input.Input](text: T, from: i32, end: i32): i32 {
   let i: i32 = from;
   while (i < end) {
@@ -110,8 +82,6 @@ function file_prefixlen[T: byte_input.Input](text: T, from: i32, end: i32): i32 
   return end;
 }
 
-// Whether [at, end) is one or more `\.[A-Za-z~][A-Za-z0-9~]*` segments
-// and nothing else.
 function suffix_runs_to_end[T: byte_input.Input](text: T, at: i32, end: i32): boolean {
   let i: i32 = at;
   while (i < end) {
@@ -142,7 +112,6 @@ function is_alpha_b(c: i32): boolean {
   return c >= 65 && c <= 90 || c >= 97 && c <= 122;
 }
 
-// Compare the half-open ranges [a0, a1) and [b0, b1).
 function compare_inputs[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0: i32, b1: i32): i32 {
   if (a0 == a1) {
     if (b0 == b1) {
@@ -192,7 +161,6 @@ function compare_inputs[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0:
   return verrevcmp(ta, a0, a1, tb, b0, b1);
 }
 
-// Both entry points use the same version ordering without copying ranges.
 pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   return compare_inputs(ta, a0, a1, tb, b0, b1);
 }
@@ -201,8 +169,6 @@ pub function compare_bytes(ta: [u8], a0: i32, a1: i32, tb: [u8], b0: i32, b1: i3
   return compare_inputs(byte_input.Bytes { data: ta }, a0, a1, byte_input.Bytes { data: tb }, b0, b1);
 }
 
-// Callers retaining whole buffers can borrow the arrays directly, avoiding
-// view descriptors for each comparison in a sort.
 pub function compare_arrays(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   return compare_inputs(byte_input.Array { data: ta }, a0, a1, byte_input.Array { data: tb }, b0, b1);
 }

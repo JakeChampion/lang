@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// readFileLargeSrc reads a 1.5 MB file whose byte k is 48 + k % 61 and checks
-// every byte. The two strings freed first leave a 64 KiB-class and a 1 MiB-class
-// block for the reader's first buffer to reuse, with the live sentinel `b`
-// right after them: a reader that writes past its own block overwrites `b`
-// or its own input. The preview-1 reader once grew its buffer by allocating
-// the next block and assuming it was adjacent, and the preview-2 one read into
-// a fixed 1 MiB buffer.
 const readFileLargeSrc = `import "std/string";
 
 function main(): i32 {
@@ -38,9 +31,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmReadFileLarge runs readFileLargeSrc as a preview-1 command
-// core and as a preview-2 component. Exit 1 is a wrong length, 2 a wrong
-// byte, 4 an overwritten sentinel, 9 an Err.
 func TestSelfHostWasmReadFileLarge(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

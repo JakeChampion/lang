@@ -1,40 +1,16 @@
-// std/io_buffered — in-memory buffered writers and readers.
-// Tier-C Rec §13 Phase 1 (docs/STDLIB-DESIGN-RESEARCH.md
-// Rec §5).
-//
-// BytesWriter accumulates bytes in memory. Its write_string and write_bytes
-// methods return an updated BytesWriter. The fd-backed Writer instead has
-// write(string) and write_bytes([u8]), which return Result[void, IoError].
-//
-// Build a byte buffer without a host write for each piece:
-//
-//   let w: BytesWriter = bytes_writer_new();
-//   w = w.write_string("header\n");
-//   w = w.write_bytes([0 as u8, 255 as u8]);
-//   let bytes: u8[] = w.into_bytes();
-//
-// `BufWriter` wraps an fd-backed Writer with a flush threshold so
-// per-write syscall overhead drops to per-block, and `LineReader`
-// wraps a Reader and yields one line per call without buffering
-// the whole input. Both are below.
-//
+// This module provides buffered readers and writers in memory.
+
 import "core/mem";
 import "std/io_outcome";
 import "std/string";
 import "std/utf8" as utf8;
 
-// `bytes_writer_new()` — fresh empty BytesWriter.
 pub function bytes_writer_new(): BytesWriter {
   let empty: u8[] = [];
   return BytesWriter { data: empty };
 }
 
-// `(w: BytesWriter).write_string(s)` — append a string's
-// bytes. Rebind the returned writer to keep the appended bytes.
 pub function (w: BytesWriter) write_string(s: string): BytesWriter {
-  // A VIEW, not a copy: the loop below only reads bs, and the
-  // view never outlives s (a live parameter), so `bytes()` here
-  // would allocate and copy the whole string for nothing.
   let bs: [u8] = s.as_bytes();
   let data: u8[] = w.data;
   let i: i32 = 0;
@@ -45,8 +21,6 @@ pub function (w: BytesWriter) write_string(s: string): BytesWriter {
   return BytesWriter { ...w, data: data };
 }
 
-// `(w: BytesWriter).write_bytes(bs)` — append a byte slice
-// directly (no string round-trip).
 pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
   let data: u8[] = w.data;
   let i: i32 = 0;
@@ -57,68 +31,33 @@ pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
   return BytesWriter { ...w, data: data };
 }
 
-// `(w: BytesWriter).write_byte(b)` — single-byte write.
 pub function (w: BytesWriter) write_byte(b: i32): BytesWriter {
   return BytesWriter { ...w, data: w.data.append(b as u8) };
 }
 
-// `(w: BytesWriter).len()` — total bytes written so far.
 pub function (w: BytesWriter) len(): i32 {
   return w.data.len();
 }
 
-// `(w: BytesWriter).is_empty()` — convenience over
-// `.len() == 0`.
 pub function (w: BytesWriter) is_empty(): boolean {
   return w.data.len() == 0;
 }
 
-// `(w: BytesWriter).into_bytes()` — return the accumulated
-// buffer as a `u8[]`. Consumer-side; the BytesWriter remains
-// usable but callers typically discard it after this.
 pub function (w: BytesWriter) into_bytes(): u8[] {
   return w.data;
 }
 
-// `(w: BytesWriter).into_string()` validates the complete buffer as UTF-8.
-// Empty and valid buffers yield Some(text); malformed bytes yield None.
-// Conversion leaves the writer unchanged. Use into_bytes for arbitrary bytes.
 pub function (w: BytesWriter) into_string(): Option[string] {
   return utf8.from_bytes(w.data);
 }
 
-// `(w: BytesWriter).reset(): BytesWriter` — return a writer with
-// an empty buffer. Functional (immutable data structures): rebind
-// the result — `w = w.reset()`.
 pub function (w: BytesWriter) reset(): BytesWriter {
   let empty: u8[] = [];
   return BytesWriter { ...w, data: empty };
 }
 
-// ---- BufWriter -------------------------------------------------------------
-//
-// A Writer with a buffer in front of it. Writes accumulate in `buf`
-// and reach the fd in one write(2) per `cap` bytes; a write that is
-// itself at least `cap` bytes goes straight through rather than being
-// copied twice. A write failure is sticky: `err` holds the first
-// IoError, later writes are dropped, and the caller reads it back
-// with `.error()` — the C stdio contract, where a failed flush is
-// found at the next write or at close.
-//
-// The buffer is a capacity-carrying builder (#8773), so a write is a
-// compare, a memcpy and a length store rather than a call that re-derives
-// the buffer's capacity from the allocator's size class every time.
-//
-// A builder is a HANDLE, which changes what copying a BufWriter means: two
-// copies share one buffer rather than each owning one. The functional
-// rebind this API is written in (`b = b.write_string(s)`) never keeps the
-// old value, so that is invisible to callers -- but a caller that
-// deliberately kept two copies to get two buffers would now get one.
-// The handle is freed when the last copy dies, so a writer over stdout
-// that is flushed and never closed still gives its buffer back.
 pub struct BufWriter { w: Writer, buf: BufBlock, cap: i32, err: Option[IoError] }
 
-// The builder behind a BufWriter, freed with the last writer holding it.
 pub struct BufBlock { h: usize }
 
 impl mem.Drop for BufBlock {
@@ -127,16 +66,11 @@ impl mem.Drop for BufBlock {
   }
 }
 
-// `buf_writer_new(w, cap)` — buffer `w` with a `cap`-byte threshold.
 pub function buf_writer_new(w: Writer, cap: i32): BufWriter {
   return BufWriter { w: w, buf: BufBlock { h: buf_new(cap) }, cap: cap, err: None };
 }
 
-// `(b).write_string(s)` — append `s`, flushing when the threshold is
-// reached. Rebind: `b = b.write_string(s);`.
 pub function (b: BufWriter) write_string(s: string): BufWriter {
-  // A write at least as big as the threshold goes straight to the fd when
-  // nothing is buffered, rather than being copied in and straight back out.
   if (buf_len(b.buf.h) == 0 && s.len() >= b.cap) {
     return __buf_writer_put(b, s);
   }
@@ -147,7 +81,6 @@ pub function (b: BufWriter) write_string(s: string): BufWriter {
   return b.flush();
 }
 
-// Append raw bytes, bypassing the buffer for a full block when it is empty.
 pub function (b: BufWriter) write_bytes(bytes: u8[]): BufWriter {
   if (buf_len(b.buf.h) == 0 && bytes.len() >= b.cap) {
     return __buf_writer_put_bytes(b, bytes);
@@ -156,7 +89,6 @@ pub function (b: BufWriter) write_bytes(bytes: u8[]): BufWriter {
   return b.settle();
 }
 
-// Append a clamped raw range without allocating an intermediate array.
 pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): BufWriter {
   if (lo <= 0 && hi >= bytes.len()) {
     return b.write_bytes(bytes);
@@ -165,28 +97,21 @@ pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): Bu
   return b.settle();
 }
 
-// Translate raw bytes through table[c], keeping bytes past the table's end.
 pub function (b: BufWriter) write_bytes_mapped(bytes: u8[], table: u8[]): BufWriter {
   buf_push_bytes_mapped(b.buf.h, bytes, table);
   return b.settle();
 }
 
-// Drop raw bytes with a nonzero table entry; missing entries keep the byte.
 pub function (b: BufWriter) write_bytes_filtered(bytes: u8[], drop: u8[]): BufWriter {
   buf_push_bytes_filtered(b.buf.h, bytes, drop);
   return b.settle();
 }
 
-// Expand raw bytes through complete eight-entry records at table[c * 8].
-// The first entry is a length clamped to seven; incomplete records keep c.
 pub function (b: BufWriter) write_bytes_expanded(bytes: u8[], table: u8[]): BufWriter {
   buf_push_bytes_expanded(b.buf.h, bytes, table);
   return b.settle();
 }
 
-// `(b).write_range(s, lo, hi)` — append `s[lo:hi]` without building the
-// substring first. The shape every line-oriented utility's output loop is
-// made of, and the reason the builder carries a range push at all.
 pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): BufWriter {
   buf_push_range(b.buf.h, s, lo, hi);
   if (buf_len(b.buf.h) < b.cap) {
@@ -195,9 +120,6 @@ pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): BufWriter 
   return b.flush();
 }
 
-// `(b).write_mapped(s, table)` — append each byte `c` of `s` as
-// `table[c]`, or unchanged when `c` is past the table's end: a byte
-// translation with no intermediate string.
 pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
   buf_push_mapped(b.buf.h, s, table);
   if (buf_len(b.buf.h) < b.cap) {
@@ -206,9 +128,6 @@ pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
   return b.flush();
 }
 
-// `(b).write_filtered(s, drop)` — append each byte `c` of `s` whose
-// `drop[c]` is zero, or that is past the table's end: a byte deletion with
-// no intermediate string.
 pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
   buf_push_filtered(b.buf.h, s, drop);
   if (buf_len(b.buf.h) < b.cap) {
@@ -217,10 +136,6 @@ pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
   return b.flush();
 }
 
-// `(b).write_expanded(s, table)` — append each byte `c` of `s` as the
-// record at `table[c * 8]`: a length byte (above 7 counts as 7), then the
-// bytes. A byte whose record is not wholly inside the table is appended
-// unchanged.
 pub function (b: BufWriter) write_expanded(s: string, table: u8[]): BufWriter {
   buf_push_expanded(b.buf.h, s, table);
   if (buf_len(b.buf.h) < b.cap) {
@@ -229,7 +144,6 @@ pub function (b: BufWriter) write_expanded(s: string, table: u8[]): BufWriter {
   return b.flush();
 }
 
-// `(b).write_byte(byte)` — append one byte.
 pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   buf_push_byte(b.buf.h, byte);
   if (buf_len(b.buf.h) < b.cap) {
@@ -238,7 +152,6 @@ pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   return b.flush();
 }
 
-// `(b).write_u64(n)` — append `n` in decimal.
 pub function (b: BufWriter) write_u64(n: u64): BufWriter {
   buf_push_u64(b.buf.h, n);
   if (buf_len(b.buf.h) < b.cap) {
@@ -247,7 +160,6 @@ pub function (b: BufWriter) write_u64(n: u64): BufWriter {
   return b.flush();
 }
 
-// `(b).write_i64(n)` — `write_u64` with a sign.
 pub function (b: BufWriter) write_i64(n: i64): BufWriter {
   if (n < 0 as i64) {
     return b.write_string("-").write_u64(0 as u64 - n as u64);
@@ -255,11 +167,6 @@ pub function (b: BufWriter) write_i64(n: i64): BufWriter {
   return b.write_u64(n as u64);
 }
 
-// `buf_push_u64(h, n)` — `n` in decimal, pushed straight into a builder:
-// `write_u64` for a loop that holds the `.handle()`. Two digits go in per
-// push from a table of the hundred pairs, so one division buys two digits
-// and a number under a hundred costs no division at all. The pushes go
-// out most significant pair first, through the recursion.
 pub function buf_push_u64(h: usize, n: u64): void {
   if (n < 100 as u64) {
     if (n < 10 as u64) {
@@ -276,7 +183,6 @@ pub function buf_push_u64(h: usize, n: u64): void {
   buf_push_range(h, digit_pairs(), r, r + 2);
 }
 
-// `buf_push_i64(h, n)` — `buf_push_u64` with a sign.
 pub function buf_push_i64(h: usize, n: i64): void {
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
@@ -286,8 +192,6 @@ pub function buf_push_i64(h: usize, n: i64): void {
   buf_push_u64(h, n as u64);
 }
 
-// `buf_u64_len(n)` — how many bytes `buf_push_u64` writes for `n`, for a
-// caller that pads the number to a field.
 pub function buf_u64_len(n: u64): i32 {
   let d: i32 = 1;
   let p: u64 = 10 as u64;
@@ -301,28 +205,18 @@ pub function buf_u64_len(n: u64): i32 {
   return d;
 }
 
-// "00" through "99", each at twice its value: a static literal, never
-// allocated.
 pub function digit_pairs(): string {
   return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
 }
 
-// `(b).flush()` — write whatever is buffered. Rebind the result.
 pub function (b: BufWriter) flush(): BufWriter {
   if (buf_len(b.buf.h) == 0) {
     return b;
   }
-  // The take rewinds the builder, so a sticky error still discards the
-  // bytes the fd has already refused, as it did before.
   return __buf_writer_put_bytes(b, buf_take_bytes(b.buf.h));
 }
 
-// `(b).close()` — flush, then close the Writer: fclose. The error is the
-// close's when that fails, else the flush's; pending bytes behind a
-// sticky error count as a failed write, as the fd already refused them.
 pub function (b: BufWriter) close(): Result[void, IoError] {
-  // Read the pending count BEFORE the flush: the builder is shared between
-  // `b` and `flushed`, so afterwards both report zero.
   let pending: i32 = buf_len(b.buf.h);
   let flushed: BufWriter = b.flush();
   if let Some(e) = b.w.close().failure() {
@@ -336,26 +230,14 @@ pub function (b: BufWriter) close(): Result[void, IoError] {
   return Ok(());
 }
 
-// `(b).error()` — the first write failure, if any.
 pub function (b: BufWriter) error(): Option[IoError] {
   return b.err;
 }
 
-// `(b).handle()` — the builder behind the writer. For an output loop that
-// pushes several pieces per line: pushing the handle costs a compare and a
-// memcpy, where going through `write_string` adds a method call, a struct
-// rebuild and a threshold check to each piece. The caller owns asking
-// `.buffered() >= cap` and flushing; the handle stays valid across a flush,
-// which takes the bytes and re-arms the same builder, for as long as a copy
-// of the writer is alive.
 pub function (b: BufWriter) handle(): usize {
   return b.buf.h;
 }
 
-// `(b).settle()` — flush if what has been pushed since the last flush has
-// reached the threshold. What a loop that pushed straight into `.handle()`
-// must do at the end of each line, in place of the check `write_string` does
-// for itself.
 pub function (b: BufWriter) settle(): BufWriter {
   if (buf_len(b.buf.h) < b.cap) {
     return b;
@@ -363,12 +245,10 @@ pub function (b: BufWriter) settle(): BufWriter {
   return b.flush();
 }
 
-// `(b).buffered()` — bytes held back so far.
 pub function (b: BufWriter) buffered(): i32 {
   return buf_len(b.buf.h);
 }
 
-// One write(2) of `s`, recording the first failure.
 function __buf_writer_put(b: BufWriter, s: string): BufWriter {
   match (b.err) {
     Some(_) => {
@@ -382,8 +262,6 @@ function __buf_writer_put(b: BufWriter, s: string): BufWriter {
   return b;
 }
 
-// Buffered content can end inside a scalar or contain arbitrary mapped bytes.
-// Keep it in the byte domain and retain the same first-error behavior.
 function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
   match (b.err) {
     Some(_) => {
@@ -397,11 +275,6 @@ function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
   return b;
 }
 
-// ---- ByteLineReader --------------------------------------------------------
-//
-// Raw records include their terminating byte. The reader remains borrowed:
-// callers close it. Results own their bytes and survive later cursor reads.
-// A read failure is sticky; a partial final record is returned before None.
 pub struct ByteLineReader { r: Reader, chunk: u8[], pos: i32, eof: boolean, term: i32, chunk_size: i32, err: Option[IoError] }
 
 pub function byte_line_reader_new(r: Reader, term: i32, chunk_size: i32): ByteLineReader {
@@ -432,8 +305,6 @@ function byte_line_end(chunk: u8[], pos: i32, term: i32): i32 {
 
 pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineReader) {
   let s: ByteLineReader = lr;
-  // Allocate a builder only when a record spans chunks. Repeatedly copying
-  // the accumulated prefix would make long records quadratic.
   let b: usize = 0 as usize;
   while (true) {
     let end: i32 = byte_line_end(s.chunk, s.pos, s.term);
@@ -474,8 +345,6 @@ pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineRead
   return (None, s);
 }
 
-// `(lr).skip_line()` — next_line_bytes without the line: true when there
-// was one to pass, and nothing is allocated for it.
 pub function (lr: ByteLineReader) skip_line(): (boolean, ByteLineReader) {
   let s: ByteLineReader = lr;
   let partial: boolean = false;
@@ -502,7 +371,6 @@ pub function (lr: ByteLineReader) skip_line(): (boolean, ByteLineReader) {
   return (false, s);
 }
 
-// Switch from records to raw chunks without discarding the unread suffix.
 pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineReader) {
   let s: ByteLineReader = lr;
   if (s.pos < s.chunk.len()) {
@@ -525,23 +393,12 @@ pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineRea
   }
 }
 
-// ---- LineReader ------------------------------------------------------------
-//
-// Validated text records, including their terminating byte when present.
-// Physical reads stay in bytes, so a scalar may span any number of reads.
-// Invalid text ends input with InvalidUtf8("") in the sticky error channel.
-// An earlier I/O error takes precedence. Use ByteLineReader for raw records.
-//
-// Cursor idiom (docs/CURSOR-IDIOM.md): `let (line, lr) = lr.next_line();`.
 pub struct LineReader { raw: ByteLineReader }
 
-// `line_reader_new(r, term, chunk_size)` — read lines from `r`
-// ending in byte `term`.
 pub function line_reader_new(r: Reader, term: i32, chunk_size: i32): LineReader {
   return LineReader { raw: byte_line_reader_new(r, term, chunk_size) };
 }
 
-// `(lr).error()` — the read failure that ended the input, if one did.
 pub function (lr: LineReader) error(): Option[IoError] {
   return lr.raw.error();
 }
@@ -557,7 +414,6 @@ function invalid_text_reader(raw: ByteLineReader): LineReader {
   return LineReader { raw: ByteLineReader { ...raw, chunk: [], pos: 0, eof: true, err: err } };
 }
 
-// Validate a whole record, after joining any scalar split across reads.
 pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
   let (line, raw) = lr.raw.next_line_bytes();
   match (line) {
@@ -591,8 +447,6 @@ function text_scalar_width(lead: i32): i32 {
   return 0;
 }
 
-// Continuation bytes have already been located by text_chunk_end. These
-// tighter second-byte bounds rule out overlong, surrogate and large scalars.
 function text_second_byte_valid(lead: i32, second: i32): boolean {
   match (lead) {
     224 => {
@@ -614,8 +468,6 @@ function text_second_byte_valid(lead: i32, second: i32): boolean {
   return true;
 }
 
-// Locate a possibly incomplete final scalar. This only chooses where to
-// split a chunk; from_bytes still validates every returned prefix.
 function text_chunk_end(bytes: u8[]): i32 {
   let n: i32 = bytes.len();
   if (n == 0) {
@@ -639,8 +491,6 @@ function text_chunk_end(bytes: u8[]): i32 {
   return start;
 }
 
-// Return complete scalars and retain an incomplete suffix for the next
-// call. With a small chunk_size, one scalar can require several reads.
 pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
   let (first, raw) = lr.raw.next_chunk_bytes();
   let bytes: u8[] = [];

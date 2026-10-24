@@ -9,7 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// A float cast converts a generic call's result. Its arguments keep their types.
 func TestFloatCastDoesNotRetargetGenericCall(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string

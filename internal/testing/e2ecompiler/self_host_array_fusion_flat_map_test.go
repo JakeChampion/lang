@@ -6,12 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// flat_map fusion (#6795): a flat_map opens an inner loop over the array its
-// function returns, and the later stages and the sink run inside it. Each
-// chain is compared with a hand-written loop inside the program, with fusion
-// on and off, and the leak checker confirms every array the element function
-// returned is freed, including when a take stops the pipeline inside the
-// inner loop.
 const arrayFusionFlatMapSrc = `import "std/array";
 
 function build(n: i32): i64[] {
@@ -181,8 +175,6 @@ function main(): i32 {
 }
 `
 
-// Exit 10..35 names the case that disagreed with its loop and the size it
-// disagreed at: (case * 5 + size index) - 40. 99 is a refcount underflow.
 func TestSelfHostArrayFusionFlatMap(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {

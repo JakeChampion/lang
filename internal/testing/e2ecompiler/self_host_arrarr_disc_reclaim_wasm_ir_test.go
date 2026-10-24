@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrDiscReclaimWasmIR runs the shared discarded nested-array reclaim
-// cases on WASI, exercising the typed release pipeline.
 func TestSelfHostArrArrDiscReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrArrDiscReclaimCases {

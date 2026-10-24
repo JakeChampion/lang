@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// The builder's appends over every string shape: each range of every string
-// up to 20 bytes, so both the inline form (7 bytes or fewer, held in the
-// word itself) and the heap form are read at every offset, and whole-string
-// pushes of both. The builder starts at one byte of capacity, so most pushes
-// grow it first. buf_push_byte and buf_push_u64 run between them.
 func runBufPushRangeCorpus(t *testing.T, run func(t *testing.T, src string) string) {
 	t.Helper()
 	const alphabet = "abcdefghijklmnopqrst"
@@ -37,7 +32,6 @@ func runBufPushRangeCorpus(t *testing.T, run func(t *testing.T, src string) stri
     return 0;
 }
 `)
-	// Runners differ in whether they keep the final newline.
 	out = strings.TrimRight(out, "\n")
 	wantS := strings.TrimRight(want.String(), "\n")
 	if out != wantS {

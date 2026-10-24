@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The shipped fern reads every flag the way Go's flag package does: one dash
-// or two, a value as `-flag VALUE` or `-flag=VALUE`, and a boolean that also
-// takes `=true` or `=false`. Each spelling below must behave exactly as its
-// canonical form: the same stdout, stderr and exit status.
 func TestSelfHostShippedFernFlagSpellings(t *testing.T) {
 	fern := e2eharness.ShippedFern(t)
 	env := []string{"FERN_CACHE_DIR=" + filepath.Join(t.TempDir(), "cache")}
@@ -77,7 +73,6 @@ func TestSelfHostShippedFernFlagSpellings(t *testing.T) {
 	}
 }
 
-// cliRun is what one run of the CLI did.
 type cliRun struct {
 	stdout, stderr string
 	code           int

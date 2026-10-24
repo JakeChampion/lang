@@ -11,22 +11,9 @@ import (
 	"github.com/jakechampion/lang/internal/testing/corpus"
 )
 
-// Every `-target NAME` a user-facing file tells someone to type must be a
-// target the CLI accepts. #6572 renamed the whole vocabulary with a sed and
-// applied it twice in places, so `examples/wasm/README.md` shipped
-// `-target wasm32-wasi32-wasi32-wasi-http` and `examples/cli/README.md`
-// shipped `-target x86-64-linux-linux` — commands that cannot run, in the
-// files a newcomer copies from first.
-//
-// The scope is deliberately the surfaces that address a USER: the READMEs,
-// the diagnostic explanations, and the header comments of runnable examples.
-// `docs/` is excluded because it is a working record where a line may
-// legitimately quote a target that no longer exists.
 func TestUserFacingTargetNamesResolve(t *testing.T) {
 	root := repoRoot(t)
 
-	// `-target NAME` or `-target=NAME`, not preceded by another dash
-	// (`clang --target=aarch64-linux-gnu` is a different compiler's flag).
 	re := regexp.MustCompile(`(^|[^-\w])-target[= ]+([A-Za-z0-9][A-Za-z0-9._-]*)`)
 
 	var checked int
@@ -47,8 +34,6 @@ func TestUserFacingTargetNamesResolve(t *testing.T) {
 			}
 		}
 	}
-	// A rename that moved the mentions elsewhere would otherwise leave this
-	// test green over nothing.
 	if checked < 10 {
 		t.Errorf("only %d -target mentions found; the scan lost its corpus", checked)
 	}

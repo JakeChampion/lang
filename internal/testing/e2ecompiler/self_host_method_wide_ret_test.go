@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostMethodWideReturn pins that an i64 returned from a method on a
-// PRIMITIVE receiver — i32, string, f64, f32, u32, boolean — keeps all 64 bits,
-// as it does from a free function or a struct method. Truncated to 32 bits:
-//
-//	function (n: f64) m(): i64 { return f64_bits(n / 3.0); }
-//	a.m()   ->  0x00000000_55555555   (want 0x3FD5555555555555)
-//
-// Each case compares the method's result against the identical computation in a
-// free function, so it asserts agreement rather than a hard-coded constant —
-// the truncation is what differs, and a both-paths-wrong regression would still
-// be caught by the interpreter rows in the differential suites.
 func TestSelfHostMethodWideReturn(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -53,9 +42,6 @@ func TestSelfHostMethodWideReturn(t *testing.T) {
 			 function main(): i32 { let s: string = "x"; if (s.m() == big()) { return 7; } return 9; }`,
 		},
 		{
-			// The receiver kind that already worked — it resolves through
-			// expr_struct_type, so it guards against a fix that regressed the
-			// struct path while widening the primitive one.
 			"struct-receiver",
 			`struct P { x: i32 }
 			 function (p: P) m(): i64 { return f64_bits(1.0 / 3.0); }

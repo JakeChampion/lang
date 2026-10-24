@@ -12,19 +12,12 @@ import "std/tls/pem";
 import "std/tls/record";
 import "std/tls/verify";
 
-// tests/stdlib/tls_client_test.fern — std/tls/client's session against
-// std/tls/handshake's server: the chain judged against the roots for the
-// name asked for, the CertificateVerify checked, ALPN, close_notify, and a
-// session saved and restored. The certificates are Ed25519, valid from 2020
-// to 2100, made with Python's `cryptography`.
-
 const ROOT: string = "3082011b3081cea003020102020165300506032b657030243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f74302a300506032b6570032100d54207da194977dcf46adbfec2bc2e75b52d5a8a42184fedfdc00024f0e3e8daa3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b657003410049ecb5759f87f254129a83d895dda7f57627948c65bc15a9de6034f727fc203ff87eb86fd535211cba0506d7f6f0d267cf6f55e5e9edd493b9b3122e2beeb408";
 
 const LEAF: string = "3082013d3081f0a003020102020166300506032b657030243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8aa3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b65700341004d3b2dbd279de4c58e998fc45411b30ce83466c697e11a463807a1e4c8a83b5e6b146b49f2eb1b2ffc8d9ec9618e084eb9c71a9c93af3604f984f5e0d2065c08";
 
 const OTHER_ROOT: string = "3082011d3081d0a003020102020167300506032b657030253123302106035504030c1a4665726e20544c5320436c69656e74204f7468657220526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30253123302106035504030c1a4665726e20544c5320436c69656e74204f7468657220526f6f74302a300506032b657003210031debe55d37c722768b137131caa6087080b2e0b60b94bd785d14575cfa498bca3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b6570034100a9d36bd35a8fc8b9f4185019799b57f15117b07297fac4c6ba2ca04dcb0ef2efcd63a0d9dea29154c6ca3073a465948eb35c2420de91445faa250ca4590e610f";
 
-// The identity fixtures are std/tls/server's, under its test root.
 const IDENTITY_ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
 
 const CLIENT_LEAF: string = "308201203081d3a00302010202020301300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b6665726e2d636c69656e74302a300506032b6570032100c6822637c7d310ec57627be00ba259d253749f4aaf644470cffbe53a35f73242a3353033300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302300506032b6570034100161c1f81f20e2ac01097ac7bf062898a3fa631c14e14d69861e37755887101605670ad0a5cafeab706169f96d64df8635f7f88b247d8d524612892d543765a0c";
@@ -33,8 +26,6 @@ const CLIENT_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
   + "MC4CAQAwBQYDK2VwBCIEIFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV\n"
   + "-----END PRIVATE KEY-----\n";
 
-// The wall clock the sessions run at, in Unix milliseconds: inside the test
-// chain's validity (2020-01-01 to 2100-01-01), and the bounds of it.
 const WALL_MS: i64 = 1700000000000;
 
 const NOT_BEFORE_MS: i64 = 1577836800000;
@@ -55,13 +46,10 @@ function leaf_seed(): u8[] {
 
 struct Pair { session: client.Session, server: handshake.Server }
 
-// connect runs a handshake between a session and a server whose chain is
-// the test leaf; `forge` makes the server sign something else.
 function connect(cfg: client.Config, alpn: string[], forge: boolean): Result[Pair, tls.TlsError] {
   return connect_at(cfg, alpn, forge, WALL_MS);
 }
 
-// connect_at is `connect` with the session's wall clock at `now`.
 function connect_at(cfg: client.Config, alpn: string[], forge: boolean, now: i64): Result[Pair, tls.TlsError] {
   let start: client.Step = client.start(cfg, now)?;
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), alpn: alpn };
@@ -153,7 +141,6 @@ function outcome(r: Result[Pair, tls.TlsError]): string {
   return "";
 }
 
-// exchange sends "ping" from the session and "pong" back from the server.
 function exchange(s: client.Session, server: handshake.Server): Result[string, tls.TlsError] {
   let cw: client.Step = s.write("ping".bytes())?;
   let sr: handshake.ServerStep = srv(server.read(cw.output))?;
@@ -190,8 +177,6 @@ function test_trusted(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// server_name is what the ClientHello in a first flight names, "-" for
-// none.
 function server_name(first: client.Step): string {
   match (record.deframe(first.output)) {
     Ok(d) => {
@@ -262,8 +247,6 @@ function test_untrusted(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// refusal_alert is what the server makes of the alert a refused chain
-// sends: sealed under the handshake keys, it reads as bad_certificate.
 function refusal_alert(): Result[string, tls.TlsError] {
   let start: client.Step = client.start(client.config("tls.example", roots(OTHER_ROOT)), WALL_MS)?;
   let sc: handshake.ServerConfig = handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]);
@@ -296,9 +279,6 @@ function refusal_alert(): Result[string, tls.TlsError] {
   return Ok("");
 }
 
-// The server's chain is judged at the time the session is given, not the
-// machine's: a second outside either bound of its validity it is refused,
-// and a second inside either bound it is accepted.
 function test_validity_window(): test.TestOutcome {
   let cfg: client.Config = client.config("tls.example", roots(ROOT));
   if (outcome(connect_at(cfg, [], false, NOT_BEFORE_MS - 1000)) != "the peer's certificate is not trusted: tls verify: certificate 0 is not yet valid") {
@@ -362,7 +342,6 @@ function test_save_restore(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// closes is what each side sees of the other's close_notify.
 function closes(p: Pair): Result[string, tls.TlsError] {
   let sc: handshake.ServerStep = srv(p.server.close())?;
   let seen: client.Step = rd(p.session, sc.output)?;
@@ -393,7 +372,6 @@ function test_close(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// has_resume is whether a server step asks about a ticket.
 function has_resume(events: handshake.Event[]): boolean {
   for e in events {
     match (e) {
@@ -406,8 +384,6 @@ function has_resume(events: handshake.Event[]): boolean {
   return false;
 }
 
-// issued has the server issue a ticket on a connected pair; the ticket as
-// the session keeps it, and the PSK the server derives for it.
 function issued(p: Pair): Result[(client.Ticket, u8[]), tls.TlsError] {
   let t: message.NewSessionTicket = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 99 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
   let st: handshake.ServerStep = srv(p.server.ticket(t))?;
@@ -418,8 +394,6 @@ function issued(p: Pair): Result[(client.Ticket, u8[]), tls.TlsError] {
   return Ok((cr.tickets[0], srv(st.server.resumption_psk([0 as u8]))?));
 }
 
-// connect_resumed drives a session offering its ticket against a server
-// that takes it up with `psk`; a server never asked is a refusal.
 function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, tls.TlsError] {
   let start: client.Step = client.start(cfg, WALL_MS)?;
   let server: handshake.Server = srv(handshake.server_new(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), random_bytes(handshake.server_entropy(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807])))))?;
@@ -436,8 +410,6 @@ function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, tls.TlsErr
   return Ok(Pair { session: c1.session, server: s3.server });
 }
 
-// A ticket the server issued resumes the next session, whose chain is not
-// judged; one issued to another name, or past its lifetime, is not offered.
 function test_resumption(): test.TestOutcome {
   match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
     Ok(p) => {
@@ -487,9 +459,6 @@ function client_shown(events: handshake.Event[]): Option[handshake.Verification]
   return None;
 }
 
-// connect_asked drives a session against a server asking for a client
-// certificate and reports what it was shown: the chain's length and
-// whether the signature verifies under the leaf's key.
 function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
   let start: client.Step = client.start(cfg, WALL_MS)?;
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), request_client_certificate: true };
@@ -544,8 +513,6 @@ function asked_outcome(cfg: client.Config): string {
   return "";
 }
 
-// A session with an identity presents it when asked, signed with its key;
-// one without sends an empty Certificate.
 function test_identity(): test.TestOutcome {
   let id: identity.Identity = identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
   match (identity.from_pem(pem_of(CLIENT_LEAF), CLIENT_PKCS8)) {
@@ -580,7 +547,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

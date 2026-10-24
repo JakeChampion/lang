@@ -3,7 +3,6 @@ import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
 import "std/string";
 
-// Native status bytes are shared; the printed module and case identify failure.
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("array-release instruction controls failed: " + group);

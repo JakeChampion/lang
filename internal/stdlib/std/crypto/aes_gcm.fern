@@ -1,34 +1,7 @@
-// std/crypto/aes_gcm — AES-128-GCM and AES-256-GCM, the AEAD of NIST SP
-// 800-38D with a 12-byte nonce and a 16-byte tag.
-//
-//   let sealed: u8[] = aes_gcm.seal(key, nonce, plaintext, aad)?;
-//   let opened: u8[] = aes_gcm.open(key, nonce, sealed, aad)?;
-//
-// A session under one key prepares it once and seals and opens under
-// that, which spares each message the key expansion:
-//
-//   let k: aes_gcm.Key = aes_gcm.key(key)?;
-//   let sealed: u8[] = k.seal(nonce, plaintext, aad)?;
-//
-// The key is 16 bytes for AES-128 or 32 for AES-256, and the nonce 12.
-// `seal` answers the ciphertext with the 16-byte tag after it; `open`
-// answers the plaintext only once the tag verifies, and a sealed message
-// whose tag does not, or that is shorter than a tag, is `Forged`. A nonce
-// must never be used twice under one key.
-//
-// Constant time: a message is one pass of the `__aes_gcm_seal` or
-// `__aes_gcm_open` kernel over a key `__aes_expand_key` prepared, the AES
-// and carry-less multiply instructions on x86-64 and arm64 and a bitsliced
-// AES on wasm, none of which branches on or indexes memory with a key or
-// data byte. The tag is
-// compared with no early exit and only the verdict is declassified. The
-// valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
+// This module provides AES-128-GCM and AES-256-GCM authenticated encryption.
 
 import "std/crypto/aead";
 
-// Key — a key prepared once for many messages: its round keys and the
-// GHASH key H = E(K, 0). `key` makes one; a session seals and opens
-// under it without expanding the key again.
 pub struct Key { rk: u8[], h: u8[] }
 
 pub function key(bytes: [u8]): Result[Key, aead.AeadError] {
@@ -39,7 +12,6 @@ pub function key(bytes: [u8]): Result[Key, aead.AeadError] {
   return Ok(Key { rk: rk, h: __aes_ctr32(rk, ZERO_BLOCK, ZERO_BLOCK) });
 }
 
-// __prepared is `key` for one message, after the nonce is checked.
 function __prepared(bytes: [u8], nonce: [u8]): Result[Key, aead.AeadError] {
   if (nonce.len() != 12) {
     return Err(aead.NonceLength(nonce.len()));
@@ -49,13 +21,10 @@ function __prepared(bytes: [u8], nonce: [u8]): Result[Key, aead.AeadError] {
 
 const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-// seal(key, nonce, plaintext, aad) — the plaintext encrypted, with the
-// 16-byte tag over it and the additional data `aad` after it.
 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   return __prepared(key, nonce)?.seal(nonce, plaintext, aad);
 }
 
-// (k).seal(nonce, plaintext, aad) — `seal` under a prepared key.
 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   if (nonce.len() != 12) {
     return Err(aead.NonceLength(nonce.len()));
@@ -63,14 +32,10 @@ pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[]
   return Ok(__aes_gcm_seal(k.rk, k.h, nonce, aad, plaintext));
 }
 
-// open(key, nonce, sealed, aad) — the plaintext of a message `seal` made
-// with the same key, nonce and aad, or `Forged`. The tag is checked in
-// constant time, and the plaintext is released only when it verifies.
 pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   return __prepared(key, nonce)?.open(nonce, sealed, aad);
 }
 
-// (k).open(nonce, sealed, aad) — `open` under a prepared key.
 pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   if (nonce.len() != 12) {
     return Err(aead.NonceLength(nonce.len()));
@@ -79,7 +44,6 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
     return Err(aead.Forged);
   }
   let n: i32 = sealed.len() - 16;
-  // The plaintext, then the tag the ciphertext should carry.
   let out: u8[] = __aes_gcm_open(k.rk, k.h, nonce, aad, sealed[0:n]);
   let diff: u8 = 0;
   let i: i32 = 0;
@@ -87,7 +51,6 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
     diff = diff | out[n + i] ^ sealed[n + i];
     i = i + 1;
   }
-  // The verdict is the one secret-derived value allowed to steer a branch.
   let verdict: u8[] = __alloc_u8(1);
   verdict = verdict.with(0, diff);
   __ct_public(verdict);

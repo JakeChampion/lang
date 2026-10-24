@@ -5,59 +5,25 @@ import (
 	"testing"
 )
 
-// strConcatTempIRCases pin the anonymous-temporary reclaim of FRESH string concat
-// OPERANDS on the self-hosted IR path (#2649). In `X + Y`, an operand that is a
-// fresh anonymous temp — a string literal (`s + "x"`: const_str allocs a box) or
-// a fresh producer (a nested concat `a + b + c`, a method, a named producer) — is
-// dead the instant the concat has read it, so it is freed via __fern_str_free
-// right after. A bare-ident / field operand (an ALIAS) is not.
 var strConcatTempIRCases = []struct {
-	name     string
-	src      string
-	expected int
-	// wantReclaims: -1 = at least one __fern_str_free reclaim site must be
-	// emitted; N >= 0 = EXACTLY N sites (the ident-operand case pins 1: the
-	// fresh RESULT temp's release — more, within its scope, would mean an
-	// operand was mis-freed, the over-release this table exists to catch).
+	name         string
+	src          string
+	expected     int
 	wantReclaims int
-	// scope names the ONE user function the count is taken in. "" counts the
-	// whole program; a case that needs a helper function to keep its operands
-	// un-reclaimable names that helper, so main's own literal temps are not
-	// counted against the contract.
-	scope string
+	scope        string
 }{
-	// Two literal operands: both freed after the concat. len 3.
 	{"two-literals",
 		`function main(): i32 { let r: string = "hi" + "!"; return r.len(); }`,
 		3, -1, ""},
-	// Concat chain: the intermediate (a + b) is a fresh temp freed after the outer
-	// concat consumes it; a/b/c (idents) are aliases, not freed as operands. len 6.
 	{"chain-intermediate",
 		`function main(): i32 { let a: string = "x"; let b: string = "yy"; let c: string = "zzz"; let r: string = a + b + c; return r.len(); }`,
 		6, -1, ""},
-	// Memory-safety at scale: a concat-chain temporary in a 5,000,000-iteration loop,
-	// non-escaping — the intermediate, the literal, and the final are all reclaimed,
-	// so the heap stays FLAT (a leak would grow it; a double-free would corrupt the
-	// freelist and crash / return garbage). exit 0.
 	{"chain-churn-safe",
 		`function main(): i32 { let pre: string = "aa"; let suf: string = "bb"; let t: i32 = 0; let k: i32 = 0; while (k < 5000000) { let r: string = pre + "x" + suf; t = (t + r.len()) % 7; k = k + 1; } return 0; }`,
 		0, -1, ""},
-	// Ident operands, result consumed inline by .len(): the fresh RESULT temp
-	// is released (the #4365 value-consuming-receiver reclaim — exactly ONE
-	// __fern_str_free site), while the ALIASED operands a/b are never freed;
-	// the exit code proves the values survive.
-	//
-	// a and b are PARAMETERS, which f never frees, so the count isolates the
-	// result temp. A literal-init local would not do: a concat operand is a
-	// borrow, so `let a = "ab"` used only there earns the ordinary literal-local
-	// reclaim and the count stops isolating anything.
-	// ("ab"+"cde").len() + 2 + 3 = 10.
 	{"ident-operands-result-only",
 		`@noinline function f(a: string, b: string): i32 { return (a + b).len() + a.len() + b.len(); } function main(): i32 { return f("ab", "cde"); }`,
 		10, 1, "f"},
-	// A scalar `.to_string()` operand (`"n" + w.to_string()`) is the builtin
-	// fresh producer — freed after the concat (#4353). Heap-bump flat across
-	// 5000 iterations.
 	{"tostring-operand-churn",
 		`import "std/i32";
 function main(): i32 {
@@ -74,22 +40,14 @@ function main(): i32 {
     return 0;
 }`,
 		0, -1, ""},
-	// Value shape: "n" + 47.to_string() = "n47", len 3 (scalar-receiver
-	// admission via the ident-slot arm; the cast arm gets its own case).
 	{"tostring-operand-len",
 		`import "std/i32";
 function main(): i32 { let w: i32 = 47; return ("n" + w.to_string()).len(); }`,
 		3, -1, ""},
-	// Cast-receiver form `(k as u32).to_string()` — the as_* scalar arm.
 	{"tostring-cast-operand-len",
 		`import "std/i32";
 function main(): i32 { let k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
 		3, -1, ""},
-	// Arithmetic receiver `(i % 8).to_string()` — the scalar proof is inductive
-	// over the operator, so a COMBINATION of scalars admits exactly as a bare
-	// slot does. Before that arm existed the operand leaked one box per
-	// evaluation, which is 32 bytes per iteration of the dominant `"lit" +
-	// (i % 8).to_string()` shape (#6544).
 	{"arith-tostring-operand-churn",
 		`import "std/i32";
 function main(): i32 {
@@ -106,7 +64,6 @@ function main(): i32 {
     return 0;
 }`,
 		0, -1, ""},
-	// Unary negation is the same proof. "v" + "-12" = len 4.
 	{"neg-tostring-operand-churn",
 		`import "std/i32";
 function main(): i32 {
@@ -123,11 +80,6 @@ function main(): i32 {
     return 0;
 }`,
 		0, -1, ""},
-	// NEGATIVE: a `+` whose operands are STRINGS is not an arithmetic
-	// combination of scalars — `("a" + s).to_string()` is the identity, whose
-	// result aliases the concat's box. Freeing it as an operand would release a
-	// box the outer concat still reads; the underflow detector is the direct
-	// witness.
 	{"arith-tostring-string-operand-alias-safe",
 		`import "std/i32";
 function main(): i32 {
@@ -138,11 +90,6 @@ function main(): i32 {
     return 0;
 }`,
 		0, -1, ""},
-	// NEGATIVE: a STRING-receiver `.to_string()` is the identity case — its
-	// result aliases the receiver, so the operand must NOT be freed. The call
-	// is inlined to its receiver, so exactly 1 site: the concat's result (2
-	// would mean the aliased identity result was mis-freed — the over-release
-	// this case exists to catch); the exit code proves s survives the concat.
 	{"tostring-string-recv-alias-safe",
 		`import "std/i32";
 function main(): i32 {
@@ -154,10 +101,6 @@ function main(): i32 {
 		0, 1, ""},
 }
 
-// TestSelfHostStrConcatTempIRX86_64 compiles each case through the self-hosted
-// x86-64 driver, asserting the exit code and that the anonymous-operand reclaim is
-// (or isn't) emitted. The negative uses only ident operands and no other reclaimable
-// string, so a `call __fn___fern_str_free` would be an aliased-operand over-release.
 func TestSelfHostStrConcatTempIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)

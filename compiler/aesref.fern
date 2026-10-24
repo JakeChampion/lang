@@ -1,10 +1,3 @@
-// aesref — the interpreter's AES-GCM kernels, `__aes_expand_key`,
-// `__aes_ctr32`, `__ghash`, `__aes_gcm_seal` and `__aes_gcm_open`, spelled from their definitions: FIPS-197's key
-// schedule and cipher over an S-box computed from the field inverse, and SP
-// 800-38D's bit-at-a-time GHASH. The compiled backends answer to these.
-// Nothing here is constant time; the interpreter is not under the gate.
-
-// gf_mul multiplies in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1.
 function gf_mul(a: i32, b: i32): i32 {
   let p: i32 = 0;
   let x: i32 = a;
@@ -26,7 +19,6 @@ function rotl8(x: i32, k: i32): i32 {
   return (x << k | x >> 8 - k) & 255;
 }
 
-// sbox_byte is FIPS-197 §5.1.1: the inverse (0 for 0), then the affine map.
 function sbox_byte(x: i32): i32 {
   let inv: i32 = 0;
   if (x != 0) {
@@ -50,8 +42,6 @@ function sbox_table(): i32[] {
   return t;
 }
 
-// sub_rot_word is the schedule's temp for word i: SubWord, after RotWord
-// with the round constant when `rot`.
 function sub_rot_word(w: u8[], at: i32, sb: i32[], rot: boolean, rcon: i32): u8[] {
   let out: u8[] = __alloc_u8(4);
   let k: i32 = 0;
@@ -69,7 +59,6 @@ function sub_rot_word(w: u8[], at: i32, sb: i32[], rot: boolean, rcon: i32): u8[
   return out;
 }
 
-// expand_key is FIPS-197 §5.2 for a 16- or 32-byte key, empty for any other.
 pub function expand_key(key: u8[]): u8[] {
   let nk: i32 = key.len() / 4;
   if (key.len() != 16 && key.len() != 32) {
@@ -114,8 +103,6 @@ function word_at(w: u8[], at: i32): u8[] {
   return out;
 }
 
-// cipher_round is one round on the column-major state: SubBytes,
-// ShiftRows, MixColumns unless `last`, then AddRoundKey.
 function cipher_round(st: u8[], rk: u8[], at: i32, sb: i32[], last: boolean): u8[] {
   let out: u8[] = __alloc_u8(16);
   let c: i32 = 0;
@@ -162,7 +149,6 @@ function encrypt_block(rk: u8[], rounds: i32, block: u8[], sb: i32[]): u8[] {
   return st;
 }
 
-// inc32 steps the counter block's last four bytes as a big-endian u32.
 function inc32(cb: u8[]): u8[] {
   let k: i32 = 15;
   let carry: boolean = true;
@@ -175,9 +161,6 @@ function inc32(cb: u8[]): u8[] {
   return cb;
 }
 
-// ctr32 is data exclusive-ored with E(K, counter), E(K, counter + 1), ...;
-// 240 round-key bytes select AES-256, 176 AES-128, and fewer, or a counter
-// under 16 bytes, answer empty.
 pub function ctr32(rk: u8[], counter: u8[], data: u8[]): u8[] {
   let rounds: i32 = 0;
   if (rk.len() >= 240) {
@@ -207,7 +190,6 @@ pub function ctr32(rk: u8[], counter: u8[], data: u8[]): u8[] {
   return out;
 }
 
-// block_at copies up to 16 bytes of src from `at`, zero-padded to 16.
 function block_at(src: u8[], at: i32, n: i32): u8[] {
   let out: u8[] = __alloc_u8(16);
   let k: i32 = 0;
@@ -218,8 +200,6 @@ function block_at(src: u8[], at: i32, n: i32): u8[] {
   return out;
 }
 
-// gf128_mul is SP 800-38D Algorithm 1: x * y, bit 0 the most significant bit
-// of byte 0.
 function gf128_mul(x: u8[], y: u8[]): u8[] {
   let z: u8[] = __alloc_u8(16);
   let v: u8[] = block_at(y, 0, 16);
@@ -238,7 +218,6 @@ function gf128_mul(x: u8[], y: u8[]): u8[] {
   return z;
 }
 
-// shift_right1 is V >> 1 with the reduction by R = 0xe1 || 0^120.
 function shift_right1(v: u8[]): u8[] {
   let lsb: i32 = v[15] as i32 & 1;
   let k: i32 = 15;
@@ -253,8 +232,6 @@ function shift_right1(v: u8[]): u8[] {
   return v;
 }
 
-// ghash is y with each 16-byte block of data folded in under h, a short last
-// block zero-padded; an h or y under 16 bytes answers empty.
 pub function ghash(h: u8[], y: u8[], data: u8[]): u8[] {
   if (h.len() < 16 || y.len() < 16) {
     return __alloc_u8(0);
@@ -274,10 +251,6 @@ pub function ghash(h: u8[], y: u8[], data: u8[]): u8[] {
   return acc;
 }
 
-// gcm is `__aes_gcm_seal` (`seal`) or `__aes_gcm_open` over data: SP
-// 800-38D's GCM with a 96-bit nonce, answering the data run through CTR from
-// J0 + 1 followed by the tag over the ciphertext, data when opening. A short
-// key schedule or h, or a nonce that is not 12 bytes, answers empty.
 pub function gcm(rk: u8[], h: u8[], nonce: u8[], aad: u8[], data: u8[], seal: boolean): u8[] {
   if (rk.len() < 176 || h.len() < 16 || nonce.len() != 12) {
     return __alloc_u8(0);

@@ -1,41 +1,20 @@
 package x86tbl
 
-// NamedOp is one row of the by-name vocabulary: an instruction neither a
-// group, the condition table nor the two-byte SSE table reaches, keyed on
-// the AT&T spelling the self-host dispatches on. The encoding fields are
-// what the family's generated Fern lookup returns for the spelling.
 type NamedOp struct {
-	// ATT is the spelling compiler/x86_native.fern dispatches on.
-	// It is empty for the SSE `movq`, which AT&T spells the same as the
-	// suffixed general-register move and which x86_gas_movq resolves by
-	// operand.
-	ATT string
-	// Suffixed marks a spelling the self-host matches after stripping the
-	// AT&T size suffix (testq → test), the way the group families are
-	// matched. The generated predicate is called with the stripped base.
-	Suffixed bool
-	// Prefix, Op and Ext are the encoding data the family's lookup carries;
-	// each family documents how it packs them. Ext doubles as the width or
-	// size field where a family needs one.
+	ATT             string
+	Suffixed        bool
 	Prefix, Op, Ext byte
-	// ATTProbe is one representative instruction: the test inventory the
-	// self-host assembler must encode to GNU as's bytes.
-	ATTProbe string
+	ATTProbe        string
 }
 
-// NamedFamily groups the rows one encoder arm takes.
 type NamedFamily struct {
-	Name string
-	Doc  string
-	// FernFn is the generated Fern lookup, which a caller tests for >= 0 to
-	// ask whether a mnemonic is in the family. A family without one generates
-	// the predicate PredicateName instead. Pack says what the lookup returns.
+	Name   string
+	Doc    string
 	FernFn string
 	Pack   func(NamedOp) int
 	Ops    []NamedOp
 }
 
-// PredicateName is the generated Fern predicate over the family's spellings.
 func (f NamedFamily) PredicateName() string { return "x86_gas_is_" + f.Name }
 
 func pfxOp(o NamedOp) int    { return int(o.Prefix)*256 + int(o.Op) }
@@ -46,7 +25,6 @@ func extOnly(o NamedOp) int  { return int(o.Ext) }
 func pfxExt(o NamedOp) int   { return int(o.Prefix)*256 + int(o.Ext) }
 func pfxOpExt(o NamedOp) int { return int(o.Prefix)*65536 + int(o.Op)*256 + int(o.Ext) }
 
-// Named is the by-name vocabulary of the self-host x86-64 assembler.
 var Named = []NamedFamily{
 	{Name: "rep", Doc: "the repeat prefixes; Prefix is the byte — rep/repe/repz are one F3, repne/repnz the F2, since the condition only means anything on cmps/scas", FernFn: "x86_gas_rep_pfx", Pack: pfxOnly, Ops: []NamedOp{
 		{ATT: "rep", Prefix: 0xF3, ATTProbe: "rep movsb"},

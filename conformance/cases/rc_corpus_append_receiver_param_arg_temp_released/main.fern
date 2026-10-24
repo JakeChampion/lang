@@ -1,19 +1,19 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7867 class C: a fresh array temp handed to a callee that appends
-// to its parameter and returns the result without reassigning the
-// parameter. The receiver of an append is a counted occurrence —
-// the grow bumps the buffer to rc 2 before handing it back in
-// place, and leaves it at rc 1 beside a fresh copy otherwise — so
-// the position is counted-retain: the caller releases the temp
-// unconditionally after the call and credits the binding of the
-// result. `seed()` is the identity path: its buffer has spare
-// capacity, so the callee grows it in place and returns the very
-// temp the caller then releases — at rc 2, down to the result's
-// one. Nothing was released before (400 allocs / 0 frees on the
-// i32 form), and a pointer-guarded release would have stranded the
-// identity path.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @noinline
 function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }
 @noinline

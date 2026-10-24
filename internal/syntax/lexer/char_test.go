@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// TestCharAndByteLiterals pins the accepted spellings of `'x'` and
-// `b'x'`: the decoded Scalar, the Kind (which is what carries the
-// char-vs-u8 type split downstream), and the Text, which the formatter
-// re-emits verbatim so an author's escape survives `-fmt`.
 func TestCharAndByteLiterals(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -64,9 +60,6 @@ func TestCharAndByteLiterals(t *testing.T) {
 	}
 }
 
-// TestCharAndByteLiteralErrors pins every spelling the lexer refuses.
-// Each is rejected HERE rather than by the parser or checker, so a
-// malformed literal names its own problem.
 func TestCharAndByteLiteralErrors(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -80,8 +73,6 @@ func TestCharAndByteLiteralErrors(t *testing.T) {
 		{`'a`, "unterminated character literal"},
 		{`b'a`, "unterminated byte literal"},
 		{`'`, "unterminated character literal"},
-		// The closing quote is on the NEXT line, so this is an
-		// unterminated literal rather than an over-long one.
 		{"'a\nb'", "unterminated character literal"},
 		{"'\n'", "newline inside character literal"},
 		{`b'é'`, "byte literal must be ASCII"},
@@ -110,8 +101,6 @@ func TestCharAndByteLiteralErrors(t *testing.T) {
 	}
 }
 
-// A `b` that is not the prefix of a byte literal stays an identifier —
-// the two-character lookahead must not swallow an ordinary name.
 func TestBytePrefixOnlyBindsToQuote(t *testing.T) {
 	toks, _, err := Tokenize("b b1 ab bytes")
 	if err != nil {
@@ -124,8 +113,6 @@ func TestBytePrefixOnlyBindsToQuote(t *testing.T) {
 	}
 }
 
-// The scanner runs byte-by-byte, so a multi-byte scalar must still
-// leave line/col pointing at the next token.
 func TestCharLiteralPositions(t *testing.T) {
 	toks, _, err := Tokenize("'😀' x\n'a' y")
 	if err != nil {

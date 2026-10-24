@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Aliased array value: the set value is an Ident
-// (needsRcIncOnAlias → inc-on-set), so the source local's
-// exit dec and the map's drop balance to a single free.
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function main(): i32 {

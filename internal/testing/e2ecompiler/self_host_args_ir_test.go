@@ -8,24 +8,6 @@ import (
 	"testing"
 )
 
-// argsIRCases exercise the `args()` builtin through the IR path on x86-64,
-// arm64, and wasm. args() lowers to a value IR op that calls each backend's
-// __fern_args helper, pushing a fresh string[] — argv[0] first. On the register
-// backends the helper reads the __fern_argc / __fern_argv globals the entry's
-// _start saves from the initial stack; on wasm it reads the wasi args_get
-// import. `argc` returns a.len(); `index` returns a[1].len() (exercising the
-// str-array tracking that makes a[i] read a string box and .len() dispatch to
-// str_len).
-//
-// The last two rows are about the ELEMENTS' rc headers (#8648). An element the
-// program reads out of the array is a value the rc pass incs and decs, so each
-// one must carry the rc word at box-8 like any other heap string: `element-rc`
-// incs argv[2] three times while argv[1] is live and then reads argv[1]'s
-// length — on the headerless back-to-back boxes __fern_args used to build,
-// those incs landed on argv[1]'s length word, which is how every operator of
-// coreutils/expr came out as `+`, NUL, `2`. `element-outlives-array` keeps an
-// element past the drop of the array that owned it, so the per-element release
-// runs on a box whose bytes live outside the arena.
 var argsIRCases = []struct {
 	name, src string
 	extraArgs []string
@@ -92,11 +74,6 @@ func TestSelfHostArgsIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArgsIRWasm runs the same cases through the wasm IR backend under
-// wasmtime, which supplies argv (argv[0] is the program name). wasm_ir emits
-// `call $__fern_args` and wasm_ir_run pulls in the wasi args_sizes_get /
-// args_get imports + the args_func helper when the module reads argv. The extra
-// args sit after the module path on the wasmtime command line.
 func TestSelfHostArgsIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host args wasm IR e2e")

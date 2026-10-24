@@ -2,12 +2,6 @@ import "std/test";
 import "std/num" as num;
 import "core/iter" as iter;
 
-// tests/stdlib/num_reducers_test.fern — pure-Fern coverage of std/num's
-// generic numeric reducers: the trait-bounded array forms (sum_with / sum [Add
-// (+ Zero)], product_with / product [Mul (+ One)]) and core/iter's
-// `iter.sum` / `iter.product`, bounded on the same traits, over i32, i64 and
-// f64.
-
 function test_sum_with(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4];
   return test.assert_eq(num.sum_with(xs, 0), 10);
@@ -44,7 +38,6 @@ function test_product_iter(): test.TestOutcome {
 }
 
 function test_sum_iter_range(): test.TestOutcome {
-  // sum 0..5 = 0+1+2+3+4 = 10.
   return test.assert_eq(iter.sum(iter.range(0, 5)), 10);
 }
 

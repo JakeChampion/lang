@@ -5,26 +5,11 @@ import (
 	"testing"
 )
 
-// These tests byte-check the #7887 port of the #7886 instruction surface
-// to the self-host arm64 assembler (compiler/arm64_native.fern)
-// against aarch64-linux-gnu-as, through the in-process bench driver — the
-// same no-qemu, encodings-only pattern as
-// TestSelfHostArm64AsmEncodingMatchesGas. Every `want` below is what
-// GNU as emits for the same line (read back with objdump — never
-// hand-derived, since a wrong field placement usually still assembles as
-// some other valid instruction); each family checks low AND high register
-// numbers so a dropped 5-bit field cannot pass, and each family's
-// unencodable near-miss shapes must be REFUSED, not folded into a field
-// that does not exist.
-
-// pinnedAsm is one instruction line with its aarch64-linux-gnu-as word.
 type pinnedAsm struct {
 	asm  string
 	want uint32
 }
 
-// checkPinnedSelfHost assembles the cases as one program and compares
-// word-for-word, naming the diverging source line.
 func checkPinnedSelfHost(t *testing.T, bin string, runner []string, cases []pinnedAsm) {
 	t.Helper()
 	var b strings.Builder
@@ -43,8 +28,6 @@ func checkPinnedSelfHost(t *testing.T, bin string, runner []string, cases []pinn
 	}
 }
 
-// checkRefusedSelfHost feeds each line separately and requires the
-// assembler to record a refusal for it.
 func checkRefusedSelfHost(t *testing.T, bin string, runner []string, lines []string) {
 	t.Helper()
 	for _, ln := range lines {
@@ -54,8 +37,6 @@ func checkRefusedSelfHost(t *testing.T, bin string, runner []string, lines []str
 	}
 }
 
-// TestSelfHostArm64CarryMulGas: the carry chain (adc/adcs/sbc/sbcs and
-// the ngc/ngcs aliases) and the high/widening multiplies.
 func TestSelfHostArm64CarryMulGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -88,8 +69,6 @@ func TestSelfHostArm64CarryMulGas(t *testing.T) {
 		{"smsubl x23, w9, w28, x11", 0x9b3cad37},
 		{"umsubl x23, w9, w28, x11", 0x9bbcad37},
 	})
-	// The carry ops have no immediate or shifted form, and the
-	// high/widening multiplies have fixed register widths (no sf bit).
 	checkRefusedSelfHost(t, bin, runner, []string{
 		"adc x0, x1, #1",
 		"sbcs w0, w1, #2",
@@ -105,10 +84,6 @@ func TestSelfHostArm64CarryMulGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64LogicalNegatedGas: tst/ands (register, shifted and
-// bitmask-immediate) and the Rm-inverting bic/bics/orn/eon with the
-// mvn/negs aliases, plus the shifted forms of plain and/orr/eor (whose
-// fourth operand used to be silently DROPPED).
 func TestSelfHostArm64LogicalNegatedGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -153,14 +128,12 @@ func TestSelfHostArm64LogicalNegatedGas(t *testing.T) {
 		{"cmn x23, x9", 0xab0902ff},
 		{"cmn w9, #255", 0x3103fd3f},
 	})
-	// bic/bics/orn/eon have no immediate encoding (the bitmask class has
-	// no invert bit); GAS aliases `bic #v` to `and #~v`, refused here.
 	checkRefusedSelfHost(t, bin, runner, []string{
 		"bic x0, x1, #0xff",
 		"bics x0, x1, #0xff",
 		"orn x0, x1, #0xff",
 		"eon w0, w1, #0xf",
-		"tst x0, #0", // 0 is not an encodable bitmask
+		"tst x0, #0",
 		"tst x0",
 		"mvn x0",
 		"negs x0, x1, x2",
@@ -168,9 +141,6 @@ func TestSelfHostArm64LogicalNegatedGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64ExtrBitfieldGas: extr, both ror forms (the extr alias
-// and RORV), and the BFM-family insert aliases, range-checked — the raw
-// immr/imms fields would wrap silently.
 func TestSelfHostArm64ExtrBitfieldGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -200,28 +170,15 @@ func TestSelfHostArm64ExtrBitfieldGas(t *testing.T) {
 		"ror x0, x1, #64",
 		"ror w0, w1, #32",
 		"ror x0, x1",
-		"bfi x0, x1, #60, #8",   // lsb+width > 64
-		"bfi w0, w1, #30, #5",   // lsb+width > 32
-		"bfxil x0, x1, #64, #1", // lsb out of range
-		"ubfiz x0, x1, #0, #0",  // width < 1
+		"bfi x0, x1, #60, #8",
+		"bfi w0, w1, #30, #5",
+		"bfxil x0, x1, #64, #1",
+		"ubfiz x0, x1, #0, #0",
 		"sbfiz w0, w1, #-1, #4",
-		"bfi x0, x1, #4", // missing width
+		"bfi x0, x1, #4",
 	})
 }
 
-// TestSelfHostArm64ExtractExtendGas pins #8000 wave 1: the bitfield-EXTRACT
-// pair, the sign/zero-extend aliases, the sign-extending byte/half loads, and
-// the two operand-less-ish branches — every mnemonic the native arm64
-// assembler encoded while the self-host one silently recorded it as unknown.
-//
-// The W rows are what catches this. A 32-bit bitfield instruction is not its
-// 64-bit sibling with sf cleared: N drops too, so `ubfx w1, w2, #3, #8` is
-// 0x53032841 and not 0xd3432841. The self-host's ubfx encoder hardcoded the
-// 64-bit base, so every W-form extract it assembled was a 64-bit UBFM.
-//
-// The ldrsb/ldrsh rows carry the inverse trap: opc names the DESTINATION
-// width, so the X form has the SMALLER base word and reading the pair the
-// obvious way round swaps them.
 func TestSelfHostArm64ExtractExtendGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -241,9 +198,6 @@ func TestSelfHostArm64ExtractExtendGas(t *testing.T) {
 		{"sxth w28, w9", 0x13003d3c},
 		{"uxtb w28, w9", 0x53001d3c},
 		{"uxth w28, w9", 0x53003d3c},
-		// gas takes the X spelling of the unsigned pair and emits the W word
-		// anyway; matching that is what keeps the two assemblers identical on
-		// input a user can legally write.
 		{"uxtb x28, w9", 0x53001d3c},
 		{"ldrsb x23, [x9, #4095]", 0x39bffd37},
 		{"ldrsb w28, [x9]", 0x39c0013c},
@@ -251,36 +205,16 @@ func TestSelfHostArm64ExtractExtendGas(t *testing.T) {
 		{"ldrsh w28, [x9, #2]", 0x79c0053c},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		// The extract pair now goes through the same range check as the
-		// insert aliases; without it these wrap into a different, valid
-		// instruction rather than failing.
 		"ubfx x0, x1, #60, #8",
 		"ubfx w0, w1, #30, #5",
 		"sbfx x0, x1, #64, #1",
 		"sbfx w0, w1, #0, #0",
 		"ubfx x0, x1, #4",
-		// The sign-extending loads have only an immediate-offset encoder,
-		// so an index register must be refused rather than dropped.
 		"ldrsb x0, [x1, x2]",
 		"ldrsh w0, [x1, w2, uxtw #1]",
 	})
 }
 
-// TestSelfHostArm64VectorGeneralGas pins #8000 wave 2a: the four general
-// Advanced SIMD classes, which the self-host assembler could not spell at all
-// before. Its whole vector surface was the seven mnemonics the §3 kernels
-// emit, each with one arrangement hard-wired, because every encoder pinned
-// size=00 and the parser accepted only `.8b` / `.16b` — a wider element size
-// would have assembled as a DIFFERENT instruction on the same bytes.
-//
-// The first four rows are the three byte-only encoders this wave RETIRED
-// (cnt, the register cmeq, the compare-against-zero cmlt). They are here to
-// prove the general path reproduces them word for word, since the memchr and
-// ascii-run kernels emit exactly those forms.
-//
-// The bitwise rows are the ones to read carefully: and/bic/orr/orn put the
-// OPERATION in the size field, so they exist only in the byte arrangements
-// and their four words differ in bits 23:22 rather than in the opcode.
 func TestSelfHostArm64VectorGeneralGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -329,49 +263,23 @@ func TestSelfHostArm64VectorGeneralGas(t *testing.T) {
 		{"rev64 v23.4s, v9.4s", 0x4ea00937},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		// A size the op's encoding does not have. Each of these is a valid
-		// word for a DIFFERENT instruction, so folding it in is worse than
-		// refusing: mul/smax/smin/umax/umin have no 64-bit lanes, and the
-		// bitwise ops none but the byte ones.
 		"mul v0.2d, v1.2d, v2.2d",
 		"smax v0.2d, v1.2d, v2.2d",
 		"and v0.4s, v1.4s, v2.4s",
 		"orn v0.8h, v1.8h, v2.8h",
 		"cnt v0.4s, v1.4s",
 		"rev32 v0.4s, v1.4s",
-		// `.1d` is a real arrangement — ld1/st1 take it — but 64-bit lanes
-		// exist only in the full-width form, so the data-processing classes
-		// refuse it everywhere.
 		"add v0.1d, v1.1d, v2.1d",
 		"neg v0.1d, v1.1d",
-		// Operands must share one arrangement.
 		"add v0.4s, v1.8h, v2.4s",
 		"cmeq v0.16b, v1.8b, #0",
-		// The compare-against-zero immediate is part of the opcode: there is
-		// no `cmlt … #1`, and a parser that folds one in emits the zero form.
 		"cmlt v0.4s, v1.4s, #1",
 		"cmle v0.8b, v1.8b, #4",
-		// Arity.
 		"add v0.4s, v1.4s",
 		"neg v0.4s, v1.4s, v2.4s",
 	})
 }
 
-// TestSelfHostArm64VectorFPShiftGas pins #8000 wave 2b: the lane-wise FP
-// families, shift-by-immediate, and permute.
-//
-// Two encodings here do not work like the integer classes:
-//
-//   - The FP ops read `size` as szHi<<1 | (D lanes), NOT as an element width.
-//     So fadd .4s and fsub .4s differ in bits 23:22 while sharing an opcode,
-//     and the arrangements are fixed at 2s/4s/2d — a byte or halfword one has
-//     no meaning in this class rather than a narrower one.
-//   - Shift-by-immediate has no size field at all: immh's top set bit IS the
-//     element size, so the amount and the width share immh:immb. The caller
-//     derives esize+shift for a left shift and 2*esize-shift for a right one,
-//     and an out-of-range amount carries into immh and selects a DIFFERENT
-//     element size — which is why the refusals below matter as much as the
-//     encodings.
 func TestSelfHostArm64VectorFPShiftGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -416,25 +324,18 @@ func TestSelfHostArm64VectorFPShiftGas(t *testing.T) {
 		{"trn2 v23.2s, v9.2s, v28.2s", 0x0e9c6937},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		// The lane-wise FP class has no byte or halfword arrangement, and
-		// `.1d` is not the scalar-double form.
 		"fadd v0.16b, v1.16b, v2.16b",
 		"fmul v0.8h, v1.8h, v2.8h",
 		"fneg v0.1d, v1.1d",
 		"scvtf v0.4h, v1.4h",
-		// The FP compare-against-zero immediate is spelled #0.0 and is part
-		// of the opcode.
 		"fcmeq v0.4s, v1.4s, #1.0",
 		"fcmlt v0.2d, v1.2d, v2.2d",
-		// A left shift is 0..esize-1, a right shift 1..esize. Outside that
-		// the amount carries into immh and picks a different element size.
 		"shl v0.4s, v1.4s, #32",
 		"shl v0.16b, v1.16b, #8",
 		"sshr v0.8h, v1.8h, #17",
 		"sshr v0.8h, v1.8h, #0",
 		"ushr v0.2d, v1.2d, #65",
 		"sri v0.16b, v1.16b, #0",
-		// Shared arrangement and arity, as everywhere else in the class.
 		"zip1 v0.4s, v1.2d, v2.4s",
 		"trn2 v0.1d, v1.1d, v2.1d",
 		"fadd v0.4s, v1.4s",
@@ -442,21 +343,6 @@ func TestSelfHostArm64VectorFPShiftGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64VectorWidenAcrossGas pins #8000 wave 2c: the narrowing and
-// widening shifts, ext, tbl, and the across-lanes reductions.
-//
-// What these get wrong when nothing checks it is the arrangement PAIR. The two
-// operands differ by one element size, and the narrow side's Q bit is the `2`
-// suffix rather than a free choice — xtn and xtn2 are the same opcode, and
-// which half of the 128-bit register is written comes from that bit alone. A
-// mismatched pair is a valid word for a different instruction, so every
-// refusal below is a miscompile that did not happen.
-//
-// The across-lanes rows carry the other version of the same trap: nothing in
-// the encoding says how wide the RESULT is. The mnemonic and the source
-// arrangement decide it together — one element size up for the widening
-// saddlv/uaddlv — so a destination of the wrong class names a register the
-// instruction does not write.
 func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -537,51 +423,34 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"sha1su1 v7.4s, v30.4s", 0x5e281bc7},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		// The pair must differ by exactly one element size.
 		"xtn v0.8b, v1.4s",
 		"shrn v0.4h, v1.8h, #2",
 		"sshll v0.4s, v1.8b, #1",
-		// The narrow side's Q bit IS the 2 suffix, so it cannot disagree
-		// with the mnemonic.
 		"xtn v0.16b, v1.8h",
 		"xtn2 v0.8b, v1.8h",
 		"sshll2 v0.8h, v1.8b, #1",
 		"uxtl v0.8h, v1.16b",
-		// The wide side is always full width.
 		"xtn v0.2s, v1.1d",
-		// Shift ranges: 1..esize narrowing, 0..esize-1 widening.
 		"shrn v0.8b, v1.8h, #9",
 		"shrn v0.8b, v1.8h, #0",
 		"sshll v0.8h, v1.8b, #8",
-		// ext is byte-only and its index counts bytes within the pair.
 		"ext v0.4s, v1.4s, v2.4s, #1",
 		"ext v0.8b, v1.8b, v2.8b, #8",
 		"ext v0.16b, v1.16b, v2.16b, #16",
-		// A tbl or tbx table is one to four .16b registers, braces included.
 		"tbl v0.16b, v1.16b, v2.16b",
 		"tbl v0.16b, {v1.8b}, v2.16b",
 		"tbl v0.8b, {v1.16b}, v2.16b",
 		"tbx v0.16b, {v1.16b-v5.16b}, v2.16b",
 		"tbx v0.16b, {v1.16b-v1.16b}, v2.16b",
 		"tbl v0.16b, {v1.16b-v2.8b}, v2.16b",
-		// The across-lanes destination class follows the arrangement, one
-		// size up for the widening pair, and .2s/.2d have no such form.
 		"smaxv h23, v9.16b",
 		"saddlv b23, v9.16b",
 		"umaxv s23, v9.2s",
 		"addv d23, v9.2d",
 		"sminv v0.8h, v9.8h",
-		// A widening pairwise add names only its source arrangement: the
-		// destination is one element size up at the same width, and a
-		// doubleword source has nothing wider to pair into.
 		"uaddlp v1.4s, v0.16b",
 		"uadalp v2.2s, v1.8h",
 		"saddlp v0.2d, v1.2d",
-		// pmull's `2` IS the Q bit and both forms write a full-width
-		// destination, so nothing in the operands repeats it: a source
-		// arrangement disagreeing with the mnemonic is the OTHER
-		// instruction. Only the byte and doubleword sizes exist, and `.1q`
-		// belongs to pmull alone.
 		"pmull v0.8h, v1.16b, v2.16b",
 		"pmull2 v0.8h, v1.8b, v2.8b",
 		"pmull v0.1q, v1.2d, v2.2d",
@@ -591,13 +460,10 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		"pmull2 v0.1q, v1.2d, v2.1d",
 		"add v0.1q, v1.1q, v2.1q",
 		"ld1 {v0.1q}, [x0]",
-		// The AES rounds take two registers and only .16b.
 		"aese v0.4s, v1.4s",
 		"aesmc v0.16b, v1.8b",
 		"aese v0.16b, v1.16b, v2.16b",
 		"aesmc v0.16b",
-		// The SHA-256 hash updates take two q registers and a .4s; the
-		// schedule updates only .4s registers.
 		"sha256h v0.4s, v1.4s, v2.4s",
 		"sha256h2 q0, q1, v2.16b",
 		"sha256h q0, q1",
@@ -605,8 +471,6 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		"sha256su0 v0.4s, v1.4s, v2.4s",
 		"sha256su1 v0.4s, v1.4s",
 		"sha256su1 q0, v1.4s, v2.4s",
-		// The SHA-1 hash updates take a q, an s and a .4s register; sha1h
-		// two s registers; the schedule updates only .4s registers.
 		"sha1c q0, q1, v2.4s",
 		"sha1p v0.4s, s1, v2.4s",
 		"sha1m q0, s1, v2.16b",
@@ -619,22 +483,6 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64VectorLaneGas pins #8000 wave 2d: the lane moves
-// (umov/smov/ins/dup), the modified immediate, and the single-register
-// load/store-structure forms.
-//
-// These address ONE LANE, and every one of them says which lane in the same
-// field: imm5 packs the element size and the index together as
-// (index<<1 | 1) << size. So the size is not a separate thing that could be
-// merely wrong — get it wrong and the index bits MOVE, naming a different lane
-// on a word that still decodes. That is why the refusals check the destination
-// register width against the lane size rather than treating them as
-// independent.
-//
-// movi's shift is the other trap: it is not a shift field. cmode selects which
-// BYTE POSITION of the element the imm8 lands in, so only the positions the
-// element actually has are encodable, and `.2d` is a different encoding again
-// where each imm8 bit expands to a whole byte.
 func TestSelfHostArm64VectorLaneGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -674,35 +522,24 @@ func TestSelfHostArm64VectorLaneGas(t *testing.T) {
 		{"st1 {v23.2d}, [x9]", 0x4c007d37},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		// The general register's width is fixed by the lane: only .d reads
-		// into an X register, and smov has no .d form at all — sign-extending
-		// 64 bits to 64 is nothing.
 		"umov x23, v9.b[5]",
 		"umov w23, v9.d[1]",
 		"smov x23, v9.d[0]",
 		"smov w23, v9.s[1]",
-		// ins takes its source width from the lane the same way, and a
-		// lane-to-lane move must not change element size.
 		"ins v23.b[5], x9",
 		"ins v23.d[1], w9",
 		"ins v23.b[5], v9.h[2]",
-		// A lane index runs 0..(16/esize - 1).
 		"umov w23, v9.b[16]",
 		"ins v23.s[4], w9",
 		"dup v23.8h, v9.h[8]",
-		// dup broadcasts a W register below doubleword lanes and an X for
-		// them; a lane source must match the destination arrangement.
 		"dup v23.16b, x9",
 		"dup v23.2d, w9",
 		"dup v23.4s, v9.h[1]",
-		// movi's imm8 is 0..255, and the shift picks a cmode rather than
-		// filling a field, so only the byte positions the element has exist.
 		"movi v23.16b, #256",
 		"movi v23.16b, #7, lsl #8",
 		"movi v23.8h, #7, lsl #16",
 		"movi v23.4s, #7, lsl #32",
 		"movi v23.2d, #7, lsl #8",
-		// The structure forms take a one-register list and a bare [Xn].
 		"ld1 {v23.16b}, [x9, #16]",
 		"ld1 {v23.16b}, [x9, x10]",
 		"st1 v23.16b, [x9]",
@@ -710,8 +547,6 @@ func TestSelfHostArm64VectorLaneGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64CondCmpSelGas: ccmp/ccmn (register and imm5 forms) and
-// the conditional-select family with its inverted-condition aliases.
 func TestSelfHostArm64CondCmpSelGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -739,24 +574,17 @@ func TestSelfHostArm64CondCmpSelGas(t *testing.T) {
 		{"cneg w28, w9, hi", 0x5a89953c},
 		{"csetm x23, lt", 0xda9fa3f7},
 		{"csetm w28, hi", 0x5a9f93fc},
-		// csel carries its width in the sf bit; the W form used to encode
-		// as X (the same class as cset's #6062 bug, one alias over).
 		{"csel w1, w2, w3, lt", 0x1a83b041},
 		{"csel x1, x2, x3, lt", 0x9a83b041},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		"ccmp x0, x1, #16, eq", // nzcv is 4 bits
-		"ccmp x0, #32, #0, eq", // imm5 is 0..31
-		"ccmp x0, #-1, #0, eq", // imm5 is unsigned
-		"ccmn x0, x1, #0, xx",  // bad condition
-		"csinc x0, x1, x2",     // missing condition
-		"cinc x0, x1",          // missing condition
-		"csetm x0",             // missing condition
-		// AL and NV are refused only where the encoder INVERTS the written
-		// condition. GNU as assembles `ccmp x0, x1, #0, al` (fa41e000) and
-		// every other direct form; these five aliases are the ones it
-		// refuses, and it says why: "must be one of the standard conditions,
-		// excluding AL and NV". #8075.
+		"ccmp x0, x1, #16, eq",
+		"ccmp x0, #32, #0, eq",
+		"ccmp x0, #-1, #0, eq",
+		"ccmn x0, x1, #0, xx",
+		"csinc x0, x1, x2",
+		"cinc x0, x1",
+		"csetm x0",
 		"cset x0, al",
 		"cset x0, nv",
 		"csetm x0, al",
@@ -767,8 +595,6 @@ func TestSelfHostArm64CondCmpSelGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64RevClsGas: rev (whose X and W forms differ in opc, not
-// just sf), rev32 (X only), and cls.
 func TestSelfHostArm64RevClsGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -784,17 +610,12 @@ func TestSelfHostArm64RevClsGas(t *testing.T) {
 		{"cls w28, w9", 0x5ac0153c},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		"rev32 w0, w1", // no W form: that operation is `rev Wd, Wn`
+		"rev32 w0, w1",
 		"rev x0",
 		"cls x0, x1, x2",
 	})
 }
 
-// TestSelfHostArm64ExtRegAddressingGas: the extended-register addressing
-// forms `[Xn, Wm, uxtw|sxtw {#s}]` / `[Xn, Xm, sxtx|lsl {#s}]` on every
-// plain load/store width. Note the byte access: an explicit `#0` amount
-// sets the S bit where the bare extend leaves it clear — GNU as
-// distinguishes the two spellings the same way.
 func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -822,9 +643,6 @@ func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 		{"strh w23, [x9, x28, sxtx #1]", 0x783cf937},
 		{"strh w23, [x9, x28, lsl #1]", 0x783c7937},
 	})
-	// The amount must be 0 or log2(access size), the extend must match the
-	// offset register's width, and a W offset register without a widening
-	// extend is not a valid encoding (GNU as rejects each the same way).
 	checkRefusedSelfHost(t, bin, runner, []string{
 		"ldr x0, [x1, w2, uxtw #2]",
 		"ldr x0, [x1, x2, uxtw]",
@@ -838,11 +656,6 @@ func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64PairWDGas: ldp/stp for W-register pairs (offset scale
-// 4) and D-register pairs (scale 8) in all three addressing modes, plus
-// the X modes the frame code has always used — now range-checked, since
-// the imm7 mask would wrap an out-of-range offset into a different, valid
-// instruction.
 func TestSelfHostArm64PairWDGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -864,19 +677,15 @@ func TestSelfHostArm64PairWDGas(t *testing.T) {
 		{"ldp x0, x1, [sp, #16]", 0xa94107e0},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		"ldp w0, w1, [x2, #2]",    // W pairs scale by 4
-		"ldp w0, w1, [x2, #256]",  // out of the scaled imm7 range
-		"stp w1, w2, [x3, #-260]", // likewise, negative side
-		"ldp d0, d1, [x2, #4]",    // D pairs scale by 8
-		"ldp w0, x1, [x2]",        // mixed widths
-		"ldp s0, s1, [x2]",        // S pairs not supported (loud gap)
+		"ldp w0, w1, [x2, #2]",
+		"ldp w0, w1, [x2, #256]",
+		"stp w1, w2, [x3, #-260]",
+		"ldp d0, d1, [x2, #4]",
+		"ldp w0, x1, [x2]",
+		"ldp s0, s1, [x2]",
 	})
 }
 
-// TestSelfHostArm64FP32UnscaledGas: the S-register loads/stores (every
-// mode the D form supports, including the silent ldur/stur rewrite of
-// negative offsets GNU as performs), the D pre/post writeback modes,
-// ldurb/sturb/ldurh/sturh, and the sign-extending unscaled loads.
 func TestSelfHostArm64FP32UnscaledGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -888,14 +697,12 @@ func TestSelfHostArm64FP32UnscaledGas(t *testing.T) {
 		{"str s23, [x9], #-4", 0xbc1fc537},
 		{"ldr s23, [x9, #4]!", 0xbc404d37},
 		{"str s23, [x9, #-4]!", 0xbc1fcd37},
-		{"ldr s23, [x9, #-4]", 0xbc5fc137}, // ldur rewrite
-		{"str s23, [x9, #-8]", 0xbc1f8137}, // stur rewrite
+		{"ldr s23, [x9, #-4]", 0xbc5fc137},
+		{"str s23, [x9, #-8]", 0xbc1f8137},
 		{"ldur s23, [x9, #-4]", 0xbc5fc137},
 		{"stur s23, [x9, #-4]", 0xbc1fc137},
 		{"ldur s0, [x1, #255]", 0xbc4ff020},
 		{"stur s0, [x1, #-256]", 0xbc100020},
-		// The D writeback modes: `ldr d…!` used to drop the writeback and
-		// encode a plain LDUR.
 		{"ldr d1, [x2, #8]!", 0xfc408c41},
 		{"str d2, [x3], #-8", 0xfc1f8462},
 		{"ldurh w23, [x9, #-2]", 0x785fe137},
@@ -913,17 +720,14 @@ func TestSelfHostArm64FP32UnscaledGas(t *testing.T) {
 		{"ldursw x0, [x1]", 0xb8800020},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		"ldursw w0, [x1]",        // destination must be X
-		"ldurh w0, [x1, #256]",   // out of imm9 range
-		"ldursb x0, [x1, #-257]", // likewise
-		"ldur s0, [x1, x2]",      // no register-offset unscaled form
-		"ldursh x0, [x1, #2]!",   // no writeback form
+		"ldursw w0, [x1]",
+		"ldurh w0, [x1, #256]",
+		"ldursb x0, [x1, #-257]",
+		"ldur s0, [x1, x2]",
+		"ldursh x0, [x1, #2]!",
 	})
 }
 
-// TestSelfHostArm64ExclusivesBarriersGas: the exclusive and acquire-release
-// accesses, the LSE add and compare-and-swap of the ARMv8.2-A baseline, and
-// the barriers, whose dmb/dsb option is REQUIRED as GNU as requires it.
 func TestSelfHostArm64ExclusivesBarriersGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -977,23 +781,20 @@ func TestSelfHostArm64ExclusivesBarriersGas(t *testing.T) {
 		{"isb sy", 0xd5033fdf},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		"stxr x11, x23, [x9]", // status register must be W
-		"ldxr x0, [x1, #8]",   // no offset form
-		"ldaxr x0, [x1], #8",  // no writeback form
-		"ldxrb x0, [x1]",      // byte data register must be W
-		"ldaxrh x0, [x1]",     // half data register must be W
-		"stlr w0, [x1, #4]",   // no offset form
-		"dmb",                 // GNU as requires the option
+		"stxr x11, x23, [x9]",
+		"ldxr x0, [x1, #8]",
+		"ldaxr x0, [x1], #8",
+		"ldxrb x0, [x1]",
+		"ldaxrh x0, [x1]",
+		"stlr w0, [x1, #4]",
+		"dmb",
 		"dsb",
-		"dmb foo",           // unknown option
-		"isb ish",           // isb takes only sy
-		"ldxr x0, [x1, x2]", // no register-offset form
+		"dmb foo",
+		"isb ish",
+		"ldxr x0, [x1, x2]",
 	})
 }
 
-// TestSelfHostArm64FPScalarGas: the fused multiply-adds, fnmul, min/max,
-// fcsel, fccmp, fcmpe (register and #0.0), and the single-precision forms
-// of the whole scalar family — previously a loud D-only gap.
 func TestSelfHostArm64FPScalarGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -1038,18 +839,16 @@ func TestSelfHostArm64FPScalarGas(t *testing.T) {
 		{"fneg s2, s3", 0x1e214062},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
-		"fmadd d0, s1, d2, d3",  // mixed precision
-		"fmin d0, d1, s2",       // likewise
-		"fcsel d0, d1, s2, eq",  // likewise
-		"fccmp d0, d1, #16, eq", // nzcv is 4 bits
-		"fcmpe d0, #1.0",        // only #0.0 exists
-		"fcmp d0, s1",           // mixed precision
-		"fnmul d0, d1",          // missing operand
+		"fmadd d0, s1, d2, d3",
+		"fmin d0, d1, s2",
+		"fcsel d0, d1, s2, eq",
+		"fccmp d0, d1, #16, eq",
+		"fcmpe d0, #1.0",
+		"fcmp d0, s1",
+		"fnmul d0, d1",
 	})
 }
 
-// TestSelfHostArm64SysregFpGas: the `fp` spelling of x29 (GNU as accepts
-// it) and the extended system-register table with the msr write form.
 func TestSelfHostArm64SysregFpGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -1067,23 +866,17 @@ func TestSelfHostArm64SysregFpGas(t *testing.T) {
 		{"msr fpsr, x23", 0xd51b4437},
 		{"mrs x23, dczid_el0", 0xd53b00f7},
 	})
-	// dczid_el0 and the counter-timers are read-only from EL0: the msr
-	// encoding would exist and trap at runtime, so it must refuse.
 	checkRefusedSelfHost(t, bin, runner, []string{
 		"msr dczid_el0, x0",
 		"msr cntvct_el0, x0",
 		"msr cntfrq_el0, x0",
-		"msr nzcv, w0", // source must be X
+		"msr nzcv, w0",
 		"msr bogus_reg, x0",
 		"msr nzcv",
-		"mrs w0, nzcv", // destination must be X
+		"mrs w0, nzcv",
 	})
 }
 
-// TestSelfHostArm64AdrGas pins `adr Xd, label` through the program+link
-// path (a byte-relative kind-3 fixup beside adrp's page-relative one).
-// The words are what aarch64-linux-gnu-as emits for the same layout; adr
-// is PC-relative, so they are independent of the text base address.
 func TestSelfHostArm64AdrGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -1105,8 +898,8 @@ lbl:
 		}
 	}
 	checkRefusedSelfHost(t, bin, runner, []string{
-		"adr w0, _start",  // W destination: no such form
-		"adr x0, nowhere", // undefined symbol
-		"adr x0",          // missing operand
+		"adr w0, _start",
+		"adr x0, nowhere",
+		"adr x0",
 	})
 }

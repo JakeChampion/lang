@@ -57,21 +57,7 @@ function main(): i32 { return Malformed("entry"); }`,
 	}
 }
 
-// A bare variant name resolves among the enums the REFERRING module can
-// name, not every enum in the program (#6951).
-//
-// modload mangles each module's types and functions to `<mod>__name`, but
-// leaves variant names bare, so before this the single flat variant table
-// let any loaded module's `enum Kind { Text }` make every other module's
-// bare `Text` ambiguous. Two libraries that never import each other could
-// not be used together, and declaring `enum Opt { Some, None }` was enough
-// to report E036 against stdlib source the author cannot edit.
-//
-// Every case here is multi-module on purpose: single-file programs have one
-// module, so they cannot distinguish the rules.
 func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
-	// Two libraries with the same variant name that never see each other.
-	// Neither reference is ambiguous where it stands.
 	t.Run("independent modules do not ambiguate each other", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"a.fern": "enum Kind { Text, Binary }\n" +
@@ -86,8 +72,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 
-	// The issue's own repro: declaring the enums is enough, nothing in the
-	// user's file references them, and the diagnostics landed on core/int.
 	t.Run("a user enum does not ambiguate stdlib source", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"main.fern": "import \"core/int\";\n" +
@@ -100,8 +84,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 
-	// A private enum is not exported and still reached every other module
-	// through the shared variant table.
 	t.Run("a private enum does not ambiguate stdlib source", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": "enum Secret { Some(i32), None }\n" +
@@ -114,8 +96,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 
-	// The narrowing is to what the module can NAME, not to what it declares:
-	// a module that imports the other sees both and must qualify.
 	t.Run("a module that sees both must qualify", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"other.fern": "pub enum Kind { Text, Blob }\n",
@@ -131,8 +111,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 
-	// Built-in enums carry no SourceModule, so they stay candidates in every
-	// module — shadowing Option's variants is still ambiguous where declared.
 	t.Run("builtin enums stay visible everywhere", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": "enum O { Some(i32), None }\n" +
@@ -147,8 +125,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 
-	// The filter must not narrow away the ordinary cross-module case: an
-	// imported enum's variants stay nameable bare.
 	t.Run("an imported enum's variant is still nameable", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": "pub enum Kind { Text, Binary }\n",
@@ -160,8 +136,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 
-	// Same, through a `pub use` facade — the re-export is what puts shapes
-	// in the consumer's closure.
 	t.Run("a re-exported enum's variant is still nameable", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"shapes.fern": "pub enum Kind { Text, Binary }\n",
@@ -174,8 +148,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 
-	// The other edge of the same rule: a module cannot name a variant of an
-	// enum it has no route to, which previously resolved silently.
 	t.Run("an unreachable module's variant is not nameable", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"other.fern": "pub enum Kind { Text, Binary }\n",
@@ -192,15 +164,6 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 	})
 }
 
-// #6951's rule was applied through moduleSees, whose stdlib-to-stdlib
-// shortcut then re-opened the same hole between two stdlib modules: the
-// shortcut exists so the method graph's cycles load (std/string's bodies
-// call std/i32 methods and back), and a variant name is not a method.
-//
-// std/pmap and std/pvec each declare an `Empty` variant and neither
-// imports the other, so importing both drew 47 E036s — every one of them
-// on stdlib source, blaming a module for a collision with a module it
-// cannot name. The program is valid and the self-host compiled it.
 func TestTwoStdlibModulesDoNotAmbiguateEachOther(t *testing.T) {
 	err, _ := checkFiles(t, map[string]string{
 		"main.fern": "import \"std/pmap\";\nimport \"std/pvec\";\n" +

@@ -6,10 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The raw floor the Go compiler exposes as `__syscall3` … `__syscall6` and
-// `__store_u8` is the same floor the self-host has always been written on,
-// so the one probe runs through both compilers (#9853, #4451). The self-host
-// leg of `internal/testing/e2e/native_syscall_floor_test.go`.
 func TestSelfHostSyscallFloorX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

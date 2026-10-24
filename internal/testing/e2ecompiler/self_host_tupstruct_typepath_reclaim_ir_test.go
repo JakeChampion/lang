@@ -7,21 +7,11 @@ import (
 	"testing"
 )
 
-// tupStructTypePathCases pin the #4365 reclaim of a struct inside a tuple
-// element: `Option[(i32, P)]` / `(i32, P)[]`, where P sole-owns an rc-array
-// field, must deep-drop the struct every iteration — its rc-array fields, then
-// the struct box — along with the option box or the array buffer, on the
-// register and wasm backends alike.
-//
-// SCOPE: the element is consumed SCALAR-only (the consuming match reads `g.0` /
-// `xs[i].0`, never the struct). A WHOLE struct extraction (`keep = g.1`) must
-// never be over-released.
 var tupStructTypePathCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// OPTTUP struct element, scalar-consumed: reclaims the struct + option box each iter.
 	{"opttup-struct-scalar-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -36,7 +26,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ARRTUP struct element, scalar-consumed: reclaims each element's struct + the buffer.
 	{"arrtup-struct-scalar-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -51,8 +40,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// OPTTUP struct WHOLE-EXTRACT: `keep = g.1` moves the struct out — leak-safe (the
-	// option is left uncredited), never over-released.
 	{"opttup-struct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let keep: P = P { xs: [0, 0], y: 0 };
@@ -67,7 +54,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// ARRTUP struct WHOLE-EXTRACT: `keep = xs[0].1` — leak-safe, never over-released.
 	{"arrtup-struct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let keep: P = P { xs: [0, 0], y: 0 };
@@ -82,8 +68,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// REGRESSION: the pre-existing plain array-element OPTTUP still reclaims (the shared
-	// admission predicates now thread structs, but the array path is unchanged).
 	{"opttup-arrtuple-regression", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -98,8 +82,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostTupStructTypePathReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostTupStructTypePathReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

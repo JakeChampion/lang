@@ -8,12 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A payloadless Option or Result (None, Ok(()), Err(())) is one shared static
-// block per tag on the self-host compiler, so making one allocates nothing:
-// a miss returned through a function, `?` propagating it, and an Ok of void
-// cost no box. The blocks still behave as values beside allocated ones: held
-// in an array, replaced, appended, matched and dropped, with x86-64's
-// leakcheck balanced.
 func TestSelfHostPayloadlessOptionIsStatic(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "payloadless.fern")

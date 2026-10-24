@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Closure env churn: create + call + drop a fresh closure each
-// iteration. With reclamation the env rc1 block frees at the
-// loop-body scope exit and the next alloc reuses it; the
-// counter must stay 0 (no over-release). sum_{1..100} = 5050.
+
+
+
+
+
+
+
 import "core/int";
 function main(): i32 {
     let sum: i32 = 0;

@@ -2,11 +2,6 @@ package checker
 
 import "testing"
 
-// A local named like an enum shadows it for a qualified access, in the entry
-// and in an imported module alike (#10159), and inside a lambda that captures
-// it (#10211). std/string has a local `R` that
-// calls `R.mul_pow10(...)`, so an entry union named R used to make the import
-// fail with E036.
 func TestEnumNameShadowedByLocal(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"entry union named like an import's local", `import "std/string";

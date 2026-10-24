@@ -9,19 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRWholeProgramSignatures exercises whole-program signature
-// analysis for per-module emit (#3451 step 2 / #3454). Per-module, a call from
-// the entry into an imported function is tagged by the CALLEE's return type so a
-// chained method on the result lowers correctly — but the callee lives in a
-// sibling module, invisible to the entry's own funcs. The driver threads the
-// union of every loaded module's signatures into emit; asm_ir_run models that
-// with `-ir-sigs <file>` (parse a sibling for signatures only).
-//
-// Library B's bgreet returns a STRING ("hi"); entry A does `let s = bgreet();
-// return s.len();`. Only with B's signature in the whole-program view does the
-// entry type bgreet's result as a string and lower `.len()` to str_len → 2.
-// Without it the typed lowering refuses the unit: the checker sees a call to
-// nothing, rather than a lowering guessing the callee's type.
 func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -47,14 +34,11 @@ func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 	libSrc := "function bgreet(): string { return \"hi\"; }"
 	entrySrc := "function main(): i32 { let s = bgreet(); return s.len(); }"
 
-	// Sibling source on disk for -ir-sigs (absolute path so the driver's
-	// read_file resolves it regardless of cwd).
 	sigPath := filepath.Join(dir, "bmod.fern")
 	if err := os.WriteFile(sigPath, []byte(libSrc), 0o644); err != nil {
 		t.Fatalf("write bmod.fern: %v", err)
 	}
 
-	// The library needs heap (it allocates the "hi" box); aggregate into entry.
 	libNeeds := splitNeeds(run(t, libSrc, "-ir-needs"))
 
 	entryArgs := []string{"-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bgreet", "-ir-sigs", sigPath}
@@ -63,8 +47,6 @@ func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 	}
 	entryWith := run(t, entrySrc, entryArgs...)
 
-	// Without the sibling's source bgreet names nothing the checker knows, so
-	// the unit is refused rather than emitted with a guessed return type.
 	{
 		var cmd *exec.Cmd
 		args := []string{"-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bgreet"}
@@ -85,8 +67,6 @@ func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 		}
 	}
 	if !strings.Contains(entryWith, "__fern_str") && !strings.Contains(entryWith, "8(%r") {
-		// With the signature the result is treated as a string box (len read at
-		// offset 8) — a loose sanity check that str handling is present.
 		t.Logf("entry-with-sigs asm (head):\n%s", firstNLines(entryWith, 40))
 	}
 

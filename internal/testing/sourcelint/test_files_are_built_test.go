@@ -10,23 +10,6 @@ import (
 	"testing"
 )
 
-// A `_test.go` file whose name ends in a GOOS or GOARCH is constrained to that
-// platform by the FILENAME, with no build tag to read and no error anywhere: Go
-// simply leaves it out of the package. `foo_wasm_test.go` is a wasm-only file,
-// `foo_arm64_test.go` an arm64-only one — so a test written on an amd64 host,
-// named after the backend it exercises, compiles, vets and reports `ok` while
-// never being built at all.
-//
-// This is #8470 / #8471's family — a test that runs nowhere — with a cause
-// those two gates cannot see, because it is upstream of every workflow
-// selector: the test is not missing from a lane's list, it is missing from the
-// binary the lane runs.
-//
-// The rule is the narrow one: every `_test.go` on disk must be in some
-// package's build here, unless it carries an explicit `//go:build` line. An
-// explicit tag is a decision somebody wrote down (internal/tables/strerror's
-// `//go:build darwin` errno table is the only one today); a filename that
-// happens to end in a platform name is not.
 func TestEveryTestFileIsInSomeBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs `go list ./...`; not a -short test")
@@ -98,8 +81,6 @@ func TestEveryTestFileIsInSomeBuild(t *testing.T) {
 	}
 }
 
-// hasBuildConstraint reports whether the file opens with a //go:build line.
-// The constraint must precede the package clause, so the scan stops there.
 func hasBuildConstraint(t *testing.T, path string) bool {
 	t.Helper()
 	b, err := os.ReadFile(path)

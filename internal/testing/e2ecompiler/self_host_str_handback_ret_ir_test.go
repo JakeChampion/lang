@@ -7,22 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStrHandbackRetIRX86_64 pins #8409: a fresh string argument at a
-// BORROWABLE position whose callee RETURNS it through an identity method.
-//
-// `ret(x) { return x.idret(); }` borrows `x` as a method receiver, but
-// `idret`'s no-op fast path (`return s`) hands `x`'s own box back. Freeing the
-// caller's fresh argument temp unconditionally after the call frees the very box
-// the call just returned as its result: a double free (`__rc_underflow_count`) /
-// use-after-free (`[[[[[]` for `[TOOL]`).
-//
-// The post-call release must be guarded on the result differing from the temp:
-// on the identity path the temp IS the result, so the result's new owner frees
-// it once; on the allocating path the temp differs and is freed, so no leak
-// appears either (the AL-01 conformance fixture is the measured shape). Both
-// paths churn flat at detector zero. `maybe` returns its receiver bare in one arm, so
-// it is a receiver-handback method; `remove_all(needle) { return
-// s.replace(needle, ""); }` is the transitive std/string shape this mirrors.
 func TestSelfHostStrHandbackRetIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -54,15 +38,9 @@ func TestSelfHostStrHandbackRetIRX86_64(t *testing.T) {
 		}
 	}
 
-	// A method whose k==0 arm returns its receiver bare (identity) and whose
-	// other arm allocates — the sometimes-identity/sometimes-fresh shape of
-	// std/string's `replace`.
 	method := `function (s: string) maybe(k: i32): string { if (k == 0) { return s; } return s + "!"; }
 `
 
-	// IDENTITY path: `idret` returns its arg via the identity arm. The fresh
-	// concat temp aliases the call's result; the guard must skip freeing it, so
-	// `got` stays readable and the churn is flat with no over-release.
 	run(t, method+`function idret(x: string): string { return x.maybe(0); }
 function main(): i32 {
     let base: string = "payload";
@@ -88,9 +66,6 @@ function main(): i32 {
     return 0;
 }`, "identity-return-arg-flat", 0)
 
-	// IDENTITY path, DISCARDED result: nothing binds the call result, so the
-	// box the callee handed back is reclaimed by the discarded-result path. The
-	// guard must still skip the arg free, or the two paths double-free it.
 	run(t, method+`function idret(x: string): string { return x.maybe(0); }
 function main(): i32 {
     let base: string = "payload";
@@ -106,9 +81,6 @@ function main(): i32 {
     return 0;
 }`, "identity-return-discarded-flat", 0)
 
-	// FRESH path: `freshret` returns its arg via the allocating arm, so the
-	// call result is a NEW box and the arg temp differs — the guard frees the
-	// temp, closing the leak the non-borrowable escape-analysis fix opened.
 	run(t, method+`function freshret(x: string): string { return x.maybe(1); }
 function main(): i32 {
     let base: string = "payload";
@@ -134,8 +106,6 @@ function main(): i32 {
     return 0;
 }`, "fresh-return-arg-flat", 0)
 
-	// TRANSITIVE: `wrap` hands its arg to `idret`, which hands it back — the
-	// handback must be followed through `wrap` too.
 	run(t, method+`function idret(x: string): string { return x.maybe(0); }
 function wrap(y: string): string { return idret(y); }
 function main(): i32 {

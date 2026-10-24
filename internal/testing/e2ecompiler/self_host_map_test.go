@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// mapCases exercise the self-host Map runtime (string-keyed, 8-byte
-// values): map_new, set (insert + update), get → Option, has, len.
-// Values cross-checked vs the Go backend.
 var mapCases = []struct {
 	name string
 	src  string
@@ -19,8 +16,6 @@ var mapCases = []struct {
 	{"get-absent", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 1); match (m.get(\"absent\")) { Some(v) => { return 1; }, None => { return 99; } } return 0; }", 99},
 }
 
-// TestSelfHostMapX86_64 compiles map programs with the self-hosted
-// compiler and checks exit codes.
 func TestSelfHostMapX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -47,7 +42,6 @@ func TestSelfHostMapX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapArm64 — CI-gated arm64 counterpart.
 func TestSelfHostMapArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mapCases {

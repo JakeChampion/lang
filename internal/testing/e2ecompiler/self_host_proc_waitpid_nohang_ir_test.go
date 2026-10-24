@@ -6,27 +6,6 @@ import (
 	"testing"
 )
 
-// `proc_waitpid_nohang` (#8374) through the SELF-HOST IR path, on each backend
-// that emits it. The op pops [pid] and pushes an i32 from one wait4 with
-// WNOHANG — asmcore.rt_src_proc_waitpid_nohang, reached as
-// `call __fn___fern_proc_waitpid_nohang`.
-//
-// The probe measures all three answers rather than asserting the builtin
-// compiles, because a lowering that dropped WNOHANG would still compile and
-// would still satisfy anything that only waited for a child which does exit:
-//
-//   - a live child answers -1 rather than blocking, which is the whole point
-//     (and a dropped WNOHANG HANGS here rather than failing, which is the
-//     loudest failure available),
-//   - -1 rather than 0, which is what wait4 itself returns there and what a
-//     clean exit decodes to,
-//   - a reaped child answers -ECHILD, which is what recovers the pid a
-//     blocking `proc_waitpid(-1)` drops,
-//   - a signal death decodes to 128+signal, as the blocking sibling does.
-//
-// wasm's whole answer is a refusal: a component has no process model to reap
-// in, so platforms.fern withholds the builtin on `proc`.
-// TestSelfHostProcWaitpidNohangIRWasmRefused is that half.
 const procWaitpidNohangSelfHostSource = `function main(): i32 {
     // No children at all: -ECHILD, not -1 — which would claim a child is
     // still running.
@@ -69,14 +48,10 @@ const procWaitpidNohangSelfHostSource = `function main(): i32 {
     return 0;
 }`
 
-// procWaitpidNohangWasmProbe is the refusal probe: the one builtin and nothing
-// else, so the refusal it draws is that builtin's own.
 const procWaitpidNohangWasmProbe = `function main(): i32 {
     return proc_waitpid_nohang(1);
 }`
 
-// TestSelfHostProcWaitpidNohangIRX86_64 compiles the probe through the
-// production x86-64 IR driver and runs it.
 func TestSelfHostProcWaitpidNohangIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -98,8 +73,6 @@ func TestSelfHostProcWaitpidNohangIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostProcWaitpidNohangIRArm64 runs the same probe through the arm64
-// IR backend under qemu, where wait4 is asm-generic 260.
 func TestSelfHostProcWaitpidNohangIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -122,11 +95,6 @@ func TestSelfHostProcWaitpidNohangIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostProcWaitpidNohangIRWasmRefused pins the wasm answer, which is a
-// refusal NAMING THE BUILTIN. A component has no process model, so
-// platforms.fern withholds `proc`; the wasm driver has to say so itself,
-// because instruction selection downstream sees only an IR op and would frame
-// a deliberate gap as a missing lowering.
 func TestSelfHostProcWaitpidNohangIRWasmRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

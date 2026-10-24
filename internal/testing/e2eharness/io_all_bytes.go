@@ -10,8 +10,6 @@ func IOAllBytesInput() []byte {
 	return b
 }
 
-// IOAllBytesProgram checks complete binary collection and that borrowing a
-// reader leaves its handle open. The closed-handle call exercises cleanup.
 const IOAllBytesProgram = `import "std/io";
 function main(): i32 {
     let r: Reader = stdin();

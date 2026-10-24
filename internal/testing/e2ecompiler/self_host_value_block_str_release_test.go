@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// A string local bound from an if- or match-expression is released (#10216),
-// including the one bound in a loop body, whether the block's live leaves are
-// all freshly allocated or fresh and literal, with a diverging branch among
-// them.
 const valueBlockStrReleaseSrc = `import "std/i32";
 function fresh(n: i32): i32 { let s: string = if (n > 0) { "pos" + n.to_string() } else { "neg" + n.to_string() }; return s.len(); }
 function mixed(n: i32): i32 { let s: string = if (n > 0) { "pos" + n.to_string() } else { "x" }; return s.len(); }

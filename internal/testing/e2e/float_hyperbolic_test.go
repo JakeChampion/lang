@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/f64.sinh / cosh / tanh — the hyperbolic trig
-// functions, built on the natural exp. Like the other exp/log-derived helpers,
-// the wasmbin leg skips (the legacy AST backend doesn't wire libm exp).
-// Tolerance-banded; checks the reference values at x=1, the odd/even symmetry,
-// the cosh²-sinh²==1 identity, and tanh's ±1 saturation. Both f64 and f32.
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
-// leg skips itself when its toolchain is absent.
 const floatHyperbolicProg = `
 import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }

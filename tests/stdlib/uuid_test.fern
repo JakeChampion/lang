@@ -1,15 +1,6 @@
 import "std/test";
 import "std/uuid" as uuid;
 
-// tests/stdlib/uuid_test.fern — pure-Fern coverage of std/uuid's
-// generators. The output is random, so the assertions check the
-// *structure* (length, hyphen positions, version + variant nibbles,
-// is_valid shape, distinctness) — all of which hold for every draw, so
-// the TAP output is deterministic and the self-host differential gate
-// (which compares self-host vs interp output byte-for-byte) still
-// applies even though the bytes differ run to run. The Go-side suite
-// unit-tests the bytes; this is the migration-shaped companion.
-
 function test_v4_len(): test.TestOutcome {
   return test.assert_eq(uuid.v4().len(), 36);
 }
@@ -20,24 +11,19 @@ function test_v4_is_valid(): test.TestOutcome {
 
 function test_v4_hyphens(): test.TestOutcome {
   let u: string = uuid.v4();
-  // '-' is 45, at the 8-4-4-4-12 boundaries.
   return test.assert_true(u[8] == 45 && u[13] == 45 && u[18] == 45 && u[23] == 45);
 }
 
 function test_v4_version(): test.TestOutcome {
-  // The version nibble is the first char of the third group (index 14):
-  // '4' is 52.
   return test.assert_eq(uuid.v4()[14] as i32, 52);
 }
 
 function test_v4_variant(): test.TestOutcome {
-  // The variant nibble (index 19) is one of 8/9/a/b for RFC 4122.
   let c: i32 = uuid.v4()[19] as i32;
   return test.assert_true(c == 56 || c == 57 || c == 97 || c == 98);
 }
 
 function test_v4_distinct(): test.TestOutcome {
-  // Two draws are overwhelmingly likely distinct (122 random bits).
   return test.assert_true(uuid.v4() != uuid.v4());
 }
 
@@ -50,7 +36,6 @@ function test_v7_is_valid(): test.TestOutcome {
 }
 
 function test_v7_version(): test.TestOutcome {
-  // v7 carries version '7' (55) in the same nibble slot.
   return test.assert_eq(uuid.v7()[14] as i32, 55);
 }
 
@@ -61,12 +46,10 @@ function test_nil(): test.TestOutcome {
   if (!uuid.is_nil(uuid.NIL)) {
     return test.fail("is_nil on nil");
   }
-  // A generated v4 is never nil.
   return test.assert_false(uuid.is_nil(uuid.v4()));
 }
 
 function test_version_extract(): test.TestOutcome {
-  // Version comes from index 14: v4 → 4, v7 → 7, nil → 0.
   if (!has_version(uuid.v4(), 4)) {
     return test.fail("v4");
   }
@@ -77,7 +60,6 @@ function test_version_extract(): test.TestOutcome {
 }
 
 function test_version_malformed(): test.TestOutcome {
-  // Wrong lengths and missing hyphens return an error.
   if let Ok(_) = uuid.version("not-a-uuid") {
     return test.fail("short");
   }

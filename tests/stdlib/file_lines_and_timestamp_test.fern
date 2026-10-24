@@ -1,13 +1,5 @@
 import "std/test";
 
-// tests/stdlib/file_lines_and_timestamp_test.fern — batch
-// 25 additions to std/test:
-//   * `test.assert_file_lines(path, expected_lines)` — read a
-//     file, split lines, compare to a string array.
-//   * `test.assert_file_line_count(path, n)` — count lines.
-//   * `test.assert_close_to_now_ms(actual_ms, max_skew_ms)` —
-//     wall-clock timestamp recency check.
-
 function test_file_lines_pass(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "lines-pass");
   if (dir == "") {
@@ -37,7 +29,6 @@ function test_file_lines_no_trailing_newline(r: test.TestRunner): test.TestRunne
     return rr;
   }
   let path: string = dir + "/output.txt";
-  // No trailing newline — `.lines()` still returns 3 lines.
   match (write_file(path, "one\ntwo\nthree")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -68,8 +59,6 @@ function test_file_lines_mismatch_reports(r: test.TestRunner): test.TestRunner {
       return rr.it("expected mismatch fail", () => test.fail("missed"));
     },
     Fail(msg) => {
-      // assert_lines_eq names the differing line; the
-      // file wrapper just routes through it.
       if (!msg.contains("line 2")) {
         rr = rr.it(
           "file_lines diff names line",
@@ -131,15 +120,11 @@ function test_file_lines_missing_file(): test.TestOutcome {
 }
 
 function test_close_to_now_ms_now_passes(): test.TestOutcome {
-  // A timestamp captured "right now" should be within
-  // 5s of now_unix_ms() under any sane runtime.
   let t: i64 = now_unix_ms();
   return test.assert_close_to_now_ms(t, 5000 as i64);
 }
 
 function test_close_to_now_ms_old_fails(): test.TestOutcome {
-  // A timestamp from 1 hour ago must NOT be considered
-  // recent.
   let t: i64 = now_unix_ms() - 3600000 as i64;
   match (test.assert_close_to_now_ms(t, 1000 as i64)) {
     Pass => {
@@ -155,7 +140,6 @@ function test_close_to_now_ms_old_fails(): test.TestOutcome {
 }
 
 function test_close_to_now_ms_future_skew_fails(): test.TestOutcome {
-  // Future-skewed (negative signed skew) must also fail.
   let t: i64 = now_unix_ms() + 3600000 as i64;
   match (test.assert_close_to_now_ms(t, 1000 as i64)) {
     Pass => {

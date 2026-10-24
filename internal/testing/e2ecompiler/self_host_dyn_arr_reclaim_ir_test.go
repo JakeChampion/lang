@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostDynArrReclaimIRX86_64 pins the #4351 slice-3 surface: a
-// dyn-Trait ARRAY local built from an all-literal array literal
-// (`let xs: dyn T[] = [41, "s", Dot{..}]`). Every element is an rc-headered
-// box (a prim/string op_dyn_box cell — slice 2 — or a scalar-only leak-safe
-// struct box), sole-owned by the buffer, so the exit sweep releases each
-// element by its kind (a string cell first frees its sole-owned inner string
-// box at cell@8) before the buffer dec. Only dispatch in transient positions
-// is admitted; an element binding, for-in, append, store or escape leaves the
-// array leaking rather than risk an over-release.
 func TestSelfHostDynArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -48,10 +39,6 @@ func TestSelfHostDynArrReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// MIXED literal elements (prim + string + scalar-only struct + a variant
-	// construction, #4351 slice 4), RECLAIM, BOUNDED HIGH-WATER: every element
-	// box + the string's inner box + the buffer free per call — a second
-	// 3000-iteration churn stays flat.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Dot { r: i32 }
 enum Op { Add(i32), Neg }
@@ -64,17 +51,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-mixed-reclaim-flat", 0)
 
-	// BLOCK-SCOPED, reclaimed (#7253): the identical literal declared inside an
-	// `if` body rather than at function scope. The credit is the same; what
-	// differed was the KEY. The sweep resolved "DARR:" by the slot's name, and
-	// retire_locals renames a block-scoped slot to "!retired!xs" at the block's
-	// exit — before the sweep runs — so the lookup missed and every element box
-	// leaked. Measured 98 against the function-scope sibling's 0, one `if` apart;
-	// under the binding-site key both are 0.
-	//
-	// The function-scope form is the control and stays in the case above: a
-	// regression that breaks the credit outright takes both to 98, where one that
-	// re-introduces the name key takes only this one.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
@@ -83,10 +59,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-block-scoped-reclaim-flat", 0)
 
-	// INDEXED-LOOP dispatch: `while (j < xs.len()) { acc + xs[j].show() }` —
-	// the len() receiver and transient dispatches are admitted; still flat.
-	// (Elements must be LITERALS — a param-derived element like `[k, 5]`
-	// stays uncredited/sound-leak; the literal-only gate is the slice.)
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let xs: dyn Show[] = [4, 5, 7]; let t: i32 = 0; let j: i32 = 0; while (j < xs.len()) { t = t + xs[j].show(); j = j + 1; } return t + k; }
@@ -94,8 +66,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-idx-loop-reclaim-flat", 0)
 
-	// ELEMENT BINDING: `let e = xs[0]` is a lasting element alias, so values
-	// and the underflow detector must stay clean.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let xs: dyn Show[] = [k, 5]; let e = xs[0]; return e.show() + xs[1].show(); }
@@ -103,8 +73,6 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-elem-binding-excluded", 0)
 
-	// FOR-IN excluded: the loop var is a lasting element binding this slice
-	// doesn't track — candidate rejected, values + detector clean.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let xs: dyn Show[] = [k, 5]; let t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
@@ -112,9 +80,6 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-forin-excluded", 0)
 
-	// ALIASED excluded: `let ys = xs` — a bare-ident alias rejects the
-	// candidate (both names see live elements through frame exit; the array
-	// leaks, sound). Values + detector stay clean.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let xs: dyn Show[] = [41, 5]; let ys = xs; return ys[0].show() + xs[1].show() + k; }
@@ -122,10 +87,6 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-aliased-excluded", 0)
 
-	// RETURNED `dyn T[]` dispatches in the caller (#4780): an unannotated
-	// `let ys = mk()` — and the annotated form — recover the trait and route
-	// `ys[i].m()` through op_dyn_dispatch. A mis-dispatch returns 74 rather
-	// than 10. Values + detector pin correctness, not flatness.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Dot { r: i32 }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
@@ -137,7 +98,6 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"dyn-arr-returned-dispatch", 0)
 }
 
-// TestSelfHostDynArrReclaimWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostDynArrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping dyn arr reclaim wasm IR e2e")
@@ -209,7 +169,6 @@ function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0
 	}
 }
 
-// TestSelfHostDynArrReclaimIRArm64: the arm64 sibling under qemu.
 func TestSelfHostDynArrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

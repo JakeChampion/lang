@@ -1,4 +1,4 @@
-// A generic struct with a generic unbox helper, monomorphised at i32.
+
 struct Box[T] { value: T }
 
 function unbox[T](b: Box[T]): T {

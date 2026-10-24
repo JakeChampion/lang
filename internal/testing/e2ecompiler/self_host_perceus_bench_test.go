@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// Enumerate row placements by backtracking, independently of the benchmark's
-// breadth-wise lists of shared partial solutions.
 func perceusQueensOracle(n int) []int64 {
 	var answers []int64
 	var visit func([]int)

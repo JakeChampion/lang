@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Option[struct] that ESCAPES (returned): the box + payload must
-// survive the constructor; the caller still owns it. Churn forces
-// same-size reuse.
+
+
+
+
+
+
 import "core/int";
 struct Item { tags: i32[] }
 function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }

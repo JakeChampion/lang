@@ -5,23 +5,6 @@ import (
 	"testing"
 )
 
-// --- A repeated array alias assignment owes a release (#7814) ----------------
-//
-// Overwriting an array slot retains the new reference and releases the old
-// one. Skipping the release when old == new is right only for an in-place
-// mutator handing back the SAME buffer, which creates no second count; a
-// self-ALIAS does create one. `b = a` executed twice assigns the same pointer
-// both times, so the second store's retain must be paired with a release or
-// one buffer is stranded. Constant, not per-iteration — each further repeat
-// inflates the refcount again but it is the same single block that ends up
-// stranded.
-//
-// Each case asserts the answer agrees with the `fern` CLI build of the same
-// program and the census reads live_bytes 0.
-
-// repeatAliasSrc is the minimal shape — no nested array, no append, no element
-// read. A second execution of `b = a` is what owes the extra release, so the
-// loop is the point.
 const repeatAliasSrc = `function round(n: i32): i32 {
     let a: i32[] = [n, n, n, n, n];
     let b: i32[] = [7];
@@ -38,10 +21,6 @@ function main(): i32 {
     return t % 3;
 }`
 
-// repeatAliasRowSrc is the shape that surfaced it: an append-built arr-of-arr
-// with a row bound inside the loop. `g[0]` yields the same row pointer every
-// iteration, so the bind is a repeated self-alias. This was the last named
-// residual of the #7805 / #7810 / #7812 row work.
 const repeatAliasRowSrc = `function round(n: i32): i32 {
     let g: i32[][] = [];
     let held: i32[] = [7];
@@ -63,10 +42,6 @@ function main(): i32 {
     return t % 3;
 }`
 
-// repeatSelfMutationSrc is the control: an in-place append can hand back the
-// same buffer, and that store takes no retain, so releasing the old value
-// would free the live one. That use-after-free shows up as a wrong answer or a
-// crash, so it is asserted on exit-code agreement rather than on bytes.
 const repeatSelfMutationSrc = `function round(n: i32): i32 {
     let xs: i32[] = [n];
     let i: i32 = 0;
@@ -97,9 +72,6 @@ func TestSelfHostRepeatAliasStoreX86_64(t *testing.T) {
 		{"self_mutation_keeps_guard", repeatSelfMutationSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Exit codes must agree first: an over-release here frees a buffer
-			// the program still reads, which diverges the answer long before
-			// any byte count would say so.
 			_, nativeExit := nativeLeakVerdict(t, cli, dir, "repalias_nat_"+tc.name, tc.src)
 			if nativeExit < 0 {
 				t.Fatalf("native side did not run (exit %d)", nativeExit)

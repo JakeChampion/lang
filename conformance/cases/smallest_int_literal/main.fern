@@ -1,14 +1,14 @@
-// The most negative value of a width has a literal spelling, and it means
-// what it says.
-//
-// A literal carries only its magnitude — the sign is a separate unary node —
-// so `-2147483648` and `2147483648` share one number token, and only one of
-// them is in range. Getting that wrong leaves the smallest i32 unwritable,
-// which is why `std/math`'s `i32_min` is spelled `0 - 2147483647 - 1`.
-//
-// Every position a literal can settle in is exercised, because they reach
-// the range check by different routes: a let initialiser, an argument, a
-// return, an array element, a struct field and a match arm.
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/i32";
 import "std/i64";
@@ -21,7 +21,7 @@ function smallest(): i32 { return -2147483648; }
 
 function main(): i32 {
     let a: i32 = -2147483648;
-    // The workaround spelling must agree with the literal.
+
     let b: i32 = 0 - 2147483647 - 1;
     if (a != b) { return 1; }
     print(a.to_string());
@@ -41,14 +41,14 @@ function main(): i32 {
         _ => { return 6; },
     }
 
-    // The i64 width has always accepted its own smallest value; it must
-    // still, and it must not be confused with the i32 one.
+
+
     let w: i64 = -9223372036854775808;
     print(w.to_string());
     if (w == (a as i64)) { return 7; }
 
-    // Negating it overflows back to itself in two's complement — the value
-    // is its own negation, which is the property that makes it special.
+
+
     if (0 - a != a) { return 8; }
     return 0;
 }

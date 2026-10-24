@@ -9,13 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/oracle/interp"
 )
 
-// __str_hash(s, seed) is the seeded word-at-a-time string hash
-// (compiler/ir.fern's str_hash has the definition; interp.StrHash is the Go
-// reference, pinned to an independent implementation by TestStrHashPins).
-// The corpus sweeps every length to 40, which crosses the one-word, exact
-// multiple and overlapping-tail shapes, from several seeds including a
-// negative one, plus NUL and high bytes and random strings.
-
 type strHashCase struct {
 	s    string
 	seed int

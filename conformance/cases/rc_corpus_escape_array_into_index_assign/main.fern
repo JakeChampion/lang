@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Escape into an array element via index-assign
-// (`grid[i] = row`): the store retains the value without an
-// inc, so the owned inner array must survive the helper's
-// exit. Churn forces reuse of any freed block.
+
+
+
+
+
+
+
 import "core/int";
 function main(): i32 {
     let row: i32[] = [6000, 6001, 6002, 6003];

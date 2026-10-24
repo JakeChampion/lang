@@ -1,6 +1,6 @@
-// A struct and an enum variant sharing a bare name are different types at
-// run time: a `dyn` value of either dispatches to its own impl, a downcast
-// tells them apart, and so do two enums that declare one variant name.
+
+
+
 import "std/i32";
 
 trait Named {

@@ -10,10 +10,6 @@ import (
 	"testing"
 )
 
-// shortestDigitsWant is (significand, exponent) for Go's shortest
-// round-trip rendering of v at the given width: the digits of the
-// mantissa with the point and trailing zeros dropped, and the exponent
-// moved down by the digits that followed the point.
 func shortestDigitsWant(v float64, bits int) (string, int) {
 	s := strconv.FormatFloat(v, 'e', -1, bits)
 	mant, exps, _ := strings.Cut(s, "e")
@@ -22,10 +18,6 @@ func shortestDigitsWant(v float64, bits int) (string, int) {
 	return digits, exp - (len(digits) - 1)
 }
 
-// TestFloatShortestDigits pins `shortest_digits()` on f64 and f32 to
-// strconv's shortest digits: the same Dragonbox result `to_string()`
-// renders, handed out as a pair, with zero, the infinities and NaN
-// answering (0, 0) and the sign dropped.
 func TestFloatShortestDigits(t *testing.T) {
 	vals := []float64{
 		0.1, 100, 1.5, -1.5, 1e15, 1e16, 1e17, 123456789012345680, 0.3, 1e-5,
@@ -79,10 +71,6 @@ func TestFloatShortestDigits(t *testing.T) {
 	}
 }
 
-// TestFloatPow10Table pins the power-of-ten words `std/f64` exports
-// to the exact definition: with l2 = floor(log2(10^k)), the 128-bit
-// value ceil(10^k × 2^(127 - l2)), high word first, and `pow10_log2` is
-// l2 itself. Every entry is checked, both ends of the range included.
 func TestFloatPow10Table(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("import \"std/f64\";\nfunction main(): i32 {\n    let k: i32 = 0 - 292;\n    while (k <= 326) {\n")

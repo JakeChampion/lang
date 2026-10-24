@@ -10,22 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRRuntimeNeedsAggregation exercises whole-program runtime-needs
-// aggregation (#3451 step 3 / #3455). In per-module emit the ENTRY module emits
-// the single shared __fern_* runtime, but on its own it only knows its OWN
-// needs. A LIBRARY module that uses a helper the entry doesn't (here:
-// __fern_str_concat, via `a + b`) would reference an undefined symbol at link.
-//
-// asm_ir.module_runtime_needs reports a module's closed need-set (`-ir-needs`),
-// read off the emit of its unit of the typed lowering; the driver unions those
-// across modules and passes them to the entry as `-ir-extra-need`, so the
-// entry's runtime covers every module. The typed lowering checks the entry
-// against B's source (`-ir-sigs`), as it does for the entry's emit. The test would
-// FAIL (link error: undefined __fern_str_concat / __fern_alloc) without the
-// aggregation, because the entry here allocates/concats nothing itself.
-//
-// Library B's bcat concatenates "ab"+"ab" and returns its length (4); entry A
-// just calls bcat. Linked binary exits 4.
 func TestSelfHostIRRuntimeNeedsAggregation(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -56,7 +40,6 @@ func TestSelfHostIRRuntimeNeedsAggregation(t *testing.T) {
 		t.Fatalf("write rn_lib.fern: %v", err)
 	}
 
-	// The library needs str_concat + heap; the entry needs nothing.
 	libNeeds := splitNeeds(run(t, libSrc, "-ir-needs", "-ir-ns", "b"))
 	if !contains(libNeeds, "str_concat") || !contains(libNeeds, "heap") {
 		t.Fatalf("lib needs probe missing str_concat/heap: %v", libNeeds)
@@ -66,14 +49,11 @@ func TestSelfHostIRRuntimeNeedsAggregation(t *testing.T) {
 		t.Fatalf("entry should not itself need str_concat: %v", entryNeeds)
 	}
 
-	// Build the entry's -ir-extra-need args from the whole-program union (here
-	// just the library's needs) — this is what the driver will do across modules.
 	entryArgs := []string{"-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bcat", "-ir-sigs", sigPath}
 	for _, n := range libNeeds {
 		entryArgs = append(entryArgs, "-ir-extra-need", n)
 	}
 	entryAsm := run(t, entrySrc, entryArgs...)
-	// The aggregated runtime must now be present in the entry unit.
 	if !strings.Contains(entryAsm, "__fern_str_concat:") {
 		t.Fatalf("entry unit did not emit aggregated __fern_str_concat runtime\n%s", rodataOf(entryAsm))
 	}

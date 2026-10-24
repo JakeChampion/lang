@@ -10,16 +10,13 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A fern.toml the loader refuses is E088 at the line it is on, in both
-// front ends, whether it governs the entry or an imported module; the
-// self-host also quotes that line.
 func TestSelfHostManifestErrorIsE088(t *testing.T) {
 	const badDep = "[package]\nname = \"app\"\n[dependencies]\nfoo = { path = \"../foo\", capabilities = [\"nett\"] }\n"
 	const msg = `error[E088]: dependency "foo": capabilities: unknown capability "nett" (valid capabilities: env, fs, net, random, subprocess, time)`
 	for _, c := range []struct {
 		name  string
 		files map[string]string
-		bad   string // the refused manifest, relative to the project
+		bad   string
 		line  string
 		quote string
 	}{

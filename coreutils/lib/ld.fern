@@ -1,33 +1,3 @@
-// coreutils/lib/ld.fern — C's `long double`, as the TARGET has it.
-//
-// GNU's printf, seq and numfmt all convert and compute in `long
-// double`, so parity with them is parity with whatever format the C
-// compiler gives that type on the machine the binary runs on. That is
-// not one format:
-//
-//   x86-64          x87 80-bit extended  64-bit significand, integer bit STORED
-//   arm64 / wasm32  IEEE binary128       113-bit significand, leading 1 implied
-//   Darwin          IEEE binary64        53-bit significand, leading 1 implied
-//
-// and the difference shows in ordinary output, not only in the last
-// bit: `printf '%a' 1` is `0x8p-3` on x86-64 and `0x1p+0` on arm64,
-// `0.1` has twenty-one exact decimal digits against thirty-four, and
-// 1e-4951 is a subnormal on one machine and an underflow to zero on
-// another.
-//
-// `Format` is the three facts that make a machine's format —
-// significand bits, exponent range, and whether the leading
-// significand bit is stored — and every operation takes one, so a test
-// can drive all three on any host. `format()` is the one the target
-// has: `target_arch()` and `target_os()` fold to string literals before
-// the checker runs, so the other machines' arms are pruned and a build
-// carries exactly one model.
-//
-// A value is `m × 2^e` with `m` a 128-bit significand in two machine
-// words, because 113 bits do not fit one and the round-to-nearest-even-
-// plus-sticky logic is the same shape at any width. Canonical form: a
-// normal has `m` exactly `mant` bits wide; a subnormal, and zero, has
-// `e` pinned at the format's least exponent.
 import "./byte_input";
 import "std/string";
 import "std/array";
@@ -35,45 +5,24 @@ import "std/u64";
 import "core/bigint";
 import "std/f64";
 
-// ---- the format ------------------------------------------------------------
-// `mant` is the significand's width in bits (C's LDBL_MANT_DIG),
-// `emax` the exponent of the largest finite binade (LDBL_MAX_EXP - 1),
-// and `explicit_bit` says the leading bit is stored in the significand
-// rather than implied by the exponent field. `mant - 1` and `mant - 4`
-// are multiples of four in every format below, which is what lets `%a`
-// print whole hex digits.
 pub struct Format { mant: i32, emax: i32, explicit_bit: boolean }
 
-// x87 80-bit extended: what glibc gives `long double` on x86-64.
 pub function x87(): Format {
   return Format { mant: 64, emax: 16383, explicit_bit: true };
 }
 
-// IEEE binary128: `long double` on arm64 (Linux, Android), and on
-// wasm32, whose ABI is whatever clang says the type is —
-// __LDBL_MANT_DIG__ 113 for wasm32-wasi, the same as aarch64.
 pub function binary128(): Format {
   return Format { mant: 113, emax: 16383, explicit_bit: false };
 }
 
-// IEEE binary64: on Apple platforms `long double` IS `double`.
 pub function binary64(): Format {
   return Format { mant: 53, emax: 1023, explicit_bit: false };
 }
 
-// IEEE binary32: C's `float` everywhere Fern targets. Not a `long
-// double` anywhere, but a caller that reads floats out of a byte buffer
-// (`od -t f4`) wants the same conversions this module gives the wider
-// two, and a second copy of them is a second place for the same bug.
 pub function binary32(): Format {
   return Format { mant: 24, emax: 127, explicit_bit: false };
 }
 
-// IEEE binary16 and bfloat16: two-byte types `od -t fH` and `-t fB`
-// read out of a buffer. Neither is a Fern type, and neither is C's on
-// every compiler, so they exist here only as an encoding to decode —
-// both widen exactly into `float`, which is what the decimal they print
-// has to read back as.
 pub function binary16(): Format {
   return Format { mant: 11, emax: 15, explicit_bit: false };
 }
@@ -82,11 +31,6 @@ pub function bfloat16(): Format {
   return Format { mant: 8, emax: 127, explicit_bit: false };
 }
 
-// `format()` — the target's. Darwin is the only environment that
-// narrows the type to `double`, and x86-64 the only ISA that carries
-// x87; every other target is the AAPCS64 / clang quad. There is no
-// x86-64 Darwin target (docs/BACKEND-PARITY.md), so the two tests do
-// not overlap.
 pub function format(): Format {
   if (target_os() == "darwin") {
     return binary64();
@@ -97,28 +41,18 @@ pub function format(): Format {
   return binary128();
 }
 
-// The exponent of the least NORMAL value's leading bit.
 pub function (f: Format) emin(): i32 {
   return 1 - f.emax;
 }
 
-// The exponent of a subnormal's lowest bit — the least exponent any
-// value in the format has, and the one every subnormal is stored with.
 pub function (f: Format) min_exp(): i32 {
   return f.emin() - (f.mant - 1);
 }
 
-// C's LDBL_DIG: how many decimal digits survive a round trip through
-// the format — 18 in x87, 33 in binary128, 15 in binary64. It is
-// floor((mant - 1) * log10 2), with log10 2 as 30103/100000, which is
-// exact enough to land on the same integer for every width a format
-// here has.
 pub function (f: Format) dig(): i32 {
   return (f.mant - 1) * 30103 / 100000;
 }
 
-// How far below the significand's top the printed `%a` point sits: the
-// stored integer bit takes four bits with it, an implied one takes one.
 function hex_shift(f: Format): i32 {
   if (f.explicit_bit) {
     return f.mant - 4;
@@ -126,10 +60,6 @@ function hex_shift(f: Format): i32 {
   return f.mant - 1;
 }
 
-// ---- values ----------------------------------------------------------------
-// `LD` — a long double as `m × 2^e`, with `m` the 128-bit significand
-// `hi:lo` and `e` the exponent of its lowest bit. `kind` is 0 for
-// finite, 1 for infinity, 2 for NaN.
 pub struct LD { neg: boolean, kind: i32, hi: u64, lo: u64, e: i32 }
 
 pub function (f: Format) zero(neg: boolean): LD {
@@ -168,14 +98,10 @@ pub function (v: LD) abs(): LD {
   return LD { ...v, neg: false };
 }
 
-// The exponent of the value's leading bit; meaningless for zero.
 function top_of(v: LD): i32 {
   return v.e + bit_length128(v.hi, v.lo) - 1;
 }
 
-// Whether the magnitude is at least one. gnulib's xstrtod tells an
-// ERANGE that OVERFLOWED from one that merely underflowed by exactly
-// this test, the two being the only ways a conversion sets it.
 pub function (v: LD) abs_ge_one(): boolean {
   if (v.is_nan()) {
     return false;
@@ -189,7 +115,6 @@ pub function (v: LD) abs_ge_one(): boolean {
   return top_of(v) >= 0;
 }
 
-// Whether a finite value is zero or below the format's least normal.
 pub function (f: Format) is_subnormal(v: LD): boolean {
   if (v.is_zero()) {
     return true;
@@ -197,11 +122,6 @@ pub function (f: Format) is_subnormal(v: LD): boolean {
   return top_of(v) < f.emin();
 }
 
-// ---- 128-bit words -----------------------------------------------------------
-// A significand is two u64 words, `hi:lo`. Every helper takes a shift
-// count in [0, 128] and answers one word, because a pair would be a
-// tuple and a tuple return allocates. A u64 shift count is masked to
-// six bits by the machine, so 64 and up are answered here explicitly.
 function bit_length128(hi: u64, lo: u64): i32 {
   if (hi != 0 as u64) {
     return 128 - __clz64(hi);
@@ -256,12 +176,10 @@ function shr_lo(hi: u64, lo: u64, k: i32): u64 {
   return lo >> k as u64 | hi << (64 - k) as u64;
 }
 
-// The low `k` bits set, for k in [0, 64).
 function low_mask(k: i32): u64 {
   return (1 as u64 << k as u64) - 1 as u64;
 }
 
-// Whether any of the low `k` bits is set.
 function low_bits_set(hi: u64, lo: u64, k: i32): boolean {
   if (k <= 0) {
     return false;
@@ -291,8 +209,6 @@ function cmp128(ah: u64, al: u64, bh: u64, bl: u64): i32 {
   return 0;
 }
 
-// The high word of the 128-bit product x × y; the low word is the
-// machine's wrapping product. Four 32×32 partials, each of which fits.
 function mul_hi64(x: u64, y: u64): u64 {
   let m: u64 = 4294967295 as u64;
   let sh: u64 = 32 as u64;
@@ -307,8 +223,6 @@ function mul_hi64(x: u64, y: u64): u64 {
   return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
 }
 
-// The high word of (ah:al) − (bh:bl), which requires the first to be
-// the larger; the low word is the machine's wrapping difference.
 function sub_hi(ah: u64, al: u64, bh: u64, bl: u64): u64 {
   let hi: u64 = ah - bh;
   if (al < bl) {
@@ -317,8 +231,6 @@ function sub_hi(ah: u64, al: u64, bh: u64, bl: u64): u64 {
   return hi;
 }
 
-// The significand as a bigint, for the operations whose exact
-// intermediate does not fit two words.
 function to_big(hi: u64, lo: u64): bigint.BigInt {
   if (hi == 0 as u64) {
     return bigint.from_u64(lo);
@@ -326,17 +238,6 @@ function to_big(hi: u64, lo: u64): bigint.BigInt {
   return bigint.from_u64(hi).shl(64).add(bigint.from_u64(lo));
 }
 
-// ---- rounding --------------------------------------------------------------
-// `round128(f, hi, lo, e, sticky, neg)` — the long double nearest
-// (hi:lo) × 2^e, plus a little when `sticky`, half to even. Overflow is
-// infinity; a value below half the least subnormal is zero. A value
-// under the least normal is rounded at the subnormal grid, and when
-// that carries it up to the least normal the two representations are
-// the same record, so one rounding covers both.
-//
-// The word shifts are written out rather than taken from the helpers
-// above: this is the one function every operation ends in, and on the
-// x86-64 backend a helper call costs more than the shift it wraps.
 function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boolean): LD {
   let bl: i32 = 64 - __clz64(lo);
   if (hi != 0 as u64) {
@@ -349,8 +250,6 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
   if (top > f.emax) {
     return inf(neg);
   }
-  // `emin` and `min_exp` spelled out: the accessors are calls, and
-  // this is where every operation ends.
   let min_exp: i32 = 2 - f.emax - f.mant;
   if (top < min_exp - 1) {
     return f.zero(neg);
@@ -361,8 +260,6 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
   }
   let shift: i32 = at - e;
   if (shift <= 0) {
-    // Exact: the value has no more bits than the format keeps, so it
-    // is only moved up to its canonical width. The shift is under 128.
     let k: i32 = 0 - shift;
     if (k == 0) {
       return LD { neg: neg, kind: 0, hi: hi, lo: lo, e: at };
@@ -372,9 +269,6 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     }
     return LD { neg: neg, kind: 0, hi: hi << k as u64 | lo >> (64 - k) as u64, lo: lo << k as u64, e: at };
   }
-  // Rounding: `shift` is in [1, bl], so at most 128. `mh:ml` is the
-  // kept part, `round` the first bit below it and `below` whether any
-  // bit under that one is set.
   let mh: u64 = 0 as u64;
   let ml: u64 = 0 as u64;
   let round: boolean = false;
@@ -402,8 +296,6 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     if (ml == 0 as u64) {
       mh = mh + 1 as u64;
     }
-    // A carry out of the top bit leaves a power of two one bit wider
-    // than the format, which drops back exactly.
     let wide: boolean = false;
     if (mh != 0 as u64) {
       wide = 128 - __clz64(mh) > f.mant;
@@ -422,11 +314,6 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
   return LD { neg: neg, kind: 0, hi: mh, lo: ml, e: at };
 }
 
-// `round(f, q, e, sticky, neg)` — `round128` for a bigint `q` of any
-// width, and whether strtold would set ERANGE for it: overflow to
-// infinity, or a result that is tiny AND inexact, tininess judged after
-// rounding. Only the top 128 bits of `q` reach the rounding; everything
-// below them is sticky, which decides the same tie the exact tail would.
 pub function (f: Format) round(q: bigint.BigInt, e: i32, sticky: boolean, neg: boolean): (LD, boolean) {
   let bl: i32 = q.bit_length();
   if (bl == 0) {
@@ -466,7 +353,6 @@ pub function (f: Format) from_u64(v: u64): LD {
   return round128(f, 0 as u64, v, 0, false, false);
 }
 
-// `(v).as_i64()` — the value when it is a whole number an i64 holds.
 pub function (v: LD) as_i64(): Option[i64] {
   if (v.kind != 0) {
     return None;
@@ -499,10 +385,6 @@ pub function (v: LD) as_i64(): Option[i64] {
   return Some(u as i64);
 }
 
-// The largest whole number the format holds exactly, capped at what a
-// u64 carries. A digit fold that stays under this is exact, so it can
-// run in plain integer arithmetic and convert once; past it, every step
-// has to round the way the C one does.
 pub function (f: Format) max_exact_u64(): u64 {
   if (f.mant >= 64) {
     return 18446744073709551615 as u64;
@@ -510,10 +392,6 @@ pub function (f: Format) max_exact_u64(): u64 {
   return (1 as u64 << f.mant as u64) - 1 as u64;
 }
 
-// `pow10(f, k)` — 10^k, reached the way a C program reaches it: by
-// multiplying, so the result carries the roundings that accumulate once
-// the power outgrows the significand. Exact either way while 5^k still
-// fits (k up to 27 in x87, 48 in binary128, 22 in binary64).
 pub function (f: Format) pow10(k: i32): LD {
   let v: LD = f.from_i64(1 as i64);
   if (k <= 0) {
@@ -528,9 +406,6 @@ pub function (f: Format) pow10(k: i32): LD {
   return v;
 }
 
-// A decimal magnitude past which the answer is settled by the digit
-// count alone: log10(2) as 30103/100000, rounded outward so the exact
-// path below still sees every value that could land in range.
 function decimal_hi(f: Format): i32 {
   return (f.emax + 1) * 30103 / 100000 + 3;
 }
@@ -539,11 +414,6 @@ function decimal_lo(f: Format): i32 {
   return 0 - ((1 - f.min_exp()) * 30103 / 100000 + 3);
 }
 
-// `from_decimal(f, digits, k, neg)` — digits × 10^k, correctly rounded.
-// `digits` has no leading or trailing zeros. Magnitudes far outside the
-// format are decided from the digit count; the rest go through exact
-// bignum arithmetic — a division for a negative k, wide enough that the
-// quotient carries the round and sticky bits.
 pub function (f: Format) from_decimal(digits: string, k: i32, neg: boolean): (LD, boolean) {
   if (digits.len() == 0) {
     return (f.zero(neg), false);
@@ -574,10 +444,6 @@ pub function (f: Format) from_decimal(digits: string, k: i32, neg: boolean): (LD
   return f.round(qr.0, 0 - s, !qr.1.is_zero(), neg);
 }
 
-// ---- parsing ---------------------------------------------------------------
-// C-locale byte classes. This module is a leaf — nothing it needs
-// belongs to the GNU conventions in lib/gnu.fern — so it carries its
-// own rather than importing that whole surface.
 function is_digit(b: i32): boolean {
   return b >= 48 && b <= 57;
 }
@@ -618,15 +484,12 @@ function hex_char(v: i32): i32 {
   return 87 + v;
 }
 
-// `Parse` — what strtold reports: the value, whether it set ERANGE,
-// and how far it consumed (0 when the text names no number at all).
 pub struct Parse { v: LD, erange: boolean, end: i32 }
 
 function no_float(f: Format): Parse {
   return Parse { v: f.zero(false), erange: false, end: 0 };
 }
 
-// Whether the bytes at offset i start with word, case-insensitively.
 function has_word[S: byte_input.Input](s: S, i: i32, word: string): boolean {
   if (i + word.len() > s.byte_count()) {
     return false;
@@ -641,7 +504,6 @@ function has_word[S: byte_input.Input](s: S, i: i32, word: string): boolean {
   return true;
 }
 
-// A decimal exponent, saturating far beyond any magnitude that matters.
 function read_exponent[S: byte_input.Input](s: S, i: i32): (i32, i32) {
   let j: i32 = i;
   let neg: boolean = false;
@@ -665,13 +527,10 @@ function read_exponent[S: byte_input.Input](s: S, i: i32): (i32, i32) {
   return (v, j);
 }
 
-// `strtold(f, s)` — glibc's c_strtold: white space, sign, then inf /
-// infinity / nan / nan(chars), a hex float, or a decimal one.
 pub function (f: Format) strtold(s: string): Parse {
   return strtold_input(f, s);
 }
 
-// Parse a raw key without making its unconsumed bytes into text.
 pub function (f: Format) strtold_bytes(s: [u8]): Parse {
   return strtold_input(f, byte_input.Bytes { data: s });
 }
@@ -836,18 +695,6 @@ function decimal_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: bo
   return Parse { v: lr.0, erange: lr.1, end: i };
 }
 
-// ---- arithmetic ------------------------------------------------------------
-// Each result is the exact value rounded once to the format, which is
-// what an IEEE operation gives. The specials follow 754: a NaN operand
-// is returned as it stands, ∞ − ∞ and 0 × ∞ are NaN, and a sum that
-// cancels exactly is +0 under round-to-nearest.
-//
-// Each operation first strips its operands' trailing zero bits, so an
-// integer's significand is the integer rather than the integer padded
-// to the format's width, and runs on machine words when the exact
-// result fits two of them; otherwise it runs the same computation on
-// bigints. Both are exact, so they round to the same value, and the ld
-// suite holds them to that on every format.
 pub function (f: Format) add(a: LD, b: LD): LD {
   if (a.kind == 2) {
     return a;
@@ -884,8 +731,6 @@ pub function (f: Format) add(a: LD, b: LD): LD {
   return f.add_exact(a, b);
 }
 
-// The sum on words: both significands aligned to 2^e fit 127 bits, so
-// the sum fits 128 and the difference needs no borrow past the top.
 function add128(f: Format, a: LD, b: LD, e: i32): LD {
   let ah: u64 = aligned_hi(a, e);
   let al: u64 = aligned_lo(a, e);
@@ -909,8 +754,6 @@ function add128(f: Format, a: LD, b: LD, e: i32): LD {
   return round128(f, sub_hi(ah, al, bh, bl), al - bl, e, false, a.neg);
 }
 
-// The significand of `v` as a multiple of 2^e, for an `e` at or below
-// `v.e` plus its trailing zeros.
 function aligned_hi(v: LD, e: i32): u64 {
   if (v.e >= e) {
     return shl_hi(v.hi, v.lo, v.e - e);
@@ -925,12 +768,6 @@ function aligned_lo(v: LD, e: i32): u64 {
   return shr_lo(v.hi, v.lo, e - v.e);
 }
 
-// ---- the exact path ----------------------------------------------------------
-// `add_exact`, `mul_exact` and `div_exact` are the operations on
-// bigints: the exact intermediate, then one rounding. Each operation
-// above reaches for its own when the words do not hold the exact
-// result, and the ld suite compares the two paths on random values,
-// which is what these are public for.
 pub function (f: Format) add_exact(a: LD, b: LD): LD {
   let e: i32 = a.e;
   if (b.e < e) {
@@ -957,9 +794,6 @@ pub function (f: Format) mul_exact(a: LD, b: LD): LD {
   return r.0;
 }
 
-// The dividend is shifted by enough that the integer quotient carries
-// the whole significand plus the round bit; a non-zero remainder is
-// the sticky bit.
 pub function (f: Format) div_exact(a: LD, b: LD): LD {
   let s: i32 = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
   if (s < 0) {
@@ -1006,10 +840,6 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
   return f.mul_exact(a, b);
 }
 
-// Whether a non-zero significand fits one word once its trailing zero
-// bits are dropped: `hi` is zero, or `lo` is and `hi` alone is the
-// significand, or the two together are no wider than 64 bits once
-// `lo`'s trailing zeros are counted off.
 function fits_word(v: LD): boolean {
   if (v.hi == 0 as u64) {
     return true;
@@ -1020,7 +850,6 @@ function fits_word(v: LD): boolean {
   return 128 - __clz64(v.hi) - __ctz64(v.lo) <= 64;
 }
 
-// The significand of a value `fits_word` accepted, as that word.
 function reduced(v: LD): u64 {
   if (v.hi == 0 as u64) {
     return v.lo >> __ctz64(v.lo) as u64;
@@ -1032,11 +861,6 @@ function reduced(v: LD): u64 {
   return v.lo >> t as u64 | v.hi << (64 - t) as u64;
 }
 
-// `div(f, a, b)` — a / b rounded once to the format. The quotient is
-// almost never exact, so the dividend is shifted first by enough that
-// the integer quotient carries the whole significand plus the round
-// bit; a non-zero remainder is the sticky bit, which is all `round`
-// needs to break the tie correctly however much was cut off below.
 pub function (f: Format) div(a: LD, b: LD): LD {
   if (a.kind == 2) {
     return a;
@@ -1079,13 +903,6 @@ pub function (f: Format) div(a: LD, b: LD): LD {
   return f.div_exact(a, b);
 }
 
-// The quotient on words: `x × 2^s / d` by long division in 32-bit
-// chunks, for a divisor under 2^32 so each step's `rem:chunk` fits a
-// u64. `s` gives the quotient `mant + 3` bits; the chunks are read
-// straight out of `x` at their offset below `s`, so the shifted
-// dividend, which can run to 148 bits, is never built. The first
-// chunk is whatever is left over above a multiple of 32, so the
-// quotient, which is under `mant + 4` bits, never outgrows two words.
 function div_small(f: Format, x: u64, ex: i32, d: u64, ed: i32, neg: boolean): LD {
   let s: i32 = f.mant + 3 + (64 - __clz64(d)) - (64 - __clz64(x));
   if (s < 0) {
@@ -1100,9 +917,6 @@ function div_small(f: Format, x: u64, ex: i32, d: u64, ed: i32, neg: boolean): L
   let ql: u64 = 0 as u64;
   let rem: u64 = 0 as u64;
   while (pos > 0) {
-    // Bits [from, from + width) of the dividend are the same bits of
-    // `x` when `from` is at or above 0, the low bits of `x` moved up
-    // when it is within `width` below, and zero further down.
     let from: i32 = pos - width - s;
     let chunk: u64 = 0 as u64;
     if (from >= 0) {
@@ -1121,10 +935,6 @@ function div_small(f: Format, x: u64, ex: i32, d: u64, ed: i32, neg: boolean): L
   return round128(f, qh, ql, ex - ed - s, rem != 0 as u64, neg);
 }
 
-// `cmp(a, b)` — -1, 0 or 1, and 2 when the two are UNORDERED because
-// one is a NaN. 2 makes `a.cmp(b) < 0` and `a.cmp(b) == 0` answer as C
-// does; a caller that wants `>=` has to rule the NaN out first, exactly
-// as C's `!(a < b)` differs from `a >= b`.
 pub function (a: LD) cmp(b: LD): i32 {
   if (a.kind == 2 || b.kind == 2) {
     return 2;
@@ -1152,8 +962,6 @@ pub function (a: LD) lt(b: LD): boolean {
   return a.cmp(b) == 0 - 1;
 }
 
-// Where a magnitude sits among the three that need no arithmetic to
-// order: -1 zero, 0 an ordinary finite one, 1 infinite.
 function mag_class(v: LD): i32 {
   if (v.kind == 1) {
     return 1;
@@ -1164,12 +972,6 @@ function mag_class(v: LD): i32 {
   return 0;
 }
 
-// `cmp_abs(a, b)` — |a| against |b|, without building either. The
-// leading bits' exponents settle almost every pair, and two canonical
-// values that share a binade share an exponent too, so their words
-// compare directly; only a non-canonical pair is aligned to the lower
-// of its exponents, where the wider significand's width bounds the
-// shifted one. A NaN operand is unordered here too.
 pub function (a: LD) cmp_abs(b: LD): i32 {
   if (a.kind == 2 || b.kind == 2) {
     return 2;
@@ -1209,10 +1011,6 @@ pub function (a: LD) cmp_abs(b: LD): i32 {
   return cmp128(aligned_hi(a, e), aligned_lo(a, e), aligned_hi(b, e), aligned_lo(b, e));
 }
 
-// ---- rounding a value to a whole number ------------------------------------
-// The modes `numfmt --round` selects between. They round the VALUE to a
-// whole number, which is a different question from the rounding every
-// operation above does to fit the format.
 pub function round_up(): i32 {
   return 0;
 }
@@ -1233,14 +1031,6 @@ pub function round_nearest(): i32 {
   return 4;
 }
 
-// `round_to_int(f, v, mode)` — v as a whole number.
-//
-// `nearest` is `floor(|v| + 1/2)` with the sign put back, NOT a
-// correctly-rounded round-half-away: the addition rounds to the format
-// first, so a value a hair under a half carries up to the half and then
-// rounds away with it. That asymmetry is essential — it is why
-// `numfmt --round=nearest --format=%.3f 0.0005` is 0.001 — so the
-// addition has to happen at the target's precision, not exactly.
 pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
   if (v.kind != 0 || (v.hi | v.lo) == 0 as u64 || v.e >= 0) {
     return v;
@@ -1248,8 +1038,6 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
   if (mode == round_nearest()) {
     return trunc_mag(f, plus_half(f, v), v.neg);
   }
-  // The whole part, as an integer in two words, plus one when the
-  // mode moves away from zero; both fit, since the value did.
   let drop: i32 = 0 - v.e;
   let wh: u64 = 0 as u64;
   let wl: u64 = 0 as u64;
@@ -1275,10 +1063,6 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
   return round128(f, wh, wl, 0, false, v.neg);
 }
 
-// |v| + 1/2 rounded to the format, for a `v` below one in magnitude
-// or with a fraction. The half is added on the value's own grid when
-// it lands within two words of it; a value too small for that is
-// added the general way.
 function plus_half(f: Format, v: LD): LD {
   let k: i32 = 0 - 1 - v.e;
   if (k < 127 && top_of(v) - v.e < 127) {
@@ -1301,8 +1085,6 @@ pub function (f: Format) half(): LD {
   return round128(f, 0 as u64, 1 as u64, 0 - 1, false, false);
 }
 
-// Whether a value with a fraction moves one step away from zero. The
-// caller has already established that there is a fraction.
 function away_from_zero(mode: i32, neg: boolean): boolean {
   if (mode == round_toward_zero()) {
     return false;
@@ -1316,9 +1098,6 @@ function away_from_zero(mode: i32, neg: boolean): boolean {
   return neg;
 }
 
-// The whole part of a finite value's magnitude with the sign `neg`,
-// which is exact in the format: it has no more significant bits than
-// the value it came from.
 function trunc_mag(f: Format, v: LD, neg: boolean): LD {
   if (v.e >= 0) {
     return LD { ...v, neg: neg };
@@ -1326,11 +1105,6 @@ function trunc_mag(f: Format, v: LD, neg: boolean): LD {
   return round128(f, shr_hi(v.hi, 0 - v.e), shr_lo(v.hi, v.lo, 0 - v.e), 0, false, neg);
 }
 
-// ---- exact decimal digits ---------------------------------------------------
-// `Dec` — a finite value as 0.digits × 10^dp with the leading digit
-// non-zero, or an empty digit string for zero; the digits are the EXACT
-// expansion of the binary value, which is what `%e`, `%f` and `%g`
-// round from.
 pub struct Dec { digits: string, dp: i32 }
 
 pub function (v: LD) dec(): Dec {
@@ -1349,8 +1123,6 @@ pub function (v: LD) dec(): Dec {
     let s: string = to_big(hi, lo).shl(e).to_string();
     return Dec { digits: s, dp: s.len() };
   }
-  // m × 5^-e, which a word holds while 5^k has room beside m: 5^27 is
-  // the largest power under 2^63.
   if (hi == 0 as u64 && 0 - e <= 27 && 64 - __clz64(lo) + pow5_bits(0 - e) <= 64) {
     let u: string = (lo * pow5_u64(0 - e)).to_string();
     return Dec { digits: u, dp: u.len() + e };
@@ -1359,7 +1131,6 @@ pub function (v: LD) dec(): Dec {
   return Dec { digits: t, dp: t.len() + e };
 }
 
-// 5^k for k up to 27, and its width in bits.
 function pow5_u64(k: i32): u64 {
   let p: u64 = 1 as u64;
   let i: i32 = 0;
@@ -1374,12 +1145,6 @@ function pow5_bits(k: i32): i32 {
   return 64 - __clz64(pow5_u64(k));
 }
 
-// `canonical(v)` — a finite `v` with its significand at the format's
-// full width: a normal value's leading bit at bit mant-1, a subnormal at
-// the format's least exponent. Decoding one of the format's own
-// encodings gives this form; a value read from a narrower format keeps
-// its shorter significand until it is widened here. For formats whose
-// significand fits a word.
 pub function (f: Format) canonical(v: LD): LD {
   if (v.kind != 0 || v.hi != 0 as u64 || v.lo == 0 as u64) {
     return v;
@@ -1394,15 +1159,6 @@ pub function (f: Format) canonical(v: LD): LD {
   return LD { neg: v.neg, kind: 0, hi: 0 as u64, lo: v.lo << shift as u64, e: v.e - shift };
 }
 
-// `round_to(v, x, p)` — the p-digit decimal nearest a canonical, finite,
-// non-zero `v`, ties to even, and whether it reads back as `v`: one
-// precision of C's `%.*g` search for the shortest decimal that does
-// (gnulib's ftoastr), for a `p` of at most 19. `x` is v's decimal
-// exponent, floor(log10 |v|). Where `dec` expands the whole value — a
-// subnormal runs to a thousand digits — this takes one product: v × 10^s
-// for s = p-1-x is m × 5^s × 2^(e+s), whose integer part is the digits
-// and whose remainder, against half the unit, is the rounding and,
-// against half the format's gap, the read-back.
 pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
   let s: i32 = p - 1 - x;
   let fast: (Dec, i32) = round_fast(f, v, x, p, s);
@@ -1416,8 +1172,6 @@ pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
   let d: bigint.BigInt = bigint.from_u64(1 as u64);
   let h: bigint.BigInt = d;
   if (s >= 0) {
-    // m × 5^s over 2^-e2: the remainder is the low bits, and half a
-    // gap is 5^s in units of the divisor.
     h = h.mul_pow5(s);
     let a: bigint.BigInt = m.mul(h);
     if (e2 >= 0) {
@@ -1428,9 +1182,6 @@ pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
       d = d.shl(0 - e2);
     }
   } else {
-    // m × 2^e2 over 5^-s, the power of two on whichever side keeps
-    // both whole; half a gap is 2^e2 in units of the divisor, or one
-    // when the divisor took the power.
     d = d.mul_pow5(0 - s);
     let b: bigint.BigInt = m;
     if (e2 >= 0) {
@@ -1450,7 +1201,6 @@ pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
   if (up) {
     dist = d.sub(r);
   } else if (v.lo == 1 as u64 << (f.mant - 1) as u64 && v.e > f.min_exp()) {
-    // The gap below a power of two is half the gap above it.
     twice = 2;
   }
   let cg: i32 = dist.shl(twice).cmp(h);
@@ -1472,21 +1222,12 @@ function no_dec(): (Dec, i32) {
   return (Dec { digits: "", dp: 0 }, 0);
 }
 
-// `round_to` without the product. `std/f64` keeps 10^s as a 128-bit
-// significand c with 10^s = (c − θ) × 2^β for some 0 ≤ θ < 1, so m × c
-// is v × 10^s to within m × θ < m units of its low bit, and the integer
-// part, the fraction against a half and the fraction against half the
-// format's gap are all read off that one product. A fraction within the
-// error of any of those three lines is left to the exact path: 0 says
-// so, 1 is a candidate that does not read back, 2 one that does.
 function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   if (s < 0 - 292 || s > 326) {
     return no_dec();
   }
   let chi: u64 = f64.pow10_hi(s);
   let clo: u64 = f64.pow10_lo(s);
-  // v × 10^s is m × c / 2^sigma; F is that in units of 2^-64, so its
-  // high word is the integer part and its low word the fraction.
   let t: i32 = 63 - f64.pow10_log2(s) - v.e;
   if (t < 48 || t > 126) {
     return no_dec();
@@ -1508,8 +1249,6 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
     q = shr_lo(p2, p1, t);
     fr = shr_lo(p1, p0, t);
   }
-  // The true F is below the computed one plus one, and above it less
-  // m × θ / 2^t.
   let margin: u64 = 1 as u64;
   if (t < 64) {
     margin = (m >> t as u64) + 1 as u64;
@@ -1522,8 +1261,6 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   if (!up && fr >= half) {
     return no_dec();
   }
-  // Half the format's gap in the same units is (c − θ) / 2^(t + 1),
-  // within one of its computed value either way.
   let hh: u64 = shr_hi(chi, t + 1);
   let hl: u64 = shr_lo(chi, clo, t + 1);
   let reads: i32 = 0;
@@ -1537,7 +1274,6 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
       reads = 2;
     }
   } else if (v.lo == 1 as u64 << (f.mant - 1) as u64 && v.e > f.min_exp()) {
-    // The gap below a power of two is half the gap above it.
     if (2 as u64 * (fr - margin) > hl) {
       reads = 1;
     } else if (2 as u64 * fr + 3 as u64 <= hl) {
@@ -1566,10 +1302,6 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   return (Dec { digits: digits, dp: dp }, reads);
 }
 
-// `round_digits(d, n)` — the first `n` digits of `d`, rounded half to
-// even on the exact tail; all of `d` when it has no more than `n`. When
-// the rounding carries out of the top digit the result is one digit
-// longer (a 1 and n zeros) and the boolean says so.
 pub function round_digits(d: string, n: i32): (string, boolean) {
   if (n <= 0) {
     if (n < 0) {
@@ -1628,15 +1360,6 @@ function has_nonzero(d: string, from: i32): boolean {
   return false;
 }
 
-// ---- %e %f %g ----------------------------------------------------------------
-// `Body` — the characters of one conversion in three pieces, so a
-// precision wider than the value's digits never has to be a string:
-// `head` is the digits with the point, `zeros` how many zeros pad the
-// fraction out to the precision, and `tail` the exponent. `refused` is
-// the refusal glibc answers a field longer than INT_MAX bytes with: the
-// directive prints nothing and the stream carries an error. `extra`
-// below is how many bytes the caller puts in front (a sign, a radix),
-// which counts toward that limit the same way.
 pub struct Body { head: string, zeros: i64, tail: string, refused: boolean }
 
 function refused(): Body {
@@ -1647,8 +1370,6 @@ function body(head: string, zeros: i64, tail: string): Body {
   return Body { head: head, zeros: zeros, tail: tail, refused: false };
 }
 
-// `text(b)` — the body as one string, for a caller whose precision is
-// known to be small.
 pub function (b: Body) text(): string {
   if (b.zeros == 0 as i64) {
     return b.head + b.tail;
@@ -1656,23 +1377,14 @@ pub function (b: Body) text(): string {
   return b.head + "0".repeat(b.zeros as i32) + b.tail;
 }
 
-// The most fractional digits any value of any supported format has
-// exactly. The narrowest value is the smallest subnormal, 2^-16445 for
-// the 80-bit format, whose expansion is that many digits; past this a
-// `%f` fraction is all zeros however much precision was asked for, so
-// a caller can format at this width and write the rest as a run.
 pub function max_exact_fraction(): i32 {
   return 16500;
 }
 
-// The length at which glibc refuses a conversion outright: one past
-// INT_MAX, which is the largest count its return value can carry.
 pub function overflow_len(): i64 {
   return 2147483648 as i64;
 }
 
-// `fixed(d, prec, alt, extra)` — the `%f` body: `prec` digits after the
-// point, `alt` keeping the point when there are none.
 pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
   if (d.digits.len() == 0) {
     if (prec + 2 as i64 + extra >= overflow_len()) {
@@ -1702,9 +1414,6 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
   return fixed_shape(rf.0, dp, prec, alt, 0 as i64);
 }
 
-// `digits` are the rounded digits with the decimal point `dp` digits in
-// (dp ≤ 0 puts leading zeros after the point), and `zeros` how many
-// more zeros make the fraction exactly `prec` long.
 function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean, zeros: i64): Body {
   let head: string = "";
   if (dp >= 1) {
@@ -1723,7 +1432,6 @@ function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean, zeros: i6
   return body(head, zeros, "");
 }
 
-// The `e+NN` tail, at least two exponent digits.
 function exp_suffix(x: i32, upper: boolean): string {
   let ax: i32 = x;
   if (x < 0) {
@@ -1753,8 +1461,6 @@ function exp_suffix(x: i32, upper: boolean): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `sci(d, prec, alt, upper, extra)` — the `%e` body: one digit, the
-// point, `prec` more, then the exponent.
 pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): Body {
   if (d.digits.len() == 0) {
     if (prec + 6 as i64 + extra >= overflow_len()) {
@@ -1788,10 +1494,6 @@ function sci_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boole
   return body(head, zeros, exp_suffix(x, upper));
 }
 
-// `general(d, prec, alt, upper, extra)` — the `%g` body: `prec`
-// significant digits (0 reads as 1), style `%e` when the exponent is
-// below -4 or at least `prec` and `%f` otherwise, trailing zeros gone
-// unless `alt` asks for them.
 pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): Body {
   let pr: i64 = prec;
   if (pr == 0 as i64) {
@@ -1815,12 +1517,6 @@ pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64
   return general_shape(digits, x, pr, alt, upper, r.1, extra);
 }
 
-// `digits` are the value's leading significant digits (at most `prec`,
-// fewer only when the exact expansion ends sooner) and `x` the exponent
-// of the first. glibc chooses the style BEFORE rounding, so when
-// `carried` lifted a fixed-style value to exactly 10^prec the exponent
-// style inherits the fixed style's zero fraction digits: `%#.3g` of
-// 999.5 is `1.e+03`. Apple's libc follows C and prints `1.00e+03`.
 function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, carried: boolean, extra: i64): Body {
   let pr: i32 = prec as i32;
   let zeros: i64 = 0 as i64;
@@ -1848,10 +1544,6 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
     mant = copy_digits(mant, 1 + point, digits, 1, end);
     return body(string_from_bytes_unchecked(mant), zeros, exp_suffix(x, upper));
   }
-  // The whole part is the first `dp` digits, padded with zeros past the
-  // digits there are, or a lone zero when the value is below one; the
-  // fraction is `lead` zeros and the digits after, cut back to the last
-  // non-zero one unless `alt` keeps them.
   let dp: i32 = x + 1;
   let whole: i32 = dp;
   let lead: i32 = 0;
@@ -1909,7 +1601,6 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
   return body(string_from_bytes_unchecked(head), zeros, "");
 }
 
-// The end of `s` once its trailing zeros are dropped, never before `from`.
 function nonzero_end(s: string, from: i32): i32 {
   let n: i32 = s.len();
   while (n > from && s[n - 1] as i32 == 48) {
@@ -1927,18 +1618,6 @@ function copy_digits(own out: u8[], at: i32, s: string, from: i32, to: i32): u8[
   return out;
 }
 
-// ---- whole conversions ------------------------------------------------------
-// The bodies above carry no sign, because printf writes its own from
-// the flags. A caller that just wants what C would print reaches for
-// these.
-// `to_fixed(f, v, prec)` — `printf("%.*Lf", prec, v)`.
-//
-// `%f` rounds the exact decimal expansion half to even at `prec`
-// places, which is the integer nearest |v| × 10^prec with ties to even,
-// written with the point `prec` digits from its end. When |v|'s
-// significand and 10^prec both fit a word that integer is a 128-bit
-// product shifted by the exponent — no expansion built and no digit
-// string rounded. The rest go through `dec` and `fixed`.
 pub function (f: Format) to_fixed(v: LD, prec: i32): string {
   if (v.kind == 0 && prec >= 0 && prec <= 19) {
     if ((v.hi | v.lo) == 0 as u64) {
@@ -1960,9 +1639,6 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
   return sign_of(v) + fixed(v.dec(), prec as i64, false, 0 as i64).text();
 }
 
-// `m × 2^e × 10^prec` as the nearest whole number, ties to even, or u64
-// MAX when it does not fit a word — a value that large is the 20-digit
-// case `fixed` handles, so the sentinel costs nothing.
 function scaled_u64(m: u64, e: i32, prec: i32): u64 {
   let p: u64 = pow10_u64(prec);
   let hi: u64 = mul_hi64(m, p);
@@ -2007,7 +1683,6 @@ function scaled_u64(m: u64, e: i32, prec: i32): u64 {
   return q;
 }
 
-// 10^k for k up to 19.
 function pow10_u64(k: i32): u64 {
   let p: u64 = 1 as u64;
   let i: i32 = 0;
@@ -2018,8 +1693,6 @@ function pow10_u64(k: i32): u64 {
   return p;
 }
 
-// `q` written with its last `prec` digits after the point, zero-padded
-// to at least one digit before it, and a sign in front.
 function fixed_u64(q: u64, prec: i32, neg: boolean): string {
   let digits: i32 = 1;
   let t: u64 = q / (10 as u64);
@@ -2064,8 +1737,6 @@ function fixed_u64(q: u64, prec: i32, neg: boolean): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `to_g(f, v)` — `printf("%Lg", v)`: six significant digits, exponent
-// form below -4 or from 6 up, trailing zeros dropped.
 pub function (f: Format) to_g(v: LD): string {
   return sign_of(v) + general(v.dec(), 6 as i64, false, false, 0 as i64).text();
 }
@@ -2077,29 +1748,6 @@ function sign_of(v: LD): string {
   return "";
 }
 
-// ---- %a ---------------------------------------------------------------------
-// `hex(f, v, prec, alt)` — the `%a` body of a finite `v`: the
-// significand in hex, then `p` and the binary exponent, all lowercase
-// and with no `0x` in front (the caller writes the prefix and
-// upper-cases the whole thing for `%A`).
-//
-// The format decides the shape. With the integer bit stored the point
-// sits four bits down, so the leading digit runs 8..f and 1 prints as
-// `8p-3`; with it implied the leading digit is that single bit and 1
-// prints as `1p+0`. Either way the digits below the point are the rest
-// of the significand and the exponent is the one that point implies —
-// which for a subnormal, whose `e` is pinned at the format's least,
-// comes out as the least normal's exponent, the same way glibc prints
-// one. Zero is the exception both formats share: `0p+0`.
-//
-// `prec` is the requested fraction digit count, or -1 for as many as
-// the value needs with trailing zeros dropped. Rounding is half to even
-// in hex, and a carry out of the top digit lifts the leading one — past
-// f it renormalises four binades up, which only a stored integer bit
-// can reach.
-// `hex_parts` is the same in the three pieces of a `Body`: the leading
-// digit with the point and the digits the value has, the zeros that pad
-// that out to the precision, and the `p±N`.
 pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
   return f.hex_parts(v, prec, alt).text();
 }
@@ -2185,7 +1833,6 @@ pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): Body {
   return body(head, zeros, ps);
 }
 
-// The four bits of the significand starting at bit `at`.
 function nibble_at(v: LD, at: i32): i32 {
   return (shr_lo(v.hi, v.lo, at) & 15 as u64) as i32;
 }

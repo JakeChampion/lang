@@ -10,10 +10,6 @@ import (
 	"testing"
 )
 
-// On x86-64 an ALU op or a compare reads a spilled operand from its frame
-// slot rather than loading it into a scratch register first. spread keeps
-// eight values live across the calls in its loop, more than the five
-// callee-saved registers hold, so some of them live in slots.
 const spilledOperandProg = `@noinline function bump(x: i64): i64 {
     return x + 1i64;
 }

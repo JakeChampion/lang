@@ -7,17 +7,11 @@ import (
 	"testing"
 )
 
-// tupDiscReclaimCases pin the #4365 discarded rc-field tuple temp reclaim: a
-// discarded tuple LITERAL carrying a fresh array element (`(w, [w, w+1]);`) and
-// a discarded CALL to a function returning a fresh tuple (`mk(i);`) release the
-// tuple box and its array buffers on every evaluation, so the churn's heap stays
-// bounded. An element that aliases a live local must stay readable.
 var tupDiscReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: both discarded shapes rebuilt per iteration, heap bounded.
 	{"tupdisc-churn-flat", `function mk(i: i32): (i32[], i32) {
     return ([i, i + 1], i);
 }
@@ -34,12 +28,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Negatives in one program, all CORRECT at detector zero: an IDENT element
-	// aliases a live local (skipped by the literal deep-drop — xs stays valid);
-	// a MIXED-return callee (array literal in one branch, ident in the other)
-	// gets flag '0' — box-only free; a STRING element is a pointer slot — the
-	// array position + box are freed, the string stays leak-mode; an i64
-	// element declines the entire entry (offset-uniform tuple_get).
 	{"tupdisc-negatives-safe", `function mkmix(i: i32, flip: i32): (i32[], i32) {
     let ys: i32[] = [i, i, i];
     if (flip > 0) { return ([i, i + 1], i); }
@@ -64,9 +52,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// BOUND calls are untouched by the TUPRET registry (it fires only on a
-	// discarded statement): a bound result stays readable after a discarded
-	// call to the same callee, values exact.
 	{"tupdisc-bound-untouched", `function mk(i: i32): (i32[], i32) {
     return ([i, i + 1], i);
 }
@@ -80,8 +65,6 @@ function main(): i32 {
 }`, 10},
 }
 
-// TestSelfHostTupDiscReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostTupDiscReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

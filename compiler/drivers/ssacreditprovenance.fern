@@ -1,4 +1,3 @@
-// Selection maps describe the actual merge/prune traversal, not a certificate.
 import "../ir";
 import "../irtables";
 import "../ircore";
@@ -111,7 +110,6 @@ function pruned(): void {
 function producers(): void {
   let a = semlower.runtime_lowering("struct A { n: i32 } function identity(x: A): i32 { return x.n; }");
   let b = semlower.runtime_lowering("struct B { n: i64 } function identity(x: B): i64 { return x.n + 1; }");
-  // Deliberately collide symbols from different actual selected metadata sets.
   let origins: physicalbody.Lowered[] = [a, b];
   let rows = [a.bodies[0], b.bodies[0]];
   let m = ssarc.merge_helpers_mapped([], rows);

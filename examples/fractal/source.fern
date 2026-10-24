@@ -12,7 +12,6 @@ pub struct Page {
   html: string,
 }
 
-// Load only the application files before the server accepts requests.
 pub function load(root: string): Result[Page[], string] {
   let pages: Page[] = [];
   for name in FILES {
@@ -61,7 +60,6 @@ pub function render(name: string, text: string): string {
   return layout(name, body + "</code></pre>");
 }
 
-// Match an import declaration before the highlighter escapes its source text.
 pub function highlight(line: string): string {
   match (import_markup(line)) {
     Some(html) => {

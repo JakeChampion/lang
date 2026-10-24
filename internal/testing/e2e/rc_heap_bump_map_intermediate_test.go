@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// A map RETURNED FROM A CALL — `let m = mk(i)` / a discarded `mk(i);` where
-// `mk` is the canonical cow-threaded builder (`let m = map_new(8); m =
-// m.insert(..); return m;`) — leaked its handle + buffer every iteration on
-// both compilers (#4357's map-intermediate slice), while the same map built
-// INLINE in the loop bounded (rc_heap_bump_map_reinit_test.go).
-//
-// Root cause: computeFreshLocals only admitted a local used exclusively in
-// return position, so the `m.insert(..)` receiver reads tainted `m`, `return
-// m` failed exprNoParamEscape, and returnsNoParamEscape[mk] stayed false —
-// the call result was never freeEligible at the binding, and the discarded
-// form's emitOwnedTempStackDrop had no Map routing at all (flat rc_dec).
-//
-// The fix is the COW self-reassign carve-out: a `m = m.insert(..)` statement
-// (isSelfMapMutation, receiver occurring exactly once) keeps `m` fresh — the
-// cow mutator returns the same fresh handle or a fresh copy of it — PROVIDED
-// every stored key/value is itself escape-free against the declared K/V slot
-// types. Map_set stores are UNCOUNTED and the fresh-credit reclaim
-// (emitMapSlotDrop) deep-frees the value column, so a param-derived store
-// must disqualify the builder — the negatives below pin exactly that.
 func mapIntermediateBoundBumpSrc(n string) string {
 	return `import "core/map";
 function mk(k: i32): Map[i32, i32] {
@@ -64,8 +45,6 @@ function main(): i32 {
 }`
 }
 
-// Value-correct + over-release-free for the credited path: the reclaimed maps
-// must have carried the right entries, and the underflow detector must stay 0.
 const mapIntermediateUnderflowSrc = `import "core/map";
 function mk(k: i32): Map[i32, i32] {
     let m: Map[i32, i32] = map_new(8);
@@ -85,11 +64,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// SOUNDNESS NEGATIVE 1 — cow-threading a PARAM receiver must stay unproven:
-// grow's rc==1 in-place insert returns the CALLER's handle, so crediting it
-// as fresh would free `base` out from under the loop. The carve-out excludes
-// params structurally (they are not Var decls); this pins that `base` stays
-// intact and nothing over-releases.
 const mapIntermediateParamReceiverSrc = `import "core/map";
 function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
     m = m.insert(k, k * 7);
@@ -110,12 +84,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// The same shape with a LITERAL scalar argument. `i + 2` used to carry the
-// blanket scalar-binary taint, which kept `g` un-reclaimable and hid that
-// grow's overwrite dec released the caller's handle on the cow-copy path:
-// with the literal, `g` reclaims, `base` was freed under it, and the value
-// check failed (121). The cow-threaded Map param's ownership bit
-// (cowMapParams) is what keeps both spellings correct.
 const mapIntermediateParamReceiverLiteralSrc = `import "core/map";
 function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
     m = m.insert(k, k * 7);
@@ -136,11 +104,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// SOUNDNESS NEGATIVE 2 — a builder storing a PARAM-DERIVED pointer value must
-// stay unproven: Map_set stores are uncounted and emitMapSlotDrop deep-frees
-// the value column, so crediting mk would free the caller's `keep` buffer.
-// The carve-out's per-argument escape-free check (against the declared V slot
-// type) rejects the bare param ident; `keep` must survive every iteration.
 const mapIntermediatePtrValueParamSrc = `import "core/map";
 function mk(xs: i32[], k: i32): Map[i32, i32[]] {
     let m: Map[i32, i32[]] = map_new(8);

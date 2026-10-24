@@ -9,61 +9,43 @@ import (
 	"testing"
 )
 
-// closureCallsClosureIRCases exercise a local closure whose body CALLS another
-// local, capture-free closure (`let add = fn(a){…}; let twice = fn(a){
-// add(add(a)) }`). `subst_fcall_stmts` rewrites the hoisted `add`'s call sites
-// inside nested lambda bodies too, and each lift round extends the global-fn
-// set with the names hoisted so far — so a sibling lambda calling an
-// already-hoisted `__lam_N` sees it as a global, not a capture it can't type.
-// Both closures lift to direct calls to hoisted `__lam_N` functions on the IR
-// path. Each case asserts the oracle exit code AND that lifting happened
-// (`__lam_` in the emitted asm/wat). Exit codes are kept <= 120 (x86-64) /
-// <= 125 (WASI).
 var closureCallsClosureIRCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
-	// nested call `add(add(a))` — the canonical shape.
 	{"nested", `function main(): i32 {
     let add = (a: i32): i32 => { return a + 10; };
     let twice = (a: i32): i32 => { return add(add(a)); };
     return twice(1);
 }`, 21},
-	// binary call `mk(a) + mk(a)` — two separate call sites in one expression.
 	{"binary", `function main(): i32 {
     let mk = (a: i32): i32 => { return a * 3; };
     let combine = (a: i32): i32 => { return mk(a) + mk(a); };
     return combine(4);
 }`, 24},
-	// a three-deep chain: f -> dbl -> inc, each a capture-free local closure.
 	{"chain", `function main(): i32 {
     let inc = (a: i32): i32 => { return a + 1; };
     let dbl = (a: i32): i32 => { return inc(a) * 2; };
     let f = (a: i32): i32 => { return dbl(a) + inc(a); };
     return f(3);
 }`, 12},
-	// control flow inside the calling closure (if + the called closure twice).
 	{"if_body", `function main(): i32 {
     let pos = (a: i32): i32 => { if (a < 0) { return 0; } return a; };
     let clamp = (a: i32): i32 => { return pos(a) + pos(0 - 5); };
     return clamp(7);
 }`, 7},
-	// a loop in the calling closure calling the other closure each iteration.
 	{"loop_body", `function main(): i32 {
     let sq = (a: i32): i32 => { return a * a; };
     let sumsq = (n: i32): i32 => { let s = 0; let i = 1; while (i <= n) { s = s + sq(i); i = i + 1; } return s; };
     return sumsq(3);
 }`, 14},
-	// the inner closure CAPTURES an outer variable (`add` captures `x`): the
-	// injected capture arg flows through as the calling closure's own capture.
 	{"capturing_inner", `function main(): i32 {
     let x = 10;
     let add = (a: i32): i32 => { return a + x; };
     let twice = (a: i32): i32 => { return add(a) + add(a); };
     return twice(1);
 }`, 22},
-	// the inner closure captures TWO variables.
 	{"capturing_two", `function main(): i32 {
     let x = 3;
     let y = 7;
@@ -71,8 +53,6 @@ var closureCallsClosureIRCases = []struct {
     let g = (a: i32): i32 => { return f(a) + f(a); };
     return g(2);
 }`, 26},
-	// two closures share a capture; a third calls both. (Return kept <= 125 for
-	// the WASI proc_exit range — base 50 → (1+50)+(50+1) = 102.)
 	{"shared_capture", `function main(): i32 {
     let base = 50;
     let f = (a: i32): i32 => { return a + base; };
@@ -80,18 +60,12 @@ var closureCallsClosureIRCases = []struct {
     let h = (a: i32): i32 => { return f(a) + g(a); };
     return h(1);
 }`, 102},
-	// the calling closure both CALLS the capturing inner closure and uses the
-	// captured variable directly.
 	{"direct_and_call", `function main(): i32 {
     let x = 5;
     let add = (a: i32): i32 => { return a + x; };
     let combo = (a: i32): i32 => { return add(a) + x; };
     return combo(10);
 }`, 20},
-	// The called closure's binding SPELLS ITS TYPE OUT. The captured `add`
-	// must still be called env-first as a closure; dispatched as a raw table
-	// index it traps on wasm (`undefined element`) and faults on the register
-	// backends, both with the compiler reporting success.
 	{"annotated_inner_called", `function main(): i32 {
     let add: (i32) => i32 = (a: i32): i32 => { return a + 10; };
     let twice = (a: i32): i32 => { return add(add(a)); };
@@ -99,9 +73,6 @@ var closureCallsClosureIRCases = []struct {
 }`, 21},
 }
 
-// TestSelfHostClosureCallsClosureX86IR builds the self-host asm_run driver and
-// runs each program through it (Fern → x86-64 asm → native binary → exit code),
-// asserting the oracle value.
 func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -143,8 +114,6 @@ func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostClosureCallsClosureWasmIR is the wasm sibling: the lift lives in
-// the target-independent lift.fern, so the wasm IR backend gets it for free.
 func TestSelfHostClosureCallsClosureWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host closure-calls-closure wasm IR e2e")

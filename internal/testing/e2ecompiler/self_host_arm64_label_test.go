@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64Labels byte-checks the named-label assembler added in
-// slice 3d of arm64_encode.fern (the Arm64Asm struct): forward branch
-// (patched by arm64_asm_resolve), backward branch (queued with its
-// displacement known), forward bl/call, and a conditional forward branch by
-// name. Same wasm self-test shape as TestSelfHostArm64Encode.
 func TestSelfHostArm64Labels(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 labels e2e")
@@ -39,24 +34,10 @@ func TestSelfHostArm64Labels(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOCallRuns is the end-to-end proof of the
-// label assembler: a Fern program uses the named-label API to assemble
-//
-//	_main { bl compute; exit(x0) }
-//	compute { x0=0; x1=7; loop: x0+=6; x1-=1; cbnz x1, loop; ret }
-//
-// — a forward `bl` (resolved by arm64_asm_resolve) and a backward loop
-// branch (queued with its displacement known) — wraps it with macho.fern
-// into an ad-hoc-signed Mach-O that exits 42 (= 6 × 7), with no
-// clang/ld64/codesign.
 func TestSelfHostArm64DarwinMachOCallRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "call42", main: arm64MachOCallDriverMain, wantExit: 42})
 }
 
-// arm64LabelsSelfTestMain byte-checks the named-label assembler: a forward
-// b resolved by arm64_asm_resolve, a forward b.cond resolved likewise, a
-// forward bl, and a backward cbnz whose displacement is known when queued.
-// Each `return N` is a distinct failing-check id (0 = all pass).
 const arm64LabelsSelfTestMain = `
 function main(): i32 {
     // forward b: b skip; <movz>; skip: -> b at off 0 targets off 8, rel +8
@@ -101,9 +82,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOCallDriverMain assembles a subroutine call via the label API:
-// _main bl's compute (forward), which loops 6 × 7 = 42 (backward cbnz by
-// label) and returns; _main exits with x0.
 const arm64MachOCallDriverMain = `
 function main(): i32 {
     let a: Arm64Asm = arm64_asm_new();
@@ -126,19 +104,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostArm64GasNumericLabels pins GAS local numeric labels in the
-// in-process assembler: `1:` defines an occurrence, `1f` refers to the NEXT
-// one and `1b` to the most recent. The emitter's array bounds check uses
-// them (`b.lo 1f` / `b __fern_oob_abort` / `1:`) and reuses the same digit
-// once per array index, so resolving by digit alone cannot work.
-//
-// The assembler used to record the definition as a label named "1" and look
-// the reference up as "1f", never match, and then patch the branch to
-// `-1 - site` — a jump to four bytes before .text — with `p.unknown` left
-// empty, so the binary linked and then SIGILL'd or span forever. That was 129
-// of the arm64 leg's SIGILLs. This test is the focused unit check for the
-// resolution rule (the leg is the end-to-end one), and its last two cases pin
-// the refusal that replaced the silent patch.
 func TestSelfHostArm64GasNumericLabels(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 numeric-label e2e")
@@ -166,16 +131,6 @@ func TestSelfHostArm64GasNumericLabels(t *testing.T) {
 	}
 }
 
-// arm64NumericLabelSelfTestMain assembles GAS text with two `1:` definitions
-// and one reference of each kind, then decodes the branch immediates. Layout
-// (4 bytes per instruction):
-//
-//	off  0  b.ne 1f     -> the first 1: at 4   (imm19 = 1)
-//	off  4  1: mov      <- definition #1
-//	off  8  b.eq 1f     -> the second 1: at 16 (imm19 = 2)
-//	off 12  mov
-//	off 16  1: mov      <- definition #2
-//	off 20  b 1b        -> back to 16          (imm26 field = 0x3ffffff, i.e. -1)
 const arm64NumericLabelSelfTestMain = `
 function main(): i32 {
     let src: string = "";
@@ -229,16 +184,6 @@ function imm26_at(code: u8[], at: i32): i32 {
 
 `
 
-// TestSelfHostArm64BranchRange pins #6264: the three branch patchers MASK the
-// displacement into their immediate field, so before this an overflow wrapped
-// into a different, valid-looking branch with nothing reported — the assembler
-// succeeded, the binary linked, and it jumped somewhere arbitrary. It is
-// refused now.
-//
-// The self-host compiler's own __text is ~56 MB, so imm26's ±128 MB is not
-// exceeded by today's build and the check is defensive there. imm19 (±1 MB)
-// and imm14 (±32 KB) are intra-function reaches, which a single large lowering
-// function can plausibly cross — those are the live cases.
 func TestSelfHostArm64BranchRange(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 branch-range e2e")
@@ -266,12 +211,6 @@ func TestSelfHostArm64BranchRange(t *testing.T) {
 	}
 }
 
-// arm64BranchRangeSelfTestMain checks arm64_rel_fits at each field's exact
-// boundary, then drives a real over-range branch through both patch sites (the
-// immediate one for a backward branch, arm64_asm_resolve for a forward one) and
-// asserts it is recorded rather than encoded. imm14 is used for the integration
-// half because ±32 KB is 8192 instructions — reachable in a test, where imm26
-// would need 33 million.
 const arm64BranchRangeSelfTestMain = `
 function main(): i32 {
     // ---- imm26: field holds rel/4, so the reach is +/- (1 << 27) bytes ----

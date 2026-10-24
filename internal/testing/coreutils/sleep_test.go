@@ -6,18 +6,9 @@ func init() {
 	registerCorpus("sleep", sleepCases)
 }
 
-// Every interval here is zero or a few milliseconds: the corpus asserts
-// what sleep(1) PRINTS and how it exits, and a case that actually paused
-// would only make the gate slower. The one behaviour it cannot cover is a
-// successful infinite sleep — `sleep inf` never returns, and the harness
-// has nothing to bound a process that writes nothing — so `inf` appears
-// here only in the spellings that are refused.
-// sleepCases is the corpus, shared by the GNU parity gate and the
-// self-host leg so neither can test something narrower than the other.
 func sleepCases(t *testing.T) []invocation {
 	t.Helper()
 	return []invocation{
-		// Intervals that are accepted, and the suffixes.
 		{name: "zero", args: []string{"0"}},
 		{name: "zero seconds", args: []string{"0s"}},
 		{name: "zero point zero", args: []string{"0.0"}},
@@ -60,7 +51,6 @@ func sleepCases(t *testing.T) []invocation {
 		{name: "dashdash alone is not a missing operand", args: []string{"--"}},
 		{name: "zero then a dashdash operand", args: []string{"--", "--"}},
 
-		// Intervals that are refused, one line each, then the try line.
 		{name: "a letter", args: []string{"x"}},
 		{name: "negative", args: []string{"--", "-1"}},
 		{name: "valid then invalid", args: []string{"1", "x"}},
@@ -96,7 +86,6 @@ func sleepCases(t *testing.T) []invocation {
 		{name: "invalid first", args: []string{"x", "0"}},
 		{name: "overflowing then invalid", args: []string{"1e5000", "x"}},
 
-		// The option scan: two options, permuting, and every fault.
 		{name: "no operands"},
 		{name: "negative number is an option", args: []string{"-1"}},
 		{name: "negative zero is an option", args: []string{"-0"}},
@@ -114,8 +103,6 @@ func sleepCases(t *testing.T) []invocation {
 		{name: "posix stops permuting", args: []string{"0", "--foo"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"--foo", "0"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// sleep writes nothing, so a closed or full stdout is only
-		// visible on the paths that do write — the diagnostics.
 		{name: "stdout closed", args: []string{"0"}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"0"}, stdout: stdoutFull},
 		{name: "stdout closed on an invalid interval", args: []string{"x"}, stdout: stdoutClosed},

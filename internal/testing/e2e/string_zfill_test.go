@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.zfill(width) — left-pad a numeric string
-// with '0' to at least width bytes, keeping a leading sign ('+' / '-') in FRONT
-// of the zeros (Python's str.zfill), unlike pad_start which would zero-pad
-// before the sign. Already-width-or-longer strings pass through; the sign counts
-// toward width. Returns 42 iff every check holds across interp / x86-64 / wasm /
-// arm64; each leg skips itself when its toolchain is absent.
 const stringZfillProg = `
 import "std/string";
 function main(): i32 {

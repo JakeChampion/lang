@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A `str` struct field or tuple element is a view like any other `str`
-// (#9915). Each row runs through the production CLI and balances.
-// field_literal reads its scalar field off the heap so the record holding the
-// literal is built on the heap rather than placed as a constant.
 var strAggregateCases = []struct {
 	name string
 	src  string
@@ -59,8 +55,6 @@ func TestSelfHostStrAggregateX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrAggregateNative builds the same rows with `fern -target
-// x86-64-linux`, every one clean.
 func TestSelfHostStrAggregateNative(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)

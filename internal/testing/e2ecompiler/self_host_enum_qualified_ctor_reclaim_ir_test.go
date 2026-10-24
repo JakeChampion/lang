@@ -7,24 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumQualifiedCtorReclaimIRX86_64 covers a Perceus completeness fix:
-// a consume-by-match enum local built with a QUALIFIED variant constructor
-// (`Bag.Items(..)`, not the bare `Items(..)`) is now reclaimed too. The
-// fresh-rc/scalar-enum-init classifiers only matched a bare-ident callee, so a
-// qualified-style construction's callee — an ExprFieldAccess (obj=Enum,
-// field=Variant) — fell through and the enum box + payload leaked (while the
-// identical unqualified form reclaimed). Both classifiers now resolve the variant by
-// its field name, so qualified and unqualified construction reclaim identically.
-//
-// SOUNDNESS: the qualified construction path shares the unqualified lowering, so a
-// bare-ident array payload is array-alias-inc'd at construction exactly as the
-// unqualified form is — the match-site rc-dec is balanced (no double-free). Proven
-// by the bare-ident case staying bounded AND value-correct over the churn.
-//
-// Reclaim is shown by heap exhaustion: a long consume-by-match churn that leaks the
-// payload buffer each iteration is SIGKILLed (137); with the reclaim it stays
-// bounded (0). Each payload array goes through id so it is built on the heap rather
-// than placed as a constant.
 func TestSelfHostEnumQualifiedCtorReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -56,9 +38,6 @@ func TestSelfHostEnumQualifiedCtorReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// QUALIFIED ctor + fresh-literal payload: 40M consume-by-match cycles stay bounded
-	// (exit 0). Pre-fix the qualified callee wasn't recognised, so the box + buffer
-	// leaked every iteration → heap exhausted → SIGKILL.
 	run(t, `enum Bag { Items(i32[]), None }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
@@ -72,10 +51,6 @@ function main(): i32 {
     return s - 5;
 }`, "qual_ctor_literal_churn", 0)
 
-	// QUALIFIED ctor + BARE-IDENT payload (aliases a local read before the match):
-	// the construction array-alias-inc balances the match-site dec, so the churn is
-	// bounded AND the read-back is intact. xs[0]+xs[15] = 1 + 16 = 17. A missing inc
-	// would double-free → freelist corruption / crash; a wrong free → wrong value.
 	run(t, `enum Bag { Items(i32[]), None }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {

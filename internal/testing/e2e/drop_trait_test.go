@@ -1,18 +1,3 @@
-// `core/mem.Drop` — user finalizers hooked into the RC drop glue (#2705).
-//
-// These check a LITERAL rather than an interpOracle: the interpreter has no
-// refcounts (interp.go — "the interpreter has no refcounts to underflow"), so
-// no value reaches rc-zero there and `drop` never runs. See
-// backends_agree_test.go for when that exemption applies; it is narrow, and
-// this is one of the two cases.
-//
-// What they check is the contract core/mem.fern documents: a finalizer runs
-// exactly once, when the value dies, with its fields still readable. Where a
-// value dies is the compiler's release point — native's early-release points,
-// the self-host's last use (#10756) — so where a drop line falls among the
-// program's other output is compared only where the program fixes it (a loop
-// temporary dies inside its iteration); otherwise the drop lines are compared
-// as a set and the program's own lines in order.
 package e2e
 
 import (
@@ -21,9 +6,6 @@ import (
 	"testing"
 )
 
-// dropsAgree runs src on every backend and checks that its non-drop output is
-// exactly `output`, in order, and that its `drop ...` lines are exactly
-// `drops`, in any order.
 func dropsAgree(t *testing.T, src, output string, drops ...string) {
 	t.Helper()
 	check := func(t *testing.T, backend, got string) {
@@ -71,9 +53,6 @@ impl mem.Drop for W {
 }
 `
 
-// The finalizer runs at all, and reads its fields — it must fire before
-// the field releases and the box free, or `self.n` would read freed
-// memory.
 func TestDropTraitRunsAndReadsFields(t *testing.T) {
 	src := dropPrelude + `function main(): i32 {
     let a: W = W { n: 7 };
@@ -84,9 +63,6 @@ func TestDropTraitRunsAndReadsFields(t *testing.T) {
 	dropsAgree(t, src, "use 7", "drop 7")
 }
 
-// Every container shape funnels its element/field/payload release through
-// `__drop_struct_W`, so one hook covers all of them. Each value must be
-// finalized exactly once.
 func TestDropTraitAcrossContainerShapes(t *testing.T) {
 	src := dropPrelude + `struct Holder { w: W }
 enum E { Wrap(W), Empty }
@@ -106,9 +82,6 @@ function main(): i32 {
 	dropsAgree(t, src, "len 2\nfield 3\npayload 4\nreturned 5", "drop 1", "drop 2", "drop 3", "drop 4", "drop 5")
 }
 
-// Two names for one value is ONE value: the finalizer fires once, at the
-// last reference, not once per binding. This is the is_unique gate doing
-// its job — an aliased struct takes the plain dec path.
 func TestDropTraitAliasFinalizesOnce(t *testing.T) {
 	src := dropPrelude + `function main(): i32 {
     let a: W = W { n: 1 };
@@ -120,8 +93,6 @@ func TestDropTraitAliasFinalizesOnce(t *testing.T) {
 	dropsAgree(t, src, "both 11", "drop 1")
 }
 
-// A value moved into a callee is finalized there, once — the caller must
-// not sweep it again.
 func TestDropTraitMovedIntoCallee(t *testing.T) {
 	src := dropPrelude + `function consume(w: W): i32 { print("consume " + w.n.to_string()); return w.n; }
 function main(): i32 {
@@ -133,8 +104,6 @@ function main(): i32 {
 	dropsAgree(t, src, "consume 1\nback 1", "drop 1")
 }
 
-// A loop body's temporary is finalized once per iteration, not accumulated
-// to function exit and finalized once.
 func TestDropTraitLoopTemporary(t *testing.T) {
 	src := dropPrelude + `function main(): i32 {
     let i: i32 = 0;
@@ -148,9 +117,6 @@ func TestDropTraitLoopTemporary(t *testing.T) {
 }
 `
 	dropsAgree(t, src, "iter 10\niter 11\niter 12\nend", "drop 10", "drop 11", "drop 12")
-	// A temporary dies before the next iteration's is built, so its finalizer
-	// runs before that iteration prints. The last one has no successor, and
-	// where it falls against "end" is release timing again.
 	ordered := func(t *testing.T, backend, got string) {
 		t.Helper()
 		for _, pair := range [][2]string{{"drop 10", "iter 11"}, {"drop 11", "iter 12"}} {
@@ -166,12 +132,6 @@ func TestDropTraitLoopTemporary(t *testing.T) {
 	})
 }
 
-// The reuse interaction, pinned. Drop-guided reuse hands a dying value's
-// box shell to the next same-shaped constructor instead of freeing it,
-// which skipped the finalizer entirely — a destructor silently lost on a
-// value that really did die. A `Drop` implementor is now excluded from
-// reuse (reuseClassOf), so `p` is finalized even though the loop below it
-// constructs the same shape.
 func TestDropTraitNotSwallowedByReuse(t *testing.T) {
 	src := dropPrelude + `@noinline function passthru(w: W): W { return w; }
 function main(): i32 {
@@ -190,9 +150,6 @@ function main(): i32 {
 	dropsAgree(t, src, "p 2\niter 10\niter 11\nend", "drop 2", "drop 10", "drop 11")
 }
 
-// An enum carries its own impl. `enumNeedsDrop` says an all-scalar enum
-// needs no glue; a Drop impl is itself the reason to generate it, so the
-// gate has to admit this one.
 func TestDropTraitOnAllScalarEnum(t *testing.T) {
 	src := `import "core/mem";
 import "std/i32";
@@ -210,12 +167,6 @@ function main(): i32 {
 	dropsAgree(t, src, "v 7\nend", "drop Sig")
 }
 
-// Self-overwrite is the other reuse shape: `w = W { … }` in a loop keeps
-// the OLD box and overwrites its fields in place, which displaced a value
-// without running its finalizer. Both the struct and the enum
-// self-overwrite paths now decline a Drop implementor, and the exit sweep
-// routes a Drop enum through the generated glue rather than its inline
-// variant plan — so every value constructed here is finalized.
 func TestDropTraitSelfOverwriteFinalizesEveryValue(t *testing.T) {
 	src := `import "core/mem";
 import "std/i32";
@@ -238,7 +189,5 @@ function main(): i32 {
     return 0;
 }
 `
-	// Three W values (initial + two rebinds) and three B values, each
-	// finalized exactly once.
 	dropsAgree(t, src, "wi\nwi\nbj\nbj\nend", "drop W2", "drop W1", "drop W1", "drop B", "drop B", "drop B")
 }

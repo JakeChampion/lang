@@ -7,31 +7,10 @@ import (
 	"testing"
 )
 
-// A user enum may name a variant `Ok`, `Some`, `Err` or `None`, and the match
-// lowering must not route such an arm to the Option/Result tag-test shape on
-// its NAME alone. Routed that way it fails two different ways:
-//
-//   - PAYLOAD-carrying names (`Ok(n)` / `Some(n)` / `Err(n)`) find no
-//     Option/Result type off the scrutinee slot, and the module fails to
-//     compile.
-//   - `None` carries no payload, so it reaches a hardcoded builtin tag
-//     (`None`/`Err` => 1). A user `None` sitting at any other index then never
-//     matches: it compiles clean and returns the wrong answer, with no
-//     diagnostic at all.
-//
-// So these cases pin BOTH failure modes. runCaptureStrictIR fails a refusal,
-// and every case is checked against the interpreter oracle, which is the only
-// thing that catches the `None` miscompile.
-//
-// The genuine-builtin cases are the control in the other direction: the parser
-// gives each user variant a struct with `enum_owner` and the builtins have
-// none, so a change that made everything take the user-enum path would fail
-// these instead.
 var selfHostShadowedBuiltinVariantCases = []struct {
 	name string
 	src  string
 }{
-	// Payload-carrying shadows.
 	{"user-ok", `enum E { Ok(i32), Bad(i32) }
 function main(): i32 { let e: E = E.Ok(9); match (e) { Ok(n) => { return n; }, _ => { return 1; } } }`},
 	{"user-some", `enum E { Some(i32), Nope }
@@ -39,68 +18,42 @@ function main(): i32 { let e: E = E.Some(9); match (e) { Some(n) => { return n; 
 	{"user-err", `enum E { Err(i32), Fine }
 function main(): i32 { let e: E = E.Err(9); match (e) { Err(n) => { return n; }, _ => { return 1; } } }`},
 
-	// The silent one: `E.None` is index 0, but the builtin table forced the
-	// tag to 1, so this arm never fired and control fell to the wildcard —
-	// self-host returned 7 where native returns 5.
 	{"user-none-at-index-0", `enum E { None, Bad(i32), Third(i32) }
 function main(): i32 { let e: E = E.None; match (e) { None => { return 5; }, Bad(n) => { return 6; }, _ => { return 7; } } }`},
-	// Same shape with the shadowing variant away from index 0, so a fix that
-	// merely flipped the hardcoded tag would still fail.
 	{"user-none-at-index-2", `enum E { Aa(i32), Bb(i32), None }
 function main(): i32 { let e: E = E.None; match (e) { None => { return 5; }, Aa(n) => { return 6; }, _ => { return 7; } } }`},
 
-	// The other binding sites reach the same lowering.
 	{"if-let-user-ok", `enum E { Ok(i32), Bad(i32) }
 function main(): i32 { let e: E = E.Ok(9); if let Ok(n) = e { return n; } return 1; }`},
 	{"let-else-user-ok", `enum E { Ok(i32), Bad(i32) }
 function main(): i32 { let e: E = E.Ok(9); let Ok(n) = e else { return 1; }; return n; }`},
 	{"match-expr-user-ok", `enum E { Ok(i32), Bad(i32) }
 function main(): i32 { let e: E = E.Ok(9); let r: i32 = match (e) { Ok(n) => n, _ => 1 }; return r; }`},
-	// A shadowing variant nested inside another user enum.
 	{"nested-user-ok", `enum Inner { Ok(i32), Bad(i32) }
 enum Outer { Sm(Inner), Nn(i32) }
 function main(): i32 { let o: Outer = Outer.Sm(Inner.Ok(9)); match (o) { Sm(Ok(n)) => { return n; }, _ => { return 1; } } }`},
 
-	// Controls: the real builtins must keep the tag-test path.
 	{"builtin-result", `function f(x: i32): Result[i32, string] { if (x > 0) { return Ok(x); } return Err("neg"); }
 function main(): i32 { match (f(9)) { Ok(v) => { return v; }, Err(e) => { return 1; } } }`},
 	{"builtin-result-err", `function f(x: i32): Result[i32, string] { if (x > 0) { return Ok(x); } return Err("neg"); }
 function main(): i32 { match (f(0 - 1)) { Ok(v) => { return v; }, Err(e) => { return 6; } } }`},
 	{"builtin-bool", `function main(): i32 { let b: boolean = true; match (b) { true => { return 8; }, _ => { return 2; } } }`},
 
-	// Qualified construction of a shadowing payload-less variant. This is the
-	// oracle-checkable half of the construction case — native accepts it
-	// because both sides name the enum.
 	{"qualified-user-none-idx-2", `enum E { Aa(i32), Bb(i32), None }
 function main(): i32 { let e: E = E.None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`},
 	{"qualified-user-none-idx-0", `enum E { None, Aa(i32), Bb(i32) }
 function main(): i32 { let e: E = E.None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`},
-	// Genuine Option `None` in the same positions, so the reordering below
-	// cannot have stolen the builtin's path.
 	{"builtin-none-return", `function f(): Option[i32] { return None; }
 function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 7; } } }`},
 	{"builtin-none-var-init", `function main(): i32 { let o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`},
 
-	// The control that matters most: a GENUINE Option matched while a
-	// shadowing user enum is merely DECLARED elsewhere in the program.
-	//
-	// Variant ownership alone cannot decide builtin-vs-user — it is a property
-	// of the name across the whole module, so one `enum O2 { Some(i32), None }`
-	// anywhere would send every `Some` arm down the user path, where these
-	// answer wrong with no diagnostic. The scrutinee is what settles it: a real
-	// Option/Result local has no struct type.
 	{"genuine-option-with-shadow-declared", `enum O2 { Some(i32), None }
 function main(): i32 { let r: Option[i32] = Option.Some(3); match (r) { Some(v) => { return v; }, None => { return 99; } } }`},
 	{"genuine-option-none-with-shadow-declared", `enum O2 { Some(i32), None }
 function main(): i32 { let r: Option[i32] = Option.None; match (r) { Some(v) => { return v; }, None => { return 99; } } }`},
-	// The constructions are qualified because `R2` makes the bare names
-	// ambiguous (E036) — the arm patterns need no qualifying, since the
-	// scrutinee's type settles them, which is the asymmetry under test.
 	{"genuine-result-with-shadow-declared", `enum R2 { Ok(i32), Err(i32) }
 function f(x: i32): Result[i32, string] { if (x > 0) { return Result.Ok(x); } return Result.Err("neg"); }
 function main(): i32 { match (f(4)) { Ok(v) => { return v; }, Err(e) => { return 99; } } }`},
-	// Both kinds of enum matched in ONE program, so the two paths have to
-	// coexist rather than one winning globally.
 	{"user-enum-and-genuine-option-together", `enum O2 { Some(i32), None }
 function main(): i32 { let o: O2 = O2.None; let r: Option[i32] = Option.Some(3); let t: i32 = 0;
     match (o) { O2.Some(n) => { t = n; }, O2.None => { t = 7; } }

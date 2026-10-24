@@ -10,25 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStatIR pins `stat(path)` lowering on the self-host x86-64 IR path.
-// stat returns Result[FileStat, IoError] — the Ok payload is the injected
-// FileStat STRUCT (is_file / is_dir / size). It had a full AST runtime
-// (__fern_stat) but no IR lowering, so a program using it bailed `BAIL call[stat]`
-// -> AST, dragging the `batch7` test module (std/test's assert_is_file /
-// assert_is_dir / assert_file_size) to the legacy emitter (#3457). It now lowers
-// to op_stat -> __fn___fern_stat, which on x86-64 is now a Fern runtime function
-// (#2649: asmcore.rt_src_stat — fstatat via __syscall4 into __raw_scratch, then
-// build Ok(FileStat{...}) / Err(NotFound(_))). arm64 runs the SAME Fern body now;
-// the FileStat shape is still pre-interned via shape_ref on both.
-// `Contains(asm, "__fern_stat")` holds either way — __fn___fern_stat contains it
-// as a substring — so it is not a guard against a revert; the lock-in tests in
-// self_host_runtime_fern_helper_*_test.go are.
-//
-// This is the first struct-RESULT builtin on the IR path: the match arm
-// `Ok(s) => s.is_file` binds `s` as a FileStat struct and the field reads resolve
-// against its injected layout. The program stats a known regular file (asserting
-// is_file + the exact byte size), a directory (is_dir), and a nonexistent path
-// (Err), exiting 0 only if all three resolve correctly.
 func TestSelfHostStatIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -38,9 +19,8 @@ func TestSelfHostStatIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// A known regular file (13 bytes) + a directory, both under the temp dir.
 	filePath := filepath.Join(dir, "stat_target.txt")
-	const fileBytes = "hello, stat!\n" // 13 bytes
+	const fileBytes = "hello, stat!\n"
 	if err := os.WriteFile(filePath, []byte(fileBytes), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
@@ -50,8 +30,6 @@ func TestSelfHostStatIR(t *testing.T) {
 	}
 	missing := filepath.Join(dir, "stat_does_not_exist")
 
-	// Embed the absolute paths into the program source. The match binds the Ok
-	// payload `s` as FileStat; s.is_file / s.is_dir / s.size read its fields.
 	src := fmt.Sprintf(`function main(): i32 {
     match (stat(%q)) {
         Ok(s) => {
@@ -91,16 +69,6 @@ func TestSelfHostStatIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStatIRWasm is the wasm mirror: stat now lowers through the wasm IR
-// path too (it was a wasm_eligible exclusion). The wasm op_stat handler builds
-// the Result[FileStat, IoError] box INLINE — it pushes FileStat's module-specific
-// struct type-id and calls $__fern_stat (a fresh wasm runtime: preview1
-// path_filestat_get -> the FileStat struct box [type_id@0, is_file@8, is_dir@16,
-// size@24] wrapped Ok, or Result.Err on failure). The first struct-RESULT builtin
-// on the wasm IR path. Run under wasmtime with the temp dir as preopen (`--dir=.::/`,
-// CWD = temp dir) so the relative paths resolve; the program exits 0 only if the
-// regular file (is_file + 13-byte size), the directory (is_dir), and the missing
-// path (Err) all resolve correctly.
 func TestSelfHostStatIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host stat wasm IR e2e")
@@ -108,7 +76,7 @@ func TestSelfHostStatIRWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
-	const fileBytes = "hello, stat!\n" // 13 bytes
+	const fileBytes = "hello, stat!\n"
 	if err := os.WriteFile(filepath.Join(dir, "stat_target.txt"), []byte(fileBytes), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
@@ -117,7 +85,6 @@ func TestSelfHostStatIRWasm(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// Relative paths — resolved against the preopen (the temp dir, mapped to guest /).
 	src := fmt.Sprintf(`function main(): i32 {
     match (stat("stat_target.txt")) {
         Ok(s) => {

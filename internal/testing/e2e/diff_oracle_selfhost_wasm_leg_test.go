@@ -13,61 +13,19 @@ import (
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
-// selfHostWasmDiffKnownFile lists the seeds whose self-host wasm result
-// disagrees with the interpreter's, same contract as the x86-64 and arm64
-// legs: a listed seed that starts passing fails too.
 const selfHostWasmDiffKnownFile = "selfhost-diff-wasm-known-divergences.txt"
 
-// selfHostWasmDiffMinRunRatio is this leg's own floor on seeds that compiled
-// and produced a COMPARABLE answer, lower than selfHostDiffMinRunRatio because
-// two endpoints reduce it here rather than one. A seed can be dropped by a
-// compile gap, as on every leg, and it can also be dropped by the WASI exit
-// clamp below, which no other leg has. Measured 2026-09-16 over seeds 0..63:
-// 34 compared, 27 of the remainder uncomparable under the clamp (0.53). The
-// floor sits under that with room for the corpus to shift, and is a ratchet to
-// raise: the clamp is a property of WASI, so the way to move it is to give the
-// emit somewhere other than the exit status to put main's answer.
 const selfHostWasmDiffMinRunRatio = 0.45
 
-// TestDifferential_SelfHostWasm runs the fernsmith corpus through the
-// self-host wasm emitter and asserts the module's exit matches the
-// interpreter's, the third backend's entry in a family that had only two.
-//
-// # Why wasm was missing, and why that mattered
-//
-// The x86-64 and arm64 legs cover the two register backends. Wasm is a
-// different emitter over a different string and map layout — its strings are
-// inline blocks with no data pointer, its map is a hash table rather than the
-// register backends' parallel arrays, and the semantic lowering reaches a
-// column's release through a funcref table slot where the register backends
-// pass a code address. None of that had a generated program pointed at it.
-//
-// # The WASI exit clamp, and why a seed can be uncomparable
-//
-// WASI refuses an exit status outside [0..126): a module returning 126 or more
-// exits 1 with "invalid exit status", so the program's answer is invisible.
-// The self-host wasm emit has no equivalent of the native wasm path's
-// fold-main's-result-into-stdout, so there is nothing else to read it from.
-//
-// A seed whose oracle byte is >= 126 therefore cannot have its VALUE checked.
-// It is not skipped: a trap or a rejected module is a real failure whatever
-// the program meant to return, and those are still asserted. Only the number
-// comparison is dropped, and the seed is counted out of the run ratio so the
-// floor measures what was actually compared.
 func TestDifferential_SelfHostWasm(t *testing.T) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		// Cannot exec the x86-64 driver, so there is no compiler to run.
 		t.Skip("the self-host CLI driver runs only natively (x86-64 asm, argv paths)")
 	}
 	selfHostWasmSweep(t, gcc, selfHostWasmDiffKnownFile, nil, selfHostPassConfig)
 }
 
-// TestDifferential_SelfHostSanitizeWasm is the wasm sweep with every seed
-// built under -sanitize. Wasm carries the leak census and its verdict but not
-// the over-release and freed-block checks (docs/SANITIZER.md), so what this
-// adds over the plain leg is a leak in the wasm emitter's own rc lowering.
 func TestDifferential_SelfHostSanitizeWasm(t *testing.T) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
@@ -77,14 +35,8 @@ func TestDifferential_SelfHostSanitizeWasm(t *testing.T) {
 	selfHostWasmSweep(t, gcc, selfHostWasmSanitizeKnownFile, []string{"-sanitize"}, nil)
 }
 
-// selfHostWasmSanitizeKnownFile is TestDifferential_SelfHostSanitizeWasm's
-// known-divergences file, on the same contract.
 const selfHostWasmSanitizeKnownFile = "selfhost-diff-sanitize-wasm-known-divergences.txt"
 
-// selfHostWasmSweep runs the fernsmith window through the self-host wasm CLI
-// with the extra compile flags given, against the interpreter. A -sanitize
-// build is also failed on any sanitizer report, including on a seed whose
-// answer the exit clamp hides.
 func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, passes func(uint64) []string) {
 	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -142,10 +94,6 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 					bisect(refusalClass(gap))
 					return
 				}
-				// Same contract as the other legs: a compile bail is a
-				// documented endpoint for an unlisted seed, but a LISTED one
-				// that no longer compiles cannot demonstrate the wrong answer
-				// its row claims, so the row is stale and someone must look.
 				if !isKnown {
 					t.Skipf("self-host wasm coverage gap: %s", gap)
 				}
@@ -163,8 +111,6 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 				}
 			}()
 			out, exit := r.stdout+r.stderr, r.exit
-			// A rejected module and a trap are failures whatever the oracle
-			// byte is, so both are asserted before the clamp is consulted.
 			if rejected, why := wasmRejected(out); rejected {
 				failf("wasmtime REJECTED the self-host module — not a wrong answer, the artifact is "+
 					"invalid or incomplete (%s):\n%s\nsrc:\n%s", why, out, src)
@@ -180,8 +126,6 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 				return
 			}
 			if want >= 126 {
-				// Uncomparable, not wrong: see the leg's header. Counted so
-				// the ratio below measures what was compared.
 				atomic.AddInt64(&clamped, 1)
 				return
 			}
@@ -212,9 +156,6 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 	})
 }
 
-// wasmRunAgrees is the wasm leg's verdict on one run of a seed: a valid
-// module that neither traps nor draws a sanitizer report, and exits with the
-// interpreter's byte where the exit clamp leaves that comparable.
 func wasmRunAgrees(r *selfHostRun, gap string, want int) bool {
 	if r == nil || gap != "" {
 		return false
@@ -226,10 +167,6 @@ func wasmRunAgrees(r *selfHostRun, gap string, want int) bool {
 	return want >= 126 || r.exit == want
 }
 
-// runSelfHostWasmSeed compiles src for wasm32-wasi with the self-host CLI and
-// runs the module under wasmtime. Returns (run, "") when it ran, (nil, gap)
-// when the compiler bailed, and (nil, "") when the compile hung, which is
-// already reported through failf.
 func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env []string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	dir := t.TempDir()

@@ -1,38 +1,15 @@
-// compiler/rcmemo.fern — the emitted-RC certifier's memo (#11908).
-//
-// A function's certification depends on nothing but what the certifier
-// reads: its lowered ops, which the lift turns into the SSA it walks, its
-// own contract and the contracts of the callees it names. The memo keeps
-// the digests of the functions one target has certified clean, one file per
-// target under the user's cache root, so a compile pays the certifier only
-// for a function whose lowering it has not seen before. The default compile
-// certifies through it; a report compile does not read it, since a report
-// wants every function's census.
-//
-// FERN_RC_CERTIFY_MEMO set to an off value turns the memo off; any other
-// value is the directory it lives in; unset, it lives under util.cache_base,
-// the package store's root.
-// The file is rewritten whole when an emit ends. Two compiles writing it at
-// once can tear a line, and a torn line matches nothing, so the memo is
-// never wrong, only forgetful. `version` is part of the file's name: bump
-// it when the certifier's model, the rcsigs tables or the lift's marks
-// change, so no verdict of the old model is read by the new one.
 import "./ir";
 import "./rccertify";
 import "./ssa";
 import "./util";
 import "std/envflag";
 
-// Memo is the digests one target has certified clean (`known`), the ones
-// this emit adds, and the hit and miss counters, one byte each in a buffer
-// as the gate's counters are. Off, nothing is read or written.
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
 
 function version(): string {
   return "9";
 }
 
-// keep is how many digests the file keeps when it is rewritten: the newest.
 function keep(): i32 {
   return 200000;
 }
@@ -42,7 +19,6 @@ pub function off(): Memo {
   return Memo { on: false, path: "", known: util.name_index(none), adds: 0 as usize, hits: 0 as usize, misses: 0 as usize, call_kind: 0 };
 }
 
-// root is the directory the memo lives under, "" for none.
 function root(): string {
   match (env("FERN_RC_CERTIFY_MEMO")) {
     Some(v) => {
@@ -56,8 +32,6 @@ function root(): string {
   return util.cache_base();
 }
 
-// open reads the memo of `target`, or an off memo when there is nowhere to
-// keep one.
 pub function open(target: string): Memo {
   let dir: string = root();
   if (dir == "") {
@@ -78,7 +52,6 @@ function lines_of(path: string): string[] {
   }
 }
 
-// split_lines is the non-empty lines of `text`.
 function split_lines(text: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -98,8 +71,6 @@ function split_lines(text: string): string[] {
   return out;
 }
 
-// newest keeps the last `keep()` lines: the file grows by what each compile
-// certifies afresh and is pruned from the front.
 function newest(lines: string[]): string[] {
   if (lines.len() <= keep()) {
     return lines;
@@ -113,10 +84,6 @@ function newest(lines: string[]): string[] {
   return out;
 }
 
-// key digests what the certifier reads of one function: its name (a
-// generated helper's contract is read off its name), its own contract, the
-// shape of its lifted SSA, every field of its ops the lift reads, and the
-// contract of every callee its ops name.
 pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
   let d: i64 = util.roll_text(util.digest_start(), fn_name);
   d = roll_abi(d, abis.lookup(fn_name));
@@ -137,7 +104,6 @@ function roll_abi(d: i64, a: rccertify.Abi): i64 {
   return util.roll_flag(util.roll(out, a.pair_second), a.result_word);
 }
 
-// hit says whether `k` was certified clean before, and counts.
 pub function hit(m: Memo, k: string): boolean {
   if (!m.on) {
     return false;
@@ -150,15 +116,12 @@ pub function hit(m: Memo, k: string): boolean {
   return false;
 }
 
-// add records a function this emit certified clean.
 pub function add(m: Memo, k: string): void {
   if (m.on) {
     buf_push(m.adds, k + "\n");
   }
 }
 
-// close writes the memo back with what this emit added, releases the
-// counters, and returns the hit and miss counts as text, "" when off.
 pub function close(m: Memo): string {
   if (!m.on) {
     return "";
@@ -174,9 +137,6 @@ pub function close(m: Memo): string {
   return summary;
 }
 
-// write rewrites the file: the digests it held, then the new ones. A
-// directory that cannot be made or a file that cannot be written leaves the
-// memo as it was; the next compile certifies again.
 function write(m: Memo, adds: string): void {
   let cut: i32 = m.path.len();
   while (cut > 0 && m.path[cut - 1] != b'/') {

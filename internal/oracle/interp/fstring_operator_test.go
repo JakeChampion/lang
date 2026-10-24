@@ -8,9 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// An f-string hole is evaluated through the checker's desugared chain, so the
-// post-check lowerings of composite operators have to reach it: `a < b` on a
-// struct ran as a raw struct comparison and failed (#11853).
 func TestFStringHoleUsesOperatorMethods(t *testing.T) {
 	prog, _, err := modload.LoadSource(`import "std/string";
 import "std/i32";

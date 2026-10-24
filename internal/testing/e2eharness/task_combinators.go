@@ -1,11 +1,5 @@
 package e2eharness
 
-// TaskCombinatorsProgram is slice 6's gate (docs/NET-P3-SUSPENSION-PLAN.md
-// §4): the task combinators inside a task. A task runs a race, a gather and
-// a with_deadline over entries that park on timers, and a gather over
-// futures whose waits go through RealDriver.poll_ready, driven by hand from
-// main; a second task is cancelled from outside while its race is parked.
-// Every entry has a defer, which runs whether it finished or was cancelled.
 const TaskCombinatorsProgram = `import "std/async";
 import "std/i32";
 import "std/time";
@@ -113,11 +107,6 @@ function main(): i32 {
 }
 `
 
-// TaskCombinatorsWant is the output under the self-host compiler: the fast
-// entry wins the race and the slow one is cancelled through its defer, the
-// gather's entries finish in timer order, the deadline cancels the late
-// entry, the future gather parks per round (8 parks in all), and the outer
-// cancellation reaches both of its race's children.
 const TaskCombinatorsWant = "done fast\n" +
 	"cancelled slow\n" +
 	"done slow\n" +

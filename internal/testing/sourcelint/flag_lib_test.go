@@ -8,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// scripts/flag-lib's fern_flag reads a boolean FERN_* variable as
-// internal/envflag does, for every value either side treats specially.
 func TestFlagLibAgreesWithEnvflag(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join("..", "..", "..", "scripts", "flag-lib"))
 	if err != nil {

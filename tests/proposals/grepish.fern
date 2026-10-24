@@ -1,42 +1,7 @@
-// tests/proposals/grepish.fern — proposal turn, line 10:
-// "A grep-like tool supporting literal, glob and anchored patterns with a
-// context window."
-//
-// Two subsystems that fail in completely different ways.
-//
-// **Matching** is checkable against predicates that already exist. For a
-// pattern with no metacharacters, `^p$` matches a line exactly when the line
-// EQUALS p, `^p` exactly when it starts with p, `p$` exactly when it ends with
-// p, and a bare `p` exactly when it contains p. The matcher here does not
-// branch on those four cases — it runs one scan and applies the anchors as
-// constraints on the position it found — so comparing it against
-// `==` / `starts_with` / `ends_with` / `contains` is a real cross-check against
-// four independent implementations rather than a restatement of its own logic.
-//
-// **The context window** is where the bugs actually are, and they are all one
-// bug: two matches close together produce overlapping windows. Emit each window
-// separately and lines appear twice; emit them merged but forget to merge the
-// separators and the output claims a gap where the file is continuous. So the
-// output is modelled as BLOCKS, and the invariants are structural:
-//
-//   - blocks ascend, never overlap, and are never adjacent — two blocks with no
-//     omitted line between them are one block that failed to merge;
-//   - the union of their lines is exactly the clamped union of the per-match
-//     windows, computed separately from the tool;
-//   - every line appears at most once anywhere in the output.
-//
-// That last one is the property a naive implementation fails on the very first
-// file where two matches are three lines apart, and it is invisible in any test
-// whose fixture has one match in it.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
 import "std/test";
 import "std/i32";
 import "std/string";
 
-// ------------------------------------------------------------------ model ---
-
-// mode: 0 = literal (metacharacters are ordinary bytes), 1 = glob
 struct Pattern { body: string, mode: i32, at_start: boolean, at_end: boolean }
 
 struct Line { lineno: i32, text: string, is_match: boolean }
@@ -45,11 +10,6 @@ struct Block { lines: Line[] }
 
 struct Report { blocks: Block[], matches: i32[] }
 
-// ---------------------------------------------------------------- matching ---
-
-// `^` and `$` are anchors wherever they appear at the ends, in BOTH modes — a
-// glob is still anchorable, and a literal search for a line ending in `$` is
-// what the literal mode's escape hatch is for (search for it unanchored).
 function compile(raw: string, mode: i32): Pattern {
   let body: string = raw;
   let at_start: boolean = false;
@@ -79,9 +39,6 @@ function equal_at(text: string, at: i32, body: string): boolean {
   return true;
 }
 
-// One scan, with the anchors as constraints on where a hit is allowed to sit.
-// Deliberately NOT four branches calling four stdlib predicates — the tests
-// compare against those, and a matcher built out of them could not disagree.
 function literal_match(p: Pattern, text: string): boolean {
   let last: i32 = text.len() - p.body.len();
   if (last < 0) {
@@ -101,9 +58,6 @@ function literal_match(p: Pattern, text: string): boolean {
   return false;
 }
 
-// `*` matches any run including empty, `?` exactly one byte. The single `star`
-// backtrack point is what keeps this linear-ish instead of exponential; the
-// `mark` advance is the retry.
 function glob_match(pat: string, text: string): boolean {
   let p: i32 = 0;
   let t: i32 = 0;
@@ -145,12 +99,6 @@ function matches(p: Pattern, text: string): boolean {
   return glob_match(eff, text);
 }
 
-// ---------------------------------------------------------- context window ---
-
-// The whole design in one place: mark every line the windows cover, THEN cut
-// the marked set into runs. Merging and clamping both fall out of that order —
-// there is no code path on which two windows can emit the same line twice,
-// because coverage is a set before it is ever a list.
 function search(lines: string[], p: Pattern, before: i32, after: i32): Report {
   let matched: i32[] = [];
   let covered: boolean[] = [];
@@ -199,8 +147,6 @@ function search(lines: string[], p: Pattern, before: i32, after: i32): Report {
   return Report { blocks: blocks, matches: matched };
 }
 
-// ------------------------------------------------------------- generators ---
-
 function corpus(): string[] {
   return [
     "alpha", "beta", "alphabet", "the alpha line", "gamma", "",
@@ -213,9 +159,6 @@ function metachar_free_patterns(): string[] {
   return ["alpha", "beta", "a", "x", "nothing", "", "zzz"];
 }
 
-// ------------------------------------------------------------------ tests ---
-
-// The four anchor forms, each against a predicate written by someone else.
 function test_anchors_agree_with_the_obvious_predicates(): test.TestOutcome {
   let lines: string[] = corpus();
   let pats: string[] = metachar_free_patterns();
@@ -253,8 +196,6 @@ function test_anchors_agree_with_the_obvious_predicates(): test.TestOutcome {
   return test.pass();
 }
 
-// Literal mode means literal: a `*` is an asterisk, not a wildcard. This is the
-// pair of assertions that keeps the two modes from collapsing into one.
 function test_literal_mode_treats_metacharacters_as_bytes(): test.TestOutcome {
   let star: Pattern = compile("a*b", 0);
   if (!matches(star, "a*b")) {
@@ -275,7 +216,6 @@ function test_literal_mode_treats_metacharacters_as_bytes(): test.TestOutcome {
     return test.fail("literal `a?b` must not match `aXb`");
   }
 
-  // The same patterns in GLOB mode do the opposite, which is the point.
   let gstar: Pattern = compile("^a*b$", 1);
   if (!matches(gstar, "aXb")) {
     return test.fail("glob `a*b` should match `aXb`");
@@ -299,9 +239,6 @@ function test_literal_mode_treats_metacharacters_as_bytes(): test.TestOutcome {
   return test.pass();
 }
 
-// Glob semantics stated as properties over the whole corpus rather than a table:
-// `^*$` matches everything, `^?$` matches exactly the one-byte lines, and a
-// trailing `*` is prefix matching.
 function test_glob_wildcards_behave_as_specified(): test.TestOutcome {
   let lines: string[] = corpus();
   let i: i32 = 0;
@@ -325,8 +262,6 @@ function test_glob_wildcards_behave_as_specified(): test.TestOutcome {
   return test.pass();
 }
 
-// The structural invariants that make overlapping windows impossible to get
-// wrong: ascending, non-overlapping, and never adjacent.
 function test_blocks_ascend_and_never_touch(): test.TestOutcome {
   let lines: string[] = corpus();
   let ctx: i32 = 0;
@@ -359,8 +294,6 @@ function test_blocks_ascend_and_never_touch(): test.TestOutcome {
   return test.pass();
 }
 
-// Coverage computed a second way, from the match list alone, and compared to
-// what the blocks actually contain.
 function test_coverage_is_the_clamped_union_of_windows(): test.TestOutcome {
   let lines: string[] = corpus();
   let ctx: i32 = 0;
@@ -426,7 +359,6 @@ function test_coverage_is_the_clamped_union_of_windows(): test.TestOutcome {
   return test.pass();
 }
 
-// Every match is present and flagged; every flagged line really matches.
 function test_matches_are_present_and_flagged(): test.TestOutcome {
   let lines: string[] = corpus();
   let p: Pattern = compile("alpha", 0);
@@ -463,7 +395,6 @@ function test_matches_are_present_and_flagged(): test.TestOutcome {
   return test.pass();
 }
 
-// Windows clamp at both ends rather than producing line 0 or line n+1.
 function test_windows_clamp_at_the_file_edges(): test.TestOutcome {
   let lines: string[] = ["hit", "b", "c", "d", "hit"];
   let r: Report = search(lines, compile("^hit$", 0), 10, 10);
@@ -488,16 +419,7 @@ function test_windows_clamp_at_the_file_edges(): test.TestOutcome {
   return test.pass();
 }
 
-// Two matches three lines apart, with a window that makes them touch: the
-// output must be ONE block, and no line may repeat. This is the case a
-// per-match emitter gets wrong first.
 function test_overlapping_windows_merge_into_one_block(): test.TestOutcome {
-  // Matches on lines 2 and 6 of seven. At context 1 the windows are 1..3 and
-  // 5..7, so line 4 is uncovered and there are two blocks; at context 2 they
-  // are 1..4 and 4..7, which share line 4 and must become one. Picking the
-  // fixture so the two contexts straddle the merge is the point — with the
-  // matches one line closer, context 1 already covers everything and the
-  // "does it merge?" half of the test asserts nothing.
   let lines: string[] = ["a", "hit", "c", "d", "e", "hit", "g"];
   let apart: Report = search(lines, compile("^hit$", 0), 1, 1);
   if (apart.blocks.len() != 2) {
@@ -513,7 +435,6 @@ function test_overlapping_windows_merge_into_one_block(): test.TestOutcome {
     return test.fail("merged block should hold all 7 lines, holds "
       + merged.blocks[0].lines.len().to_string());
   }
-  // Exactly touching (no overlap, no gap) must also merge.
   let touch: Report = search(["hit", "b", "c", "hit"], compile("^hit$", 0), 1, 1);
   if (touch.blocks.len() != 1) {
     return test.fail("touching windows should merge, got " + touch.blocks.len().to_string());
@@ -535,7 +456,6 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("empty input gave blocks");
   }
 
-  // The empty pattern matches every line, so the whole file is one block.
   let all: Report = search(corpus(), compile("", 0), 0, 0);
   if (all.blocks.len() != 1) {
     return test.fail("the empty pattern should match every line, got "

@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Issue #2763: a value-type struct with a Map field, reconstructed
-// through a method (`return IntSet { m: s.m.insert(...) }`), used to
-// SIGSEGV on x86-64 (and corrupt on arm64) — the COW mutator returns the
-// borrowed receiver's handle in place, so the new struct aliased the
-// caller's map and dropping the old struct freed it out from under the
-// new one. The StructLit lowering now clones a Map field initialised by a
-// COW mutator result, giving the new container its own buffer. main()
-// returns the set size (2), which doubles as a no-crash check.
 func TestX86_64MapFieldStructRebind(t *testing.T) {
 	src := `
 import "core/map";
@@ -29,15 +21,6 @@ function main(): i32 {
 	}
 }
 
-// Issue #4871: the #2763 clone (above) fires only when the Map field value is
-// DIRECTLY a COW-mutator call. One `let` removed — `let m = s.m.insert(...);
-// return ISet { m: m }` — the field value is a plain ident, the clone was
-// missed, and the new struct aliased the borrowed receiver's in-place buffer:
-// dropping the old struct on `s = iset_add(s, ...)` freed it, so the SECOND
-// wrap-insert hung on the corrupted (open-addressing) map header on x86-64
-// (interp was correct). borrowedMapFieldResults now flags a Map local bound to
-// a mutator with a field-access receiver so the StructLit clones it too. main()
-// returns the set size (2); a hang or a wrong count both fail.
 func TestX86_64MapFieldStructRebindIndirect(t *testing.T) {
 	src := `
 import "core/map";

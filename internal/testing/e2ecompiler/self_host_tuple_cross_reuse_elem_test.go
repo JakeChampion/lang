@@ -8,42 +8,16 @@ import (
 	"testing"
 )
 
-// --- The cross-tuple reuse donor's children, given back (#7275) --------------
-//
-// When a dead donor tuple's box is recycled for a later tuple construction,
-// whatever that box OWNED must be given back: a bare-ident element's
-// construction retain (#7226) and a fresh array-literal element. The same holds
-// at a LOOP-CARRIED recipient, whose prior iteration's box is released at the
-// rebind rather than by the exit sweep. A recipient whose element is a fresh
-// array literal owns it, typed from the declared tuple type, so its exit sweep
-// frees the array.
-//
-// The reuse is runtime-guarded on __fern_rc_is_unique: when the donor's box is
-// not unique it survives under its other owners, and releasing its children
-// there would free buffers those owners still read. No source-level shape
-// reaches that arm, so no case below witnesses it.
-//
-// Every want below was confirmed against `fern -interp`, never read off the
-// self-host run under test.
-
 type tupXReuseElemCase struct {
-	name string
-	src  string
-	want int
-	// allocs is the exact allocation count, and it is the non-vacuity guard: it
-	// is BELOW what the same program allocates under FERN_SELFHOST_NO_REUSE=1
-	// (one box per round is recycled instead of allocated), so a change that
-	// stops pairing these shapes fails here rather than passing trivially with
-	// nothing to release.
+	name   string
+	src    string
+	want   int
 	allocs int64
 }
 
 func tupXReuseElemCases() []tupXReuseElemCase {
 	return []tupXReuseElemCase{
 		{
-			// The main shape: donor and recipient each retain a bare-ident
-			// array element. Only the donor's retain was stranded — the
-			// recipient's slot is exit-swept normally.
 			name: "donor_and_recipient_idents",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -57,9 +31,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 74, allocs: 300,
 		},
 		{
-			// The RECIPIENT limb: its element is a fresh array literal, so the
-			// exit sweep's type-driven deep free owns it — and could not see it
-			// while the reuse tagged the slot from the element expression.
 			name: "recipient_array_literal",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -72,10 +43,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 74, allocs: 300,
 		},
 		{
-			// The donor's SOURCE local is read after the reuse. The release gives
-			// back the tuple's reference, not the local's, so the read must still
-			// see live bytes — this is the case a release of the wrong reference
-			// corrupts, and the underflow check is what separates the two.
 			name: "donor_source_read_after",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -89,8 +56,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 61, allocs: 300,
 		},
 		{
-			// Both positions retained, so the reuse arm walks a list rather than
-			// releasing one position.
 			name: "two_retained_positions",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -106,10 +71,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 35, allocs: 500,
 		},
 		{
-			// A CHAIN: u recycles t's box and then donates it to v. u is bound by
-			// the reuse path, so its own fresh literal is owned by a slot that
-			// bind_var_slot never saw — the case that needs the donor release to
-			// consult the deep-free class, not only the recorded element kinds.
 			name: "chained_donor",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -124,9 +85,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 29, allocs: 400,
 		},
 		{
-			// The donor's element is a PARAM ident — a buffer the frame does not
-			// own. The construction still retains it, so the reuse arm owes
-			// exactly one dec; one too many frees the caller's live array.
 			name: "param_ident_donor",
 			src: `function feed(xs: i32[], i: i32): i32 {
     let t: (i32, i32[]) = (i, xs);
@@ -139,10 +97,6 @@ function main(): i32 { let xs: i32[] = [7, 11]; let x: i32 = 0; let r: i32 = 0; 
 			want: 57, allocs: 200,
 		},
 		{
-			// A LOOP-CARRIED recipient: `u`'s slot is re-bound every iteration, so
-			// its prior box is released at the rebind rather than by the exit
-			// sweep. A shallow box dec is the whole release only when the box owns
-			// nothing — here it owns a fresh array literal.
 			name: "loop_carried_recipient_literal",
 			src: `function run(n: i32): i32 {
     let acc: i32 = 0;
@@ -161,10 +115,6 @@ function main(): i32 { let x: i32 = run(100); if (__rc_underflow_count() != 0) {
 			want: 74, allocs: 300,
 		},
 		{
-			// The same loop with a bare-ident recipient element. The reuse path
-			// takes no element retain, so the source local's own sweep owns the
-			// buffer and the prior-box release must NOT claim it — the direction
-			// the widened prior-box gate could have got wrong.
 			name: "loop_carried_recipient_ident",
 			src: `function run(n: i32): i32 {
     let acc: i32 = 0;
@@ -184,9 +134,6 @@ function main(): i32 { let x: i32 = run(100); if (__rc_underflow_count() != 0) {
 			want: 74, allocs: 300,
 		},
 		{
-			// The RECIPIENT's source local is read after the reuse. The recipient
-			// takes a bare ident, so the deep free must NOT claim it — the
-			// direction the corrected slot tags could have got wrong.
 			name: "recipient_source_read_after",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -203,14 +150,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// TestSelfHostTupleCrossReuseElemX86_64 — the donor's children are given back, so
-// allocs and frees balance exactly and the underflow counter stays at 0.
-//
-// Three assertions, each essential in a different direction. The exit code
-// catches a release of a live buffer (99 = the counter tripped, and both oracles
-// agree on the want otherwise). allocs == frees catches the leak this closes, and
-// frees ABOVE allocs a double free. The exact alloc count catches the reuse
-// silently ceasing to pair these shapes, which would make the rest vacuous.
 func TestSelfHostTupleCrossReuseElemX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -253,9 +192,6 @@ func TestSelfHostTupleCrossReuseElemX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleCrossReuseElemWasmIR — the wasm sibling. Exit codes only:
-// FERN_LEAKCHECK is x86-64-only, and the answer is what proves the release did
-// not free a live buffer.
 func TestSelfHostTupleCrossReuseElemWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple cross-reuse element wasm IR e2e")
@@ -294,7 +230,6 @@ func TestSelfHostTupleCrossReuseElemWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleCrossReuseElemIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleCrossReuseElemIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

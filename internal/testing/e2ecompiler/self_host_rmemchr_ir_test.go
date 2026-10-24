@@ -9,32 +9,6 @@ import (
 	"testing"
 )
 
-// `__rmemchr(s, byte, from)` on the self-host IR path — the third fused kernel
-// of docs/ATLAS-PLATFORM-PLAN.md §3, and the backward sibling §3.3 nominates.
-//
-// It lands SCALAR on all seven backends at once, which is §3.4's step 1: the
-// intrinsic becomes total before anything depends on it being fast, so no step
-// can leave the tree unbuildable. That ordering is also what let __memchr's
-// own corpus survive its vectorisation unchanged — it was written while every
-// body was still a byte loop, so it already covered the block boundaries the
-// vector bodies would later have.
-//
-// The one thing that is NOT a mirror image of the forward scan, and so the one
-// thing a seventh port gets wrong, is the clamp: `from` clamps DOWN to len-1
-// here where __memchr clamps UP to 0. A negative `from` therefore finds
-// nothing, where in __memchr it means "search the whole string".
-
-// rmemchrIRProg is SELF-CHECKING: it carries its own reference implementation
-// in Fern and compares `__rmemchr` against it, so the corpus sweeps
-// exhaustively with no Go-side expectation list to keep in step.
-//
-// Lengths 0..72 with the needle at every position and the scan starting
-// before / at / after it — two full 32-byte blocks, a 16-byte one and a
-// partial tail, so every hand-over between the vector tiers and the scalar
-// tail is crossed.
-//
-// A failure returns a small distinct code rather than a count, so the exit
-// status says WHICH shape disagreed. 42 means every comparison matched.
 const rmemchrIRProg = `function ref(s: string, b: i32, from: i32): i32 {
     if (b < 0) { return 0 - 1; }
     if (b > 255) { return 0 - 1; }
@@ -80,8 +54,6 @@ function main(): i32 {
 }
 `
 
-// runRmemchrIR compiles rmemchrIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runRmemchrIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -126,10 +98,6 @@ func TestSelfHostRmemchrIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRmemchrIRWasm runs the same program through the self-hosted wasm
-// IR driver. The helper's presence in the emitted text is asserted, so a module
-// that silently stopped needing it would fail rather than pass by exercising
-// nothing.
 func TestSelfHostRmemchrIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host rmemchr wasm IR e2e")

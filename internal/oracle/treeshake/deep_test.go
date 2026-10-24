@@ -8,15 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// These tests deepen reachability coverage beyond the basics in
-// treeshake_test.go. They reuse the runShake / hasName helpers
-// defined there (same package).
-
-// TestShakeTransitiveChain — a four-deep call chain
-// (main→a→b→c) keeps every link alive, while an unreferenced
-// leaf `d` parallel to the chain is dropped. The basic
-// TestShakeKeepsCalledFunctions only goes two deep and has no
-// distractor function to confirm pruning still happens.
 func TestShakeTransitiveChain(t *testing.T) {
 	src := `function d(): i32 { return 4; }
 function c(): i32 { return 3; }
@@ -34,11 +25,6 @@ function main(): i32 { return a(); }`
 	}
 }
 
-// TestShakeDiamondGraph — a diamond call graph
-// (main→{a,b}, both a and b call c) keeps c alive exactly once
-// and does not corrupt the program by double-processing the
-// shared callee. Confirms the BFS `reachable` guard against
-// re-enqueueing a node already visited from another path.
 func TestShakeDiamondGraph(t *testing.T) {
 	src := `function c(): i32 { return 3; }
 function a(): i32 { return c(); }
@@ -50,7 +36,6 @@ function main(): i32 { return a() + b(); }`
 			t.Errorf("%s should survive the diamond: %v", want, names)
 		}
 	}
-	// c kept exactly once — count occurrences directly.
 	count := 0
 	for _, n := range names {
 		if n == "c" {
@@ -62,10 +47,6 @@ function main(): i32 { return a() + b(); }`
 	}
 }
 
-// TestShakeMutualRecursionReachable — two mutually-recursive
-// functions (isEven↔isOdd) reached from main both survive.
-// Confirms the visited-set prevents the BFS from looping
-// forever on the cycle while still keeping both nodes.
 func TestShakeMutualRecursionReachable(t *testing.T) {
 	src := `function isEven(n: i32): boolean { if (n == 0) { return true; } return isOdd(n - 1); }
 function isOdd(n: i32): boolean { if (n == 0) { return false; } return isEven(n - 1); }
@@ -78,13 +59,6 @@ function main(): i32 { if (isEven(4)) { return 1; } return 0; }`
 	}
 }
 
-// TestShakeMutualRecursionIsland — a mutually-recursive pair
-// (ping↔pong) that nothing reachable references is dropped
-// entirely, even though they reference each other. A live
-// main calling an unrelated `live` keeps the entry-point
-// fallback from kicking in (so the island isn't kept by the
-// "no entry point" rule). Confirms internal cycles do not make
-// dead code look reachable.
 func TestShakeMutualRecursionIsland(t *testing.T) {
 	src := `function ping(n: i32): i32 { return pong(n); }
 function pong(n: i32): i32 { return ping(n); }
@@ -99,12 +73,6 @@ function main(): i32 { return live(); }`
 	}
 }
 
-// TestShakeKeepsMethodReachableViaCall — a function reachable
-// only through a method call survives. After type-checking, the
-// method `(p: Point) getx()` is a top-level func mangled to
-// `__method_Point_getx`, and `p.getx()` resolves to a call of
-// that mangled name. An unrelated `dead` function is dropped.
-// Confirms method dispatch participates in reachability.
 func TestShakeKeepsMethodReachableViaCall(t *testing.T) {
 	src := `struct Point { x: i32 }
 function (p: Point) getx(): i32 { return p.x; }
@@ -119,12 +87,6 @@ function main(): i32 { let p = Point { x: 5 }; return p.getx(); }`
 	}
 }
 
-// TestShakeKeepsFunctionReachableOnlyViaClosure — a top-level
-// function referenced only from inside a closure body that also
-// captures a local survives. Extends TestShakeWalksLambdaBody by
-// adding a capture (`x`) so the lambda is a genuine closure, not
-// just an anonymous function, confirming the Lambda walk fires
-// regardless of captures.
 func TestShakeKeepsFunctionReachableOnlyViaClosure(t *testing.T) {
 	src := `function target(): i32 { return 7; }
 function main(): i32 {
@@ -138,12 +100,6 @@ function main(): i32 {
 	}
 }
 
-// TestShakeWasiHandleIsEntryPoint — the wasi-http entry
-// (checker.WasiHandleName) is an entry point independent of `main`. A
-// function reachable only from it survives even though main never
-// references it, while an unreferenced `dead` is dropped. Pairs the entry
-// with a trivial main so the program type-checks without the HTTP-server
-// runtime path.
 func TestShakeWasiHandleIsEntryPoint(t *testing.T) {
 	src := `function onlyFromEntry(): i32 { return 7; }
 function dead(): i32 { return 9; }
@@ -160,12 +116,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// TestShakeExtraSeedsTransitiveClosure — a name passed in
-// `extras` is kept alive AND its own callees are walked, so a
-// function reachable only through an extra-seeded function also
-// survives. Extends TestShakeHonoursExtras (which only checks the
-// directly-named extra) by asserting the BFS continues from the
-// seed.
 func TestShakeExtraSeedsTransitiveClosure(t *testing.T) {
 	src := `function dep(): i32 { return 1; }
 function seeded(): i32 { return dep(); }

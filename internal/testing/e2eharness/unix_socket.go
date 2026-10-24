@@ -1,13 +1,5 @@
 package e2eharness
 
-// UnixSocketProbe exercises the Unix-domain sockets (#9853): a listener at a
-// fresh path under /tmp, a connect to it, the accepted side used both ways
-// through the tcp verbs, the refusal of a second listener while the path is
-// held, the -ENOENT a connect reports once the socket file is removed, and
-// the -ENAMETOOLONG a path longer than the address holds draws before any
-// socket exists. Native only: the unix capability refuses the builtins on
-// wasm at check time. Exit 42 and "ok" on stdout iff every check holds,
-// else the number of the first failing check.
 func UnixSocketProbe() string {
 	return `import "core/int";
 import "std/string";
@@ -66,10 +58,6 @@ function main(): i32 {
 `
 }
 
-// NetUnixProbe is UnixSocketProbe through std/net: listen_unix, connect_unix
-// and accept answering Results, the AddrInUse a second listener reports, the
-// Other(ENOENT) of a connect to a removed path and the Other(ENAMETOOLONG)
-// of a path too long for the address. Same verdict channel.
 func NetUnixProbe() string {
 	return `import "core/int";
 import "std/net";

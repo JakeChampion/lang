@@ -17,15 +17,6 @@ impl Shape for Square {
 function describe(s: dyn Shape): i32 { return s.area() * 10 + s.sides(); }
 `
 
-// `assignable` recursed into enum and tuple type ARGUMENTS, and each hop
-// re-admitted the `dyn` boxing rule — so `Option[Square]` was assignable to
-// `Option[dyn Shape]`. Boxing is a representation change (a `dyn` value is
-// [data, vtable]) and it is materialised only at a direct coercion site, so
-// the payload slot kept a raw Square pointer: SIGSEGV on the natives, `trap:
-// indirect call type mismatch` on wasm, and correct only on interp (#8446).
-//
-// Structs were invariant here all along — their branch requires an
-// argument-free source — so this makes enums and tuples agree with them.
 func TestDynIsInvariantInContainerArguments(t *testing.T) {
 	cases := []struct {
 		name string
@@ -61,10 +52,6 @@ function main(): i32 { give(); return 0; }`},
 	}
 }
 
-// The refusal is specific to `dyn`. Every other reason these containers
-// assign element-wise has to keep working — that recursion is what lets
-// `Option[i64] = Some(1)` settle a polymorphic literal and what the cursor
-// idiom's `(Option[T], Stream)` bare-`None` return depends on.
 func TestContainerElementAssignabilityStillWorks(t *testing.T) {
 	cases := []struct {
 		name string
@@ -95,9 +82,6 @@ function main(): i32 {
 	}
 }
 
-// A direct `dyn` destination is a coercion site, so a refusal there is about
-// the source, not about boxing inside a container, and the container hint
-// would send the reader to rebuild something that holds nothing.
 func TestDirectDynRefusalHasNoContainerHint(t *testing.T) {
 	cases := []struct {
 		name string

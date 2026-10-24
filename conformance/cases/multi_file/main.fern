@@ -1,8 +1,8 @@
 import "./tokens";
 
-// Pulls a sibling module in via a relative import. Returns 5 + 17 =
-// 22 so the exit code proves cross-module dispatch resolved on every
-// backend.
+
+
+
 function main(): i32 {
     let t1: tokens.Tok = tokens.make_a();
     let v1: i32 = 0;

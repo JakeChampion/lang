@@ -8,8 +8,8 @@ import "std/i32";
   return t;
 }
 
-// A scratch buffer shortened to what one read brought, then grown back to its
-// room before the next: the slice after the regrow reads its new length.
+
+
 @noinline function rounds(scratch: u8[], sizes: i32[]): i32 {
   let t: i32 = 0;
   for n in sizes {

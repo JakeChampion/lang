@@ -8,31 +8,11 @@ import (
 	"testing"
 )
 
-// arrOwnedRetReleaseCases pin the caller-side release of an ARRAY-returning
-// call whose callee leaves this frame owning one reference (#7259).
-//
-// `return h.xs` and `return a` (a borrowed array param) are RETAINED on the way
-// out — the return-transfer Perceus dup — so the result is a counted reference
-// somebody owes a dec for. A caller that BINDS it pays that from the slot's exit
-// sweep. A caller that consumes it in place — `h.get().len()`, `grab(h)[0]`, a
-// discarded `h.get();` — has no slot, so the dec follows the consuming use. A
-// method returning a field must also leave its RECEIVER's deep drop intact,
-// including the rc fields the method never names.
-//
-// Every case is LOOP-RESIDENT: the struct is constructed inside the loop, so a
-// leak is per ROUND rather than per object; hoisting it out reads "flat" for
-// something unbounded.
-//
-// The byte cases return `(heap after churn 2 − heap after churn 1) / rounds`,
-// which is the per-round leak rate: what the first churn failed to give back is
-// exactly what the second has to allocate fresh. A one-time cost would read 0
-// here, so a non-zero exit IS the growth.
 var arrOwnedRetReleaseCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The `.len()` receiver, an ARRAY-field-returning METHOD.
 	{"arrown-method-len-recv", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
@@ -50,7 +30,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
-	// The result DISCARDED outright — the statement is its whole lifetime.
 	{"arrown-method-discarded", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
@@ -68,7 +47,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
-	// The INDEX read, through a FREE function rather than a method.
 	{"arrown-free-fn-index", `struct H { xs: i32[] }
 function grab(h: H): i32[] { return h.xs; }
 function churn(n: i32): i32 {
@@ -86,9 +64,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
-	// A bare BORROWED param returned (the #4357 return-transfer limb) with the
-	// result never bound. Its owner `s` is read afterwards, so the release has
-	// to give back the retain and nothing more.
 	{"arrown-borrowed-param-len-recv", `@noinline function id(a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
     let t: i32 = 0;
@@ -105,9 +80,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
-	// MIXED per-path returns: one path retains a borrowed field, the other moves
-	// a fresh literal out. Both leave the caller owning one reference, so the
-	// unconditional release is balanced on either.
 	{"arrown-mixed-returns", `struct H { xs: i32[] }
 function pick(h: H, c: i32): i32[] { if (c > 0) { return h.xs; } return [7, 8]; }
 function churn(n: i32): i32 {
@@ -125,8 +97,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
-	// BOUND result: the binding slot's exit sweep already pays the dec, so this
-	// is the case that would go 99 if the in-place release also fired on it.
 	{"arrown-bound-result-balanced", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
@@ -149,10 +119,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
-	// The whole-local half: `ys` is never passed to the method, never returned
-	// and never aliased, and it leaked all the same because one field-returning
-	// method disabled the receiver's deep drop for EVERY field. 112 B/round
-	// before (48 + 64, both buffers), 0 after.
 	{"arrown-sibling-field-deep-drop", `struct H2 { xs: i32[], ys: i32[] }
 function (h: H2) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
@@ -174,10 +140,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
-	// USE-AFTER-FREE control, and the reason the rows above are a reclaim rather
-	// than a dangle: the receiver OUTLIVES the loop, so the release must give
-	// back only the retain. Its buffer is read after decoy allocations that would
-	// be handed the block if it had really been freed.
 	{"arrown-shared-buffer-still-live", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
@@ -195,12 +157,6 @@ function main(): i32 {
     if (w != 1150) { return 97; }
     return 0;
 }`, 0},
-	// An `own` param returned bare is REFUSED by the registry, and this is the
-	// row that says why: it moves the caller's own reference back out, so a
-	// release would be the second dec on one reference. The self-host checker
-	// has no E051, so it lowers `id(s)` over a live local — which native rejects
-	// — and admitting the shape took that program to an rc underflow. It keeps
-	// its leak instead; only the safety property is pinned here.
 	{"arrown-own-param-refused", `@noinline function id(own a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
     let t: i32 = 0;
@@ -216,19 +172,6 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// --- the "STRARR:" half: a producer whose ELEMENTS this frame allocated ---
-	//
-	// "ARROWN:" admits a returned array LITERAL only at a scalar element type,
-	// because its release is the element-blind __fern_rc_dec — right for a
-	// retained alias at any element kind, and right for a moved literal only
-	// where shallow and complete coincide. A `string[]` literal is neither, so
-	// its producer earns "STRARR:" instead, whose release is the DEEP
-	// __fern_str_arr_free.
-	//
-	// The `mk()[i]` read reclaim already made that split. The `.len()` receiver
-	// and the discarded statement carried only the shallow half, so they matched
-	// no admission at all and released nothing: frees=0 outright, 144 B/round and
-	// unbounded, where native is flat at zero.
 	{"strarr-producer-len-recv", `function w(a: string): string { return a + "!"; }
 function mks(): string[] { return [w("a"), w("b"), w("c")]; }
 function churn(n: i32): i32 {
@@ -264,8 +207,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// The read reclaim, which already had the deep release — a control that must
-	// not move, and the site the two above were modelled on.
 	{"strarr-producer-index-unchanged", `function w(a: string): string { return a + "!"; }
 function mks(): string[] { return [w("a"), w("b"), w("c")]; }
 function churn(n: i32): i32 {
@@ -284,9 +225,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// A string[] producer whose result IS bound pays from the slot's exit sweep.
-	// It was already clean; the new in-place release must not double it — an
-	// over-release here reads 99, not a byte count.
 	{"strarr-producer-bound-balanced", `function w(a: string): string { return a + "!"; }
 function mks(): string[] { return [w("a"), w("b"), w("c")]; }
 function churn(n: i32): i32 {
@@ -305,15 +243,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// A string[] FIELD read through a method reaches `.len()` the same way, but the
-	// buffer and its elements belong to the struct, so the call result must not be
-	// deep-freed.
-	//
-	// The receiver is read twice more AFTER the `.get()`, which is what makes a
-	// wrong deep free visible: it would take element boxes the struct still owns,
-	// so the later reads return garbage (97) or the rc underflows (99). The byte
-	// rate is asserted too: when the struct dies its drop must release the element
-	// boxes along with the buffer, on every backend.
 	{"strarr-field-len-not-deep-freed", `function w(a: string): string { return a + "!"; }
 struct H { xs: string[] }
 function (h: H) get(): string[] { return h.xs; }
@@ -338,13 +267,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// --- the STRUCT-element producers ---
-	//
-	// A struct array from a producer call consumed in place (`mk().len()`, or a
-	// discarded `mk();`) has no slot to sweep, so its release follows the consuming
-	// use: each element is released through its type's drop, then the buffer. An
-	// rc-array-field element (Inner) and a string-field element (P) must both stay
-	// flat per round.
 	{"arrstruct-producer-len-recv", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
@@ -417,9 +339,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// A producer whose local is REASSIGNED before return, every write a
-	// strict-fresh literal. The caller's binding owns the returned box and the
-	// callee's rebind frees the box it replaces, so the per-round rate is 0.
 	{"struct-producer-reassigned-local", `struct P { xs: i32[], s: string }
 function w(s: string): string { return s + ""; }
 function re(i: i32): P { let p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }
@@ -439,10 +358,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// An ALIAS of the intermediate value taken before the rebind must sink the
-	// whole credit — releasing the superseded box would free what `q` still
-	// holds. The refusal keeps the old (safe) leak, so the assertion is the
-	// exit and the underflow, deliberately not a byte rate.
 	{"struct-producer-reassigned-alias-refused", `struct P { xs: i32[], s: string }
 function w(s: string): string { return s + ""; }
 function re2(i: i32): P {
@@ -467,7 +382,6 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// A scalar element needs no field routing or nested reference release.
 	{"structarr-scalar-producer-len-recv", `struct Q { a: i32, b: i32 }
 function mkq(): Q[] { return [Q { a: 1, b: 2 }, Q { a: 3, b: 4 }]; }
 function churn(n: i32): i32 {
@@ -486,10 +400,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// The index-read shape, whose release lives one node UP: the index site's
-	// own reclaim would free the element box before the field read enters it,
-	// so the field-access arm parks the container, indexes, reads the scalar,
-	// and releases the container afterwards with the same class split.
 	{"arrstruct-producer-index-field", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
@@ -527,10 +437,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// An RC-field read off the element (`mkp()[0].s`) keeps the arm OFF —
-	// releasing the container would free the string box the read returns. The
-	// answer's stability is the assertion; the container's leak on this shape
-	// is the recorded safe floor, so no byte rate is pinned.
 	{"structarr-producer-index-strfield-not-freed", `function w(a: string): string { return a + "!"; }
 struct P { s: string, n: i32 }
 function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
@@ -549,9 +455,6 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// A producer whose result IS bound pays from the slot's exit sweep — it was
-	// already clean (#7445), and the new in-place release must not double it.
-	// An over-release here reads 99, not a byte count.
 	{"arrstruct-producer-bound-balanced", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
@@ -570,12 +473,6 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// A struct-array FIELD-returning method reaches `.len()` through the same
-	// site but is in NEITHER producer registry (both require a receiver-less
-	// fresh-returning free function), so the new arms must stay OFF: freeing
-	// the field's elements would take boxes the struct still owns. The
-	// receiver is read again after the call, which is what makes a wrong deep
-	// free visible as 97/99 rather than a byte rate.
 	{"arrstruct-field-len-not-deep-freed", `struct Inner { k: i32, ys: i32[] }
 struct H { xs: Inner[] }
 function (h: H) get(): Inner[] { return h.xs; }

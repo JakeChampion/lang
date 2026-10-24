@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/rand across backends. The draws are
-// non-deterministic, so the program checks the invariants: shuffle
-// preserves the multiset (sum + every element present) and leaves its
-// input untouched; choice stays in-bounds (None only on empty); sample
-// returns k distinct input elements. Returns 42 iff all hold. Each leg
-// skips itself when its toolchain is absent.
 const randProg = `
 import "std/rand" as rand;
 function sum(a: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }

@@ -1,11 +1,5 @@
 package e2eharness
 
-// RelistenProbe binds a port again right after the server closed a
-// connection on it first (#12237). The server's half of that connection
-// lingers in FIN_WAIT or TIME_WAIT, so both listeners must set
-// SO_REUSEADDR before bind or the second bind is EADDRINUSE: through
-// `tcp_listen_with`, then through `tcp_listen`. Exit 42 and "ok" on stdout
-// iff every check holds, else the number of the first failing check.
 func RelistenProbe() string {
 	return `import "core/int";
 import "std/net";

@@ -10,26 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith is the differential
-// #7948 was invisible to: the SAME self-host driver source, compiled twice by
-// the SAME self-host CLI with only -target differing, must answer identically.
-//
-// It pins a use-after-free in the compiler's own gate passes. Releasing a
-// struct-ARRAY parameter on a consume-rebind as if it were a struct box reads
-// its field offsets past the end of the buffer and frees whatever words follow.
-// The wasm-hosted compiler dereferences enough of that garbage to corrupt an
-// AST node, then bails with "unknown expression" on a program the native build
-// compiles fine.
-//
-// The programs below are the shape that reached it: two or more depth->=2
-// binary initialisers with a NON-CONSTANT operand. One such statement, or
-// all-constant nesting (which constant-folds to depth <= 1), leaves the freed
-// block unrecycled and the corruption unobservable — the reason the neighbour
-// whole-compiler test's `leaf.leaf_tag().len() + 7` never saw it.
-//
-// Both halves are asserted: identical exit code AND byte-identical WAT. Exit
-// code alone would pass on two agreeing refusals; the WAT is what says the
-// wasm-hosted compiler computed the same module.
 func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the self-host wasm-IR driver twice; skipped in -short")
@@ -56,9 +36,6 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	entry := filepath.Join(dir, "drivers/wasm_ir_run.fern")
 
-	// Both drivers come out of the same CLI binary, so the only variable is
-	// -target. Each emit peaks in the low gigabytes, so it takes a slot in the
-	// process-wide build budget the cold driver builds share.
 	compile := func(t *testing.T, out string, args ...string) string {
 		t.Helper()
 		outPath := filepath.Join(dir, out)
@@ -78,9 +55,6 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 	nativeDrv := compile(t, "wasm_ir_run.native", "-target", "x86-64-linux")
 	wasmDrv := compile(t, "wasm_ir_run.wasm", "-target", "wasm32-wasi", "-emit", "core-module")
 
-	// FERN_STRICT_IR turns a lowering bail into a named diagnostic + exit 3
-	// rather than a silent whole-module refusal, so a divergence names the
-	// function it happened in instead of only moving the exit code.
 	run := func(t *testing.T, cmd *exec.Cmd, src string) (string, string, int) {
 		t.Helper()
 		var so, se bytes.Buffer
@@ -102,24 +76,18 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 		want      int
 	}{
 		{
-			// The reduced #7948 repro: two `a + a * a` initialisers, `a` a
-			// parameter so nothing folds.
 			name: "two-nested-initialisers",
 			src: "function f(a: i32): i32 { let x: i32 = a + a * a; let y: i32 = a + a * a; return x; }\n" +
 				"function main(): i32 { return f(1); }\n",
 			want: 2,
 		},
 		{
-			// Same depth reached through a literal-heavy spelling, and the
-			// results are USED, so a wrong answer is a wrong exit code rather
-			// than dead code.
 			name: "nested-initialisers-both-read",
 			src: "function g(a: i32): i32 { let v0: i32 = 1 + a * 1; let v1: i32 = 1 + a * 1; return v0 + v1; }\n" +
 				"function main(): i32 { return g(3); }\n",
 			want: 8,
 		},
 		{
-			// Deeper and wider: four initialisers at depth 3.
 			name: "four-deep-initialisers",
 			src: "function h(a: i32, b: i32): i32 {\n" +
 				"    let p: i32 = a + b * (a + b);\n" +
@@ -153,8 +121,6 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 				t.Fatal("driver emitted no module text")
 			}
 
-			// The agreed-on module has to be a real one: two identically WRONG
-			// texts would pass the comparison above and nothing else looks.
 			watPath := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watPath, []byte(natOut), 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)

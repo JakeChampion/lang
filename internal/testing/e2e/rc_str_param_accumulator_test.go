@@ -5,27 +5,6 @@ import (
 	"testing"
 )
 
-// A string PARAMETER that the body reassigns is consumed-threaded (#8785):
-// the entry retain hands the frame a reference of its own, the reassignment's
-// dec-on-overwrite releases what the frame owns, and the exit sweep spends the
-// last count. Two things follow, and each has its own gate here.
-//
-//   - The frame no longer leaks. Before the promotion the sweep skipped a
-//     borrowed param, so the value a reassignment put into that slot was
-//     never released: ONE heap string per call, unbounded, with no append
-//     involved (`a = s + s` leaked identically).
-//   - An accumulator whose loop runs inside the callee is linear. The first
-//     append copies — it must, the incoming buffer is the caller's, and the
-//     entry retain's rc 2 is what sends it down __fern_str_append's copy
-//     path — and every later one grows the replacement in place at rc 1.
-//
-// The aliasing half (that the caller's string is NOT lengthened under it)
-// lives in the rc corpus (conformance/cases/rc_corpus_*), which runs on every
-// backend; these two gates are x86-64 + wasm, the ABIs with a __fern_str_append
-// at all (arm64 has none, #8414, so its codegen for the append is unchanged).
-
-// strParamAccumulatorSrc: the parameter IS the accumulator. n appends of 8
-// bytes with the loop inside the callee.
 func strParamAccumulatorSrc(n int) string {
 	return fmt.Sprintf(`function grow(a: string, n: i32): string {
     let i: i32 = 0;
@@ -38,9 +17,6 @@ function main(): i32 {
 }`, n, n*8)
 }
 
-// strParamReassignNoAppendSrc: the leak half on its own — the reassignment's
-// RHS is a fresh concat of the OTHER parameter, so no self-append, no
-// in-place growth, nothing but the ownership of the overwritten slot.
 const strParamReassignNoAppendSrc = `function f(a: string, s: string): i32 {
     a = s + s;
     return a.len();
@@ -69,12 +45,6 @@ func checkStrParamNoLeak(t *testing.T, what, stderr string, exit int) {
 	}
 }
 
-// checkStrParamAccumulatorShape is the shape gate: the same accumulation at
-// two sizes must cost proportionally. Quadratic copying allocates once per
-// append (allocs == n), so the per-size bound n/8 already separates the
-// regimes; the ratio check is what makes the second size worth having — under the
-// copy regime doubling n doubles the allocations too, so only the growth
-// SCHEDULE (one allocation per allocator class step) keeps 2n under 1.5x n.
 func checkStrParamAccumulatorShape(t *testing.T, small, large [3]int64, n int) {
 	t.Helper()
 	for _, c := range []struct {

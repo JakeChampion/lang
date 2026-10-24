@@ -4,23 +4,6 @@ import (
 	"testing"
 )
 
-// std/ndarray's materialization rule (docs/ARRAY-SHAPES.md, #9734), held to
-// by the allocation counters rather than by inspection: the structural
-// operations — transpose, permute, reverse, slice, select, and reshape of a
-// row-major handle — move no elements, and the ones that must copy —
-// reshape of a strided handle, packed(), to_flat() of anything not packed —
-// copy exactly then. The element buffer is 32 KiB; a metadata operation is
-// bounded well under 1 KiB (a handle and two small index arrays) and a copy
-// is at least the buffer, so the two are not confusable. Every result is
-// read again at the very end: a local is released after its LAST use, not
-// at scope exit, and a released buffer goes back to the freelist where the
-// next copy of the same size takes it for free and the bump counter never
-// moves — which is exactly what the first draft of this test measured.
-//
-// The shape is a runtime value throughout — nothing states a dimension
-// statically — and the values are checked against the flat construction
-// on every backend. The interpreter's counter stub reads 0, so the program
-// detects that and checks values only there.
 const ndarraySrc = `import "std/ndarray";
 
 function build(n: i32): i64[] {
@@ -343,12 +326,6 @@ function main(): i32 {
 }
 `
 
-// A shape that does not account for its storage, two shapes that do not
-// broadcast, a broadcast that would drop an axis, a negative extent, a
-// count that does not fit an i32, an axis that is not one of the handle's,
-// and a contraction whose two extents differ or whose operand has no axis
-// to contract are each a derived-shape error, and
-// docs/ARRAY-ALGEBRA.md §4 makes that an abort rather than a truncation.
 var ndarrayAbortSrcs = map[string]string{
 	"get_unchecked out of bounds": `import "std/ndarray";
 function main(): i32 {
@@ -436,11 +413,6 @@ function main(): i32 {
 	return a.map_rank(3, (c: ndarray.NdArray[i32]): ndarray.NdArray[i32] => c).rank();
 }
 `,
-	// The two cell results have the SAME element count and different
-	// shapes, so the assembled buffer still fits frame ++ first-cell-shape
-	// and from_flat's count check passes. Only map_rank's own same-shape
-	// check catches this one -- with that check removed the program runs
-	// to completion, which is how the case was chosen.
 	"map_rank whose cells return different shapes": `import "std/ndarray";
 function ragged(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
 	if (c.get_unchecked([0]) == 1) { return ndarray.from_flat([9, 9], [1, 2]); }
@@ -453,11 +425,6 @@ function main(): i32 {
 `,
 }
 
-// 1x = construction, 2x = transpose, 3x = the other metadata operations,
-// 4x = chains, 5x/6x = reshape (metadata / copy), 7x/8x = to_flat (no copy /
-// copy), 90-92 = packed, 93-96 = a reversed handle materialized, 10x = rank
-// 0 and empty, 12x = elementwise, 13x = along an axis, 14x = broadcasting,
-// 15x = products, 16x = by rank.
 func TestX86_64NdarrayStructuralOpsAreMetadata(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, ndarraySrc); code != 0 {
 		t.Errorf("ndarray on x86-64: got %d, want 0", code)
@@ -484,9 +451,6 @@ func TestWASMNdarrayStructuralOpsAreMetadata(t *testing.T) {
 	if got := runWasm(t, ndarraySrc); got != 0 {
 		t.Errorf("ndarray on wasm: got %d, want 0", got)
 	}
-	// `exit(134)` collapses to wasmtime's exit 1, and runWasm fails the test
-	// on any non-zero exit, so the abort is asserted the way the array
-	// bounds trap is.
 	for name, src := range ndarrayAbortSrcs {
 		if _, _, trapped := runWasmExpectingTrap(t, src); !trapped {
 			t.Errorf("%s on wasm: exit 0, want a failure", name)
@@ -499,10 +463,6 @@ func TestInterpNdarrayValuesCorrect(t *testing.T) {
 		t.Errorf("ndarray on interp: got %d, want 0", got)
 	}
 	for name, src := range ndarrayAbortSrcs {
-		// 134 exactly, as the three compiled backends demand. Accepting any
-		// nonzero exit here made this leg blind to a case whose SUCCESS
-		// value is also nonzero — a rank, say — which is how the ragged
-		// map_rank case slipped through while it was still returning 3.
 		if got := runInterpExit(t, src); got != 134 {
 			t.Errorf("%s on interp: exit %d, want the bounds abort 134", name, got)
 		}

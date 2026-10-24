@@ -12,13 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// rename_noreplace and rename_exchange (#9784) through the self-host IR path.
-// Both are generated Fern runtime bodies (`asmcore.rt_src_rename_flagged`),
-// where `sysno(t, "renameat2")` and `rename_flag` carry the per-target
-// difference: renameat2 on Linux, renameatx_np on Darwin with its own flag
-// values. A wrong flag is still a plausible call, so the probe checks the
-// resulting tree as well as each return value.
-
 func selfHostRenameFlagsSource(dir string) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	return fmt.Sprintf(`function main(): i32 {
@@ -115,8 +108,6 @@ func TestSelfHostRenameFlagsIRArm64(t *testing.T) {
 	selfHostRenameFlagsTree(t, work)
 }
 
-// Darwin's renameatx_np takes RENAME_EXCL 4 where Linux's RENAME_NOREPLACE
-// is 1, so the Linux word would ask XNU for something else.
 func TestSelfHostArm64DarwinRenameFlags(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires Apple Silicon")

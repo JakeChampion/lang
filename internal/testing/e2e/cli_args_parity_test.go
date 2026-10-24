@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// argsEchoProgram prints its own argv: slot 0 on its own line (it differs by
-// design between engines — the source path under -interp, the executable for a
-// compiled binary), then every later slot bracketed so empty strings and
-// trailing whitespace stay visible, then a terminator so "no arguments" is
-// distinguishable from "produced no output".
 const argsEchoProgram = `function main(): i32 {
     let av: string[] = args();
     print("argv0=" + av[0]);
@@ -27,13 +22,6 @@ const argsEchoProgram = `function main(): i32 {
 }
 `
 
-// TestArgsParityInterpVsCompiled pins the contract that `args()[1:]` is the
-// same vector under -interp and in a compiled binary for the same command tail
-// (#8465): the interp path used to strip a `--` separator that the compile
-// path forwarded to the program verbatim, so `fern -interp p.fern -- --filter x`
-// and `fern -run p.fern -- --filter x` disagreed. -interp is the reference
-// oracle for the backends, so a divergence here tests stdlib argument parsing
-// against one convention and ships it under another.
 func TestArgsParityInterpVsCompiled(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -45,7 +33,7 @@ func TestArgsParityInterpVsCompiled(t *testing.T) {
 	tails := []struct {
 		name string
 		tail []string
-		want []string // args()[1:], one bracketed line each
+		want []string
 	}{
 		{name: "empty", tail: nil, want: nil},
 		{name: "plain", tail: []string{"a", "b", "c"}, want: []string{"[a]", "[b]", "[c]"}},
@@ -54,14 +42,9 @@ func TestArgsParityInterpVsCompiled(t *testing.T) {
 		{name: "literal_separator", tail: []string{"--", "--", "x"}, want: []string{"[--]", "[x]"}},
 	}
 
-	// Each engine reports what it ran as, so the argv0 line can be checked
-	// against the right expectation while args()[1:] is compared across all
-	// of them.
 	type engine struct {
-		name string
-		// run returns the program's stdout for one command tail.
-		run func(t *testing.T, tail []string) string
-		// argv0 checks the engine's own argv[0] convention.
+		name  string
+		run   func(t *testing.T, tail []string) string
 		argv0 func(t *testing.T, got string)
 	}
 	engines := []engine{{
@@ -76,13 +59,6 @@ func TestArgsParityInterpVsCompiled(t *testing.T) {
 		},
 	}}
 
-	// One compiled engine per register target `-run` can execute here. The
-	// host's own target always runs (natively, no emulator involved); the
-	// foreign one runs under its user-mode emulator when that is on PATH and
-	// skips otherwise. The per-arch CI matrix runs this test on both hosts, so
-	// each target is covered natively somewhere and a skip is only ever the
-	// foreign leg — a test that named one target unconditionally failed on
-	// the other arch's runner for want of an emulator it does not ship.
 	compiledArgv0 := func(t *testing.T, got string) {
 		if got == "" || strings.HasSuffix(got, ".fern") {
 			t.Errorf("compiled args()[0] = %q, want the executable's path", got)
@@ -142,9 +118,6 @@ func TestArgsParityInterpVsCompiled(t *testing.T) {
 	}
 }
 
-// A driver flag written after FILE reaches neither the driver nor the program:
-// `fern p.fern -o out` used to print assembly to stdout and exit 0 with no
-// binary written. Both engines must refuse it, and identically (#8465).
 func TestFlagAfterFileIsRefusedByBothEngines(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -176,8 +149,6 @@ func TestFlagAfterFileIsRefusedByBothEngines(t *testing.T) {
 	}
 }
 
-// runFernProgram runs the fern CLI with argv and returns the program's stdout,
-// failing the test on a non-zero exit.
 func runFernProgram(t *testing.T, bin string, argv []string) string {
 	t.Helper()
 	cmd := exec.Command(bin, argv...)
@@ -190,8 +161,6 @@ func runFernProgram(t *testing.T, bin string, argv []string) string {
 	return stdout.String()
 }
 
-// splitArgsEcho parses argsEchoProgram's output into its argv[0] and the
-// bracketed lines for args()[1:].
 func splitArgsEcho(t *testing.T, out string) (string, []string) {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")

@@ -1,6 +1,6 @@
-// Lane values cross direct calls as parameters and results: mixed with
-// integer, float and string arguments, through recursion, from a function
-// with no parameters, and as a branch's or a loop's value.
+
+
+
 import "std/f64";
 
 function show(tag: string, v: f64x2): void {

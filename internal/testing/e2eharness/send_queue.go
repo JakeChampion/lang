@@ -1,12 +1,5 @@
 package e2eharness
 
-// SendQueueProbe exercises `tcp_socket_ctl` op 6, the bytes queued to
-// send that the peer has not acknowledged, over a loopback connection: a
-// fresh connection has nothing queued; once non-blocking sends have
-// filled the socket, with the peer reading nothing, the count is
-// positive; and once the peer has read everything it falls back to zero.
-// On wasm the op answers -ENOTSUP (58). Exit 42 and "ok" on stdout iff
-// every check holds, else the number of the first failing check.
 func SendQueueProbe() string {
 	return `import "core/int";
 import "std/string";

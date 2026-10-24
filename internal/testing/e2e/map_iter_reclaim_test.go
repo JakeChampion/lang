@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// A MapIter cursor is freed at its last use (#9562). Its box carried a static
-// sentinel count, so no release could free it and every `m.iter()` — every
-// `for (k, v) in m` included — stranded 32 bytes. Each case iterates eight
-// times so a per-iteration leak cannot hide in the census.
 var mapIterReclaimCases = []struct {
 	name string
 	body string

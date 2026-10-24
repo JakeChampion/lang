@@ -1,15 +1,4 @@
-// std/tls/der — the Distinguished Encoding Rules of X.690, the encoding
-// X.509 certificates use, read one element at a time.
-//
-//   let cert: der.Element = der.expect(bytes, 0, der.SEQUENCE)?;
-//   let parts: der.Element[] = der.children(bytes, cert)?;
-//   let oid: string = der.oid(bytes, parts[0])?;      // "1.2.840.10045.4.3.2"
-//
-// An Element is a tag and where its contents lie in the bytes it was read
-// from, so reading copies nothing until a value is asked for. Reading is
-// strict: an indefinite or non-minimal length, a high tag number, a
-// non-minimal integer or OID arc, a boolean other than 0x00 or 0xff, or set
-// unused bits in a bit string is refused, as DER requires.
+// This module reads DER values from byte buffers.
 
 import "core/int";
 import "std/i64";
@@ -17,7 +6,6 @@ import "std/utf8";
 import "std/error";
 import "core/cmp";
 
-// Universal tags, and the constructed SEQUENCE and SET.
 pub const BOOLEAN: i32 = 0x01;
 
 pub const INTEGER: i32 = 0x02;
@@ -48,9 +36,6 @@ pub const SEQUENCE: i32 = 0x30;
 
 pub const SET: i32 = 0x31;
 
-// context is the tag of context-specific element n: [n] EXPLICIT, or a
-// constructed IMPLICIT one, when constructed; a primitive IMPLICIT one
-// otherwise.
 pub function context(n: i32, constructed: boolean): i32 {
   if (constructed) {
     return 0xa0 | n;
@@ -58,9 +43,6 @@ pub function context(n: i32, constructed: boolean): i32 {
   return 0x80 | n;
 }
 
-// DerError — why bytes were refused: running out, a length or tag DER does
-// not allow, an element of another tag than wanted (wanted, got), or
-// contents that are not a valid value of their type, naming it.
 pub enum DerError {
   Truncated,
   BadLength,
@@ -98,14 +80,10 @@ pub function (e: DerError) message(): string {
   return "";
 }
 
-// Element — one element: its tag, where it starts in the bytes it was read
-// from, and its contents from `from` up to `to`; `next` is where the
-// element after it starts.
 pub struct Element { tag: i32, start: i32, from: i32, to: i32, next: i32 }
 
 struct Length { len: i32, from: i32 }
 
-// __length reads the length at `at`, which must use the fewest octets.
 function __length(b: [u8], at: i32): Result[Length, DerError] {
   if (at >= b.len()) {
     return Err(Truncated);
@@ -117,8 +95,6 @@ function __length(b: [u8], at: i32): Result[Length, DerError] {
   return __long_length(b, at + 1, first & 0x7f);
 }
 
-// __long_length reads the n length octets at `at`: at most four, the first
-// not zero, and a value short form could not have held.
 function __long_length(b: [u8], at: i32, n: i32): Result[Length, DerError] {
   if (n == 0 || n > 4) {
     return Err(BadLength);
@@ -141,7 +117,6 @@ function __long_length(b: [u8], at: i32, n: i32): Result[Length, DerError] {
   return Ok(Length { len: len, from: at + n });
 }
 
-// read reads the element starting at `at`.
 pub function read(b: [u8], at: i32): Result[Element, DerError] {
   if (at >= b.len()) {
     return Err(Truncated);
@@ -157,7 +132,6 @@ pub function read(b: [u8], at: i32): Result[Element, DerError] {
   return Ok(Element { tag: tag, start: at, from: l.from, to: l.from + l.len, next: l.from + l.len });
 }
 
-// expect reads the element at `at`, which must have the tag given.
 pub function expect(b: [u8], at: i32, tag: i32): Result[Element, DerError] {
   let e: Element = read(b, at)?;
   if (e.tag != tag) {
@@ -166,7 +140,6 @@ pub function expect(b: [u8], at: i32, tag: i32): Result[Element, DerError] {
   return Ok(e);
 }
 
-// only reads the one element b holds, with nothing after it.
 pub function only(b: [u8], tag: i32): Result[Element, DerError] {
   let e: Element = expect(b, 0, tag)?;
   if (e.next != b.len()) {
@@ -175,7 +148,6 @@ pub function only(b: [u8], tag: i32): Result[Element, DerError] {
   return Ok(e);
 }
 
-// children reads the elements e's contents hold, which must fill them.
 pub function children(b: [u8], e: Element): Result[Element[], DerError] {
   let inner: [u8] = b[0:e.to];
   let out: Element[] = [];
@@ -188,7 +160,6 @@ pub function children(b: [u8], e: Element): Result[Element[], DerError] {
   return Ok(out);
 }
 
-// bytes is a copy of e's contents.
 pub function bytes(b: [u8], e: Element): u8[] {
   let out: u8[] = __alloc_u8(e.to - e.from);
   let i: i32 = e.from;
@@ -199,13 +170,10 @@ pub function bytes(b: [u8], e: Element): u8[] {
   return out;
 }
 
-// whole is a copy of e itself, tag and length included.
 pub function whole(b: [u8], e: Element): u8[] {
   return bytes(b, Element { ...e, from: e.start });
 }
 
-// unsigned is the value of a non-negative INTEGER as big-endian bytes,
-// without the sign octet DER puts in front of a high first byte.
 pub function unsigned(b: [u8], e: Element): Result[u8[], DerError] {
   if (e.tag != INTEGER) {
     return Err(UnexpectedTag(INTEGER, e.tag));
@@ -223,7 +191,6 @@ pub function unsigned(b: [u8], e: Element): Result[u8[], DerError] {
   return Ok(bytes(b, e));
 }
 
-// small is a non-negative INTEGER below 2^31.
 pub function small(b: [u8], e: Element): Result[i32, DerError] {
   let v: u8[] = unsigned(b, e)?;
   if (v.len() > 4 || v.len() == 4 && v[0] >= 0x80) {
@@ -248,7 +215,6 @@ pub function boolean_value(b: [u8], e: Element): Result[boolean, DerError] {
   return Ok(b[e.from] == 0xff);
 }
 
-// oid is an OBJECT IDENTIFIER in dotted form.
 pub function oid(b: [u8], e: Element): Result[string, DerError] {
   if (e.tag != OID) {
     return Err(UnexpectedTag(OID, e.tag));
@@ -278,7 +244,6 @@ pub function oid(b: [u8], e: Element): Result[string, DerError] {
   return Ok(out);
 }
 
-// The first subidentifier holds the first two arcs, 40x + y.
 function __arc(out: string, arc: i64): string {
   if (out.len() > 0) {
     return out + "." + arc.to_string();
@@ -289,8 +254,6 @@ function __arc(out: string, arc: i64): string {
   return "2." + (arc - 80).to_string();
 }
 
-// BitString — a BIT STRING's bytes, the last `unused` bits of which are not
-// part of it.
 pub struct BitString { unused: i32, bytes: u8[] }
 
 pub function bit_string(b: [u8], e: Element): Result[BitString, DerError] {
@@ -311,8 +274,6 @@ pub function bit_string(b: [u8], e: Element): Result[BitString, DerError] {
   return Ok(BitString { unused: unused, bytes: bytes(b, Element { ...e, from: e.from + 1 }) });
 }
 
-// time is a UTCTime or GeneralizedTime in UTC, as seconds since the Unix
-// epoch. A UTCTime's two-digit year is 1950 to 2049 (RFC 5280 §4.1.2.5.1).
 pub function time(b: [u8], e: Element): Result[i64, DerError] {
   let n: i32 = e.to - e.from;
   let at: i32 = e.from;
@@ -350,7 +311,6 @@ function __digits(b: [u8], at: i32, n: i32): Result[i32, DerError] {
   return Ok(v);
 }
 
-// __seconds reads MMDDHHMMSS after the year and counts from 1970-01-01.
 function __seconds(year: i32, b: [u8], at: i32): Result[i64, DerError] {
   let f: i32[] = [];
   let i: i32 = 0;
@@ -383,8 +343,6 @@ function __month_days(y: i32, m: i32): i32 {
   return days[m - 1];
 }
 
-// __days counts the days from 1970-01-01 to the date (Hinnant's
-// days_from_civil).
 function __days(y: i32, m: i32, d: i32): i64 {
   let yy: i64 = y as i64;
   if (m <= 2) {
@@ -398,8 +356,6 @@ function __days(y: i32, m: i32, d: i32): i64 {
   return era * 146097 + doe - 719468;
 }
 
-// text is a UTF8String, PrintableString, IA5String or TeletexString (read as
-// ASCII), or a BMPString (UCS-2), as a string.
 pub function text(b: [u8], e: Element): Result[string, DerError] {
   if (e.tag == BMP_STRING) {
     return __bmp(b, e);

@@ -1,11 +1,3 @@
-// base64.fern — GNU-compatible `base64`.
-//
-//   base64 [-d] [-i] [-w COLS] [FILE]
-//
-// RFC 4648 base64, wrapped at 76 columns by default. The codec, the
-// decoder's rules and every diagnostic live in `lib/base.fern`, which
-// `base32` and `basenc` drive too; this file is the option scan and the
-// one alphabet.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -48,8 +40,6 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("d", "decode", opt_decode()));
   opts = opts.append(gnu.valued("w", "wrap", opt_wrap()));
   opts = opts.append(gnu.flag("i", "ignore-garbage", opt_ignore()));
-  // The declaration order is GNU's, because the ambiguity list prints
-  // candidates in it: `--=x` names '--decode' '--wrap' '--ignore-garbage'.
   let g: gnu.Getopt = gnu.getopt_new(argv, opts, "base64", help_text(), 1);
   let decode: boolean = false;
   let ignore: boolean = false;

@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/array combinators added alongside
-// this test: flatten (T[][] → T[]), partition (→ (T[], T[]) — a
-// tuple of arrays, exercising tuple + array-in-tuple codegen), and scan
-// (running left fold). All are read-only over their inputs (build a
-// fresh output), so they carry across every backend; each leg skips
-// itself when its toolchain is absent.
 const arrayComboProg = `
 import "std/array" as array;
 function is_even(x: i32): boolean { return x % 2 == 0; }

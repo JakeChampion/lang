@@ -13,41 +13,23 @@ import (
 	"time"
 )
 
-// FakeNameserverMode is how StartFakeNameserver answers a query for
-// vm.example.com: Answer replies over UDP with the CNAME and A record,
-// Truncate replies over UDP with the TC bit and no answer so the client
-// asks again over TCP, where the full reply waits, and Silent never
-// replies at all.
 type FakeNameserverMode int
 
 const (
 	FakeNameserverAnswer FakeNameserverMode = iota
 	FakeNameserverTruncate
 	FakeNameserverSilent
-	// FakeNameserverPair answers an AAAA query at once and holds the
-	// reply to an A query until an AAAA query has arrived, so a client
-	// that asks for the two one after the other times out on the A query
-	// while one that asks for both at once gets both.
 	FakeNameserverPair
-	// FakeNameserverAAAAOnly answers an AAAA query at once and never
-	// answers an A query, so a client gets the AAAA address only by reading
-	// whichever of its sockets has a reply rather than the first.
 	FakeNameserverAAAAOnly
-	// FakeNameserverNat64 answers every AAAA query with 64:ff9b::c000:aa,
-	// the well-known NAT64 prefix embedding 192.0.0.170, which is what a
-	// network behind a translator answers for ipv4only.arpa.
 	FakeNameserverNat64
 )
 
-// FakeNameserver is a nameserver on the loopback interface for one name:
-// its port, and how many queries it took over each transport.
 type FakeNameserver struct {
 	Port       int
 	UDPQueries *int32
 	TCPQueries *int32
 }
 
-// dnsQuestionType is the type of the question at offset 12.
 func dnsQuestionType(msg []byte) int {
 	qlen := dnsQuestionLen(msg)
 	if qlen == 0 || 12+qlen > len(msg) {
@@ -56,8 +38,6 @@ func dnsQuestionType(msg []byte) int {
 	return int(msg[12+qlen-4])<<8 | int(msg[12+qlen-3])
 }
 
-// dnsQuestionLen is the length of the question at offset 12: the labels
-// up to the root, then type and class.
 func dnsQuestionLen(msg []byte) int {
 	p := 12
 	for p < len(msg) {
@@ -70,17 +50,6 @@ func dnsQuestionLen(msg []byte) int {
 	return 0
 }
 
-// dnsReply is the reply to a query for vm.example.com: the question
-// echoed, then (unless truncated) a CNAME to www.example.com and the
-// record the question's type asks for, the A record 93.184.216.34 or
-// the AAAA record 2001:db8::1, both owners compressed back to the
-// question, which has to be `vm.example.com` for the pointers to land.
-// In the NAT64 mode the reply is one AAAA record on the question's own
-// name, 64:ff9b::c000:aa.
-// listenLoopbackPair listens on one loopback port over both UDP and TCP,
-// trying port first (0 for any free one). A free UDP port can be taken for
-// TCP, by another test's connection say, so a port whose TCP side is in use
-// is given back and another tried.
 func listenLoopbackPair(port int) (*net.UDPConn, *net.TCPListener, error) {
 	for attempt := 0; ; attempt++ {
 		udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
@@ -130,8 +99,6 @@ func dnsReply(query []byte, truncated bool, mode FakeNameserverMode) []byte {
 	return out
 }
 
-// StartFakeNameserver listens on a free loopback port over UDP and TCP
-// and answers as `mode` says until the test ends.
 func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 	t.Helper()
 	udp, tcp, err := listenLoopbackPair(0)
@@ -144,7 +111,6 @@ func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 		udp.Close()
 		tcp.Close()
 	})
-	// The pair mode's barrier: closed once an AAAA query has arrived.
 	seenAAAA := make(chan struct{})
 	var closeSeen sync.Once
 	go func() {
@@ -222,11 +188,6 @@ func readFull(c net.Conn, buf []byte) (int, error) {
 	return got, nil
 }
 
-// DnsExchangeSource is a program that asks the nameserver at `port` on
-// the loopback interface for vm.example.com's address and canonical name
-// through std/dns, with one attempt and a one-second timeout: it prints
-// the address and the name and exits 0, or prints the failure and exits
-// 2 (the address) or 3 (the name).
 func DnsExchangeSource(port int) string {
 	return fmt.Sprintf(`import "std/dns";
 import "std/time";
@@ -247,10 +208,6 @@ function main(): i32 {
 `, port)
 }
 
-// CheckDnsExchange compares a DnsExchangeSource run against `mode`: the
-// address and the name on stdout with exit 0 for a server that answers,
-// the silence reported with exit 2 for one that does not; and the
-// transports the server saw: UDP alone, UDP then TCP when it truncated.
 func CheckDnsExchange(t *testing.T, mode FakeNameserverMode, ns FakeNameserver, stdout string, exit int) {
 	t.Helper()
 	udp := atomic.LoadInt32(ns.UDPQueries)
@@ -280,11 +237,6 @@ func CheckDnsExchange(t *testing.T, mode FakeNameserverMode, ns FakeNameserver, 
 	}
 }
 
-// DnsPairSource is a program that asks the nameserver at `port` on the
-// loopback interface for every address of vm.example.com through
-// `lookup_addresses`, which puts the A and AAAA queries together: it
-// prints the addresses one per line and exits 0, or prints the failure
-// and exits 2.
 func DnsPairSource(port int) string {
 	return fmt.Sprintf(`import "std/dns";
 import "std/time";
@@ -305,11 +257,6 @@ function main(): i32 {
 `, port)
 }
 
-// CheckDnsPair compares a DnsPairSource run against a FakeNameserverPair
-// server: both addresses on stdout with exit 0, whichever order the
-// host's routes put them in, and exactly two UDP queries. A client that
-// asked for the records one after the other would have timed out on
-// the A query, which the server holds until the AAAA query arrives.
 func CheckDnsPair(t *testing.T, ns FakeNameserver, stdout string, exit int) {
 	t.Helper()
 	got := strings.Fields(stdout)
@@ -322,8 +269,6 @@ func CheckDnsPair(t *testing.T, ns FakeNameserver, stdout string, exit int) {
 	}
 }
 
-// DnsNat64Source is a program that asks the nameserver at `port` for the
-// NAT64 prefixes ipv4only.arpa reveals and prints each as prefix/bits.
 func DnsNat64Source(port int) string {
 	return fmt.Sprintf(`import "std/dns";
 import "std/time";
@@ -347,7 +292,6 @@ function main(): i32 {
 `, port)
 }
 
-// CheckDnsNat64 expects the one well-known prefix.
 func CheckDnsNat64(t *testing.T, stdout string, exit int) {
 	t.Helper()
 	if exit != 0 || stdout != "64:ff9b::/96\n" {
@@ -355,9 +299,6 @@ func CheckDnsNat64(t *testing.T, stdout string, exit int) {
 	}
 }
 
-// StartEchoListener listens on 127.0.0.1 at a free port and answers "ok"
-// to each connection that sends "hi", until the test ends. Returns the
-// port.
 func StartEchoListener(t *testing.T) int {
 	t.Helper()
 	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
@@ -384,10 +325,6 @@ func StartEchoListener(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// DnsDialSource is a program that races `first` and 127.0.0.1 for a
-// connection to `port` with a short attempt delay, sends "hi" on the
-// winner and prints what comes back: "ok" from StartEchoListener. It
-// exits 2 on a failed dial.
 func DnsDialSource(first string, port int) string {
 	return fmt.Sprintf(`import "std/dns";
 import "std/time";
@@ -425,7 +362,6 @@ function main(): i32 {
 `, first, port)
 }
 
-// CheckDnsDial expects the echo's "ok" with exit 0.
 func CheckDnsDial(t *testing.T, stdout string, exit int) {
 	t.Helper()
 	if exit != 0 || stdout != "ok\n" {

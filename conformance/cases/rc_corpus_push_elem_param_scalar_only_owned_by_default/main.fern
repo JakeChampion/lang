@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The interlock the element credit must not disturb. A
-// scalar-only element type is isOwnedByDefaultType, so the
-// CALLEE reclaims the argument at exit and the caller must not —
-// `ownedByCalleeAt` suppresses the stage-(b) dec at that
-// position. This shape was already clean (9 allocs / 9 frees)
-// and stays clean; it is what would double-free first if the
-// credit ever reached an owned-by-default position.
+
+
+
+
+
+
+
+
+
+
 struct Op { a: i32, b: i32 }
 struct St { ops: Op[] }
 

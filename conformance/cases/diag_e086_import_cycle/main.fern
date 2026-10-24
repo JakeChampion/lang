@@ -1,5 +1,5 @@
-// Pins E086 for an import cycle among the program's own modules: the import
-// in `second.fern` leads back to `first`, which is still being loaded.
+
+
 import "./first";
 
 function main(): i32 {

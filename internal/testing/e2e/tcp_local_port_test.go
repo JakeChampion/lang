@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// tcp_local_port(sock) answers the port a socket is bound to. It exists for
-// tcp_listen(0): the kernel picks the port there and, until this builtin, no
-// part of the language could say which one — so a program that wanted a free
-// port had to name one and hope, and the tests around it had to probe the host
-// for a port, hand it to the guest, and retry the bind when something else took
-// it in between.
-//
-// The round-trip below runs entirely inside the guest, which is the point. It
-// listens on 0, asks for the port, and connects to it over loopback; connect(2)
-// completes in the kernel's backlog before accept(2) runs, so one process plays
-// both ends with no host coordination and nothing to race. A wrong port cannot
-// pass: connecting to one nothing is listening on is refused.
-//
-// Exit codes localise a failed step — 9x is setup, 42 is every step holding.
 const tcpLocalPortRoundTrip = `function main(): i32 {
     let l: i32 = tcp_listen(0);
     if (l < 0) { return 90; }
@@ -42,8 +28,6 @@ const tcpLocalPortRoundTrip = `function main(): i32 {
     return 42;
 }`
 
-// TestTcpLocalPortRoundTrip runs the round-trip on both native ISAs, which
-// each write their own getsockname helper.
 func TestTcpLocalPortRoundTrip(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -91,16 +75,9 @@ func TestTcpLocalPortRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTcpLocalPortInterp pins the same answer from the interpreter, whose
-// socket handles are indices into Go maps rather than fds — so it has to reach
-// for net.Listener.Addr() where the AOT backends call getsockname(2). Without
-// this the interp could return its handle id and nobody would notice.
 func TestTcpLocalPortInterp(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
-	// The half of the contract that needs no peer: an ephemeral listener
-	// reports a plausible port, and a handle that names no socket reports
-	// failure rather than a stale number.
 	src := `function main(): i32 {
     let l: i32 = tcp_listen(0);
     if (l < 0) { return 90; }
@@ -129,15 +106,6 @@ func TestTcpLocalPortInterp(t *testing.T) {
 	}
 }
 
-// TestTcpLocalPortErrno pins the failure arm on both x86-64 emitters: a
-// descriptor that is not a socket must come back as a negative errno, not as a
-// port read out of whatever the sockaddr buffer happened to hold.
-//
-// The descriptor is fd 0, and what makes that a non-socket is leaving
-// cmd.Stdin nil: os/exec then hands the child the null device. Do not wire this
-// to the test process's own stdin — a socket there (some CI runners and agent
-// shells do exactly that) makes getsockname SUCCEED and report port 0, and the
-// case passes or fails on the harness rather than on the emitter.
 func TestTcpLocalPortErrno(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	bin := buildFernCLI(t)
@@ -160,7 +128,7 @@ func TestTcpLocalPortErrno(t *testing.T) {
 			}
 			code := 0
 			run := runX86Bin(qemu, out)
-			run.Stdin = nil // the null device; see the comment above
+			run.Stdin = nil
 			if err := run.Run(); err != nil {
 				var ee *exec.ExitError
 				if !errors.As(err, &ee) {

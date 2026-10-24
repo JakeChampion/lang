@@ -9,12 +9,9 @@ func init() {
 	registerCorpus("seq", seqCases)
 }
 
-// seqCases is the corpus, shared by the GNU parity gate and the
-// self-host leg so neither can test something narrower than the other.
 func seqCases(t *testing.T) []invocation {
 	t.Helper()
 	return []invocation{
-		// The three synopses, and the empty ranges between them.
 		{name: "one operand", args: []string{"5"}},
 		{name: "one operand zero", args: []string{"0"}},
 		{name: "one operand negative", args: []string{"-1"}},
@@ -30,7 +27,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "descending with a positive one", args: []string{"3", "1"}},
 		{name: "wide descending", args: []string{"5", "-5"}},
 
-		// Fractional sequences: the precision comes from the spelling.
 		{name: "tenths", args: []string{"0", "0.1", "1"}},
 		{name: "three tenths", args: []string{"1", "0.3", "2"}},
 		{name: "leading dot increment", args: []string{"1", ".1", "1.3"}},
@@ -69,7 +65,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "last stays below an integer", args: []string{"1", "1", "2.999999999999"}},
 		{name: "thirtieths", args: []string{"1e-30", "1e-30", "3e-30"}},
 
-		// Exponents: the precision moves with them.
 		{name: "exponent last", args: []string{"1e2"}},
 		{name: "exponent both ends", args: []string{"1e-3", "1e-2"}},
 		{name: "fractional exponent", args: []string{"1.5e1"}},
@@ -84,7 +79,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "big exponent", args: []string{"1e30"}, limit: 4096},
 		{name: "tiny exponent", args: []string{"1e-400"}},
 
-		// Hex operands: no precision of their own.
 		{name: "hex last", args: []string{"0x10"}},
 		{name: "hex range", args: []string{"0xa", "0xf"}},
 		{name: "hex capital", args: []string{"0X10"}},
@@ -124,11 +118,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "capital P quarter", args: []string{"0X1P-2", "1", "3"}},
 		{name: "negative capital P halves", args: []string{"--", "-0X1P-1", "1", "3"}},
 
-		// A LAST with no precision of its own sends the whole sequence to
-		// %g, though its precision never RAISES the derived one — that is
-		// what separates `seq 0.5 0.5 0x1.8` from `seq 0.5 0.5 0x2`, whose
-		// LAST is a hex integer and asks for precision 0, and both from
-		// `seq 1 1 1.5`, whose one decimal is ignored.
 		{name: "hex power last gives up the precision", args: []string{"1", "0.5", "0x1p2"}},
 		{name: "hex fraction last gives up the precision", args: []string{"0.5", "0.5", "0x1.8"}},
 		{name: "hex last with a long increment", args: []string{"-0.3", "0.35000005", "0x1.8"}},
@@ -137,7 +126,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "equal width hex fraction last", args: []string{"-w", "0.5", "0.5", "0x1.8"}},
 		{name: "equal width hex power last", args: []string{"-w", "1", "0.5", "0x1p2"}},
 
-		// -w: the width the spellings ask for.
 		{name: "equal width", args: []string{"-w", "1", "10"}},
 		{name: "equal width across zero", args: []string{"-w", "-5", "5"}},
 		{name: "equal width with decimals", args: []string{"-w", "0.5", "0.25", "2"}},
@@ -248,7 +236,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "equal width tiny to one", args: []string{"-w", "1e-30", "1"}},
 		{name: "equal width big last", args: []string{"-w", "1", "1e+05"}, limit: 4096},
 
-		// -f: one printf float conversion, and every way to get it wrong.
 		{name: "format g", args: []string{"-f", "%g", "3"}},
 		{name: "format f with a precision", args: []string{"-f", "%.3f", "1", "0.5", "2"}},
 		{name: "format e with a width", args: []string{"-f", "%5.2e", "1", "3"}},
@@ -287,15 +274,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "format two precisions", args: []string{"-f", "%1.1.1g", "2"}},
 		{name: "format width beyond an int", args: []string{"-f", "%9999999999g", "1"}},
 		{name: "format width one past an int", args: []string{"-f", "%2147483648g", "1"}},
-		// GNU coreutils 9.12 does not terminate on this one on macOS, where
-		// 9.4 returned at once (on Linux, 9.4 and 9.12 both refuse it in
-		// milliseconds). Measured against 9.12 on macOS arm64: the two WIDTH
-		// forms above are refused at once, `%.9999999999g` aborts, and
-		// `%.1000000000g` answers -- the precision one past an int is the
-		// only one that never returns. The bound keeps that at ten seconds
-		// of the macOS lane instead of corpusRunLimit's five minutes; the
-		// outcome is "did not finish" either way, so the recorded divergence
-		// does not change.
 		{name: "format precision past an int", args: []string{"-f", "%.2147483648g", "1"}, timeout: 10 * time.Second,
 			darwinLibcDefect: "Apple's printf wraps a precision past INT_MAX into a run GNU seq never finishes"},
 		{name: "format two long modifiers", args: []string{"-f", "%LLg", "1.5"}},
@@ -334,21 +312,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "format no decimals stops early", args: []string{"-f", "%.0f", "0", "0.3", "0.9"}},
 		{name: "format two decimals keeps it", args: []string{"-f", "%.2f", "0", "0.3", "0.9"}},
 
-		// A term past LAST is printed only when its own text reads back
-		// as LAST ITSELF and differs, AS TEXT, from the text just
-		// printed.
-		//
-		// Reading back merely inside the range does not do it, which is
-		// what separates `%.1f 0 0.36 0.7` from `%.1f 0 0.36 0.71` —
-		// same terms, same text, and only the first prints its 0.72 as
-		// `0.7`. A hex conversion therefore never prints this term at
-		// all: at full precision it reads back as the out-of-range
-		// value, and cut short it lands under LAST.
-		//
-		// The second half is a text comparison and not a value one in
-		// both directions: two terms that print the same bytes end the
-		// sequence even though their values differ, and `0.0` followed
-		// by `-0.0` does not even though the two values are equal.
 		{name: "extra term reads back as last", args: []string{"-f", "%.1f", "0", "0.36", "0.7"}},
 		{name: "extra term reads back short of last", args: []string{"-f", "%.1f", "0", "0.36", "0.71"}},
 		{name: "extra term short of a fractional last", args: []string{"-f", "%.1f", "0", "0.36", "0.715"}},
@@ -377,7 +340,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "format glued to the option", args: []string{"-f%g", "3"}},
 		{name: "format that is not valid UTF-8", args: []string{"-f", "%g\xff", "2"}},
 
-		// -s: any string between the numbers.
 		{name: "separator comma", args: []string{"-s,", "5"}},
 		{name: "separator empty", args: []string{"-s", "", "3"}},
 		{name: "separator percent", args: []string{"-s", "%", "3"}},
@@ -398,7 +360,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "separator two newlines", args: []string{"-s", "\n\n", "3"}},
 		{name: "separator that is not valid UTF-8", args: []string{"-s", "\xff", "2"}},
 
-		// Operands that are not numbers, and the ones that are out of range.
 		{name: "not a number", args: []string{"x"}},
 		{name: "not a number as the last", args: []string{"1", "x"}},
 		{name: "not a number as the increment", args: []string{"1", "2", "x"}},
@@ -430,19 +391,7 @@ func seqCases(t *testing.T) []invocation {
 		{name: "half the smallest subnormal", args: []string{"0x1p-16446", "1"}},
 		{name: "smallest normal", args: []string{"0x1p-16382", "1"}},
 		{name: "inexact subnormal", args: []string{"0x1.8p-16445", "1"}},
-		// These boundaries are the target's `long double`, and it is not
-		// one type: x86-64 carries x87's 80-bit, every other ISA the
-		// AAPCS64 quad, and Darwin narrows to `double`. A spelling that
-		// underflows to zero on one is a subnormal on the next, so an
-		// increment meant to reach zero is written below the quad's least
-		// subnormal (2^-16494) rather than the 80-bit one's.
 		{name: "increment underflows to zero", args: []string{"1", "1e-5000", "2"}},
-		// The other side of it: 1e-4951 is below the least normal in every
-		// format, but only the 80-bit one rounds it away — the quad keeps
-		// it as a subnormal, and an increment the format keeps counts
-		// forever. Bounded, because the terms are 4,951 fraction digits
-		// each and filling the 64 MiB capture cap with them takes the
-		// self-host build seventeen minutes.
 		{name: "increment below the least normal", args: []string{"1", "1e-4951", "2"}, limit: 65536},
 		{name: "last underflows to zero", args: []string{"1", "1", "1e-4951"}},
 		{name: "zero increment", args: []string{"1", "0", "3"}},
@@ -478,7 +427,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "blank first operand", args: []string{" ", "5"}},
 		{name: "trailing letter", args: []string{"5x"}},
 
-		// The option scan: in order, and a negative number ends it.
 		{name: "option after an operand is an operand", args: []string{"1", "--foo"}},
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "abbreviated format needs an argument", args: []string{"--form"}},
@@ -512,7 +460,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "posix does not permute", args: []string{"2", "-w", "4"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix options before operands", args: []string{"-w", "1", "5"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Infinities: a bound that is never reached, and one already past.
 		{name: "infinite last", args: []string{"1", "inf", "2"}},
 		{name: "negative infinite increment", args: []string{"1", "-inf", "-2"}},
 		{name: "infinite increment with equal width", args: []string{"-w", "1", "inf", "2"}},
@@ -533,7 +480,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "infinite last operand", args: []string{"inf"}, limit: 4096},
 		{name: "nan as the last", args: []string{"1", "nan"}},
 
-		// Integers past what a long double holds exactly: the digit engine.
 		{name: "past sixty four bits", args: []string{"18446744073709551615", "18446744073709551616"}},
 		{name: "past sixty three bits negative", args: []string{"-9223372036854775809", "-9223372036854775808"}},
 		{name: "ten to the twenty", args: []string{"100000000000000000000", "100000000000000000002"}},
@@ -571,10 +517,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "just past sixty four bits by a hundred", args: []string{"18446744073709551617", "100", "18446744073709551617"}},
 		{name: "just past sixty four bits by a thousand", args: []string{"18446744073709551617", "1000", "18446744073709551617"}},
 		{name: "ten to the twenty nine", args: []string{"100000000000000000000000000000", "100", "100000000000000000000000000000"}},
-		// At 1e29 the long double's ulp is far past 1000, so the increment
-		// vanishes and the same line comes back 4.29 million times — 128 MB,
-		// which the unbounded read buffers whole on both sides. Bounded like
-		// every other case here whose output the arithmetic does not stop.
 		{name: "ten to the twenty nine by a thousand", args: []string{"100000000000000000000000000000", "1000", "100000000000000000000000000000"}, limit: 4096},
 		{name: "either side of sixty four bits", args: []string{"18446744073709551614", "18446744073709551618"}},
 		{name: "either side of sixty three bits", args: []string{"9223372036854775806", "9223372036854775810"}},
@@ -601,11 +543,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "tiny everything", args: []string{"1e-400", "1e-400", "1e-400"}},
 		{name: "equal width tiny to one long", args: []string{"-w", "1e-400", "1"}},
 		{name: "largest finite", args: []string{"1e4932", "1", "1e4932"}},
-		// A term of zero carries the LONG DOUBLE's sign, which exact
-		// decimal arithmetic cannot produce: 3 x 0.3 rounds to just
-		// above 0.9, so the term that lands on zero is just below it
-		// and prints `-0.0`. The same sequence one step shorter cancels
-		// exactly and prints `0.0`.
 		{name: "zero term is negative", args: []string{"-f", "%.1f", "0.9", "-0.3", "0"}},
 		{name: "zero term is negative by default", args: []string{"0.9", "-0.3", "0"}},
 		{name: "zero term is negative with equal width", args: []string{"-w", "0.9", "-0.3", "0"}},
@@ -620,18 +557,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "negative zero increment of zero", args: []string{"-0", "0"}},
 		{name: "zero to negative zero", args: []string{"0", "-0"}},
 
-		// One per long double a target can have. seq computes and prints
-		// in C's `long double`, which is x87 80-bit extended on x86-64,
-		// IEEE binary128 on arm64 and wasm32, and binary64 on Darwin
-		// (#8513), so the corpus above only ever proves the format of the
-		// host it runs on. These are the invocations whose bytes differ
-		// between the three, measured against GNU on both an x86-64 and an
-		// aarch64 host: how many hex digits `%a` carries and where its
-		// point sits, how far the exact decimal tail of a tenth runs, which
-		// precisions survive the round trip (LDBL_DIG is 18, 33 or 15),
-		// where the subnormals stop, and the largest whole number the
-		// format holds — which is the edge the digit and scaled-decimal
-		// engines hand over at.
 		{name: "a signature of each format", args: []string{"-f", "%a", "0.1", "0.1", "0.3"}},
 		{name: "a of a tenth to three digits", args: []string{"-f", "%.3a", "0.1", "0.1", "0.3"}},
 		{name: "decimal tail of a tenth", args: []string{"-f", "%.40f", "0.1", "0.1", "0.3"}},
@@ -648,14 +573,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "largest exactly held integer", args: []string{"-f", "%.0f", "18446744073709551615", "1", "18446744073709551617"}},
 		{name: "rendered past the exactly held integer", args: []string{"+18446744073709551615", "1", "18446744073709551617"}},
 
-		// The block writer: a step that divides 1000 is written from a
-		// template of one block's terms, patched in place from block to
-		// block, with the terms before the first block, after the last,
-		// and at any other step going one at a time. Every seam is here:
-		// ranges that start and end mid-block, a range inside one block,
-		// a block that is the last thing printed, the prefix widening as
-		// the block index passes a power of ten, and each separator,
-		// width and precision the template is laid out for.
 		{name: "one block and the term after", args: []string{"1000", "2000"}},
 		{name: "one block with nothing after", args: []string{"1000", "1999"}},
 		{name: "one block short of a term", args: []string{"1000", "1998"}},
@@ -738,8 +655,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "descending tenths go one at a time", args: []string{"120", "-0.1", "-1.5"},
 			darwinLibcDefect: "Apple clang fuses GNU seq's first + i * step into one fma, so 120 + 1200 * -0.1 keeps a -6.7e-15 that two roundings lose"},
 
-		// Write failures inside the block writer: the head of the range
-		// is buffered, so the first write that fails is a block's.
 		{name: "stdout full over blocks", args: []string{"1", "5000"}, stdout: stdoutFull},
 		{name: "stdout closed over blocks", args: []string{"1", "5000"}, stdout: stdoutClosed},
 		{name: "stdout full over stepped blocks", args: []string{"1", "2", "5000"}, stdout: stdoutFull},
@@ -750,7 +665,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "stdout full over descending terms", args: []string{"5000", "-1", "1"}, stdout: stdoutFull},
 		{name: "stdout full over a long separator", args: []string{"-s", "--------", "1", "5000"}, stdout: stdoutFull},
 
-		// Write failures: a closed descriptor and a full device.
 		{name: "stdout closed", args: []string{"3"}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"3"}, stdout: stdoutFull},
 		{name: "stdout closed with nothing to write", args: []string{"0"}, stdout: stdoutClosed},
@@ -769,7 +683,6 @@ func seqCases(t *testing.T) []invocation {
 		{name: "stdout full on a refused format", args: []string{"-f", "%2147483648g", "1"}, stdout: stdoutFull},
 		{name: "stdout closed past the digit engine", args: []string{"99999999999999999999", "100000000000000000001"}, stdout: stdoutClosed},
 
-		// A bounded read of an endless sequence: both sides meet SIGPIPE.
 		{name: "endless integers", args: []string{"1", "1", "inf"}, limit: 65536},
 		{name: "endless with a separator", args: []string{"-s,", "inf"}, limit: 65536},
 	}

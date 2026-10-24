@@ -1,33 +1,3 @@
-// compiler/playground_run.fern — the compiler as a service: source
-// on stdin, a wasm module on stdout, and no filesystem underneath (#6643).
-//
-// This is the driver the browser playground needs and `fern.fern` is not.
-// `fern.fern` is a CLI — it takes argv paths, reads them, and writes an
-// executable — while a playground has one program in memory and nowhere to put
-// a file. `wasm_ir_run.fern` has the right SHAPE (stdin in, module out) and
-// resolves nothing: it warns about every import and carries on.
-//
-// What makes the difference is where `std/…` comes from. Native serves the
-// stdlib out of `go:embed`; the self-host CLI reads it from a root named on the
-// command line, which a wasm-hosted compiler does not have. So this driver
-// carries the stdlib as `-embed` assets and hands them to the module loader as
-// an overlay, consulted ahead of disk:
-//
-//     fern -target wasm32-wasi -emit core-module -embed internal/stdlib \
-//         -o playground.wasm compiler/playground_run.fern internal/stdlib
-//
-// `internal/stdlib` appears twice and means two different things. As `-embed`
-// it is the stdlib this driver will carry AT RUNTIME. As the trailing
-// positional it is the stdlib root resolving THIS FILE's own `import "std/io"`
-// at build time. Dropping either one produces a driver that builds and then
-// cannot resolve, or one that cannot build at all.
-//
-// The overlay is sealed, so a miss is an error rather than a disk read. That is
-// the property that makes this safe to run against untrusted source: there is
-// no path from an import to the host filesystem, and `read_file` on a wasm
-// module with no preopens would fail anyway — sealed makes it fail with a
-// diagnostic naming the import instead of a silently-skipped module.
-
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./asmcore";
@@ -51,30 +21,12 @@ import "./watbin";
 import "./wit_compose";
 import "std/io";
 
-// main wraps `run` in the shared rc-over-release guard — see
-// util.rc_underflow_guard. Every self-host driver run self-checks its own heap
-// accounting; a corrupted freelist is otherwise silent (#6021).
 function main(): i32 {
   return util.rc_underflow_guard("playground_run", run());
 }
 
-// STDLIB_EXT is the suffix an embedded module name carries and an import path
-// does not.
 const STDLIB_EXT: string = ".fern";
 
-// embedded_stdlib turns the `-embed` bundle into the module loader's overlay.
-//
-// Asset names arrive as paths relative to the embed root with the extension
-// intact — `std/io.fern` — and imports are written `std/io`, so the extension
-// comes off and nothing else is rewritten. That is exact rather than
-// approximate because no module under `internal/stdlib` imports a sibling
-// relatively: every one of them spells it package-root-relative (`import
-// "std/string"`, `import "core/int"`), which is the same key the overlay is
-// built with.
-//
-// Non-`.fern` assets are skipped. They are not modules, and an embed root can
-// legitimately hold other text; a binary file there is a compile error, which
-// is `__fern_assets()` refusing a string that could not be valid.
 function embedded_stdlib(): modloader.Overlay {
   let paths: string[] = [];
   let srcs: string[] = [];
@@ -89,8 +41,6 @@ function embedded_stdlib(): modloader.Overlay {
   return modloader.Overlay { paths: paths, srcs: srcs, sealed: true, files: modloader.no_buffers() };
 }
 
-// embedded_stdlib_files is the `-embed` bundle as the files of a stdlib root
-// at `root`, which is how the language server reads it.
 function embedded_stdlib_files(root: string): modloader.Buffers {
   let b: modloader.Buffers = modloader.no_buffers();
   for a in __fern_assets() {
@@ -99,47 +49,18 @@ function embedded_stdlib_files(root: string): modloader.Buffers {
   return b;
 }
 
-// LSP_FLAG runs `fern -lsp`'s language server on stdin and stdout. A browser
-// host feeds stdin as one buffer, so a page replays a whole session — open
-// the document, ask, shut down — per question it has.
 const LSP_FLAG: string = "-lsp";
 
-// LSP_STDLIB_ROOT is where the language server's stdlib lives: a directory no
-// host has, so a path under it is only ever an embedded file.
 const LSP_STDLIB_ROOT: string = "/stdlib";
 
-// CHECK_FLAG selects the diagnostics-only mode. A playground wants the errors
-// as the user types, long before anything is worth compiling, and running the
-// whole emit path to get them means paying for a module nobody will run.
 const CHECK_FLAG: string = "-check";
 
-// INTERP_FLAG selects the evaluator. The playground's output pane needs a
-// program's OUTPUT, which compiling to wasm does not give the page directly —
-// and interp_run.fern cannot serve it, because it has no module loader: a
-// program that prints a number imports std/i32 for `to_string`, and that
-// import is exactly what interp_run drops. The overlay this driver already
-// carries is the answer, so interpret lives here.
 const INTERP_FLAG: string = "-interp";
 
-// TARGET_FLAG names the machine, as the CLI's `-target` does, from the same
-// platforms table: `wasm32-wasi` is the default. A freestanding target is
-// check-only here as it is there.
 const TARGET_FLAG: string = "-target";
 
-// EMIT_FLAG selects the output form with the CLI's vocabulary (fern.emit_refusal).
-// The default is what the CLI writes for the target: a wasm target's component,
-// and a native target's assembly text, since stdout is where the CLI puts it
-// and nothing links here. `asm` is the emitter's text (WAT on wasm), and
-// `core-module` (or `command-module` on wasm32-wasi) the core module a
-// preview-1 host runs.
 const EMIT_FLAG: string = "-emit";
 
-// report_diags prints `line:col: error[E0XX]: message` for each diagnostic, in
-// position order, with the module's path ahead of it for an imported module
-// (util.pos_str), and reports whether any were printed. An empty code renders without the
-// `error[…]` segment — some diagnostics are uncoded, and parity is on the text
-// native actually prints — and a zero line drops the position prefix, which the
-// checker still leaves on some paths.
 function report_diags(diags: util.Diag[], files: string[]): boolean {
   for d in util.sorted_by(diags, util.diag_after) {
     let tag: string = "";
@@ -155,23 +76,6 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
   return diags.len() > 0;
 }
 
-// check reports type errors and emits nothing. The parser's sentinels are
-// reported first, then the declaration gate, each alone: the permissive parser
-// leaves an empty name where a keyword was written and then parses the body as
-// top-level statements, so the checker downstream of it reports a cascade that
-// all points away from the cause.
-//
-// The verdict is the DIAGNOSTICS, not ModuleTypes.all_well_typed. While the
-// checker port is partial (#9053) that flag goes false for a program it merely
-// cannot model — measured on `import "std/string"; function main(): i32 {
-// return 12; }`, which yields all_well_typed = false and an empty diag list.
-// Gating on it would fail almost every program that touches the stdlib, with
-// nothing printed to act on. Reporting what the checker can actually name means
-// this under-reports where the port is incomplete rather than rejecting valid
-// programs, which is the right side to err on for an editor-facing check.
-//
-// With a `-target`, the CLI's target gate (E066) reports beside the checker,
-// and the handler gate (E080) always does, as `fern -check` reports them.
 function check(merged: parser.Module, files: string[], target: string, target_given: boolean): i32 {
   if (report_diags(asmcore.parse_errors_before_check(merged), files)) {
     return 1;
@@ -186,17 +90,6 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
   return 0;
 }
 
-// interpret evaluates the bundle and reports the program's own exit code, the
-// same mapping fern.fern uses: interp.exit_status for main's result (an
-// integer's low byte, a boolean's 1 or 0), the program's own fatal abort (an
-// index out of range) is 134 with its cause line, and anything else is 254,
-// which is outside the range a Fern `main` can return and so cannot be
-// confused with one. The evaluator's own error says
-// why it stopped, on stderr, where the page shows it: a silent 254 is an
-// empty output pane.
-//
-// The program's output has already gone to stdout/stderr by the time this
-// returns: interp.eval_module runs the builtins as it goes.
 function interpret(merged: parser.Module): i32 {
   let v: interp.Value = interp.eval_module(merged);
   let (is_status, status) = interp.exit_status(v);
@@ -218,9 +111,6 @@ function interpret(merged: parser.Module): i32 {
   }
 }
 
-// Argv is the driver's mode, read from its arguments: which of `-check`,
-// `-interp` and `-lsp` was given, the `-target` and whether one was named, and
-// the `-emit` form ("" when none was).
 struct Argv { check: boolean, interp: boolean, lsp: boolean, target: string, target_given: boolean, form: string }
 
 function parse_argv(av: string[]): Argv {
@@ -287,9 +177,6 @@ function run(): i32 {
     return 1;
   }
 
-  // The entry came from stdin, so it is named `stdin` and has no directory.
-  // With a sealed overlay that is inert: nothing below resolve_module ever sees
-  // the empty root.
   let ov: modloader.Overlay = embedded_stdlib();
   let g: modloader.Graph = modloader.load_graph(ov, "stdin", entry, "");
   entry = g.entry;
@@ -307,11 +194,6 @@ function run(): i32 {
   if (o.check) {
     return check(merged, files, target, o.target_given);
   }
-  // Ahead of the emit gates below: those reject shapes the wasm EMITTER
-  // would miscompile, and the evaluator does not emit. A program the
-  // interpreter can run is worth running even where the backend would
-  // decline it. It is checked first, as `fern -interp` is, so a type error
-  // reads as a diagnostic rather than an evaluator failure mid-run.
   if (o.interp) {
     let checked: i32 = check(merged, files, target, false);
     if (checked != 0) {
@@ -322,13 +204,7 @@ function run(): i32 {
   return emit(merged, files, target, form);
 }
 
-// emit writes the program in `form`: "asm" for the emitter's text,
-// "core-module" for a wasm core module, and "" for a wasm target's component.
-// The pipeline is the CLI's, so the bytes are the ones `fern -target <t>`
-// writes for the same program.
 function emit(merged: parser.Module, files: string[], target: string, form: string): i32 {
-  // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
-  // shape the emitter would otherwise miscompile rather than refuse.
   if (report_diags(asmcore.parse_errors(merged), files)) {
     return 1;
   }
@@ -342,9 +218,6 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     eprint(util.format_diags_in(errs, files));
     return 1;
   }
-  // The target's name folded and its untaken branches pruned, then the
-  // target gate (E066) and the handler gate (E080), all where the CLI runs
-  // them, so the browser refuses what `fern -target <t>` refuses.
   let desc: platforms.Descriptor = platforms.for_target(target);
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
@@ -354,12 +227,6 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   if (report_diags(fern.ambient_diags(merged), files)) {
     return 1;
   }
-  // Tree-shaking is required here rather than an optimisation: the
-  // overlay hands the loader every stdlib module the program's imports reach,
-  // and without the shake the emitted module carries all of them. It runs on
-  // the annotated module, as in fern.fern: the checker's Display rewrite
-  // (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) is what roots the
-  // method the shake would otherwise drop.
   merged = constfold.fold_module(merged);
   merged = checker.annotate_module(merged);
   merged = treeshake.treeshake(merged);

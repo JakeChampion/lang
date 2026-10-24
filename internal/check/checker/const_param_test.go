@@ -9,8 +9,6 @@ const constParamDecls = `function filled[const N: i32](x: f64): f64[] { let out:
 function count[const N: i32, T](x: T): i32 { return N * 10; }
 `
 
-// Const parameters (docs/CONST-GENERICS.md): each rejected program names its
-// code and the words of its message.
 func TestConstParamRejected(t *testing.T) {
 	for name, tc := range map[string]struct{ src, code, msg string }{
 		"value argument":   {`function f(k: i32): i32 { return filled[k](1.0).len(); }`, "E089", "the const argument for N must be an integer literal or a const parameter"},
@@ -35,8 +33,6 @@ func TestConstParamRejected(t *testing.T) {
 	}
 }
 
-// A const parameter is an i32 in the body, and it takes an integer literal or
-// a const parameter in scope as its argument.
 func TestConstParamAccepted(t *testing.T) {
 	for name, src := range map[string]string{
 		"literal":        `function f(): i32 { return filled[4](1.0).len() + count[3, string]("a"); }`,

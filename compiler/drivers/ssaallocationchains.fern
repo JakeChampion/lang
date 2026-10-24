@@ -44,8 +44,6 @@ function coherent(output: ssaprepare.Output, from: string, to: string): ssaprepa
 }
 
 function frames(output: ssaprepare.Output): void {
-  // The machine derives the call's depth from instructions, not metadata, and
-  // the helper's proof floor moves with it rather than sitting at a fixed -64.
   for amount in ["8", "16"] {
     let changed = coherent(output, "call __fern_arr_box", "subq $" + amount + ", %rsp\ncall __fern_arr_box\nmovq -16(%rsp), %rdi\naddq $" + amount + ", %rsp");
     require(chain.record(changed, "parent"), "derived alternate frame " + amount);

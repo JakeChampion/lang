@@ -5,17 +5,10 @@ import (
 	"testing"
 )
 
-// Lambda and closure programs the self-host CLI refused in its typed lowering
-// (FERN_SEM_IR) or answered wrongly. Each want is the Go interpreter's exit
-// code. Each case goes through the production CLI, because the refusals were in
-// passes the emit drivers do not run.
 var lambdaCaptureLoweringCases = []struct {
 	name, src string
 	want      int
 }{
-	// `?` in an unannotated lambda: `return Ok(y + 1)` names no error type, so
-	// the lambda's result comes from unifying it with the `?` operand's
-	// Result[i32, string] (#9515). The annotated spelling is the control.
 	{"try-op-unannotated-lambda", lambdaTryHelpersSrc + `function main(): i32 {
     let f = (x: i32) => { let y: i32 = g(x)?; return Some(y + 10); };
     let r = (x: i32) => { let y: i32 = h(x)?; return Ok(y + 1); };
@@ -25,7 +18,6 @@ var lambdaCaptureLoweringCases = []struct {
     let r: (i32) => Result[i32, string] = (x: i32) => { let y: i32 = h(x)?; return Ok(y + 1); };
 ` + lambdaTryBodySrc, 122},
 
-	// A written instantiation binds a type parameter no argument spells.
 	{"generic-nullary-written-type-arg", `function pick[T](): T[] {
     let out: T[] = [];
     return out;
@@ -48,7 +40,6 @@ function main(): i32 {
     return makeId[i32]()(42) - 42;
 }`, 0},
 
-	// A view of closures keeps the closures' signature: `[(i32) => i32]`.
 	{"view-of-closures-binding", `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
     return add;
@@ -74,8 +65,6 @@ function main(): i32 {
     return apply_all(arr[1:3], 10) - 25;
 }`, 0},
 
-	// A capture written by a lambda nested inside the capturing one is boxed
-	// in the frame that declares it, so the write reaches that frame.
 	{"nested-lambda-writes-capture-returned", `function main(): i32 {
     let seen: i32 = 0;
     let pick: () => (i32) => void = (): (i32) => void => {
@@ -96,8 +85,6 @@ function main(): i32 {
     if (seen != 7) { return 1; }
     return 0;
 }`, 0},
-	// A lambda writing a captured parameter: the parameter's cell is built on
-	// entry.
 	{"lambda-writes-captured-param", `function bump(x: i32): i32 {
     let g = (): void => { x = x + 1; };
     g();
@@ -108,8 +95,6 @@ function main(): i32 {
     return bump(5) - 7;
 }`, 0},
 
-	// An 8-byte capture the closure writes shares one cell with the frame that
-	// declared it rather than being snapshotted per call.
 	{"mutable-captured-i64", `function makeCounter(): () => i64 {
     let count: i64 = 0i64;
     function tick(): i64 {
@@ -148,8 +133,6 @@ function main(): i32 {
     if (b != 12i64) { return 2; }
     return 0;
 }`, 0},
-	// The closure is called only inside another function; the declaring frame
-	// reads the count afterwards.
 	{"mutable-captured-i64-called-by-callee", `function apply(f: (i64) => i64, x: i64): i64 { return f(x); }
 function main(): i32 {
     let count: i64 = 0i64;

@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map.get_or returning a string V: the returned string must
-// survive the map drop. On wasm, emitWideMapGetOr now str_incs
-// the loaded (data, len) pair; on natives, the call dispatch
-// intercepts non-boxed string V and rc_incs the returned data
-// pointer. Without these, the caller would hold an un-retained
-// alias and the map drop's column walk would later free the
-// buffer → UAF when the caller eventually used the string.
-//
-// Per iter: v.len() = 28; 500x → 14000.
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

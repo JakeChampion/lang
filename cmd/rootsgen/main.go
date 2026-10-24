@@ -1,30 +1,3 @@
-// Command rootsgen generates internal/stdlib/std/tls/mozilla.fern — the
-// roots Mozilla trusts for server authentication — from the NSS
-// certdata.txt committed beside it.
-//
-// Usage, from the repository root:
-//
-//	go run ./cmd/rootsgen
-//
-// To refresh the list: replace cmd/rootsgen/certdata.txt and nssckbi.h
-// with the current lib/ckfw/builtins/certdata.txt and nssckbi.h from
-// NSS's own repository, not mozilla-central, which takes an NSS change
-// only when Firefox next imports NSS (the builtins version is read from
-// the header's NSS_BUILTINS_LIBRARY_VERSION) and re-run; that is what
-// `scripts/refresh-data roots` does, and what the refresh-data workflow
-// does every week. TestCommittedFileIsUpToDate fails until the output is
-// committed.
-//
-// A root is taken when its trust object marks it CKT_NSS_TRUSTED_DELEGATOR
-// for server authentication. One Mozilla distrusts for server certificates
-// issued after a date (CKA_NSS_SERVER_DISTRUST_AFTER) is bundled with that
-// date, which std/tls/verify enforces against the leaf's notBefore, while
-// a certificate issued before the date can still be valid, and left out
-// once none can.
-//
-// The list is one string literal, not an array of them: a Fern array
-// literal is code that builds the array on every call, a string literal
-// is static data (cmd/unicodegen says more).
 package main
 
 import (
@@ -44,9 +17,6 @@ const (
 	certdataPath = "cmd/rootsgen/certdata.txt"
 	headerPath   = "cmd/rootsgen/nssckbi.h"
 	outputPath   = "internal/stdlib/std/tls/mozilla.fern"
-	// leafLifetime is the longest validity a server certificate issued
-	// before any distrust date in the file could carry (CA/Browser Forum
-	// Baseline Requirements §6.3.2: 398 days since 2020-09-01).
 	leafLifetime = 398 * 24 * time.Hour
 )
 
@@ -78,7 +48,6 @@ func main() {
 	fmt.Fprintf(os.Stderr, "wrote %s (%d roots, %d left out, NSS %s)\n", outputPath, stats.taken, stats.leftOut, nssVersion)
 }
 
-// builtinsVersion is NSS_BUILTINS_LIBRARY_VERSION as nssckbi.h defines it.
 func builtinsVersion(header []byte) (string, error) {
 	m := regexp.MustCompile(`(?m)^#define NSS_BUILTINS_LIBRARY_VERSION "([0-9.]+)"`).FindSubmatch(header)
 	if m == nil {
@@ -87,17 +56,12 @@ func builtinsVersion(header []byte) (string, error) {
 	return string(m[1]), nil
 }
 
-// attr is one attribute of a certdata.txt object: its PKCS #11 type and
-// its value, as text for a token or a quoted string and as bytes for a
-// MULTILINE_OCTAL block.
 type attr struct {
 	typ   string
 	text  string
 	bytes []byte
 }
 
-// parseCertdata reads certdata.txt's objects, each a run of attribute
-// lines opened by CKA_CLASS.
 func parseCertdata(data []byte) ([]map[string]attr, error) {
 	var objects []map[string]attr
 	var cur map[string]attr
@@ -151,7 +115,6 @@ func parseCertdata(data []byte) ([]map[string]attr, error) {
 	return objects, nil
 }
 
-// octal decodes one MULTILINE_OCTAL line: a run of \ooo escapes.
 func octal(line string) ([]byte, error) {
 	var out []byte
 	for line != "" {
@@ -168,20 +131,13 @@ func octal(line string) ([]byte, error) {
 	return out, nil
 }
 
-// root is one certificate object of certdata.txt with what its trust
-// object says about server authentication. A distrust date is read in
-// the two encodings the file uses, a MULTILINE_OCTAL time and CK_FALSE
-// for none; any other fails, so a distrusted root cannot slip in
-// unread.
 type root struct {
 	label    string
 	der      []byte
 	trusted  bool
-	distrust time.Time // zero when Mozilla sets no date
+	distrust time.Time
 }
 
-// roots pairs every certificate object with its trust object by issuer
-// and serial, in the file's order.
 func roots(objects []map[string]attr) ([]root, error) {
 	key := func(o map[string]attr) string {
 		return string(o["CKA_ISSUER"].bytes) + "\x00" + string(o["CKA_SERIAL_NUMBER"].bytes)
@@ -225,9 +181,6 @@ type stats struct {
 	taken, dated, leftOut int
 }
 
-// generate is the module's source for certdata.txt as of a date: the date
-// decides which distrusted roots can still have a valid certificate, and
-// so are bundled with their date rather than left out.
 func generate(data []byte, nssVersion string, asOf time.Time) (string, stats, error) {
 	objects, err := parseCertdata(data)
 	if err != nil {
@@ -260,18 +213,18 @@ func generate(data []byte, nssVersion string, asOf time.Time) (string, stats, er
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, header, nssVersion, sha256.Sum256(data), asOf.Format("2006-01-02"))
-	b.WriteString("// The roots, in certdata.txt's order:\n")
+	b.WriteString("// The roots follow the order in certdata.txt:\n")
 	for _, r := range taken {
 		fmt.Fprintf(&b, "//   %s\n", r.label)
 	}
-	b.WriteString("//\n// Distrusted for server certificates issued after the date, which the\n// list carries and std/tls/verify enforces:\n")
+	b.WriteString("//\n// The verifier rejects server certificates with issue dates after these limits:\n")
 	if len(dated) == 0 {
 		b.WriteString("//   (none)\n")
 	}
 	for _, r := range dated {
 		fmt.Fprintf(&b, "//   %s (%s)\n", r.label, r.distrust.Format("2006-01-02"))
 	}
-	b.WriteString("//\n// Left out, distrusted for server certificates issued after a date no\n// certificate issued before can still be valid from:\n")
+	b.WriteString("//\n// The list excludes these roots because all their permitted certificates expired.\n// Exclusion dates start from:\n")
 	if len(leftOut) == 0 {
 		b.WriteString("//   (none)\n")
 	}
@@ -287,7 +240,9 @@ func generate(data []byte, nssVersion string, asOf time.Time) (string, stats, er
 	}
 	b.WriteString(strings.ReplaceAll(text.String(), "\n", `\n`))
 	b.WriteString("\";\n}\n")
-	b.WriteString("\n// __distrust is, per root, the Unix second after which a server\n// certificate issued under it is refused; 0 for none.\nfunction __distrust(): i64[] {\n  return [")
+	b.WriteString(`
+function __distrust(): i64[] {
+  return [`)
 	for i, r := range taken {
 		if i > 0 {
 			b.WriteString(", ")
@@ -302,34 +257,25 @@ func generate(data []byte, nssVersion string, asOf time.Time) (string, stats, er
 	return b.String(), stats{taken: len(taken), dated: len(dated), leftOut: len(leftOut)}, nil
 }
 
-const header = `// std/tls/mozilla — the roots Mozilla trusts for server authentication,
-// bundled for a program whose machine has no bundle to read: a WASI
-// component, a container image without ca-certificates. A program that
-// imports it carries the list; one that does not pays nothing for it.
+const header = `// This module provides Mozilla roots for server authentication.
 //
-// GENERATED by cmd/rootsgen from NSS's certdata.txt (builtins %s, sha256
-// %x), as of %s.
-// Do NOT edit by hand; re-run ` + "`go run ./cmd/rootsgen`" + ` after refreshing
-// cmd/rootsgen/certdata.txt and nssckbi.h (` + "`scripts/refresh-data roots`" + `).
+// Generator: cmd/rootsgen.
+// Source: cmd/rootsgen/certdata.txt, NSS builtins %s.
+// SHA-256: %x, as of %s.
 //
-// The list goes stale: it is Mozilla's on the day it was taken, so a root
-// added since is missing and one withdrawn since is still trusted until the
-// file is regenerated. Prefer the machine's bundle where there is one
-// (` + "`verify.system_roots()`" + `), which its distribution keeps current.
+// Use ` + "`go run ./cmd/rootsgen`" + ` to regenerate this file.
+// Prefer the system certificate bundle when one is available.
+// Refresh the source list to include certificate trust changes.
 //
 `
 
 const body = `
 import "std/tls/verify";
 
-// NSS_VERSION is the NSS builtins release the list was taken from.
 pub const NSS_VERSION: string = "%s";
 
-// COUNT is how many roots the list holds.
 pub const COUNT: i32 = %d;
 
-// roots is the list as ` + "`verify.Roots`" + `, every certificate of it parsed,
-// each distrusted root with its date.
 pub function roots(): verify.Roots {
   match (verify.roots_from_pem(__pem())) {
     Ok(r) => {
@@ -342,6 +288,5 @@ pub function roots(): verify.Roots {
   return verify.roots([]);
 }
 
-// __pem is the list as one PEM bundle.
 function __pem(): string {
   return "`

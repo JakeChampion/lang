@@ -7,8 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The runtime's bytes floor (#9853): `__str_bytes` and `__arr_set_len` lower
-// onto the raw floor the self-host's own runtime bodies use.
 func TestSelfHostBytesFloorX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

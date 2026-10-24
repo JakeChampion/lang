@@ -5,24 +5,9 @@ import (
 	"testing"
 )
 
-// The counted tuple struct-field store: `S { t: k, … }` where `t` is a direct
-// deep-droppable tuple field (#7253). The store takes a count on a non-literal
-// field value; the field drop walks the children only when it finds rc 1 and
-// decs the box once per owner; the SOURCE keeps its own deep free.
-//
-// two_holders_balances must exercise two live holders of one box, not just
-// one: without the store's count the totals can still level and the sanitizer
-// stay silent while the second holder reads a header the first already freed.
-//
-// Exits confirmed against `fern -interp`, never read off the self-host under
-// test.
-
 func tupleStructFieldStoreCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The matrix cell tuple_mixed__structfield__local_store: one
-			// holder, source read after the store. rc 1 -> store inc 2 ->
-			// source's deep free 1 -> the holder's field drop 0.
 			name: "local_store_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
@@ -40,10 +25,6 @@ function main(): i32 {
 			want: 23,
 		},
 		{
-			// TWO holders of one box — the shape that exposed the move. Only
-			// the owner that finds rc 1 walks the children; all three decs
-			// land, so the box reaches zero exactly once and no holder ever
-			// reads a freed header.
 			name: "two_holders_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
@@ -62,8 +43,6 @@ function main(): i32 {
 			want: 10,
 		},
 		{
-			// Reads through BOTH owners after the store: the field read
-			// `h.t.1` and the source read `k.1` must see the same live box.
 			name: "read_through_both_owners",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
@@ -83,9 +62,6 @@ function main(): i32 {
 			want: 38,
 		},
 		{
-			// A FRESH tuple literal in the field takes no inc — the struct
-			// sole-owns it and the field drop reclaims it outright. The arm
-			// that must NOT fire; an inc here would pin the box forever.
 			name: "fresh_literal_field_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
@@ -102,10 +78,6 @@ function main(): i32 {
 			want: 23,
 		},
 		{
-			// The struct ESCAPES the frame that built it. The literal is the
-			// return value, so the store is a MOVE: the source must not free a
-			// box whose ownership left the frame. Balances because the caller's
-			// own drop does the work.
 			name: "returned_holder_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function mk(i: i32): Hold {
@@ -126,8 +98,6 @@ function main(): i32 {
 			want: 23,
 		},
 		{
-			// Adversarial: the holders are built inside an ARRAY literal.
-			// The exit and the sanitize leg guard the shared tuple.
 			name: "array_of_holders_stays_refused",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
@@ -176,10 +146,6 @@ func TestSelfHostTupleStructFieldStoreX86_64(t *testing.T) {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
-			// Sanitize leg. Free-safety is what this pair can get wrong: a
-			// retain that does not fire leaves the second owner reading a
-			// freed header, which is a use-after-free even when the totals
-			// happen to level.
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
 			sanBin := buildBin(t, gcc, dir, "tupsfs_san_"+tc.name, sanAsm)
 			sanErr, sanExit := hevRun(t, runner, sanBin)

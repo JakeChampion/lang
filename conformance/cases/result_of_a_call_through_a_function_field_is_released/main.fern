@@ -1,6 +1,6 @@
-// The result of a call through a function-typed struct field is the
-// caller's to release, as a call through a function-typed local's is:
-// bound to a local, read straight off, or passed on.
+
+
+
 struct Txn { id: i32 }
 struct Out { v: i32 }
 struct Stage { name: string, run: (string, Txn) => Out }

@@ -11,26 +11,12 @@ import (
 	"time"
 )
 
-// SIGINT mid-copy (#11698): GNU dd writes its statistics report and then dies
-// of the signal. Its handler interrupts a blocked read or write, so the report
-// comes at once even when nothing more will arrive.
-//
-// Each case runs GNU and Fern the same way and compares the two: stderr with
-// the durations masked, and how the process ended — killed by SIGINT, or, for
-// a SIGINT ignored at the start, an ordinary exit once the input closes.
 func TestDDInterrupt(t *testing.T) {
 	duration := regexp.MustCompile(`copied, [0-9.e+-]+ s, [0-9.]+ [kMGTPE]?B/s`)
 	type ended struct {
 		stderr string
 		st     *os.ProcessState
 	}
-	// fifoRun has dd read `abc` from a FIFO and block on the next read, where
-	// SIGINT arrives. The writer closes the FIFO only once dd has ended: a
-	// pipe read that wakes to find the writer gone returns EOF even with the
-	// signal pending, which would race the report against `cannot skip` and
-	// the end of input. `ignored` starts dd with SIGINT ignored, as a shell
-	// without job control starts a background command; then the FIFO closes
-	// after a pause, and dd finishes the copy.
 	fifoRun := func(t *testing.T, bin string, ignored bool, args ...string) ended {
 		t.Helper()
 		dir := t.TempDir()
@@ -64,8 +50,6 @@ func TestDDInterrupt(t *testing.T) {
 			t.Fatal(err)
 		}
 		<-wrote
-		// Long enough for dd to have read the three bytes and to be
-		// waiting on the next read, under qemu too.
 		time.Sleep(500 * time.Millisecond)
 		if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
 			t.Fatal(err)
@@ -80,8 +64,6 @@ func TestDDInterrupt(t *testing.T) {
 		}
 		return ended{duration.ReplaceAllString(stderr.String(), "copied, T s, R/s"), cmd.ProcessState}
 	}
-	// writeRun blocks dd on a write instead: its output is a pipe the test
-	// holds open and never reads, so the copy stops when the pipe is full.
 	writeRun := func(t *testing.T, bin string) ended {
 		t.Helper()
 		r, w, err := os.Pipe()
@@ -114,19 +96,14 @@ func TestDDInterrupt(t *testing.T) {
 		name    string
 		ignored bool
 		args    []string
-		// reports is how many record-count reports stderr carries.
 		reports int
 	}{
 		{"default status", false, nil, 1},
 		{"noxfer", false, []string{"status=noxfer"}, 1},
 		{"none", false, []string{"status=none"}, 0},
-		// bs= writes each record as it is read, so one is out as well.
 		{"bs", false, []string{"bs=2", "status=noxfer"}, 1},
-		// The truncation of the record already read is in the report.
 		{"truncated record", false, []string{"conv=block", "cbs=1", "status=noxfer"}, 1},
-		// The skip reads the pipe too, and nothing has been copied yet.
 		{"during skip", false, []string{"skip=10", "bs=1", "status=noxfer"}, 1},
-		// Ignored at the start, SIGINT stays ignored and the copy finishes.
 		{"ignored", true, []string{"status=noxfer"}, 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -158,8 +135,6 @@ func TestDDInterrupt(t *testing.T) {
 	})
 }
 
-// waitDD waits for a dd the test has signalled, and fails rather than hang
-// when it does not end.
 func waitDD(t *testing.T, cmd *exec.Cmd, bin string, stderr *strings.Builder) {
 	t.Helper()
 	done := make(chan struct{})

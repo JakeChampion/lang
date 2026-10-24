@@ -1,23 +1,5 @@
 package e2e
 
-// Coverage for std/rand's seeded PCG32 generator and the `*_seeded` helpers.
-//
-// `shuffle` / `choice` / `sample` draw from the OS CSPRNG — one syscall per
-// draw, which is the right default but costs ~5x in bulk. The seeded siblings
-// run in userspace from a seed, which also makes a run reproducible.
-//
-// The generator is pinned to PCG32's actual output, not merely to "looks
-// random": the first six u32s for seed 42 are compared against values
-// computed independently from the PCG32 definition. That catches a wrong
-// multiplier, a mis-ordered xorshift, or a rotate that silently loses bits —
-// none of which a distribution check would notice.
-//
-// The rotate is the subtle part and gets its own attention. `rotr32(v, 0)`
-// must return `v`; a naive implementation computes `v << 32`, a shift by the
-// full width, which is undefined rather than zero. A rotation of 0 happens
-// whenever the state's top 5 bits are zero, i.e. 1 draw in 32, so the vector
-// check above hits it quickly.
-
 import "testing"
 
 const randSeededPcgProg = `

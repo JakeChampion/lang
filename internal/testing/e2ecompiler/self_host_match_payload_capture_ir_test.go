@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostMatchPayloadCaptureIRX86_64 pins a lambda, stored in a struct fn
-// FIELD, that captures a match-arm payload binding — `Some(v)` / `Ok(v)` /
-// `Err(v)`, a user-enum variant's payloads (#5155), a CALL scrutinee's
-// (`match (pop(i)) { … }`, typed from the callee's declared return type,
-// #5200) — or a tuple-destructure binding (#5173). The capture takes its type
-// from the scrutinee's, so these shapes lower via the IR path (asserted via the
-// .Lssa_ label witness) and compute the oracle values, including a `string`
-// payload whose captured var must dispatch `.len()` correctly.
 func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -42,9 +34,6 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		{"option-string-payload",
 			`struct H { f: (i32) => i32, id: i32 } function g(o: Option[string]): i32 { let r: i32 = 0; match (o) { Some(s) => { let h: H = H { f: (x: i32): i32 => { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(Some("abc")); }`,
 			15},
-		// USER-ENUM variant payloads (#5155), including every binding of a
-		// multi-payload variant, which the lift must see as enclosing locals
-		// (astwalk.collect_bound_stmt).
 		{"user-enum-single-payload",
 			`enum E { One(i32), Two(string) } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { let r: i32 = 0; match (e) { One(v) => { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, Two(s) => { let h: H = H { f: (x: i32): i32 => { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; } } return r; } function main(): i32 { return g(One(5)) + g(Two("abcd")); }`,
 			36},
@@ -54,9 +43,6 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		{"user-enum-three-payload",
 			`enum E { P(i32, i32, i32), Q } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { let r: i32 = 0; match (e) { P(a, b, c) => { let h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: b }; r = h.f(1) + h.id; }, Q => { r = 0; } } return r; } function main(): i32 { return g(P(3, 4, 5)); }`,
 			17},
-		// TUPLE-DESTRUCTURE bindings (#5173): `let (a, b) = t` binds each name
-		// as an enclosing local typed as the tuple element at its index.
-		// Covers i32, string (captured `.len()`), and three-element destructures.
 		{"tuple-destructure-i32",
 			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { let t: (i32, i32) = (3, 4); let (a, b) = t; let h: H = H { f: (x: i32): i32 => { return x + a + b; }, id: a }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
 			11},
@@ -66,9 +52,6 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		{"tuple-destructure-three",
 			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { let t: (i32, i32, i32) = (2, 3, 4); let (a, b, c) = t; let h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: b }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
 			13},
-		// CALL SCRUTINEE (#5200): `match (pop(i)) { Some(v) => … }` — the arm
-		// binding's type comes from the callee's Option/Result return type
-		// (free function `pop`, receiver method `b.take()`).
 		{"call-scrutinee-option-free-fn",
 			`struct H { f: (i32) => i32, id: i32 } function pop(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; } function g(i: i32): i32 { let r: i32 = 0; match (pop(i)) { Some(v) => { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(5); }`,
 			20},

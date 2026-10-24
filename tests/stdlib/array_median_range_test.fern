@@ -1,15 +1,6 @@
 import "std/test";
 import "std/array" as array;
 
-// tests/stdlib/array_median_range_test.fern — pure-Fern coverage of
-// std/array.median_f64 (median, averaging the two middles for even length) and
-// the generic `range` (max - min spread) at f64, both Option[f64] (None for
-// empty). The Go-side
-// TestArrayMedianRange pins these across interp / x86-64 / arm64 (the wasmbin
-// leg skips Option over a 64-bit payload, the gap avg_f64 / variance_f64
-// share); this is the migration-shaped companion. Option[f64] and sort_f64
-// lower on the self-host asm_ir path, so this runs in both self-host gates too.
-
 function unwrap(o: Option[f64]): f64 {
   match (o) {
     Some(v) => {
@@ -46,7 +37,6 @@ function test_median_odd(): test.TestOutcome {
 }
 
 function test_median_even(): test.TestOutcome {
-  // sorted 2,4,8,10 -> average of 4 and 8.
   let even: f64[] = [10.0, 2.0, 8.0, 4.0];
   return test.assert_eq_f64_near(unwrap(array.median_f64(even)), 6.0, 0.0001);
 }

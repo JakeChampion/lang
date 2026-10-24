@@ -180,8 +180,6 @@ function controls(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): void {
   expect(check(sub, f, assertion), "replace", "proved checked-capacity consumer invocation");
 }
 
-// Deliberately incomplete physical bodies isolate the storage preconditions.
-// They do not replace or weaken the normal-lowered consumer controls.
 function unsafe_storage(name: string, unique: boolean): ssa.SFunc {
   let p = ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" };
   let c = ssa.SInst { ...p, result: 1, imm: 1 };
@@ -205,8 +203,6 @@ function target_checks(target: string): void {
   let f = body(sub, "replace");
   let assertion = body(sub, "require");
   expect(check(sub, f, assertion), "replace", "scalar call may exit with unproved caller obligations");
-  // A separate actual non-exiting callee is a positive control. The original
-  // consumer instructions, reads and call operands remain unchanged above.
   let safe = semlower.driven(parser.parse_module(lexer.tokenize("@noinline\nfunction require(ok: boolean, code: i32): void { return; }\nfunction main(): i32 { require(true,1); return 0; }\n")), target).sub;
   expect(check(sub, f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");
   expect(check(sub, ssa.register_form(f).f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");

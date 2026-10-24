@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64ForwardRefs byte-checks the forward-reference patch
-// helpers added in slice 3c of arm64_encode.fern — arm64_rel and the
-// placeholder-patch splicers arm64_patch_b (imm26) / arm64_patch_b19
-// (imm19, shared by b.cond/cbz/cbnz) — run through the self-host wasm
-// pipeline. Exit 0 = all checks pass; a failing check returns its 1-based id.
 func TestSelfHostArm64ForwardRefs(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 forward-refs e2e")
@@ -39,20 +34,10 @@ func TestSelfHostArm64ForwardRefs(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOMaxRuns extends the no-external-tool
-// arm64-darwin proof to a *forward* branch: a Fern program assembles
-// max(42, 17) as `cmp a,b; b.ge done; mov a,b; done:` — the b.ge is a
-// forward branch emitted as a placeholder and patched once `done`'s offset
-// is known. With a (42) >= b (17) the branch is *taken*, skipping the
-// `mov a,b`, so a wrong target or a not-taken branch would exit 17 instead
-// of 42. macho.fern wraps the bytes into an ad-hoc-signed Mach-O.
 func TestSelfHostArm64DarwinMachOMaxRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "max42", main: arm64MachOMaxDriverMain, wantExit: 42})
 }
 
-// arm64ForwardSelfTestMain asserts arm64_rel and the patch splicers
-// preserve the opcode/cond/Rt bits while writing the correct displacement.
-// Each `return N` is a distinct failing-check id (0 = all pass).
 const arm64ForwardSelfTestMain = `
 function main(): i32 {
     // arm64_rel(target=20, branch=12) = 8.
@@ -83,11 +68,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOMaxDriverMain assembles max(42, 17) with a forward b.ge:
-//
-//	0 movz x0,#42 (a); 4 movz x1,#17 (b); 8 cmp x0,x1;
-//	12 b.ge done (placeholder, patched); 16 mov x0,x1; 20 (done) movz
-//	x16,#1; 24 svc #0x80. a >= b so the branch is taken, skipping the mov.
 const arm64MachOMaxDriverMain = `
 function main(): i32 {
     let code: i32[] = [];

@@ -7,16 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// TestSettleIntSkipsStringConcatArg pins that the numeric-settle walk leaves a
-// string-concat `+` alone. settleInt's Call case settles every argument bound to
-// a bare type parameter, so an `Eq`-bounded generic returning i32 whose result
-// is compared against a literal — `find(xs, "a" + "b") != 1` — reached the
-// concat node with an i32 hint and stamped IntWidth onto it. The next check pass
-// (monomorph's re-check) then typed the concat as an integer add and reported
-// `argument 2: expected string, got i32` as an internal "compiler bug".
-//
-// Reachable from plain code since `.index_of()` / `.contains()` became
-// element-generic (#6801): `xs.index_of("a" + "b") != 1` is exactly this shape.
 func TestSettleIntSkipsStringConcatArg(t *testing.T) {
 	const src = `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for string { function eq(self: Self, other: Self): boolean { return self == other; } }
@@ -58,9 +48,6 @@ function main(): i32 {
 	}
 }
 
-// A float destination reaches the same argument walk through settleFloat, so it
-// needs the same guard: `let r: f64 = pick(cond, "a" + "b", "c").len() as f64`
-// is contrived, but a `T: Eq` generic returning a float is not.
 func TestSettleFloatSkipsStringConcatArg(t *testing.T) {
 	const src = `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for string { function eq(self: Self, other: Self): boolean { return self == other; } }

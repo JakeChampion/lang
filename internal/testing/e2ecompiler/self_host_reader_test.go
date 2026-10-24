@@ -8,28 +8,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostReaderX86_64 exercises the self-hosted x86-64 emitter's
-// support for the Reader / Option machinery:
-//
-//   - stdin() → a Reader,
-//   - Reader.read_chunk(n) → Ok(string) / Err(IoError),
-//   - Reader.close(),
-//   - Ok(x) / Err(e) construction,
-//   - match on a Result binding the Ok payload.
-//
-// These are the building blocks std/io.read_all_stdin is written in.
-// The test builds the asm_run single-file self-host compiler (Go-built
-// x86 host binary), feeds it a hand-written read-all-of-stdin echo
-// program, assembles the EMITTED asm into a binary, then runs that
-// binary against several stdin inputs — including a >4096-byte input
-// that forces the read_chunk loop through multiple non-empty chunks
-// before Ok("") — asserting the program echoes its stdin verbatim.
 func TestSelfHostReaderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 
-	// Build the asm_run driver (lexer + parser + asm) as an x86 host
-	// binary: it reads Fern source from stdin and prints x86-64 asm.
 	src, err := os.ReadFile("../../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
@@ -39,9 +21,6 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	// A read-all-of-stdin echo program — the same shape as
-	// std/io.read_all_stdin, with a print to make the result
-	// observable.
 	echoSrc := "function main(): i32 {\n" +
 		"    let r: Reader = stdin();\n" +
 		"    let out: string = \"\";\n" +
@@ -57,13 +36,10 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 		"    return 0;\n" +
 		"}\n"
 
-	// stage 1: the self-host compiler emits asm for the echo program.
 	echoAsm := runCapture(t, gcc, runner, driverBin, []byte(echoSrc))
 	if len(echoAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the echo program")
 	}
-	// Both helpers are Fern runtime functions (#2649), so the calls carry the
-	// stack-ABI `__fn___` prefix.
 	for _, sym := range []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"} {
 		if !bytes.Contains(echoAsm, []byte(sym)) {
 			t.Fatalf("echo asm has no %q", sym)
@@ -79,7 +55,7 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 		{"short", "hello reader world"},
 		{"with-newlines", "line one\nline two\nline three\n"},
 		{"exactly-one-chunk", string(bytes.Repeat([]byte("a"), 4096))},
-		{"multi-chunk", string(bytes.Repeat([]byte("xy"), 5000))}, // 10000 bytes > 4096
+		{"multi-chunk", string(bytes.Repeat([]byte("xy"), 5000))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,14 +77,6 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStdIoBundleX86_64 is the final gate of the Reader work:
-// the self-hosted compiler compiles the REAL internal/stdlib/std/io.fern
-// — unmodified, with its whole import closure — behind an
-// `import "std/io"`, with the qualified `io.read_all_stdin()` call rewritten
-// by flatten. This proves
-// the emitter handles std/io's actual Reader / Option / match source,
-// not just a hand-written reduction of it, so a program can use std/io
-// through the self-hosted toolchain.
 func TestSelfHostStdIoBundleX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
@@ -137,18 +105,9 @@ func TestSelfHostStdIoBundleX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostReadFileX86_64 exercises the self-hosted x86-64 emitter's
-// read_file(path) → Result[string, IoError] support and Ok/Err match.
-// The self-hosted compiler builds a "cat" program that reads the file
-// named in argv[1] and prints it (Ok) or exits 7 (Err); the emitted
-// binary is run against an existing file (expect its contents, exit 0)
-// and a missing file (expect exit 7).
 func TestSelfHostReadFileX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		// The cat program takes a host filesystem path as argv[1];
-		// running it under a qemu runner would need the path visible
-		// to the emulated process. Skip on the cross-host path.
 		t.Skip("read_file test runs only natively (argv path)")
 	}
 	dir := writeSelfHostAsmProject(t)
@@ -161,7 +120,6 @@ func TestSelfHostReadFileX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	// A "cat" program: read argv[1] and print it, or exit 7 on error.
 	catSrc := "function main(): i32 {\n" +
 		"    let path: string = args()[1];\n" +
 		"    match (read_file(path)) {\n" +

@@ -1,20 +1,3 @@
-// pwd.fern — GNU-compatible `pwd`.
-//
-//   pwd [-L | -P]    print the working directory
-//
-// Two answers, and they differ whenever a symbolic link was walked to
-// get here: `-P` is the PHYSICAL path, every link resolved, which is
-// what getcwd(2) reports; `-L` is the LOGICAL one the shell recorded in
-// $PWD, which keeps the link names. POSIX specifies `-L` as the default
-// and every standalone pwd defaults to `-P` anyway, so the default here
-// is `-P` unless POSIXLY_CORRECT is set.
-//
-// $PWD is not trusted on sight: it has to be absolute, carry no `.` or
-// `..` component, and name the same directory `.` does, dev and inode
-// both. Otherwise the physical answer stands.
-//
-// Operands are not an error — they are ignored with a diagnostic, and
-// the directory is still printed.
 import "std/string";
 import "./lib/gnu";
 
@@ -40,9 +23,6 @@ function opt_physical(): i32 {
   return 2;
 }
 
-// Whether `wd` carries a `.` or `..` COMPONENT — a `/.` or `/..` that
-// ends the string or is followed by another `/`. A name like `/a/.hidden`
-// or `/a/..b` has neither and is fine.
 function has_dot_component(wd: string): boolean {
   let i: i32 = 0;
   while (i + 1 < wd.len()) {
@@ -63,7 +43,6 @@ function has_dot_component(wd: string): boolean {
   return false;
 }
 
-// $PWD when it is fit to print as the logical directory, else None.
 function logical_cwd(): Option[string] {
   let wd: string = "";
   match (env("PWD")) {
@@ -96,7 +75,6 @@ function logical_cwd(): Option[string] {
   return None;
 }
 
-// One diagnostic and exit 1, gnulib's `error (EXIT_FAILURE, ...)`.
 function die(msg: string): void {
   gnu.error(msg);
   exit(1);
@@ -106,16 +84,6 @@ function die_errno(msg: string, e: IoError): void {
   die(msg + ": " + gnu.io_error_text(e));
 }
 
-// The path built by walking up from `.`, for the case getcwd(2) will not
-// answer: at each level, find the entry of `..` whose inode is the
-// directory we are standing in, prepend its name, and step up. It ends
-// at the root, which is the one directory whose dev and inode `/` also
-// has.
-//
-// GNU chdirs its way up and reads `..`; this walks a growing `../..`
-// prefix instead, which asks the same questions of the same directories
-// without moving the process. The diagnostics name the prefix, as GNU's
-// do, so a failure says how far up it got.
 function walked_cwd(): string {
   let root: FileStat = stat_or_die(stat("/"), "failed to get attributes of " + gnu.quotea("/"));
   let here: FileStat = stat_or_die(stat("."), "failed to stat " + gnu.quotea("."));
@@ -136,9 +104,6 @@ function walked_cwd(): string {
     let matched: boolean = false;
     let i: i32 = 0;
     while (i < entries.len()) {
-      // An entry that will not stat is skipped rather than fatal: it
-      // cannot be the directory we are standing in, since that one we
-      // already stat'd.
       match (lstat(prefix + "/" + entries[i])) {
         Ok(st) => {
           if (st.ino == here.ino && st.dev == here.dev) {
@@ -164,8 +129,6 @@ function walked_cwd(): string {
   return name;
 }
 
-// `stat` or a diagnostic and exit. The unreachable return past the match
-// is what the checker asks for: `exit` is an ordinary call to it.
 function stat_or_die(r: Result[FileStat, IoError], msg: string): FileStat {
   match (r) {
     Ok(st) => {
@@ -183,9 +146,6 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("L", "logical", opt_logical()));
   opts = opts.append(gnu.flag("P", "physical", opt_physical()));
 
-  // POSIX wants -L; standalone implementations want -P. GNU splits the
-  // difference on POSIXLY_CORRECT, and the last option on the line wins
-  // over both.
   let logical: boolean = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
@@ -220,7 +180,6 @@ pub function main(): i32 {
       None => {}
     }
   }
-  // Any refusal falls back to the walk, as GNU's does.
   match (getcwd()) {
     Ok(wd) => {
       gnu.write_out(wd + "\n");

@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A generic whose only type-variable-carrying parameters are function-typed
-// hands one on to a generic that returns a generic enum (#12125). The forwarder
-// has to be promoted too, or the callee is reached at the bare variable and no
-// instance of it exists. The second call takes the callee at a nested argument,
-// and `tag` reaches the promoted forwarder at its own type variable.
 const fnParamForwardingSrc = `import "std/i32";
 import "std/option";
 

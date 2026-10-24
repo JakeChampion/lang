@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// Fluent generic combinator pipeline — the main ergonomic benefit of #2663:
-// generic receiver-method dispatch over the element type (`xs.map(...)`) plus
-// unannotated arrow-lambda return inference (#3360, `(x) => expr`) let
-// `xs.map(f).filter(g).fold(init, h)` read left-to-right instead of the old
-// inside-out `fold(filter(map(xs,f),g),init,h)` with `(x): U =>` annotations.
-//
-// [1,2,3,4,5].map(x*2) = [2,4,6,8,10]; .filter(>4) = [6,8,10]; .fold(0,+) = 24.
-//
-// Generic stdlib methods, so monomorphised — exercised on interp / arm64 / wasm
-// (the x86-64 e2e helper skips monomorph; the combinator methods + arrow
-// inference are covered there by their own unit/e2e tests).
 const combinatorPipelineSrc = `import "std/array";
 function main(): i32 {
     return [1, 2, 3, 4, 5]

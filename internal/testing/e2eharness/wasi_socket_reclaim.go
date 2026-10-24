@@ -13,11 +13,6 @@ import (
 	"time"
 )
 
-// WasiSocketStorageProbe repeats a complete operation, preserving its result
-// while checking that the guest heap stops growing after the first iteration.
-// The host fault fixture runs the same loop at every failure stage. `any`,
-// the unspecified IPv4 address, is in scope for expr, allocated before the
-// loop so the per-iteration count is the operation's alone.
 func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 	close := ""
 	if closeSocket {
@@ -43,8 +38,6 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 }`
 }
 
-// UDPSendOnce is one datagram to addr:port from a socket bound to an
-// ephemeral port and closed again: the bytes the host accepted, or -errno.
 const UDPSendOnce = `function send_once(addr: u8[], port: i32, data: string): i32 {
     let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
     if (s < 0) { return s; }
@@ -54,9 +47,6 @@ const UDPSendOnce = `function send_once(addr: u8[], port: i32, data: string): i3
 }
 `
 
-// WasiUDPStorageProbe covers both inline-string spills and borrowed string
-// buffers, sending to addr (a Fern u8[] literal). Normalize successful byte
-// counts for the host ownership oracle.
 func WasiUDPStorageProbe(addr, data string) string {
 	return UDPSendOnce + fmt.Sprintf(`function main(): i32 {
     let addr: u8[] = %s;
@@ -80,9 +70,6 @@ func WasiUDPStorageProbe(addr, data string) string {
 }`, addr, data, data)
 }
 
-// WasiStreamSendStorageProbe writes data on connection record 0 each round.
-// A write the host took only part of is the failed send it reports, so the
-// oracle sees -1 for it as it does for a write that took nothing.
 func WasiStreamSendStorageProbe(data string) string {
 	return BytesOf + fmt.Sprintf(`function main(): i32 {
     let data: u8[] = bytes_of(%q);
@@ -102,8 +89,6 @@ func WasiStreamSendStorageProbe(data string) string {
 }`, data)
 }
 
-// WasiStreamRecvStorageProbe reads connection record 0 into one max-byte
-// buffer each round.
 func WasiStreamRecvStorageProbe(max int) string {
 	return fmt.Sprintf(`function read(buf: u8[]): i32 {
     let n: i32 = tcp_recv_into(0, buf);
@@ -130,10 +115,6 @@ function main(): i32 {
 }`, max)
 }
 
-// CheckWasiSocketReclaim replaces only host imports in a compiled core module.
-// The production socket bodies and allocator still execute. Host resources are
-// tracked independently; dropping an unowned handle or a parent before its
-// children traps. Each setup phase can report unknown (error-code zero).
 func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	t.Helper()
 	emptySend, chunkedSend := operation == "send-empty", operation == "send-chunked"
@@ -154,7 +135,6 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	wat := string(out)
 	export := regexp.MustCompile(`\(export "main" \(func ([^\s)]+)\)\)`).FindStringSubmatch(wat)
 	if len(export) != 2 {
-		// The self-host command framing exports _start, with a private $main.
 		export = regexp.MustCompile(`\(func (\$main)\s`).FindStringSubmatch(wat)
 	}
 	if len(export) != 2 {
@@ -168,7 +148,6 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		}
 		allocator = "(func $fh_alloc (param $n i32) (result i32) (call " + alloc[1] + " (i32.const 0) (i32.const 0) (i32.const 1) (local.get $n)))"
 	}
-	// wasm-tools encloses numeric index comments in parentheses.
 	imports := regexp.MustCompile(`\(import "([^"]+)" "([^"]+)" \(func ((?:\$[^\s()]+\s+)?\(;[0-9]+;\)) \(type ([0-9]+)\)\)\)`)
 	seen := 0
 	wat = imports.ReplaceAllStringFunc(wat, func(decl string) string {
@@ -184,8 +163,6 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if steps == 0 {
 		t.Fatal("unknown socket operation")
 	}
-	// Successful TCP setup transfers ownership to the returned connection.
-	// UDP sends are one-shot and release everything before returning.
 	socket, streams := 1, 0
 	successFailure := "(i32.le_s (local.get $result) (i32.const 0))"
 	if operation == "connect" || operation == "accept" {
@@ -205,9 +182,6 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	}
 	errorResult := "(i32.const -29)"
 	if strings.HasPrefix(operation, "recv") {
-		// A read of nothing yet is -EAGAIN (step 1), the end of the stream
-		// 0 (step 2), and a stream error -EIO (step 3): an error is never
-		// the end of the stream.
 		socket, streams = 0, 0
 		errorResult = "(select (i32.const -6) (select (i32.const 0) (i32.const -29) (i32.eq (local.get $step) (i32.const 2))) (i32.eq (local.get $step) (i32.const 1)))"
 		successFailure = "(i32.ne (local.get $result) (i32.const 3))"
@@ -229,14 +203,9 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	}
 	borrowedListener := ""
 	if operation == "accept" || operation == "port" {
-		// A borrowed listener record at address zero, with host handle 42.
-		// The accepted socket gets a distinct handle (0 or 7) and owns its
-		// streams. The listener remains host-owned and must never be dropped.
 		borrowedListener = "(i32.store (i32.const 0) (i32.const 42))"
 	}
 	if strings.HasPrefix(operation, "recv") {
-		// A connection record at address zero: the read checks its kind
-		// word (1, a connection) before it reads the input stream.
 		borrowedListener = "(i32.store offset=12 (i32.const 0) (i32.const 1))"
 	}
 	census := ""
@@ -302,9 +271,6 @@ func socketHostBody(operation, moduleName, name string) string {
 		return "(i32.const 0)"
 	}
 	if moduleName == "wasi_snapshot_preview1" && name == "fd_write" {
-		// Under the census the exported main reports on its return through
-		// fd_write. Stdio is not a socket resource, so the write succeeds
-		// and the probe reads the census globals itself.
 		return "(i32.const 0)"
 	}
 	if strings.Contains(name, "[resource-drop]") {
@@ -376,9 +342,6 @@ func socketHostBody(operation, moduleName, name string) string {
         (i32.store offset=8 (local.get 3) (global.get $fh_handle))))))`
 	}
 	phase, ret, own := 0, 1, ""
-	// errAt is where the canonical ABI puts the error-code of the method's
-	// result: 1 after `result<_, error-code>`, 4 after a handle, handle
-	// tuple or address, 8 after a u64 count.
 	errAt := 4
 	switch {
 	case strings.HasPrefix(name, "create-"):
@@ -415,7 +378,6 @@ func socketHostBody(operation, moduleName, name string) string {
 	}
 	payload := fmt.Sprintf("(i32.store offset=4 (local.get %d) (global.get $fh_handle)) (i32.store offset=8 (local.get %d) (global.get $fh_handle))", ret, ret)
 	if operation == "port" {
-		// IPv4 port zero and IPv6 port 65535 exercise both canonical shapes.
 		payload = "(if (i32.ne (local.get 0) (i32.const 42)) (then unreachable)) " +
 			"(i32.store offset=4 (local.get 1) (i32.ne (global.get $fh_handle) (i32.const 0))) " +
 			"(i32.store16 offset=8 (local.get 1) (select (i32.const 0) (i32.const 65535) (i32.eqz (global.get $fh_handle))))"
@@ -429,8 +391,6 @@ func socketHostBody(operation, moduleName, name string) string {
 	return fmt.Sprintf("(if (i32.eq (global.get $fh_fail) (i32.const %d)) (then (i32.store (local.get %d) (i32.const 1)) (i32.store8 offset=%d (local.get %d) (i32.const 0))) (else (i32.store (local.get %d) (i32.const 0)) %s %s))", phase, ret, errAt, ret, ret, payload, own)
 }
 
-// BytesOf is a Fern `bytes_of(s)`: the string's bytes as a fresh u8[],
-// written out so a probe needs no stdlib module for it.
 const BytesOf = `function bytes_of(s: string): u8[] {
     let out: u8[] = __alloc_u8(s.len());
     let i: i32 = 0;

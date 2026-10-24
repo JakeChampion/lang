@@ -8,30 +8,6 @@ import (
 	"testing"
 )
 
-// annotateBinaryCases exercise the ExprBinary.ty / ExprUnary.ty carriers — the
-// last two in the Phase-A annotate-and-consume migration
-// (docs/TYPED-IR-REWRITE.md), after ExprCall.ty (#5531), ExprFieldAccess.ty,
-// ExprIndex.ty (#6165), ExprSlice.ty and ExprIdent.ty.
-//
-// Ordinary arithmetic needs no carrier: the lowering composes a binary's
-// type from its OPERANDS, so `a * b` on two f64 locals is already f64. The one
-// shape the operand walk cannot reach is a composite operator overload, where
-// BOTH operands are structs and the result is whatever the method returns:
-//
-//	struct V { x: f64, y: f64 }
-//	function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
-//	let d: f64 = p * q;                       // f64, and no walk over p / q says so
-//
-// Each case below is an overload whose result is NOT a struct. The self-host
-// checker types `p * q` through its operator-overload arm and stamps the
-// carrier; a missing arm types it unknown (E009), and a missing carrier refuses
-// it ("did not lower: binary `*`" under FERN_STRICT_IR). The struct-returning
-// overload (overload_add_struct below) is the control that the scalar carrier
-// did not displace the struct-return path.
-//
-// The i64 rows also need the width query (infer_expr_width) and the i64 load to
-// read the same tag; wired to only one, `(p + q) % 100i64` is refused at the
-// enclosing `as i32`.
 var annotateBinaryCases = []struct {
 	name string
 	src  string
@@ -43,31 +19,27 @@ function main(): i32 {
   let q: V = V { x: 2.0, y: 5.0 };
   let d: f64 = p * q;
   return (d * 2.0) as i32;
-}`}, // 52
-	// The same overload consumed inline, so the enclosing `*` asks
-	// expr_is_f64 about an ExprBinary rather than about a typed local.
+}`},
 	{"overload_mul_f64_direct", `struct V { x: f64, y: f64 }
 function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
 function main(): i32 {
   let p: V = V { x: 3.0, y: 4.0 };
   let q: V = V { x: 2.0, y: 5.0 };
   return ((p * q) * 2.0) as i32;
-}`}, // 52
-	// i64 return: needs infer_expr_width AND lower_i64's binary arm.
+}`},
 	{"overload_add_i64", `struct C { n: i32 }
 function (a: C) add(b: C): i64 { return (a.n as i64) * 1000000000i64 + (b.n as i64); }
 function main(): i32 {
   let p: C = C { n: 5 };
   let q: C = C { n: 7 };
   return ((p + q) % 100i64) as i32;
-}`}, // 7
-	// The unary sibling at i64 width: lower_i64's ExprUnary arm.
+}`},
 	{"overload_neg_i64", `struct C { n: i32 }
 function (a: C) neg(): i64 { return (a.n as i64) * 1000000000i64; }
 function main(): i32 {
   let p: C = C { n: 5 };
   return (((-p) / 1000000000i64) + 37i64) as i32;
-}`}, // 42
+}`},
 	{"overload_add_string", `struct N { n: i32 }
 function (a: N) add(b: N): string { return "ab"; }
 function main(): i32 {
@@ -75,16 +47,14 @@ function main(): i32 {
   let q: N = N { n: 2 };
   let s: string = p + q;
   return s.len() as i32;
-}`}, // 2
+}`},
 	{"overload_neg_f64", `struct V { x: f64 }
 function (a: V) neg(): f64 { return 0.0 - a.x; }
 function main(): i32 {
   let p: V = V { x: 21.0 };
   let d: f64 = -p;
   return (d * 0.0 - d) as i32;
-}`}, // 21
-	// A boolean-returning overload: without the tag expr_is_bool answered
-	// false and expr_scalar_type fell to its "i32" default.
+}`},
 	{"overload_rem_boolean", `struct V { x: i32 }
 function (a: V) rem(b: V): boolean { return a.x > b.x; }
 function main(): i32 {
@@ -92,20 +62,15 @@ function main(): i32 {
   let q: V = V { x: 22 };
   if (p % q) { return 7; }
   return 42;
-}`}, // 42
+}`},
 
-	// Control: a STRUCT-returning overload, which lowered before the scalar
-	// carrier existed and must still lower.
 	{"overload_add_struct", `struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 function main(): i32 {
   let p: V = V { x: 20 };
   let q: V = V { x: 22 };
   return (p + q).x;
-}`}, // 42
-	// Control: the explicit method call the overload desugars to. It never
-	// went through the binary arm at all, so it pins that the fix did not
-	// change the ordinary struct-method path.
+}`},
 	{"method_call_control", `struct V { x: f64, y: f64 }
 function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
 function main(): i32 {
@@ -113,27 +78,18 @@ function main(): i32 {
   let q: V = V { x: 2.0, y: 5.0 };
   let d: f64 = p.mul(q);
   return (d * 2.0) as i32;
-}`}, // 52
-	// Control: ordinary f64 arithmetic, where the operand walk already
-	// answers and the tag must be inert.
+}`},
 	{"plain_f64_arithmetic", `function main(): i32 {
   let a: f64 = 3.5;
   let b: f64 = 2.0;
   return ((a * b) + 1.0) as i32;
-}`}, // 8
-	// Control: ordinary i64 arithmetic through the width walk. An unsuffixed
-	// literal types i32 in the self-host checker, so a tag-FIRST width leaf
-	// would narrow this; the wiring is additive precisely so it cannot.
+}`},
 	{"plain_i64_arithmetic", `function main(): i32 {
   let a: i64 = 5000000000i64;
   return ((a + 7i64) % 100i64) as i32;
-}`}, // 7
+}`},
 }
 
-// TestSelfHostAnnotateBinaryX86_64 runs the cases on the self-host x86-64
-// backend. fern.fern is the driver because it runs checker.annotate_module; a
-// driver that skips annotation leaves every ty empty, and these cases then bail
-// exactly as they did before the change.
 func TestSelfHostAnnotateBinaryX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -170,10 +126,6 @@ func TestSelfHostAnnotateBinaryX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAnnotateBinaryWasm is the wasm leg. Both backends bailed
-// identically here, so this leg is not carrying a distinct defect — it is what
-// proves the desugared call's result width is emitted consistently, which is
-// the half the wasm validator checks and x86-64 does not.
 func TestSelfHostAnnotateBinaryWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping annotate-binary wasm cases")
@@ -215,11 +167,6 @@ func TestSelfHostAnnotateBinaryWasm(t *testing.T) {
 	}
 }
 
-// annotateBinaryRejectCases pin the other direction: teaching the self-host
-// checker about operator overloads must NOT make it accept an operator on a
-// type that does not define the method. Native rejects both of these E009, and
-// so must the self-host — otherwise the checker-codes differential is the gate
-// that would have caught it, and only after this had shipped.
 var annotateBinaryRejectCases = []struct {
 	name string
 	src  string
@@ -239,8 +186,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostAnnotateBinaryRejectsX86_64 asserts the self-host checker still
-// emits E009 for an operator with no overload method behind it.
 func TestSelfHostAnnotateBinaryRejectsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

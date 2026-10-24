@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostDepImportDifferentialX86_64 is the parity gate for the import
-// forms that reach into a declared dependency: a module below its root
-// (`import "helper/extra"`, #11839), a module that dependency's lib imports
-// beside itself, and a dependency found by walking up from an entry given by a
-// RELATIVE path (#11840). Native must accept each fixture, and the self-host
-// must build it and the program must exit with the value the dependency's code
-// returns — or, for a directory entry, the self-host's `-check` must accept it.
 func TestSelfHostDepImportDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -32,25 +25,18 @@ func TestSelfHostDepImportDifferentialX86_64(t *testing.T) {
 		"handlers/app/main.fern": "import \"lexer\";\nfunction main(): i32 { return lexer.n(); }\n",
 	}
 	for _, c := range []struct {
-		name  string
-		files map[string]string
-		// cwd is the directory both compilers run in, relative to the fixture
-		// root; entry is the entry file as the command line names it.
+		name       string
+		files      map[string]string
 		cwd, entry string
 		wantExit   int
-		// checkOnly runs the self-host's `-check` on the entry instead of
-		// building it.
-		checkOnly bool
+		checkOnly  bool
 	}{
-		// The first segment names the dependency, the rest a module in it.
 		{"dep-submodule", map[string]string{
 			"app/fern.toml":     appDep,
 			"app/main.fern":     "import \"helper/extra\";\nfunction main(): i32 { return extra.four(); }\n",
 			"helper/fern.toml":  "[package]\nname = \"helper\"\n",
 			"helper/extra.fern": "pub function four(): i32 { return 4; }\n",
 		}, "app", "main.fern", 4, false},
-		// Two segments deep, and the submodule's own `./` import resolves
-		// beside it rather than at the dependency's root.
 		{"dep-nested-submodule", map[string]string{
 			"app/fern.toml":     appDep,
 			"app/main.fern":     "import \"helper/sub/x\";\nfunction main(): i32 { return x.v(); }\n",
@@ -59,7 +45,6 @@ func TestSelfHostDepImportDifferentialX86_64(t *testing.T) {
 			"helper/sub/y.fern": "pub function w(): i32 { return 8; }\n",
 			"helper/y.fern":     "pub function w(): i32 { return 100; }\n",
 		}, "app", "main.fern", 9, false},
-		// A submodule name that is also the dependency's own name.
 		{"dep-submodule-named-like-dep", map[string]string{
 			"app/fern.toml":      appDep,
 			"app/main.fern":      "import \"helper/helper\";\nfunction main(): i32 { return helper.h(); }\n",
@@ -67,8 +52,6 @@ func TestSelfHostDepImportDifferentialX86_64(t *testing.T) {
 			"helper/lib.fern":    "pub function h(): i32 { return 1; }\n",
 			"helper/helper.fern": "pub function h(): i32 { return 2; }\n",
 		}, "app", "main.fern", 2, false},
-		// A lib below the dependency's root imports its sibling: `./util` is
-		// src/util.fern, not util.fern at the package root.
 		{"dep-lib-in-subdir", map[string]string{
 			"app/fern.toml":        appDep,
 			"app/main.fern":        "import \"helper\";\nfunction main(): i32 { return helper.twelve(); }\n",
@@ -76,14 +59,8 @@ func TestSelfHostDepImportDifferentialX86_64(t *testing.T) {
 			"helper/src/lib.fern":  "import \"./util\";\npub function twelve(): i32 { return util.two() * 6; }\n",
 			"helper/src/util.fern": "pub function two(): i32 { return 2; }\n",
 		}, "app", "main.fern", 12, false},
-		// A workspace member's entry named from the workspace root: the walk
-		// to the [workspace] manifest passes the relative path's last segment.
 		{"workspace-entry-from-root", workspace, ".", "handlers/app/main.fern", 7, false},
-		// The member's own directory: the walk climbs through `../`.
 		{"workspace-entry-from-member", workspace, "handlers/app", "main.fern", 7, false},
-		// A vendor tree at the workspace root serves a member's dependency,
-		// found from inside the member. ../ext gives a different value, so a
-		// pass proves the vendored copy was read.
 		{"workspace-root-vendor-from-member", map[string]string{
 			"fern.toml":            "[workspace]\nmembers = [\"app\"]\n",
 			"app/fern.toml":        "[package]\nname = \"app\"\n[dependencies]\next = { path = \"../../ext\" }\n",
@@ -93,8 +70,6 @@ func TestSelfHostDepImportDifferentialX86_64(t *testing.T) {
 			"../ext/fern.toml":     "[package]\nname = \"ext\"\n",
 			"../ext/lib.fern":      "pub function val(): i32 { return 3; }\n",
 		}, "app", "main.fern", 42, false},
-		// `-check DIR` for a relative directory with no manifest of its own
-		// checks the workspace that governs it.
 		{"check-relative-dir", workspace, ".", "handlers", 0, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {

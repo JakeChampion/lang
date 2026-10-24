@@ -1,12 +1,6 @@
 import "std/test";
 import "std/time" as time;
 
-// tests/stdlib/time_relative_test.fern — pure-Fern coverage of
-// std/time.Instant.relative_to: the "just now" window, past vs future
-// direction ("ago" / "in"), singular vs plural units, and the unit
-// ladder from seconds through years.
-
-// Reference instant all cases are measured against.
 function now(): Instant {
   return time.instant_from_unix(1000000 as i64);
 }

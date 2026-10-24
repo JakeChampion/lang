@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// std/array's `binary_search[T: cmp.Ord](xs, target) -> Option[i32]` — O(log n)
-// search of an ascending-sorted array via the three-way `xs[mid].cmp(target)`.
-// The `T: cmp.Ord` bound monomorphises the compare per element type (scalar for
-// i32, lexicographic for string), same as `sort`; the return is Option[i32]
-// (scalar payload) regardless of T, so — unlike the T[]/Option[T]-returning
-// generics — it lowers on the self-host IR path for string elements too. This
-// differential exercises i32 AND string arrays across interp / x86-64 / wasm /
-// arm64. Returns 42 iff every check holds; each leg skips itself when its
-// toolchain is absent.
 const arrayBinarySearchProg = `
 import "std/array" as array;
 function idx(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }

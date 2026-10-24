@@ -21,42 +21,12 @@ func init() {
 	registerCorpus("ptx", ptxCases)
 }
 
-// ptxCases is ptx(1)'s corpus.
-//
-// Three things carry most of the risk. The first is the COLUMN
-// arithmetic: the default format rotates each context around its
-// keyword into four fields whose widths come off -w, -g and the length
-// of -F's flag, with the head's share sized by the WIDEST keyword in
-// the whole input — so the corpus sweeps -w and -g against inputs whose
-// words are all one length, so that a field boundary lands on a word
-// boundary, and against inputs whose words vary, so that it does not.
-//
-// The second is what counts as a word and as a context. Without -G a
-// keyword is a run of LETTERS (no digits, no underscore, no byte past
-// 127) and a context ends at `.?!` followed by end-of-line, a tab or
-// two spaces; with -G a keyword is a run of non-whitespace and a
-// context is a line. -b replaces the alphabet, -W replaces it with a
-// regexp, -S replaces the sentence — and both regexps are glibc's
-// DEFAULT syntax, syntax 0, where `+` is an operator and `\{` is not.
-//
-// The third is the references. -r takes the first field of each input
-// LINE, -A generates `FILE:LINE`, and each occurrence carries the
-// reference of the line it sits on rather than the line its context
-// started at — so a context spanning two lines has two references in
-// it. -R moves them to the right and out of the width, and in roff and
-// tex it does nothing at all.
-//
-// An empty CONTEXT is fatal (`regular expression has a match of length
-// zero`), which is how -r meets a blank line; an empty-matching -W is
-// not, and makes GNU spin forever, so no case has one.
 func ptxCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	in1 := ptxFile(t, dir, "in1", "the quick brown fox\njumps over the lazy dog\n")
 	sent := ptxFile(t, dir, "sent", "aa bb. cc dd\nee ff\n")
 	sent2 := ptxFile(t, dir, "sent2", "aa bb.  cc dd\nee ff\n")
 	sent3 := ptxFile(t, dir, "sent3", "aa bb.\ncc dd\n")
-	// Distinct keys avoid GNU's address-dependent ordering of equal keys.
-	// This case checks that contexts remain separate across files.
 	distinct := ptxFile(t, dir, "distinct", "gg hh. ii jj\nkk ll\n")
 	closers := ptxFile(t, dir, "closers", "aa bb.\")  cc dd\nee ff\n")
 	tabsep := ptxFile(t, dir, "tabsep", "aa bb.\tcc dd\n")
@@ -65,12 +35,6 @@ func ptxCases(t *testing.T) []invocation {
 	mixedcase := ptxFile(t, dir, "mixedcase", "Apple banana APPLE Banana cherry\n")
 	classes := ptxFile(t, dir, "classes", "a.b c!d foo_bar baz-qux 123 caf\xc3\xa9\n")
 	nonl := ptxFile(t, dir, "nonl", "aa bb")
-	// The second file of the joining case carries words of its own. GNU
-	// breaks a tie between two equal keywords by the ADDRESS of the key
-	// in the buffer it read the file into, and it reads each file into
-	// its own allocation — so two files sharing a keyword order by
-	// whatever the allocator did, which no second implementation can
-	// reproduce. Distinct words keep the case about the join.
 	joinl := ptxFile(t, dir, "joinl", "zz yy")
 	empty := ptxFile(t, dir, "empty", "")
 	blanks := ptxFile(t, dir, "blanks", "  aa bb\n   cc\n")
@@ -78,8 +42,6 @@ func ptxCases(t *testing.T) []invocation {
 	nul := ptxFile(t, dir, "nul", "aa\x00bb cc\n")
 	quotes := ptxFile(t, dir, "quotes", "aa\"bb 'cc' \\dd\n")
 	tex := ptxFile(t, dir, "tex", "it's (a) {b} $c% &d# e_f \\g ^h ~i\n")
-	// Every printable byte, one per keyword-bearing line, so the roff
-	// doubling rule and the eight TeX escapes are each hit.
 	var sweep strings.Builder
 	for c := 32; c < 127; c++ {
 		sweep.WriteString("aa")
@@ -87,8 +49,6 @@ func ptxCases(t *testing.T) []invocation {
 		sweep.WriteString("bb\n")
 	}
 	bytesweep := ptxFile(t, dir, "bytesweep", sweep.String())
-	// One-length words, so a cut lands on a word boundary; and words of
-	// several lengths, so it does not.
 	var even, odd strings.Builder
 	for i := 0; i < 40; i++ {
 		even.WriteString(string(rune('a'+i%26)) + string(rune('a'+i/26)) + " ")
@@ -100,10 +60,6 @@ func ptxCases(t *testing.T) []invocation {
 	oddWords := ptxFile(t, dir, "odd", strings.TrimRight(odd.String(), " ")+"\n")
 	numbered := ptxFile(t, dir, "numbered",
 		"w01 w02 w03 w04 w05 w06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16\n")
-	// 20000 distinct keywords, above the radix sort's threshold, whose
-	// first eight bytes tie a hundred at a time; none are equal, so GNU's
-	// pointer tie-break among equal keywords (Known divergences) does not
-	// arise.
 	var many strings.Builder
 	for i := 0; i < 20000; i++ {
 		fmt.Fprintf(&many, "word%d", 100000+i*7%20000)
@@ -115,13 +71,6 @@ func ptxCases(t *testing.T) []invocation {
 	}
 	manyWords := ptxFile(t, dir, "many", many.String())
 	longword := ptxFile(t, dir, "longword", "xx abcdefghijklmnopqrstuvwxyz yy\n")
-	// The head field is the piece of the geometry that cannot be
-	// guessed: its share is the widest keyword in the WHOLE input plus
-	// the gap, it is counted from the keyword rather than from the end
-	// of the before field, and it starts one byte further left when
-	// nothing is lost than when the flag has to be printed. These four
-	// differ only in where a word boundary falls against those three
-	// rules.
 	head1 := ptxFile(t, dir, "head1",
 		"j obu zpqfnsbg lrabgsro jxbmte liwe hlna zjodid ichiglx mz dclj oy"+
 			" cmychrc ypj eruip h cz odqhvyi ghnkytxi btikugzb rsxwry itzsk\n")
@@ -167,7 +116,6 @@ func ptxCases(t *testing.T) []invocation {
 	raw := rawByteFile(t, dir, "aa bb\n")
 
 	return []invocation{
-		// The default format, and the two it is not.
 		{name: "default", args: []string{in1}},
 		{name: "roff", args: []string{"-O", in1}},
 		{name: "tex", args: []string{"-T", in1}},
@@ -188,7 +136,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "empty operand is stdin", args: []string{""}, stdin: "alpha beta\n"},
 		{name: "dashdash then stdin", args: []string{"--"}, stdin: "aa bb\n"},
 
-		// Sentences and lines.
 		{name: "sentence one space does not split", args: []string{"-O", sent}},
 		{name: "sentence two spaces split", args: []string{"-O", sent2}},
 		{name: "sentence end of line splits", args: []string{"-O", sent3}},
@@ -208,7 +155,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "context with leading blanks", args: []string{blanks}},
 		{name: "context with leading blanks roff", args: []string{"-O", blanks}},
 
-		// Word alphabets.
 		{name: "letters only", args: []string{"-T", classes}},
 		{name: "traditional non whitespace", args: []string{"-G", "-T", classes}},
 		{name: "word regexp", args: []string{"-O", "-W", "[a-z]+", mixedcase}},
@@ -235,7 +181,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "a NUL", args: []string{"-O", nul}},
 		{name: "non utf8 input", args: []string{"-T", classes}},
 
-		// Ignore and only lists.
 		{name: "ignore file", args: []string{"-G", "-O", "-i", ign, mixedcase}},
 		{name: "ignore is case sensitive with fold", args: []string{"-G", "-O", "-f", "-i", ign, mixedcase}},
 		{name: "ignore two words on a line", args: []string{"-G", "-O", "-i", ign2, mixedcase}},
@@ -248,7 +193,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "last ignore wins", args: []string{"-G", "-O", "-i", ign, "-i", only, mixedcase}},
 		{name: "only does not change the widest keyword", args: []string{"-o", only, longline}},
 
-		// Sorting.
 		{name: "fold", args: []string{"-G", "-O", "-f", mixedcase}},
 		{name: "no fold", args: []string{"-G", "-O", mixedcase}},
 		{name: "ties keep input order", args: []string{"-G", "-O"}, stdin: "zzz the\naaa the\n"},
@@ -256,7 +200,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "contexts do not join across files", args: []string{"-O", sent3, distinct}},
 		{name: "unterminated file does not join the next", args: []string{"-O", joinl, sent}},
 
-		// Width and gap.
 		{name: "width 20", args: []string{"-w", "20", in1}},
 		{name: "width 30", args: []string{"-w", "30", in1}},
 		{name: "width 31 is width 30", args: []string{"-w", "31", in1}},
@@ -291,7 +234,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "width bounds the tex fields", args: []string{"-T", "-w", "20", in1}},
 		{name: "last width wins", args: []string{"-w", "30", "-w", "20", in1}},
 
-		// The geometry, swept against words of one length and of many.
 		{name: "even words", args: []string{evenWords}},
 		{name: "even words narrow", args: []string{"-w", "40", evenWords}},
 		{name: "even words roff", args: []string{"-O", evenWords}},
@@ -321,7 +263,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "head with a flag string", args: []string{"-F", "XX", "-w", "50", "-g", "2", head3}},
 		{name: "an empty flagged before keeps the tail column", args: []string{"-w", "20", "-g", "2", head3}},
 
-		// -F.
 		{name: "flag string", args: []string{"-F", "XX", "-w", "30", in1}},
 		{name: "empty flag string", args: []string{"-F", "", "-w", "30", in1}},
 		{name: "long flag string", args: []string{"-F", "****", "-w", "40", in1}},
@@ -341,7 +282,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "flag NUL is empty", args: []string{"-F", "\\0", "-w", "14", in1}},
 		{name: "flag tab", args: []string{"-F", "\\t", "-w", "14", in1}},
 
-		// -M.
 		{name: "macro name", args: []string{"-O", "-M", "ZZ", in1}},
 		{name: "macro name in tex", args: []string{"-T", "-M", "ZZ", in1}},
 		{name: "empty macro name", args: []string{"-O", "-M", "", in1}},
@@ -350,14 +290,12 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "last macro wins", args: []string{"-O", "-M", "AA", "-M", "BB", in1}},
 		{name: "macro name does nothing in columns", args: []string{"-M", "ZZ", in1}},
 
-		// Escaping.
 		{name: "roff doubles the quote", args: []string{"-G", "-O", quotes}},
 		{name: "tex escapes its eight", args: []string{"-G", "-T", tex}},
 		{name: "roff over every printable byte", args: []string{"-G", "-O", bytesweep}},
 		{name: "tex over every printable byte", args: []string{"-G", "-T", bytesweep}},
 		{name: "columns over every printable byte", args: []string{"-G", bytesweep}},
 
-		// References.
 		{name: "input references", args: []string{"-O", refs}},
 		{name: "input references columns", args: []string{refs}},
 		{name: "input references tex", args: []string{"-T", refs}},
@@ -391,11 +329,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "right side refs with no reference at all", args: []string{"-R", in1}},
 		{name: "references over two files", args: []string{"-A", "-O", in1, sent}},
 
-		// -G's second operand is an OUTPUT file, and it is created —
-		// truncating whatever was there — before almost every check, so
-		// a run that goes on to fail still empties it. Only the
-		// option-parse-time diagnostics come first. `-` there is a file
-		// name, not stdout.
 		{name: "traditional writes its second operand", args: []string{"-G", "in", "out"},
 			seedTree: ptxSeed},
 		{name: "traditional output named dash", args: []string{"-G", "in", "-"},
@@ -415,10 +348,8 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "traditional stdin to a file", args: []string{"-G", "-", "out"},
 			stdin: "aa bb\n", seedTree: ptxSeed},
 
-		// -t is inert but still occupies the option table.
 		{name: "typeset mode is inert", args: []string{"-G", "-t", mixedcase}},
 
-		// Option grammar.
 		{name: "glued short value", args: []string{"-w20", "-G", "-O", in1}},
 		{name: "long with equals", args: []string{"--width=20", "-G", "-O", in1}},
 		{name: "long with a separate value", args: []string{"--width", "20", "-G", "-O", in1}},
@@ -431,7 +362,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "dashdash makes an option a name", args: []string{"--", "-G", in1}},
 		{name: "dashdash before a real operand", args: []string{"-O", "--", sent}},
 
-		// getopt diagnostics.
 		{name: "invalid short option", args: []string{"-x", in1}},
 		{name: "invalid option in a cluster", args: []string{"-Gx", in1}},
 		{name: "unrecognized long option", args: []string{"--foo", in1}},
@@ -465,7 +395,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "invalid format argument", args: []string{"--format=x", in1}},
 		{name: "format takes a file as its argument", args: []string{"--format", in1}},
 
-		// Numeric diagnostics, and their order.
 		{name: "zero width", args: []string{"-w", "0", in1}},
 		{name: "negative width", args: []string{"-w", "-1", in1}},
 		{name: "malformed width", args: []string{"-w", "x", in1}},
@@ -479,7 +408,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "a numeric error beats a bad regexp", args: []string{"-w", "0", "-W", "[", in1}},
 		{name: "a numeric error beats a missing file", args: []string{"-w", "0", missing}},
 
-		// Regexp diagnostics, which beat every file open.
 		{name: "bad word regexp", args: []string{"-W", "[", in1}},
 		{name: "bad sentence regexp", args: []string{"-S", "[", in1}},
 		{name: "unmatched open group", args: []string{"-W", "\\(", in1}},
@@ -490,7 +418,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "a bad class is not an error", args: []string{"-O", "-W", "[[:foo:]]", sent}},
 		{name: "a bare star is not an error", args: []string{"-O", "-W", "*", sent}},
 
-		// Operands and files.
 		{name: "missing file", args: []string{missing}},
 		{name: "missing file after a good one", args: []string{in1, missing}},
 		{name: "directory operand", args: []string{d}},
@@ -505,7 +432,6 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "no trailing newline", args: []string{"-O", nonl}},
 		{name: "three operands without G", args: []string{in1, sent, missing}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{in1}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{in1}, stdout: stdoutFull},
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
@@ -514,9 +440,6 @@ func ptxCases(t *testing.T) []invocation {
 	}
 }
 
-// ptxSeed is the working directory the -G output-operand cases run in:
-// an input to index and a file with something in it, so that the
-// truncation is visible in the tree the harness compares.
 func ptxSeed(t *testing.T, dir string) {
 	t.Helper()
 	ptxFile(t, dir, "in", "the quick brown fox\njumps over the lazy dog\n")

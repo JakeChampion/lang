@@ -11,18 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantMixedWidthParamCustomProvider is the self-host port of
-// the Go-side TestExternVariantMixedWidthParamCustomProvider (docs/WIT-BRING-YOUR-OWN.md):
-// a mixed-width `variant ev { i(s32), l(s64) }` @import parameter. The canonical
-// join is i64 (a 32-bit and a 64-bit arm), so the flattened param is (disc:i32,
-// payload:i64). The self-host wrapper pushes the disc (struct_id -> variant index)
-// then the payload coerced to the i64 join via a disc-branching if/else chain: the
-// i arm `i64.extend_i32_u`s its 4-byte box payload, the l arm `i64.load`s its
-// 8-byte one (the S1 wide enum slot). Exercises the new
-// extern_variant_join_is64 / extern_variant_payload_join_i64 path.
-//
-// `take: func(e: ev) -> s32`: i(x) -> x, l(y) -> y / 1e8. The self-host passes
-// I(7) (-> 7) and L(4200000000) (-> 42, only if the 64-bit payload survives).
 func TestSelfHostExternVariantMixedWidthParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,8 +38,6 @@ func TestSelfHostExternVariantMixedWidthParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, payload:i64). The i arm's
-	// s32 occupies the i64 join's low 32 bits; the l arm's s64 fills it.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $p i64) (result i32)

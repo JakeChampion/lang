@@ -2,15 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A string is freed at its length's size class, so a runtime helper that
-// wraps a buffer must hand back a block allocated at the string's length.
-// read_file sized its buffer one byte past fstat's answer, and env and
-// temp_dir kept the NUL a syscall needed, so each returned a string whose
-// block sat a class above the one its free used whenever the length was a
-// multiple of 8. Each case below lands on that boundary: an 8-byte file, an
-// 8-byte variable, and temp_dir prefixes of every length from 1 to 8, one of
-// which makes the path a multiple of 8. /proc/self/stat reports size 0, so
-// its read grows the buffer and is copied to an exact block.
 const runtimeStringClassSrc = `import "std/i32";
 
 function main(): i32 {

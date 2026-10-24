@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A receiver method resolves only in a module whose import closure loads the
-// module declaring it, as the Go checker's methodVisibleHere rules: another
-// module importing it is not enough (#12901). Both checkers must agree on the
-// E043, its text and its position, and both must accept the programs where the
-// module reaches std/string itself, directly or through an import.
 func TestSelfHostMethodVisibilityFollowsImports(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -33,8 +28,6 @@ func TestSelfHostMethodVisibilityFollowsImports(t *testing.T) {
 		{"typo-without-import", map[string]string{"a.fern": "pub function has_x(s: string): boolean {\n  return s.contans(\"x\");\n}\n"}, true, ""},
 		{"direct-import", map[string]string{"a.fern": "import \"std/string\";\n" + body}, false, ""},
 		{"transitive-import", map[string]string{"a.fern": "import \"./b\";\n" + body, "b.fern": "import \"std/string\";\npub function one(): i32 { return 1; }\n"}, false, ""},
-		// The array path: neither the call's argument nor a near-miss name is
-		// checked against a std/array method the module cannot see.
 		{"array-sibling-import-does-not-reach", map[string]string{"a.fern": "pub function f(xs: string[]): i32 {\n  return xs.join(123).len();\n}\n"}, true, arrayEntry},
 		{"array-near-miss-not-suggested", map[string]string{"a.fern": "pub function f(xs: string[]): i32 {\n  return xs.min_by_len().len();\n}\n"}, true, arrayEntry},
 	}

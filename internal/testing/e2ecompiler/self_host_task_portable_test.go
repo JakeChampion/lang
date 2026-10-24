@@ -10,13 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostTaskPortable is the task runtime's gate on every target
-// (docs/NET-P3-SUSPENSION-PLAN.md §3.7): e2eharness.TaskPortableProgram
-// parks on a bound alone, holding an i64, an f64 and a string across the
-// parks, and the self-host's x86-64, arm64 and wasm output must show both
-// parks and the plain run's figure. The wasm leg composes the module with
-// the preview-1 adapter and runs it under wasmtime, as the sim's wasm legs
-// do.
 func TestSelfHostTaskPortable(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
@@ -54,9 +47,6 @@ func TestSelfHostTaskPortable(t *testing.T) {
 				if adapter == "" {
 					t.Skip("FERN_WASI_ADAPTER unset")
 				}
-				// The module imports wasi:io/poll's list-returning `poll`, so
-				// the composition needs the world's component metadata: embed
-				// cmd/fern/wit's `fern` world, then adapt.
 				wat := cli.emit(t, src, target, "FERN_STRICT_IR=1")
 				core := filepath.Join(filepath.Dir(wat), "prog.core.wasm")
 				if out, err := exec.Command(wasmtools, "parse", wat, "-o", core).CombinedOutput(); err != nil {

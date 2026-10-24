@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRExportBridge pins that the IR path emits the WIT extern/export
-// canonical-ABI bridge. In mode 0 an `@export` module must keep its binding: a
-// core whose only exports are `memory` and `_start` has SILENTLY DROPPED it.
-//
-// The bridge lives in wasm_ir and lays its heap boxes out with 8-byte slots
-// (wasm_ir.xbox_field_off). TestSelfHostWasmExternBridgeIRLayout pins the
-// offsets per shape.
-//
-// This test covers the mode-0 half, which is reachable from a stdin driver.
-// The component half is covered by the TestSelfHostExport*/TestSelfHostExtern*
-// component tests, which compose a real component and run it under wasmtime.
 func TestSelfHostIRExportBridge(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -39,19 +28,11 @@ function main(): i32 { return 0; }
 	if !strings.Contains(wat, `(export "local:test/nums@0.1.0#iota"`) {
 		t.Errorf("IR path dropped the @export binding — the extern/export bridge is not being emitted\n%s", wat)
 	}
-	// The export must resolve to the canonical-ABI wrapper, not the raw Fern
-	// function: an i32[] result is lifted through a return area, so exporting
-	// $iota directly would hand the consumer a bare pointer.
 	if !strings.Contains(wat, "$__xwrap_iota") {
 		t.Error("the @export is not routed through its canonical-ABI wrapper")
 	}
 }
 
-// TestSelfHostIRExportBridgeInert pins the other half of the contract: a module
-// declaring no extern and no export must be completely unaffected. The bridge
-// emitters are gated (module_needs_extern_wrappers / an empty export list), so
-// wiring them in must add nothing to an ordinary program — which is what makes
-// the change safe for the ~440 wasm test files that declare neither.
 func TestSelfHostIRExportBridgeInert(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -69,7 +50,6 @@ func TestSelfHostIRExportBridgeInert(t *testing.T) {
 	if len(wat) == 0 {
 		t.Fatal("IR path emitted 0 bytes")
 	}
-	// No extern surface at all: the only exports are the ones every core has.
 	for _, unwanted := range []string{"__xwrap_", "__import", "(export \"local:"} {
 		if strings.Contains(wat, unwanted) {
 			t.Errorf("extern/export surface leaked into an extern-free module: found %q", unwanted)

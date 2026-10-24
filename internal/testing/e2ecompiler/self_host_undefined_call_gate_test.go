@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// runDriverAllowFail runs a driver binary and returns (stdout, stderr, exit
-// code) WITHOUT failing the test on a non-zero exit — the reject cases below
-// are exactly the non-zero exits (runDriverFile fatals on them).
 func runDriverAllowFail(t *testing.T, runner []string, bin string, stdin string, args ...string) ([]byte, []byte, int) {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -29,24 +26,9 @@ func runDriverAllowFail(t *testing.T, runner []string, bin string, stdin string,
 	return out, stderr.Bytes(), cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostUndefinedCallGate pins #5644 on the file-based x86 driver: a
-// call to a function that does not exist must REJECT (exit 1 + an E001
-// diagnostic naming the callee, nothing emitted) instead of emitting
-// `call __fn_<name>` against nothing and exiting 0 — which turned a source
-// typo into a bare `undefined reference` from the linker. A std/ import made
-// with no stdlib given is the same defect one level up: modloader skips it, so
-// every qualified call into it dangles; that case gets the module named.
-//
-// The accept cases are the gate's real risk: they pin that the admit list
-// (builtins, variant constructors, closure locals, receiver methods, and the
-// emitter-only free-function spellings the lowering accepts) never rejects
-// a valid program, and that an accepted program still routes through the IR
-// path and runs.
 func TestSelfHostUndefinedCallGate(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// compile writes `main.fern` (plus builtins.fern, which the driver merges)
-	// into a fresh dir and runs the driver on it.
 	compile := func(t *testing.T, src string) ([]byte, []byte, int, string) {
 		t.Helper()
 		dir := t.TempDir()
@@ -67,26 +49,19 @@ func TestSelfHostUndefinedCallGate(t *testing.T) {
 	rejects := []struct {
 		name string
 		src  string
-		want []string // substrings the diagnostic must carry
+		want []string
 	}{
-		// The issue's repro: exit 0 + 1662 bytes of asm containing
-		// `call __fn_totally_undefined_fn` before the gate.
 		{
 			"undefined-fn",
 			"function main(): i32 {\n    return totally_undefined_fn(1);\n}\n",
 			[]string{"E001", "totally_undefined_fn"},
 		},
-		// An undefined callee reached only from a nested position (a lambda
-		// body inside an argument) — the walk must find it there too.
 		{
 			"undefined-in-lambda",
 			"function apply(f: (i32) => i32, n: i32): i32 { return f(n); }\n" +
 				"function main(): i32 { return apply((n: i32): i32 => { return missing_helper(n); }, 1); }\n",
 			[]string{"E001", "missing_helper"},
 		},
-		// Unresolved import (#5644 comment 2): this dir has no std/ tree, so
-		// `std/jni` is skipped and the qualified call becomes a dangling
-		// `__fn_jni__call0`. The message must blame the MODULE, not the name.
 		{
 			"unresolved-import",
 			"import \"std/jni\";\n" +
@@ -112,9 +87,6 @@ func TestSelfHostUndefinedCallGate(t *testing.T) {
 		})
 	}
 
-	// One accept program exercising most admit-list arms at once: a builtin
-	// (`print`), an Option constructor, a user enum variant constructor, and a
-	// receiver method.
 	const acceptSrc = `enum Shape { Circle(i32), Square(i32) }
 struct P { x: i32, y: i32 }
 function (p: P) sum(): i32 { return p.x + p.y; }
@@ -151,7 +123,7 @@ function main(): i32 {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
 		}
 		out, exit := runBin(cmd, "")
-		if exit != 20 { // dbl(7) = 14, + xs.len() 3, twice
+		if exit != 20 {
 			t.Errorf("program exited %d, want 20 (stdout %q)", exit, out)
 		}
 		if !strings.Contains(out, "6OK") {
@@ -159,10 +131,6 @@ function main(): i32 {
 		}
 	})
 
-	// A local closure called by bare name is the shadow-set arm: `f` names no
-	// module function, so only the enclosing function's binder set keeps the
-	// gate off it. (This shape bails on `const_func`, so it
-	// pins acceptance, not IR routing.)
 	t.Run("accept-closure", func(t *testing.T) {
 		_, errOut, code, _ := compile(t, "function dbl(n: i32): i32 { return n * 2; }\n"+
 			"function main(): i32 { let f = dbl; return f(21); }\n")
@@ -171,10 +139,6 @@ function main(): i32 {
 		}
 	})
 
-	// A stdlib-importing program is the false-positive case that matters most:
-	// its calls are mangled (`math__range`), so the gate sees names that only
-	// resolve because modload really loaded the module — the same shape that
-	// dangles when an import resolves to nothing.
 	t.Run("accept-stdlib", func(t *testing.T) {
 		asm, _ := compileSourceModload(t, runner, driverBin,
 			"import \"std/math\";\nfunction main(): i32 { return math.range(0, 7).len(); }\n")
@@ -184,9 +148,6 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostWasmUndefinedCallGate is the wasm sibling: the same gate runs on
-// both wasm drivers, so an undefined callee is a diagnostic instead of a WAT
-// that fails at load with `unknown func`.
 func TestSelfHostWasmUndefinedCallGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

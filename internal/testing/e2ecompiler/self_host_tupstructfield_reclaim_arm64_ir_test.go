@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupStructFieldReclaimIRArm64 is the arm64 leg of
-// TestSelfHostTupStructFieldReclaimIRX86_64, sharing its case table.
 func TestSelfHostTupStructFieldReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupStructFieldReclaimCases {

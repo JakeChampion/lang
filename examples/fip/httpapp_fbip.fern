@@ -1,27 +1,7 @@
-// examples/fip/httpapp_fbip.fern — the FBIP variant of the HTTP-like
-// application pipeline (#9586, experiment 4): the same parse, routes,
-// bounded counter table, limits and answers as `httpapp_fip.fern`, with the
-// response buffer held INSIDE the application state so the data plane is
-// one call, `serve(own app, wire, len): App`, rather than two.
-//
-// This is the ergonomic shape: the state has field names, a response is a
-// field of it, and the driver hands one value in and takes one value out.
-// What it costs is that every response byte is written through a rebuild
-// of the whole `App` — `App { ...app, out: app.out.with(at, b) }` — which
-// the compiler pairs with the box the call consumed and writes in place.
-// Each rebuild is allocation-free; it is not free. `httpapp_fip.fern` threads
-// the response buffer as its own `own` parameter and records the decision
-// in the state instead, and the gap between the two is what this pair is
-// for, as it was for the packet codec (`packet_fbip.fern`).
-//
-// The functions that construct are `fbip`; the byte scanners they lean on
-// are `fip`, as in the other variant.
 import "core/cmp";
 import "std/bench";
 import "std/i32";
 import "std/i64";
-
-// ===================== CAPACITIES AND LIMITS =====================
 
 fip function max_wire(): i32 {
   return 1024;
@@ -31,9 +11,6 @@ fip function max_out(): i32 {
   return 1024;
 }
 
-// The counter table: 256 slots, open addressing with linear probing over
-// the id's low bits. The workload draws ids from 320 values, so the table
-// fills and the overflow answers 503.
 fip function max_counters(): i32 {
   return 256;
 }
@@ -46,7 +23,6 @@ fip function id_space(): i32 {
   return 320;
 }
 
-// A request may carry at most 8 header fields and 240 body bytes.
 fip function max_headers(): i32 {
   return 8;
 }
@@ -55,10 +31,6 @@ fip function max_body(): i32 {
   return 240;
 }
 
-// ===================== RESPONSE CLASSES =====================
-//
-// Classes 1..6 are the codec's six refusals, every one a 400. 7..11 are the
-// application's answers other than 200.
 fip function cl_ok(): i32 {
   return 0;
 }
@@ -107,8 +79,6 @@ fip function cl_full(): i32 {
   return 11;
 }
 
-// Body kinds a decision records: a literal chosen by the status, bytes
-// copied out of the wire, a decimal integer, or the metrics text.
 fip function body_literal(): i32 {
   return 0;
 }
@@ -141,11 +111,6 @@ fip function colon(): u8 {
   return 58 as u8;
 }
 
-// ===================== THE STATE =====================
-//
-// Everything the service remembers between requests, plus the decision the
-// last `apply` made. The three arrays are the counter table: `used` marks a
-// live slot, `ids` holds its id, `counts` its value.
 struct App {
   live: i32,
   total: i64,
@@ -167,8 +132,6 @@ struct App {
   counts: i64[],
   out: u8[],
 }
-
-// ===================== INITIALIZATION (allocating, once) =====================
 
 function zeros_i64(n: i32): i64[] {
   let xs: i64[] = [];
@@ -202,8 +165,6 @@ function new_app(): App {
   };
 }
 
-// ===================== BYTE HELPERS (fip) =====================
-
 fip function lower(b: u8): u8 {
   if (b >= 65 as u8 && b <= 90 as u8) {
     return (b as i32 + 32) as u8;
@@ -211,8 +172,6 @@ fip function lower(b: u8): u8 {
   return b;
 }
 
-// find_crlf is the index of the first CRLF at or after `from` and before
-// `end`, or -1.
 fip function find_crlf(buf: u8[], from: i32, end: i32): i32 {
   let i: i32 = from;
   while (i + 1 < end) {
@@ -224,7 +183,6 @@ fip function find_crlf(buf: u8[], from: i32, end: i32): i32 {
   return 0 - 1;
 }
 
-// find_byte is the index of the first `b` in [from, end), or -1.
 fip function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
   let i: i32 = from;
   while (i < end) {
@@ -236,8 +194,6 @@ fip function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
   return 0 - 1;
 }
 
-// name_is reports whether the header name in buf[from, end) is `lit`,
-// case-insensitively; `lit` is spelled in lower case.
 fip function name_is(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from != lit.len()) {
     return false;
@@ -252,7 +208,6 @@ fip function name_is(buf: u8[], from: i32, end: i32, lit: string): boolean {
   return true;
 }
 
-// bytes_are reports whether buf[from, end) spells `lit` exactly.
 fip function bytes_are(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from != lit.len()) {
     return false;
@@ -267,7 +222,6 @@ fip function bytes_are(buf: u8[], from: i32, end: i32, lit: string): boolean {
   return true;
 }
 
-// starts_with reports whether buf[from, end) begins with `lit`.
 fip function starts_with(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from < lit.len()) {
     return false;
@@ -302,9 +256,6 @@ fip function trim_end(buf: u8[], from: i32, end: i32): i32 {
   return e;
 }
 
-// parse_int is the decimal value in buf[from, end) with std/http's
-// Content-Length acceptance: digits only, non-empty, no i32 overflow; -1
-// refuses. The same function reads the id out of a path.
 fip function parse_int(buf: u8[], from: i32, end: i32): i32 {
   let s: i32 = trim_start(buf, from, end);
   let e: i32 = trim_end(buf, s, end);
@@ -328,7 +279,6 @@ fip function parse_int(buf: u8[], from: i32, end: i32): i32 {
   return acc;
 }
 
-// put_str writes `lit` at `at`.
 fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
   let i: i32 = 0;
   while (i < lit.len()) {
@@ -338,7 +288,6 @@ fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
   return out;
 }
 
-// put_bytes copies src[from, from + n) to `at`.
 fip function put_bytes(own out: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
   let i: i32 = 0;
   while (i < n) {
@@ -348,7 +297,6 @@ fip function put_bytes(own out: u8[], at: i32, src: u8[], from: i32, n: i32): u8
   return out;
 }
 
-// digits is how many decimal digits `n` prints as.
 fip function digits(n: i32): i32 {
   let d: i32 = 1;
   let v: i32 = n;
@@ -359,7 +307,6 @@ fip function digits(n: i32): i32 {
   return d;
 }
 
-// put_int writes `n` in decimal at `at`, `digits(n)` bytes.
 fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
   let d: i32 = digits(n);
   let v: i32 = n;
@@ -372,13 +319,10 @@ fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
   return out;
 }
 
-// ===================== THE COUNTER TABLE (fip) =====================
-
 fip function home_slot(id: i32): i32 {
   return id & slot_mask();
 }
 
-// find_slot is the slot holding `id`, or -1.
 fip function find_slot(app: App, id: i32): i32 {
   let slot: i32 = home_slot(id);
   let probes: i32 = 0;
@@ -395,8 +339,6 @@ fip function find_slot(app: App, id: i32): i32 {
   return 0 - 1;
 }
 
-// free_slot is the first empty slot at or after the home slot. Only called
-// with live < max_counters(), so one exists.
 fip function free_slot(app: App, id: i32): i32 {
   let slot: i32 = home_slot(id);
   while (app.used[slot] != 0 as i64) {
@@ -421,10 +363,6 @@ fbip function insert(own app: App, slot: i32, id: i32): App {
   };
 }
 
-// ===================== THE DECISION (fip) =====================
-
-// decide records what the response will be and tallies it. Everything
-// `frame` needs is in the state after this.
 fbip function decide(own app: App, class: i32, status: i32, kind: i32, from: i32, len: i32, value: i32, rid_at: i32, rid_len: i32): App {
   let served: i64 = app.served;
   let refused: i64 = app.refused;
@@ -449,8 +387,6 @@ fbip function decide(own app: App, class: i32, status: i32, kind: i32, from: i32
   };
 }
 
-// reject is the 400 every refused request gets: no request id, since the
-// request was never parsed far enough to have one.
 fbip function reject(own app: App, class: i32): App {
   return decide(app, class, 400, body_literal(), 0, 0, 0, 0, 0);
 }
@@ -459,8 +395,6 @@ fbip function answer(own app: App, class: i32, status: i32, rid_at: i32, rid_len
   return decide(app, class, status, body_literal(), 0, 0, 0, rid_at, rid_len);
 }
 
-// counter is `/counter/<id>`: GET reads, POST increments or inserts, and an
-// insert into a full table is the 503.
 fbip function counter(own app: App, wire: u8[], sp1: i32, id_at: i32, id_end: i32, rid_at: i32, rid_len: i32): App {
   let id: i32 = parse_int(wire, id_at, id_end);
   if (id < 0 || id >= id_space()) {
@@ -491,7 +425,6 @@ fbip function counter(own app: App, wire: u8[], sp1: i32, id_at: i32, id_end: i3
   return decide(app, cl_ok(), 200, body_int(), 0, 0, 1, rid_at, rid_len);
 }
 
-// route is the handler, spelled the same way in the other two variants.
 fbip function route(own app: App, wire: u8[], sp1: i32, path_at: i32, path_end: i32, rid_at: i32, rid_len: i32): App {
   let get: boolean = bytes_are(wire, 0, sp1, "GET");
   if (bytes_are(wire, path_at, path_end, "/health")) {
@@ -518,10 +451,6 @@ fbip function route(own app: App, wire: u8[], sp1: i32, path_at: i32, path_end: 
   return answer(app, cl_not_found(), 404, rid_at, rid_len);
 }
 
-// apply parses the request in wire[0, wire_len), applies the limits, routes
-// it and records the decision. The parse walks the header block once,
-// keeping what the route needs — the field count, the request id's bounds
-// and the body's — as scalars.
 // fern-lint: allow cyclomatic-complexity
 fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
   let hend: i32 = 0 - 1;
@@ -539,8 +468,6 @@ fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
   let body_at: i32 = hend + 4;
   let line_end: i32 = find_crlf(wire, 0, wire_len);
 
-  // The headers first, as std/http does: a Content-Length problem is
-  // refused before the request line is looked at.
   let cl: i32 = 0;
   let cl_seen: i32 = 0;
   let fields: i32 = 0;
@@ -596,7 +523,6 @@ fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
     return reject(app, cl_truncated());
   }
 
-  // The request line: method, a space, the path, a space, the rest.
   let sp1: i32 = find_byte(wire, 0, line_end, sp());
   if (sp1 < 0) {
     return reject(app, cl_bad_request_line());
@@ -606,9 +532,6 @@ fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
     return reject(app, cl_no_version());
   }
 
-  // The application's limits, once the request is well formed: too many
-  // fields is the 431, too long a body the 413. Both carry the request id
-  // back, since the request was parsed.
   if (fields > max_headers()) {
     return answer(app, cl_headers(), 431, rid_at, rid_len);
   }
@@ -617,11 +540,6 @@ fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
   }
   return route(app, wire, sp1, sp1 + 1, sp2, rid_at, rid_len);
 }
-
-// ===================== FRAMING (fbip) =====================
-//
-// Every write goes through `emit`, a rebuild of the state with one byte of
-// its response buffer changed.
 
 fbip function emit(own app: App, at: i32, b: u8): App {
   return App { ...app, out: app.out.with(at, b) };
@@ -701,7 +619,6 @@ fbip function emit_reason(own app: App, at: i32, status: i32): App {
   return emit_str(app, at, "Bad Request");
 }
 
-// literal_len / emit_literal are the body a literal-bodied status gets.
 fip function literal_len(status: i32): i32 {
   if (status == 200) {
     return 2;
@@ -746,9 +663,6 @@ fbip function emit_literal(own app: App, at: i32, status: i32): App {
   return emit_str(app, at, "bad request");
 }
 
-// The metrics body, one `name value` line per tally:
-//
-//   requests N\nserved N\nrefused N\nfull N\ncounters N\ncounter_total N\n
 fip function metrics_len(app: App): i32 {
   return 9 + digits(app.seen as i32) + 1
     + 7 + digits(app.served as i32) + 1
@@ -784,7 +698,6 @@ fbip function emit_metrics(own app: App, at: i32): App {
   return emit_line(app, at, "counter_total ", total);
 }
 
-// body_len is how long the decided body is.
 fip function body_len(app: App): i32 {
   if (app.r_kind == body_wire()) {
     return app.r_len;
@@ -798,9 +711,6 @@ fip function body_len(app: App): i32 {
   return literal_len(app.r_status);
 }
 
-// head_len is how many bytes the response head takes: the status line, the
-// request id header when there is one, the length, `Connection: close` and
-// the blank line.
 fip function head_len(status: i32, rid_len: i32, blen: i32): i32 {
   let n: i32 = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(blen) + 23;
   if (rid_len > 0) {
@@ -809,9 +719,6 @@ fip function head_len(status: i32, rid_len: i32, blen: i32): i32 {
   return n;
 }
 
-// emit_head writes the response head std/http would serialise: the status
-// line, the request id header with the baseline handler's spelling,
-// the length and `Connection: close`.
 fbip function emit_head(own app: App, status: i32, src: u8[], rid_at: i32, rid_len: i32, blen: i32): App {
   let at: i32 = 0;
   app = emit_str(app, at, "HTTP/1.1 ");
@@ -841,8 +748,6 @@ fbip function emit_head(own app: App, status: i32, src: u8[], rid_at: i32, rid_l
   return emit_str(app, at, "\r\nConnection: close\r\n\r\n");
 }
 
-// frame writes the decision `apply` recorded into the state's response
-// buffer and records its length.
 fbip function frame(own app: App, wire: u8[]): App {
   let blen: i32 = body_len(app);
   let status: i32 = app.r_status;
@@ -866,20 +771,10 @@ fbip function frame(own app: App, wire: u8[]): App {
   return App { ...app, out_len: h + blen };
 }
 
-// serve is the whole plane: one value in, one value out.
 fbip function serve(own app: App, wire: u8[], wire_len: i32): App {
   app = apply(app, wire, wire_len);
   return frame(app, wire);
 }
-
-// ===================== THE WORKLOAD =====================
-//
-// Identical in the three variants, verbatim, so the runs differ in how the
-// bytes and the state are held and in nothing else. Every 17th request is
-// malformed, cycling through the six refusals; every 23rd carries six extra
-// header fields, for the 431; every 29th that has a body carries 300 bytes,
-// for the 413. The request's length is left in the wire buffer's last four
-// bytes, past anything a request can reach.
 
 fip function wire_len_at(): i32 {
   return max_wire() - 4;
@@ -918,15 +813,10 @@ fip function mix64(n: i64): i64 {
   return x;
 }
 
-// The id a request names: 320 values, drawn by the mixing hash, over a
-// 256-slot table.
 fip function id_of(n: i64): i32 {
   return (mix64(n) % (id_space() as i64)) as i32;
 }
 
-// Methods 0..3: GET, POST, PUT, DELETE. Only POST and PUT carry a body. On
-// `/counter/<id>` 70% of requests are the POST, 20% the GET and 10% a method
-// the route refuses; everywhere else 95% are the GET.
 fip function method_for(n: i64, p: i32): i32 {
   let bucket: i32 = (mix64(n + 1 as i64) % (20 as i64)) as i32;
   if (p == 2) {
@@ -973,8 +863,6 @@ fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
   return put_str(w, at, "DELETE");
 }
 
-// Paths 0..4: `/health`, `/users/<id>`, `/counter/<id>`, `/metrics`,
-// `/missing/<id>`.
 fip function path_of(n: i64): i32 {
   return (n % (5 as i64)) as i32;
 }
@@ -1019,7 +907,6 @@ fip function put_crlf(own w: u8[], at: i32): u8[] {
   return w.with(at + 1, lf());
 }
 
-// put_length writes a Content-Length header line for `cl` at `at`.
 fip function length_line_len(cl: i32): i32 {
   return 16 + digits(cl) + 2;
 }
@@ -1030,9 +917,6 @@ fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
   return put_crlf(w, at + 16 + digits(cl));
 }
 
-// build_request writes request `n` into the buffer it is handed and gives
-// it back with the length in its last four bytes. It takes the buffer `own`
-// in every variant: generating the input is the harness, not the service.
 // fern-lint: allow cyclomatic-complexity
 fip function build_request(own w: u8[], n: i64): u8[] {
   let id: i32 = id_of(n);
@@ -1125,9 +1009,6 @@ fip function wire_len_of(w: u8[]): i32 {
   return w[wire_len_at()] as i32 + w[wire_len_at() + 1] as i32 * 256;
 }
 
-// A running digest over every response byte. Three implementations of one
-// service agree only if this agrees, which is what makes the comparison a
-// differential test rather than three unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
   let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
@@ -1137,12 +1018,6 @@ fip function mix(d: i64, b: i32): i64 {
   }
   return x % (1000000007 as i64);
 }
-
-// ===================== DRIVER =====================
-//
-// The driver is NOT `fbip`: it owns the state and the wire buffer, tallies
-// and prints. The response, its length and its class are read out of the
-// state the plane hands back.
 
 function main(): i32 {
   let batch: i32 = 64;
@@ -1161,8 +1036,6 @@ function main(): i32 {
     p = p + 1;
   }
 
-  // One warm round before the mark. Its requests are the first batch's,
-  // so the state starts the measured run the way the other variants' does.
   let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);

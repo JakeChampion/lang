@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// Every handle operation with no value answers Result[void, IoError], the
-// shape remove_file has, so `?` composes them in one function (#12669).
 func TestHandleVoidOperationsComposeWithQuestionMark(t *testing.T) {
 	src := `function f(r: Reader, d: Dir): Result[i32, IoError] {
 		let w: Writer = stdout();
@@ -35,8 +33,6 @@ func TestHandleVoidOperationsComposeWithQuestionMark(t *testing.T) {
 	}
 }
 
-// The Option[IoError] spelling those operations used to answer is gone: a
-// match written for it names variants Result does not have.
 func TestHandleWriteIsNotOption(t *testing.T) {
 	src := `function f(): i32 {
 		let w: Writer = stdout();

@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// Wide-scalar (i64 / f64) struct fields are reuse-eligible (#4356
-// divergence 1). The self-overwrite rebuild churn is the shape that used to
-// fall back to fresh allocs: with the width-stamped reuse temps it now
-// reuses the box in place every iteration. These programs are the
-// correctness gate — the i64/f64 values must survive the temp round-trip
-// (a mis-sized temp truncates i64 to 32 bits or garbles the f64 bits), the
-// over-release detector must stay 0, and the loop must hold a bounded
-// high-water on wasm (the reuse means zero allocs per iteration).
-
 const wideReuseSrc = `struct Acc { total: i64, scale: f64, n: i32 }
 function main(): i32 {
     let p: Acc = Acc { total: 0, scale: 1.0, n: 0 };
@@ -58,8 +49,6 @@ func TestWASMWideFieldReuse(t *testing.T) {
 	if got := runWasm(t, wideReuseSrc); got != 0 {
 		t.Errorf("wide-field reuse churn: got %d, want 0", got)
 	}
-	// Bounded high-water: the self-overwrite reuses the box in place, so the
-	// churn allocates a constant number of boxes regardless of N.
 	bump := func(n string) string {
 		return `struct Acc { total: i64, scale: f64, n: i32 }
 function main(): i32 {

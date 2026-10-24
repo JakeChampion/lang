@@ -21,9 +21,6 @@ func parseTypeOfParam(t *testing.T, src string) ast.Type {
 	return prog.Funcs[0].Params[0].Type
 }
 
-// `own` inside a function type marks a consuming slot, and it is part of the
-// type's spelling — so a consuming function value cannot be handed to a
-// lending position.
 func TestFuncTypeParsesOwnParam(t *testing.T) {
 	ty := parseTypeOfParam(t, `function f(g: (own i32[], string) => i32): void {}`)
 	ft, ok := ty.(*ast.FuncType)
@@ -38,8 +35,6 @@ func TestFuncTypeParsesOwnParam(t *testing.T) {
 	}
 }
 
-// A consuming slot over a primitive is the marker and the primitive, never a
-// handle: `own` reads as a handle only where it does not open a slot.
 func TestFuncTypeOwnSlotOverPrimitive(t *testing.T) {
 	ty := parseTypeOfParam(t, `function f(g: (own string) => i32): void {}`)
 	ft, ok := ty.(*ast.FuncType)
@@ -62,9 +57,6 @@ func TestFuncTypeWithoutOwnHasNoFlags(t *testing.T) {
 	}
 }
 
-// `own R` is also a resource-HANDLE type. The consuming marker is only read
-// where a `=>` follows the matching `)`, so a grouped or tuple type keeps the
-// handle meaning it had.
 func TestOwnHandleTypeInParensUnchanged(t *testing.T) {
 	ty := parseTypeOfParam(t, `resource Conn;
 function f(h: (own Conn)): void {}`)
@@ -73,9 +65,6 @@ function f(h: (own Conn)): void {}`)
 	}
 }
 
-// Outside a function type's parameter slot, `own` / `borrow` in a type is a
-// resource handle and must be followed by the resource's name. Anything else is
-// a P001 at the word, pointing at the parameter-modifier spelling.
 func TestOwnBorrowInTypeNeedsResourceName(t *testing.T) {
 	cases := []struct {
 		name, src string
@@ -113,9 +102,6 @@ func TestOwnBorrowInTypeNeedsResourceName(t *testing.T) {
 	}
 }
 
-// A resource is module-local, so `pub` and `pub(package)` do not apply to one.
-// Both are refused rather than parsed and dropped, which would let a formatter
-// print the declaration without them.
 func TestPubResourceIsRejected(t *testing.T) {
 	for _, src := range []string{"pub resource Conn;\n", "pub(package) resource Conn;\n"} {
 		_, err := Parse(src)
@@ -125,7 +111,6 @@ func TestPubResourceIsRejected(t *testing.T) {
 	}
 }
 
-// A lambda spells a consuming parameter the way a declaration does.
 func TestArrowLambdaParsesOwnParam(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
     let g: (own i32[]) => i32 = (own xs: i32[]) => xs.len();

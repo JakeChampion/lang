@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// Arrow lambdas written WITHOUT a return-type annotation — `(x) => expr` —
-// infer their return type from the body expression (#2663 ergonomics). Before
-// this, an unannotated arrow defaulted to a void return, so passing it where a
-// `(T) => U` callback was expected failed ("returns void but expression is U")
-// and combinators forced the verbose `(x): U => expr` form. This makes
-// `xs.map((x) => x * 2).filter((x) => x > 2)` read naturally.
-//
-// `apply_i` takes an `(i32) => i32` and `keep` an `(i32) => boolean`; passing
-// unannotated arrows to each exercises i32- and boolean-return inference.
-// (Non-generic higher-order fns so the x86-64 e2e harness — which skips
-// monomorph — can compile it; the generic-stdlib `xs.map((x) => …)` form this
-// unblocks is covered on interp/arm64/wasm via the combinator suites.)
-// apply_i((x) => x*2, 16) = 32; keep((x) => x > 5, 9) = 10. 32 + 10 = 42.
 const arrowInferSrc = `function apply_i(f: (i32) => i32, x: i32): i32 { return f(x); }
 function keep(f: (i32) => boolean, x: i32): i32 { if (f(x)) { return 10; } return 0; }
 function main(): i32 {

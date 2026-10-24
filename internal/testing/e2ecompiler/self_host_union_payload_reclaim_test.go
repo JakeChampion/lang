@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// unionPayloadReclaimCases pin the PAYLOAD of a tagged union at a tuple element:
-// releasing `(i, Some([i, i + 2]))` frees the array payload as well as the union
-// box, by the variant's own drop — a user enum's variant dispatch or the
-// built-in Some/Ok/Err payload drop.
-//
-// The payload release follows the SAME freshness rule the sibling element arms
-// use one level up, so `(i, [a, b])` and `(i, Some([a, b]))` admit the same
-// array; a bare-ident payload is the aliasing control below.
-//
-// Byte cases return measured bytes per round, so a leaked payload reads
-// non-zero.
 var unionPayloadReclaimCases = []struct {
 	name string
 	src  string
@@ -45,8 +34,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// A USER enum takes the runtime variant dispatch instead: read the tag,
-	// release that variant's rc payload fields, then free the box.
 	{"user-enum-array-payload", `enum Tag { Buf(i32[]), Nil }
 function churn(n: i32): i32 {
     let acc: i32 = 0;
@@ -69,9 +56,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// A built-in Result. #7160 took this shape from 80 to 40 by admitting Ok/Err
-	// as constructions at all; this takes the remaining 40 — the payload — so the
-	// two together close it. 40 on the parent, native flat.
 	{"result-array-payload", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -93,10 +77,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// A user enum with a string[] variant still gets its constructed variant's
-	// payload released here. This also pins that a user variant spelled `Some`
-	// goes through variant dispatch and NOT the built-in Option path, where the
-	// payload offset would fit it only by coincidence.
 	{"user-enum-nondroppable-sibling", `enum E { Some(i32[]), Other(string[]) }
 function churn(n: i32): i32 {
     let acc: i32 = 0;
@@ -117,10 +97,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// IMMORTAL-LITERAL control rather than a leak gate: a `.rodata` literal is
-	// not heap, so this shape was already flat. What it pins is the new
-	// __fern_str_free on a payload that must not be freed — the rc-aware free
-	// heap-guard-skips it, and an over-release would show as 99.
 	{"string-literal-payload", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -142,10 +118,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The arm CARRIES the payload out to a local read after the loop, so the
-	// pointer outlives every reclaim point — and the payload is still released,
-	// because the escaping binding retains it and the element's dec is spending
-	// the tuple's own reference, not the last one.
 	{"carried-out-payload-reclaimed", `function churn(n: i32): i32 {
     let keep: i32[] = [0, 0];
     let acc: i32 = 0;
@@ -167,10 +139,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// USE-AFTER-FREE control, and the reason the case above is a reclaim rather
-	// than a dangle. The carried-out pointer is read after decoy allocations
-	// that would be handed the payload's block if it had really been freed;
-	// `keep` still reads what it was given. 66 on native too.
 	{"carried-out-payload-still-valid", `function churn(n: i32): i32 {
     let keep: i32[] = [0, 0];
     let i: i32 = 0;
@@ -189,9 +157,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return w % 97;
 }`, 66},
-	// ALIASING control: the payload is a bare ident whose local is read after
-	// the tuple is built. It keeps its leak rather than its correctness — the
-	// value must be right and __rc_underflow_count() zero either way.
 	{"bare-ident-payload-safe", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

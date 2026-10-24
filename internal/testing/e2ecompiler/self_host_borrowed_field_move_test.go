@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// A local bound from a struct field read, stored into a construction at its
-// last use, is not a move: the construction retains it, since the `own`
-// receiver's drop still releases the field. Taken as a move, that drop freed
-// the field under the new struct (#10475).
 const borrowedFieldMoveSrc = `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, k: i32 }
 function node(own st: Acc): Acc {

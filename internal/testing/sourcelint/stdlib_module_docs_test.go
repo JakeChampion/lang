@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// A header that touches a declaration becomes that declaration's documentation.
-// Keep every published module's introduction separate so ferndoc can render it.
 func TestEveryStdlibModuleHasAModuleIntroduction(t *testing.T) {
 	root := filepath.Join("..", "..", "stdlib")
 	count := 0

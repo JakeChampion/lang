@@ -1,36 +1,36 @@
-// A generic whose type params are ALL erased — every one unbounded — still
-// carries them in its RETURN type. `pick2[T](keep: (T) => boolean): T[]`
-// reaches the monomorphiser with type_params EMPTY and ret_type "T[]", because
-// T's only occurrence is inside a fn-param's argument. call_ret_type's fast
-// path handed that back verbatim, so the caller's binding had an unresolved
-// element type and a downstream generic monomorphised at the type PARAMETER:
-// `call to unknown symbol T.cmp`, refusing the module.
-//
-// The partially-erased sibling (`sort_by_key[T, K: Ord]`, where the bounded-only
-// substitution leaves T behind) was already resolved by the residual path;
-// this routes the fully-erased case through the same resolution instead of
-// short-circuiting past it.
-//
-// Distinct from #7765, which fixed the case WITH a bounded param present
-// (`filter[T, I: Iterator[T]]`) by adding an argument-position clause to
-// full_ret_binds. That fix is merged and did NOT close this one — verified —
-// because with no bounded param the call never reaches infer_inst at all.
-//
-// Positions:
-//   erased   — the bail shape: T only in the fn-param's argument, no bound.
-//   bound_by_param — T also reachable from an ordinary parameter; always worked.
-//   string_elem — a non-i32 element, so the recovery is not i32-shaped.
-//   two_calls — the same generic instantiated at two different types, so a fix
-//               that cached one instantiation for all callers is visible.
-//
-// Sentinels are 251-253, above the `% 113` the success path returns.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/cmp" as cmp;
 
 function pick2[T](keep: (T) => boolean): T[] { let e: T[] = []; return e; }
 
 function only[T](keep: (T) => boolean, xs: T[]): T[] { return xs; }
 
-// The bail shape: the result feeds a generic that needs the element type.
+
 function erased(i: i32): i32 {
     let ys = pick2((x: i32): boolean => { return x > 0; });
     let s = cmp.sort(ys);
@@ -38,7 +38,7 @@ function erased(i: i32): i32 {
     return 1;
 }
 
-// T also reachable from an ordinary parameter — this always lowered.
+
 function bound_by_param(i: i32): i32 {
     let zs = only((x: i32): boolean => { return x > 1; }, [3, 1, 2]);
     let t = cmp.sort(zs);
@@ -46,14 +46,14 @@ function bound_by_param(i: i32): i32 {
     return t[0];
 }
 
-// A non-i32 element, so the recovery is not i32-shaped.
+
 function string_elem(i: i32): i32 {
     let ss = pick2((x: string): boolean => { return x.len() > 0; });
     if (ss.len() != 0) { return 252; }
     return 1;
 }
 
-// The same generic at two element types in one program.
+
 function two_calls(i: i32): i32 {
     let a = pick2((x: i32): boolean => { return true; });
     let b = pick2((x: string): boolean => { return true; });

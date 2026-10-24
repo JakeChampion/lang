@@ -17,8 +17,6 @@ func TestSelfHostWriterBytes(t *testing.T) {
 	t.Run("interp", func(t *testing.T) {
 		testWriterBytesInterpreter(t, cli.bin, cli.runner, cli.stdlib)
 	})
-	// Keep stderr open for the ownership census. These executable entry points
-	// exit with main's result instead of printing it to the closed stdout.
 	source := strings.Replace(e2eharness.WriterBytesProgram, "let closed = stderr();", "let closed = stdout();", 1)
 	src := filepath.Join(t.TempDir(), "writer.fern")
 	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
@@ -69,8 +67,6 @@ func TestSelfHostWriterBytes(t *testing.T) {
 
 func writerBytesOpenProgram(t *testing.T) string {
 	t.Helper()
-	// Components and the primary interpreter provide stdio writes, but not
-	// descriptor closing. Keep all raw and view cases before that boundary.
 	source, _, ok := strings.Cut(e2eharness.WriterBytesProgram, " let closed = stderr();")
 	if !ok {
 		t.Fatal("missing boundary before closed-descriptor cases")

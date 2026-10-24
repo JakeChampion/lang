@@ -1,70 +1,3 @@
-// Command fern-oracle is the Go oracle's CLI, built as bin/fern-oracle: the
-// parser, checker and interpreter the differential tests run every program
-// against, with compiles handed to the self-hosted compiler. The shipped
-// `fern` is compiler/fern_main.fern.
-//
-// Usage:
-//
-//	fern-oracle FILE.fern                # write arm64 Linux assembly to stdout
-//	fern-oracle -o OUTPUT FILE.fern      # compile with the self-hosted
-//	                                     # compiler to a static arm64
-//	                                     # Linux binary (-target picks
-//	                                     # another; `fern-oracle -targets` lists
-//	                                     # them)
-//	fern-oracle -run FILE.fern [-- ARGS...]
-//	                                     # build a temporary binary and run
-//	                                     # it, directly when the target's
-//	                                     # ISA is the host's, else under
-//	                                     # -qemu (forwarding stdio)
-//	fern-oracle -fmt FILE...             # write idiomatic, indented source
-//	                                     # to stdout, each file in order
-//	                                     # (use -w to overwrite the files
-//	                                     # in place; use -d to print a
-//	                                     # unified diff per file against
-//	                                     # the on-disk version and exit
-//	                                     # non-zero when any differs; -o
-//	                                     # OUT takes a single file). A
-//	                                     # FILE.fern.md formats the code
-//	                                     # inside each chunk in place,
-//	                                     # leaving prose / fences / headers
-//	                                     # and any unparseable chunk verbatim.
-//	fern-oracle -check FILE.fern         # type-check the codebase rooted
-//	                                     # at FILE.fern (follows imports);
-//	                                     # silent on success, prints
-//	                                     # diagnostics + exits 1 on error.
-//	                                     # `-check -` reads from stdin.
-//	fern-oracle -tangle FILE.fern.md     # literate programming: tangle a
-//	                                     # Markdown document's named `fern`
-//	                                     # chunks into plain Fern source on
-//	                                     # stdout (expands the `<<*>>` root).
-//	fern-oracle -weave FILE.fern.md      # weave the same document into a
-//	                                     # cross-referenced Markdown reading
-//	                                     # file on stdout.
-//
-// A literate `FILE.fern.md` may be passed to any of the compile / -run /
-// -check / -interp / -fmt modes directly, and imported like a `.fern`
-// module: it is tangled in memory first, and diagnostics are mapped back to
-// the lines you wrote in the document.
-//
-// # Program arguments
-//
-// Driver flags come before FILE; everything after FILE belongs to the
-// program and reaches it through `args()`. One leading `--` separates the
-// two and is consumed by the driver, so a literal `--` is written `-- --`.
-// `args()[0]` is the program as invoked — the source path under -interp,
-// the executable's own path for a compiled binary — and `args()[1:]` is
-// identical between the two for the same command tail:
-//
-//	fern-oracle -interp prog.fern -- --filter x   # args() = [prog.fern --filter x]
-//	fern-oracle -run prog.fern -- --filter x      # args() = [/tmp/…   --filter x]
-//
-// A flag written after FILE with no `--` before it is refused (exit 2)
-// rather than handed to the program as data: `fern-oracle prog.fern -o out` is a
-// misplaced driver flag far more often than it is an argument named `-o`.
-//
-// -qemu names the emulator -run uses for a foreign ISA.
-// The formatter preserves `//` line comments (leading, trailing, and
-// standalone) and an author's blank-line grouping between statements.
 package main
 
 import (
@@ -96,9 +29,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// absPath returns the canonical absolute form of p, or p itself if
-// the conversion fails. Used to look up source text in the per-file
-// map modload returns.
 func absPath(p string) string {
 	abs, err := filepath.Abs(p)
 	if err != nil {
@@ -107,50 +37,28 @@ func absPath(p string) string {
 	return abs
 }
 
-// literateExt marks a literate Fern document — a Markdown file whose
-// `fern` code chunks are tangled into plain Fern before compilation.
 const literateExt = ".fern.md"
 
-// isLiterate reports whether srcPath names a literate Fern document.
 func isLiterate(srcPath string) bool {
 	return strings.HasSuffix(srcPath, literateExt)
 }
 
-// litRemap remaps one module's tangled diagnostics back onto the
-// literate document it was generated from: docPath / docSrc identify
-// the `.fern.md` to render against, and remap turns a generated-source
-// position into a document position.
 type litRemap struct {
 	docPath string
 	docSrc  string
 	remap   func(ast.Position) ast.Position
 }
 
-// entry bundles a loaded program with everything needed to render its
-// diagnostics. Each module generated from a literate document — the
-// entry `.fern.md` (single or multi-file), or an imported `.fern.md`
-// library — gets a litRemap keyed by that module's path, so a checker
-// error in any generated module points at the line the author wrote in
-// the right document. Plain `.fern` / stdlib modules render against
-// their own source from srcs; a fully non-literate program has no
-// remaps.
 type entry struct {
-	prog     *ast.Program
-	srcs     map[string]string
-	path     string               // diagnostic-header path for the entry module
-	src      string               // entry-module source (non-literate fallback rendering)
-	entryAbs string               // abs path of the entry module
-	remaps   map[string]*litRemap // module path → its literate-document remap
-	// multiFile is true for a `file=`-multi-module literate entry, where
-	// every generated module shares the document source but has its own
-	// tangle line map. An unattributed error then can't be remapped
-	// safely (we don't know which line map applies). See
-	// docs/ADVERSARIAL-REVIEW-2026-06.md (L3).
+	prog      *ast.Program
+	srcs      map[string]string
+	path      string
+	src       string
+	entryAbs  string
+	remaps    map[string]*litRemap
 	multiFile bool
 }
 
-// litRemaps builds the per-module remap table for the literate modules
-// modload tangled while loading (imported `.fern.md` libraries).
 func litRemaps(litMods map[string]*modload.LiterateModule) map[string]*litRemap {
 	out := map[string]*litRemap{}
 	for modPath, lm := range litMods {
@@ -159,14 +67,6 @@ func litRemaps(litMods map[string]*modload.LiterateModule) map[string]*litRemap 
 	return out
 }
 
-// remapFor turns a tangle line map into a position remapper: a tangled
-// position (1-based line into the generated source) maps to its origin
-// line in the `.fern.md` document, with the column shifted back by the
-// indentation tangling prepended. A position outside the map maps to the
-// zero Position so the renderer falls back to the bare message instead of
-// drawing a caret over an arbitrary document line — a generated line
-// number must never be used to index the document source. See
-// docs/ADVERSARIAL-REVIEW-2026-06.md (L4).
 func remapFor(lineMap []literate.Line) func(ast.Position) ast.Position {
 	return func(p ast.Position) ast.Position {
 		if p.Line < 1 || p.Line > len(lineMap) {
@@ -181,18 +81,9 @@ func remapFor(lineMap []literate.Line) func(ast.Position) ast.Position {
 	}
 }
 
-// loadEntry loads srcPath through modload. A literate `.fern.md` entry
-// is first parsed and tangled; the generated Fern source is handed to
-// modload via an in-memory override keyed by the document's own path,
-// so disk-relative imports still resolve against its directory. Any
-// load error is returned already formatted (remapped onto the document
-// for a literate entry). The returned entry's format method renders
-// later pipeline errors the same way.
 func loadEntry(srcPath string) (entry, error) {
 	abs := absPath(srcPath)
 	if !isLiterate(srcPath) {
-		// A plain `.fern` entry may still import `.fern.md` libraries,
-		// so capture their remaps for diagnostics.
 		prog, srcs, litMods, err := modload.LoadWithLiterate(srcPath, nil)
 		e := entry{prog: prog, srcs: srcs, path: srcPath, entryAbs: abs, remaps: litRemaps(litMods)}
 		if srcs != nil {
@@ -215,7 +106,6 @@ func loadEntry(srcPath string) (entry, error) {
 	}
 	tangled, lineMap, err := doc.Tangle()
 	if err != nil {
-		// Tangle errors carry document-coordinate positions already.
 		return entry{}, fmt.Errorf("%s", diag.Format(srcPath, litSrc, err))
 	}
 	prog, srcs, litMods, lerr := modload.LoadWithLiterate(srcPath, map[string]string{abs: tangled})
@@ -228,12 +118,6 @@ func loadEntry(srcPath string) (entry, error) {
 	return e, nil
 }
 
-// loadMultiFileEntry tangles a `file=PATH` literate document into one
-// virtual module per output file, feeds them all to modload as in-memory
-// overrides (keyed by their paths relative to the document's directory,
-// so the generated modules' `import "./other"` lines resolve), and loads
-// from the entry module. Each module carries its own document remap, so
-// a diagnostic in any generated file points back at the `.fern.md` line.
 func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (entry, error) {
 	results, err := doc.TangleFiles()
 	if err != nil {
@@ -253,8 +137,6 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 		overrides[fileAbs] = r.Code
 		remaps[fileAbs] = &litRemap{docPath: srcPath, docSrc: litSrc, remap: remapFor(r.LineMap)}
 	}
-	// Pick the compile entry: the marked / sole file, else the unique
-	// module that defines a `main` function.
 	entryRel, eerr := doc.EntryFile()
 	if eerr != nil {
 		var mains []string
@@ -274,7 +156,7 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 	}
 	prog, srcs, litMods, lerr := modload.LoadWithLiterate(entryFile, overrides)
 	for modPath, lr := range litRemaps(litMods) {
-		remaps[modPath] = lr // imported `.fern.md` libraries
+		remaps[modPath] = lr
 	}
 	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: resolve(entryRel), remaps: remaps, multiFile: true}
 	if lerr != nil {
@@ -283,26 +165,12 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 	return e, nil
 }
 
-// definesMain reports whether tangled source declares a top-level
-// `main` function — used to disambiguate the compile entry among a
-// multi-file document's modules when none is marked `entry`.
 var mainFuncRe = regexp.MustCompile(`(?m)^\s*(pub\s+)?(function|fn)\s+main\b`)
 
-// embeddedAssets is set from the -embed flag: the asset bundle the asset
-// builtins resolve against during const folding. nil when -embed was not
-// passed, which makes any use of one an error.
-// It is compile-time state shared by the check / interp / build paths
-// rather than a parameter because `run` already carries fifteen.
 var embeddedAssets *embed.Set
 
 func definesMain(code string) bool { return mainFuncRe.MatchString(code) }
 
-// format renders err against the right source for each entry it
-// carries: each diagnostic's File() picks its module's source out of
-// the srcs map, while the literate entry file's diagnostics (and any
-// error with no file attribution) route through the document remap so
-// positions land on the `.fern.md` source. For a non-literate entry
-// (remap nil) this matches the plain per-file modload error rendering.
 func (e entry) format(err error) error {
 	if err == nil {
 		return nil
@@ -315,14 +183,7 @@ func (e entry) format(err error) error {
 		if f, ok := one.(diag.Filed); ok {
 			path = f.File()
 		}
-		// The entry module, and any unattributed pre-decl error, render
-		// against the entry — remapped onto its document if literate.
 		if path == "" || path == e.entryAbs {
-			// In a multi-file literate document each generated module
-			// has its own tangle line map, so an unattributed error
-			// can't be remapped through the entry's map without landing
-			// on the wrong document line. Render the bare message
-			// instead. See docs/ADVERSARIAL-REVIEW-2026-06.md (L3).
 			if path == "" && e.multiFile {
 				return one.Error()
 			}
@@ -331,11 +192,9 @@ func (e entry) format(err error) error {
 			}
 			return diag.Format(e.path, e.src, one)
 		}
-		// An imported literate module → its own document.
 		if lr, ok := e.remaps[path]; ok {
 			return renderRemap(lr, one)
 		}
-		// A plain imported module (stdlib / on-disk `.fern`) → its source.
 		if src := e.srcs[path]; src != "" {
 			return diag.Format(path, src, one)
 		}
@@ -357,17 +216,12 @@ func (e entry) format(err error) error {
 	return fmt.Errorf("%s", render(err))
 }
 
-// warnUnusedChunks prints a non-fatal lint note to stderr for each
-// chunk a literate document defines but never reaches from a tangle
-// root — typically a typo in a `<<ref>>` or a leftover definition.
 func warnUnusedChunks(srcPath string, doc *literate.Document) {
 	for _, name := range doc.UnusedChunks() {
 		fmt.Fprintf(os.Stderr, "%s: warning: chunk <<%s>> is defined but never used\n", srcPath, name)
 	}
 }
 
-// repeatedString collects a flag that may be passed multiple times (e.g.
-// `-lint-set a=warn -lint-set b=deny`).
 type repeatedString []string
 
 func (r *repeatedString) String() string { return strings.Join(*r, ",") }
@@ -376,19 +230,13 @@ func (r *repeatedString) Set(v string) error {
 	return nil
 }
 
-// shouldColorize resolves the -color mode to a boolean. "auto" (the
-// default) enables colour only when stderr is a terminal (a character
-// device) and NO_COLOR is unset — so `fern -check` piped to a file or run
-// under a test harness stays plain, while an interactive terminal gets
-// colour. "always" / "never" force the decision. See the NO_COLOR informal
-// standard (no-color.org) and docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7.
 func shouldColorize(mode string) bool {
 	switch mode {
 	case "always":
 		return true
 	case "never":
 		return false
-	default: // "auto"
+	default:
 		if os.Getenv("NO_COLOR") != "" {
 			return false
 		}
@@ -396,11 +244,6 @@ func shouldColorize(mode string) bool {
 	}
 }
 
-// shouldUseASCII decides whether the rich diagnostic gutter falls back to a
-// plain `|`. A `--ascii` forces it; otherwise box-drawing `│` is used only
-// when the locale advertises UTF-8 (LC_ALL / LC_CTYPE / LANG contain
-// "UTF-8"), the same signal docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7 names.
-// With no UTF-8 locale we fall back to ASCII rather than risk mojibake.
 func shouldUseASCII(force bool) bool {
 	if force {
 		return true
@@ -481,10 +324,6 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-	// The instrumentation is a lowering pass, and neither the AST
-	// interpreter nor the REPL lowers anything. Accepting -cover there would
-	// run the program and print no report — silence a reader would take for
-	// "nothing was covered".
 	if *cover && (*doInterp || *repl) {
 		fmt.Fprintln(os.Stderr, "fern-oracle: -cover instruments compiled code; -interp and -repl do not lower, so they have no coverage to report")
 		os.Exit(2)
@@ -498,11 +337,6 @@ func main() {
 		embeddedAssets = set
 	}
 
-	// Diagnostics colourise per -color (docs/DIAGNOSTIC-UX-RESEARCH.md
-	// Rec §7). Decided once, up front, so every diag.Format call below
-	// inherits it. Default "auto" keeps piped / redirected output plain
-	// (and honours NO_COLOR), so scripts and the test harnesses see the
-	// same text as always.
 	diag.SetColor(shouldColorize(*colorMode))
 	diag.SetASCII(shouldUseASCII(*asciiBoxes))
 	diag.SetTerse(*terseDiagnostics)
@@ -586,9 +420,6 @@ func main() {
 		} else {
 			path = "-"
 		}
-		// Only an EXPLICIT -target enforces: the flag defaults to
-		// arm64, and a bare `fern -check` must keep meaning "does this
-		// type-check" rather than silently gaining a capability gate.
 		checkTarget := ""
 		flag.Visit(func(f *flag.Flag) {
 			if f.Name == "target" {
@@ -728,8 +559,6 @@ func main() {
 	}
 	srcPath := flag.Arg(0)
 
-	// -fmt takes a file LIST, not a program tail: every positional is an
-	// input, so it must not go through programArgs.
 	if *doFmt {
 		os.Exit(formatFiles(flag.Args(), *writeBack, *diffMode, *out))
 	}
@@ -762,10 +591,6 @@ func main() {
 	os.Exit(code)
 }
 
-// formatFiles is `-fmt` over a file list, gofmt-style: every file is
-// processed in order even when an earlier one fails, and the exit code is
-// the worst one seen (1 for any error or, under -d, any non-empty diff).
-// -o names one output file, so it is refused with more than one input.
 func formatFiles(paths []string, writeBack, diffMode bool, outPath string) int {
 	if outPath != "" && len(paths) > 1 {
 		fmt.Fprintf(os.Stderr, "fern-oracle: -fmt -o takes a single input file (%d given)\n", len(paths))
@@ -785,11 +610,6 @@ func formatFiles(paths []string, writeBack, diffMode bool, outPath string) int {
 	return code
 }
 
-// formatFile parses the file at srcPath (stdin for "-"), formats it, and
-// either writes the result to stdout / back to the file / to outPath / prints
-// a unified diff against the on-disk version. Returns the exit code the CLI
-// should use: 0 for "no work needed" or successful write, 1 when
-// `-d` saw a difference, with errors returned separately.
 func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, error) {
 	name := srcPath
 	var srcBytes []byte
@@ -825,10 +645,6 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 		return 1, err
 	}
 	if writeBack {
-		// The only irreversible path: refuse to overwrite the input with
-		// output the parser rejects. A printer that drops a node it has no
-		// case for (#6803) produces exactly that, and a file is not
-		// recoverable from a diagnostic printed after the write.
 		if !isLiterate(srcPath) {
 			if _, err := parser.Parse(formatted); err != nil {
 				return 1, fmt.Errorf("%s: refusing to write back — the formatted output does not parse; this is a formatter bug, please report it:\n%s", srcPath, diag.Format(srcPath, formatted, err))
@@ -847,16 +663,6 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 	return 0, err
 }
 
-// runInterp parses srcPath (or stdin when srcPath is "-"), runs the
-// pre-codegen passes (constfold + checker + monomorph) on it, and
-// invokes `main()` through the AST interpreter. The returned int
-// is `main()`'s result clamped to 0..255 — typical script-mode
-// semantics. Returns an error if any pipeline stage fails or the
-// program has no `main` to call.
-//
-// Stdin support is intentionally simple: read the whole stream into
-// memory and load it as the entry module, whose std/ and core/ imports
-// resolve; a relative import has no directory to resolve against.
 func runInterp(srcPath string, argv []string) (int, error) {
 	var prog *ast.Program
 	var formatErr func(error) error
@@ -866,9 +672,6 @@ func runInterp(srcPath string, argv []string) (int, error) {
 			return 1, fmt.Errorf("read stdin: %w", err)
 		}
 		src := string(buf)
-		// modload.LoadSource (not bare parser.Parse) so a piped
-		// program's std/ + core/ imports resolve — the auto-prelude
-		// is gone, so stdlib is in scope only when imported.
 		p, _, err := modload.LoadSource(src)
 		if err != nil {
 			return 1, fmt.Errorf("%s", diag.Format("<stdin>", src, err))
@@ -909,10 +712,6 @@ func runInterp(srcPath string, argv []string) (int, error) {
 
 	ip := interp.New()
 	ip.SetDynCoercions(info.DynCoercions)
-	// argv[0] is conventionally the program path so `args()`
-	// matches the C / Go shape. Subsequent entries are the
-	// user's own arguments, written after FILE on the fern
-	// command line (see programArgs).
 	ip.Args = append([]string{srcPath}, argv...)
 	for _, ed := range prog.Enums {
 		ip.RegisterEnum(ed)
@@ -931,9 +730,6 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	return status, nil
 }
 
-// runCheck loads one entry module ("-" reads stdin) and runs gates.Check on
-// it, printing its warnings. target is the -target value when the user
-// passed one explicitly and "" otherwise.
 func runCheck(srcPath, target string) error {
 	var prog *ast.Program
 	var formatErr func(error) error
@@ -943,8 +739,6 @@ func runCheck(srcPath, target string) error {
 			return fmt.Errorf("read stdin: %w", err)
 		}
 		src := string(buf)
-		// modload.LoadSource so a piped program's std/ + core/
-		// imports resolve now that the auto-prelude is gone.
 		p, _, err := modload.LoadSource(src)
 		if err != nil {
 			return fmt.Errorf("%s", diag.Format("<stdin>", src, err))
@@ -975,8 +769,6 @@ func runCheck(srcPath, target string) error {
 
 const backendFlagUsage = "code-generation backend for the selected -target: `ssa`, the register-allocating emitter and the only one on the native ISAs, or `flat`, the stack-machine emitter wasm uses. Empty picks the target's own. The target keeps its descriptor either way, so capability enforcement (E066) applies regardless."
 
-// execDirect runs binPath natively (host arch matches the build target),
-// returning the program's exit code so the caller can mirror it.
 func execDirect(binPath string, progArgs []string) (int, error) {
 	cmd := exec.Command(binPath, progArgs...)
 	cmd.Stdin = os.Stdin
@@ -989,9 +781,6 @@ func execDirect(binPath string, progArgs []string) (int, error) {
 	return 1, err
 }
 
-// execUnderQemu runs binPath through the supplied user-mode emulator
-// with stdio passed through. The first return is the program's exit
-// code (so the caller can mirror it as the fern process exit code).
 func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 	if _, err := exec.LookPath(qemu); err != nil {
 		return 1, fmt.Errorf("emulator %q not found on PATH (override with -qemu): %w", qemu, err)
@@ -999,8 +788,6 @@ func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 	return execTool(qemu, append([]string{binPath}, progArgs...))
 }
 
-// execTool runs tool with args, stdio passed through, and returns its exit
-// code.
 func execTool(tool string, args []string) (int, error) {
 	if _, err := exec.LookPath(tool); err != nil {
 		return 1, fmt.Errorf("%s not found on PATH: %w", tool, err)
@@ -1016,9 +803,6 @@ func execTool(tool string, args []string) (int, error) {
 	return 1, err
 }
 
-// explainFlag is -explain. It is a boolean flag to the flag package, so a
-// bare -explain takes no value and the code is the argument after it, or the
-// value after `=`.
 type explainFlag struct {
 	set  bool
 	bare bool
@@ -1037,8 +821,6 @@ func (e *explainFlag) Set(v string) error {
 	return nil
 }
 
-// codeWith is the code to explain given the positional arguments, empty to
-// list them all.
 func (e *explainFlag) codeWith(args []string) (string, error) {
 	switch {
 	case len(args) == 0:
@@ -1049,8 +831,6 @@ func (e *explainFlag) codeWith(args []string) (string, error) {
 	return "", fmt.Errorf("-explain takes one error code (got %q)", args)
 }
 
-// runExplain prints the explanation for code, or the list of codes when
-// code is empty, and returns the exit status.
 func runExplain(code string, stdout, stderr io.Writer) int {
 	if code == "" {
 		fmt.Fprintln(stdout, strings.Join(diag.AvailableCodes(), "\n"))

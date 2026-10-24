@@ -7,22 +7,6 @@ import (
 	"testing"
 )
 
-// A module whose FILE NAME is not an identifier (#9684).
-//
-// The prefix a non-entry module's decls take is its basename, and it used to
-// be used verbatim: `[.fern` produced the symbol `__fn_[__help_text`, which
-// the in-process assembler refuses ("unsupported instruction") and gas refuses
-// as "junk at end of line, first unrecognized character is `['".
-//
-// `coreutils/[.fern` — the bracket form of test(1), named for the program it
-// is — has been in the tree since that utility landed and never tripped this,
-// because it is only ever compiled as the ENTRY module and an entry module's
-// prefix is "". The multi-call binary (#9671) is what imports it.
-//
-// THE HELPER HAS TO BE BIG ENOUGH TO SURVIVE INLINING. Three smaller
-// reductions of this all built cleanly: a one-line private function is inlined
-// away and its symbol never emitted, so the bug is invisible. Forty appends is
-// comfortably over the threshold.
 const moduleNameMangleBracket = `function help_text(): string {
     let out: string = "";
     out = out + "line 00\n"; out = out + "line 01\n"; out = out + "line 02\n";
@@ -45,15 +29,11 @@ const moduleNameMangleBracket = `function help_text(): string {
 pub function answer(): i32 { return help_text().len() / 8; }
 `
 
-// An ALIAS is not optional here and never was: a bare qualifier `[.answer()`
-// does not parse, so this is the only spelling that reaches the mangler at
-// all.
 const moduleNameMangleMain = `import "./[" as bracket;
 
 function main(): i32 { return bracket.answer(); }
 `
 
-// 40 lines of 8 bytes each.
 const moduleNameMangleWant = 40
 
 func writeModuleNameMangleProject(t *testing.T) string {
@@ -70,10 +50,6 @@ func writeModuleNameMangleProject(t *testing.T) string {
 	return dir
 }
 
-// Through the CLI rather than by lowering in-process, because the layer that
-// rejected this is the ASSEMBLER: the mangler produces a string that looks
-// fine, and only the encoder has an opinion about it. The default path is the
-// in-process native backend, which is the one that failed.
 func runModuleNameMangle(t *testing.T, target string, runner []string) {
 	t.Helper()
 	fern := buildFernCLI(t)
@@ -89,8 +65,6 @@ func runModuleNameMangle(t *testing.T, target string, runner []string) {
 	}
 }
 
-// runUnder builds the command for a binary that may need an emulator in
-// front of it. A nil prefix runs it directly.
 func runUnder(runner []string, prog string) *exec.Cmd {
 	if len(runner) == 0 {
 		return exec.Command(prog)
@@ -98,10 +72,6 @@ func runUnder(runner []string, prog string) *exec.Cmd {
 	return exec.Command(runner[0], append(append([]string{}, runner[1:]...), prog)...)
 }
 
-// Neither name matches `^TestX86_64` or `^TestArm64`, so both legs land in the
-// catch-all lane — whose matrix includes an aarch64 runner. The x86-64 leg
-// therefore cannot assume it can exec what it just built: x86NativeRunner is
-// nil on amd64, qemu-x86_64 elsewhere, and a skip when neither can run it.
 func TestModuleNameMangleX86_64(t *testing.T) {
 	runModuleNameMangle(t, "x86-64-linux", x86NativeRunner(t))
 }
@@ -110,19 +80,6 @@ func TestModuleNameMangleArm64(t *testing.T) {
 	runModuleNameMangle(t, "arm64-linux", arm64RunnerPrefix(t))
 }
 
-// Two modules whose sanitised prefixes are the same string.
-//
-// Replacing what an assembler will not take with `_` is not injective:
-// `[.fern` and `_.fern` both want the prefix `_`, as would `a-b.fern` beside
-// `a_b.fern`. Sanitising BEFORE the collision loop rather than after is what
-// keeps that from silently becoming one prefix and two definitions of every
-// symbol — the loop that already disambiguates two modules sharing a basename
-// disambiguates these too, and the emitted pair is `__fn____help_text` and
-// `__fn___1__help_text`.
-//
-// Worth its own fixture because the ordinary one cannot fail this way: it has
-// a single non-identifier module, so the replacement has nothing to collide
-// with.
 const moduleNameMangleCollisionMain = `import "./[" as bracket;
 import "./_" as under;
 
@@ -154,8 +111,6 @@ func runModuleNameMangleCollision(t *testing.T, target string, runner []string) 
 	}
 	cmd := runUnder(runner, out)
 	_, _ = cmd.CombinedOutput()
-	// Both modules' answer(), so a prefix collision that lost one of the two
-	// definitions would not reach this number even if it linked.
 	if got, want := cmd.ProcessState.ExitCode(), 2*moduleNameMangleWant; got != want {
 		t.Errorf("exit code: got %d, want %d", got, want)
 	}
@@ -169,7 +124,6 @@ func TestModuleNameMangleCollisionArm64(t *testing.T) {
 	runModuleNameMangleCollision(t, "arm64-linux", arm64RunnerPrefix(t))
 }
 
-// arm64QemuOrEmpty as a runner prefix.
 func arm64RunnerPrefix(t *testing.T) []string {
 	t.Helper()
 	if r := arm64QemuOrEmpty(t); r != "" {

@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// Generic enum with a generic-STRUCT (or generic-ENUM) variant payload —
-// `enum E[U] { A(Box[U]) }` (#3693). The native monomorphizer used to leave
-// the enum generic while cloning + dropping the generic struct, so the
-// post-monomorphization re-check crashed ("variant A payload type Box__i32,
-// expected Box[U]" / "unknown struct type Box"). The fix clones generic enums
-// with composite payloads per instantiation (E__i32 with payload Box__i32) and
-// re-qualifies their variant references, so every backend returns the value.
 const genEnumStructPayloadSingle = `
 struct Box[T] { v: T }
 enum E[U] { A(Box[U]), B }
@@ -22,9 +15,6 @@ function main(): i32 {
 }
 `
 
-// Same enum constructed at TWO different instantiations in one program — the
-// clones E__i32 and E__string share variant names, so the construction relies
-// on the destination type to disambiguate. Returns 6 + 2 = 8.
 const genEnumStructPayloadMulti = `
 struct Box[T] { v: T }
 enum E[U] { A(Box[U]), B }
@@ -33,7 +23,6 @@ function gets(): i32 { let e: E[string] = A(Box { v: "hi" }); match (e) { A(b) =
 function main(): i32 { return geti() + gets(); }
 `
 
-// Generic enum whose payload is another generic ENUM — `A(Opt[U])`. Returns 7.
 const genEnumEnumPayload = `
 enum Opt[U] { Sm(U), Nn }
 enum E[U] { A(Opt[U]), B }
@@ -43,16 +32,6 @@ function main(): i32 {
 }
 `
 
-// Generic enum with a FUNCTION-typed, SELF-referential variant payload —
-// `Wait(i32, (i32) => Step[T])` — used in function signatures and
-// instantiated. This is std/async's `Future[T]` minimized. It
-// re-checks fine while the enum stays generic (lenient unify), but the
-// composite-payload cloning (#3693/#3733) over-eagerly cloned it via the
-// function boundary and produced a broken clone (`Step[i32]` slots in
-// signatures and the `(i32) => Step[i32]` payload weren't rewritten to
-// `Step__i32`), crashing the re-check. The fix treats a function
-// boundary as opaque for the clone decision (enumNeedsClone), so such
-// enums stay generic and work. Returns 6.
 const genEnumFnSelfPayload = `
 enum Step[T] { Done(T), Wait(i32, (i32) => Step[T]) }
 function start(v: i32): Step[i32] {

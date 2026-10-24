@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-// Read-modify-write through a struct field must write in place (#9605).
-//
-// `o.xs.with(i, o.xs[i] + 1)` is what an update IS — "add delta to the value
-// at this key" — and it used to cost a copy of the WHOLE buffer, once per
-// call, because the element read was treated as a later reader of the field
-// and the CoW was forced down its shared path. Hoisting the read one line
-// into a local made it free, which is folklore, not a language rule.
-//
-// Nothing else could see it. The copies are recycled, so the fresh-byte mark
-// stays flat and the leak census balances allocs against frees; only
-// `__heap_alloc_count()` (#9596) shows the allocator running at all. That is
-// why this gate counts allocations rather than measuring time or bytes.
-//
-// The verdict rides the EXIT CODE so the same program serves every backend
-// with no output parsing, and the value assertions are what keep the fix
-// honest: the element read has to yield the value from BEFORE the store. If
-// the write were ever ordered first, `xs[0] + 1` would read back what it just
-// wrote and the counts would still be zero.
 const fieldRmwSrc = `import "std/i64";
 
 struct Box { xs: i64[], n: i64 }
@@ -102,10 +84,6 @@ function main(): i32 {
 `
 
 func TestFieldReadModifyWriteWritesInPlace(t *testing.T) {
-	// 90/92/94/96 name which shape still copies; 91/93/95/97/98 mean the
-	// element read stopped seeing the pre-store value, which would be a
-	// miscompile rather than a missed optimisation; 100 means the counter
-	// never moved and the zeros above meant nothing.
 	out, code := compileAndRunX86_64(t, fieldRmwSrc)
 	if code != 42 {
 		t.Fatalf("exit %d, want 42 — see the source for what each code names\n%s", code, strings.TrimSpace(out))

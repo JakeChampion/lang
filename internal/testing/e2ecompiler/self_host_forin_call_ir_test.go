@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostForInCallResultIRX86_64 verifies that `for x in <call>()` — a
-// for-in loop whose iterable is an array-returning function call — lowers on the
-// register backends. The loop snapshots the call result into a hidden local and
-// iterates it, so that local has to be typed as an array.
-//
-// Two shapes: a free function returning i32[] (sum = 1+2+4 = 7) and one returning
-// string[] (count = 3). Exit codes pin correctness.
 func TestSelfHostForInCallResultIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

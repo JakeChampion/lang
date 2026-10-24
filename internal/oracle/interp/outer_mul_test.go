@@ -3,7 +3,6 @@ package interp
 import "testing"
 
 func TestOuterMulRejectsOverflowBeforeAllocation(t *testing.T) {
-	// Each input is small; their product exceeds the language's i32 length.
 	a := newArray(46341)
 	exit := 0
 	i := &Interp{Exiter: func(code int) { exit = code }}

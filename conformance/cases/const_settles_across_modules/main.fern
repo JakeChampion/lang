@@ -1,7 +1,7 @@
 import "./lib";
 
-// A `const` written without a type, read from another module, settles where
-// it is read, as it does in its own module.
+
+
 function main(): i32 {
     let x: i64 = lib.K;
     let y: u8 = lib.J;

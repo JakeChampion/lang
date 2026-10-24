@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i32.midpoint / std/i64.midpoint — the
-// overflow-safe average via (a & b) + ((a ^ b) >> 1), rounded toward negative
-// infinity. The naive (a+b)/2 overflows for large same-sign operands (the
-// classic binary-search bug); this form never does, so the near-MAX cases are
-// the crux. Scalar bit-ops, so this lowers on all four backends. Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const intMidpointProg = `
 import "std/i32" as i32m;
 import "std/i64" as i64m;

@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// The self-host compiler carries its own copy of Table
-// (compiler/asmcore.fern) because it cannot import Go, the
-// same way internal/pkg/platforms and internal/pkg/caps are mirrored. Two
-// copies of an errno table go wrong the same way: one side gains an
-// entry, or a Darwin number is corrected, and the other keeps reporting
-// "Unknown error N" — silently, because neither compiler can see the
-// other's list. This reads the Fern source as data and compares it row
-// for row, without building anything, so the gate runs on every change
-// to this package.
-
 const selfHostSrc = "../../../compiler/asmcore.fern"
 
 func readSelfHost(t *testing.T) string {
@@ -28,8 +18,6 @@ func readSelfHost(t *testing.T) string {
 	return string(b)
 }
 
-// fernListBody is the `[...]` body of `function NAME(): T[] { return [...]; }`,
-// public or not.
 func fernListBody(t *testing.T, src, name string) string {
 	t.Helper()
 	m := regexp.MustCompile(`(?s)(?:pub )?function ` + name + `\(\): (?:string|i32)\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(src)
@@ -61,9 +49,6 @@ func fernInts(t *testing.T, src, name string) []int {
 	return out
 }
 
-// TestSelfHostTableMatches pins the five parallel lists to Table, row
-// for row and in order: the self-host generates its ladder by index, so
-// a row out of place pairs a text with the wrong number.
 func TestSelfHostTableMatches(t *testing.T) {
 	src := readSelfHost(t)
 	texts := fernStrings(t, src, "strerror_texts")
@@ -106,10 +91,6 @@ func TestSelfHostTableMatches(t *testing.T) {
 	}
 }
 
-// TestStdErrnoMatches pins std/errno's constants to Table: one per row, named
-// as the row is, holding the number IoError.Other carries for it. A constant
-// the table lacks, or a row without one, fails — either would let a program
-// compare against a number no runtime reports.
 func TestStdErrnoMatches(t *testing.T) {
 	const stdErrnoSrc = "../../stdlib/std/errno.fern"
 	b, err := os.ReadFile(stdErrnoSrc)
@@ -151,9 +132,6 @@ func TestStdErrnoMatches(t *testing.T) {
 	}
 }
 
-// TestStdErrnoFromHostMatches pins the tables std/errno's from_host translates
-// through to Table, row for row: a row out of place would hand a Darwin or WASI
-// errno some other errno's Linux number.
 func TestStdErrnoFromHostMatches(t *testing.T) {
 	b, err := os.ReadFile("../../stdlib/std/errno.fern")
 	if err != nil {
@@ -180,8 +158,6 @@ func TestStdErrnoFromHostMatches(t *testing.T) {
 	}
 }
 
-// TestSelfHostUnknownPrefixMatches pins the self-host's unknown-errno
-// prefix pair, which is the one piece of the table that is not a row.
 func TestSelfHostUnknownPrefixMatches(t *testing.T) {
 	src := readSelfHost(t)
 	m := regexp.MustCompile(`(?s)pub function strerror_unknown_prefix\(t: string\): string \{.*?if \(t == "arm64-darwin"\) \{\s*return "([^"]*)";\s*\}\s*return "([^"]*)";`).FindStringSubmatch(src)
@@ -195,12 +171,6 @@ func TestSelfHostUnknownPrefixMatches(t *testing.T) {
 		t.Errorf("the self-host says %q off darwin, Go says %q", m[2], UnknownPrefix)
 	}
 
-	// The literals above are only half of it: a caller that ignored the
-	// target would pass them both and still match. These pin the WIRING —
-	// that the prefix reaches the emitted runtime from the target rather
-	// than from a constant. Textual, because this test reads the Fern
-	// source as data and cannot run it; the end-to-end proof is the
-	// arm64-darwin binary itself, which the macOS lane builds.
 	if !regexp.MustCompile(`let pfx: string = strerror_unknown_prefix\(t\);`).MatchString(src) {
 		t.Error("strerror_unknown_src does not take its prefix from strerror_unknown_prefix(t) — the per-target prefix is not reaching the emitted runtime")
 	}
@@ -209,9 +179,6 @@ func TestSelfHostUnknownPrefixMatches(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasiErrorCodesMatch pins the preview-2 error-code
-// translation the self-host wasm emitter bakes into
-// $__fern_build_io_error_p2.
 func TestSelfHostWasiErrorCodesMatch(t *testing.T) {
 	got := fernInts(t, readSelfHost(t), "wasi_error_code_errnos")
 	if len(got) != len(WasiErrorCodes) {

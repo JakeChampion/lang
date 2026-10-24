@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternTupleParamCustomProvider is the P4c tuple-parameter gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern program passes a tuple to an `@import`
-// extern whose WIT signature takes a `tuple`. A tuple is laid out like a struct
-// (rc header + elements), so the same record machinery flattens it — the
-// canonical ABI flattens a small tuple param to its elements' core types, and
-// the wasm wrapper loads each element off the Fern tuple value and pushes it in
-// order (the layout precomputed during IR lowering — ir.ExternFunc.ParamRecords
-// now covers tuples via externCompositeFieldTypes).
-//
-// The provider exports `sum-pair: func(p: tuple<s32, s32>) -> s32`, receiving
-// the flattened (x, y) and returning their sum. The Fern side passes (10, 32).
 func TestExternTupleParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -40,7 +29,6 @@ func TestExternTupleParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-point. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -50,8 +38,6 @@ func TestExternTupleParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-point receives the record flattened to (x, y) — two i32 params — and
-	// returns their sum.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -66,7 +52,6 @@ func TestExternTupleParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom sink iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -101,7 +86,6 @@ func TestExternTupleParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: pass Point{ x: 10, y: 32 } (sum 42) to the extern. ---
 	const want = "pair-ok"
 	src := `@import("local:test/sink@0.1.0", "sum-pair")
 function sum_pair(p: (i32, i32)): i32;

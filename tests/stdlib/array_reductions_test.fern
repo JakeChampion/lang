@@ -3,18 +3,6 @@ import "std/num";
 import "core/cmp";
 import "std/test";
 
-// tests/stdlib/array_reductions_test.fern — wider-int /
-// float array reductions.
-//
-// The per-width `sum_*` / `max_*` / `min_*` family std/array once
-// carried was retired (#5349) in favour of the generic bounded
-// verbs: `num.sum[T: Add + Zero]` and `cmp.max_of` /
-// `cmp.min_of[T: Ord]`. These cases pin the width-specific
-// behaviours that mattered — i64 / u32 wrapping-add sums, the
-// near-u64-max unsigned max compare, f64 sum + max — now driven
-// through the generic forms monomorphised to each width. `avg_i64`
-// / `avg_f64` (no generic equivalent) stay in std/array.
-
 function test_sum_i64(): test.TestOutcome {
   let arr: i64[] = [1 as i64, 2 as i64, 3 as i64, 4 as i64];
   return test.assert_eq(num.sum(arr), 10 as i64);
@@ -83,10 +71,6 @@ function test_sum_u32(): test.TestOutcome {
 }
 
 function test_max_u64_unsigned(): test.TestOutcome {
-  // Values near u64-max — `max` must drive its compare
-  // with unsigned semantics. If sign-extension contaminated
-  // the compare, 18446744073709551615u64 would look smaller
-  // than 1u64 (because as signed it's -1).
   let arr: u64[] = [18446744073709551615u64, 1u64, 1000u64];
   match (cmp.max_of(arr)) {
     Some(m) => {
@@ -118,7 +102,6 @@ function test_max_f64(): test.TestOutcome {
 }
 
 function test_avg_f64(): test.TestOutcome {
-  // Mean of [1.0, 2.0, 3.0, 4.0] = 2.5
   let arr: f64[] = [1.0, 2.0, 3.0, 4.0];
   match (array.avg_f64(arr)) {
     Some(m) => {

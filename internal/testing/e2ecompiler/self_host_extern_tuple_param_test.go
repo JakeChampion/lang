@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternTupleParamCustomProvider is the self-host port of the tuple
-// `@import` parameter (docs/WIT-BRING-YOUR-OWN.md). A self-host tuple is a heap
-// block of N consecutive 4-byte slots (element i @ i*4, no type-id header), and
-// the canonical tuple flattens to one i32 per element in order — so the wrapper
-// (`extern_tuple_param_supported` gate) pushes `(i32.load (tuple + i*4))` per
-// element, no copy or alignment constraint (it flattens to values, like records).
-// Tested via the custom-provider harness: a `sum-pair: func(p: tuple<s32, s32>)
-// -> s32` provider sums the pair; the self-host program builds (10, 32) and
-// checks 42. Mirror of the Go TestExternTupleParamCustomProvider.
 func TestSelfHostExternTupleParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -38,7 +29,6 @@ func TestSelfHostExternTupleParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-pair. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -48,7 +38,6 @@ func TestSelfHostExternTupleParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// The tuple flattens to two i32 params; the export sums them.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#sum-pair") (param $x i32) (param $y i32) (result i32)
@@ -60,7 +49,6 @@ func TestSelfHostExternTupleParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom sink iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -89,7 +77,6 @@ func TestSelfHostExternTupleParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the tuple-param program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

@@ -107,11 +107,11 @@ def borrow_fn():
     bo = None
     for j in range(4):
         _, bo = g.sub(a[j], b[j], bo)
-    return "// __borrow is 1 when the plain limbs a are below b and 0 otherwise.\nfunction __borrow(a: Fe, b: Fe): u64 {\n%s\n  return %s;\n}\n" % ("\n".join(g.lines), bo)
+    return "// __borrow returns 1 when `a < b` and 0 otherwise.\nfunction __borrow(a: Fe, b: Fe): u64 {\n%s\n  return %s;\n}\n" % ("\n".join(g.lines), bo)
 
-def fe_fn(name, v, doc):
+def fe_fn(name, v):
     l = limbs(v)
-    return "// %s\nfunction %s(): Fe {\n  return Fe { l0: %s, l1: %s, l2: %s, l3: %s };\n}\n" % (doc, name, lit(l[0]), lit(l[1]), lit(l[2]), lit(l[3]))
+    return "function %s(): Fe {\n  return Fe { l0: %s, l1: %s, l2: %s, l3: %s };\n}\n" % (name, lit(l[0]), lit(l[1]), lit(l[2]), lit(l[3]))
 
 def ec_add(a, b):
     if a is None:
@@ -141,7 +141,7 @@ def base_table():
     lines = []
     for at in range(0, len(words), 4):
         lines.append("  " + ", ".join(lit(w) for w in words[at:at + 4]) + ",")
-    return "// BASE holds j * 16^i * G at ((i * 15 + j - 1) * 8): x then y, four limbs\n// each, in Montgomery form.\nconst BASE: u64[] = [\n" + "\n".join(lines) + "\n];\n"
+    return "// BASE stores `j * 16^i * G` at `((i * 15 + j - 1) * 8)`.\n// Each point stores x before y, with four Montgomery limbs per coordinate.\nconst BASE: u64[] = [\n" + "\n".join(lines) + "\n];\n"
 
 def check(fns):
     rnd = random.Random(1)
@@ -172,13 +172,13 @@ def region():
     }
     check(fns)
     parts = [fns[k] for k in ("__fp_mul", "__fp_add", "__fp_sub", "__fn_mul", "__fn_add", "__borrow")]
-    parts.append(fe_fn("__fp_one", R % P, "R mod p, 1 in Montgomery form."))
-    parts.append(fe_fn("__fp_r2", R * R % P, "R^2 mod p, which takes a plain value into Montgomery form."))
-    parts.append(fe_fn("__fp_b", B * R % P, "The curve's b in Montgomery form."))
-    parts.append(fe_fn("__n", N, "The group order n."))
-    parts.append(fe_fn("__n_minus2", N - 2, "n - 2."))
-    parts.append(fe_fn("__fn_one", R % N, "R mod n."))
-    parts.append(fe_fn("__fn_r2", R * R % N, "R^2 mod n."))
+    parts.append(fe_fn("__fp_one", R % P))
+    parts.append(fe_fn("__fp_r2", R * R % P))
+    parts.append(fe_fn("__fp_b", B * R % P))
+    parts.append(fe_fn("__n", N))
+    parts.append(fe_fn("__n_minus2", N - 2))
+    parts.append(fe_fn("__fn_one", R % N))
+    parts.append(fe_fn("__fn_r2", R * R % N))
     parts.append(base_table())
     return "\n".join(parts)
 

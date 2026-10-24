@@ -2,14 +2,6 @@ package constfold
 
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
-// ElideAsserts removes every `assert(...)` check from the program — the
-// `-O` release-build behaviour (#4416). The parser desugars an assert to
-// an `ast.If` carrying IsAssert, so the pass filters those out of every
-// statement list, recursing through nested blocks, lambdas, block
-// expressions, and match arms. Run it AFTER checker.Check so an
-// ill-typed assert still fails the build under -O; the elision removes
-// the condition evaluation along with the check, which is why asserts
-// must be side-effect-free.
 func ElideAsserts(prog *ast.Program) {
 	for _, fn := range prog.Funcs {
 		elideBlock(fn.Body)

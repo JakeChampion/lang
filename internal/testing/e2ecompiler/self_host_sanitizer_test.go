@@ -9,22 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- The self-host compiler's sanitizer port (#5545) ---------------
-//
-// FERN_SANITIZE=1 is read by the self-host compiler at EMIT time (the
-// FERN_LEAKCHECK / FERN_RC_TRACE precedent), so the flag goes to the
-// driver process, not to the program it produces.
-//
-// The mode is the leak census, the rc over-release report, and the
-// use-after-free quarantine (the RcFreeDebug port —
-// self_host_uaf_quarantine_test.go). Each report ends in a frame-pointer
-// backtrace unless FERN_BACKTRACE=0.
-//
-// What these tests are mostly for is the exact text and exit status of each
-// `fern-sanitizer:` line.
-
-// sanSelfHostCleanSrc: the rc-driven drop-everything loop. Every row is
-// precisely dropped, so a sanitizer run must be silent.
 const sanSelfHostCleanSrc = `function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;
@@ -37,11 +21,6 @@ const sanSelfHostCleanSrc = `function main(): i32 {
     return 1;
 }`
 
-// sanSelfHostLeakSrc: three raw allocations, one of them freed — the same
-// program, and now the same verdict, as native's sanLeakSrc. `__free` used to
-// be a no-op here, so this leg read 3 blocks where native read 2; it returns
-// the block to its size class now, and the two agree. Exit code 42 passes
-// through the report untouched.
 const sanSelfHostLeakSrc = `function main(): i32 {
     let a: usize = __alloc(60);
     let b: usize = __alloc(60);
@@ -51,16 +30,6 @@ const sanSelfHostLeakSrc = `function main(): i32 {
     return 42;
 }`
 
-// sanSelfHostDoubleFreeSrc over-releases deliberately: __alloc_u8 hands
-// back an rc==1 buffer and __rc_dec is dec'd twice. In THIS runtime
-// __rc_dec maps to the freeing __fn___fern_arr_dec, so the first dec
-// reclaims the block and — under the quarantine the sanitizer implies —
-// poisons its rc word; the second dec then touches a quarantined block
-// and dies with the use-after-free report. (Native's plain __fern_rc_dec
-// never frees, so the same source there leaves rc at 0 and reports the
-// over-release text instead — an intrinsic-semantics difference, not a
-// diagnostic divergence: both texts are byte-identical across backends, and
-// each fires for the mechanism that actually happened in its runtime.)
 const sanSelfHostDoubleFreeSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
@@ -70,9 +39,6 @@ const sanSelfHostDoubleFreeSrc = `function main(): i32 {
 
 var sanSelfHostLeakRe = regexp.MustCompile(`fern-sanitizer: leak (\d+) bytes in (\d+) blocks\n`)
 
-// sanSelfHostBuild compiles src through the self-host driver with the
-// given emit-time env, links it, and returns the built binary path plus
-// the runner needed to execute it.
 func sanSelfHostBuild(t *testing.T, name, src string, env []string) (string, []string) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -92,9 +58,6 @@ func TestSelfHostSanitizeCleanRunIsSilentX86_64(t *testing.T) {
 	if strings.Contains(stderr, "fern-sanitizer:") {
 		t.Errorf("clean program reported a sanitizer finding: %q", stderr)
 	}
-	// FERN_SANITIZE implies the census (sanitize_on folds into
-	// leak_check_on), so the summary must be there even though the
-	// verdict is not.
 	var allocs, frees, live int64
 	if _, err := fmtSscan(stderr, &allocs, &frees, &live); err != nil {
 		t.Fatalf("no leakcheck summary under FERN_SANITIZE=1: %v (stderr %q)", err, stderr)
@@ -119,11 +82,6 @@ func TestSelfHostSanitizeLeakVerdictX86_64(t *testing.T) {
 	}
 	bytes, _ := strconv.Atoi(m[1])
 	blocks, _ := strconv.Atoi(m[2])
-	// Three 60-byte requests, one of them reclaimed. The exact byte total
-	// depends on this runtime's allocation granularity, so assert the
-	// block count (which does not) and that the byte figure is a
-	// consistent multiple rather than pinning a granularity the
-	// allocator is free to change.
 	if blocks != 2 {
 		t.Errorf("verdict says %d blocks, want 2 (the same count native's "+
 			"TestX86_64SanitizeLeakVerdict reads for this program)", blocks)
@@ -131,7 +89,6 @@ func TestSelfHostSanitizeLeakVerdictX86_64(t *testing.T) {
 	if bytes < 2*60 || bytes%blocks != 0 {
 		t.Errorf("verdict says %d bytes across %d blocks, want a consistent per-block size >= 60", bytes, blocks)
 	}
-	// The verdict must agree with the summary it follows.
 	var allocs, frees, live int64
 	if _, err := fmtSscan(stderr, &allocs, &frees, &live); err != nil {
 		t.Fatalf("no leakcheck summary: %v", err)
@@ -148,20 +105,11 @@ func TestSelfHostSanitizeDoubleFreeReportedX86_64(t *testing.T) {
 	if code != e2eharness.ExitSanitizer {
 		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, e2eharness.ExitSanitizer)
 	}
-	// Byte-for-byte text — this is the assertion that keeps
-	// "build it with -sanitize" meaning one thing. The
-	// quarantine (the RcFreeDebug port) catches the re-free at the
-	// poison it left, one instruction before the underflow test would
-	// have seen a zero that no longer exists.
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)\n") {
 		t.Errorf("stderr does not carry the diagnostic: %q", stderr)
 	}
 }
 
-// Without the flag the same over-release only bumps a counter and the
-// program runs to completion — the "test-only oracle" state #5545 set
-// out to promote. Pins that the promotion is opt-in rather than a
-// change to what the self-host compiler emits by default.
 func TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64(t *testing.T) {
 	bin, runner := sanSelfHostBuild(t, "san_dfree_off", sanSelfHostDoubleFreeSrc, []string{uncertified})
 	stderr, code := hevRun(t, runner, bin)
@@ -173,10 +121,6 @@ func TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64(t *testing.T) {
 	}
 }
 
-// Flag off, no sanitizer symbol reaches the emitted asm — the cheap
-// proxy for "an ordinary build is byte-identical to one from a compiler
-// without the mode". The companion half asserts the markers DO appear
-// when asked for, so this is testing a gate rather than a typo.
 func TestSelfHostSanitizeOffEmitsNoSymbolsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -196,17 +140,11 @@ func TestSelfHostSanitizeOffEmitsNoSymbolsX86_64(t *testing.T) {
 			t.Errorf("flag-on asm is missing %q", marker)
 		}
 	}
-	// FERN_SANITIZE must not drag in the per-heap-event tracer: that is
-	// one stderr line per alloc, which no standing mode can afford.
 	if strings.Contains(on, "rctrace") {
 		t.Error("FERN_SANITIZE=1 emitted the rctrace hook; it is a targeted probe, not part of the mode")
 	}
 }
 
-// A box freed through __fern_box_free (core/map's handle release) carries the
-// poison in its rc word like every other freed box, so dropping the handle a
-// second time is a use-after-free rather than a second free the census counts.
-// An over-release of the same handle is reported as one.
 const sanMapDoubleDropSrc = `import "core/map";
 function main(): i32 {
     let h: usize = map_new_impl(4, 0, 0);
@@ -223,9 +161,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// uncertified opts a compile out of the emitted-RC certifier: the programs
-// below drop a handle twice or corrupt its count on purpose, for the runtime
-// to catch, and the certifier would refuse them at compile time.
 const uncertified = "FERN_RC_CERTIFY=0"
 
 func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
@@ -246,12 +181,8 @@ func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
 	}
 }
 
-// sanBacktraceRe is the walk's output: the header, then at least one return
-// address in "  0x<16 hex>" form.
 var sanBacktraceRe = regexp.MustCompile(`backtrace:\n(  0x[0-9a-f]{16}\n)+`)
 
-// Both reports end in the frame-pointer backtrace, and FERN_BACKTRACE=0 drops
-// it without changing the cause line or the exit status.
 func TestSelfHostSanitizeReportCarriesBacktrace(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	cases := []struct{ name, src, finding string }{

@@ -38,7 +38,6 @@ func TestPutName(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got % x, want % x", got, want)
 	}
-	// Empty string still emits the zero-length prefix.
 	got = encode.PutName(nil, "")
 	want = []byte{0x00}
 	if !bytes.Equal(got, want) {
@@ -56,8 +55,6 @@ func TestPutSection(t *testing.T) {
 }
 
 func TestPutFuncType(t *testing.T) {
-	// (i32, i32) -> i32 — the canonical add(): byte sequence is
-	// 0x60 + 0x02 + i32 + i32 + 0x01 + i32.
 	params := []byte{encode.ValtypeI32, encode.ValtypeI32}
 	results := []byte{encode.ValtypeI32}
 	got := encode.PutFuncType(nil, params, results)
@@ -65,7 +62,6 @@ func TestPutFuncType(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got % x, want % x", got, want)
 	}
-	// Empty params, empty results: `() -> ()`.
 	got = encode.PutFuncType(nil, nil, nil)
 	want = []byte{0x60, 0x00, 0x00}
 	if !bytes.Equal(got, want) {
@@ -73,24 +69,17 @@ func TestPutFuncType(t *testing.T) {
 	}
 }
 
-// TestEndToEndMinimalModule wires PutModuleHeader + a hand-rolled
-// type section through to a known-good byte sequence — the
-// minimal module that compiles via wasm-tools.
 func TestEndToEndMinimalModule(t *testing.T) {
-	// Manually build the module bytes for `(module)` + a type
-	// section with one functype `() -> ()`. This is the same
-	// shape `wasm-tools parse` produces for the trivial program.
 	out := encode.PutModuleHeader(nil)
-	// Type section body: vec(functype) of length 1, then `() -> ()`.
-	body := []byte{0x01} // count = 1
+	body := []byte{0x01}
 	body = encode.PutFuncType(body, nil, nil)
 	out = encode.PutSection(out, encode.SectionType, body)
 
 	want := []byte{
-		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // header
-		0x01, 0x04, // section id 1 (type), size 4
-		0x01,             // count
-		0x60, 0x00, 0x00, // functype () -> ()
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04,
+		0x01,
+		0x60, 0x00, 0x00,
 	}
 	if !bytes.Equal(out, want) {
 		t.Fatalf("got % x, want % x", out, want)

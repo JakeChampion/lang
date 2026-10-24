@@ -13,22 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// #8891: the self-host build of uniq segfaulted on every long option once
-// `Getopt` had as many fields as uniq's `Cfg`. The self-host's tail release
-// at `return long_option(s, a)` in `Getopt.next` freed `s`'s box, though
-// long_option hands that box back INSIDE the tuple it returns (through its
-// alias `let s: Getopt = g`); the freed block sat in the same freelist class
-// as `Cfg` from then on, and the next `Cfg { ...cfg, … }` in uniq's option
-// loop recycled it under the live Getopt. EQUAL FIELD COUNTS are what put
-// the two structs in one class, which is why every build where they
-// differed was fine.
-//
-// The recipe is the issue's own: uniq compiled by the self-host against a
-// `Getopt` padded to uniq's `Cfg` field count, then a long option that
-// matches. Both counts are read from the sources rather than written down,
-// so the gate keeps synthesising the collision as either struct grows — and
-// the tree's own gnu.fern is copied, not edited, because the field count is
-// the trigger and not the fix.
 func TestSelfHostUniqLongOptionWithSameFieldCountStructs(t *testing.T) {
 	root := repoRoot(t)
 	work := t.TempDir()
@@ -96,9 +80,6 @@ func TestSelfHostUniqLongOptionWithSameFieldCountStructs(t *testing.T) {
 	}
 }
 
-// structFields counts the fields of the one-line struct declaration that
-// starts with `head`. Every struct in this tree is written on one line and
-// no field type here carries a comma, so the count is the commas plus one.
 func structFields(t *testing.T, src, head, where string) int {
 	t.Helper()
 	i := strings.Index(src, head)
@@ -113,8 +94,6 @@ func structFields(t *testing.T, src, head, where string) int {
 	return strings.Count(body[:end], ",") + 1
 }
 
-// padGetopt adds `pad` fields to Getopt's declaration and to the literal
-// `getopt_new` builds, which is the only one that names every field.
 func padGetopt(t *testing.T, gnu string, pad int) string {
 	t.Helper()
 	var decl, init strings.Builder
@@ -126,8 +105,6 @@ func padGetopt(t *testing.T, gnu string, pad int) string {
 	return insertBefore(t, out, "return Getopt { argv: argv,", " };", init.String())
 }
 
-// insertBefore splices `text` in just before the first `tail` that follows
-// `head`.
 func insertBefore(t *testing.T, src, head, tail, text string) string {
 	t.Helper()
 	i := strings.Index(src, head)

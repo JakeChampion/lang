@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantMixedWidthParamCustomProvider is the *mixed-width* `variant`
-// *parameter* gate (docs/WIT-BRING-YOUR-OWN.md): a Fern enum whose payloaded arms
-// have different canonical core widths — `enum Val { I(i32), L(i64) }` — passed to
-// an `@import` extern taking the WIT `variant val { i(s32), l(s64) }`. The
-// canonical join is i64 (one slot); the param wrapper branches on the box tag and
-// loads each arm's payload at its own box offset, coercing to i64 — `i64.load` for
-// the 64-bit arm, `i32.load`+`i64.extend_i32_u` for the 32-bit arm
-// (appendVariantParamPayloadI64). The host wraps the 32-bit arm back with
-// `i32.wrap_i64`.
-//
-// `take: func(v: val) -> s32`: i(p) → p, l(p) → 42 iff p == 5_000_000_000. The
-// Fern side passes I(7) (→ 7) and L(5_000_000_000) (→ 42 only if the i64 survives).
 func TestExternVariantMixedWidthParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,8 +38,6 @@ func TestExternVariantMixedWidthParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, payload:i64-join). The i
-	// arm's payload is the s32 zero-extended; the l arm's is the full s64.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $p i64) (result i32)

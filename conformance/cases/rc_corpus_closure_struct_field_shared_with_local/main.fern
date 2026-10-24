@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A closure SHARED between a struct field and a live local (#6443).
-// The field release dispatches through the drop-fn pointer the pair
-// carries, so it has to respect the pair's own count: at rc>1 the
-// is_unique gate must decline and leave the env alone, or `h` calls a
-// freed env and reads a recycled capture. `keep` holds the struct so
-// both references are live across the calls.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 struct H { f: (i32) => i32 }

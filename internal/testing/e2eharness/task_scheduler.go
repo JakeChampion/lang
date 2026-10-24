@@ -1,12 +1,5 @@
 package e2eharness
 
-// TaskSchedulerProgram drives a task by hand (docs/NET-P3-SUSPENSION-PLAN.md
-// §4, slice 2): a function three calls deep parks twice, inside a loop and a
-// branch, with a string held across both parks by the outermost frame. The
-// scheduler is the program's own loop: each park hands back its wait, the
-// same wait_any outside the task is the scheduler's wait, and the word 7 is
-// what the park answers. It then runs the same functions with no task, where
-// wait_any blocks on the timer and answers 0.
 const TaskSchedulerProgram = `import "std/async";
 import "std/i32";
 
@@ -66,8 +59,4 @@ function main(): i32 {
 }
 `
 
-// TaskSchedulerWant is the output under the self-host compiler, which lowers
-// the three functions to their resumable form: two parks, then
-// ((7+5) + (7+15)) * 100 + len("held5"), and the plain run's
-// ((0+5) + (0+15)) * 100 + 5.
 const TaskSchedulerWant = "parks 2 out 3405\nplain 2005\n"

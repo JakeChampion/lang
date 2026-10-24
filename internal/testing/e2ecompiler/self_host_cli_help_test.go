@@ -12,7 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// runHelp runs the CLI and returns its stdout, stderr and exit status.
 func runHelp(t *testing.T, bin string, env []string, args ...string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
@@ -26,9 +25,6 @@ func runHelp(t *testing.T, bin string, env []string, args ...string) (string, st
 	return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// -h and -help, with one dash or two, print the help to stdout and succeed,
-// wherever they come among the driver flags; no arguments at all prints the
-// same help to stderr and exits 2.
 func TestSelfHostCLIHelp(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	for _, args := range [][]string{{"-h"}, {"-help"}, {"--help"}, {"-check", "-target", "x86-64-linux", "-h"}} {
@@ -44,12 +40,8 @@ func TestSelfHostCLIHelp(t *testing.T) {
 	}
 }
 
-// usageRowRe is one flag row of the help: two spaces, the flag's spellings
-// and value, then its description after a run of spaces.
 var usageRowRe = regexp.MustCompile(`^  (-\S.*?)\s{2,}\S`)
 
-// usageFlags is every flag the help lists, mapped to the value placeholder it
-// is written with ("" for none).
 func usageFlags(t *testing.T, help string) map[string]string {
 	t.Helper()
 	flags := map[string]string{}
@@ -75,11 +67,8 @@ func usageFlags(t *testing.T, help string) map[string]string {
 	return flags
 }
 
-// parserFlagRe is one case of the dispatch over a flag read_flag has parsed.
 var parserFlagRe = regexp.MustCompile(`\bf\.name == "(-[^"]+)"`)
 
-// parserFlags is every flag name compiler/fern.fern's dispatch has a case
-// for, read from the functions that do the dispatching.
 func parserFlags(t *testing.T) []string {
 	t.Helper()
 	src, err := os.ReadFile(e2eharness.RepoPath("compiler", "fern.fern"))
@@ -106,11 +95,6 @@ func parserFlags(t *testing.T) []string {
 	return out
 }
 
-// The help lists exactly the flags the parser accepts. Every flag the
-// dispatch has a case for has a row, every row has a case, and every row's
-// flag is accepted: a probe passes it (with a value where it takes one)
-// followed by an unknown flag, so the refusal naming that unknown flag shows
-// the listed one parsed.
 func TestSelfHostCLIUsageListsEveryFlag(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	help, _, _ := runHelp(t, cli, nil, "-h")
@@ -155,9 +139,6 @@ func TestSelfHostCLIUsageListsEveryFlag(t *testing.T) {
 	}
 }
 
-// A build carrying its stdlib takes no stdlib root, so neither its help nor
-// its hint for a flag after the source file names one; a build without it
-// names one in both.
 func TestSelfHostShippedFernHelpHasNoStdlibPositional(t *testing.T) {
 	shipped := e2eharness.ShippedFern(t)
 	dev := e2eharness.SelfHostCLI(t)
@@ -172,7 +153,6 @@ func TestSelfHostShippedFernHelpHasNoStdlibPositional(t *testing.T) {
 	if !strings.Contains(devHelp, "STDLIB") {
 		t.Errorf("the help of a build without an embedded stdlib does not name the stdlib root:\n%s", devHelp)
 	}
-	// The flag rows are the same in both builds; only the synopsis differs.
 	if a, b := usageFlags(t, help), usageFlags(t, devHelp); len(a) != len(b) {
 		t.Errorf("the shipped help lists %d flags, the other build %d", len(a), len(b))
 	}

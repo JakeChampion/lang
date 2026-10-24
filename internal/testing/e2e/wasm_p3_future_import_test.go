@@ -10,13 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// p3FutureProducerCore is the PRODUCER half of the two-component future export:
-// `prod` ()->() creates a future (future.new — readable=low32 / writable=high32),
-// stores 42 in its own memory, task.returns the readable end (so the caller's
-// async lower gets it), then future.writes the value through the writable end. It
-// imports ("","tr") task.return(future) (i32)->(), ("","fnew") future.new ()->i64,
-// ("","fw") future.write (writable,ptr)->status [gMem-trampolined], and exports
-// "mem" + "prod". Generated from WAT via wasm-tools 1.240.
 var p3FutureProducerCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x12, 0x04, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x00, 0x01, 0x7e, 0x60, 0x02, 0x7f, 0x7f, 0x01,
@@ -34,13 +27,6 @@ var p3FutureProducerCore = []byte{
 	0x64, 0x02, 0x02, 0x77, 0x72,
 }
 
-// p3FutureConsumerCore is the CONSUMER half: `run` ()->() async-lowers the
-// imported `prod` (("","prodl") (retptr)->status) into mem[0], reads the future
-// readable handle from mem[0], future.reads it (("","fread") (readable,ptr)->
-// status) into mem[4], and task.returns mem[4]. Both the lower and the read
-// complete synchronously (the producer writes before yielding), so the statuses
-// are dropped — no await loop. Imports ("","tr"/"prodl"/"fread") and ("mem","m"),
-// exports "run". Generated from WAT via wasm-tools 1.240.
 var p3FutureConsumerCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x13, 0x04, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f,
@@ -57,18 +43,8 @@ var p3FutureConsumerCore = []byte{
 	0x01, 0x00, 0x02, 0x72, 0x64,
 }
 
-// TestWasmP3FutureExportImport is the WASI Preview-3 `future<T>` ACROSS-A-BOUNDARY
-// gate, assembled through the Go composer (component.BuildFutureExportImportComponent):
-// a nested producer exports `prod: async func() -> future<u32>` (future.new →
-// task.return the readable end → future.write the value), and a consumer
-// `canon lower async`-es that import, reads the returned future handle,
-// `future.read`s the value, and re-returns it from its own async export `run`.
-// Runs under wasmtime's async features → 42. This is the two-component split that
-// exercises a future flowing OUT of one component and INTO another — both
-// future-ABI directions together, the production-shaped counterpart of the
-// single-component TestWasmP3FutureRoundtrip. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 func TestWasmP3FutureExportImport(t *testing.T) {
-	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+	skipIfPreview2Missing(t)
 
 	comp := component.BuildFutureExportImportComponent(p3FutureProducerCore, p3FutureConsumerCore, p3PendMemCore, component.CValtypeU32)
 	dir := t.TempDir()

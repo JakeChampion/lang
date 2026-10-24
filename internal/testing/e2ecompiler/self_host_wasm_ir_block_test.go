@@ -9,23 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRBlock covers wasm_block on the self-host wasm-IR path (#3457
-// phase / #4317 follow-up): the primitive that makes a wasm_timer_pollable timer
-// observably block.
-//
-// wasm_block(p: i32) -> i32 synchronously waits until the pollable p is ready
-// (wasi:io/poll.[method]pollable.block), then returns 0. Combined with
-// wasm_timer_pollable (subscribe a monotonic-clock timer) it is a real sleep:
-// subscribe -> block -> the duration elapses before control returns. wasm_ir
-// emits it as a DIRECT component-model import, so the emitted core module must be
-// composed with `wasm-tools component new` before it runs (a bare core module
-// can't resolve a preview2 interface) — building on the timer-pollable foundation.
-//
-// The test drives the IR path, asserts the emitted WAT carries the
-// [method]pollable.block preview2 import (proving the op lowered rather than
-// bailing), composes the core into a component, checks it imports
-// wasi:io/poll + wasi:clocks/monotonic-clock, and runs it: subscribe a short
-// timer, block on it, drop it, exit 0.
 func TestSelfHostWasmIRBlock(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,10 +30,6 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
-	// Subscribe a short monotonic-clock timer, block on the pollable until it
-	// fires, then drop it. The duration is a typed i64 local (a direct i64 literal
-	// in argument position mis-infers to i32 — a separate pre-existing lowering
-	// quirk, unrelated to this op).
 	const src = `function main(): i32 {
     let d: i64 = 20000000i64;
     let p: i32 = wasm_timer_pollable(d);
@@ -70,8 +49,6 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 		t.Fatalf("wasm_ir_run failed: %v", err)
 	}
 
-	// The emitted WAT must carry the three preview2 imports — proof the ops
-	// lowered on the IR path rather than bailing.
 	for _, want := range []string{
 		`"wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration"`,
 		`"wasi:io/poll@0.2.0" "[method]pollable.block"`,
@@ -99,7 +76,6 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
 	}
 
-	// The component must import the two preview2 interfaces the ops resolve to.
 	wit, _ := exec.Command(wasmtools, "component", "wit", compPath).Output()
 	for _, want := range []string{"wasi:io/poll@0.2", "wasi:clocks/monotonic-clock@0.2"} {
 		if !strings.Contains(string(wit), want) {
@@ -107,7 +83,6 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 		}
 	}
 
-	// Runs: subscribe + block + drop the pollable, exit 0.
 	runCmd := exec.Command(wasmtime, "run", compPath)
 	if out, err := runCmd.CombinedOutput(); err != nil {
 		t.Fatalf("wasmtime run block component: %v\n%s", err, out)

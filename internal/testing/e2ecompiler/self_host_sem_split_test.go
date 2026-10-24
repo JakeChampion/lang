@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// A tuple, record or variant built and only read is never allocated
-// (seminline.split_constructions): each read takes the part off the
-// construction, a phi joining constructions becomes a phi per part, and the
-// unread construction is dropped. Each probe runs 100 rounds and prints its
-// result times 1000 plus the heap allocations the rounds made; every round
-// builds one heap string, so 100 is the floor. option and result join two
-// variants with a phi, record and tuple hold the string beside a scalar, and
-// held passes its record to a call, so that record is still a box a round.
-// threaded carries a record through the loop by rebuilding it, building its
-// string once: the rebuilds join in a phi, so no box is left at all.
-// kept_variant hands its option to a call and matches it too, so the option
-// is still built and its test and payload read both stay on the box.
-// gate joins two records holding the same call result and reads that field
-// three times: the reads share one part phi, so the record is unique where
-// the update rebuilds it, and a round allocates only what mk does.
 const semSplitProgram = `struct Pair { name: string, n: i32 }
 struct St { xs: i32[], n: i32 }
 struct Gate { s: St, from: i32 }
@@ -154,17 +139,12 @@ func TestSelfHostSemanticSplit(t *testing.T) {
 		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n250100\n10100200\n"))
 }
 
-// FERN_SEM_INLINE= turns the pass off, and every construction is a box again.
 func TestSelfHostSemanticSplitOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "semsplit-off", semSplitProgram, semSplitProduced,
 		semInlineWants("150150\n2600250\n5150200\n5150200\n5150200\n102002\n250100\n10100350\n"))
 }
 
-// A function spliced into its one caller leaves no body behind, on any
-// target, and the program still answers 51. A method is named outside the
-// bodies (dispatch, drop), so one called once keeps its body and stays a call
-// rather than being emitted twice.
 const semSplicedProgram = `struct Acc { n: i32 }
 function (self: Acc) bump(k: i32): Acc { return Acc { n: self.n + runtime(k) * 3 + 1 }; }
 @noinline function runtime(n: i32): i32 { return n; }

@@ -22,8 +22,6 @@ type WcByteCase struct {
 	Error       string
 }
 
-// WcByteCases exercises C-locale counting across read boundaries and the
-// separate UTF-8 boundary at which a name becomes a filesystem path.
 func WcByteCases() []WcByteCase {
 	all := make([]byte, 256)
 	for i := range all {

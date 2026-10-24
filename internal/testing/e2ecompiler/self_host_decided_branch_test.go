@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// decidedBranchShapeSrc's matches each test a nested payload's variant.
-// The parser's done-flag chain tests the scrutinee's variant again in every
-// arm after the first; semthread sends each arm's failure straight to the
-// arm it decides, so each variant a path can still be is tested once.
 const decidedBranchShapeSrc = `enum Color { Red, Black }
 enum Shade { Light, Mid, Dark }
 enum Tree { Node(Color, Tree, i32, Tree), Leaf }
@@ -62,8 +58,6 @@ function main(): i32 {
 var shapeLabelRe = regexp.MustCompile(`(?m)^(\.S\d+): \.ascii "([^"]*)"`)
 var shapeTestRe = regexp.MustCompile(`cmpq \$(\.S\d+), `)
 
-// variantTests counts, per variant shape (`Enum$Variant`), the shapes `body`
-// compares a box's shape word against.
 func variantTests(asm, body string) map[string]int {
 	names := map[string]string{}
 	for _, m := range shapeLabelRe.FindAllStringSubmatch(asm, -1) {

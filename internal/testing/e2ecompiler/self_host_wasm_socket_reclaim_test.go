@@ -70,7 +70,7 @@ func TestSelfHostWasmSocketCloseZeroHandles(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
-		{"accept", "tcp_accept(0)"}, // harness supplies a borrowed listener record
+		{"accept", "tcp_accept(0)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := runX86_64Bin(runner, bin)
@@ -104,8 +104,6 @@ func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 		if err := os.WriteFile(path, wat, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// Validate without executing an invalid connection. Close must bring
-		// in its allocator return path without a constructor in this module.
 		if out, err := exec.Command("wasm-tools", "validate", path).CombinedOutput(); err != nil {
 			t.Fatalf("close-only module: %v\n%s", err, out)
 		}
@@ -113,7 +111,7 @@ func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with(any, 1, false)"},
-		{"accept", "tcp_accept(0)"}, // harness supplies a borrowed listener record
+		{"accept", "tcp_accept(0)"},
 		{"port", "tcp_local_port(0)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

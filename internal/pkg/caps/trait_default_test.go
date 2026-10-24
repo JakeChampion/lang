@@ -8,24 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/caps"
 )
 
-// A trait's DEFAULT body is the trait module's source even though the
-// clone is instantiated in each `impl`, so its capability use is charged
-// to the package that DECLARED the trait (#8450). Charging it to the
-// implementer misattributed it: the ordinary way to adopt a trait is an
-// `impl` supplying only the required methods, and when that impl is in
-// the ROOT package — which is never enforced — the effectful default ran
-// with no diagnostic at all.
-//
-// Analyze roots each package's walk in `FuncDecl.BodyModule()`, which
-// prefers DefiningModule (the trait's module) over SourceModule (the
-// impl's). These cases pin the enforcement end of that, one per v1
-// capability, because the hole was invisible from the checker-side tests
-// that only assert which module the body resolves in.
-
-// traitDefaultCase is a v1 capability and a default-body statement that
-// reaches it. Every body is shaped the same — discard the builtin's
-// result, return 0 — so the only variable across the table is the
-// builtin.
 type traitDefaultCase struct {
 	capability string
 	builtin    string
@@ -42,8 +24,6 @@ var traitDefaultCases = []traitDefaultCase{
 	{"time", "now_unix_ms", `now_unix_ms();`},
 }
 
-// pkgByDir maps a module path to the package whose directory contains
-// it, folding the stdlib away.
 func pkgByDir(dirs ...string) func(string) string {
 	return func(module string) string {
 		if strings.HasPrefix(module, "stdlib://") {
@@ -58,10 +38,6 @@ func pkgByDir(dirs ...string) func(string) string {
 	}
 }
 
-// The root writes the `impl`; the capability must still land on the
-// declaring package, and E070 must fire there once that package is
-// governed. Before #8450 the row read "app", the root exemption
-// swallowed it, and `fern -check` exited 0.
 func TestTraitDefaultChargesTheDeclaringPackage(t *testing.T) {
 	for _, tc := range traitDefaultCases {
 		t.Run(tc.capability, func(t *testing.T) {
@@ -88,11 +64,6 @@ function main(): i32 {
 			prog := loadChecked(t, filepath.Join(root, "app", "main.fern"))
 			rows := caps.Analyze(prog, pkgByDir("b"))
 
-			// The root reports it too, transitively — Analyze charges a
-			// caller for what its callees reach. The regression is the
-			// row BELOW: before #8450 the declaring package had none at
-			// all, so the only report was the root's and the root is
-			// exempt.
 			b := rowFor(t, rows, "b")
 			if len(b.Uses) != 1 || b.Uses[0].Capability != tc.capability {
 				t.Fatalf("declaring package must report %s alone, got %+v", tc.capability, b.Uses)
@@ -113,11 +84,6 @@ function main(): i32 {
 	}
 }
 
-// The same misattribution one hop away from the root: a middle package
-// writes the impl. `mid` is enforceable, so this case never exited 0 —
-// but the charge went to `mid` alone, and `mid` legitimately needs the
-// grant for calling into `b`. Granting it therefore silenced the
-// declarer's own use entirely, which is what the grant below sets up.
 func TestTraitDefaultChargesTheDeclarerThroughAnIntermediate(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nmid = { path = \"../mid\" }\n",

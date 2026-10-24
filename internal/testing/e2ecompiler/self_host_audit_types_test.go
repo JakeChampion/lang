@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// auditTypesCases isolate composite-type + pattern-matching features and
-// run them through the SELF-HOSTED compiler, asserting the exit code.
-// Self-host arm of the §C / §A audit (docs/FEATURE-AUDIT.md); the
-// conformance case `audit_types_match` covers the same features.
-//
-// Struct fields are immutable after construction (E048), so these cases use
-// only functional update (`T { ...old, f: v }`).
 var auditTypesCases = []struct {
 	name string
 	src  string
@@ -33,8 +26,6 @@ var auditTypesCases = []struct {
 	{"result-err", `function main(): i32 { let r: Result[i32, i32] = Err(9); match (r) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 9},
 }
 
-// TestSelfHostAuditTypesX86_64 runs each composite-type case through the
-// self-hosted x86-64 driver and asserts the exit code.
 func TestSelfHostAuditTypesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -68,7 +59,6 @@ func TestSelfHostAuditTypesX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAuditTypesArm64 — CI-gated arm64 counterpart.
 func TestSelfHostAuditTypesArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range auditTypesCases {

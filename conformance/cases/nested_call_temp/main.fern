@@ -1,7 +1,7 @@
-// Nested-call owned-temp reclamation: a fresh temp (`build(6)`) passed as a
-// borrowed arg to a POINTER-returning callee (`dup`) is reclaimed once the
-// callee returns, proven safe by returnsNoParamEscape. Differentially pinned:
-// free-on == free-off and reuse-on == reuse-off, plus the interp oracle.
+
+
+
+
 enum List { Cons(i32, List), Nil }
 
 function build(n: i32): List {
@@ -16,5 +16,5 @@ function dup(xs: List): List {
 }
 
 function main(): i32 {
-    return sum(dup(dup(build(6))));   // 6+5+4+3+2+1 = 21
+    return sum(dup(dup(build(6))));
 }

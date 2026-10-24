@@ -7,26 +7,11 @@ import (
 	"testing"
 )
 
-// tupStructFieldReclaimCases pin the #4365 struct-field read THROUGH a tuple element of
-// an array-of-tuples / option-of-tuple: `xs[i].1.y` / `match (o) { Some(g) => g.1.y }`
-// where the tuple's element is a reclaim-struct P (P sole-owning an rc-array field).
-//
-// Two things are pinned together:
-//  1. The read lowers: a field access whose object is a tuple projection of an
-//     array element (`xs[i].1.y`, `xs[i].1.xs[0]`) resolves its struct type from
-//     the array's element tuple type.
-//  2. The reclaim still happens: a struct SCALAR-field read, an indexed struct
-//     ARRAY-field read (`…N.field[j]`), and their `.len()` are borrows; a WHOLE
-//     struct element or a bare struct array-field extraction escapes and the
-//     container is left leak-safe.
-//
-// x86-64 / arm64 / wasm share the case table.
 var tupStructFieldReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// ARRTUP `(i32, P)[]`, struct scalar-field read `xs[i].1.y` — reclaims (was: AST bail).
 	{"arrtupstruct-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -41,8 +26,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ARRTUP full borrow set: scalar tuple field, struct scalar field, indexed struct
-	// array field, struct array-field .len() — all borrows, still reclaims.
 	{"arrtupstruct-borrow-full", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -57,8 +40,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ARRTUP escape-store negative: `keep = xs[0].1` extracts the WHOLE struct element —
-	// un-credited (leak-safe), never over-released.
 	{"arrtupstruct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let keep: P = P { xs: [0, 0], y: 0 };
@@ -69,8 +50,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// ARRTUP escape-arrfield negative: `keep = xs[0].1.xs` extracts the struct's ARRAY
-	// field bare — un-credited (leak-safe), never over-released.
 	{"arrtupstruct-escape-arrfield-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let keep: i32[] = [0, 0];
@@ -81,7 +60,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// OPTTUP `Option[(i32, P)]`, struct scalar-field read `g.1.y` — reclaims.
 	{"opttupstruct-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -96,7 +74,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// OPTTUP full borrow set (scalar + struct scalar + indexed struct array + .len()).
 	{"opttupstruct-borrow-full", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -111,7 +88,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// OPTTUP escape-store negative: `keep = g.1` extracts the whole struct — leak-safe.
 	{"opttupstruct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
     let keep: P = P { xs: [0, 0], y: 0 };
@@ -122,8 +98,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// REGRESSION: the plain `(i32, i32[])[]` array-field reclaim (no struct element) still
-	// reclaims after the escape checker gained struct-awareness.
 	{"arrtup-plain-array-regression", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -138,8 +112,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostTupStructFieldReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostTupStructFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

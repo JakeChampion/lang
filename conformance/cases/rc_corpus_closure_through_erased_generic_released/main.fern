@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A closure handed through an ERASED generic (`id[T]`, whose
-// declared return is `T`) and bound to a FuncType local. Neither an
-// OpMakeClosure nor a closure-returning callee wrote the slot, so its
-// drop went through the generic release and freed the pair, never the
-// env behind it (#8701); the slot's declared type now says it holds a
-// pair. The non-capturing spelling is the guard: a zero-capture value
-// arrives as a static cell the pair-aware drop must skip. 100 rounds
-// of (i + 1) + 2 = 5250, minus 5250.
+
+
+
+
+
+
+
+
+
+
+
 function id[T](x: T): T { return x; }
 function capturing(p: i32): i32 {
     let v: (i32) => i32 = id(((a: i32) => (a + p)));

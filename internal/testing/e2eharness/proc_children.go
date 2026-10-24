@@ -10,12 +10,6 @@ import (
 	"strings"
 )
 
-// ChildPIDs lists pid's direct children, in pid order. Each thread's
-// /proc/PID/task/TID/children names the children that thread forked, so
-// it reads every thread's; a kernel built without
-// CONFIG_CHECKPOINT_RESTORE provides none, and there it scans every
-// process's PPid instead. A missing parent, unreadable metadata and a
-// malformed record are errors either way.
 func ChildPIDs(pid int) ([]string, error) {
 	tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
 	if err != nil {
@@ -44,9 +38,6 @@ func ChildPIDs(pid int) ([]string, error) {
 	return pidStrings(kids), nil
 }
 
-// childrenByPPid scans proc, a /proc tree, for the processes whose
-// status names pid as their parent, in pid order. A process that exits
-// between the listing and the read is skipped.
 func childrenByPPid(proc fs.FS, pid int) ([]string, error) {
 	entries, err := fs.ReadDir(proc, ".")
 	if err != nil {
@@ -85,7 +76,6 @@ func pidStrings(pids []int) []string {
 	return out
 }
 
-// statusPPid reads the PPid line of a /proc/PID/status record.
 func statusPPid(status string) (int, error) {
 	for _, line := range strings.Split(status, "\n") {
 		if v, ok := strings.CutPrefix(line, "PPid:"); ok {

@@ -1,10 +1,3 @@
-// #4380 lever 3: syntactic bounds-check elision for len-bounded loops.
-// The parser marks `arr[i]` reads inside `while (i < arr.len())` / C-style
-// `for` loops Unchecked (routing to the `_nc` helper) when `0 <= i < len` is
-// syntactically provable. These programs must produce identical results with
-// the check elided as the interpreter oracle produces with it in place —
-// exercising the widened loop shapes beyond the plain while-sum already covered
-// by TestArrayInBoundsStillWorks/loop_sum.
 package e2e
 
 import "testing"

@@ -40,7 +40,6 @@ func simulationDisplacement(to, from int) int {
 	return d
 }
 
-// Deliberately use all-pairs proximity, independent of the subject's grid.
 func simulationOracle(previous []simulationEntity, tick int) ([]simulationEntity, int64) {
 	rows := append([]simulationEntity(nil), previous...)
 	for i, old := range previous {

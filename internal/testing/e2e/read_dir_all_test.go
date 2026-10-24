@@ -8,29 +8,6 @@ import (
 	"testing"
 )
 
-// read_dir_all is read_dir without the `.` / `..` filter (#9279): every
-// name the directory holds, in the order its reader reports them. `ls -f`
-// is what wanted it — an unsorted listing prints the dot entries where the
-// directory keeps them, and a pair synthesized at the front is a different
-// listing.
-//
-// The program seeds its own directory rather than taking a host-seeded one,
-// so the same source runs on every leg including the two wasm ones, whose
-// harnesses preopen a directory but do not create trees inside it. Every
-// failure returns its own exit code.
-//
-// What is asserted here is the RELATIONSHIP between the two builtins on one
-// backend: read_dir_all holds everything read_dir holds, in the same order,
-// plus the dot entries where the reader put them. That the resulting order
-// is the one GNU prints is pinned where it matters — the `ls -f` cases in
-// internal/testing/coreutils compare it against the GNU binary byte for byte.
-//
-// `dots` says whether the host reports `.` and `..` at all. Every kernel
-// and preview 1 do; wasi-filesystem's read-directory omits them, so a
-// preview-2 host has none to report and read_dir_all's answer is read_dir's.
-// That case is asserted rather than skipped: the equivalence is the
-// documented behaviour there, and a host that started reporting them would
-// show up here.
 func readDirAllSource(dots bool) string {
 	const src = `function has(names: string[], want: string): boolean {
     let i: i32 = 0;
@@ -86,8 +63,6 @@ __DOTS__
 	return strings.Replace(src, "__DOTS__", arm, 1)
 }
 
-// inDir gives a command its own empty directory to work in, so the
-// program's relative `d` lands in a temp tree rather than the test's own.
 func inDir(t *testing.T, cmd *exec.Cmd) *exec.Cmd {
 	t.Helper()
 	cmd.Dir = t.TempDir()
@@ -110,9 +85,6 @@ func TestArm64ReadDirAll(t *testing.T) {
 	}
 }
 
-// The interpreter reads the same getdents drain both builtins do, so it
-// reports the same order — which is why its read_dir no longer wraps
-// `os.ReadDir`, whose sort no backend reproduces.
 func TestInterpReadDirAll(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "prog.fern")
@@ -127,8 +99,6 @@ func TestInterpReadDirAll(t *testing.T) {
 	}
 }
 
-// Preview 1's fd_readdir yields `.` and `..`, so the dot entries are there
-// to be kept.
 func TestWASMPreview1ReadDirAll(t *testing.T) {
 	mod := buildWasmCore(t, readDirAllSource(true))
 	if code := runPreview1Module(t, mod, t.TempDir()); code != 0 {
@@ -143,22 +113,6 @@ func TestWASMReadDirAll(t *testing.T) {
 	}
 }
 
-// readDirAllWithRemoveSource calls read_dir_all AND remove_dir_all in one
-// program, which is the pair that catches a LABEL COLLISION between their
-// two runtime helpers.
-//
-// Both bodies land in one object, and the in-process assemblers bound a
-// duplicate `.L` name to whichever body was emitted second — silently, so
-// every branch in the first one jumped into the second. read_dir_all
-// shipped with `.Lrda` / `.Lrda2w` / `.Lssa_rda`, the prefixes
-// remove_dir_all already owned, and this exact program segfaulted on all
-// three native backends while every single-builtin test stayed green.
-// Reported by pullfrog on #9290.
-//
-// The assembler refuses a duplicate named .text label now, so the
-// collision is a build error rather than a
-// wrong image; this runs the pair anyway, because the refusal is a
-// backstop and the answer being right is the property.
 const readDirAllWithRemoveSource = `function main(): i32 {
     match (create_dir_all("d/sub")) { Ok(_) => {}, Err(_) => { return 1; } }
     match (write_file("d/a.txt", "x")) { Ok(_) => {}, Err(_) => { return 2; } }

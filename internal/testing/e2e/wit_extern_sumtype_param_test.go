@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternSumTypeParamCustomProvider is the P4c sum-type-parameter gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern program passes an Option / Result to an
-// `@import` extern whose WIT signature takes an `option` / `result`. A Fern
-// enum is a heap box `[tag:i32 @0][payload @4]`; the canonical option/result
-// flattens to (disc:i32, payload). The wrapper pushes the discriminant (the tag,
-// remapped 1-tag for option since Fern's Some=0/None=1 is the reverse of
-// canonical none=0/some=1; result's Ok=0/Err=1 matches) then the payload.
-//
-// The provider exports `check-result: func(r: result<s32, s32>) -> s32` (ok→v,
-// err→-v) and `peek-option: func(o: option<s32>) -> s32` (some→v, none→-1). The
-// Fern side checks Ok(42)→42, Err(5)→-5, Some(7)→7, None→-1.
 func TestExternSumTypeParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestExternSumTypeParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// Both functions receive the flattened (disc, payload): result disc 0=ok /
-	// 1=err; option disc 0=none / 1=some (canonical order).
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)

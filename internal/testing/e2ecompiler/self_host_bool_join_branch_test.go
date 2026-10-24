@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// A predicate spliced into its caller brings its `&&` or `||` as a boolean
-// phi, and a branch on that phi used to test again what the arms had decided:
-// a setcc and a zero-extend on one arm, a constant on the other, then a test.
-// ssa.thread_bool_joins sends each arm to the branch's targets instead, so
-// `digits`, `skip_space` and `word_char` must materialise no flag and call no
-// predicate. `flag` returns the same predicate as a value, so it still
-// materialises one, which keeps the absence in the other three from passing
-// vacuously.
 const boolJoinBranchProg = `function is_digit(c: i32): boolean {
     return c >= 48 && c <= 57;
 }

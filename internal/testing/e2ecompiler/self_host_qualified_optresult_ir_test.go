@@ -2,31 +2,17 @@ package e2ecompiler
 
 import "testing"
 
-// qualifiedOptResultIRCases pin the qualified built-in Option/Result
-// construction spellings — `Option.Some(x)`, `Option.None`, `Result.Ok(x)`,
-// `Result.Err(x)` — on the IR path: each produces the identical value as its
-// bare form (`Some(x)` / `Ok(x)` / `None`).
-//
-// Each case is oracle-checked against the interpreter and returns a value
-// <= 126 (cf. the wasmtime exit-code gap #2908).
 var qualifiedOptResultIRCases = []struct {
 	name string
 	main string
 }{
-	// Option.Some payload round-trips through a match.
 	{"option-some", "function f(): Option[i32] { return Option.Some(42); }\nfunction main(): i32 { let o = f(); match (o) { Some(n) => { return n; }, None => { return 0; } } }"},
-	// Option.None takes the None arm.
 	{"option-none", "function f(): Option[i32] { return Option.None; }\nfunction main(): i32 { let o = f(); match (o) { Some(n) => { return n; }, None => { return 7; } } }"},
-	// Result.Ok payload round-trips.
 	{"result-ok", "function f(): Result[i32, string] { return Result.Ok(13); }\nfunction main(): i32 { let r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }"},
-	// Result.Err payload (a string) reaches the Err arm.
 	{"result-err", "function f(): Result[i32, string] { return Result.Err(\"bad\"); }\nfunction main(): i32 { let r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }"},
-	// Qualified construction composes with the try-operator.
 	{"qual-with-try", "function g(): Result[i32, string] { return Result.Ok(20); }\nfunction f(): Result[i32, string] { let n = g()?; return Result.Ok(n + 5); }\nfunction main(): i32 { let r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }"},
 }
 
-// TestSelfHostQualifiedOptResultIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostQualifiedOptResultIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

@@ -9,32 +9,6 @@ import (
 	"testing"
 )
 
-// `__sum_bytes(s)` on the self-host IR path — the sixth fused kernel of
-// docs/ATLAS-PLATFORM-PLAN.md §3, and the family's first true reduction.
-//
-// This is the leg the Go-side suite cannot stand in for. `internal/testing/e2e`'s
-// differential proves the NATIVE emitters; the self-host op, its two native
-// assembly bodies and its wat helper are a separate implementation that no
-// Go test reaches. An incomplete mirror there passes every Go test in the
-// tree, which is how #9060's sleep_ns and the two overnight defects reached
-// main.
-//
-// What a port of a reduction gets wrong is not a clamp — there is no cursor.
-// It is the ACCUMULATOR lost across a block boundary, and SIGN EXTENSION: a
-// body that loads bytes with a sign-extending move agrees on every ASCII
-// case and fails every case above 0x7f. Half the sweep below is therefore
-// high-byte, which is what separates those two bugs from a working body.
-
-// sumBytesIRProg is SELF-CHECKING: it carries its own reference in Fern and
-// compares `__sum_bytes` against it, so the sweep is exhaustive with no
-// Go-side expectation list to keep in step.
-//
-// Lengths 0..40 — two full 16-byte blocks plus a partial tail either side —
-// cover the vector bodies' block boundaries, and a 16 MiB string the wrap of
-// the 32-bit result.
-//
-// A failure returns a small distinct code rather than a sum, so the exit
-// status says WHICH shape disagreed. 42 means every comparison matched.
 const sumBytesIRProg = `function ref(s: string): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
@@ -86,8 +60,6 @@ function main(): i32 {
 }
 `
 
-// runSumBytesIR compiles sumBytesIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runSumBytesIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -109,7 +81,6 @@ func runSumBytesIR(t *testing.T, target string) int {
 	if len(progAsm) == 0 {
 		t.Fatal("self-host emitter produced 0 bytes")
 	}
-	// The vector helper, not a scalar body inline at the call site.
 	vector := "psadbw"
 	if target == "arm64-linux" {
 		vector = "uadalp"
@@ -140,10 +111,6 @@ func TestSelfHostSumBytesIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSumBytesIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostSumBytesIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host sum_bytes wasm IR e2e")

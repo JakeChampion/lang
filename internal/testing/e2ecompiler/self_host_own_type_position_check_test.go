@@ -11,13 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `own` / `borrow` in a type name a WIT resource handle, and nothing else: the
-// consuming-parameter spelling is `own xs: T`, and a function type's parameter
-// slot may open with `own`. The self-host parser used to read `xs: own i32[]`
-// as a handle type, accept it under -check, and then fail lowering with an
-// internal error, where native refused it with an unrelated P001 (#12655).
-// Both front ends must now agree on the verdict and on every diagnostic's
-// code, position and message.
 func TestSelfHostOwnInTypePositionCheck(t *testing.T) {
 	driverBin := e2eharness.SelfHostCLI(t)
 	stdlib := e2eharness.SelfHostStdlibRoot(t)
@@ -75,9 +68,6 @@ func TestSelfHostOwnInTypePositionCheck(t *testing.T) {
 
 var diagHeaderRe = regexp.MustCompile(`(?m)^\S*?:(\d+:\d+): error\[(\w+)\]: (?:at top level: |in fn '[^']*': )?(.*)$`)
 
-// diagHeaders is each diagnostic's position, code and message, without the
-// file path, the source excerpt under it, or the self-host's parse-error
-// context prefix.
 func diagHeaders(out string) string {
 	var lines []string
 	for _, m := range diagHeaderRe.FindAllStringSubmatch(out, -1) {

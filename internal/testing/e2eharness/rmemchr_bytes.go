@@ -2,7 +2,6 @@ package e2eharness
 
 import "strings"
 
-// RmemchrBytesSource checks reverse scan bounds, raw values and borrowing.
 func RmemchrBytesSource(allocations bool) string {
 	probe := ""
 	if allocations {

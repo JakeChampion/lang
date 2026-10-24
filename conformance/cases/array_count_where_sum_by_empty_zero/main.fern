@@ -1,9 +1,9 @@
-// std/array's count_where (tally of matching elements) and sum_by (sum of an
-// i32 projection). Empty gives 0.
-// A minimal inline body, so this pins the lowering of its shape rather than
-// the shipped module.
-//
-// empty → 0 for both; encode as 2 + 3 = 5.
+
+
+
+
+
+
 function count_where[T](xs: T[], pred: (T) => boolean): i32 { let c: i32 = 0; let i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
 function sum_by[T](xs: T[], key: (T) => i32): i32 { let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
 function is_even(x: i32): boolean { return x % 2 == 0; }

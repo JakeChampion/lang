@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// TestMapLitEntriesMustMatchInferredTypes covers the E045 same-type rule
-// on a map literal's entries: the first entry fixes K and V, and every
-// later entry must match.
-//
-// The check compared each entry against itself. postSettleType returns
-// its `prior` argument unchanged for anything that is not a numeric
-// literal, and the loop passed the ALREADY-INFERRED key/value type as
-// prior — so the comparison was `keyType != keyType` and no mismatch
-// could ever be reported.
 func TestMapLitEntriesMustMatchInferredTypes(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{
@@ -48,8 +39,6 @@ function main(): i32 { let m = Map { 1: P { x: 1 }, 2: Q { y: 2 } }; return 0; }
 		})
 	}
 
-	// Homogeneous literals stay clean, including the mixed-width numeric
-	// keys the settling pass is there to reconcile.
 	for _, src := range []string{
 		`import "core/map";
 function main(): i32 { let m = Map { 1: "a", 2: "b" }; return m.len(); }`,

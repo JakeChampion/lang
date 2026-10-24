@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// jsonCases are `import "std/json"` programs compiled through the
-// multi-module bundling loader (asm_load_run.fern), checked by exit
-// code. Exercises json_parse (objects, arrays, nesting), json_encode,
-// and the typed extractors — including json_get_f64, which since
-// #5420 routes through std/string's parse_float receiver method, the
-// cross-module method-reference shape the old standalone (no-loader)
-// driver could never link. Exit codes cross-checked vs the Go backend.
 var jsonCases = []struct {
 	name string
 	main string
@@ -30,17 +23,10 @@ var jsonCases = []struct {
 	{"get-f64-neg-frac", `match (json.json_parse("{\"x\": -0.5}")) { Some(v) => { match (json.json_get_f64(v, "x")) { Some(x) => { if (x > 0.0 - 0.501 && x < 0.0 - 0.499) { return 6; } return 1; }, None => { return 2; } } }, None => { return 3; } } return 4;`, 6},
 }
 
-// jsonProgram wraps a main body into a loader-shaped program: the
-// entry imports std/json and calls it qualified, the way modload
-// routes stdlib access. The enum is `json.JsonValue`; its variants stay
-// bare, since the entry imports std/json.
 func jsonProgram(mainBody string) string {
 	return "import \"std/json\";\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// writeJsonLoaderProject assembles the self-host bundling-loader
-// project (base asm project + the loader's extra modules) and builds
-// the mmc driver.
 func writeJsonLoaderProject(t *testing.T, gcc string) (dir, mmc, stdlibRoot string) {
 	t.Helper()
 	dir = writeSelfHostAsmProject(t)
@@ -53,9 +39,6 @@ func writeJsonLoaderProject(t *testing.T, gcc string) (dir, mmc, stdlibRoot stri
 	return dir, mmc, stdlibRoot
 }
 
-// TestSelfHostJsonX86_64 compiles the jsonCases programs with the
-// self-hosted x86-64 compiler through the bundling loader and checks
-// exit codes.
 func TestSelfHostJsonX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -84,9 +67,6 @@ func TestSelfHostJsonX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostJsonArm64 — CI-gated arm64 counterpart: same loader
-// driver (an x86 host binary) with `-target arm64-linux`, output assembled
-// with the arm64 toolchain and run under qemu.
 func TestSelfHostJsonArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

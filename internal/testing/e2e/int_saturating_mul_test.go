@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer saturating_mul helpers — std/i32,
-// std/i64, std/u32, std/u64 — the clamping companion of checked_mul and the
-// multiply sibling of saturating_add / saturating_sub, completing the
-// saturating_ family. saturating_mul clamps to the type's MAX on positive
-// overflow and (for the signed types) to MIN on negative overflow, instead of
-// wrapping. The i32 / u32 versions read the clamp off the widened product; the
-// i64 / u64 versions detect overflow with the inverse division and pick the
-// bound from the product's sign, with i64 clamping MIN * -1 to MAX. Exercises
-// both clamp directions, the sign edges, and the in-range maxima. Returns 42
-// iff every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const intSaturatingMulProg = `
 import "std/i32";
 import "std/i64" as i64m;

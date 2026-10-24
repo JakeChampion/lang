@@ -8,10 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// A bound written in an imported module names the module's own trait: one on
-// a trait default's own type parameter (`zip[U, J: It[U]]`) and one on a
-// parametric impl, which the impl's inherited defaults carry. Both are
-// mangled to the trait's module-qualified name, as a function's bounds are.
 func TestImportedTraitBoundsAreQualified(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"seq.fern": `pub trait It[T] {

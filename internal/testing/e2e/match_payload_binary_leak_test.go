@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// A match payload read by a binary operator in the arm (#10678): a string
-// concatenation answers a fresh string and a comparison a boolean, so the
-// arm's release of the payload (pair-form) or of the box (heap-box) is
-// safe, and before the excuse both leaked one per call. `target` is
-// std/http's request-target shape, the decoded path joined to its query
-// on the way out of the arm.
 const matchPayloadBinarySrc = `import "std/i32";
 function pair(n: i32): Result[string, i32] {
     if (n < 0) { return Err(400); }

@@ -3,11 +3,6 @@ import "std/hex";
 import "std/codec";
 import "std/crypto/x25519";
 
-// tests/stdlib/x25519_test.fern — std/crypto/x25519 against RFC 7748: the
-// two §5.2 vectors, the first step of the iterated vector, and the §6.1
-// Diffie-Hellman exchange, plus an independent implementation's answer for
-// a non-canonical u-coordinate, and the low-order refusal TLS 1.3 needs.
-
 function shown(r: Result[u8[], x25519.X25519Error]): string {
   match (r) {
     Ok(b) => {
@@ -62,8 +57,6 @@ function test_exchange(): test.TestOutcome {
   return test.assert_eq(shown(x25519.x25519(bob(), __codec_bytes(hex.decode("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")))), shared);
 }
 
-// A u-coordinate of 2^255 - 1 with the top bit masked is p + 18, which is
-// read as 18 mod p rather than refused.
 function test_non_canonical(): test.TestOutcome {
   return test.assert_eq(
     shown(x25519.x25519(alice(), __codec_bytes(hex.decode("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")))),
@@ -86,9 +79,6 @@ function test_lengths(): test.TestOutcome {
   return test.assert_eq(shown(x25519.x25519(alice(), __codec_bytes(hex.decode("0001")))), "x25519: the point is 2 bytes, want 32");
 }
 
-// public_key reads Ed25519's fixed-base table rather than the ladder; it
-// must agree with the ladder from u = 9 for scalars whose clamping matters
-// and for ones whose signed digits carry through every nibble.
 function test_public_key_matches_ladder(): test.TestOutcome {
   let nine: u8[] = __codec_bytes(hex.decode("0900000000000000000000000000000000000000000000000000000000000000"));
   let scalars: string[] = [
@@ -135,7 +125,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before ending the test.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

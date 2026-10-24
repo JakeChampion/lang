@@ -8,28 +8,6 @@ import (
 	"testing"
 )
 
-// --- A `return` inside a match arm takes the return-path release (#7725) -----
-//
-// A `return` inside a consuming match's arm leaves before the statement after
-// the match, so the scrutinee's release must also run on the return path — and
-// it must be the same DEEP release the fall-through takes. A nested-Option
-// payload and a struct payload are the two shapes whose box owns something
-// further (the inner string, the `xs` buffer); a shallow release there frees
-// the boxes and strands what they own, unbounded and sanitizer-clean. Each is
-// paired with a control that assigns in the arm and returns after the match.
-//
-// Each row asserts `__rc_underflow_count() == 0` before its answer, because an
-// over-release on the return path is a double free, which no byte count shows
-// — `docs/rc-log/2026-08-29-option-alias-payload-out.md` measured an
-// over-releasing build reading `300/300 live 0` where the correct one carried an
-// actual leak. `TestSelfHostNestedMatchBorrowNoUnderflowX86_64` covers the same
-// hazard for other shapes.
-//
-// The last four rows pin the other payload kinds on the same return path:
-// string, string[], tagged (call-bound) and leak-safe-array.
-//
-// Every want was confirmed against `bin/fern -interp`, never read off the
-// self-host run under test.
 type armReturnDropCase struct {
 	name string
 	src  string
@@ -43,8 +21,6 @@ const armReturnDropMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 =
 func armReturnDropCases() []armReturnDropCase {
 	return []armReturnDropCase{
 		{
-			// THE REPRO: a shallow drop frees both option boxes and strands the
-			// string.
 			name: "optopt_return_in_arm",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -55,8 +31,6 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// Its control: the same program differing only in where the arm
-			// returns.
 			name: "optopt_return_after_match",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -68,8 +42,6 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// The same shape with the candidate and its match inside an `if`
-			// block.
 			name: "optopt_return_in_arm_nested_block",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -82,9 +54,6 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// The inner tag guard on the return path. A statically-None inner has
-			// no string to release; an unguarded two-level walk would hand
-			// __fern_str_free whatever the payload word holds.
 			name: "optopt_none_return_in_arm",
 			src: `function round(i: i32): i32 {
     let o: Option[Option[string]] = Some(None);
@@ -94,8 +63,6 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// THE SECOND SHAPE: a shallow drop frees the struct box and strands
-			// its `xs` buffer, whose release is the struct's field drop.
 			name: "optstruct_return_in_arm",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -129,7 +96,6 @@ function round(i: i32): i32 {
 			want: 13,
 		},
 		{
-			// A STRING payload.
 			name: "str_return_in_arm",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -140,8 +106,6 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// A string[] payload. Its release walks every element, so a fallback
-			// to the plain box dec strands all of them.
 			name: "strarr_return_in_arm",
 			src: `function round(i: i32): i32 {
     let o: Option[string[]] = Some(["a" + "b", "c" + "d"]);
@@ -151,9 +115,6 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// A TAGGED (call-bound) candidate whose producer returns None on half
-			// the rounds, so the None arm's `return` runs the sweep over a box
-			// carrying no payload — the case the tagged release's guard is for.
 			name: "tagged_return_in_arm",
 			src: `function mk(i: i32): Option[i32[]] { if (i % 2 == 0) { return None; } return Some([i, i + 1]); }
 function round(i: i32): i32 {
@@ -164,7 +125,6 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// A leak-safe array payload, whose release is the shallow drop.
 			name: "arr_return_in_arm",
 			src: `function round(i: i32): i32 {
     let o: Option[i32[]] = Some([i, i + 1]);
@@ -176,9 +136,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostArmReturnConsumingDropX86_64 — every row balances at live_bytes 0
-// with no rc underflow, which is the pair of facts a shallow return-path release
-// (leak) and a doubled one (over-release) each break in one direction only.
 func TestSelfHostArmReturnConsumingDropX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -216,9 +173,6 @@ func TestSelfHostArmReturnConsumingDropX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArmReturnConsumingDropWasmIR — the wasm sibling. Exit codes only:
-// an over-release moves no byte count on any backend, and the underflow guard
-// is what carries the signal here.
 func TestSelfHostArmReturnConsumingDropWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping arm-return consuming-drop wasm IR e2e")
@@ -257,7 +211,6 @@ func TestSelfHostArmReturnConsumingDropWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostArmReturnConsumingDropIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostArmReturnConsumingDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

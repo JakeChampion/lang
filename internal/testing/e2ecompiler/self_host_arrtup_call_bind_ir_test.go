@@ -8,38 +8,27 @@ import (
 	"testing"
 )
 
-// An array-of-tuples local bound from a CALL (`let ps = mk()`) must know its
-// tuple element types as an annotated or literal-initialised one does. Without
-// them an element read is an untyped 4-byte read: on wasm32 an f64 element
-// comes back wrong while a string element — a 4-byte pointer — survives. The
-// register backends give every slot 8 bytes and lose nothing, so only the wasm
-// leg diverges. See docs/SELFHOST-TUPLE-ARRAY-LOCAL-TAGS.md.
-//
-// `foreach_loop_var` reads the element through `for p in ps`, which has no
-// index expression to carry a type, so only the binding's own element type
-// reaches it.
 var arrtupCallBindCases = []struct {
 	name string
 	src  string
 }{
 	{"tuple_local_f64", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45; was 1 on wasm
+function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`},
 	{"tuple_local_destructured", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); let t = ps[0]; let (a, b) = t; return (b * 10.0) as i32; }`}, // 45; was 0 on wasm
+function main(): i32 { let ps = mk(); let t = ps[0]; let (a, b) = t; return (b * 10.0) as i32; }`},
 	{"foreach_loop_var", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); let acc: f64 = 0.0; for p in ps { acc = acc + p.1; } return (acc * 10.0) as i32; }`}, // 45; was 1 on wasm — no ExprIndex node, so only the upstream fix reaches it
+function main(): i32 { let ps = mk(); let acc: f64 = 0.0; for p in ps { acc = acc + p.1; } return (acc * 10.0) as i32; }`},
 	{"tuple_local_i64", `function mk(): (i32, i64)[] { return [(5, 4000000000)]; }
-function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 / 100000000) as i32 + t.0; }`}, // 45
+function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 / 100000000) as i32 + t.0; }`},
 	{"direct_index_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — no intermediate local: always worked
+function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`},
 	{"annotated_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps: (i32, f64)[] = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — the annotation supplies the element types: always worked
+function main(): i32 { let ps: (i32, f64)[] = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`},
 	{"string_elem_control", `function mk(): (i32, string)[] { return [(5, "abcde")]; }
-function main(): i32 { let ps = mk(); let t = ps[0]; return t.1.len() + 40; }`}, // 45 — a 4-byte pointer survived the untyped read even before the fix
-	{"literal_control", `function main(): i32 { let ps = [(0, 4.5)]; let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — the literal arm already inferred the tag
+function main(): i32 { let ps = mk(); let t = ps[0]; return t.1.len() + 40; }`},
+	{"literal_control", `function main(): i32 { let ps = [(0, 4.5)]; let t = ps[0]; return (t.1 * 10.0) as i32; }`},
 }
 
-// TestSelfHostArrtupCallBindWasm is the leg the bug was on.
 func TestSelfHostArrtupCallBindWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping array-of-tuples call-bind wasm cases")
@@ -81,8 +70,6 @@ func TestSelfHostArrtupCallBindWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrtupCallBindX86_64 pins that the register backend, which was
-// already correct because its slots are 8 bytes wide, stays correct.
 func TestSelfHostArrtupCallBindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

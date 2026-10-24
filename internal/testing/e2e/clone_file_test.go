@@ -1,4 +1,3 @@
-// `clone_file(src, dest)`: a copy-on-write clone where the filesystem has one.
 package e2e
 
 import (
@@ -12,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Either the clone happened and dest reads back as src, or it was refused and
-// left no dest behind. Darwin's clone never replaces an existing dest.
 const cloneFileSource = `import "std/errno";
 
 function main(): i32 {
@@ -63,8 +60,6 @@ function main(): i32 {
 }
 `
 
-// runCloneFile builds the probe for target and runs it in a directory holding
-// src.txt, returning what it printed.
 func runCloneFile(t *testing.T, target string, runner []string) string {
 	t.Helper()
 	fern := buildFernCLI(t)
@@ -95,7 +90,6 @@ func runCloneFile(t *testing.T, target string, runner []string) string {
 	return string(out)
 }
 
-// APFS clones, so on Apple Silicon the probe must report one.
 func TestArm64DarwinCloneFile(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		runCloneFile(t, "arm64-darwin", nil)
@@ -106,9 +100,6 @@ func TestArm64DarwinCloneFile(t *testing.T) {
 	}
 }
 
-// hostClones is what clone_file must answer in a test directory on this
-// host: whether FICLONE works on the filesystem under it, asked by Go in a
-// sibling directory, and on Darwin a clone, since APFS has one.
 func hostClones(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "darwin" {
@@ -135,8 +126,6 @@ func hostClones(t *testing.T) string {
 	return "cloned\n"
 }
 
-// A Linux runtime clones exactly where the filesystem can, and a refused
-// clone leaves no destination behind.
 func TestCloneFileX86_64(t *testing.T) {
 	runner := e2eharness.X86_64Runner(t)
 	if runner == nil {
@@ -147,7 +136,6 @@ func TestCloneFileX86_64(t *testing.T) {
 	}
 }
 
-// The interpreter asks the host's own call (clonefile_*.go).
 func TestInterpCloneFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("hello\n"), 0o644); err != nil {
@@ -168,7 +156,6 @@ func TestInterpCloneFile(t *testing.T) {
 	}
 }
 
-// Neither WASI preview has a clone.
 func TestCloneFileWasmIsUnsupported(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("requires wasmtime")
@@ -178,7 +165,6 @@ func TestCloneFileWasmIsUnsupported(t *testing.T) {
 	}
 }
 
-// The arm64-linux runtime asks FICLONE through its own syscall table.
 func TestCloneFileArm64Linux(t *testing.T) {
 	var runner []string
 	if q := e2eharness.Arm64Runner(t); q != "" {

@@ -1,8 +1,8 @@
-// Phase 5e enum drop-reuse. A uniform pointer-payload enum self-
-// overwritten in a loop reuses its box in place when uniquely owned.
-// The differential gate runs this both free-off and free-on; the
-// result must be byte-identical, proving the reuse is rc-neutral (no
-// over-release, no use-after-free) across the cross-variant box reuse.
+
+
+
+
+
 enum Bag { Keep(i32[]), Swap(i32[]) }
 
 function head(b: Bag): i32 {

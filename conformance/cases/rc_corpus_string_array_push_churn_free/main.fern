@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// String[] grown by push then reclaimed: each pushed element moves
-// into the array (source escapes → not separately freed); the
-// array's __fern_drop_arr_str frees all of them at the last
-// reference. Exercises the push/grow + element-walk interaction.
-// 5 pushes/iter, arr[3].len()=2; 100x. 100*2=200.
+
+
+
+
+
+
+
+
 function mk(seed: i32): i32 {
     let arr: string[] = [];
     let k: i32 = 0;

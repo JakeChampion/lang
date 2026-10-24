@@ -11,12 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExportTupleResultRunsViaConsumer is the self-host parity gate for
-// the P6 tuple result export (the Go side is TestExportTupleResultRunsViaConsumer).
-// The self-hosted compiler emits an exporter core whose wrapper copies the Fern
-// tuple's i32 elements (element i @ i*4, no header) into the canonical
-// (element i @ i*4) return area; the Go composer lifts it; a Fern consumer
-// `@import`s it and reads p.0/p.1, linked + run under wasmtime.
 func TestSelfHostExportTupleResultRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

@@ -5,11 +5,6 @@ import "std/string";
 import "core/bigint";
 import "std/crypto/montgomery" as mont;
 
-// tests/stdlib/montgomery_test.fern — std/crypto/montgomery against
-// core/bigint over P-256's field prime and P-384's group order: products,
-// sums, differences and inverses of values at the edges (0, 1, p - 1) and
-// between, and in_range at its bounds.
-
 const P256: string = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
 
 const N384: string = "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
@@ -46,15 +41,12 @@ function reduced(v: bigint.BigInt, p: bigint.BigInt): bigint.BigInt {
   return r;
 }
 
-// values are the operands tried: 0, 1, 2, p - 1, p - 2 and three between.
 function values(p: bigint.BigInt, bytes: i32): string[] {
   let one: bigint.BigInt = bigint.from_u64(1 as u64);
   let mid: bigint.BigInt = reduced(big("123456789abcdef0fedcba9876543210").mul(big("deadbeefcafef00d1234567890abcdef0123")), p);
   return [hex_of(bigint.zero(), bytes), hex_of(one, bytes), hex_of(one.add(one), bytes), hex_of(p.sub(one), bytes), hex_of(p.sub(one).sub(one), bytes), hex_of(mid, bytes), hex_of(reduced(mid.mul(mid), p), bytes), hex_of(p.shr(1), bytes)];
 }
 
-// mismatch is the first operation whose result differs from bigint's, or
-// "" when none does.
 function mismatch(modulus: string, bytes: i32): string {
   let m: mont.Modulus = mont.modulus(modulus, bytes);
   let p: bigint.BigInt = big(modulus);
@@ -122,7 +114,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

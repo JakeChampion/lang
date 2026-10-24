@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// A shift masks its count to the operand width — 5 bits at i32, 6 at i64 — so
-// a count at or past the width wraps rather than annihilating the value, and a
-// negative count wraps to the top of the range. Every layer that evaluates a
-// shift has to apply that rule independently, and each of them reached it a
-// different way: the constant folder works in Go's int64 (where `1 << 64` is
-// 0), x86 masks implicitly to the width of the destination register, arm64 to
-// the width of the register the instruction names, wasm by opcode.
-//
-// This program checks the layers against each other rather than against a
-// hardcoded table: CA/CB/CC fold at compile time while lsh/rsh compute the
-// same shifts at runtime, so a divergence between the folder and codegen shows
-// up as a missing bit. All eight checks pass → 255.
 const shiftCountMaskSrc = `const CA: i32 = 1 << 64;
 const CB: i32 = 1 << 65;
 const CC: i32 = 256 >> 65;

@@ -3,8 +3,6 @@ import "../ssalargepushranges" as ranges;
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("large-push partition controls failed: " + group);
-    // Every nonzero native status is already used in the composed driver.
-    // The printed module and case identify this deliberately shared status.
     exit(180);
   }
 }
@@ -25,8 +23,6 @@ function invalid(): void {
   require(ranges.expected_class(cross) == 4 && ranges.rounded(cross) == -(1 as i64), "same bin crossing highest bit");
 }
 
-// Scalar oracle grows consecutive bins without the index-modulo formula used
-// by capacities(). This is deliberately independent of the instruction ISA.
 function scalar_class(n: i32): i32 {
   let cap = 524288;
   let step = 131072;
@@ -37,7 +33,6 @@ function scalar_class(n: i32): i32 {
     index = index + 1;
     if (cap == boundary) {
       step = step * 2;
-      // No next boundary is needed after the final representable bin.
       if (boundary < 1073741824) {
         boundary = boundary * 2;
       }
@@ -64,8 +59,6 @@ function bins(): void {
   }
 }
 
-// This arithmetic replay derives the bit-mask result without using rounded()
-// or its expected bin as an input. Bounds keep every operation mathematical.
 function arithmetic(n: i32): i64 {
   let x = if (n < 524288) { 524288 as i64 } else { n as i64 };
   let quantum = 1 as i64;
@@ -77,9 +70,6 @@ function arithmetic(n: i32): i64 {
   return sum / quantum * quantum;
 }
 
-// The limit changes only how many partition rows are checked. Full input
-// coverage is symbolic through the monotone interval calculation, not a claim
-// of enumerating every byte size or executing the supplied helper.
 pub function audit(limit: i32): void {
   let rows = ranges.intervals();
   require(rows.len() == 57 && limit >= 1 && limit <= rows.len(), "partition count and audit bound");

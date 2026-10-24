@@ -9,62 +9,39 @@ import (
 	"testing"
 )
 
-// `@derive(Ord)` on the self-host IR path. Like the derived `eq`, the
-// synthesised `cmp` emitted `self.f.cmp(other.f)` for every field; a scalar
-// field's `.cmp()` resolves to core/cmp's `i32.cmp` (etc.), which the self-host
-// loader never loads (local + builtin only), so the module bailed to the legacy
-// AST emitter. The synthesiser now inlines core/cmp's numeric Ord body for a
-// NUMERIC-scalar field/payload (`vn = -1 / 1 / 0` via `<` / `>`), keeping
-// `.cmp()` delegation for nominal fields. The inline form matches core/cmp's
-// numeric `cmp` exactly, so the native/self-host differential oracle still
-// agrees. (A string field's Ord routes through `impl Ord for string`, not a primitive
-// `<`, so a string-keyed derive(Ord) is the one shape that still falls back —
-// it stays correct on the native backends, just not on the self-host IR path.)
 var deriveOrdCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// struct, i32 fields: lexicographic cmp (first differing field wins).
 	{"struct-i32", `import "core/cmp";
 @derive(cmp.Ord)
 struct P { x: i32, y: i32 }
 function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 3 }; let c = P { x: 1, y: 2 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(c) == 0) { return 42; } return 0; }`, 42},
-	// struct with a mix of numeric widths.
 	{"struct-i64", `import "core/cmp";
 @derive(cmp.Ord)
 struct Q { a: i64, b: i32 }
 function main(): i32 { let x = Q { a: 5, b: 1 }; let y = Q { a: 5, b: 2 }; let z = Q { a: 9, b: 0 }; if (x.cmp(y) < 0 && z.cmp(x) > 0 && x.cmp(x) == 0) { return 42; } return 0; }`, 42},
-	// nested struct: the outer cmp delegates to the inner struct's own derived
-	// `.cmp()` for the nominal field (exercises dv_cmp_stmts's non-numeric arm).
 	{"struct-nested", `import "core/cmp";
 @derive(cmp.Ord)
 struct Inner { v: i32 }
 @derive(cmp.Ord)
 struct Outer { inner: Inner, tag: i32 }
 function main(): i32 { let a = Outer { inner: Inner { v: 5 }, tag: 1 }; let b = Outer { inner: Inner { v: 6 }, tag: 0 }; let c = Outer { inner: Inner { v: 5 }, tag: 1 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(c) == 0) { return 42; } return 0; }`, 42},
-	// enum: variant order by declaration index; same variant compares payload.
 	{"enum-numeric", `import "core/cmp";
 @derive(cmp.Ord)
 enum E { A(i32), B(i32), C }
 function main(): i32 { if (A(1).cmp(A(2)) < 0 && A(5).cmp(B(0)) < 0 && C.cmp(A(0)) > 0 && A(3).cmp(A(3)) == 0) { return 42; } return 0; }`, 42},
-	// The OPERATOR form: `a < b` is `a.cmp(b) < 0`. The self-host IR path used
-	// to compare the two box POINTERS instead, so the answer was the boxes'
-	// relative allocation addresses — which for equal values made `a < c` true
-	// and `a >= c` false (#6009).
 	{"struct-operator", `import "core/cmp";
 @derive(cmp.Ord)
 struct P { x: i32, y: i32 }
 function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 5 }; let c = P { x: 1, y: 2 }; if (a < b && b > a && a <= c && a >= c && !(a < c) && !(c > a)) { return 42; } return 0; }`, 42},
-	// Enum operands, both freshly constructed and held in locals.
 	{"enum-operator", `import "core/cmp";
 @derive(cmp.Ord)
 enum E { A(i32), B(i32), C }
 function main(): i32 { let p = A(3); if (A(1) < A(2) && A(5) < B(0) && C > A(0) && !(A(3) < A(3)) && p <= A(3) && p >= A(3)) { return 42; } return 0; }`, 42},
 }
 
-// TestNativeDeriveOrd runs the derived-Ord programs through the native
-// interpreter + x86-64 + wasm backends, oracle-checked.
 func TestNativeDeriveOrd(t *testing.T) {
 	for _, tc := range deriveOrdCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,9 +63,6 @@ func TestNativeDeriveOrd(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeriveOrdIRX86_64 routes each case through the self-hosted x86-64
-// IR driver, pins routing to "ir" (the synthesiser's inline numeric compare
-// keeps the derived cmp IR-eligible), and oracle-checks the exit code.
 func TestSelfHostDeriveOrdIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -122,7 +96,6 @@ func TestSelfHostDeriveOrdIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeriveOrdIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostDeriveOrdIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host derive-ord wasm IR e2e")

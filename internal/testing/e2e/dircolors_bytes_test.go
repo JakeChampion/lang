@@ -18,7 +18,6 @@ func TestDircolorsRawBytes(t *testing.T) {
 	for _, target := range []string{"interp", "arm64-darwin", "x86-64-linux", "arm64-linux", "wasm32-wasi", "wasm32-preview2"} {
 		t.Run(target, func(t *testing.T) {
 			if target == "interp" {
-				// The CLI separates program arguments from its source with --.
 				e2eharness.RunDircolorsByteCases(t, "--", []string{fern, "-interp", src}, nil)
 				return
 			}

@@ -1,22 +1,22 @@
 import "core/map";
-// An integer key that is not spelled `i32`. map_key_kind_of asked for the
-// literal `Map[i32,` prefix, so a `u8` or `u32` key took the STRING column and
-// the self-host's insert path read the key's VALUE as an address: this program
-// segfaulted where the interpreter answered it (#9973). Both maps are grown
-// past their initial capacity so the rehash walks the key column too, and each
-// is read back through the shapes a key column is consumed by — len, has, get,
-// pair iteration, and the keys column itself.
-//
-// An `f32` key is NOT here and is not admitted at all: neither compiler gets
-// one to the key cell as an i32 on wasm, so the self-host refuses it rather
-// than accept on one target and emit a module wasmtime rejects on another
-// (#10008). TestSelfHostMapKeyWithNoColumnRefusesEverySurface pins that
-// refusal.
-//
-// The keys() column is read on the `u32` map rather than the `u8` one because
-// the u8 COLUMN is a separate question — the stride of the result array rather
-// than the column a key is stored in — and `map_u8_column` is the case for it.
-// Keeping them apart is what lets this one stay about the key column alone.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function main(): i32 {
     let small: Map[u8, i32] = map_new(2);
     let i: i32 = 0;
@@ -31,12 +31,12 @@ function main(): i32 {
     if (wide.len() != 9) { return 4; }
     if (wide.contains(1 as u32)) { return 5; }
 
-    // The u8 key column, read one entry at a time through pair iteration.
+
     let sum: i32 = 0;
     for (k, v) in small { sum = sum + (k as i32) + v; }
     if (sum != 198) { return 6; }
 
-    // The u32 key column, read as a materialised keys() array.
+
     let ksum: i32 = 0;
     for k in wide.keys() { ksum = ksum + (k as i32) + wide.get_or(k, "").len(); }
     if (ksum != 261) { return 7; }

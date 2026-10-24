@@ -20,75 +20,45 @@ func init() {
 	registerCorpus("join", joinCases)
 }
 
-// joinCases is join(1)'s corpus.
-//
-// Two halves repay the most cases. The first is the command line: `-o`
-// takes field specs as separate arguments and `-j1` / `-j2` take their
-// field from the next one, so a bare word after either is ambiguous
-// between an option argument and a file — and it is settled by how many
-// arguments follow, not by the word. The second is the order check,
-// which by default reports a disorder only once a line has already
-// proved unpairable, and even then not for the line that immediately
-// follows the first unpairable one.
 func joinCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	f1 := joinFile(t, dir, "f1", "a 1\nb 2\nc 3\n")
 	f2 := joinFile(t, dir, "f2", "a x\nb y\nd z\n")
-	// Comma-separated, with an empty field and a leading separator.
 	c1 := joinFile(t, dir, "c1", "a,1\nb,2\n")
 	c2 := joinFile(t, dir, "c2", "a,x\nb,y\n")
 	cempty := joinFile(t, dir, "cempty", "a,,1\nb,2,\n")
 	clead := joinFile(t, dir, "clead", ",a,1\n,b,2\n")
-	// Three fields, so `-o auto` has a width to take.
 	w1 := joinFile(t, dir, "w1", "a 1 2\nb 3 4\n")
-	// Case differences for -i.
 	u1 := joinFile(t, dir, "u1", "A 1\nb 2\n")
 	u2 := joinFile(t, dir, "u2", "a x\nB y\n")
-	// Duplicate keys on both sides: the cross product.
 	d1 := joinFile(t, dir, "d1", "a 1\na 2\nb 3\n")
 	d2 := joinFile(t, dir, "d2", "a x\na y\n")
-	// A repeated key then a single one, against both keys once: the group
-	// built for `a` must not be read again when `b` pairs one line a side.
 	d3 := joinFile(t, dir, "d3", "a 1\na 2\nb 3\nc 4\nc 5\n")
 	d4 := joinFile(t, dir, "d4", "a x\nb y\nc z\n")
-	// Out of order in file 1, with everything still pairable.
 	o1 := joinFile(t, dir, "o1", "b 1\na 2\nc 3\n")
 	o2 := joinFile(t, dir, "o2", "a x\nb y\nc z\n")
-	// Out of order and unpairable, which is what the default check
-	// waits for.
 	p1 := joinFile(t, dir, "p1", "a 1\nz 2\nc 3\nb 4\n")
 	p2 := joinFile(t, dir, "p2", "a x\nq y\n")
-	// Out of order only past the point where the other file ended.
 	q1 := joinFile(t, dir, "q1", "a 1\nc 2\nb 3\n")
 	q2 := joinFile(t, dir, "q2", "a x\n")
-	// Out of order with the first line unpairable from file 1, which
-	// exempts the line that follows it.
 	e1 := joinFile(t, dir, "e1", "b 1\na 2\n")
 	e2 := joinFile(t, dir, "e2", "z x\n")
 	empty := joinFile(t, dir, "empty", "")
 	blank := joinFile(t, dir, "blank", "\n\na 1\n")
-	// Trailing separators: a line ending in one has an empty field
-	// after it, which -e fills.
 	tr1 := joinFile(t, dir, "tr1", "a 1 \n")
-	// No terminator on the last line.
 	n1 := joinFile(t, dir, "n1", "a 1")
 	n2 := joinFile(t, dir, "n2", "a x")
-	// NUL-terminated records for -z.
 	z1 := joinFile(t, dir, "z1", "a 1\x00b 2\x00")
 	z2 := joinFile(t, dir, "z2", "a x\x00b y\x00")
-	// Headers.
 	h1 := joinFile(t, dir, "h1", "H1 A\na 1\n")
 	h2 := joinFile(t, dir, "h2", "H2 B\na x\n")
 	h3 := joinFile(t, dir, "h3", "H1 A\n")
-	// A name that is not valid UTF-8, and one that needs quoting.
 	raw := rawByteFile(t, dir, "a 1\n")
 	missing := filepath.Join(dir, "nosuch")
-	// A directory: open(2) succeeds and read(2) fails EISDIR.
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	// Enough lines that the output crosses a write block.
 	var big strings.Builder
 	for i := 0; i < 20000; i++ {
 		big.WriteString("k" + itoa(i) + " v" + itoa(i) + "\n")
@@ -96,7 +66,6 @@ func joinCases(t *testing.T) []invocation {
 	b1 := joinFile(t, dir, "b1", big.String())
 
 	return []invocation{
-		// The default join.
 		{name: "default", args: []string{f1, f2}},
 		{name: "duplicate keys", args: []string{d1, d2}},
 		{name: "a group on one side then a single key", args: []string{d3, d4}},
@@ -108,7 +77,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "no trailing newline", args: []string{n1, n2}},
 		{name: "large output", args: []string{b1, b1}},
 
-		// -a and -v.
 		{name: "a1", args: []string{"-a1", f1, f2}},
 		{name: "a2", args: []string{"-a2", f1, f2}},
 		{name: "a1 and a2", args: []string{"-a1", "-a2", f1, f2}},
@@ -131,7 +99,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "v3", args: []string{"-v3", f1, f2}},
 		{name: "v0", args: []string{"-v0", f1, f2}},
 
-		// Join fields.
 		{name: "field 2 both", args: []string{"-j", "2", f1, f2}},
 		{name: "field 2 of file 1", args: []string{"-1", "2", f1, f2}},
 		{name: "field 2 of file 2", args: []string{"-2", "2", f1, f2}},
@@ -156,8 +123,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "incompatible 1 twice", args: []string{"-1", "1", "-1", "2", f1, f2}},
 		{name: "compatible j twice", args: []string{"-j", "1", "-j", "1", f1, f2}},
 
-		// The obsolete -j1 / -j2 forms, and the counting that decides
-		// whether the next word is their field or a file.
 		{name: "obsolete j1", args: []string{"-j1", "2", f1, f2}},
 		{name: "obsolete j2", args: []string{"-j2", "2", f1, f2}},
 		{name: "obsolete j1 with nothing to take", args: []string{"-j1", f1, f2}},
@@ -173,7 +138,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "j with a space is not obsolete", args: []string{"-j", "1", "2", f1, f2}},
 		{name: "j glued with two digits", args: []string{"-j12", f1, f2}},
 
-		// -o.
 		{name: "o one spec", args: []string{"-o", "1.1", f1, f2}},
 		{name: "o comma separated", args: []string{"-o", "0,1.2,2.2", f1, f2}},
 		{name: "o blank separated", args: []string{"-o", "1.1 2.2", f1, f2}},
@@ -215,7 +179,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "o field of the other file", args: []string{"-v2", "-o", "1.1", f1, f2}},
 		{name: "o zero on an unpairable from file 1", args: []string{"-v1", "-o", "0", f1, f2}},
 
-		// -e.
 		{name: "e without o", args: []string{"-a1", "-e", "E", f1, f2}},
 		{name: "e with o", args: []string{"-a1", "-o", "0,1.2,2.2", "-e", "E", f1, f2}},
 		{name: "e empty", args: []string{"-a1", "-o", "0,1.2,2.2", "-e", "", f1, f2}},
@@ -224,7 +187,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "e needs an argument", args: []string{"-e"}},
 		{name: "e then a spare word", args: []string{"-e", "X", "1.1", f1, f2}},
 
-		// -t.
 		{name: "t comma", args: []string{"-t,", c1, c2}},
 		{name: "t with a space", args: []string{"-t", ",", c1, c2}},
 		{name: "t empty means the whole line", args: []string{"-t", "", f1, f1}},
@@ -238,20 +200,17 @@ func joinCases(t *testing.T) []invocation {
 		{name: "t is also the output separator", args: []string{"-t,", "-o", "1.1,2.2", c1, c2}},
 		{name: "t tab", args: []string{"-t", "\t", f1, f2}},
 
-		// -i.
 		{name: "ignore case", args: []string{"-i", u1, u2}},
 		{name: "ignore case long", args: []string{"--ignore-case", u1, u2}},
 		{name: "case matters by default", args: []string{u1, u2}},
 		{name: "ignore case after the operands", args: []string{u1, u2, "-i"}},
 		{name: "ignore case with POSIXLY_CORRECT", args: []string{u1, u2, "-i"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// -z.
 		{name: "zero terminated", args: []string{"-z", z1, z2}},
 		{name: "zero terminated long", args: []string{"--zero-terminated", z1, z2}},
 		{name: "zero terminated over newline records", args: []string{"-z", f1, f2}},
 		{name: "zero terminated with unpairables", args: []string{"-z", "-a1", "-a2", z1, z2}},
 
-		// The order check.
 		{name: "unsorted but all pairable", args: []string{o1, o2}},
 		{name: "unsorted and checked", args: []string{"--check-order", o1, o2}},
 		{name: "unsorted with nocheck", args: []string{"--nocheck-order", o1, o2}},
@@ -268,7 +227,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "disorder in file 2", args: []string{"--check-order", o2, o1}},
 		{name: "disorder found under -i", args: []string{"--check-order", "-i", u1, u2}},
 
-		// --header.
 		{name: "header", args: []string{"--header", h1, h2}},
 		{name: "header with o", args: []string{"--header", "-o", "0,1.2,2.2", h1, h2}},
 		{name: "header with v1", args: []string{"--header", "-v1", h1, h2}},
@@ -279,7 +237,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "header does not order-check across itself", args: []string{"--header", "--check-order", h1, h2}},
 		{name: "header with a missing file", args: []string{"--header", h1, missing}},
 
-		// Operands.
 		{name: "no operands"},
 		{name: "one operand", args: []string{f1}},
 		{name: "three operands", args: []string{f1, f2, f1}},
@@ -300,7 +257,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "dashdash", args: []string{"--", f1, f2}},
 		{name: "dashdash with three operands", args: []string{"--", f1, f2, f1}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x", f1, f2}},
 		{name: "unrecognized long option", args: []string{"--foo", f1, f2}},
 		{name: "long flag rejects a value", args: []string{"--header=x", f1, f2}},
@@ -318,7 +274,6 @@ func joinCases(t *testing.T) []invocation {
 		{name: "help rejects a value", args: []string{"--help=x"}},
 		{name: "version rejects a value", args: []string{"--version=x"}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{f1, f2}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{f1, f2}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{b1, b1}, stdout: stdoutClosed},

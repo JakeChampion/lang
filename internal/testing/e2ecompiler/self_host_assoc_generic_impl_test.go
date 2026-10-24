@@ -7,35 +7,11 @@ import (
 	"testing"
 )
 
-// A PARAMETRIC impl binding an associated type to its own type parameter
-// (`impl[T] Carrier for Box[T] { type Ok = T; }`) — the shape no
-// associated-type test in either compiler covered, every one of which binds a
-// concrete type on a NON-generic impl.
-//
-// The self-host resolves projections in the parser, by rewriting the spelling
-// `Base::Name` to the impl's binding. Three things defeated it here, and the
-// cases below are chosen so each is load-bearing:
-//
-//   - the base recovery scanned back over identifier bytes only, so the
-//     `Box[T]::Ok` that `subst_self` produces for every method of a parametric
-//     impl recovered the base "T" and matched nothing;
-//   - the impl lookup compared the `for` spelling verbatim, so `Box[T]` was
-//     never found for a `Box[i32]` base;
-//   - a bound written in the impl's own parameter needs the base's type
-//     arguments substituted into it, which nothing did.
-//
-// Erasure hides the first two whenever the answer does not depend on the type:
-// the self-host gave the RIGHT exit code for an i32 payload while resolving
-// nothing, because its uniform 8-byte slot is correct either way. So the
-// corpus turns on the type — `.len()` on a string payload is what an
-// unresolved projection gets wrong — rather than on the value alone.
 var assocGenericImplCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The failing case before the fix: the self-host returned 0, native 5.
-	// `b.get()` must be a string for `.len()` to mean string length.
 	{"binding-typed-use-site", `trait Carrier {
     type Ok;
     function get(self: Self): Self::Ok;
@@ -49,7 +25,6 @@ function main(): i32 {
     let b: Box[string] = Box { v: "hello" };
     return b.get().len();
 }`, 5},
-	// The same binding read through a bounded generic rather than directly.
 	{"bounded-generic-projection", `trait Carrier {
     type Ok;
     function get(self: Self): Self::Ok;
@@ -64,10 +39,6 @@ function main(): i32 {
     let b: Box[i32] = Box { v: 20 };
     return b.get() + unwrap(b);
 }`, 40},
-	// A projection written on a CONCRETE base, which is what makes the
-	// type-argument substitution observable: the binding is `T`, the answer
-	// is i32. Also the only case that needs `Box[i32]::Ok` to PARSE — the
-	// type parser took a `::` only before a bracket group, never after one.
 	{"explicit-concrete-base", `trait Carrier {
     type Ok;
     function get(self: Self): Self::Ok;
@@ -82,8 +53,6 @@ function main(): i32 {
     let b: Box[i32] = Box { v: 21 };
     return twice(b.get());
 }`, 42},
-	// A binding that is a COMPOSITE of the parameter rather than the bare
-	// parameter, so the substitution has to reach inside the spelling.
 	{"composite-binding", `trait Holder {
     type Item;
     function take(self: Self): Self::Item;
@@ -98,8 +67,6 @@ function main(): i32 {
     let o: Option[i32] = b.take();
     match (o) { Some(v) => { return v + 1; }, None => { return 0; } }
 }`, 42},
-	// Two parameters, each bound to the OTHER one's associated type, so a
-	// substitution that matched positionally by accident still fails.
 	{"parameters-bound-out-of-order", `trait Two {
     type A;
     type B;
@@ -119,9 +86,6 @@ function main(): i32 {
 }`, 42},
 }
 
-// TestSelfHostAssocGenericImplX86_64 — the corpus through the self-hosted
-// x86-64 compiler. The Go checker's side of the same binding is
-// TestAssociatedTypesGenericImplBinding.
 func TestSelfHostAssocGenericImplX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -155,9 +119,6 @@ func TestSelfHostAssocGenericImplX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAssocGenericImplArm64 — the arm64 counterpart. Projection
-// resolution is a parser pass shared by every backend, so this guards that the
-// shared path stays sound rather than testing the emitter.
 func TestSelfHostAssocGenericImplArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range assocGenericImplCases {

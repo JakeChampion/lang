@@ -1,16 +1,16 @@
-// Pins E057: a cell's element must be built from scalars, strings, arrays,
-// tuples, maps, structs and enums. Those are immutable data, so a cell can
-// never end up inside its own payload and reference counting needs no cycle
-// collector. Each refusal below names a part that breaks that:
-//
-// - a function value can capture the cell it is stored in, which is the
-//   cycle `tie` would build if Handler were admitted;
-// - a cell inside the element is a second mutable slot that can point back;
-// - a type parameter could be instantiated with either of those, and the
-//   check does not wait for the instantiation;
-// - a borrowed view would be outlived by the cell.
-//
-// cell_composite_state is the half that is admitted.
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct Handler { name: string, run: () => i32 }
 
 enum Slot { Empty, Full(Cell[i32]) }

@@ -1,11 +1,5 @@
 package e2eharness
 
-// PeerKeyProbe exercises `tcp_socket_ctl` op 7, the peer's address as a
-// 32-bit key, over a loopback connection: both ends of one answer
-// 127.0.0.1 packed as `packed_v4` packs it, a listener answers 0, and
-// std/net's `peer_key` reads the same through its Option. Exit 42 and
-// "ok" on stdout iff every check holds, else the number of the first
-// failing check.
 func PeerKeyProbe() string {
 	return `import "core/int";
 import "std/net";

@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCheckValueBlockPosition holds the position `-check` prints for
-// a value if, match or block refused as an argument to the Go checker's: the
-// expression's opening token, not none.
 func TestSelfHostCheckValueBlockPosition(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -73,8 +70,6 @@ func TestSelfHostCheckLiteralMatchArmPosition(t *testing.T) {
 	}
 }
 
-// Generic calls carry their opening bracket position; plain calls carry the
-// opening parenthesis. Exercise both methods and free functions through -check.
 func TestSelfHostCheckGenericCallPosition(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -98,8 +93,6 @@ func TestSelfHostCheckGenericCallPosition(t *testing.T) {
 	}
 }
 
-// An f-string placeholder desugars to `(e).to_string()`; a missing
-// `to_string` is reported at the f-string, where the Go checker reports it.
 func TestSelfHostCheckFStringToStringPosition(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)

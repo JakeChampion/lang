@@ -1,13 +1,6 @@
 import "std/test";
 import "std/array";
 
-// tests/stdlib/array_count_sum_by_test.fern — pure-Fern coverage of std/array's
-// closure-aggregate verbs count_where (tally of matching elements — the
-// allocation-free companion to filter(…).len()) and sum_by (sum of an i32
-// projection over any element type — the projection sibling of the i32[]-only
-// sum). Free-function and method forms, over i32 and string arrays, incl. the
-// empty and none-match cases.
-
 function cs_is_even(x: i32): boolean {
   return x % 2 == 0;
 }

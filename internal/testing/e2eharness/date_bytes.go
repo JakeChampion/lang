@@ -130,7 +130,6 @@ func RunDateByteCases(t *testing.T, bin string, runner []string, census func(*te
 			}
 			got := normalize(diagnostic)
 			if tc.InvalidZone {
-				// D10: a timezone crossing into text must be complete UTF-8.
 				if code != 1 || out != "" || !strings.Contains(got, "invalid date") || tc.Debug && !strings.Contains(got, "invalid UTF-8 timezone") {
 					t.Fatalf("invalid timezone: exit %d, stdout %q, stderr %q", code, out, got)
 				}

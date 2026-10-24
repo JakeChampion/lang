@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// CheckExampleTr exercises the example's byte stream, including invalid UTF-8
-// and squeeze state spanning read_chunk_bytes calls.
 func CheckExampleTr(t *testing.T, command func(...string) *exec.Cmd, census bool) {
 	t.Helper()
 	all := make([]byte, 256)

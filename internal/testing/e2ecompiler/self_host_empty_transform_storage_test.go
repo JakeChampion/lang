@@ -40,9 +40,6 @@ function main(): i32 { return check(%s, %q); }
 `, expression, want)
 }
 
-// Empty transforms must allocate the same size that string release accounts for.
-// Retained aliases and concatenation exercise ownership of the result as well
-// as its value; equal allocation/free counts alone miss a size mismatch.
 func TestSelfHostEmptyTransformStorage(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

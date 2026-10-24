@@ -1,28 +1,3 @@
-// What the whole program can reach, decided together with the branches it
-// can take: an interprocedural sparse conditional constant propagation over
-// the semantic graphs.
-//
-// It starts optimistic. Only the roots are reached, no record field has a
-// value yet, no enum variant is built, and no function returns. A reached
-// function's blocks are walked from its entry over the edges its facts
-// allow, and what it builds, names and returns there widens the facts; a
-// function that read a fact that widened is walked again. At the fixpoint a
-// branch one value decides becomes a jump, a branch on a value nothing
-// produces is unreachable, and a function nothing reached is dropped. So a
-// field no reachable construction sets never enables the code it guards,
-// and a variant only that code builds is never tested true: std/serve's
-// HTTP/2 is not in a program that never calls `with_h2`.
-//
-// Facts are kept for the bool and i32 fields of records, the variants of
-// declared enums, what scalar, if any, each function returns, and whether
-// any value of a record type exists: an array of one with none is empty. A
-// type a value of which can arrive other than by a construction in a reached
-// body is opaque, its fields any value and its variants all built: an
-// extern's or a dyn narrowing's result, the result of a function value that
-// itself arrived, a root's parameter, and everything such a value holds. A
-// closure's result is what its body built, and a paired call's payload read
-// back (sempair) what its callee built. A closure's construction builds its
-// environment, the captures in the slots after the body's address.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -32,22 +7,14 @@ import "./semthread";
 import "./typeinfo";
 import "./util";
 
-// `live[i]` says whether anything reached `funcs[i]` and `rewritten[i]`
-// whether a branch in it was decided. `ok` is false when a reached function
-// could not be walked, and the module is then left as it was.
 pub struct Reached { funcs: ssasem.Func[], live: boolean[], rewritten: boolean[], ok: boolean }
 
-// `usable[i]` marks the functions with a body to walk, `blocked[i]` those
-// whose references cannot be seen (a refusal), and `roots[i]` those called
-// from outside the bodies, whose arguments are values no body here built.
 pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blocked: boolean[], roots: boolean[]): Reached {
   let ix: util.NameIndex = util.name_index(names);
   let u: Universe = universe(funcs, usable);
   let op: util.NameIndex = opaque_types(funcs, ix, usable, roots, u);
   let ctx: Ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u), counters: counters_of(funcs, usable, u) };
   let w: World = start(ctx, roots, op, zeroed(funcs, usable));
-  // A function's last walk is under the final facts: a fact it read that
-  // widened after would have queued it again.
   let walks: Walk[] = [];
   while (walks.len() < funcs.len()) {
     walks = walks.append(Walk { vals: [], exec: [], edges: [], stale: [], keys: [], changed: false });
@@ -83,10 +50,6 @@ pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blo
   return Reached { funcs: out, live: w.reach, rewritten: changed, ok: true };
 }
 
-// ---- the lattice -----------------------------------------------------------
-
-// A value's lattice is one i64: an i32 constant, or one of the two values
-// no i32 is, TOP (nothing produced it yet) and BOTTOM (any value).
 function top(): i64 {
   return 4294967296i64;
 }
@@ -125,12 +88,6 @@ function tracked(t: typeinfo.Type): boolean {
   return ssasem.is_bool(t) || ssasem.is_i32(t);
 }
 
-// ---- the facts' keys -------------------------------------------------------
-
-// Every tracked field (`type#index`) and every declared enum's variant
-// (`type|name`), with the type each belongs to.
-// `rec_fields[r][k]` is the fact index of field `k` of `recs[r]`, -1 for an
-// untracked one.
 struct Universe { fields: util.NameIndex, field_owner: string[], variants: util.NameIndex, variant_owner: string[], rec_ix: util.NameIndex, recs: semrecords.Record[], rec_fields: i32[][], enum_ix: util.NameIndex, enums: semrecords.Enum[] }
 
 function field_key(t: typeinfo.Type, k: i32): string {
@@ -193,8 +150,6 @@ function with_enum(u: Universe, e: semrecords.Enum): Universe {
   return u;
 }
 
-// ---- opaque types ----------------------------------------------------------
-
 function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], roots: boolean[], u: Universe): util.NameIndex {
   let op: util.NameIndex = util.name_index([]);
   let i: i32 = 0;
@@ -219,15 +174,6 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
   return op;
 }
 
-// Whether `ins` makes its `result` other than from the values a body built:
-// a call to what has no body here, or a function value naming one, a dyn
-// narrowing, an enum's widening from its member, a zero that is not a
-// record's (a zero record is its fields' zeros, `zeroed`), or any physical
-// operation. A closure's result is what its body built, unless the
-// function value itself arrived, which makes its result type opaque. A
-// variant-layout enum's zero is the null word, which is no variant, so like
-// a record's it does not make its type opaque; an option- or member-layout
-// enum's zero is a real variant (Some, or the member) and still does.
 function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[], u: Universe): boolean {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
@@ -239,8 +185,6 @@ function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usab
   return !(k >= 1 && k <= 10 || k == 35 || k == 36);
 }
 
-// A paired call's payload read back (sempair) is the value its callee
-// built, so it arrives no more than the call's result would.
 function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): boolean {
   if (ssasem.is_dyn_call(ins.str) || util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
     return false;
@@ -263,9 +207,6 @@ function is_record(t: typeinfo.Type): boolean {
   return false;
 }
 
-// is_variant_enum reports a declared enum laid out as tagged variants, whose
-// zero is the null word and names no variant. An option- or member-layout
-// enum's zero is a real variant, so it is not one of these.
 function is_variant_enum(t: typeinfo.Type, u: Universe): boolean {
   if let typeinfo.TypeUnion(_) = t {
     let e: i32 = u.enum_ix.find(ssasem.type_key(t));
@@ -274,7 +215,6 @@ function is_variant_enum(t: typeinfo.Type, u: Universe): boolean {
   return false;
 }
 
-// `t` and every type a value of it holds, added to `op`.
 function opaque_add(t: typeinfo.Type, op: util.NameIndex, u: Universe): util.NameIndex {
   match (t) {
     typeinfo.TypeStruct(s) => {
@@ -314,7 +254,6 @@ function opaque_all(ts: typeinfo.Type[], op: util.NameIndex, u: Universe): util.
   return op;
 }
 
-// The field types of the record or of every variant of the enum `key` names.
 function held_types(u: Universe, key: string): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let r: i32 = u.rec_ix.find(key);
@@ -334,7 +273,6 @@ function held_types(u: Universe, key: string): typeinfo.Type[] {
   return out;
 }
 
-// The record types some reached body may build as a zero.
 function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let i: i32 = 0;
@@ -354,14 +292,6 @@ function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
   return out;
 }
 
-// ---- who reads what --------------------------------------------------------
-
-// `keys[i][v]` is the fact the instruction defining value `v` of `funcs[i]`
-// reads or builds: a projection's field, a variant test's or construction's
-// variant, a record or closure construction's record (an index into
-// `u.recs`); -1 for any other.
-// `counters[r]` are the functions taking the length of an array of the
-// record `u.recs[r]`.
 struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][], counters: i32[][] }
 
 function lists(n: i32): i32[][] {
@@ -467,8 +397,6 @@ function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[
   return out;
 }
 
-// The record an array of which `t` is, by its index in `u.recs`; -1 for
-// any other type.
 function element_record(u: Universe, t: typeinfo.Type): i32 {
   if let typeinfo.TypeArray(a) = t {
     if let typeinfo.TypeStruct(_) = a.elem {
@@ -526,10 +454,6 @@ function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
   return 0 - 1;
 }
 
-// ---- the whole program's facts ---------------------------------------------
-
-// `inhabited[r]` says whether some value of the record `u.recs[r]` exists:
-// a reached body built one, or one can arrive (opaque) or be a zero.
 struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], inhabited: boolean[], queue: i32[], next: i32, queued: boolean[] }
 
 function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.Type[]): World {
@@ -552,8 +476,6 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
   return w;
 }
 
-// The records with a value before any body runs: the opaque ones and those
-// a body builds as a zero.
 function inhabited_at_start(u: Universe, op: util.NameIndex, zeros: typeinfo.Type[]): boolean[] {
   let out: boolean[] = [];
   for r in u.recs {
@@ -568,7 +490,6 @@ function inhabited_at_start(u: Universe, op: util.NameIndex, zeros: typeinfo.Typ
   return out;
 }
 
-// Every field unknown yet, but an opaque record's, which is any value.
 function opaque_fields(u: Universe, op: util.NameIndex): i64[] {
   let fields: i64[] = [];
   for owner in u.field_owner {
@@ -581,7 +502,6 @@ function opaque_fields(u: Universe, op: util.NameIndex): i64[] {
   return fields;
 }
 
-// `fields` with each field of a record a body builds as a zero holding 0.
 function zero_fields(u: Universe, own fields: i64[], zeros: typeinfo.Type[]): i64[] {
   for t in zeros {
     let r: i32 = u.rec_ix.find(ssasem.type_key(t));
@@ -628,13 +548,6 @@ function reached_name(ctx: Ctx, w: World, name: string): World {
   return reached(w, g);
 }
 
-// ---- one function's walk ---------------------------------------------------
-
-// Each value's lattice, which blocks run, and which of each block's incoming
-// edges do, parallel to its preds. `stale[pos]` marks a block entered along
-// an edge its preds do not list, whose phis are then any value.
-// `changed` says a round of the walk moved a value, executed a block or took
-// an edge; walk clears it at each round's start.
 struct Walk { vals: i64[], exec: boolean[], edges: boolean[][], stale: boolean[], keys: i32[], changed: boolean }
 
 function walk(ctx: Ctx, w: World, i: i32): Walk {
@@ -655,7 +568,6 @@ function walk(ctx: Ctx, w: World, i: i32): Walk {
   return wk;
 }
 
-// The parameters are any value; nothing else is produced yet.
 function entry_values(g: ssa.SFunc): i64[] {
   let vals: i64[] = [];
   while (vals.len() < g.nvals) {
@@ -676,8 +588,6 @@ function no_edges(g: ssa.SFunc): boolean[][] {
   return edges;
 }
 
-// One pass over the block at `pos`: its values, then the edges its branch
-// takes.
 function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, pos: i32): Walk {
   let g: ssa.SFunc = f.graph;
   let b: ssa.SBlock = g.blocks[pos];
@@ -766,7 +676,6 @@ function scalar_value(f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): i64 {
   return any();
 }
 
-// A boolean `!` of a constant.
 function unary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
   let a: i64 = wk.vals[ins.args[0]];
   if (ins.str != "!" || !ssasem.is_bool(f.values[ins.args[0]]) || a == bottom()) {
@@ -807,10 +716,6 @@ function select_value(wk: Walk, ins: ssa.SInst): i64 {
   return wk.vals[ins.args[2]];
 }
 
-// A field's fact, a variant test nothing built the variant for, and a call's
-// result. A paired call's position (sempair, `imm` naming its word) stays a
-// test: the branch on it is where the certifier settles whether the word
-// holds the payload's unit.
 function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.record_get()) {
@@ -850,8 +755,6 @@ function call_value(ctx: Ctx, w: World, ins: ssa.SInst): i64 {
   return w.rets[g];
 }
 
-// The comparisons of two bool or i32 constants, and the sum and difference
-// of two i32 ones that fit an i32.
 function binary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
   let a: i64 = wk.vals[ins.args[0]];
   let b: i64 = wk.vals[ins.args[1]];
@@ -918,8 +821,6 @@ function truth(b: boolean): i64 {
   return konst(0);
 }
 
-// ---- what a walk adds to the world -----------------------------------------
-
 function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
   let f: ssasem.Func = ctx.funcs[i];
   let pos: i32 = 0;
@@ -943,8 +844,6 @@ function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
   return w;
 }
 
-// `funcs[i]` returns `value`: a tracked scalar's lattice, anything else's
-// mere return.
 function returned(ctx: Ctx, w: World, i: i32, wk: Walk, value: i32): World {
   let r: i64 = any();
   if (tracked(ctx.funcs[i].result) && value >= 0) {
@@ -976,7 +875,6 @@ function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SIns
   return w;
 }
 
-// What `name` reaches: the function it names, or every arm of a dyn call.
 function named(ctx: Ctx, w: World, name: string): World {
   if (!ssasem.is_dyn_call(name)) {
     return reached_name(ctx, w, name);
@@ -987,10 +885,6 @@ function named(ctx: Ctx, w: World, name: string): World {
   return w;
 }
 
-// The record `u.recs[r]` built from `args`: inhabited, and each tracked
-// field, `first + k` from `args[k]`, widened by the operand's lattice: a
-// record from its fields, or a closure's environment from its captures (slot
-// 0 is the body's address).
 function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: i32): World {
   if (r < 0) {
     return w;
@@ -1013,16 +907,8 @@ function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: 
   return w;
 }
 
-// ---- the rewrite -----------------------------------------------------------
-
 struct Rewritten { f: ssasem.Func, changed: i32 }
 
-// A branch the walk decided keeps its test, and the side it never takes goes
-// to an unreachable block: what later passes read off a test (that a variant
-// projection is guarded, that a paired word is settled) still holds. A
-// branch on a value nothing produced is unreachable itself. So no edge into
-// a block the walk did not run is left, and the blocks the graph still
-// reaches are the ones it ran.
 function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
   let g: ssa.SFunc = f.graph;
   let dead: i32 = 0;
@@ -1054,8 +940,6 @@ function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
   return Rewritten { f: ssasem.Func { ...f, graph: ssa.SFunc { ...kept, blocks: ssa.refreshed_preds(kept) } }, changed: changed };
 }
 
-// The branch `t` with the side its condition `c` never takes sent to the
-// block `dead`, or unreachable where nothing produced `c`.
 function decided(t: ssa.STerm, c: i64, dead: i32): ssa.STerm {
   if (c == top()) {
     return unreachable();

@@ -1,7 +1,7 @@
-// main imports store, which imports shapes; main never imports shapes. A
-// module may name bare the variants of every module its imports reach, so
-// `Circle` / `Square` resolve here in a match on store's result, nested in an
-// `Ok(...)`, and in construction.
+
+
+
+
 import "./store";
 
 function area(k: i32): i32 {

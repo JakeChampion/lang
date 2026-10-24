@@ -1,5 +1,3 @@
-// The package capability vocabulary shared by manifest validation and the
-// checker. Kept import-free so reading a manifest needs no syntax frontend.
 pub function capabilities(): string[] {
   return ["env", "fs", "net", "random", "subprocess", "time"];
 }

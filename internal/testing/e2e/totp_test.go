@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/crypto's HOTP/TOTP (RFC 4226 / RFC 6238,
-// SHA-256 mode) across backends, against the RFC 6238 Appendix B
-// vectors (key = 32 ASCII bytes, 8 digits, 30s step). Also checks the
-// i64 time-step counter (T = 2e10 exercises the wide counter) and the
-// digit truncation. Returns 42 iff every vector matches. Each leg skips
-// itself when its toolchain is absent.
 const totpProg = `
 import "std/crypto" as crypto;
 import "std/string";

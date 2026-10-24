@@ -1,8 +1,5 @@
 package e2ecompiler
 
-// An enum schema beside the record table: a union identity and its variants'
-// field shapes. A variant's field is read only where a test of the same value
-// for that variant has held.
 const semanticEnum = `
 let shape: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
 let dot = semrecords.Variant { name: "Dot", fields: [] };
@@ -20,8 +17,6 @@ graph = ssa.SFunc { name: "measure", nparams: 1, nvals: 7, entry: 7, takes_env: 
 ] };
 `
 
-// Only Full can inhabit this type. Unlike a void field, a never field
-// makes Line impossible without removing its ordinal from the schema.
 const semanticSingleVariant = `
 let absent = semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeNever { tag: 0 } }] };
 enums = [semrecords.Enum { ...shapeEnum, variants: [full, absent] }];
@@ -68,19 +63,11 @@ func semanticEnumCases() []struct{ name, change, want string } {
 
 func unitEnumCases() []unitCase {
 	return []unitCase{
-		// A BORROWED scrutinee is nobody's to move out of: the caller still
-		// names the box, so the projection stays a borrow and the frame holds
-		// no unit of the payload.
 		{"enum-borrowed-match", semanticEnum + "modes = [2];", `
 if (p.payloads[2]) { return 49; }
 if (!drops(find(p, 27, 1, 0 - 1), [6])) { return 50; }
 if (!drops(find(p, 17, ssaunits.return_point(), 0 - 1), [])) { return 51; }
 `, "", ""},
-		// A COUNTED scrutinee read no further is taken from: the projection
-		// moves the payload out under a runtime uniqueness test, so the box
-		// dies at the read rather than at the last read through the
-		// projection, and the payload is released at its own last use. The
-		// arm that never projects releases the box on its edge as before.
 		{"enum-counted-match", semanticEnum + "modes = [3];", `
 if (!p.payloads[2]) { return 52; }
 if (!drops(find(p, 17, 0, 0 - 1), [0])) { return 53; }

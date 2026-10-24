@@ -1,8 +1,8 @@
-// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
-// re-matches the payload, so every backend sees only flat arms.
-//
-// A named-field inner pattern (`Boxed(r)` where the payload is a struct)
-// nested under `Some`.
+
+
+
+
+
 struct Rect { w: i32, h: i32 }
 enum Shape { Boxed(Rect), Empty }
 function g(o: Option[Shape]): i32 {

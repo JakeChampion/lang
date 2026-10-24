@@ -1,15 +1,3 @@
-// upload.fern — a multipart/form-data upload read part by part.
-//
-// The handler is what `serve.run` would call: it opens the request's body
-// as multipart, reads the text fields whole and the file a piece at a
-// time, and answers with what it saw. This program drives the handler
-// directly with a request the builder made, so it runs without a socket;
-// `serve.run(8080, serve.config(), handle)` would serve the same handler.
-//
-//   $ ./upload
-//   title = holiday
-//   photo = beach.png (image/png, 9 bytes in 3 pieces)
-//   tags = sea, sand
 import "std/http";
 import "std/http/multipart";
 import "std/platform";
@@ -44,8 +32,6 @@ function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartErr
   return Ok(http.ok(out));
 }
 
-// sized reads a file part four bytes at a time, counting rather than
-// keeping the bytes: what a handler writing a file to disk does.
 function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multipart.Reader), multipart.MultipartError] {
   let bytes: i32 = 0;
   let pieces: i32 = 0;

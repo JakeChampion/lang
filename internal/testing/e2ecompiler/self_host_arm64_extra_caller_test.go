@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// A pool larger than the register argument set must preserve runtime argument
-// cycles, stack arguments and callee-saved floating-point values.
 func TestSelfHostArm64ExtraCallerRegisters(t *testing.T) {
 	cli := buildRuntimeCLI(t)
 	for name, source := range map[string]string{
@@ -23,8 +21,6 @@ func TestSelfHostArm64ExtraCallerRegisters(t *testing.T) {
 			}
 		})
 	}
-	// Nine simultaneously live, short-lived integer parameters fit the caller
-	// pool. None needs a saved integer register just to reach its last use.
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(armRuntimeArgumentCycle), 0o644); err != nil {
 		t.Fatal(err)

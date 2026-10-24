@@ -1,5 +1,5 @@
-// A returned call pins a type parameter only the callee's result names, in an
-// associated function as in a free function or a method.
+
+
 trait Ident { function one(): Self; }
 trait Mk { function make(): A; }
 struct A { v: i32 }

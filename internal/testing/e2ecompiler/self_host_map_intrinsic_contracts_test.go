@@ -9,20 +9,6 @@ import (
 	"testing"
 )
 
-// `core/map` is written against the runtime directly — `__fern_rc_inc`,
-// `__fern_str_dec`, `__map_hash_seed`, `__fern_drop_arr_ptr`, `__fern_arr_dec`
-// are called by name rather than inserted by the RC lowering. None is a
-// declared Fern function, so none had a contract, so `semsource` refused every
-// declaration that called one and every declaration that called those.
-//
-// That was 91% of every refusal in a 512-program fernsmith census: 7,168 on
-// `__fern_rc_inc`, 4,096 on `__fern_str_dec`, 512 on `__map_hash_seed`, against
-// 396 for `unresolved result type`. 23 declarations per program, one module,
-// multiplied by every program that imports it — which is all of them.
-//
-// This gate is the shape rather than the count: any program that touches a Map
-// must leave no `no semantic contract` refusal naming a `__fern_*` or `__map_*`
-// helper. A sixth helper arriving in core/map without a contract fails here.
 func TestSelfHostMapIntrinsicContracts(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -42,8 +28,6 @@ func TestSelfHostMapIntrinsicContracts(t *testing.T) {
 	}
 
 	entry := filepath.Join(dir, "entry.fern")
-	// Enough Map surface to drag in the string-keyed and pointer-valued
-	// columns: those are where the retain / drop helpers live.
 	writeEntry(t, entry, `import "core/map";
 function main(): i32 {
     let m: Map[string, string] = Map { "a": "x" };
@@ -79,8 +63,6 @@ function main(): i32 {
 		n, _ := strconv.Atoi(m[1])
 		return n
 	}
-	// The stdlib closure of a Map program is thousands of declarations; a
-	// handful refusing for unrelated reasons is fine, a collapse is not.
 	measured, produced := count("measured"), count("produced")
 	if measured == 0 {
 		t.Fatalf("census measured nothing:\n%s", report)

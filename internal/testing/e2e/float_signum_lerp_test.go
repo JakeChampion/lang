@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/f64's convenience methods added atop the
-// existing abs/floor/…/clamp surface: signum (sign as a float, zero at zero,
-// NaN-preserving), lerp (precise a+(b-a)*t linear interpolation, incl.
-// extrapolation), and to_radians/to_degrees (degree↔radian conversion via a
-// high-precision π). Both f64 and f32 receivers. Returns 42 iff every check
-// holds; each leg skips itself when its toolchain is absent. All comparisons
-// use exact-representable values (halves / integers) so the four backends must
-// agree bit-for-bit; the conversion checks use tolerance bands.
 const floatSignumLerpProg = `
 import "std/f64";
 function main(): i32 {

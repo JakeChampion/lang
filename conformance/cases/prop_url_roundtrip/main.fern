@@ -1,30 +1,30 @@
-// Full cross-backend coverage. The arm64-only heap-corruption that
-// originally forced arm64 out of this case (a live string cell recycled
-// by the RcFree freelist drop/reuse path) was root-caused to
-// string_from_bytes allocating via plain __fern_alloc on the two-word
-// ABI — so the resulting string had no rc header and __fern_str_dec
-// read garbage at data-8 / data-4. Fixed in internal/codegen/arm64
-// (string_from_bytes now uses __fern_alloc_rc1, matching __str_slice /
-// __fern_strcat and the wasm two-word path). Tracked as #2817.
+
+
+
+
+
+
+
+
 import "std/url";
 import "std/i32";
 
-// Property-based round-trip audit for std/url percent-encoding.
-//
-// Deterministic LCG => identical inputs on every backend, lengths 0..47.
-//
-// Two sweeps. The text sweep draws each character from an alphabet
-// spanning all four UTF-8 widths and the ASCII bytes the encoder escapes
-// (NUL, space, the reserved punctuation), so every escape path and every
-// byte of a multi-byte sequence is exercised, and checks both decoders.
-// The byte sweep keeps the full 0..255 range of the original case: a
-// `string` is well-formed UTF-8 (docs/STRINGS-SOTA.md, D9) and `url_decode`
-// reads an escape that does not spell UTF-8 as U+FFFD, so an arbitrary
-// byte sequence round-trips only through `url_decode_bytes`; the unchecked
-// string it is encoded from is the #2817 allocator churn this case guards.
-//
-// Properties: url_decode(url_encode(s)) == s for every generated text s,
-// and url_decode_bytes(url_encode(s)) == s.bytes() for every generated s.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function lcg_next(state: i32): i32 {
     return ((state * 1103515245) + 12345) & 2147483647;

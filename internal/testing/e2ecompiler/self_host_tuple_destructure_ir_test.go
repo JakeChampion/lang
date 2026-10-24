@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// tupleDestructureIRCases pin `let (a, b) = E` tuple destructuring on the IR
-// path: the destructure lowers to op_tuple_get reads into the freshly-bound
-// locals. The `let (a, b)` form has a documented history of hanging the
-// self-host compiler, which is why it gets a pin beyond the exit-code-only
-// TestSelfHostTupleDestructure* tests.
-//
-// Each program also declares a fresh, non-escaping struct temp whose reclaim
-// free (`call __fn___fern_arr_dec`) the test requires in the asm. `t.x - t.y`
-// pads 0 into every result, so exit codes still pin the destructured values.
-// Every tuple stays scalar `(i32, i32)`; the struct only appears as the
-// separate pad temp, never as a tuple element. Mirrors self_host_if_let_ir_test.go.
 var tupleDestructureIRCases = []struct {
 	name string
 	src  string
@@ -32,9 +21,6 @@ var tupleDestructureIRCases = []struct {
 	{"let-from-local", "struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let p: (i32, i32) = (15, 27); let (a, b) = p; return a + b + pad; }", 42},
 }
 
-// TestSelfHostTupleDestructureIRX86_64 compiles each case through the self-hosted
-// x86-64 driver (asm_run, IR default-on), asserts the IR path was taken (the
-// reclaimed-temp struct free), and asserts the destructured exit code.
 func TestSelfHostTupleDestructureIRX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

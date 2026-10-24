@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Transitive reclamation Stage C — enum carrying a struct
-// payload that ESCAPES (pushed into an array): the enum is
-// tainted (not free-eligible), so its struct payload must NOT be
-// deep-freed; the array still references it after the local is
-// swept. Churn forces same-size reuse that would corrupt a
-// strayed read.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/array";
 import "std/string";

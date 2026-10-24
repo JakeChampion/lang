@@ -8,23 +8,16 @@ import (
 	"testing"
 )
 
-// Optimisations that compute the right answer whether or not they fire, so no
-// runtime test notices when one stops: each case names a function and the
-// shape its emitted code must (and must not) have on each native target. The
-// program's exit code is checked too, on the host target.
 type optShapeCase struct {
-	name string
-	src  string
-	fn   string
-	exit int
-	// want and forbid are regexps over the function's body, keyed by target.
+	name   string
+	src    string
+	fn     string
+	exit   int
 	want   map[string][]string
 	forbid map[string][]string
 }
 
 var optShapeCases = []optShapeCase{
-	// A shift by a constant takes the register of an operand that dies at it
-	// and shifts there, with no copy into a fresh register first.
 	{name: "shift_in_operand_home", fn: "pack", exit: 38, src: `
 @noinline function pack(a: u64, b: u64, c: u64): u64 {
     return (a & 255u64) << 16 | (b & 255u64) << 8 | c;
@@ -32,7 +25,6 @@ var optShapeCases = []optShapeCase{
 function main(): i32 { return (pack(1u64, 2u64, 3u64) % 251u64) as i32; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\s+shlq`}}},
-	// `while (i < xs.len())` with `i` counting up from 0 reads in bounds.
 	{name: "bce_while_len", fn: "sum_while", exit: 39, src: `
 @noinline function sum_while(xs: i32[]): i32 {
     let s: i32 = 0;
@@ -43,7 +35,6 @@ function main(): i32 { return (pack(1u64, 2u64, 3u64) % 251u64) as i32; }
 function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
-	// A for-in loop's index is below the length by construction.
 	{name: "bce_for_in", fn: "sum_for", exit: 39, src: `
 @noinline function sum_for(xs: i64[]): i64 {
     let s: i64 = 0;
@@ -53,7 +44,6 @@ function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
 function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
-	// The same two shapes over a string's bytes.
 	{name: "bce_string", fn: "count_a", exit: 5, src: `
 @noinline function count_a(s: string): i32 {
     let n: i32 = 0;
@@ -65,8 +55,6 @@ function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 function main(): i32 { return count_a("banana") - 1; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
-	// A loop is rotated: the back edge re-runs the header's test and branches
-	// to the body, so no unconditional branch is left in the loop.
 	{name: "loop_rotation", fn: "sum_to", exit: 45, src: `
 @noinline function sum_to(n: i64): i64 {
     let s: i64 = 0i64;
@@ -77,12 +65,6 @@ function main(): i32 { return count_a("banana") - 1; }
 function main(): i32 { return sum_to(10i64) as i32; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`\bjmp\b`}, "arm64-linux": {`\bb \.L`}}},
-	// A uniqueness test whose answer only chooses a branch is fused into it:
-	// the guards meet at a `_uq` join and the branch reads the flags, with no
-	// 0/1 built and copied into a scratch to be tested again. Reuse, and so
-	// the test, is the typed lowering's.
-	// A string literal's static box is immortal: comparing against one
-	// releases nothing afterwards.
 	{name: "literal_compare_no_release", fn: "sym", exit: 5, src: `
 @noinline function sym(k: string): i32 {
     if (k == "add") { return 1; }
@@ -93,8 +75,6 @@ function main(): i32 { return sym("sub") + sym("x"); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`__fern_str_eq`}, "arm64-linux": {`__fern_str_eq`}},
 		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
-	// A literal a consumer takes while it stays live is handed on without a
-	// retain.
 	{name: "literal_consumed_no_retain", fn: "pair", exit: 2, src: `
 @noinline function pair(): string[] {
     let s: string = "x";
@@ -106,8 +86,6 @@ function main(): i32 { return sym("sub") + sym("x"); }
 function main(): i32 { return pair().len(); }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
-	// A phi of literals is a literal too: handed on while it stays live, it
-	// is not retained.
 	{name: "literal_phi_consumed_no_retain", fn: "pick2", exit: 2, src: `
 @noinline function pick2(c: boolean): string[] {
     let s: string = "ab";
@@ -120,8 +98,6 @@ function main(): i32 { return pair().len(); }
 function main(): i32 { return pick2(true).len(); }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
-	// A phi that can also carry a counted string is not a literal: handed on
-	// while live, it is retained.
 	{name: "mixed_phi_consumed_retained", fn: "pick3", exit: 2, src: `
 @noinline function pick3(c: boolean, t: string): string[] {
     let s: string = "a";
@@ -134,7 +110,6 @@ function main(): i32 { return pick2(true).len(); }
 function main(): i32 { return pick3(true, "b").len(); }
 `,
 		want: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
-	// A phi of literals holds nothing, so its death releases nothing.
 	{name: "literal_phi_no_release", fn: "pick", exit: 3, src: `
 @noinline function pick(c: boolean): i32 {
     let s: string = "ab";
@@ -144,8 +119,6 @@ function main(): i32 { return pick3(true, "b").len(); }
 function main(): i32 { return pick(true); }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
-	// An array release whose count survives it is decremented in place; only
-	// the free calls __fern_arr_dec.
 	{name: "release_inline", fn: "grow", exit: 7, src: `
 @noinline function grow(xs: i32[]): i32 {
     let ys: i32[] = xs.append(4);
@@ -154,8 +127,6 @@ function main(): i32 { return pick(true); }
 function main(): i32 { return grow([1, 2, 3]); }
 `,
 		want: map[string][]string{"x86-64-linux": {`rcdecd\d+:\n\s+subl \$1, -8\(`}, "arm64-linux": {`rcdecd\d+:\n\s+sub w5, w5, #1`}}},
-	// An append to a receiver with a free slot that it solely owns stores in
-	// place; only the grow or a shared receiver calls the helper.
 	{name: "push_inline", fn: "fill", exit: 3, src: `
 @noinline function fill(n: i32): i32[] {
     let out: i32[] = [];
@@ -178,8 +149,6 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`_uq\d+:`, `cmpl \$1, -8\(%\w+\)`}, "arm64-linux": {`_uq\d+:`}},
 		forbid: map[string][]string{"x86-64-linux": {`_rcuniq\d+:`, `testq %r11, %r11`, `movl -8\(%\w+\), %edx`}, "arm64-linux": {`_rcuniq\d+:`, `mov x6, #1`}}},
-	// A call through a function value reads the body's address from slot 0 of
-	// the closure box without a bounds check: every box has that slot.
 	{name: "closure_call_unchecked", fn: "apply", exit: 8, src: `
 @noinline function apply(f: (i32) => i32, x: i32): i32 { return f(x) + 1; }
 function main(): i32 {
@@ -189,9 +158,6 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`call \*8\(%rax\)`}, "arm64-linux": {`blr x\d+`}},
 		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
-	// A variant box's drop tests its variants as one chain: the first that
-	// matches ends it, so the shape is loaded once and compared until a
-	// variant holds.
 	{name: "drop_variants_chained", fn: "__sem_drop_Tok", exit: 4, src: `
 enum Tok { Word(string), Num(string, i32), Punct(string), Gap(string, string) }
 @noinline function make(i: i32): Tok {
@@ -211,8 +177,6 @@ function main(): i32 {
 		forbid: map[string][]string{
 			"x86-64-linux": {`(?s)movq 0\(%r\w+\), %r\w+.*movq 0\(%r\w+\), %r\w+`},
 			"arm64-linux":  {`(?s)ldr x\d+, \[x\d+, #0\].*ldr x\d+, \[x\d+, #0\]`}}},
-	// An inline retain tests and bumps the count in memory rather than
-	// round-tripping it through %ecx.
 	{name: "rc_inc_in_memory", fn: "twice", exit: 5, src: `
 struct Two { a: string, b: string }
 @noinline function twice(s: string): Two { return Two { a: s, b: s }; }
@@ -223,8 +187,6 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`cmpl \$0, -8\(%\w+\)\n\s+js `, `addl \$1, -8\(%\w+\)`}},
 		forbid: map[string][]string{"x86-64-linux": {`addl \$1, %ecx`, `movl -8\(%\w+\), %ecx`}}},
-	// A runtime call's arguments move straight into %rdi and %rsi, not
-	// through %r11 and %rcx first.
 	{name: "rt_call_args_direct", fn: "fill", exit: 37, src: `
 @noinline function fill(n: i32): i32[] {
     let xs: i32[] = [];
@@ -236,10 +198,6 @@ function main(): i32 { let xs: i32[] = fill(10); return xs[9] + xs.len(); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call __fern_arr_push`}},
 		forbid: map[string][]string{"x86-64-linux": {`movq %r11, %rdi`, `movq %rcx, %rsi`}}},
-	// With the callee-saved registers full, the value a loop reads and writes
-	// every iteration keeps its register and a cold one spills, though the
-	// loop value lives longer. The x86 add reads both saved registers in one
-	// lea before the call, without reloading either loop value from the frame.
 	{name: "spill_the_cold_value", fn: "hot", exit: 56, src: `
 @noinline function g(x: i64): i64 { return x + 1i64; }
 @noinline function hot(n: i64): i64 {
@@ -260,10 +218,6 @@ function main(): i32 { return (hot(5i64) % 100i64) as i32; }
 		forbid: map[string][]string{
 			"x86-64-linux": {`movq %rax, -\d+\(%rbp\)\n\s+cmpq`},
 			"arm64-linux":  {`str x0, \[sp, #\d+\]\n\s+cmp `}}},
-	// A block of values each read a few times across a long call-free loop body
-	// gives up its registers before the short temporaries between them: a
-	// shift's result is used at once, so spilling it costs a store and a load
-	// for almost no span freed (#10615).
 	{name: "spill_the_long_value", fn: "mix", exit: 49, src: `
 @noinline function mix(xs: i64[], n: i32): i64 {
     let h: i64 = 0i64;
@@ -295,9 +249,6 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`sarq \$7, %\w+\n\s+xorq`}},
 		forbid: map[string][]string{"x86-64-linux": {`(?:sar|shl)q \$\d+, %\w+\n\s+movq %\w+, -\d+\(%rbp\)`}}},
-	// `(x >> n) | (x << (W - n))` is one rotate at either width, and a pair of
-	// shifts that is not one (a signed right shift, counts not summing to the
-	// width) keeps its shifts.
 	{name: "rotate_u32", fn: "rot32", exit: 170, src: rotateShapesSrc,
 		want:   map[string][]string{"x86-64-linux": {`rorl \$7, %e\w+`}, "arm64-linux": {`ror w\d+, w\d+, #7\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bsh[lr]q\b`}, "arm64-linux": {`\bls[lr]\b`}}},
@@ -307,11 +258,6 @@ function main(): i32 {
 	{name: "rotate_lookalikes_kept", fn: "notrot", exit: 170, src: rotateShapesSrc,
 		want:   map[string][]string{"x86-64-linux": {`shlq \$24,`, `sarq \$3,`}, "arm64-linux": {`lsl x\d+, x\d+, #24`, `asr x\d+, x\d+, #3`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
-	// A word built from bytes, as std/crypto reads its message words, is one
-	// bounds check and one load of the word, from an owned array or a view
-	// (#8782), its bytes in any order or at constant indexes; a big-endian
-	// word is that load byte swapped (#10615). Bytes out of their places stay
-	// byte reads.
 	{name: "le_word_owned_u32", fn: "word32", exit: 5, src: wordLoadSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
@@ -330,8 +276,6 @@ function main(): i32 {
 	{name: "be_word_constant_indexes", fn: "header", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
-	// The same words read from a string's bytes, as core/map's string hash
-	// reads them.
 	{name: "le_word_string_u32", fn: "sword32", exit: 110, src: stringWordSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
@@ -344,27 +288,18 @@ function main(): i32 {
 	{name: "le_word_str_view", fn: "vword32", exit: 110, src: stringWordSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
-	// A raw byte load at a constant offset reads it as a displacement, so the
-	// offset takes no register: __fern_str_cmp's tail reads both strings'
-	// bytes at offset 0.
 	{name: "raw_byte_load_constant_offset", fn: "__fern_str_cmp", exit: 73, src: strCmpSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bmovzbl 0\(%r\w+\), %e\w+`}, "arm64-linux": {`\bldrb w\d+, \[x\d+, #0\]`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bxorl %e\w+, %e\w+\n\s+movzbl \(`}}},
 	{name: "word_bytes_out_of_place_kept", fn: "swapped", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bmovzb`}, "arm64-linux": {`\bldrb\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bbswap[lq]?\b`}, "arm64-linux": {`\brev\b`}}},
-	// A rotate whose operand is written out twice, as std/crypto's md5 rounds
-	// spell it: the two copies merge, so it is one sum and one rotate. Halves
-	// over different sums stay two shifts.
 	{name: "rotate_of_repeated_operand", fn: "rotdup", exit: 47, src: mergedRotateSrc,
 		want:   map[string][]string{"x86-64-linux": {`rorl \$25, %e\w+`}, "arm64-linux": {`ror w\d+, w\d+, #25\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bsh[lr]q\b`, `(?s)\badd[lq]\b.*\badd[lq]\b`}, "arm64-linux": {`\bls[lr]\b`, `(?s)\badd\b.*\badd\b`}}},
 	{name: "rotate_of_different_operands_kept", fn: "notdup", exit: 47, src: mergedRotateSrc,
 		want:   map[string][]string{"x86-64-linux": {`shrq \$25,`, `shlq \$7,`}, "arm64-linux": {`lsr \w+, \w+, #25`, `lsl \w+, \w+, #7`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
-	// A u32 sum that only a 32-bit rotate and an exclusive-or read keeps no
-	// zero extension between its adds. The sum stays live for the second
-	// rotate, so the first is a rorx from its register.
 	{name: "u32_wraps_nothing_reads_dropped", fn: "mix32", exit: 10, src: `
 @noinline function mix32(a: u32, b: u32, c: u32): u32 {
     let s: u32 = a + b + c;
@@ -374,8 +309,6 @@ function main(): i32 { return (mix32(4000000000u32, 3000000000u32, 123456789u32)
 `,
 		want:   map[string][]string{"x86-64-linux": {`rorxl \$7, %e\w+, %e\w+`}, "arm64-linux": {`ror w\d+, w\d+, #7\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`movl %(e\w+), %e\w+\n\s+(?:add|ror)`}, "arm64-linux": {`\bmov w\d+, w\d+\n\s+(?:add|ror)`, `\bmov x\d+, x\d+\n\s+ror`}}},
-	// Spilled values whose lifetimes do not meet share a frame slot: the
-	// second phase's spills reuse the first phase's slots.
 	{name: "spill_slots_shared", fn: "two_phase", exit: 57, src: `
 @noinline function g(x: i64): i64 { return x + 1i64; }
 @noinline function two_phase(n: i64): i64 {
@@ -392,8 +325,6 @@ function main(): i32 { return (two_phase(1i64) % 100i64) as i32; }
 `,
 		want:   map[string][]string{"x86-64-linux": {`-\d+\(%rbp\)`}, "arm64-linux": {`\[sp, #\d+\]`}},
 		forbid: map[string][]string{"x86-64-linux": {`-(?:1\d\d)\(%rbp\)`}, "arm64-linux": {`\[sp, #(?:1[6-9]|[2-9]\d)\]`}}},
-	// A branch on a boolean tests the register the boolean lives in. The
-	// arm calls, so the branch is not a select.
 	{name: "value_test_in_place", fn: "pick", exit: 7, src: `
 @noinline function id(x: i32): i32 { return x; }
 @noinline function pick(b: boolean, x: i32): i32 { if (b) { return id(x); } return 0; }
@@ -401,10 +332,6 @@ function main(): i32 { return pick(true, 7) + pick(false, 9); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`testq (%r\w+), (%r\w+)`}, "arm64-linux": {`\bcbn?z x\d+,`}},
 		forbid: map[string][]string{"x86-64-linux": {`testq %r11, %r11`, `movq %r\w+, %r11`}, "arm64-linux": {`\bcbn?z x4,`, `mov x4, x`}}},
-	// A constant a phi merges is loaded on its edge, with no home of its own,
-	// so the `false` the first compare merges does not hold a callee-saved
-	// register across the call between; only the string the second compare
-	// reads does. A returned constant goes straight to the result register.
 	{name: "phi_constant_loads_on_edge", fn: "is_stream", exit: 1, src: `
 enum Ty { Named(string), Other(i32) }
 @noinline function is_stream(t: Ty): boolean {
@@ -423,10 +350,6 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`pushq %rbx`, `movl \$1, %eax`}, "arm64-linux": {`str x19, \[sp, #-16\]!`, `mov x0, #1\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`pushq %r12`}, "arm64-linux": {`\bx20\b`}}},
-	// A multiply by a constant reads its operand from its home: x86-64's
-	// three-operand imul, with no copy into the destination first, whichever
-	// side the constant is written on. The forbid is the half that tells it
-	// from main, and it holds only while each product has a register home.
 	{name: "imul_reads_operand_in_place", fn: "poly", exit: 87, src: `
 @noinline function poly(s: string): i32 {
     let h: i32 = 7;
@@ -451,10 +374,6 @@ function main(): i32 { return poly("pack my box with five dozen liquor jugs"); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, %\w+`}},
 		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+imulq \$1000003`}}},
-	// A 32-bit value read only by further 32-bit arithmetic keeps no sign
-	// extension: the product feeds the sum without one, and the sum is
-	// extended once, where the comparison and the division read it. The roll
-	// overflows on every byte, so the exit code checks the wrap still lands.
 	{name: "wrap_dropped_before_low_reader", fn: "roll", exit: 48, src: `
 @noinline function roll(s: string): i32 {
     let h: i32 = 7;
@@ -467,8 +386,6 @@ function main(): i32 { return roll("the quick brown fox jumps over the lazy dog"
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %\w+, %r\w+`}, "arm64-linux": {`\bsxtw x\d+, w\d+\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, (%\w+)\n\s+movslq`}, "arm64-linux": {`\bmul (x\d+), x\d+, x\d+\n\s+sxtw`}}},
-	// A loop counter stepped by one under `i < n` cannot overflow, so its
-	// step keeps no sign extension even though the test reads it whole.
 	{name: "counter_step_unwrapped", fn: "count_odd", exit: 21, src: `
 @noinline function count_odd(xs: i32[]): i32 {
     let n: i32 = 0;
@@ -479,8 +396,6 @@ function main(): i32 { return roll("the quick brown fox jumps over the lazy dog"
 function main(): i32 { return count_odd([1, 2, 3, 4, 5, 6, 12]) + 12; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
-	// Under `<=` the step can pass INT32_MAX, so it keeps its wrap, and the
-	// counter still turns negative where it overflows.
 	{name: "counter_le_keeps_wrap", fn: "climb", exit: 3, src: `
 @noinline function climb(start: i32): i32 {
     let i: i32 = start;
@@ -491,9 +406,6 @@ function main(): i32 { return count_odd([1, 2, 3, 4, 5, 6, 12]) + 12; }
 function main(): i32 { return climb(2147483645); }
 `,
 		want: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
-	// A body the header's other test also enters is not below `n` on every
-	// path, so its step keeps the wrap: the first test's successor does not
-	// dominate it.
 	{name: "counter_two_entries_keeps_wrap", fn: "mix", exit: 65, src: `
 @noinline function mix(n: i32): i32 {
     let i: i32 = 0;
@@ -504,15 +416,12 @@ function main(): i32 { return climb(2147483645); }
 function main(): i32 { return mix(10); }
 `,
 		want: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
-	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }
 function main(): i32 { return times8(5); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bshl[lq]? \$3,`}, "arm64-linux": {`\blsl x\d+, x\d+, #3\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bimul`}, "arm64-linux": {`\bmul\b`}}},
-	// A direct call passes its arguments in registers to the callee's `.r`
-	// entry: no push, no pop, and the callee reads no parameter from memory.
 	{name: "register_args", fn: "caller", exit: 10, src: `
 @noinline function clamp(v: i32, lo: i32, hi: i32): i32 {
     if (v < lo) { return lo; }
@@ -524,8 +433,6 @@ function main(): i32 { return caller(25); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call __fn_clamp\.r\n`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bpushq %(rax|rsi|rdi|r8|r9|r10)\b`, `addq \$\d+, %rsp`, `\s[1-9]\d*\(%rbp\), %`}}},
-	// A tiny call-free function is spliced into its callers; @noinline keeps
-	// the call.
 	{name: "inline_tiny_leaf", fn: "caller", exit: 33, src: `
 function sq(x: i32): i32 { return x * x; }
 @noinline function cube(x: i32): i32 { return x * x * x; }
@@ -534,16 +441,12 @@ function main(): i32 { return caller(3); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call __fn_cube\b`}, "arm64-linux": {`bl __fn_cube\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`__fn_sq\b`}, "arm64-linux": {`__fn_sq\b`}}},
-	// An i32 result's wrap is one sign-extension on the value's own register,
-	// not a round trip through the scratch.
 	{name: "wrap_in_place", fn: "add3", exit: 12, src: `
 @noinline function add3(a: i32, b: i32, c: i32): i32 { return a + b + c; }
 function main(): i32 { return add3(3, 4, 5); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %(\w+)d?, %\w+`}, "arm64-linux": {`\bsxtw x(\d+), w\d+`}},
 		forbid: map[string][]string{"arm64-linux": {`\bsxtw x4, w4\b`}}},
-	// A wrap whose operand sits in another register reads it there: one
-	// extension into the destination, not a copy and an extension in place.
 	{name: "wrap_reads_its_source", fn: "sum", exit: 15, src: `
 @noinline function sum(xs: i32[]): i32 {
     let s: i32 = 0;
@@ -555,8 +458,6 @@ function main(): i32 { return sum([3, 5, 7]); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %r\w+, %r\w+`}, "arm64-linux": {`\bsxtw x\d+, w\d+`}},
 		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+movslq`}, "arm64-linux": {`\bmov x\d+, x\d+\n\s+sxtw`}}},
-	// A match's variant tests read the box's shape word once: each later arm
-	// compares the shape the first test loaded rather than loading it again.
 	{name: "match_loads_the_shape_once", fn: "area", exit: 9, src: `
 enum Shape { Circle(i32), Square(i32), Tri(i32), Line(i32) }
 @noinline function area(s: Shape): i32 {
@@ -626,8 +527,6 @@ func TestSelfHostOptimisationShapes(t *testing.T) {
 	}
 }
 
-// oneCheck and wordForbid pin a fused word: a bounds check, and no shift,
-// byte load or second check left over from its bytes.
 var oneCheck = map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}
 
 var wordForbid = map[string][]string{

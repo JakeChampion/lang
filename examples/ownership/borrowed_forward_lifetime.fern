@@ -1,5 +1,3 @@
-// Diagnostic for #8920: keep the borrowed input live while repeatedly handing
-// replacements through an own parameter. The size argument changes only calls.
 import "std/i64";
 
 @noinline

@@ -10,24 +10,12 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `tests/stdlib/sim_platform_test.fern` runs a handler's platform over
-// the simulation (std/sim_platform): the clock, randomness, configuration
-// and the public-only HTTP route answered from a `Sim`, a scripted network
-// and what the test set, with the shapes the host and the mock answer. It
-// is the platform's sim parity suite (#9855), so it runs on every backend,
-// and on the self-host compiler in internal/testing/e2ecompiler's std/test e2e.
-
 const simPlatformSuite = "tests/stdlib/sim_platform_test.fern"
 
 var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 13", "# fail 0", "1..13"}
 
-// hostProxyEnv is a proxy configuration for the machine that leads nowhere.
-// Every leg runs under it: the simulated network's requests are virtual, so
-// the host's proxies must not reach them.
 var hostProxyEnv = []string{"http_proxy=http://192.0.2.1:9", "https_proxy=http://192.0.2.1:9", "HTTPS_PROXY=http://192.0.2.1:9"}
 
-// runUnderHostProxy runs cmd with hostProxyEnv added to the test's
-// environment, returning its combined output and exit code.
 func runUnderHostProxy(t *testing.T, cmd *exec.Cmd) (string, int) {
 	t.Helper()
 	cmd.Env = append(os.Environ(), hostProxyEnv...)

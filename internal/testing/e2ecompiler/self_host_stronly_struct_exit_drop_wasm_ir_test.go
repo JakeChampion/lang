@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStrOnlyStructExitDropWasmIR is the wasm port of
-// TestSelfHostStrOnlyStructExitDropIRX86_64 (a wasm heap string is one inline
-// rc-headered block, so $__fern_arr_dec IS the string free). Case table shared
-// with the x86-64 leg.
 func TestSelfHostStrOnlyStructExitDropWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range strOnlyStructExitDropCases {

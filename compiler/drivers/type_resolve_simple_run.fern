@@ -1,22 +1,3 @@
-// compiler/type_resolve_simple_run.fern — golden driver for the
-// checker's three simpler type-name resolvers (checker.fern's
-// type_from_name_with_structs / _with_struct_names / _with_names_and_unions,
-// SH-021 slice 5 — docs/SELF-HOST-AUDIT.md T2).
-//
-// Each maps a type STRING to the checker's Type against a name context. Unlike
-// the richest resolver (_with_structs_unions, slice 4) these recognise only
-// scalars, the `Elem[]` array suffix, and struct / union NAMES — a tuple or a
-// generic (`(a, b)`, `Map[…]`) is not modelled and resolves to unknown by its
-// full spelling, except a builtin `Option[…]` / `Result[…]` instantiation in
-// the names+unions resolver (#5986). This slice retargets their array-suffix decode
-// from the magic-byte `[`(91)/`]`(93) scan onto the structured TypeRef's
-// array_depth (the same array-depth peel proven byte-identical in slice 4). This
-// driver resolves a corpus covering every branch of all three (scalars, struct /
-// union / unknown names, arrays incl. multi-depth and of struct/union/unknown
-// elements, and the array-of-tuple / array-of-generic / bogus-element cases that
-// peel to an unknown element) and prints type_debug of each. The companion Go
-// test pins the exact mapping.
-
 import "../checker";
 import "../typeinfo";
 import "../util";

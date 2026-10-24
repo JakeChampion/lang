@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `root = ins(root, .., k, v)` carries k into root, which is
-// returned: the escape analysis followed only `let` initialisers,
-// so k read as borrowable and the caller's fresh key temp was never
-// released (one key box per insert). Leak-only.
+
+
+
+
+
+
+
 struct CK { bucket: i32, id: i32 }
 enum H { E, L(i32, CK, i32) }
 struct PM { root: H }

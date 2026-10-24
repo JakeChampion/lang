@@ -1,6 +1,6 @@
-// Consuming trait method (`own self` on trait + impl) returning the Self enum:
-// the FBIP map behind a trait bound. Differentially pinned: free-on == free-off
-// and reuse-on == reuse-off, plus the interp oracle.
+
+
+
 enum List { Cons(i32, List), Nil }
 
 trait Mapper { function inc(own self: Self): List; }
@@ -20,5 +20,5 @@ function build(n: i32): List {
     return Cons(n, build(n - 1));
 }
 function main(): i32 {
-    return sum(build(10).inc());   // sum(2..11) = 65
+    return sum(build(10).inc());
 }

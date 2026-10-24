@@ -1,29 +1,8 @@
-// expand.fern — GNU-compatible `expand`.
-//
-//   expand [-i] [-t LIST] [FILE]...
-//
-// Every tab becomes the spaces that reach the next tab stop. The stops
-// are eight columns apart by default and `-t` gives them explicitly
-// (`coreutils/lib/tabs.fern` holds that grammar, which unexpand shares);
-// `-i` converts only the tabs in a line's leading blanks.
-//
-// Three behaviours are the reference binary's rather than the obvious
-// reading:
-//
-//   - Column counting is not byte counting: `\b` moves BACK a column and
-//     rewinds the stop cursor with it, so `ab\b\t` reaches the stop from
-//     column 1.
-//   - Past the last explicit stop a tab is ONE space, not a stop's worth:
-//     `-t 1,4,8` leaves the fourth tab on a line as a single space.
-//   - Files are one stream, not a file each. A FILE with no final newline
-//     runs into the next one, and the column count runs with it.
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/tabs";
 
-// Option ids. The declaration order below is GNU's — `expand --=x` lists
-// `--tabs` before `--initial`, which is the reverse of the help text.
 function opt_tabs(): i32 {
   return 1;
 }
@@ -32,10 +11,6 @@ function opt_initial(): i32 {
   return 2;
 }
 
-// The obsolete `-NUM` form is the ten digits declared as options taking
-// an OPTIONAL value, so `-4,8` is the digit 4 with ",8" glued on and the
-// tab list is the two put back together. Each digit gets its own id so
-// the digit itself needs no second look at argv.
 function opt_digit(d: i32): i32 {
   return 10 + d;
 }
@@ -60,7 +35,6 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
@@ -69,7 +43,6 @@ function block_size(): i32 {
   return 16384;
 }
 
-// `digit_of(m)` — the digit an `opt_digit` match stood for.
 function digit_of(id: i32): string {
   return slice_unchecked("0123456789", id - 10, id - 9) + "";
 }
@@ -106,8 +79,6 @@ pub function main(): i32 {
       }
     }
   }
-  // The stops are checked only once the scan is over: `expand -t 0 -x`
-  // reports the option, and `expand --tabs=0 --help` prints the help.
   stops = stops.finish();
 
   let files: string[] = g.operands();
@@ -117,16 +88,11 @@ pub function main(): i32 {
   return run(files, stops, initial);
 }
 
-// `run(files, stops, initial)` — the whole conversion. Every piece of a
-// line is pushed straight into stdout's builder, which is flushed once it
-// holds a block, so no byte is copied into an accumulator on the way.
 function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
   let pad: string = "        ";
   let ok: boolean = true;
-  // Non-zero when every stop is the same distance apart, which is the
-  // case for a default run and for `-t N`.
   let step: u64 = stops.size;
 
   let fi: i32 = 0;
@@ -191,8 +157,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
             },
             Err(e) => {
               let message: string = gnu.io_error_text(e);
-              // WASI may answer EBADF for a directory. Classify the open
-              // descriptor only after a failed read, preserving normal I/O.
               match (r.stat()) {
                 Ok(st) => {
                   if (st.is_dir) {
@@ -245,8 +209,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       j = chunk.len() - 1;
     }
 
-    // One line, terminator included. It stays a view into the chunk
-    // unless a partial line from an earlier chunk has to be glued on.
     let buf: u8[] = chunk;
     let lo: i32 = pos;
     let hi: i32 = j + 1;
@@ -261,9 +223,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     }
     pos = j + 1;
 
-    // Where the next tab, backspace and NUL are. All three are cursors
-    // over the chunk, so finding every one of them costs a single pass
-    // over it rather than a scan per line.
     let ta: i32 = tabat;
     let ba: i32 = bsat;
     let na: i32 = nulat;
@@ -273,14 +232,10 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       na = __memchr_bytes(buf, 0, 0);
     }
     if (ta < 0 || ta >= hi) {
-      // No tab on this line, so nothing on it converts and a backspace
-      // has nothing to move the column of.
       buf_push_bytes_range(h, buf, lo, hi);
     } else {
       let end: i32 = hi;
       if (initial) {
-        // -i converts only the leading blanks; everything from the
-        // first other byte is copied as it stands.
         end = lo;
         while (end < hi && (buf[end] as i32 == 32 || buf[end] as i32 == 9)) {
           end = end + 1;
@@ -311,8 +266,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
         let c: i32 = buf[p] as i32;
         p = p + 1;
         if (c == 0) {
-          // wcwidth answers 0 for a NUL, so it takes no column at all —
-          // the one byte for which the count is not the byte count.
           buf_push_byte(h, c);
           na = __memchr_bytes(buf, 0, p);
         } else if (c == 8) {
@@ -325,9 +278,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           buf_push_byte(h, c);
           ba = __memchr_bytes(buf, 8, p);
         } else {
-          // The uniform case is most of them, and it is arithmetic:
-          // taking it here keeps the call and its tuple out of the
-          // inner loop.
           let target: u64 = 0 as u64;
           if (step != 0 as u64) {
             target = column + (step - column % step);
@@ -342,8 +292,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           let need: u64 = target - column;
           column = target;
           if (need <= 8 as u64) {
-            // The pad always holds a tab's usual width, so the common
-            // tab is one range push out of it.
             buf_push_range(h, pad, 0, need as i32);
           } else {
             while (need > 0 as u64) {
@@ -368,9 +316,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
         buf_push_bytes_range(h, buf, p, hi);
       }
     }
-    // Back to chunk indices, and past anything this line left behind:
-    // -i can stop before the end of a line, so a tab it never reached
-    // is still ahead of the cursor.
     tabat = ta;
     bsat = ba;
     nulat = na;

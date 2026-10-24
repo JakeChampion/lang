@@ -1,21 +1,3 @@
-// Package fernsmith generates syntactically- and type-correct Lang
-// programs from a seeded random source.
-//
-// The type universe is the `gtype` const block: scalars signed and
-// unsigned at both widths, strings, arrays, tuples, maps, structs
-// and enums both fixed and program-declared, Option / Result, and
-// function values. Bodies carry bounded `while` loops, `for..in`
-// over arrays and maps, nested function declarations, and match
-// expressions. Every expression production picks operands whose
-// types match the surrounding context, so the emitted source is
-// guaranteed to parse AND type-check. That property is the
-// essential invariant the fuzz oracle relies on: any parser or
-// checker error means a real bug.
-//
-// Inspired by wasm-smith: a structured generator that walks the
-// grammar top-down, in contrast to the byte-mutation fuzzers in
-// internal/syntax/parser and internal/check/checker that exercise mostly junk
-// inputs the parser rejects before any later stage sees them.
 package fernsmith
 
 import (
@@ -25,32 +7,15 @@ import (
 	"strings"
 )
 
-// Config tunes the size of generated programs. Zero values are
-// treated as their effective minimum (at least one function, one
-// possible statement, etc.) so callers can't accidentally request
-// an empty program.
 type Config struct {
 	MaxFuncs     int
 	MaxParams    int
 	MaxStmts     int
 	MaxExprDepth int
-	// MaxLoopDepth caps how deeply nested `while` loops can get
-	// inside a body. The bounded-counter pattern emits one i32
-	// counter per loop and increments by 1 each iteration, so
-	// every loop terminates in a small constant number of steps;
-	// the cap is there to keep emitted source short, not to
-	// prevent divergence.
 	MaxLoopDepth int
-	// MaxLoopIters caps the random iteration count picked for
-	// each emitted while-loop's counter bound. The generator
-	// emits `let c = 0; while (c < N) { ...; c = c + 1; }` with
-	// N drawn from [1, MaxLoopIters]. Differential testing
-	// needs N small so backends without optimisations don't
-	// blow up runtime.
 	MaxLoopIters int
 }
 
-// DefaultConfig is what Gen uses.
 func DefaultConfig() Config {
 	return Config{
 		MaxFuncs:     3,
@@ -62,136 +27,47 @@ func DefaultConfig() Config {
 	}
 }
 
-// Gen returns a Lang program for the given seed. Output is
-// deterministic in seed and is guaranteed to parse and type-check
-// against the current compiler (within the subset the generator
-// covers). Useful for deterministic unit tests; for fuzzing,
-// prefer GenBytes — its byte-stream-driven generation maps each
-// generator decision onto a single byte of the input, which lets
-// `testing.F`'s minimiser shrink failing corpora monotonically.
 func Gen(seed uint64) string {
 	return newRandGen(seed, DefaultConfig()).Program()
 }
 
-// GenBytes returns a Lang program driven directly by the bytes in
-// data. Each generator decision (which production to pick, which
-// in-scope variable to reference, how many statements to emit)
-// consumes one byte; once the stream is exhausted, every
-// subsequent decision takes its smallest branch, so the generator
-// naturally winds down — recursion stops at the leaf production,
-// statement counters pick zero. That property is the wasm-smith-
-// style minimisation contract: chopping bytes off the end of a
-// corpus yields a program that still type-checks and has no more
-// AST nodes than before, so a shrinker converges rather than
-// walking uphill. Stated as a property by
-// TestGenBytesShrinkIsMonotonicAndValid; the source TEXT is not
-// promised to shrink with it, because a smaller program can spell
-// a leaf with a wider name.
-//
-// Wire this into `testing.F.Fuzz(func(t *testing.T, data []byte))`
-// so the mutator's byte-level edits drive the generator's
-// decisions directly.
 func GenBytes(data []byte) string {
 	return newByteGen(data, DefaultConfig()).Program()
 }
 
-// GenMainBytes is GenBytes's runnable counterpart — same byte-
-// stream semantics, emits a single `function main(): i32 { ... }`
-// instead of a free-form program. Pairs with the differential-
-// execution oracle in internal/testing/e2e.
 func GenMainBytes(data []byte) string {
 	return newByteGen(data, DefaultConfig()).MainProgram()
 }
 
-// GenPrintableMain emits a runnable `main` that PRINTS a sequence
-// of computed values to stdout (then returns 0), rather than packing
-// one byte into the return code. The printable profile re-admits
-// float (f32) and exercises string expressions, observing each
-// result through a portable channel (booleans, raw string bytes, or
-// a truncating `as i32` cast) so the stdout differential oracle in
-// internal/testing/e2e can compare them across interp / x86-64 / arm64 / wasm
-// without tripping over float formatting. Deterministic in seed.
 func GenPrintableMain(seed uint64) string {
 	return newRandGen(seed, DefaultConfig()).MainPrintableProgram()
 }
 
-// GenPrintableMainBytes is GenPrintableMain's byte-stream counterpart
-// for `testing.F` — each generator decision consumes one byte, so the
-// fuzzer's mutations drive generation and corpus minimisation works.
 func GenPrintableMainBytes(data []byte) string {
 	return newByteGen(data, DefaultConfig()).MainPrintableProgram()
 }
 
-// newRandGen builds a *Generator backed by a PCG seeded from a
-// single uint64, hiding the splitmix-stream constant.
 func newRandGen(seed uint64, cfg Config) *Generator {
 	rng := rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))
 	return &Generator{ch: &randChooser{rng: rng}, cfg: cfg}
 }
 
-// newByteGen builds a *Generator that pulls decisions directly
-// from data.
 func newByteGen(data []byte, cfg Config) *Generator {
 	return &Generator{ch: &byteChooser{data: data}, cfg: cfg}
 }
 
-// chooser is the abstraction the Generator uses for every random
-// decision. Two implementations: randChooser (PCG-backed,
-// statistically-uniform draws — what Gen / GenMain / New use) and
-// byteChooser (one byte per decision, deterministic, exhaustion-
-// safe — what GenBytes / GenMainBytes use). The split exists so
-// `testing.F`'s byte-level mutator can drive the generator
-// without sitting behind a `math/rand` wrapper whose rejection-
-// sampling loops would deadlock on an all-zero stream.
-//
-// Exhaustion convention. The byteChooser is required to bias
-// every decision towards the *smallest* / *most-terminating*
-// branch once its input is exhausted. intN returns 0 (the 0th
-// option, which by convention is the smallest), and flip returns
-// true — so generator call sites must spell each `flip(p)` such
-// that `true` is the branch that shortens the output (pick the
-// leaf, reuse an in-scope var, skip the recursion). That rule
-// keeps the wasm-smith-style minimisation contract: chopping
-// bytes off a failing corpus shrinks the program monotonically.
 type chooser interface {
-	// intN returns a value in [0, n). Panics if n <= 0.
 	intN(n int) int
-	// flip returns true with probability roughly p. byteChooser
-	// quantises p to one byte's worth of resolution. After
-	// exhaustion, byteChooser.flip returns true unconditionally
-	// — see the "exhaustion convention" note on the chooser
-	// interface.
 	flip(p float64) bool
-	// exhausted reports whether the input is spent, without
-	// consuming a decision. Spelling `true` as the shortening
-	// branch of every flip is not on its own enough to keep
-	// truncation monotonic: a function whose FALL-THROUGH (every
-	// flip skipped) is larger than one of the branches it skipped
-	// grows when the corpus runs out mid-sequence. Such a
-	// fall-through asks this predicate first and takes the minimal
-	// production instead. randChooser reports false always, so
-	// random generation is untouched.
 	exhausted() bool
 }
 
-// randChooser is a PCG-driven chooser. Honours the math/rand/v2
-// statistical guarantees.
 type randChooser struct{ rng *rand.Rand }
 
 func (c *randChooser) intN(n int) int      { return c.rng.IntN(n) }
 func (c *randChooser) flip(p float64) bool { return c.rng.Float64() < p }
 func (c *randChooser) exhausted() bool     { return false }
 
-// byteChooser yields decisions from a fixed byte slice. Each
-// `intN` and `flip` call consumes exactly one byte. Once the
-// slice is exhausted every subsequent decision returns the "0th
-// option" / `true` — the smallest, most-terminating choice —
-// so chopping bytes off the end of a corpus collapses the
-// program rather than rewriting it.
-//
-// This is the essential minimisation contract for the fuzz
-// oracle: the testing.F mutator can shrink failing inputs by
-// truncating, knowing the generator will collapse smoothly.
 type byteChooser struct {
 	data []byte
 	pos  int
@@ -222,215 +98,57 @@ func (c *byteChooser) intN(n int) int {
 func (c *byteChooser) flip(p float64) bool {
 	b, ok := c.next()
 	if !ok {
-		// Exhaustion convention: bias to the "smaller / more-
-		// terminating" branch. Call sites are written so that
-		// `true` is that branch (pick the leaf, reuse a var,
-		// skip the recursion).
 		return true
 	}
-	// One byte → 256 quantisation buckets; plenty for the
-	// 0.4..0.6 biases the generator uses today.
 	return float64(b)/256.0 < p
 }
 
-// Profile names the fernsmith generator's operating mode. The
-// two values trade coverage for cross-backend determinism:
-//
-//   - ProfileFree: free-form generation. Every type (including
-//     f32 and Map) and every production is allowed. Used by
-//     `Gen` / `GenBytes`. The output is for parse + check fuzz
-//     coverage only — not run against any backend.
-//
-//   - ProfileRunnable: the differential-oracle path. Drops f32
-//     because Lang's float semantics deliberately under-specify
-//     IEEE 754 edge cases (NaN bit-pattern, sign-of-zero through
-//     arithmetic, denormal handling — see docs/FLOAT-SEMANTICS.md)
-//     and the oracle compares main()'s 1-byte return code bit-for-
-//     bit across interp → arm64 → x86_64 → wasm. Generating
-//     float math in the runnable path would produce legitimate
-//     non-portable results that the oracle can't distinguish from
-//     real codegen bugs; excluding f32 keeps the oracle a clean
-//     signal. Used by `GenMain` / `GenMainBytes`.
-//
-// Replaces the prior `noFloats bool` field, which was three
-// concepts in one boolean: "skip f32", "runnable mode", and
-// "prefer deterministic-across-backends choices". Renaming to
-// an enum makes each gate site explicit about which axis it's
-// checking.
 type Profile int
 
 const (
 	ProfileFree Profile = iota
 	ProfileRunnable
-	// ProfilePrintable is the stdout-oracle path. Like
-	// ProfileRunnable it produces a runnable `main`, but it
-	// observes results by PRINTING them (rather than packing one
-	// byte into the return code), which lets the differential
-	// oracle compare full stdout across backends. Crucially it
-	// re-admits float (f32) expressions — the bug class the
-	// return-byte oracle can't reach — but only ever observes a
-	// float through a PORTABLE channel: a boolean comparison
-	// ("T"/"F") or a truncating `as i32` cast. Raw float
-	// formatting (whose digit count Lang under-specifies — see
-	// docs/FLOAT-SEMANTICS.md) is never compared, so NaN / Inf /
-	// rounding stay off the oracle's diff while the codegen for
-	// float arithmetic and comparison is still exercised.
-	//
-	// Floats reach AGGREGATES only here as well — arrays, struct
-	// fields, tuple elements and enum payloads (floatVarTypes,
-	// pickFieldType). A float element's width is invisible until one
-	// sits next to another, and that is a portable observation: the
-	// slots are read back through the same truncating cast.
 	ProfilePrintable
 )
 
-// floatsAllowed reports whether the current profile's
-// production set includes f32 / float-typed values. ProfileFree
-// and ProfilePrintable allow them; ProfileRunnable (the return-
-// byte oracle) does not.
 func (p Profile) floatsAllowed() bool { return p == ProfileFree || p == ProfilePrintable }
 
-// Generator emits source text directly while tracking an in-scope
-// set of typed identifiers. Each expression production picks
-// operands whose types match the context so the result type-checks
-// by construction.
-//
-// The chooser field is what every random decision goes through; see
-// the `chooser` interface for the two implementations.
 type Generator struct {
-	ch  chooser
-	cfg Config
-	// spans and exprs record, under a byteChooser, what ShrinkMainBytes
-	// reduces: each helper and statement, with the byte its list's count came
-	// from, and each expression.
-	spans []span
-	exprs []exprSpan
-	// profile names the generator's operating mode. Two values
-	// today: ProfileFree (the free-form Gen / GenBytes path,
-	// every production allowed) and ProfileRunnable (the
-	// MainProgram path that has to produce identical output
-	// across backends). An enum rather than a `noFloats bool`,
-	// which conflates three independent meanings — skip f32,
-	// this is the runnable path, prefer deterministic choices.
-	profile Profile
-	// helpers is the running list of every top-level function
-	// signature emitted so far. Subsequent function bodies
-	// (including main) can call any prior helper with type-
-	// correct arguments — this exercises the calling
-	// convention, parameter passing, and cross-function return
-	// flow that single-function programs miss. Order matters:
-	// only forward calls are allowed (helper N can call helpers
-	// 0..N-1), which sidesteps self-recursion and unbounded
-	// stack growth without needing a static check.
-	helpers []helperSig
-	// loopDepth tracks the current `while` nesting level so the
-	// generator can cap depth at cfg.MaxLoopDepth — every loop
-	// is bounded-counter (terminates in <= MaxLoopIters
-	// iterations), but unbounded nesting still bloats the
-	// emitted source and slows the differential test.
-	loopDepth int
-	// loopCounter is the monotonically-increasing index used to
-	// name every emitted loop counter (`__loop_i0`,
-	// `__loop_i1`, …). The `__loop_` prefix guarantees these
-	// names never collide with user-style vars (`v*`, `p*`,
-	// `w*`) that the rest of the generator emits.
-	loopCounter int
-	// currentReturnType is the return-type slot of the function
-	// whose body is currently being emitted. The try operator
-	// (`expr?`) is only legal when the enclosing function
-	// returns Option[_] / Result[_, _] — the checker enforces
-	// this — so the generator gates `?` emission on this field.
-	// Outside any function (between decls), value is unused; the
-	// initial zero value is tI32, which is harmless because
-	// `?` only fires when currentReturnType == tOptI32.
+	ch                chooser
+	cfg               Config
+	spans             []span
+	exprs             []exprSpan
+	profile           Profile
+	helpers           []helperSig
+	loopDepth         int
+	loopCounter       int
 	currentReturnType gtype
-	// ctrlCounter numbers the control-flow statements' private bindings
-	// (`__if`, `__lb`, `__il`, `__le`, `__td`) so a nested one never
-	// shadows an outer one.
-	ctrlCounter int
-	// optBindCounter names match-arm payload bindings the
-	// generator introduces (`__opt_x0`, `__opt_x1`, …). The
-	// `__opt_` prefix keeps these out of any path that the
-	// user-style `v*` / `p*` / `w*` names take.
-	optBindCounter int
-	// localHelpers tracks nested function declarations emitted
-	// inside the currently-being-generated body. Lifetime is
-	// the enclosing function — funcDecl / MainProgram
-	// save+restore around each body so local helpers stay
-	// scoped to their declaring function. emitCall walks
-	// localHelpers alongside the top-level helpers list so
-	// callable candidates include both.
-	localHelpers []helperSig
-	// localFnCounter names emitted local function decls
-	// (`__local_fn0`, ...). Generator-private prefix keeps
-	// these out of the user-style namespace.
-	localFnCounter int
-	// floatAggCounter names the aggregates the printable profile's
-	// mandatory float-aggregate observation declares (`__fag0`, ...).
-	floatAggCounter int
-	// cowCounter names the vars the array alias / copy-on-write
-	// cluster declares (`__cow_s0`, `__cow_a0`, `cw0_w`, `cw0_a`).
-	// Numbered across the whole program so the source and the alias
-	// are name-unique in every function they appear in — the rc
-	// analysis only elides an alias's refcount traffic when the name
-	// it aliases is declared exactly once (the slot-sharing hazard),
-	// so a reused name would silently stop producing the shape.
-	cowCounter int
-	// lambdaCounter names lambda parameters (`__lam_x0`, ...).
-	// Numbered across the whole program rather than per-lambda so a
-	// lambda emitted inside another lambda's body gets a distinct
-	// parameter name — see lambdaLiteral on why shadowing is not
-	// something this generator should be producing.
-	lambdaCounter int
-	// Dynamic nominal types. Each entry in structShapes /
-	// enumShapes lives at a gtype value beyond `numTypes`
-	// (allocated by nextNominal). Multiple struct / enum
-	// decls per program flow through the same productions
-	// as the fixed Pair / Xyz / Color / Status — the only
-	// difference is the shape lives in these maps instead of
-	// being baked into the literal / field / match production
-	// code.
-	structShapes map[gtype]*structShape
-	enumShapes   map[gtype]*enumShape
-	// arrShapes maps a program-declared array type to its element: `S0[]`
-	// over a dynamic struct or enum, the one way a box whose elements own
-	// nested boxes reaches the corpus.
-	arrShapes   map[gtype]gtype
-	nextNominal gtype
-	// ownCounter and cloCounter name the vars an ownership cluster and a
-	// closure cluster declare.
-	ownCounter int
-	cloCounter int
-	// self is the recursive helper whose body is being emitted, and
-	// selfCalls how many more calls to it that body may make; see funcDecl.
-	self      *helperSig
-	selfCalls int
-	// inClosure counts the lambda and local-function bodies being emitted,
-	// where a self-call is not placed: such a body can run any number of
-	// times per invocation of the function around it.
-	inClosure int
-	// feats and types are this program's swarm mask; see swarm.go.
-	feats uint64
-	types uint64
-	// trait is the program's user trait, nil when it declares none, and
-	// dynCounter names the vars a trait cluster declares; see traits.go.
-	trait      *traitShape
-	dynCounter int
-	// generics reports whether the program declares the generic struct and
-	// enum, and genCounter names the vars a generic cluster declares; see
-	// generics.go.
-	generics   bool
-	genCounter int
-	// ownRecv reports whether the program declares OB0 and its consuming
-	// method, and ownRecvCounter names the vars an own-receiver cluster
-	// declares; see ownrecv.go.
-	ownRecv        bool
-	ownRecvCounter int
+	ctrlCounter       int
+	optBindCounter    int
+	localHelpers      []helperSig
+	localFnCounter    int
+	floatAggCounter   int
+	cowCounter        int
+	lambdaCounter     int
+	structShapes      map[gtype]*structShape
+	enumShapes        map[gtype]*enumShape
+	arrShapes         map[gtype]gtype
+	nextNominal       gtype
+	ownCounter        int
+	cloCounter        int
+	self              *helperSig
+	selfCalls         int
+	inClosure         int
+	feats             uint64
+	types             uint64
+	trait             *traitShape
+	dynCounter        int
+	generics          bool
+	genCounter        int
+	ownRecv           bool
+	ownRecvCounter    int
 }
 
-// structShape is the runtime-allocated form of a struct decl.
-// Mirrors `ast.StructDecl` but holds the field types as gtype
-// values so productions can recurse into expr() directly.
 type structShape struct {
 	name   string
 	fields []structField
@@ -441,47 +159,23 @@ type structField struct {
 	t    gtype
 }
 
-// enumShape is the runtime-allocated form of an enum decl.
-// A variant carries 0..2 payload slots; a multi-slot payload is
-// the one shape that shows a float element's width, since the
-// second slot is what a too-wide store of the first reaches.
 type enumShape struct {
 	name     string
 	variants []enumVariant
 }
 
-// enumVariant is one arm of a dynamic enum decl. An empty
-// payload is the payload-less form (`Red`), otherwise the
-// variant is declared and constructed as `V(T0, T1)`.
 type enumVariant struct {
 	name    string
 	payload []gtype
 }
 
-// helperSig is the bare minimum the generator needs to emit a
-// call site: the function's name, the types it takes, and the
-// type it returns.
 type helperSig struct {
 	name    string
 	params  []gtype
 	retType gtype
-	// fueled marks a recursive helper, whose hidden first parameter is
-	// the `__fuel` bound; a call site passes it before params.
-	fueled bool
+	fueled  bool
 }
 
-// gtype is the generator's internal enum of Lang types. Each kind
-// has its own literal form, applicable operators, and per-type
-// bucket inside scope.
-//
-// Each composite in the block is a distinct LAYOUT rather than a
-// second spelling of one already there: a uniform-scalar array
-// against a pointer-element one, a uniform struct against a
-// mixed-width one, a payload-less enum against a single- and a
-// multi-slot payload. Adding a type whose layout an existing entry
-// already covers buys nothing; the program-declared struct / enum
-// shapes in structShapes / enumShapes cover the per-program
-// variation instead.
 type gtype int
 
 const (
@@ -497,146 +191,20 @@ const (
 	tColor
 	tOptI32
 	tMapI32I32
-	// Additional nominal types. Each adds a distinct codegen
-	// shape so the differential oracle reaches code paths the
-	// first round (Pair / Color only) couldn't trigger:
-	//
-	// - Xyz: heterogeneous struct with a non-i32 field (boolean)
-	//   — exercises the per-field stride / offset arithmetic
-	//   that uniform-i32 Pair can't.
-	// - Status: three-variant payload-less enum like Color but
-	//   with different variant *names*, so anywhere a variant
-	//   name needs to round-trip through the parser / checker /
-	//   IR / codegen / formatter it has a second sample to
-	//   compare against.
 	tXyz
 	tStatus
-	// tResI32I32 = Result[i32, i32]. Pairs with the existing
-	// Option[i32] machinery (literals, match-with-binding, try
-	// operator) — Result's two-arm shape (Ok(T) / Err(E))
-	// exercises the variant-with-payload code paths Color /
-	// Status (payload-less) and Option (single payload variant)
-	// can't reach.
 	tResI32I32
-	// tTupI32I64 = (i32, i64). A tuple is neither a struct nor an
-	// enum: it has its own box layout and its own element
-	// stride/offset arithmetic (`tupleElemLayout`), and a
-	// heterogeneous one mixes a 4-byte and an 8-byte element so a
-	// backend that assumed a uniform stride is caught. Nothing else
-	// in the corpus produced a tuple at all, despite fn-typed tuple
-	// elements having been a real bug cluster.
 	tTupI32I64
-	// tU32 is the first UNSIGNED type in the corpus, and unsigned is
-	// where this codebase's worst codegen bugs have lived: `/`, `%` and
-	// `>>` lower to div_u / rem_u / shr_u, distinct instructions from
-	// their signed siblings, and `<` / `>` / `<=` / `>=` lower to the
-	// unsigned condition codes. All of it hangs on reading a 32-bit
-	// operand as u32 rather than as the sign-extended int64 it is stored
-	// in — the mistake behind the u32 `>>` that miscompiled SHA-256, and
-	// behind the old Go x86-64 SSA model's missing width parameter. None of that
-	// was reachable from a corpus that generated only signed types.
-	//
-	// Verified identical on interp / x86-64 / arm64 / wasm before adding:
-	// wrapping `+` `-` `*`, `x / 0` = 0 and `x % 0` = x as for signed,
-	// logical (not arithmetic) `>>` with the count masked to 5 bits, and
-	// unsigned ordering on operands with bit 31 set.
 	tU32
-	// tU64 / tF64 are the WIDE siblings of tU32 / tF32. Width is a
-	// second axis entirely: an unsigned op at 64 bits is a different
-	// instruction from one at 32 (div_u vs a 32-bit div_u, a 6-bit vs
-	// a 5-bit shift mask), and every backend stores a 32-bit value
-	// sign-extended into a 64-bit slot, so the narrow cases can be
-	// right while the wide ones are wrong and vice versa. f64 likewise
-	// is not f32 at a bigger size: it is the width at which a float
-	// needs no rounding step, so an f32 path that rounds correctly says
-	// nothing about it.
-	//
-	// Verified identical on interp / x86-64 / arm64 / wasm before
-	// adding, same protocol as tU32: for u64 the unsigned divide /
-	// remainder / shift / ordering on operands above i64::MAX, the
-	// 6-bit count mask, and wrapping arithmetic; for f64 the four
-	// arithmetic ops, NaN and +/-Inf comparisons, and the saturating
-	// `as i32` at both ends of the range.
 	tU64
 	tF64
-	// tU8 is the only SUB-WORD integer the language has (i8 / u16 / i16 do
-	// not exist), and it is a distinct codegen surface from the 32- and
-	// 64-bit types rather than a narrower one: its wrap mask is 8 bits, a
-	// `u8[]` element is a BYTE load/store rather than a word one, and the
-	// saturating clamp bounds are 0 / 255 — the one width where a saturated
-	// result is in range by construction so the wrap mask never has to run
-	// (docs/INTEGER-SEMANTICS.md).
-	//
-	// Verified identical on interp / x86-64 / arm64 / wasm before adding:
-	// wrapping `+` `-` `*` at 8 bits (`250 + 10` = 4, `10 - 250` = 16,
-	// `250 * 10` = 196), `/` and `%` incl. the zero divisor, the bit
-	// operators, unsigned ordering, the saturating family clamping at 0 and
-	// 255, and `u8[]` element loads. Note the SHIFT count still masks at 32,
-	// not at 8 — `250u8 >> 9` is 0, not `250 >> (9 & 7)` — and all four
-	// backends agree on that, which is the point of generating it.
 	tU8
-	// tFnI32I32 = `(i32) => i32`, the first FUNCTION-typed value in
-	// the corpus. A closure is not just another box: it is a pair of
-	// (code pointer, captured environment) with its own rc drop
-	// helper per lambda (`__closure_drop___closure_lambda_N`), and
-	// calling one goes through an indirect `blr` / `call r11` rather
-	// than a direct symbol reference.
-	//
-	// The shapes are the ones from the closure-dispatch cluster
-	// docs/TEST-GATES.md names — #5001 / #5007 / #5009 / #5026, escaping and
-	// array-held closures that lowered fine and then SIGSEGV'd or
-	// silently miscompiled. Every one was found by a HAND-WRITTEN
-	// probe, because the generator could not produce a function
-	// value at all.
-	//
-	// What this buys, precisely: the differential oracle drives the
-	// NATIVE compiler (interp vs arm64 / x86-64 / wasmbin), so these
-	// shapes are now generated against those four. That cluster
-	// itself lived on the SELF-HOST IR path, which no fernsmith
-	// harness routes through today — generating the shape is the
-	// half that was missing, but reaching that particular cluster
-	// mechanically also needs the corpus fed to the self-host
-	// compiler. Do not read a green differential run as coverage of
-	// self-host closure lowering.
 	tFnI32I32
-	// tArrFnI32I32 = `((i32) => i32)[]`. The closure ARRAY is a
-	// distinct shape from a closure variable, and it is the one that
-	// broke: the element drop helper has to walk each closure's own
-	// drop pointer (see `__drop_arr_closure`), an 8-byte stride on a
-	// pointer element, and `fs[0](x)` is an indexed load feeding an
-	// indirect call. Nothing else in the corpus produces a pointer-
-	// element array whose elements own a nested resource.
 	tArrFnI32I32
-	// Float-bearing aggregates. Every other composite in the corpus
-	// holds integers, booleans, strings or closures, so before these a
-	// float existed only as a scalar local — and a float element's
-	// WIDTH is only observable once one sits next to a neighbour in
-	// memory. That is precisely the shape #7333 needed and the corpus
-	// could not express: an 8-byte float store for a 4-byte element
-	// overwrites the elements after it, which a single-slot payload
-	// cannot show. All five are drawn only in the profiles that admit
-	// floats (ProfileFree / ProfilePrintable); the return-byte oracle
-	// keeps its float-free pool.
-	//
-	// tArrF32 / tArrF64: three or more elements at a 4- resp. 8-byte
-	// stride, the direct #7333 shape.
 	tArrF32
 	tArrF64
-	// tTupF32F64 = `(f32, f64)`. Mixes the two float widths in one
-	// box so the 4-byte and the 8-byte element sit at offsets a
-	// uniform-stride backend gets wrong — the float counterpart of
-	// tTupI32I64.
 	tTupF32F64
-	// tVec2 = `struct Vec2 { x: f32, y: f32 }`. Two ADJACENT narrow
-	// float fields: the per-field offset arithmetic at the one width
-	// where a store that is too wide reaches its neighbour.
 	tVec2
-	// tFShape = `enum FShape { FNone, FTwo(f32, f32), FWide(f64, f64) }`.
-	// The corpus's first payload-carrying enum beyond Option / Result,
-	// and its first MULTI-SLOT payload — `examples/wasm/shape_area.fern`,
-	// where the first f32 of a two-field payload read back as 0, is
-	// exactly this shape. Option's single payload slot is the case
-	// that worked.
 	tFShape
 	numTypes
 )
@@ -649,36 +217,27 @@ var allTypes = [numTypes]gtype{
 	tArrF32, tArrF64, tTupF32F64, tVec2, tFShape,
 }
 
-// gtypeNames is the source-level name for each builtin gtype, in
-// the same iota order as the const block above. Single-source-of-
-// truth — `gtype.String()` and `Generator.typeName()` both look
-// through this table for the builtin range, so adding a builtin
-// is one slot here (plus the const + allTypes entries) rather
-// than three switch cases that can drift apart. Pinned in place by
-// `TestGtypeNamesCoversEveryBuiltin`.
 var gtypeNames = [numTypes]string{
-	tI32:       "i32",
-	tI64:       "i64",
-	tBool:      "boolean",
-	tF32:       "f32",
-	tString:    "string",
-	tArrI32:    "i32[]",
-	tArrI64:    "i64[]",
-	tArrBool:   "boolean[]",
-	tPair:      "Pair",
-	tColor:     "Color",
-	tOptI32:    "Option[i32]",
-	tMapI32I32: "Map[i32, i32]",
-	tXyz:       "Xyz",
-	tStatus:    "Status",
-	tResI32I32: "Result[i32, i32]",
-	tTupI32I64: "(i32, i64)",
-	tU32:       "u32",
-	tU64:       "u64",
-	tF64:       "f64",
-	tU8:        "u8",
-	// Parenthesised in the array form because `(i32) => i32[]` would
-	// parse the `[]` onto the RETURN type, not the function type.
+	tI32:         "i32",
+	tI64:         "i64",
+	tBool:        "boolean",
+	tF32:         "f32",
+	tString:      "string",
+	tArrI32:      "i32[]",
+	tArrI64:      "i64[]",
+	tArrBool:     "boolean[]",
+	tPair:        "Pair",
+	tColor:       "Color",
+	tOptI32:      "Option[i32]",
+	tMapI32I32:   "Map[i32, i32]",
+	tXyz:         "Xyz",
+	tStatus:      "Status",
+	tResI32I32:   "Result[i32, i32]",
+	tTupI32I64:   "(i32, i64)",
+	tU32:         "u32",
+	tU64:         "u64",
+	tF64:         "f64",
+	tU8:          "u8",
 	tFnI32I32:    "(i32) => i32",
 	tArrFnI32I32: "((i32) => i32)[]",
 	tArrF32:      "f32[]",
@@ -688,13 +247,6 @@ var gtypeNames = [numTypes]string{
 	tFShape:      "FShape",
 }
 
-// String reports the source-level name for a builtin gtype.
-// Dynamic nominal types (struct / enum shapes registered at
-// generation time on a Generator) DON'T resolve through this
-// path because the value receiver can't see generator state.
-// Use `Generator.typeName(t)` everywhere a dynamic-type name
-// might be needed — this method is for builtin-only diagnostic
-// paths (panic messages, internal asserts).
 func (t gtype) String() string {
 	if t >= 0 && int(t) < len(gtypeNames) {
 		return gtypeNames[t]
@@ -702,9 +254,6 @@ func (t gtype) String() string {
 	return fmt.Sprintf("?dyn%d", int(t))
 }
 
-// maybeTypeArg writes a generic call's type argument (`id[i32](…)`) for t,
-// which inference would also bind, so the checker-mutant oracle can erase it
-// and both checkers must still agree. Exhaustion convention: `true` = none.
 func (g *Generator) maybeTypeArg(b *strings.Builder, t gtype) {
 	name := g.typeName(t)
 	if g.flip(0.75) || g.ch.exhausted() || strings.HasPrefix(name, "?") {
@@ -713,14 +262,6 @@ func (g *Generator) maybeTypeArg(b *strings.Builder, t gtype) {
 	b.WriteString("[" + name + "]")
 }
 
-// typeName returns the source-level name token for type t. This
-// is the canonical name-fetcher: builtin gtypes resolve through
-// the static `gtypeNames` table, dynamic nominal types through
-// the generator's per-shape maps. Use anywhere a type's name
-// needs to land in the emitted source (var annotations,
-// function-decl return types, struct-field types). Diagnostic-
-// only callers that don't have a Generator can fall back to
-// `gtype.String()`, which covers the builtin range.
 func (g *Generator) typeName(t gtype) string {
 	if t < numTypes {
 		return gtypeNames[t]
@@ -737,9 +278,6 @@ func (g *Generator) typeName(t gtype) string {
 	return fmt.Sprintf("?gtype%d", int(t))
 }
 
-// arrayTypeFor returns the array gtype whose element is t, plus a
-// success flag. Used to decide whether an in-scope array can be
-// indexed to produce a value of type t.
 func (g *Generator) arrayTypeFor(t gtype) (gtype, bool) {
 	for _, at := range sortedKeys(g.arrShapes) {
 		if g.arrShapes[at] == t {
@@ -763,8 +301,6 @@ func (g *Generator) arrayTypeFor(t gtype) (gtype, bool) {
 	return 0, false
 }
 
-// arrayElemOf returns the element gtype of an array gtype, plus a
-// success flag.
 func (g *Generator) arrayElemOf(t gtype) (gtype, bool) {
 	if elem, ok := g.arrShapes[t]; ok {
 		return elem, true
@@ -786,12 +322,6 @@ func (g *Generator) arrayElemOf(t gtype) (gtype, bool) {
 	return 0, false
 }
 
-// scope tracks identifiers visible at the current generation
-// point, bucketed by gtype so picking "any variable of type T"
-// is a constant-time lookup. Map-keyed (not fixed-size array)
-// so dynamically-allocated nominal gtypes — user-declared
-// structs / enums beyond the closed const set — can be tracked
-// uniformly.
 type scope struct {
 	parent *scope
 	vars   map[gtype][]string
@@ -803,7 +333,6 @@ func newScope(parent *scope) *scope {
 
 func (s *scope) declare(t gtype, name string) { s.vars[t] = append(s.vars[t], name) }
 
-// inScope returns every identifier of type t reachable from s.
 func (s *scope) inScope(t gtype) []string {
 	var out []string
 	for cur := s; cur != nil; cur = cur.parent {
@@ -812,45 +341,10 @@ func (s *scope) inScope(t gtype) []string {
 	return out
 }
 
-// ---------- top level ----------
-
-// GenMain returns a single-function runnable Lang program — exactly
-// one `function main(): i32 { ... }` whose return value is a
-// deterministic byte in [0, 255]. Useful as input for a
-// differential-execution oracle, which runs the program through
-// every available backend (interp + arm64 + x86_64 + wasm) and
-// asserts the observers agree on the result.
-//
-// Limited to integer + boolean operations so the same expression
-// has a single well-defined value across every backend. Floats
-// can diverge at Inf/NaN edges, strings need a print-channel
-// observation, and division would risk a `/0` trap; all three
-// stay out. The mask `& 255i32` makes the result fit in an 8-bit
-// exit code AND keeps wasm's PrintMainResult stdout output a
-// short ASCII byte string the harness can compare to the native
-// exit codes.
-//
-// For native `testing.F`-driven fuzzing, prefer GenMainBytes —
-// its byte-stream RNG plays nicely with the corpus minimiser.
 func GenMain(seed uint64) string {
 	return newRandGen(seed, DefaultConfig()).MainProgram()
 }
 
-// MainProgram emits a program of the shape
-//
-//	function gen_f0(...): ... { ... }
-//	function gen_f1(...): ... { ... }
-//	...
-//	function main(): i32 { ... return (<i32-expr> & 255i32); }
-//
-// The 0..K helpers exist so main has things to call: every call
-// site in main exercises one more chunk of the calling
-// convention / parameter-passing path that single-function
-// programs miss. Helpers can themselves call any *earlier*
-// helper (forward refs only, plus a recursive helper's fuel-bounded
-// self-call — see funcDecl). Runs under ProfileRunnable,
-// so nested productions can't introduce f32 through boolean
-// comparisons.
 func (g *Generator) MainProgram() string {
 	g.profile = ProfileRunnable
 	g.drawSwarm()
@@ -858,14 +352,6 @@ func (g *Generator) MainProgram() string {
 	var b strings.Builder
 	g.preludeDecls(&b)
 
-	// Emit a small number of helpers before main. Helpers in
-	// ProfileRunnable mode share the profile's float-free type
-	// pool, so their signatures are drawn from {i32, i64, bool,
-	// string, i32[], i64[], boolean[], Pair, Color, ...}.
-	// Main only consumes i32-returning helpers in its return
-	// expression, but non-i32 helpers still get
-	// exercised: any helper can call any earlier helper of
-	// matching arg/return types.
 	nHelpers, helpersAt := 0, 0
 	if g.on(featHelpers) {
 		nHelpers, helpersAt = g.listCount(maxInt(g.cfg.MaxFuncs, 1))
@@ -887,7 +373,6 @@ func (g *Generator) MainProgram() string {
 	}
 	b.WriteString("return (")
 	g.expr(&b, sc, tI32, 0)
-	// A spent corpus skips the fold, so truncation never adds it.
 	if !g.ch.exhausted() {
 		b.WriteString(" + ")
 		g.emitStateFold(&b, sc)
@@ -896,7 +381,6 @@ func (g *Generator) MainProgram() string {
 	return b.String()
 }
 
-// mainStmt emits main's i-th statement.
 func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
@@ -904,12 +388,6 @@ func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 		g.maybeEmitControlStmt(b, sc, tI32) {
 		return
 	}
-	// Main's vars are drawn from the deterministic-across-
-	// backends subset (no floats, no strings whose
-	// observation needs a print channel). Composite types
-	// (arrays / Pair / Color) are pure values that flow
-	// through the i32 return path via index / field /
-	// match-expr productions in expr(), so they're safe.
 	vt := g.pickMainVarType()
 	vname := fmt.Sprintf("v%d", i)
 	fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
@@ -918,16 +396,6 @@ func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 	sc.declare(vt, vname)
 }
 
-// MainPrintableProgram emits the printable-oracle counterpart of
-// MainProgram: a `main` that prints a sequence of computed values and
-// returns 0. See ProfilePrintable for the portability contract.
-//
-// Main's vars are drawn from mainVarTypes plus floatVarTypes, so a
-// float — scalar or held in a multi-slot box — can be a main-level
-// local and therefore reach an observation. Two observations are
-// mandatory per program: a NaN/Inf-aware float comparison, which
-// covers the unordered-comparison codegen the return-byte path
-// can't, and a float-aggregate read of every slot of one aggregate.
 func (g *Generator) MainPrintableProgram() string {
 	g.profile = ProfilePrintable
 	g.drawSwarm()
@@ -947,9 +415,6 @@ func (g *Generator) MainPrintableProgram() string {
 	b.WriteString("function main(): i32 { ")
 	g.currentReturnType = tI32
 
-	// Runtime float 0.0 / 1.0 for the special-value (NaN / Inf)
-	// comparison observation. Runtime vars (not literals) so
-	// constfold neither rejects nor pre-evaluates `__fz / __fz`.
 	b.WriteString("let __fz: f32 = 0.0f32; let __fo: f32 = 1.0f32; ")
 
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
@@ -983,11 +448,6 @@ func (g *Generator) MainPrintableProgram() string {
 		sc.declare(vt, vname)
 	}
 
-	// One mandatory NaN/Inf-aware float comparison (guarantees the
-	// unordered path is covered every program, and that __fz/__fo are
-	// referenced), one mandatory float-aggregate read, then a handful
-	// of random observations. The aggregate goes first so the var it
-	// declares is in scope for everything after it.
 	g.emitFloatAggregateObservation(&b, sc)
 	g.emitFloatSpecialObservation(&b, sc)
 	nObs := g.ch.intN(maxInt(g.cfg.MaxStmts, 1))
@@ -1004,17 +464,6 @@ func (g *Generator) MainPrintableProgram() string {
 	return b.String()
 }
 
-// emitPrintObservation writes one `print(...)` statement observing a
-// generated expression through a backend-portable channel: signed and
-// unsigned integers via .to_string(), booleans (including float
-// comparisons) as "T"/"F", strings raw, and floats truncated through
-// `as i32`.
-//
-// Exhaustion convention: option 0 is the raw-string channel, the
-// smallest of the nine measured in AST nodes (4 against 6 for an
-// integer `.to_string()` and 7 for a cast or a comparison). An
-// exhausted corpus takes option 0, so any other ordering lets
-// truncation grow the program and the shrinker walk uphill.
 func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
 	switch g.ch.intN(9) {
 	case 0:
@@ -1034,33 +483,18 @@ func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
 		g.expr(b, sc, tI32, 0)
 		b.WriteString(").to_string()); ")
 	case 4:
-		// Float value observed by truncation — exercises float
-		// arithmetic + the saturating float→int conversion, both
-		// portable.
 		b.WriteString("print(((")
 		g.expr(b, sc, tF32, 0)
 		b.WriteString(") as i32).to_string()); ")
 	case 7:
-		// u64 through its own `.to_string()`, the full-width sibling of
-		// the u32 channel below.
 		b.WriteString("print((")
 		g.expr(b, sc, tU64, 0)
 		b.WriteString(").to_string()); ")
 	case 8:
-		// f64 truncated, same portable channel as f32. A cast is the
-		// only float observation the oracle takes: decimal rendering of
-		// a float is deliberately under-specified (docs/FLOAT-SEMANTICS.md),
-		// so printing one would report formatting drift as a miscompile.
 		b.WriteString("print(((")
 		g.expr(b, sc, tF64, 0)
 		b.WriteString(") as i32).to_string()); ")
 	case 6:
-		// u32 through its own `.to_string()` rather than an `as i32`
-		// cast: the cast reinterprets the same 32 bits, so a value
-		// above i32::MAX would print as a negative and every unsigned
-		// result would still be observable — but the DECIMAL rendering
-		// is itself unsigned-specific, so routing through it also
-		// covers the u32 formatting path.
 		b.WriteString("print((")
 		g.expr(b, sc, tU32, 0)
 		b.WriteString(").to_string()); ")
@@ -1069,39 +503,13 @@ func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
 	}
 }
 
-// floatAggArrayLen is how many elements the mandatory float-array
-// observation declares. More than one, because a float element's
-// width is only observable when there is a neighbour for a too-wide
-// access to reach; three so a corruption that spares the first or
-// the last slot still shows.
 const floatAggArrayLen = 3
 
-// emitFloatAggregateObservation declares one aggregate holding floats
-// and prints EVERY slot of it through the truncating `as i32`
-// channel. Emitted once per printable program, unconditionally.
-//
-// Unconditional because sampling cannot be relied on to reach the
-// class. Widening the type pools alone puts float aggregates into
-// generated source without any of them reaching a position the
-// oracle compares — helper return types nothing calls, or an array
-// the ordinary read production only ever indexes at [0]. This is
-// the production that makes a green sweep evidence about
-// floats-in-aggregates rather than about their absence.
-//
-// The declared var stays in scope, so the observations that follow
-// can draw from it too.
 func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope) {
 	idx := g.floatAggCounter
 	g.floatAggCounter++
 	name := fmt.Sprintf("__fag%d", idx)
-	// One production level below the cap: short enough to keep the
-	// emitted statement readable, deep enough that the slots hold
-	// float arithmetic rather than a row of bare literals.
 	d := maxInt(g.cfg.MaxExprDepth-1, 0)
-	// Exhaustion convention: option 0 is Vec2, the smallest of the five
-	// measured in AST nodes (20, against 29 for the enum payload and 32
-	// for either array) — and still two adjacent f32 slots, so even the
-	// collapsed form keeps the shape this production exists for.
 	switch g.ch.intN(5) {
 	case 1:
 		g.emitFloatArrayObservation(b, sc, name, tArrF32, d)
@@ -1117,9 +525,6 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 		g.printFloatAsI32(b, name+".0")
 		g.printFloatAsI32(b, name+".1")
 	case 4:
-		// Built as a payload-CARRYING variant rather than through the
-		// FShape literal production, so the observation can never be
-		// the FNone no-op.
 		if g.flip(0.5) {
 			fmt.Fprintf(b, "let %s: FShape = (FTwo(", name)
 			g.expr(b, sc, tF32, d)
@@ -1133,9 +538,6 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 		}
 		b.WriteString(")); ")
 		sc.declare(tFShape, name)
-		// One print per payload SLOT: a match that reads only the
-		// first binding is the read pattern that let the second slot's
-		// corruption go unseen.
 		for slot := 0; slot < 2; slot++ {
 			narrowA := fmt.Sprintf("__fs_a%d_%d", idx, slot)
 			narrowB := fmt.Sprintf("__fs_b%d_%d", idx, slot)
@@ -1161,8 +563,6 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 	}
 }
 
-// emitFloatArrayObservation declares a float array of
-// floatAggArrayLen elements and prints each one.
 func (g *Generator) emitFloatArrayObservation(b *strings.Builder, sc *scope, name string, arrT gtype, depth int) {
 	elem, _ := g.arrayElemOf(arrT)
 	fmt.Fprintf(b, "let %s: %s = [", name, g.typeName(arrT))
@@ -1179,27 +579,10 @@ func (g *Generator) emitFloatArrayObservation(b *strings.Builder, sc *scope, nam
 	}
 }
 
-// printFloatAsI32 prints one float-valued expression through the
-// truncating cast — the only float observation the oracle takes,
-// since decimal rendering of a float is under-specified
-// (docs/FLOAT-SEMANTICS.md).
 func (g *Generator) printFloatAsI32(b *strings.Builder, expr string) {
 	fmt.Fprintf(b, "print(((%s) as i32).to_string()); ", expr)
 }
 
-// emitFloatSpecialObservation prints the result of a float comparison
-// ("T"/"F") whose LEFT operand is always NaN or ±Inf (built from the
-// runtime __fz / __fo zeros and ones) and whose right operand is
-// either another special value or an ordinary finite expression.
-// Float division is well-defined (never traps) so these are safe to
-// emit; the boolean result is portable, which is what makes the
-// unordered-comparison codegen testable.
-//
-// Special on the left rather than on a draw, so the guarantee holds
-// for a byte-driven corpus too: an exhausted stream takes the
-// smallest branch everywhere, and the smallest of the four operand
-// forms is the ordinary one — a program shrunk to nothing would
-// otherwise compare two finite floats and reach no unordered path.
 func (g *Generator) emitFloatSpecialObservation(b *strings.Builder, sc *scope) {
 	op := []string{"<", "<=", ">", ">=", "==", "!="}[g.ch.intN(6)]
 	b.WriteString("print(if ((")
@@ -1209,29 +592,17 @@ func (g *Generator) emitFloatSpecialObservation(b *strings.Builder, sc *scope) {
 	b.WriteString(")) { \"T\" } else { \"F\" }); ")
 }
 
-// emitSpecialFloatValue writes NaN (0/0), +Inf (1/0) or -Inf
-// ((0-1)/0), all built from the runtime __fz / __fo.
-//
-// Exhaustion convention: option 0 is NaN — tied with +Inf for the
-// fewest AST nodes, and the value the unordered comparisons exist for.
 func (g *Generator) emitSpecialFloatValue(b *strings.Builder) {
 	switch g.ch.intN(3) {
 	case 1:
-		b.WriteString("(__fo / __fz)") // +Inf
+		b.WriteString("(__fo / __fz)")
 	case 2:
-		b.WriteString("((__fz - __fo) / __fz)") // -Inf
+		b.WriteString("((__fz - __fo) / __fz)")
 	default:
-		b.WriteString("(__fz / __fz)") // NaN
+		b.WriteString("(__fz / __fz)")
 	}
 }
 
-// emitFloatComparand writes the right-hand operand of a special-value
-// comparison: an ordinary finite f32 expression, or a second special
-// value so NaN-against-Inf and Inf-against-Inf are reached too.
-//
-// Exhaustion convention: option 0 is the ordinary expression, which
-// collapses to a single leaf where every special form is a fixed
-// three or five nodes.
 func (g *Generator) emitFloatComparand(b *strings.Builder, sc *scope) {
 	if g.ch.intN(4) == 0 {
 		g.expr(b, sc, tF32, 1)
@@ -1240,65 +611,22 @@ func (g *Generator) emitFloatComparand(b *strings.Builder, sc *scope) {
 	g.emitSpecialFloatValue(b)
 }
 
-// mainVarTypes are the float-free gtypes legal for `let v<N>`
-// declarations inside `main` in every profile — floatVarTypes
-// below adds to them where floats are admitted. Strings are exercised
-// through `len(s)` in the i32 path (see tryCompositeProduction),
-// so they
-// flow into the byte oracle even without a separate stdout
-// channel. Composite types do the same via array index, Pair
-// field access, and match-over-Color.
 var mainVarTypes = []gtype{
 	tI32, tI64, tU32, tU64, tU8, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
 	tXyz, tStatus, tResI32I32, tTupI32I64,
-	// Function values and closure arrays. Observable through the
-	// byte oracle without a channel of their own: an in-scope
-	// closure is called for its i32 result by tryCompositeProduction,
-	// which is the only way its code pointer and captured
-	// environment are ever touched.
 	tFnI32I32, tArrFnI32I32,
-	// tMapI32I32 is now included since the interp grew a Map
-	// runtime — `map_new`, `__method_Map_*`, and `*ast.MapLit`
-	// evaluation all live in internal/oracle/interp/interp.go now,
-	// so Map values flowing into main's expression path
-	// round-trip through interp + native backends identically.
 	tMapI32I32,
 }
 
-// floatVarTypes are the extra `main`-local types the printable
-// profile admits on top of mainVarTypes. Every entry past the two
-// scalars holds floats in a box with more than one slot, which is
-// the only arrangement in which a float element's WIDTH is
-// observable: an access too wide for the element reaches its
-// neighbour, and a single-slot payload has none.
-//
-// They belong in main rather than only in helper signatures
-// because only main's locals reach the print observations —
-// a helper returning `f32[]` that main never calls is generated
-// coverage nothing looks at.
 var floatVarTypes = []gtype{
 	tF32, tF64,
 	tArrF32, tArrF64,
 	tTupF32F64, tVec2, tFShape,
 }
 
-// preludeDecls emits the fixed `struct Pair` + `enum Color`
-// declarations every generated program shares, plus a small set
-// of fixed methods on Pair. Methods exercise the method-dispatch
-// path (`expr.method(args)` syntactic sugar that the checker
-// rewrites to `__method_Pair_<name>(expr, args)`) without
-// needing per-struct nominal-type tracking — Pair is fixed, so
-// the method names are fixed too.
 func (g *Generator) preludeDecls(b *strings.Builder) {
-	// The auto-prelude is gone (docs/PRELUDE-TO-MODULES.md phase 5),
-	// so generated programs must declare the stdlib they lean on:
-	// `.to_string()` (std/i32 / core/int), string + Map `.len()` and
-	// Map literals (core/map), array helpers (std/array). Imports
-	// must precede all decls. Resolving them needs the modload path —
-	// the fernsmith tests load generated source through modload, not
-	// bare parser.Parse.
 	b.WriteString("import \"std/i32\";\n")
 	b.WriteString("import \"std/i64\";\n")
 	b.WriteString("import \"std/u32\";\n")
@@ -1308,75 +636,23 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	b.WriteString("import \"core/int\";\n")
 	b.WriteString("import \"core/map\";\n")
 	b.WriteString("struct Pair { fst: i32, snd: i32 }\n")
-	// `Xyz` — heterogeneous struct with an i32 field and a
-	// boolean field. Exercises the per-field stride / offset
-	// arithmetic that Pair (uniform i32) can't.
-	//
-	// The field name `n` (not `id`) avoids a name collision
-	// with the generic helper `function id[T](x: T): T { ... }`
-	// declared further down: an `Xyz { id: 1, valid: true }`
-	// literal sits next to `id(42)` call sites in the same
-	// program, and the monomorph re-check rejects the program
-	// because `id` resolves to the field-name token in the
-	// scope where it should be the generic function.
 	b.WriteString("struct Xyz { n: i32, valid: boolean }\n")
 	b.WriteString("enum Color { Red, Green, Blue }\n")
-	// `Status` — second payload-less enum with different
-	// variant names. Anywhere a variant name has to round-trip
-	// through the parser / checker / IR / codegen / formatter,
-	// this gives the path a second sample distinct from
-	// Color's Red / Green / Blue.
 	b.WriteString("enum Status { Active, Inactive, Pending }\n")
-	// `pair.sum()`: Pair → i32. The simplest method shape — no
-	// args, scalar return. Flows back into the i32 byte-oracle
-	// path via tryCompositeProduction.
 	b.WriteString("function (p: Pair) sum(): i32 { return (p.fst + p.snd); }\n")
-	// `pair.swap()`: Pair → Pair. Tests methods that return the
-	// receiver type — a common stdlib shape codegen could
-	// plausibly mishandle.
 	b.WriteString("function (p: Pair) swap(): Pair { return (Pair { fst: p.snd, snd: p.fst }); }\n")
-	// Generic helpers. Each accepts a type parameter T and the
-	// checker infers it from the call's arg types. Monomorph
-	// clones each one per instantiation before codegen sees
-	// them; calling `id` with both i32 and bool args in the
-	// same program forces the monomorphiser to walk its
-	// clone-and-rename path, which the differential oracle
-	// then exercises end-to-end.
 	b.WriteString("function id[T](x: T): T { return x; }\n")
 	b.WriteString("function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }\n")
-	// Float-bearing nominals, declared only where floats are drawn at
-	// all — the return-byte oracle's programs never construct one, so
-	// emitting the decls there would be dead source. `Vec2` is two
-	// adjacent f32 fields; `FShape` is the multi-slot enum payload.
 	if g.profile.floatsAllowed() {
 		b.WriteString("struct Vec2 { x: f32, y: f32 }\n")
 		b.WriteString("enum FShape { FNone, FTwo(f32, f32), FWide(f64, f64) }\n")
 	}
-	// Dynamic nominal types — per-program random struct + enum
-	// shapes. See declareDynamicNominals for the field /
-	// variant generation rules.
 	g.declareDynamicNominals(b)
 	g.declareTrait(b)
 	g.declareGenerics(b)
 	g.declareOwnRecv(b)
 }
 
-// declareDynamicNominals emits 0..3 additional struct decls and
-// 0..2 additional enum decls per program, with random field /
-// variant shapes drawn from the chooser. Each declaration gets a
-// fresh gtype value past `numTypes` so the scope's map keys
-// stay collision-free with the fixed Pair / Xyz / Color / Status.
-//
-// Field types and variant-payload slots are drawn from
-// `pickFieldType` — scalars only, so the recursive expression
-// generation stays finite and the codegen layout simple, plus
-// f32 / f64 in the profiles that admit floats.
-//
-// Variant names use a generator-private `__E<i>_V<j>` prefix to
-// guarantee global uniqueness without colliding with any
-// stdlib variant. Struct names use `S<i>` and field names
-// `f<j>` — those don't collide with anything in the prelude or
-// any user code the generator emits.
 func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 	if g.structShapes == nil {
 		g.structShapes = map[gtype]*structShape{}
@@ -1393,12 +669,10 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 	if g.nextNominal < numTypes {
 		g.nextNominal = numTypes
 	}
-	// Up to 3 extra structs. Each has 2..4 fields drawn from
-	// scalar types.
-	nStructs := g.ch.intN(4) // 0..3
+	nStructs := g.ch.intN(4)
 	for i := 0; i < nStructs; i++ {
 		name := fmt.Sprintf("S%d", i)
-		nFields := 2 + g.ch.intN(3) // 2..4 fields
+		nFields := 2 + g.ch.intN(3)
 		fields := make([]structField, nFields)
 		fmt.Fprintf(b, "struct %s { ", name)
 		for j := 0; j < nFields; j++ {
@@ -1415,12 +689,10 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 		g.nextNominal++
 		g.structShapes[gt] = &structShape{name: name, fields: fields}
 	}
-	// Up to 2 extra enums. Each has 2..4 variants, some carrying a
-	// 1- or 2-slot payload.
-	nEnums := g.ch.intN(3) // 0..2
+	nEnums := g.ch.intN(3)
 	for i := 0; i < nEnums; i++ {
 		name := fmt.Sprintf("E%d", i)
-		nVariants := 2 + g.ch.intN(3) // 2..4
+		nVariants := 2 + g.ch.intN(3)
 		variants := make([]enumVariant, nVariants)
 		fmt.Fprintf(b, "enum %s { ", name)
 		for j := 0; j < nVariants; j++ {
@@ -1429,13 +701,9 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 			}
 			vname := fmt.Sprintf("__E%d_V%d", i, j)
 			b.WriteString(vname)
-			// Exhaustion convention: `true` is the payload-LESS variant,
-			// so a spent corpus collapses each enum back to the bare-name
-			// form rather than growing payload slots and the construction
-			// and destructuring they drag in.
 			var payload []gtype
 			if !g.flip(0.55) {
-				nSlots := 1 + g.ch.intN(2) // 1..2
+				nSlots := 1 + g.ch.intN(2)
 				payload = make([]gtype, nSlots)
 				b.WriteByte('(')
 				for k := 0; k < nSlots; k++ {
@@ -1454,8 +722,6 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 		g.nextNominal++
 		g.enumShapes[gt] = &enumShape{name: name, variants: variants}
 	}
-	// An array over each declared nominal, sometimes. Exhaustion
-	// convention: `true` is no array type, so a spent corpus adds none.
 	for _, elem := range append(sortedKeys(g.structShapes), sortedKeys(g.enumShapes)...) {
 		if !g.on(featNested) || g.flip(0.6) {
 			continue
@@ -1465,9 +731,6 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 	}
 }
 
-// Program emits a complete program: prelude type decls followed
-// by N top-level function declarations. Helpers can call any
-// earlier helper (forward refs only — see funcDecl).
 func (g *Generator) Program() string {
 	g.drawSwarm()
 	var b strings.Builder
@@ -1481,7 +744,6 @@ func (g *Generator) Program() string {
 
 func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	sc := newScope(nil)
-	// Exhaustion convention: `true` here = not recursive, the smaller form.
 	fueled := g.on(featRecursion) && !g.flip(0.5)
 	nParams := g.ch.intN(maxInt(g.cfg.MaxParams, 0) + 1)
 	name := fmt.Sprintf("gen_f%d", idx)
@@ -1508,15 +770,10 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	g.currentReturnType = ret
 	sig := helperSig{name: name, params: params, retType: ret, fueled: fueled}
 	if fueled {
-		// A recursive helper is bounded by its fuel: the base case returns
-		// before any self-call can run, every self-call passes one less, and
-		// the body makes at most two of them outside loops and closures, so
-		// a call with fuel n costs at most 2^(n+1) invocations.
 		b.WriteString("if (__fuel <= 0i32) { return ")
 		g.expr(b, sc, ret, 1)
 		b.WriteString("; } ")
 		g.self, g.selfCalls = &sig, 2
-		// Exhaustion convention: `true` here = no leading self-call.
 		if !g.flip(0.5) {
 			fmt.Fprintf(b, "let __rec: %s = ", g.typeName(ret))
 			g.emitCallTo(b, sc, sig, 1)
@@ -1528,17 +785,9 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	g.self = nil
 	g.currentReturnType = prevRet
 	b.WriteString("}\n")
-	// Registered after the body, so a function reaches itself only
-	// through the fuelled self-call. Only forward calls are visible
-	// otherwise, which rules out mutual recursion.
 	g.helpers = append(g.helpers, sig)
 }
 
-// body emits a sequence of `let` declarations / while-loops
-// followed by a typed `return`. Each `let` adds a fresh name to
-// the scope so later statements can reference it; while-loops use
-// the bounded-counter pattern (see emitWhileLoop) and don't add
-// anything to the outer scope.
 func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 	prevLocals := g.localHelpers
 	g.localHelpers = nil
@@ -1554,7 +803,6 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 	b.WriteString("; ")
 }
 
-// bodyStmt emits a function body's i-th statement.
 func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
@@ -1570,24 +818,6 @@ func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 	sc.declare(vt, vname)
 }
 
-// maybeEmitWhile probabilistically emits a bounded-counter while
-// loop. Returns true when it wrote one (caller should skip the
-// var-decl it would have emitted otherwise), false when the
-// loop-depth cap or the random gate skipped emission.
-//
-// Bounded-counter pattern:
-//
-//	var __loop_i<N>: i32 = 0i32;
-//	while (__loop_i<N> < <K>i32) {
-//	    <body var-decls>
-//	    __loop_i<N> = __loop_i<N> + 1i32;
-//	}
-//
-// The counter name is generator-private (`__loop_` prefix), so
-// body var-decls (`v*`, `p*`, `w*`) can't shadow or alias it.
-// The body never assigns to the counter — only the trailing
-// increment does — so termination after at most K iterations is
-// statically obvious.
 func (g *Generator) maybeEmitWhile(b *strings.Builder, sc *scope) bool {
 	if !g.on(featWhile) {
 		return false
@@ -1595,9 +825,6 @@ func (g *Generator) maybeEmitWhile(b *strings.Builder, sc *scope) bool {
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
 	}
-	// Exhaustion convention: `false` here = no loop (smaller
-	// output). Bias to ~15% loop emission per slot when bytes
-	// are flowing.
 	if g.flip(0.85) {
 		return false
 	}
@@ -1617,9 +844,6 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 	fmt.Fprintf(b, "let %s: i32 = 0i32; ", counter)
 	fmt.Fprintf(b, "while (%s < %di32) { ", counter, iters)
 
-	// Body: a few var-decls. Use an inner scope so loop-body
-	// names don't leak out; the inner scope's parent chain
-	// still gives expressions visibility into outer vars.
 	inner := newScope(sc)
 	nstmts := g.ch.intN(3)
 	for i := 0; i < nstmts; i++ {
@@ -1641,18 +865,6 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 	b.WriteString("} ")
 }
 
-// maybeEmitLocalFn probabilistically emits a nested function
-// declaration as a statement. Local fns are full closures —
-// they read outer-scope vars by name (the checker's capture
-// analysis stamps the FuncDecl.Captures list, and codegen /
-// the interpreter use that snapshot at the def site).
-//
-// Returns true when it wrote one (caller should skip the
-// var-decl it would have emitted otherwise). Adds the
-// signature to g.localHelpers so subsequent expressions in
-// the same body can emitCall it. The localHelpers list is
-// scoped to the enclosing function — save+restore around
-// each body keeps cross-function state clean.
 func (g *Generator) maybeEmitLocalFn(b *strings.Builder, sc *scope) bool {
 	if !g.on(featLocalFn) {
 		return false
@@ -1680,10 +892,6 @@ func (g *Generator) maybeEmitLocalFn(b *strings.Builder, sc *scope) bool {
 	b.WriteByte(')')
 	ret := g.pickType()
 	fmt.Fprintf(b, ": %s { return ", g.typeName(ret))
-	// Body is a single return expression. Don't recurse into
-	// emitWhile / emitForEach / nested local fns from the body
-	// shape — that'd bloat the source and put nested closures
-	// on hot paths the diff oracle hasn't proved out yet.
 	prevReturnType := g.currentReturnType
 	g.currentReturnType = ret
 	g.inClosure++
@@ -1695,19 +903,6 @@ func (g *Generator) maybeEmitLocalFn(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// maybeEmitForEach probabilistically emits a `for x in arr { ... }`
-// or `for (k, v) in m { ... }` over an in-scope array / Map. Returns
-// true when it wrote one (caller should skip the var-decl it
-// would have emitted otherwise), false when no eligible scope
-// var exists or the random gate skipped emission.
-//
-// Termination is automatic: each iteration walks one position of
-// the underlying data structure, which has a finite size set at
-// construction time. No counter to mutate, no risk of infinite
-// loops.
-//
-// The body lives in an inner scope so the loop variable's name
-// can't leak out. Same loop-depth budget as the while loop.
 func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 	if !g.on(featForEach) {
 		return false
@@ -1715,8 +910,6 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
 	}
-	// Pick an in-scope iterable: array or Map. If neither is
-	// available, skip.
 	var arrayVar string
 	var elemType gtype
 	for _, at := range append([]gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32, tArrF32, tArrF64}, sortedKeys(g.arrShapes)...) {
@@ -1731,8 +924,6 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 	if arrayVar == "" && len(mapVars) == 0 {
 		return false
 	}
-	// Exhaustion convention: `false` here = no loop (smaller
-	// output). Bias to ~12% emission per slot when bytes flow.
 	if g.flip(0.88) {
 		return false
 	}
@@ -1743,22 +934,11 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 
 	inner := newScope(sc)
 	switch {
-	// `!flip` so `true` — the exhausted choice — is the MAP form.
-	// The array reading looks smaller in source (one binding, not
-	// two), and is 2 AST nodes LARGER after checking: `for x in arr`
-	// desugars through an index-and-bounds shape that map iteration
-	// does not need. Measured, not reasoned about; the earlier
-	// spelling here assumed the source-shaped answer and the shrink
-	// property caught it the moment a fourth array type made this
-	// branch reachable at an exhaustion boundary.
 	case arrayVar != "" && (len(mapVars) == 0 || !g.flip(0.5)):
-		// for x in <arr> { ... }
 		bind := fmt.Sprintf("__fe_x%d", idx)
 		fmt.Fprintf(b, "for %s in %s { ", bind, arrayVar)
 		inner.declare(elemType, bind)
 	default:
-		// for (k, v) in <map> { ... } — k/v are i32 since we
-		// only generate Map[i32, i32].
 		mapVar := mapVars[g.ch.intN(len(mapVars))]
 		kBind := fmt.Sprintf("__fe_k%d", idx)
 		vBind := fmt.Sprintf("__fe_v%d", idx)
@@ -1786,60 +966,17 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// cowArrayTypes are the array gtypes maybeEmitArrayAliasCow builds in
-// every profile. Ordered smallest-element-first so an exhausted corpus
-// takes the i32 form.
 var cowArrayTypes = []gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32}
 
-// cowFloatArrayTypes are the extra ones the float-admitting profiles
-// add on top, the same split mainVarTypes / floatVarTypes make.
 var cowFloatArrayTypes = []gtype{tArrF32, tArrF64}
 
-// maybeEmitArrayAliasCow probabilistically emits the array
-// alias-then-copy-on-write cluster:
-//
-//	var __cow_s<N>: T[] = [ ... ];                    // source
-//	var __cow_a<N>: T[] = __cow_s<N>;                 // bare-ident ALIAS
-//	var cw<N>_w: T[]    = __cow_s<N>.with(<i>i32, v); // source's LAST use
-//	var cw<N>_a: E      = __cow_a<N>[<i>i32];         // read THROUGH the alias
-//
-// Returns true when it wrote one (caller should skip the var-decl it
-// would have emitted otherwise).
-//
-// The four statements are one production because the bug class they
-// reach is about their ORDER, not about any of them individually. A
-// `.with` whose receiver is at its last use lowers to an in-place
-// store guarded on the receiver holding the only reference; a
-// bare-ident alias is exactly what makes that guard's answer wrong if
-// the alias's refcount traffic was elided as a dead dup/drop pair. The
-// divergence is only observable by reading the alias AFTER the write,
-// so the read has to be its own later statement. Composed out of
-// independent productions the sequence needs four specific statements
-// to land in order, which no seed in a 2048-seed GenMain corpus
-// produced.
-//
-// The source and the alias are generator-private and are deliberately
-// NOT declared into the caller's scope, for the same reason the loop
-// counters are not: a later reference to the source would move its
-// last use past the `.with` and take the in-place path off the table,
-// and a later reference to the alias (a `return` mentioning it, say)
-// would pin it live and stop it being treated as a dead alias. Either
-// one silently turns the cluster back into an ordinary array copy. The
-// `.with` RESULT and the read-back element are declared, so an
-// enclosing return or print observation can pick them up — the
-// read-back is the value that carries the divergence.
 func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
 	if !g.on(featCow) {
 		return false
 	}
-	// Exhaustion convention: `true` here = no cluster, which is the
-	// smaller output (the caller falls through to a single var-decl).
-	// Bias to ~15% emission per statement slot when bytes are flowing.
 	if g.flip(0.85) {
 		return false
 	}
-	// A spent stream would take the pool's first type, which a later use of
-	// the cluster's result may not want; no cluster is the smaller program.
 	if g.ch.exhausted() {
 		return false
 	}
@@ -1862,8 +999,6 @@ func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
 	n := g.arrayLiteral(b, sc, elem, 0)
 	b.WriteString("; ")
 	fmt.Fprintf(b, "let %s: %s = %s; ", alias, arrName, src)
-	// The literal's length is known here, so the write can land
-	// anywhere in it rather than always at 0.
 	at := g.ch.intN(n)
 	fmt.Fprintf(b, "let %s: %s = %s.with(%di32, ", result, arrName, src, at)
 	g.expr(b, sc, elem, 1)
@@ -1875,16 +1010,6 @@ func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// maybeEmitLoopReadBeforeWith emits the LOOP half of the copy-on-write shape:
-// a receiver declared outside the loop, read at the top of the body, and
-// consumed by a `.with` that is its textually-last occurrence. `identOrder`
-// is textual, so "last" re-executes and the next iteration reads the slot the
-// in-place store already overwrote — interp 2 against 10 on both natives when
-// #7544 was live. maybeEmitArrayAliasCow cannot reach this: its receiver dies
-// in the same straight-line block it was declared in.
-//
-// i32[] only. The read has to reach the return value to be observed at all,
-// and an i32 accumulator is the one element type that adds up without a cast.
 func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) bool {
 	if !g.on(featCow) {
 		return false
@@ -1892,7 +1017,6 @@ func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) b
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
 	}
-	// Exhaustion convention: `true` = no loop, which is the smaller output.
 	if g.flip(0.85) {
 		return false
 	}
@@ -1903,14 +1027,10 @@ func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) b
 	acc := fmt.Sprintf("cwl%d_acc", idx)
 	result := fmt.Sprintf("cwl%d_w", idx)
 
-	// src stays out of sc, like maybeEmitArrayAliasCow's receiver: a later
-	// reference would move its last use past the `.with` and the shape would
-	// quietly become an ordinary copy.
 	fmt.Fprintf(b, "let %s: i32[] = ", src)
 	n := g.arrayLiteral(b, sc, tI32, 0)
 	b.WriteString("; ")
 	at := g.ch.intN(n)
-	// Two iterations minimum — one pass cannot observe its own store.
 	iters := 2 + g.ch.intN(2)
 	fmt.Fprintf(b, "let %s: i32 = 0i32; let %s: i32 = 0i32; ", acc, counter)
 	fmt.Fprintf(b, "while (%s < %di32) { ", counter, iters)
@@ -1927,111 +1047,47 @@ func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) b
 	return true
 }
 
-// ---------- expressions ----------
-
-// expr emits a well-typed expression of type t. Depth is the
-// current recursion level; once it exceeds cfg.MaxExprDepth, only
-// leaf productions (literals + variable references) are emitted so
-// the tree always terminates.
 func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	start := g.pos()
 	g.production(b, sc, t, depth)
 	g.markExpr(start, t, depth < g.cfg.MaxExprDepth)
 }
 
-// leafChance is how often an expression above the depth limit is a leaf.
 const leafChance = 0.4
 
-// production is expr's body.
-//
-// Two non-leaf productions are tried before falling through to the
-// per-type composite path: a call to a registered helper whose
-// return type is t, and an if-expression with both arms typed t.
-// Either can short-circuit the rest of the dispatch — when neither
-// applies, the dispatch falls into numericExpr / boolExpr / a
-// leaf depending on t.
 func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int) {
 	if depth >= g.cfg.MaxExprDepth || g.flip(leafChance) {
 		g.leaf(b, sc, t, depth)
 		return
 	}
-	// Try operator: `(<Option[i32]-expr>?)` yields i32. Only
-	// legal when the enclosing function returns Option[T] (the
-	// checker enforces this), so gate on currentReturnType. The
-	// `?` short-circuits the function on `None`, returning None
-	// to the caller — that's the early-return path differential
-	// testing wouldn't otherwise exercise.
-	//
-	// The operand can't be bare `None` because the checker
-	// can't infer its T inside the `?` slot — `emitTypedOptI32`
-	// picks an in-scope Option[i32] var (whose type is known)
-	// or a Some-wrapped value (where the i32 payload pins the
-	// type).
 	if t == tI32 && g.currentReturnType == tOptI32 && !g.flip(0.85) {
 		b.WriteByte('(')
 		g.emitTypedOptI32(b, sc, depth)
 		b.WriteString("?)")
 		return
 	}
-	// Same try-operator pattern for Result. `(<Result-expr>?)`
-	// yields the Ok-payload T (i32 here); on Err the function
-	// short-circuits with the Err value passed through. Only
-	// legal when the enclosing function returns Result[_, E]
-	// with the SAME E — the checker requires error-type
-	// equality so we can't mix a Result[_, i32] try with a
-	// Result[_, string]-returning function.
-	//
-	// Requires an in-scope Result[i32, i32] var because bare
-	// `Ok(x)` / `Err(e)` only pins one of the two type
-	// parameters and the `?` slot doesn't propagate
-	// surrounding context to fill in the other. With an
-	// in-scope var the type is known from its annotation.
 	if t == tI32 && g.currentReturnType == tResI32I32 && !g.flip(0.85) {
 		ress := sc.inScope(tResI32I32)
 		if len(ress) > 0 {
 			fmt.Fprintf(b, "(%s?)", ress[g.ch.intN(len(ress))])
 			return
 		}
-		// Fall through to other productions if no in-scope
-		// Result var is available.
 	}
-	// Helper call. Skipped when no helper returns t, or when the
-	// generator rolls "small branch" — exhaustion convention
-	// keeps generation terminating.
 	if g.on(featCall) && !g.flip(0.7) {
 		if g.emitCall(b, sc, t, depth) {
 			return
 		}
 	}
-	// Composite-derived production: route an in-scope array /
-	// Pair / Color through an index / field / match-expr to
-	// produce a value of type t. Bails out (returns false)
-	// when no in-scope composite supplies t; caller falls
-	// through to the per-type composite path below.
 	if g.on(featProjection) && !g.flip(0.75) {
 		if g.tryCompositeProduction(b, sc, t, depth) {
 			return
 		}
 	}
-	// If-expression. The Lang `if (cond) { then } else { else }`
-	// in expression position requires both arms to share a type;
-	// recursing with the same t on both arms preserves that.
 	if g.on(featIfExpr) && !g.flip(0.8) {
 		g.emitIfExpr(b, sc, t, depth)
 		return
 	}
-	// Generic helper calls: `id(<expr>)` and `pick(<bool>,
-	// <expr>, <expr>)`. Both are declared in preludeDecls with
-	// type-parameter T; the checker infers T from the arg
-	// types and the monomorphiser clones the function per
-	// instantiation. Wiring them here for any t exercises that
-	// inference + monomorph path across the type universe.
-	//
 	if g.on(featGeneric) && !g.flip(0.85) {
-		// `id` is the simpler call — single arg of type t,
-		// returns t. Exhaustion convention: `true` => skip the
-		// generic call (smaller output, no extra clone for
-		// monomorph to handle).
 		b.WriteString("id")
 		g.maybeTypeArg(b, t)
 		b.WriteString("(")
@@ -2040,11 +1096,6 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 		return
 	}
 	if g.on(featGeneric) && !g.flip(0.9) {
-		// `pick` is the three-arg variant. Both `a` and `b`
-		// recurse at type t so the checker's pairwise
-		// unification produces a single T. Use genericArg so
-		// type-ambiguous values like bare `None` get forced
-		// into a concrete form before the inference runs.
 		b.WriteString("pick")
 		g.maybeTypeArg(b, t)
 		b.WriteString("(")
@@ -2064,28 +1115,12 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 	case tString:
 		g.stringExpr(b, sc, depth)
 	default:
-		// Composite types — no binary / arithmetic productions,
-		// fall through to leaf which handles var-refs and
-		// literals (including the recursive array / Pair literal
-		// forms).
 		g.leaf(b, sc, t, depth)
 	}
 }
 
-// stringExpr picks a non-leaf string production: either `s1 + s2`
-// concatenation or an `f"..."` interpolated string. Both are
-// observable through `len()` in the byte oracle, so they
-// participate in the differential test even without a separate
-// stdout channel.
 func (g *Generator) stringExpr(b *strings.Builder, sc *scope, depth int) {
-	// `!flip` so `true` is the SHORTENING branch per byteChooser.flip's
-	// exhaustion convention: concat recurses TWICE at depth+1, where the
-	// f-string below collapses to a single interpolant once the corpus is
-	// spent. Spelled the other way round, running out of bytes chose the
-	// doubly-recursive branch and the program grew as the corpus shrank.
 	if !g.flip(0.5) {
-		// Concat: `(s1 + s2)`. The checker stamps IsStringConcat
-		// for backends that need the runtime helper.
 		b.WriteByte('(')
 		g.expr(b, sc, tString, depth+1)
 		b.WriteString(" + ")
@@ -2093,18 +1128,11 @@ func (g *Generator) stringExpr(b *strings.Builder, sc *scope, depth int) {
 		b.WriteByte(')')
 		return
 	}
-	// F-string: `f"<lit>{<i32-expr>}<lit>{<i32-expr>}..."`. Two
-	// literal segments + one or two interpolants keeps the
-	// emitted source short; the checker's desugar wires each
-	// `{e}` through `.to_string()` for the eventual concat.
-	n := 1 + g.ch.intN(2) // 1..2 interpolants
+	n := 1 + g.ch.intN(2)
 	b.WriteString("f\"")
 	for i := 0; i < n; i++ {
 		g.fstringLitSegment(b)
 		b.WriteByte('{')
-		// Restrict to i32 interpolants — every backend has a
-		// to_string for i32, and the result is platform-
-		// neutral (no float NaN, no platform pointer fmt).
 		g.expr(b, sc, tI32, depth+1)
 		b.WriteByte('}')
 	}
@@ -2112,10 +1140,6 @@ func (g *Generator) stringExpr(b *strings.Builder, sc *scope, depth int) {
 	b.WriteByte('"')
 }
 
-// fstringLitSegment writes a short ASCII-only segment for the
-// literal parts of an f-string. No escape sequences — the lexer
-// doesn't need to special-case them, the checker doesn't see them
-// in special-case interpolant positions.
 func (g *Generator) fstringLitSegment(b *strings.Builder) {
 	n := g.ch.intN(6)
 	for i := 0; i < n; i++ {
@@ -2123,19 +1147,7 @@ func (g *Generator) fstringLitSegment(b *strings.Builder) {
 	}
 }
 
-// tryCompositeProduction emits one of: array index access,
-// struct field access, enum match-expression, or `len(s)` over
-// a string — whichever kind of in-scope composite / string var
-// can produce a value of type t. Tries them in fixed order
-// (array, struct, enum, len) so a richer program seed naturally
-// cascades through more shapes. Returns false (without writing)
-// when no in-scope composite supplies t; caller falls back to
-// another production.
 func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtype, depth int) bool {
-	// Array index. `<arr-var>[0i32]` — fixed index avoids
-	// needing to track per-array lengths. The generator emits
-	// every array literal with length >= 1, so [0] is in-
-	// bounds by construction.
 	if arrT, ok := g.arrayTypeFor(t); ok {
 		arrs := sc.inScope(arrT)
 		if len(arrs) > 0 {
@@ -2144,10 +1156,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Struct field. `Pair.fst` / `.snd` are both i32.
-	// Sometimes a method call instead of a field access — both
-	// produce i32, both desugar through different checker paths
-	// (FieldAccess vs Call-with-MethodCallSite-rewritten).
 	if t == tI32 {
 		pairs := sc.inScope(tPair)
 		if len(pairs) > 0 {
@@ -2156,23 +1164,11 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 				field := []string{"fst", "snd"}[g.ch.intN(2)]
 				fmt.Fprintf(b, "%s.%s", name, field)
 			} else {
-				// `pair.sum()` — method dispatch path.
 				fmt.Fprintf(b, "%s.sum()", name)
 			}
 			return true
 		}
 	}
-	// Indirect call through an in-scope function value: `f(<i32>)`.
-	// This is the READ side of tFnI32I32, and without it a closure
-	// could be built, stored and dropped without ever being invoked
-	// — which is exactly the half the oracle cannot see, since an
-	// uncalled closure's code pointer is never dereferenced and its
-	// captured environment never read.
-	//
-	// The array-index production above already supplies the
-	// `fs[0i32]` shape for t == tFnI32I32, so a closure-array
-	// element reaches this call site as an ordinary in-scope value
-	// once it has been bound.
 	if t == tI32 {
 		fns := sc.inScope(tFnI32I32)
 		if len(fns) > 0 {
@@ -2183,21 +1179,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// `arr.with(i, v)`: T[] → T[]. The value-returning element
-	// write, and the only production that threads an array THROUGH
-	// a mutation rather than rebuilding it from a literal. It
-	// lowers to `__method_Array_set`, which the IR turns into a
-	// copy-on-write: a fresh buffer when anything else still holds
-	// a reference, an in-place store when this receiver holds the
-	// only one. Nothing else in the corpus reaches that decision.
-	//
-	// Index `0i32` for the same reason the array-index production
-	// at the top of this function uses it: every array literal the
-	// generator emits has at least one element, but no per-var
-	// length is tracked, so 0 is the only index statically known to
-	// be in bounds for an array reached through a var or a helper
-	// return. maybeEmitArrayAliasCow draws a wider index because it
-	// emits the receiver's literal itself and knows its length.
 	if elem, ok := g.arrayElemOf(t); ok {
 		arrs := sc.inScope(t)
 		if len(arrs) > 0 && !g.flip(0.7) {
@@ -2208,8 +1189,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// `pair.swap()`: Pair → Pair. Routes any in-scope Pair into
-	// a fresh Pair via the method-dispatch path.
 	if t == tPair {
 		pairs := sc.inScope(tPair)
 		if len(pairs) > 0 && !g.flip(0.4) {
@@ -2218,11 +1197,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Tuple element access. `t.0` is i32, `t.1` is i64 — the read
-	// side of the only heterogeneous-stride box in the corpus.
-	// Without a read production the generator would construct
-	// tuples and never observe one, which is exactly how `i64[]`
-	// values sat in the corpus unread throughout #5729.
 	if t == tI32 || t == tI64 {
 		tups := sc.inScope(tTupI32I64)
 		if len(tups) > 0 {
@@ -2235,9 +1209,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// `(f32, f64)` element access — the float counterpart of the
-	// tuple read above, and the read side without which a float
-	// tuple would be built and never observed.
 	if t == tF32 || t == tF64 {
 		tups := sc.inScope(tTupF32F64)
 		if len(tups) > 0 {
@@ -2250,8 +1221,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Vec2 field access. Both fields are f32 and adjacent, so a
-	// store too wide for the first is read back through the second.
 	if t == tF32 {
 		vecs := sc.inScope(tVec2)
 		if len(vecs) > 0 {
@@ -2260,7 +1229,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Xyz field access. `Xyz.n` is i32, `Xyz.valid` is bool.
 	if t == tI32 {
 		xyzs := sc.inScope(tXyz)
 		if len(xyzs) > 0 {
@@ -2277,10 +1245,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// `s.len()` — string-to-i32 byte-count. Same shape as the
-	// array-index path: every string is observable byte-wise,
-	// so this is the channel through which string ops flow
-	// into the byte oracle's i32 return path.
 	if t == tI32 {
 		strs := sc.inScope(tString)
 		if len(strs) > 0 {
@@ -2289,10 +1253,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Enum match-expr. `(match (c) { Red => e1, Green => e2,
-	// Blue => e3 })` routes a Color into any non-Color t.
-	// Skipped for t == Color to avoid infinite recursion (the
-	// arms would themselves need Color values).
 	if t != tColor {
 		colors := sc.inScope(tColor)
 		if len(colors) > 0 {
@@ -2307,8 +1267,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Status match-expr (parallel to Color). Routes a Status
-	// into any non-Status t through the three variants.
 	if t != tStatus {
 		stats := sc.inScope(tStatus)
 		if len(stats) > 0 {
@@ -2323,11 +1281,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// FShape match-with-payload-binding. Routes a float-carrying
-	// enum into any other t, binding BOTH payload slots so an arm
-	// body can read either — reading only the first is what let
-	// #7333 hide, since a too-wide store of slot 0 is visible in
-	// slot 1.
 	if t != tFShape {
 		shapes := sc.inScope(tFShape)
 		if len(shapes) > 0 {
@@ -2350,18 +1303,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Option[i32] match-with-binding. `(match (o) { Some(x) =>
-	// <expr>, None => <expr> })` routes an Option into any
-	// non-Option t. The Some arm binds the payload as an i32 in
-	// a sub-scope so the body's recursive expr might pick it up
-	// — that's the path exercising payload-binding resolution
-	// the wildcard-pattern Color match can't reach.
-	//
-	// Sometimes a guarded `Some` arm comes first — `Some(g) when <bool> =>
-	// e` — whose guard reads the payload binding, and sometimes the plain
-	// `Some` arm is `w @ Some(x)`, binding the whole scrutinee beside the
-	// payload. The plain arm stays, unguarded, so the match is exhaustive
-	// whatever the guard says.
 	if t != tOptI32 {
 		opts := sc.inScope(tOptI32)
 		if len(opts) > 0 {
@@ -2382,10 +1323,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Result[i32, i32] match-with-binding. Both arms have an
-	// i32 payload binding — exercises the two-armed-with-
-	// payload match path that Option's single-payload variant
-	// doesn't reach.
 	if t != tResI32I32 {
 		ress := sc.inScope(tResI32I32)
 		if len(ress) > 0 {
@@ -2409,9 +1346,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Map methods. `m.get(k)` returns Option[i32], `m.contains(k)` =>
-	// bool, `m.len()` => i32. Each routes an in-scope Map into
-	// the requested type.
 	if t == tOptI32 {
 		maps := sc.inScope(tMapI32I32)
 		if len(maps) > 0 {
@@ -2436,9 +1370,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 		maps := sc.inScope(tMapI32I32)
 		if len(maps) > 0 {
 			name := maps[g.ch.intN(len(maps))]
-			// Map has `.len()` as a method, not via the builtin
-			// `len()`. The latter is for string / array / slice
-			// only — using it on a Map fails the checker.
 			fmt.Fprintf(b, "%s.len()", name)
 			return true
 		}
@@ -2447,10 +1378,6 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 		b.WriteString(paths[g.ch.intN(len(paths))])
 		return true
 	}
-	// Dynamic-enum match. Route an in-scope dynamic enum into
-	// any non-same-enum t via an exhaustive match. Each variant
-	// arm recurses on t. Same determinism requirement as the
-	// struct iteration above.
 	for _, et := range sortedKeys(g.enumShapes) {
 		if et == t {
 			continue
@@ -2492,18 +1419,8 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	return false
 }
 
-// maxPathSteps bounds how many projections accessPaths chains onto a var.
 const maxPathSteps = 3
 
-// accessPaths lists every projection chain of type t rooted at an in-scope
-// var: field reads, tuple element reads and `[0i32]` element reads, up to
-// maxPathSteps deep, shortest first so an exhausted corpus takes the
-// shortest. A value nested inside a value is only ever reached this way —
-// `s.f0.fst`, `arr[0i32].f1` — and reading through the parent while it is
-// still live is what the nested retain and release paths have to get right.
-//
-// Index 0 is in bounds for every array the generator produces: literals
-// have at least one element and `.with` keeps the length.
 func (g *Generator) accessPaths(sc *scope, t gtype) []string {
 	type node struct {
 		path string
@@ -2532,14 +1449,11 @@ func (g *Generator) accessPaths(sc *scope, t gtype) []string {
 	return out
 }
 
-// member is one projection out of a value: the source text appended to
-// reach it and the type it yields.
 type member struct {
 	suffix string
 	t      gtype
 }
 
-// projectable is every type members can project out of, in a fixed order.
 func (g *Generator) projectable() []gtype {
 	out := []gtype{tPair, tXyz, tTupI32I64, tArrI32, tArrI64, tArrBool, tArrFnI32I32}
 	if g.profile.floatsAllowed() {
@@ -2548,7 +1462,6 @@ func (g *Generator) projectable() []gtype {
 	return append(out, append(sortedKeys(g.structShapes), sortedKeys(g.arrShapes)...)...)
 }
 
-// members lists the one-step projections out of a value of type t.
 func (g *Generator) members(t gtype) []member {
 	if sh, ok := g.structShapes[t]; ok {
 		out := make([]member, len(sh.fields))
@@ -2575,19 +1488,6 @@ func (g *Generator) members(t gtype) []member {
 	return nil
 }
 
-// emitCall picks a previously-registered helper whose return type
-// is t and emits a typed call to it. Half the time, when the
-// helper has at least one parameter, emits the pipe form
-// `(<arg0> |> helper(<arg1>, ...))` instead of the prefix form
-// `helper(<arg0>, ...)`. Both lower to the same Call AST node at
-// parse time (the parser desugars pipe to a Call with IsPipe set),
-// so the two shapes exercise the same backend codepath — but the
-// pipe form lets the generator's source resemble real-world
-// data-first stdlib chains and exercises the pipe parser /
-// formatter paths.
-//
-// Returns false (without writing) if no helper returns t; caller
-// falls back to another production.
 func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) bool {
 	var cands []helperSig
 	for _, h := range g.helpers {
@@ -2606,8 +1506,6 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 	if len(cands) == 0 {
 		return false
 	}
-	// A spent stream takes the cheapest call rather than index 0, so which
-	// helper comes first in the list cannot make truncation grow a program.
 	var pick helperSig
 	if g.ch.exhausted() {
 		pick = cands[0]
@@ -2623,8 +1521,6 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 	return true
 }
 
-// emitCallTo writes a call to h with type-correct arguments, as a prefix
-// call or, sometimes, in the pipe form.
 func (g *Generator) emitCallTo(b *strings.Builder, sc *scope, h helperSig, depth int) {
 	fuel := ""
 	if h.fueled {
@@ -2635,12 +1531,7 @@ func (g *Generator) emitCallTo(b *strings.Builder, sc *scope, h helperSig, depth
 			fuel = fmt.Sprintf("%di32", g.ch.intN(4))
 		}
 	}
-	// Pipe form: smaller-output choice is "no pipe" (exhaustion
-	// returns true here = no pipe = prefix form).
 	if (len(h.params) >= 1 || fuel != "") && !g.flip(0.6) {
-		// Outer parens so the `|>` precedence (which sits
-		// between assignment and ternary) doesn't clash with
-		// whatever expression slot the caller drops this into.
 		b.WriteByte('(')
 		if fuel != "" {
 			b.WriteString(fuel)
@@ -2675,12 +1566,6 @@ func (g *Generator) emitCallTo(b *strings.Builder, sc *scope, h helperSig, depth
 	b.WriteByte(')')
 }
 
-// genericArg emits an expression of type t for a generic-call
-// argument slot. Same shape as `expr` for most types, but routes
-// Option[i32] through `emitTypedOptI32` to avoid bare `None` —
-// generic-arg unification can't disambiguate `None` (Option with
-// no Args) against a sibling arg's `Option[i32]`, and the
-// checker rejects with "argument N: expected T, got Option[i32]".
 func (g *Generator) genericArg(b *strings.Builder, sc *scope, t gtype, depth int) {
 	if t == tOptI32 {
 		g.emitTypedOptI32(b, sc, depth)
@@ -2693,14 +1578,6 @@ func (g *Generator) genericArg(b *strings.Builder, sc *scope, t gtype, depth int
 	g.expr(b, sc, t, depth+1)
 }
 
-// emitTypedOptI32 emits an Option[i32] expression that the
-// checker can resolve without surrounding context. Bare `None`
-// is deliberately excluded — `None` is type-polymorphic, so in
-// slots that don't carry a type annotation (the operand of `?`,
-// some deeply nested arm positions) the checker can't infer
-// the T and errors out with "malformed Option type Option".
-// Picks an in-scope Option[i32] var (carries its declared type)
-// or wraps a fresh `Some(<i32>)` (the i32 payload pins T).
 func (g *Generator) emitTypedOptI32(b *strings.Builder, sc *scope, depth int) {
 	opts := sc.inScope(tOptI32)
 	if len(opts) > 0 && g.flip(0.6) {
@@ -2712,23 +1589,6 @@ func (g *Generator) emitTypedOptI32(b *strings.Builder, sc *scope, depth int) {
 	b.WriteString("))")
 }
 
-// emitTypedResI32I32 emits a Result[i32, i32] expression that
-// the checker can fully type without surrounding context.
-// ALWAYS uses an in-scope Result var when one is available —
-// bare `(Ok(x))` / `(Err(e))` only pins one of Result's two
-// type parameters (T from Ok, E from Err) and the checker's
-// generic-call inference doesn't flow surrounding-context
-// type info back to fill in the missing one. The call's
-// TypeArgs ends up as `[Result{no args}]` and monomorph
-// produces a clone with bare Result-typed params. Skip the
-// generic-call production entirely (via `skipGeneric` in
-// `expr`) when no Result var is in scope.
-//
-// The bare-literal fallback at the bottom is reached only
-// when called from contexts that DO carry full type info
-// (var-init annotations, fn return slots) — the surrounding
-// context makes the type unambiguous despite the variant
-// constructor only fixing one of the two params.
 func (g *Generator) emitTypedResI32I32(b *strings.Builder, sc *scope, depth int) {
 	ress := sc.inScope(tResI32I32)
 	if len(ress) > 0 {
@@ -2744,9 +1604,6 @@ func (g *Generator) emitTypedResI32I32(b *strings.Builder, sc *scope, depth int)
 	b.WriteString("))")
 }
 
-// emitIfExpr writes `(if (<bool-expr>) { <expr-of-t> } else {
-// <expr-of-t> })`. Outer parens make the result safe to drop into
-// any expression slot regardless of precedence.
 func (g *Generator) emitIfExpr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	b.WriteString("(if (")
 	g.expr(b, sc, tBool, depth+1)
@@ -2763,12 +1620,6 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 		b.WriteString(vars[g.ch.intN(len(vars))])
 		return
 	}
-	// A spent corpus takes the smallest expression of t, which is not
-	// always its literal: a projection out of an in-scope value
-	// (`v0.f1`, `fs[0i32]`) or a call can be smaller, and taking the
-	// literal there let truncating a byte GROW the program. Gated on
-	// exhausted(), which consumes nothing, so a corpus with bytes left
-	// generates exactly as before.
 	if g.ch.exhausted() {
 		g.leafMin(b, sc, t, depth)
 		return
@@ -2776,36 +1627,7 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 	g.literal(b, sc, t, depth)
 }
 
-// numericExpr picks an arithmetic operator and recurses with operands
-// of the same numeric type so the checker doesn't see a width mismatch.
-//
-// `/` and `%` ARE included. They were skipped on the grounds that
-// "division by zero traps", which is not true of Fern: division is
-// total, and all four backends agree that `7 / 0` is 0, `7 % 0` is 7,
-// `INT_MIN / -1` is INT_MIN, and `INT_MIN % -1` is 0.
-//
-// Excluding them hid the surface where the backends differ MOST. The
-// hardware does three different things — x86 `idiv` faults on both
-// div-by-zero and INT_MIN/-1, wasm `i32.div_s` traps on both, arm64
-// `sdiv` traps on neither — so each backend normalises to the shared
-// contract with its own guard code, and none of that guard code was
-// reachable from the differential corpus.
-//
-// Float division needs no special handling: `x / 0.0` is IEEE ±Inf or
-// NaN, which the printable oracle only ever observes through portable
-// channels (a "T"/"F" comparison or a saturating `as i32`).
-//
-// For i32 it sometimes produces the HIGH half of an i64 instead —
-// see emitI64HighHalf — or a reinterpreted unsigned, see emitUnsignedAsI32.
 func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth int) {
-	// Spelled `!flip(0.85)` rather than `flip(0.15)` so that `true` is the
-	// SHORTENING branch, per byteChooser.flip's exhaustion convention. The
-	// probability is identical; what changes is which way an exhausted
-	// corpus falls. Written the other way round, running out of bytes chose
-	// these compound expansions — `(((2147483648i64) >> 32i64) as i32)`
-	// where a plain literal would do — so truncating a corpus could GROW
-	// the program and the shrinker could walk uphill. Caught by
-	// TestGenBytesShrinkIsMonotonicAndValid.
 	if t == tI32 && !g.flip(0.85) {
 		g.emitI64HighHalf(b, sc, depth)
 		return
@@ -2818,31 +1640,12 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 		g.emitCheckedFold(b, sc, t, depth)
 		return
 	}
-	// The binary form below is the LARGEST shape this function emits: two
-	// operands where every specialised production above has one. Spelling
-	// the flips so `true` skips them is therefore not sufficient — a
-	// corpus that runs out partway down the sequence skips the small
-	// productions and lands here, growing the program. Once the input is
-	// spent the only legal move is the minimal one.
 	if g.ch.exhausted() {
 		g.leaf(b, sc, t, depth)
 		return
 	}
 	ops := []string{"+", "-", "*", "/"}
 	if t != tF32 && t != tF64 {
-		// Integer-only. `%` and the bit operators are all well-defined
-		// and agree across every backend, verified before adding them:
-		// the shift COUNT is masked (`1 << 32` is 1, `1i64 << 64` is 1,
-		// `1 << -1` is INT_MIN via -1 & 31), and `>>` is arithmetic
-		// (`-8 >> 1` is -4).
-		//
-		// Shifts and `&`/`|`/`^` are worth generating for the same
-		// reason `/` was: each backend reaches the shared contract by a
-		// different route. The count masking is implicit in x86's `shl`,
-		// explicit in wasm, and a register-width property on arm64; and
-		// arm64 has to encode an arbitrary `&` constant into its
-		// logical-immediate format, which nothing in the corpus was
-		// exercising with varied values.
 		ops = append(ops, "%", "<<", ">>", "&", "|", "^")
 	}
 	op := ops[g.ch.intN(len(ops))]
@@ -2854,39 +1657,7 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 	b.WriteByte(')')
 }
 
-// emitCheckedFold writes `match (a <op>? b) { Some(v) => v, None => c }` for
-// one of the CHECKED operators — `+?` / `-?` / `*?` / `/?` / `%?` / `<<?` /
-// `>>?`, which evaluate to `Some(result)` when the exact result fits the
-// operand type and `None` on overflow, a zero divisor, the signed `MIN / -1`,
-// or an out-of-range shift count (docs/INTEGER-SEMANTICS.md).
-//
-// A checked op cannot substitute for its base operator the way a saturating
-// one can: it yields `Option[T]`, not `T`. Folding it back through a match is
-// what makes it usable anywhere an integer is expected, and it is also the
-// realistic shape — the operator exists so a caller HANDLES the overflow, so the
-// corpus should be generating the handling too.
-//
-// Worth generating for the same reason as the saturating family, only more so:
-// there is no checked IR opcode either, and the desugar is a wider spread of
-// per-operator predicates — a carry-out test for unsigned `+?`, a sign-pattern
-// test for signed `+?`, a division round-trip for `*?`, divisor and `MIN / -1`
-// guards for `/?` / `%?`, a range test for the shifts plus a shift-back round
-// trip for `<<?`.
-//
-// Verified identical on interp / x86-64 / arm64 / wasm before adding, values
-// matching those documented: `MAX +? 1` → None, `40 +? 2` → Some(42),
-// `84 /? 0` → None, `1 <<? 32` → None, `256 >>? 2` → Some(64).
-//
-// Depth-gated because each fold nests three sub-expressions (both operands and
-// the None fallback); left ungated the corpus grows programs that take far
-// longer to compile than they are worth.
 func (g *Generator) emitCheckedFold(b *strings.Builder, sc *scope, t gtype, depth int) {
-	// Ordered by the size the checker desugars each one to, cheapest first,
-	// because an exhausted stream takes index 0 and the contract is that
-	// truncation never grows the program. Measured in AST nodes over the
-	// whole match production: `>>?` 25, `+?` / `-?` 29, `<<?` 31, `/?` /
-	// `%?` 35, `*?` 41 — the overflow test each check expands to differs by
-	// operator, so this is not a table where the order is cosmetic.
 	op := []string{">>?", "+?", "-?", "<<?", "/?", "%?", "*?"}[g.ch.intN(7)]
 	bind := fmt.Sprintf("__chk_v%d", g.optBindCounter)
 	g.optBindCounter++
@@ -2899,32 +1670,9 @@ func (g *Generator) emitCheckedFold(b *strings.Builder, sc *scope, t gtype, dept
 	b.WriteString(" })")
 }
 
-// maybeSaturating sometimes swaps an arithmetic operator for its SATURATING
-// counterpart — `+|` / `-|` / `*|` / `<<|`, which clamp to the operand type's
-// [MIN, MAX] instead of wrapping (docs/INTEGER-SEMANTICS.md).
-//
-// Worth generating because there is no saturating IR opcode: each one expands
-// to a clamp over ordinary IR ops, and the expansions are not uniform. The
-// signed pre-checks test against MAX - b / MIN - b, unsigned `-|` against
-// `a < b`, while signed `*|` and `<<|` cannot use a cheap pre-check at all and
-// instead post-check the WRAPPED result with a division — including a special
-// case for `a == -1 && b == MIN`, needed precisely because division is total
-// here, so `MIN / -1` yields `MIN` and the round-trip spuriously agrees on
-// exactly that pair. None of that was reachable from the corpus.
-//
-// Verified identical on interp / x86-64 / arm64 / wasm before adding, across
-// i32 / i64 / u32 / u64: clamping at both ends, `MIN *| -1` → MAX,
-// `(-2) <<| 31` → MIN, unsigned clamping low at 0, and in-range operands
-// unaffected.
-//
-// Substituted rather than appended to the operator list: four more entries
-// among ten would make saturating arithmetic nearly a third of every integer
-// expression, crowding out the wrapping paths that the corpus already covers.
-// The swap keeps the base operator distribution and adds a saturating variant
-// often enough to be hit many times per sweep.
 func (g *Generator) maybeSaturating(op string, t gtype) string {
 	if t == tF32 || t == tF64 {
-		return op // integer-only: floats already saturate to +/-Inf
+		return op
 	}
 	switch op {
 	case "+", "-", "*", "<<":
@@ -2935,29 +1683,7 @@ func (g *Generator) maybeSaturating(op string, t gtype) string {
 	return op
 }
 
-// emitUnsignedAsI32 routes an unsigned result into the i32 path at full
-// width: `((<u32 expr>) as i32)`, or for u64 the high half first, since a
-// bare truncating cast would discard exactly the 32 bits that a wide
-// unsigned op computes differently from a narrow one.
-//
-// The EXIT-BYTE oracle otherwise reaches u32 only through a comparison, which
-// collapses the whole value to one bit. That is enough to notice a wrong
-// unsigned condition code and blind to everything else: a div_u that used the
-// signed divide, a shr_u that dragged in sign-extended high bits, a rem_u off
-// by a whole quotient — all of them produce a wrong 32-bit number that a
-// boolean channel can easily round back to the right answer.
-//
-// The cast is a pure reinterpretation of the same 32 bits (`4000000000u32 as
-// i32` is -294967296), verified identical on interp / x86-64 / arm64 / wasm,
-// so it adds no semantics of its own — it only makes the bits observable.
-// The printable oracle has the stronger channel: each type's own
-// `.to_string()`.
 func (g *Generator) emitUnsignedAsI32(b *strings.Builder, sc *scope, depth int) {
-	// `!flip` so `true` is the SHORTENING branch per byteChooser.flip's
-	// exhaustion convention: the u64 form adds a shift on top of the cast
-	// (`(((x u64) >> 32u64) as i32)` vs `((x u32) as i32)`), so an
-	// exhausted corpus taking it made the program grow as the corpus
-	// shrank. Caught by TestGenBytesShrinkIsMonotonicAndValid.
 	if !g.flip(0.5) {
 		b.WriteString("(((")
 		g.expr(b, sc, tU64, depth+1)
@@ -2969,30 +1695,6 @@ func (g *Generator) emitUnsignedAsI32(b *strings.Builder, sc *scope, depth int) 
 	b.WriteString(") as i32)")
 }
 
-// emitI64HighHalf writes `((<i64 expr> >> 32i64) as i32)`, routing the top
-// 32 bits of an i64 down into the i32 return path.
-//
-// Without it the exit-code oracle cannot observe the high half of an i64 at
-// all, which makes it blind to a whole class of miscompile. `main` returns a
-// byte, and the two ways an i64 reaches that byte both discard the top half:
-// a truncating `as i32` keeps the low word by definition, and a wrong
-// sign-extension — the actual shape of the #5729 i64[] corruption — only ever
-// rewrites bits 32..63, so the low 8 bits are identical either way. The one
-// existing channel that does observe the high half is a comparison in
-// boolExpr, and it needs a wide value to land on the specific operand that
-// differs, which is rare enough to miss the bug entirely: reintroducing #5729
-// and sweeping the exit-byte corpus through arm64-ssa changed ZERO of 150
-// runnable seeds' exit codes, where the printable corpus (whole stdout, via
-// `.to_string()`) diverged on 3 of 201.
-//
-// A right shift is the cheapest fix: it is total in Fern, needs no new type,
-// and any wide value anywhere in the expression — including an `i64[]`
-// element load — can now reach the returned byte.
-//
-// The operand prefers a value that has been through memory — an `i64[]`
-// element, else an in-scope i64 var — over a fresh sub-expression, because a
-// literal-only operand is constant-folded and so cannot expose a codegen bug
-// no matter how wide it is. Observing a load is the whole point.
 func (g *Generator) emitI64HighHalf(b *strings.Builder, sc *scope, depth int) {
 	b.WriteString("(((")
 	switch {
@@ -3008,18 +1710,7 @@ func (g *Generator) emitI64HighHalf(b *strings.Builder, sc *scope, depth int) {
 	b.WriteString(") >> 32i64) as i32)")
 }
 
-// boolExpr picks one of: unary `!`, binary `&&`/`||` over booleans,
-// or a numeric comparison whose operand type is drawn fresh.
-// guardedArm sometimes writes a guarded payload arm ahead of a match's
-// plain one:
-//
-//	<variant>(<bind>) when <bool> => <expr>,
-//
-// The guard and the body both see the payload binding as an i32. The
-// caller's plain arm for the same variant follows, so exhaustiveness does
-// not depend on the guard. Exhausted, nothing is written.
 func (g *Generator) guardedArm(b *strings.Builder, sc *scope, variant, bind string, t gtype, depth int) {
-	// Exhaustion convention: `true` here = no guarded arm (smaller output).
 	if g.flip(0.7) {
 		return
 	}
@@ -3032,11 +1723,7 @@ func (g *Generator) guardedArm(b *strings.Builder, sc *scope, variant, bind stri
 	b.WriteString(", ")
 }
 
-// atBinding sometimes prefixes the pattern that follows with `<whole> @ `,
-// binding the whole scrutinee in `inner` as a value of its type `st`
-// beside the pattern's own bindings. Exhausted, nothing is written.
 func (g *Generator) atBinding(b *strings.Builder, inner *scope, st gtype, whole string) {
-	// Exhaustion convention: `true` here = no `@` binding (smaller output).
 	if g.flip(0.7) {
 		return
 	}
@@ -3068,29 +1755,11 @@ func (g *Generator) boolExpr(b *strings.Builder, sc *scope, depth int) {
 	}
 }
 
-// literal emits a value-of-type-t in the simplest available
-// form. Composite literals (array / Pair / Color) get scope +
-// depth because they contain sub-expressions whose depth must
-// extend the current cap (resetting to 0 would let a recursive
-// composite — `i32[]` element that's another `i32[]` — blow the
-// stack). Scalar literals ignore sc + depth.
 func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	switch t {
 	case tI32:
 		fmt.Fprintf(b, "%di32", g.ch.intN(1000))
 	case tI64:
-		// A quarter of i64 literals land ABOVE the int32 range, so the wide
-		// half of the type is actually exercised. While every i64 literal was
-		// drawn from 0..999, no generated program could tell an i64 from an
-		// i32, and a backend that narrowed i64 values to 32 bits agreed with
-		// the interpreter on every seed — which is exactly how the arm64-ssa
-		// i64[] corruption fixed in #5729 slipped through the differential
-		// oracle on all three backends.
-		//
-		// The three magnitudes are the ones that discriminate: just past
-		// 2^31 (bit 31 set, so a sign-extending narrow reads negative),
-		// 0xFFFFFFFF (a narrow reads -1), and past 2^32 (a truncating narrow
-		// loses the top half outright).
 		if g.flip(0.25) {
 			switch g.ch.intN(3) {
 			case 0:
@@ -3110,51 +1779,26 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 			b.WriteString("false")
 		}
 	case tU32:
-		// Half the draws land above i32::MAX, which is the whole point
-		// of generating u32 at all: a value with bit 31 set is where an
-		// unsigned divide, remainder, shift or comparison stops agreeing
-		// with its signed sibling. A corpus of small u32 literals would
-		// exercise the unsigned opcodes and never reach the operand
-		// range that distinguishes them.
 		if g.flip(0.5) {
 			fmt.Fprintf(b, "%du32", 2147483648+uint32(g.ch.intN(1000)))
 			return
 		}
 		fmt.Fprintf(b, "%du32", g.ch.intN(1000))
 	case tU8:
-		// The whole 0..255 range, weighted toward the top so the 8-bit
-		// wrap and the saturating clamp at 255 are reached often: a
-		// corpus of small u8s would exercise the type without ever
-		// crossing either boundary.
 		if g.flip(0.5) {
 			fmt.Fprintf(b, "%du8", 200+g.ch.intN(56))
 			return
 		}
 		fmt.Fprintf(b, "%du8", g.ch.intN(200))
 	case tU64:
-		// Same rationale as tU32's split, one width up: below i64::MAX
-		// an unsigned 64-bit op agrees with its signed sibling, so half
-		// the draws land above 2^63 to reach the range where div_u /
-		// rem_u / shr_u and the unsigned condition codes actually
-		// differ. Go's %d on a uint64 renders the full range, which the
-		// lexer accepts with the u64 suffix.
 		if g.flip(0.5) {
 			fmt.Fprintf(b, "%du64", uint64(1)<<63+uint64(g.ch.intN(1000)))
 			return
 		}
 		fmt.Fprintf(b, "%du64", g.ch.intN(1000))
 	case tF64:
-		// Wider mantissa than f32 by design: a value needing more than
-		// f32's ~7 significant digits is the one that catches a backend
-		// that narrowed an f64 somewhere, which a 2-decimal literal
-		// never could.
 		fmt.Fprintf(b, "%d.%06df64", g.ch.intN(10000), g.ch.intN(1000000))
 	case tF32:
-		// Always include a decimal point so the lexer locks onto
-		// the float production regardless of the suffix. Two-
-		// decimal value drawn from chooser-supplied integer
-		// bits — keeps the byte-driven RNG cleanly one byte per
-		// choice instead of needing a Float64 escape hatch.
 		fmt.Fprintf(b, "%.2ff32", float64(g.ch.intN(10000))/100.0)
 	case tString:
 		b.WriteString(g.stringLiteral())
@@ -3170,17 +1814,12 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	case tStatus:
 		b.WriteString([]string{"Active", "Inactive", "Pending"}[g.ch.intN(3)])
 	case tXyz:
-		// `(Xyz { n: <i32>, valid: <bool> })`. Outer parens
-		// match the disambiguation pattern from pairLiteral.
 		b.WriteString("(Xyz { n: ")
 		g.expr(b, sc, tI32, depth+1)
 		b.WriteString(", valid: ")
 		g.expr(b, sc, tBool, depth+1)
 		b.WriteString(" })")
 	case tOptI32:
-		// Exhaustion convention: smaller / more-terminating
-		// branch is `None` (no sub-expression). `Some(...)` is
-		// the recursive shape.
 		if g.flip(0.5) {
 			b.WriteString("None")
 		} else {
@@ -3191,9 +1830,6 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	case tMapI32I32:
 		g.mapLiteral(b, sc, depth)
 	case tResI32I32:
-		// `(Ok(<i32>))` or `(Err(<i32>))`. Both arms carry an i32
-		// payload so the result type is always Result[i32, i32]
-		// (no inference ambiguity unlike bare `None`).
 		if g.flip(0.5) {
 			b.WriteString("(Ok(")
 			g.expr(b, sc, tI32, depth+1)
@@ -3210,16 +1846,12 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		g.expr(b, sc, tF32, depth+1)
 		b.WriteString(" })")
 	case tTupF32F64:
-		// Both float widths in one box, at the offsets a uniform
-		// stride gets wrong.
 		b.WriteString("(")
 		g.expr(b, sc, tF32, depth+1)
 		b.WriteString(", ")
 		g.expr(b, sc, tF64, depth+1)
 		b.WriteString(")")
 	case tFShape:
-		// Exhaustion convention: `FNone` (no sub-expression) is the
-		// smallest arm, so a spent corpus stops building payloads.
 		switch {
 		case g.flip(0.4):
 			b.WriteString("FNone")
@@ -3237,17 +1869,12 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 			b.WriteString("))")
 		}
 	case tTupI32I64:
-		// `(<i32>, <i64>)` — heterogeneous on purpose, so the 4-byte
-		// and 8-byte elements sit at different offsets and a backend
-		// that assumed a uniform stride is caught.
 		b.WriteString("(")
 		g.expr(b, sc, tI32, depth+1)
 		b.WriteString(", ")
 		g.expr(b, sc, tI64, depth+1)
 		b.WriteString(")")
 	default:
-		// Dynamic nominal types — struct lit or enum-variant
-		// pick based on which sidecar map t belongs to.
 		if sh, ok := g.structShapes[t]; ok {
 			g.dynStructLiteral(b, sc, t, sh, depth)
 			return
@@ -3264,15 +1891,7 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	}
 }
 
-// dynStructLiteral emits `(<Name> { f0: <expr>, f1: <expr>, ... })`
-// for a dynamic struct shape declared in declareDynamicNominals.
-// Outer parens match the pairLiteral / Xyz pattern for arm-block
-// disambiguation.
 func (g *Generator) dynStructLiteral(b *strings.Builder, sc *scope, t gtype, sh *structShape, depth int) {
-	// Functional update, `S { ...v, fK: e }`: a copy of a live value with
-	// one field replaced, the shape a reuse token is built for. Exhausted,
-	// it is the smaller form — one field expression, not one per field —
-	// so it is taken whenever a source is in scope.
 	if srcs := sc.inScope(t); len(srcs) > 0 && (g.ch.exhausted() || !g.flip(0.7)) {
 		src := srcs[g.ch.intN(len(srcs))]
 		f := sh.fields[g.ch.intN(len(sh.fields))]
@@ -3292,14 +1911,6 @@ func (g *Generator) dynStructLiteral(b *strings.Builder, sc *scope, t gtype, sh 
 	b.WriteString(" })")
 }
 
-// dynEnumLiteral emits one variant of a dynamic enum shape:
-// the bare name for a payload-less variant, `(V(<expr>, ...))`
-// for a payload-carrying one. The parens match the Some / Ok
-// pattern so the literal survives an arm-block slot.
-//
-// Payload-LESS variants are preferred once the corpus is spent:
-// scanning for one keeps truncation from growing the program by
-// filling payload slots with expressions.
 func (g *Generator) dynEnumLiteral(b *strings.Builder, sc *scope, sh *enumShape, depth int) {
 	v := sh.variants[g.ch.intN(len(sh.variants))]
 	if g.ch.exhausted() {
@@ -3324,12 +1935,8 @@ func (g *Generator) dynEnumLiteral(b *strings.Builder, sc *scope, sh *enumShape,
 	b.WriteString("))")
 }
 
-// mapLiteral emits `Map { k: v, k2: v2, ... }` with 0..3 entries.
-// All keys + values are i32 expressions; the IR lowering for
-// `Map[i32, i32]` covers every backend. Outer parens
-// disambiguate when the literal lands in an arm-block slot.
 func (g *Generator) mapLiteral(b *strings.Builder, sc *scope, depth int) {
-	n := g.ch.intN(4) // 0..3 entries (empty Map is valid)
+	n := g.ch.intN(4)
 	b.WriteString("(Map { ")
 	for i := 0; i < n; i++ {
 		if i > 0 {
@@ -3342,18 +1949,8 @@ func (g *Generator) mapLiteral(b *strings.Builder, sc *scope, depth int) {
 	b.WriteString(" })")
 }
 
-// arrayLiteral emits `[e1, e2, ...]` with at least one element so
-// the fixed `[0i32]` index used by tryCompositeProduction is
-// always in-bounds. Sub-expressions recurse at depth+1 so the
-// outer MaxExprDepth budget keeps composite-of-composite
-// recursion finite.
-//
-// Returns the element count, which is the only place a caller can
-// learn an array's length: nothing tracks it per-var afterwards, so
-// a production wanting an in-bounds index other than 0 has to emit
-// the literal itself and index within what it drew.
 func (g *Generator) arrayLiteral(b *strings.Builder, sc *scope, elem gtype, depth int) int {
-	n := 1 + g.ch.intN(4) // 1..4 elements
+	n := 1 + g.ch.intN(4)
 	b.WriteByte('[')
 	for i := 0; i < n; i++ {
 		if i > 0 {
@@ -3365,41 +1962,12 @@ func (g *Generator) arrayLiteral(b *strings.Builder, sc *scope, elem gtype, dept
 	return n
 }
 
-// lambdaLiteral emits `((<param>: i32) => <i32-expr>)`, the only
-// producer of a function VALUE.
-//
-// Whether it closes over anything is not decided here and cannot be:
-// the body is an ordinary i32 expression over a scope holding both
-// the lambda's own parameter and every outer var, so the capture set
-// is whatever the body happened to reference. That is the point — a
-// generator that always captured, or never did, would emit one shape
-// where the interesting axis is the boundary between them. The
-// checker's capture analysis stamps `FuncDecl.Captures` from the same
-// evidence.
-//
-// The parameter is generator-private (`__lam_x<N>`) and globally
-// numbered, so a lambda nested inside another lambda's body cannot
-// shadow the outer parameter — shadowing would make the emitted
-// program's meaning depend on the checker's resolution order rather
-// than on the generator's scope model, and the two disagreeing is a
-// silent oracle failure rather than a caught one.
-//
-// Outer parens keep the `=>` body from swallowing a trailing `,` or
-// `)` in an argument / array-element slot.
 func (g *Generator) lambdaLiteral(b *strings.Builder, sc *scope, depth int) {
 	name := fmt.Sprintf("__lam_x%d", g.lambdaCounter)
 	g.lambdaCounter++
 	inner := newScope(sc)
 	inner.declare(tI32, name)
 	fmt.Fprintf(b, "((%s: i32) => ", name)
-	// The body is a new function's body, so the try operator's legality
-	// is decided by the LAMBDA's return type, not the enclosing
-	// function's. Without this save/restore a lambda written inside an
-	// `Option[i32]`-returning function emits `expr?` and the checker
-	// rejects it — "`?` on Option requires the surrounding function to
-	// return Option[_], got void" — which breaks the always-type-checks
-	// invariant the whole fuzz oracle rests on. maybeEmitLocalFn has
-	// always done this; the lambda producer has to as well.
 	prevReturnType := g.currentReturnType
 	g.currentReturnType = tI32
 	g.inClosure++
@@ -3409,12 +1977,6 @@ func (g *Generator) lambdaLiteral(b *strings.Builder, sc *scope, depth int) {
 	b.WriteByte(')')
 }
 
-// pairLiteral emits `(Pair { fst: <i32-expr>, snd: <i32-expr> })`.
-// Outer parens disambiguate the brace-balanced struct literal in
-// contexts where bare `Pair { ... }` would clash with the
-// surrounding statement / arm-block braces (e.g. inside match-arm
-// bodies or if-then arm expressions). Both field exprs recurse
-// at depth+1 to extend the outer budget.
 func (g *Generator) pairLiteral(b *strings.Builder, sc *scope, depth int) {
 	b.WriteString("(Pair { fst: ")
 	g.expr(b, sc, tI32, depth+1)
@@ -3423,9 +1985,6 @@ func (g *Generator) pairLiteral(b *strings.Builder, sc *scope, depth int) {
 	b.WriteString(" })")
 }
 
-// stringLiteral emits a short ASCII-only string with no escape
-// sequences so the lexer can't trip on quoting edge cases. Length is
-// bounded so corpora stay compact.
 func (g *Generator) stringLiteral() string {
 	n := g.ch.intN(8)
 	var sb strings.Builder
@@ -3437,27 +1996,11 @@ func (g *Generator) stringLiteral() string {
 	return sb.String()
 }
 
-// ---------- random helpers ----------
-
-// pickType draws from the full type universe, honouring the
-// generator's profile (ProfileRunnable drops f32). The
-// composite types (arrays, Pair, Color) are float-free, so
-// they're allowed in both profiles.
 func (g *Generator) pickType() gtype {
 	pool := g.typePool()
 	return pool[g.ch.intN(len(pool))]
 }
 
-// pickMainVarType draws the type of a `let v<N>` declared directly
-// in `main`, plus any dynamic nominal types declared in
-// declareDynamicNominals so main's vars can hold values of
-// user-declared struct / enum types.
-//
-// Profile-aware, and it has to be: main's locals are the only
-// values an observation channel can reach, so a type absent here
-// is a type the oracle never sees no matter how freely the rest of
-// the generator produces it. floatVarTypes joins the pool only
-// where floats are admitted at all.
 func (g *Generator) pickMainVarType() gtype {
 	pool := append([]gtype{}, mainVarTypes...)
 	if g.profile.floatsAllowed() {
@@ -3467,11 +2010,6 @@ func (g *Generator) pickMainVarType() gtype {
 	return pool[g.ch.intN(len(pool))]
 }
 
-// typePool returns the gtype universe pickType draws from,
-// branching on the generator's profile and including any
-// dynamic nominal types declared by the current program.
-// Allocates fresh each call so callers can mutate without
-// aliasing the underlying slices.
 func (g *Generator) typePool() []gtype {
 	var pool []gtype
 	if !g.profile.floatsAllowed() {
@@ -3487,12 +2025,6 @@ func (g *Generator) typePool() []gtype {
 	return append(g.swarmed(pool), g.sortedDynamicTypes()...)
 }
 
-// sortedDynamicTypes returns the dynamic struct + enum gtypes
-// in deterministic order (gtype-value ascending). Go's `range
-// map` iteration order is randomised per program run, so
-// iterating `g.structShapes` / `g.enumShapes` directly into
-// the type pool makes pickType non-deterministic and breaks
-// TestGenIsDeterministic for the same seed.
 func (g *Generator) sortedDynamicTypes() []gtype {
 	out := append(sortedKeys(g.structShapes), sortedKeys(g.enumShapes)...)
 	out = append(out, sortedKeys(g.arrShapes)...)
@@ -3500,9 +2032,6 @@ func (g *Generator) sortedDynamicTypes() []gtype {
 	return out
 }
 
-// sortedKeys returns m's keys in ascending order. Go randomises `range map`,
-// so anything a draw is taken from has to be ordered first or the same seed
-// stops producing the same program.
 func sortedKeys[V any](m map[gtype]V) []gtype {
 	out := make([]gtype, 0, len(m))
 	for t := range m {
@@ -3512,22 +2041,10 @@ func sortedKeys[V any](m map[gtype]V) []gtype {
 	return out
 }
 
-// pickFieldType draws the scalar type of a dynamic struct field or
-// a dynamic enum variant's payload slot. Floats join the pool in
-// the profiles that admit them: a float FIELD is the cheapest way
-// to put one next to a neighbour, which is the only arrangement in
-// which its element width is observable at all.
-//
-// Exhaustion convention: option 0 is tI32, the narrowest.
 func (g *Generator) pickFieldType() gtype {
-	// A field that owns a box: the nested-release, nested-retain and
-	// reuse shapes live here, and a scalar-only field cannot reach them.
-	// Earlier-declared nominals join the pool, so declarations form a DAG
-	// and every literal is finite.
 	nested := g.swarmed(nestedFieldTypes)
 	nested = append(nested, sortedKeys(g.structShapes)...)
 	nested = append(nested, sortedKeys(g.enumShapes)...)
-	// Exhaustion convention: `true` is the scalar pool.
 	if len(nested) == 0 || !g.on(featNested) || g.flip(0.6) {
 		scalars := []gtype{tI32, tI64, tBool, tString}
 		if g.profile.floatsAllowed() {
@@ -3539,16 +2056,11 @@ func (g *Generator) pickFieldType() gtype {
 	return nested[g.ch.intN(len(nested))]
 }
 
-// nestedFieldTypes are the builtin boxed types a struct field or an enum
-// payload slot may hold. All are float-free, so every profile admits them.
 var nestedFieldTypes = []gtype{
 	tArrI32, tOptI32, tResI32I32, tTupI32I64, tPair, tFnI32I32,
 	tMapI32I32, tArrBool, tArrI64, tArrFnI32I32, tXyz, tColor,
 }
 
-// pickNumeric draws from the numeric types only, honouring
-// the generator's profile. Used by `boolExpr` to choose the
-// operand type of a comparison.
 func (g *Generator) pickNumeric() gtype {
 	if !g.profile.floatsAllowed() {
 		ints := []gtype{tI32, tI64, tU32, tU64, tU8}
@@ -3566,18 +2078,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// maybeEmitControlStmt is the statement-level control flow the loops above
-// do not cover: an `if` / `else` STATEMENT, a `loop` that leaves through
-// `break`, a tuple destructure, `if let`, and `let … else`. Each is its own
-// production with its own gate, tried in the order written; the first that
-// fires wins the slot. Returns true when one wrote a statement.
-//
-// Every gate is spelled so that the exhausted choice emits nothing, the
-// counts are `intN` (zero once exhausted), and every body is a few
-// `let` declarations in an inner scope exactly as the loops' bodies are —
-// so chopping bytes off a corpus collapses these the way it collapses a
-// `while`. The shrink property (TestGenBytesShrinkIsMonotonicAndValid)
-// is what holds that, not this comment.
 func (g *Generator) maybeEmitControlStmt(b *strings.Builder, sc *scope, retT gtype) bool {
 	if !g.on(featControl) {
 		return false
@@ -3603,9 +2103,6 @@ func (g *Generator) maybeEmitControlStmt(b *strings.Builder, sc *scope, retT gty
 	return g.maybeEmitTupleDestructure(b, sc)
 }
 
-// innerStmts writes up to `max` statements into an inner scope: the
-// bounded loops the body may nest, else a typed `let`. The names carry
-// `prefix` so a block's locals never collide with the enclosing body's.
 func (g *Generator) innerStmts(b *strings.Builder, inner *scope, prefix string, max int) {
 	n := g.ch.intN(max)
 	for i := 0; i < n; i++ {
@@ -3624,16 +2121,7 @@ func (g *Generator) innerStmts(b *strings.Builder, inner *scope, prefix string, 
 	}
 }
 
-// maybeEmitIfElseStmt emits
-//
-//	if (<bool>) { <stmts> } else { <stmts> }
-//
-// the statement form, whose two blocks are scopes of their own and whose
-// condition is any boolean expression over the enclosing scope. The
-// if-EXPRESSION production in expr() yields a value; this one does not,
-// which is the shape a lowering has to join without a result slot.
 func (g *Generator) maybeEmitIfElseStmt(b *strings.Builder, sc *scope) bool {
-	// Exhaustion convention: `true` here = no statement (smaller output).
 	if g.flip(0.9) {
 		return false
 	}
@@ -3649,37 +2137,10 @@ func (g *Generator) maybeEmitIfElseStmt(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// maybeEmitLoopBreak emits a `loop` that leaves through `break`, and may
-// skip an iteration through `continue`:
-//
-//	let __lb<N>: i32 = 0i32;
-//	__lp<N>: loop {                                           // the label, sometimes
-//	    if (__lb<N> >= <K>i32) { break; }
-//	    if (<bool>) { __lb<N> = __lb<N> + 1i32; continue; }   // sometimes
-//	    let __li<N>: i32 = 0i32;                              // an inner loop, sometimes,
-//	    loop {                                                // only under a label
-//	        if (__li<N> >= <K2>i32) { break; }
-//	        if (<bool>) { break __lp<N>; }
-//	        if (<bool>) { __lb<N> = __lb<N> + 1i32; continue __lp<N>; }
-//	        <stmts>
-//	        __li<N> = __li<N> + 1i32;
-//	    }
-//	    <stmts>
-//	    __lb<N> = __lb<N> + 1i32;
-//	}
-//
-// The counter is bumped on every path that goes round again, so the loop
-// runs at most K times whatever the body does, as the `while` production's
-// does. `break` and `continue` out of a nested `if` are the two edges a
-// lowering's loop-exit bookkeeping has to get right; the labelled forms
-// out of the inner loop are the same two edges crossing a loop boundary,
-// so the inner loop's own counter and the outer's both have to be left in
-// the state the target loop expects.
 func (g *Generator) maybeEmitLoopBreak(b *strings.Builder, sc *scope) bool {
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
 	}
-	// Exhaustion convention: `true` here = no loop (smaller output).
 	if g.flip(0.9) {
 		return false
 	}
@@ -3690,21 +2151,17 @@ func (g *Generator) maybeEmitLoopBreak(b *strings.Builder, sc *scope) bool {
 	counter := fmt.Sprintf("__lb%d", idx)
 	iters := 1 + g.ch.intN(maxInt(g.cfg.MaxLoopIters, 1))
 	fmt.Fprintf(b, "let %s: i32 = 0i32; ", counter)
-	// `true` — the exhausted choice — is no label.
 	label := ""
 	if !g.flip(0.6) {
 		label = fmt.Sprintf("__lp%d", idx)
 		fmt.Fprintf(b, "%s: ", label)
 	}
 	fmt.Fprintf(b, "loop { if (%s >= %di32) { break; } ", counter, iters)
-	// `true` — the exhausted choice — is no `continue`.
 	if !g.flip(0.6) {
 		b.WriteString("if (")
 		g.boolExpr(b, sc, 0)
 		fmt.Fprintf(b, ") { %s = %s + 1i32; continue; } ", counter, counter)
 	}
-	// The inner loop, whose labelled edges leave for the outer one. `true`
-	// is the exhausted choice: none.
 	if label != "" && g.loopDepth < maxInt(g.cfg.MaxLoopDepth, 0) && !g.flip(0.5) {
 		g.loopDepth++
 		inner := fmt.Sprintf("__li%d", idx)
@@ -3723,33 +2180,15 @@ func (g *Generator) maybeEmitLoopBreak(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// maybeEmitDefer emits a block-shaped defer:
-//
-//	defer { <stmts> }
-//
-// whose body is a scope of its own over the enclosing one, run at the
-// function's exit after everything that follows it. What the lowering has
-// to get right is the frame at that point: the body reads locals declared
-// before the defer, which must still be live when it runs, and binds locals
-// of its own, which must be released on the deferred path.
-//
-// Not in the printable profile, as maybeEmitLetElse is not: that profile's
-// main is a fixed sequence of observations whose reach the float landmarks
-// pin, and one more draw ahead of its declarations moves every type they
-// pick.
 func (g *Generator) maybeEmitDefer(b *strings.Builder, sc *scope) bool {
 	if g.profile == ProfilePrintable {
 		return false
 	}
-	// Exhaustion convention: `true` here = no statement (smaller output).
 	if g.flip(0.92) {
 		return false
 	}
 	idx := g.ctrlCounter
 	g.ctrlCounter++
-	// A deferred action has no caller to propagate a failure to, so `?`
-	// is refused inside it: the body is generated as if the function
-	// returned no Option or Result.
 	prevRet := g.currentReturnType
 	g.currentReturnType = tI32
 	b.WriteString("defer { ")
@@ -3759,14 +2198,7 @@ func (g *Generator) maybeEmitDefer(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// maybeEmitTupleDestructure emits
-//
-//	let (__td<N>_a, __td<N>_b) = <(i32, i64)>;
-//
-// and declares both halves, so later expressions can read a tuple's
-// elements through a binding rather than a projection.
 func (g *Generator) maybeEmitTupleDestructure(b *strings.Builder, sc *scope) bool {
-	// Exhaustion convention: `true` here = no statement (smaller output).
 	if g.flip(0.9) {
 		return false
 	}
@@ -3782,24 +2214,12 @@ func (g *Generator) maybeEmitTupleDestructure(b *strings.Builder, sc *scope) boo
 	return true
 }
 
-// maybeEmitIfLet emits the one-arm match over an Option or a Result:
-//
-//	if let Some(__il<N>) = <Option[i32]> { <stmts> } else { <stmts> }
-//	if let Ok(__il<N>) = <Result[i32, i32]> { <stmts> } else { <stmts> }
-//
-// The binding is in scope for the then-block only. The scrutinee is an
-// in-scope VARIABLE of the type, as the match productions' are: a bare
-// `Err(…)` or `Some(id(…))` has an unresolved type parameter with no
-// annotation to settle it, and the binding would inherit that
-// (docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md). No such variable, no
-// statement.
 func (g *Generator) maybeEmitIfLet(b *strings.Builder, sc *scope) bool {
 	opts := sc.inScope(tOptI32)
 	ress := sc.inScope(tResI32I32)
 	if len(opts) == 0 && len(ress) == 0 {
 		return false
 	}
-	// Exhaustion convention: `true` here = no statement (smaller output).
 	if g.flip(0.9) {
 		return false
 	}
@@ -3808,7 +2228,6 @@ func (g *Generator) maybeEmitIfLet(b *strings.Builder, sc *scope) bool {
 	bind := fmt.Sprintf("__il%d", idx)
 	then := newScope(sc)
 	then.declare(tI32, bind)
-	// `true` — the exhausted choice — is the Option form when one is there.
 	if len(opts) > 0 && (len(ress) == 0 || g.flip(0.5)) {
 		fmt.Fprintf(b, "if let Some(%s) = %s", bind, opts[g.ch.intN(len(opts))])
 	} else {
@@ -3822,23 +2241,12 @@ func (g *Generator) maybeEmitIfLet(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// maybeEmitMatchStmt emits the statement form of a match over an Option or
-// a Result variable, with block arms:
-//
-//	match (<Option[i32]>) { Some(__ms<N>_g) when <bool> => { <stmts> }, __ms<N>_w @ Some(__ms<N>) => { <stmts> }, None => { <stmts> } }
-//	match (<Result[i32, i32]>) { Ok(__ms<N>_g) when <bool> => { <stmts> }, __ms<N>_w @ Ok(__ms<N>) => { <stmts> }, Err(__ms<N>_e) => { <stmts> } }
-//
-// The guarded arm and the `@` binding are each sometimes there; the plain
-// payload arm always is, so the match is exhaustive whatever the guard
-// decides. Each block is a scope of its own holding its arm's bindings.
-// The scrutinee is an in-scope variable for the reason maybeEmitIfLet's is.
 func (g *Generator) maybeEmitMatchStmt(b *strings.Builder, sc *scope) bool {
 	opts := sc.inScope(tOptI32)
 	ress := sc.inScope(tResI32I32)
 	if len(opts) == 0 && len(ress) == 0 {
 		return false
 	}
-	// Exhaustion convention: `true` here = no statement (smaller output).
 	if g.flip(0.9) {
 		return false
 	}
@@ -3846,14 +2254,12 @@ func (g *Generator) maybeEmitMatchStmt(b *strings.Builder, sc *scope) bool {
 	g.ctrlCounter++
 	bind := fmt.Sprintf("__ms%d", idx)
 	variant, miss, st := "Some", "None", tOptI32
-	// `true` — the exhausted choice — is the Option form when one is there.
 	if len(opts) > 0 && (len(ress) == 0 || g.flip(0.5)) {
 		fmt.Fprintf(b, "match (%s) { ", opts[g.ch.intN(len(opts))])
 	} else {
 		variant, miss, st = "Ok", fmt.Sprintf("Err(%s_e)", bind), tResI32I32
 		fmt.Fprintf(b, "match (%s) { ", ress[g.ch.intN(len(ress))])
 	}
-	// `true` — the exhausted choice — is no guarded arm.
 	if !g.flip(0.7) {
 		guard := newScope(sc)
 		guard.declare(tI32, bind+"_g")
@@ -3878,16 +2284,6 @@ func (g *Generator) maybeEmitMatchStmt(b *strings.Builder, sc *scope) bool {
 	return true
 }
 
-// maybeEmitLetElse emits the refutable binding whose miss leaves the
-// function:
-//
-//	let Some(__le<N>) = <Option[i32] variable> else { return <retT>; };
-//
-// and declares the binding for the rest of the block, which the parser
-// makes the match's success arm. The scrutinee is an in-scope variable
-// for the reason maybeEmitIfLet's is. Not in the printable profile, whose
-// observations have to run for its oracle to see them; a runnable
-// main masks the early return to a byte as its own return does.
 func (g *Generator) maybeEmitLetElse(b *strings.Builder, sc *scope, retT gtype) bool {
 	if g.profile == ProfilePrintable {
 		return false
@@ -3896,7 +2292,6 @@ func (g *Generator) maybeEmitLetElse(b *strings.Builder, sc *scope, retT gtype) 
 	if len(opts) == 0 {
 		return false
 	}
-	// Exhaustion convention: `true` here = no statement (smaller output).
 	if g.flip(0.92) {
 		return false
 	}

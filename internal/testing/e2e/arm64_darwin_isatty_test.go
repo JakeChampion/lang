@@ -10,10 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// TestArm64DarwinIsatty runs isatty against the descriptors Darwin's libc
-// tells apart: a pseudo-terminal master straight from /dev/ptmx, which is a
-// terminal by its device type though it refuses TIOCGETA, a slave, and
-// /dev/null. Off Apple Silicon the build is what is checked.
 func TestArm64DarwinIsatty(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

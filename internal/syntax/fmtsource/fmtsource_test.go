@@ -2,9 +2,6 @@ package fmtsource
 
 import "testing"
 
-// literateDoc has a declarations chunk, a statement-list chunk, a root that
-// references chunks, a file root, a display-only snippet, a `test` example,
-// a non-fern fence and prose that reads like code.
 const literateDoc = "# Title\n" +
 	"\n" +
 	"function   prose( ):i32{return 1;}\n" +
@@ -93,9 +90,6 @@ const literateWant = "# Title\n" +
 	"let    x=1;\n" +
 	"```\n"
 
-// FormatLiterate formats chunk and file-root bodies, keeps prose, display
-// snippets, examples, other languages and reference-bearing chunks byte for
-// byte, and is a fixed point on its own output.
 func TestFormatLiterate(t *testing.T) {
 	got := FormatLiterate(literateDoc)
 	if got != literateWant {

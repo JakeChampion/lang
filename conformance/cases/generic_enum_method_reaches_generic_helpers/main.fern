@@ -1,7 +1,7 @@
-// A generic enum's methods reach generic helpers the way std/ordmap's do
-// (#12904): `has` matches on a generic function's result, `below` binds a
-// generic struct holding the enum, and `pick` matches on that struct's field
-// inside a bounded helper the method calls.
+
+
+
+
 import "core/cmp";
 import "std/i32";
 

@@ -1,4 +1,4 @@
-// Nested struct literals and chained field access.
+
 struct Address { city: string, zip: i32 }
 struct Person { name: string, addr: Address }
 

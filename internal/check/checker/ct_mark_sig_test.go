@@ -8,13 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `__ct_secret(b)` and `__ct_public(b)` take a `[u8]`, so an owned `u8[]`
-// lends itself and a string's byte view passes as it is, and answer nothing.
 func TestCtMarkBuiltinSignatures(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // "" = must type-check
+		want string
 	}{
 		{"secret takes an owned u8[]", `function main(): i32 { let k: u8[] = __alloc_u8(4); __ct_secret(k); return 0; }`, ""},
 		{"public takes a view", `function main(): i32 { let k: u8[] = __alloc_u8(4); let v: [u8] = k[0:2]; __ct_public(v); return 0; }`, ""},

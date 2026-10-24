@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// constTableSrc reads a 256-entry constant table through __scan_set and by
-// index. The table is a static box: its elements live in the data section, and
-// nothing in the functions that read it should be per element.
 const constTableSrc = `import "std/i32";
 
 const T: u8[] = [0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8, 1u8, 2u8, 0u8];
@@ -32,11 +29,6 @@ function main(): i32 {
 
 const constTableWant = "2 2 256\n"
 
-// A function that reads a constant table stays small on wasm. The typed
-// lowering stores each element of the literal, then builds the table as a
-// static box that never reads them; the register backends pruned the dead
-// values, but wasm emitted two instructions per element per use until the IR
-// optimiser removed stores to slots nothing loads.
 func TestConstTableWasmEmitsNoElementStores(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "prog.fern")
@@ -51,14 +43,11 @@ func TestConstTableWasmEmitsNoElementStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// scan and at are inlined into main, whose two reads of the table cost
-	// 3,235 lines when each element was stored; it is 159 without them.
 	if n := watFuncLines(string(text), "$main"); n > 400 {
 		t.Errorf("$main is %d WAT lines, want at most 400: the table's elements are being materialised", n)
 	}
 }
 
-// watFuncLines counts the body lines of the WAT function named fn.
 func watFuncLines(wat, fn string) int {
 	head := regexp.MustCompile(`^\s*\(func (\$\S+)`)
 	n, in := 0, false

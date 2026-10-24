@@ -1,22 +1,22 @@
-// A SUB-PATTERN in a struct-pattern FIELD: `P { x: 0, y }`.
-//
-// A named field could bind a local of the same name (`P { x }`) or rename one
-// (`P { x: nx }`); it can now also carry a pattern matched against the field's
-// value. `field: local` still reads as a rename — only an unambiguous pattern
-// recurses, the same line a payload slot draws.
-//
-// On native this is the payload-slot mechanism reused: the field binds a
-// synthetic temp and the arm's body nests inside a match on it, exactly as
-// `Some(Ok(n))` already did, so exhaustiveness falls out — a refutable field
-// makes the inner match non-exhaustive. The merged arm keeps NamedFields and
-// FieldNames so it still projects by field rather than positionally.
-//
-// The self-host reaches the same place from the other side: its struct match
-// is a done-flag chain built at parse time, so a LITERAL field folds into the
-// arm's condition (the IR lowers a literal match only through the parse-time
-// literal desugar, never from a raw match node) and a VARIANT field nests the
-// arm's matched path inside a match on the field — the same split the tuple
-// element kinds use.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/i32";
 
@@ -26,8 +26,8 @@ struct P { x: i32, y: i32 }
 struct W { e: E, n: i32 }
 struct S { tag: string, n: i32 }
 
-// The main case: a literal field beside a plain binder field, with an
-// irrefutable sibling arm as the fallback.
+
+
 function lit(p: P): i32 {
     match (p) {
         P { x: 0, y } => { return 100 + y; },
@@ -35,8 +35,8 @@ function lit(p: P): i32 {
     }
 }
 
-// A variant field: the tag is tested and the payloads bind, under the same
-// rules an arm-position `A(v) => …` follows.
+
+
 function variant(w: W): i32 {
     match (w) {
         W { e: A(v), n } => { return v + n; },
@@ -45,11 +45,11 @@ function variant(w: W): i32 {
     }
 }
 
-// A refutable field with a trailing `_` fallback. The `_` is dead by
-// construction — a struct has one shape, so the merged arm matches every
-// value — but only because the desugar copied its body into that arm's inner
-// match, which is what makes the match total. Reporting it unreachable would
-// leave the fallback unspellable.
+
+
+
+
+
 function fallback(w: W): i32 {
     match (w) {
         W { e: A(v), n } => { return v + n; },
@@ -57,8 +57,8 @@ function fallback(w: W): i32 {
     }
 }
 
-// A string literal field, so the comparison settles the way a literal match
-// does (OpStrEq, and the two-word string ABI where it applies).
+
+
 function tagged(s: S): i32 {
     match (s) {
         S { tag: "go", n } => { return 10 + n; },
@@ -67,8 +67,8 @@ function tagged(s: S): i32 {
     }
 }
 
-// Successive arms testing the SAME field, so the merged group has to keep
-// each arm's own inner pattern rather than collapsing them.
+
+
 function both(p: P): i32 {
     match (p) {
         P { x: 1, y } => { return 100 + y; },
@@ -77,7 +77,7 @@ function both(p: P): i32 {
     }
 }
 
-// A rename still binds, beside a sub-pattern field.
+
 function renamed(w: W): i32 {
     match (w) {
         W { e: A(v), n: count } => { return v * count; },
@@ -85,10 +85,10 @@ function renamed(w: W): i32 {
     }
 }
 
-// A guard sees the field sub-pattern's own bindings AND the sibling plain
-// fields. The sibling half needed the guard to be wrapped in the same scope
-// the arm body gets: the desugar rebinds plain slots inside the body, and the
-// guard runs first, so `when v > n` used to draw E001 on `n`.
+
+
+
+
 function guarded(w: W): i32 {
     match (w) {
         W { e: A(v), n } when v > n => { return v; },

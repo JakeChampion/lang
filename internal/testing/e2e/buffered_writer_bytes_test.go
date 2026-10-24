@@ -24,7 +24,6 @@ func runBufferedWriterBytesCommand(t *testing.T, cmd *exec.Cmd) {
 func checkBufferedWriterBytesOutput(t *testing.T, out []byte) {
 	t.Helper()
 	want := e2eharness.BufferedWriterBytesOutput()
-	// Some bootstrap runners print main's return value after its output.
 	if !bytes.Equal(out, want) && !bytes.Equal(out, append(want, []byte("0\n")...)) {
 		t.Fatalf("binary output differs: got %d bytes", len(out))
 	}
@@ -71,8 +70,6 @@ func checkBufferedWriterBytesCensus(t *testing.T, out, diagnostic string, code i
 		t.Fatalf("writer bytes: exit %d\n%s", code, diagnostic)
 	}
 	allocs, frees, _ := parseLeakCheckLine(t, diagnostic)
-	// stdout() returns a sentinel-headered handle on the bootstrap backends.
-	// All arrays and writer buffers must be reclaimed, including fresh args.
 	if allocs-frees > 2 {
 		t.Fatalf("allocs=%d frees=%d: more than the two stdout handles survive\n%s", allocs, frees, diagnostic)
 	}

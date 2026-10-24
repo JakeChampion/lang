@@ -2,16 +2,6 @@ import "std/test";
 import "std/i32";
 import "std/string";
 
-// tests/stdlib/i32_to_string_radix_test.fern — pure-Fern coverage of
-// std/i32.to_string_radix(base): render an i32 in an arbitrary base (2..36,
-// digits 0-9a-z, signed), the general form behind to_binary/to_oct/to_hex and
-// the write-side inverse of string.parse_int_radix. Covers several bases, sign,
-// zero, out-of-range base, and a parse_int_radix round-trip. Kept as its own
-// suite so the self-host merged bundle stays under the asm_ir IR budget; uses
-// assert_true. The i32 -> string render self-hosts cleanly (like to_hex), so the
-// suite is self-host-gated in full. The Go-side TestI32ToStringRadix pins native
-// compilation on all four backends.
-
 function test_hex(): test.TestOutcome {
   return test.assert_true(255.to_string_radix(16) == "ff");
 }
@@ -44,7 +34,6 @@ function test_bad_base(): test.TestOutcome {
 }
 
 function test_round_trip(): test.TestOutcome {
-  // to_string_radix then parse_int_radix at the same base recovers n.
   let s: string = 1234567.to_string_radix(36);
   match (s.parse_int_radix(36)) {
     Some(v) => {

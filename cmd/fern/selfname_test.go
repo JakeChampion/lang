@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// The oracle is bin/fern-oracle, not the shipped `fern` (compiler/fern_main.fern),
-// so everything it prints about itself names it fern-oracle (#12674).
 func TestOracleNamesItselfFernOracle(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "fern-oracle")

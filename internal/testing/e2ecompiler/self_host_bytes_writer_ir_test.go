@@ -6,9 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Exercise the actual module through the primary compiler. The copied BW
-// implementation previously left these tests independent of the public API.
-// FEATURE-AUDIT std/io_buffered row.
 const bytesWriterIRPrelude = `import "std/io_buffered" as io;`
 
 var bytesWriterIRCases = []struct {

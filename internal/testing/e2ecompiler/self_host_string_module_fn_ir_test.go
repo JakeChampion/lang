@@ -8,36 +8,18 @@ import (
 	"testing"
 )
 
-// std/string free-FUNCTION calls (`string.repeat_char(…)`) on the self-host IR
-// path. The std/string module's basename alias is `string`, which collides with
-// the `string` primitive TYPE keyword, so parse_primary treats a type keyword
-// immediately followed by `.` as a module-qualified reference base and
-// flatten_qualified rewrites the call to `string__repeat_char`. Each case must
-// match the interpreter. (String METHODS like `"x".trim()` are a different
-// form.)
 var stringModuleFnIRCases = []struct {
 	name string
 	src  string
 }{
-	// repeat_char(ch, n) -> string; "AAA".len() == 3.
 	{"repeat_char-len", `import "std/string";
 function main(): i32 { return string.repeat_char(65 as char, 3).len(); }`},
-	// Bound to a var first, then .len() — exercises the call in a var-init.
 	{"repeat_char-var", `import "std/string";
 function main(): i32 { let s: string = string.repeat_char(66 as char, 5); return s.len(); }`},
-	// n <= 0 -> "" (the early-return branch); len 0.
 	{"repeat_char-empty", `import "std/string";
 function main(): i32 { return string.repeat_char(67 as char, 0).len(); }`},
-	// A string METHOD still lowers (regression guard for the parser change).
 	{"trim-method", `import "std/string";
 function main(): i32 { return "  hi  ".trim().len(); }`},
-	// camel_case / pascal_case (the inverse of snake_case): method calls,
-	// oracle-checked against the interpreter. Probe result CONTENT via
-	// byte-indexing so a self-host miscompile of the case fold — not just
-	// a length change — is caught. "foo_bar".camel_case() == "fooBar", so
-	// [3] is 'B' (66); "foo_bar".pascal_case() == "FooBar", [0] is 'F'
-	// (70); "Foo_bar".camel_case() lower-cases the first initial to 'f'
-	// (102); "__foo__bar__".camel_case() == "fooBar" (len 6).
 	{"camel_case-boundary", `import "std/string";
 function main(): i32 { return "foo_bar".camel_case()[3] as i32; }`},
 	{"pascal_case-initial", `import "std/string";
@@ -46,11 +28,6 @@ function main(): i32 { return "foo_bar".pascal_case()[0] as i32; }`},
 function main(): i32 { return "Foo_bar".camel_case()[0] as i32; }`},
 	{"camel_case-collapse-len", `import "std/string";
 function main(): i32 { return "__foo__bar__".camel_case().len(); }`},
-	// is_camel_case / is_pascal_case predicates, oracle-checked. Return
-	// the boolean as an exit code (true=1) so a self-host miscompile of
-	// the classifier diverges from the interpreter. "fooBar" is camel (1);
-	// "FooBar" is not camel (0); "FooBar" is pascal (1); "foo_bar" (with a
-	// separator) is neither (0).
 	{"is_camel_case-true", `import "std/string";
 function main(): i32 { if ("fooBar".is_camel_case()) { return 1; } return 0; }`},
 	{"is_camel_case-false", `import "std/string";

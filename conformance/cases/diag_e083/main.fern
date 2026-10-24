@@ -1,8 +1,8 @@
-// E083: `for` walks an array, a string, a Map, a range, an Iterator, or a
-// value whose `iter()` returns one. A struct with none of those, a value
-// whose `iter()` returns something else, and a type parameter with no
-// Iterator bound are each refused, naming the type rather than the loop's
-// lowering. The `ok` loops show what is accepted beside them.
+
+
+
+
+
 import "core/iter";
 
 struct Point { x: i32, y: i32 }

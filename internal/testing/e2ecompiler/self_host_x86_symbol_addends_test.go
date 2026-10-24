@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// Defined local labels keep GNU's object-file displacements resolved, so this
-// compares the actual instruction bytes rather than two relocation formats.
 func TestSelfHostX86SymbolAddends(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	driver := buildX86AsmBenchDriver(t, gcc)
@@ -47,8 +45,6 @@ func TestSelfHostX86SymbolAddends(t *testing.T) {
 			}
 		}
 	}
-	// Cross-section addresses must use the final aligned data/BSS layout,
-	// including instruction immediates that follow the displacement.
 	for _, padding := range []string{"", ".ascii \"padding-value-12345678\"\n"} {
 		t.Run("linked-bss/"+padding, func(t *testing.T) {
 			var src strings.Builder
@@ -77,8 +73,6 @@ func TestSelfHostX86SymbolAddends(t *testing.T) {
 	}
 }
 
-// GNU resolves cross-section relocations against the same explicit section
-// geometry as x86_gas_assemble; extracting an unlinked object cannot test it.
 func gnuLinkedAddendText(t *testing.T, as, objcopy, src string) []byte {
 	t.Helper()
 	ld, err := exec.LookPath("ld")

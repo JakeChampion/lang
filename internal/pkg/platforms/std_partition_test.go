@@ -10,45 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/stdlib"
 )
 
-// stdModuleReach is the DERIVED partition of `std/` against the OS
-// boundary (#6512): each module mapped to the host capabilities its
-// transitive reach touches, with the empty string meaning core-safe.
-//
-// Nothing here is a judgement call — every entry is what
-// TestStdPartitionIsDerivedNotAsserted computes from the source. It is
-// checked in so that a module ACQUIRING a host dependency is a visible
-// diff on this table rather than a surprise at someone's first
-// freestanding build. Update it by reading the failure, not by guessing.
-//
-// Two entries worth knowing:
-//
-//   - `std/math` is hosted, not core. It reads as an "obviously core"
-//     numerics module and is in fact the random-number module
-//     (`random_int` over the platform CSPRNG). Derivation caught what a
-//     hand-written classification would have got wrong.
-//   - `std/test` is hosted on six capabilities, which is the answer to
-//     the question the issue raises: a freestanding target cannot run
-//     the in-language test runner today, and `log` (its output sink) is
-//     only one of the six in the way.
-//   - `std/http` calls one capability itself, `log`, through the platform
-//     `respond_error` is handed; the other five arrive with std/platform's
-//     methods it never calls, the same module-granular reach as the
-//     `std/mock_platform` entry below, and reach std/serve and std/test
-//     through their import of it.
-//   - `std/jni` is hosted on `cabi` alone. It touches no OS surface at
-//     all; what it needs is a C calling convention to hand a JNIEnv
-//     method pointer to, which is a property of the target and not of
-//     anything above it.
-//   - `std/sim_fetch` reaches what `std/fetch` does, which it imports for
-//     the `Transport` trait it implements; it is std/sim's sibling rather
-//     than part of it so that `std/sim` keeps the clock and randomness alone.
-//   - `std/mock_platform` and `std/fetch` reach what `std/platform` reaches,
-//     because both import it for the recording seam — `.is_mock` / `.record`
-//     sit on the bag next to the capability methods. Neither CALLS a
-//     capability (a mock exists precisely so nothing does), so this is
-//     module-granular reach and not what either module can do; E066 is
-//     post-tree-shake, so a freestanding program using only the mock's log
-//     still builds.
 var stdModuleReach = map[string]string{
 	"std/_test_empty":   "",
 	"std/ansi":          "",
@@ -137,14 +98,6 @@ var stdModuleReach = map[string]string{
 	"std/zstd":          "",
 }
 
-// TestStdPartitionIsDerivedNotAsserted computes each `std/` module's host
-// reach from its source and checks the table above against it. The table
-// is the artifact; this is the derivation that owns it.
-//
-// It fails three ways, and each is the point: a module that does not load
-// cannot be classified at all; a module missing from the table is one
-// nobody has looked at; and a reach that differs from the table is a
-// module whose relationship to the OS boundary just changed.
 func TestStdPartitionIsDerivedNotAsserted(t *testing.T) {
 	ents, err := fs.ReadDir(stdlib.FS(), "std")
 	if err != nil {
@@ -189,11 +142,6 @@ func TestStdPartitionIsDerivedNotAsserted(t *testing.T) {
 	}
 }
 
-// TestStdCoreSafeModulesCheckAgainstFreestanding is the end-to-end form of
-// the claim: a module whose derived reach is empty must actually survive
-// the freestanding capability gate. Reach and Enforce share one scan, so
-// this pins that the partition means what the compiler enforces rather
-// than agreeing with it by construction alone.
 func TestStdCoreSafeModulesCheckAgainstFreestanding(t *testing.T) {
 	for mod, reach := range stdModuleReach {
 		if reach != "" {

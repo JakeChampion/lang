@@ -14,7 +14,6 @@ func TestSelfHostWasmHTTPHandlerCensus(t *testing.T) {
 	checkSelfHostWasmHTTPHandlerCensus(t, e2eharness.RunWasiHTTPHandlerCensus, 32)
 }
 
-// The persistent-connection twin (#9854) against real wasi:sockets.
 func TestSelfHostWasmHTTPKeepAlive(t *testing.T) {
 	checkSelfHostWasmHTTPHandlerCensus(t, e2eharness.RunWasiHTTPKeepAlive, e2eharness.KeepAliveCycle)
 }

@@ -2,14 +2,6 @@ import "core/cmp";
 import "std/json";
 import "std/test";
 
-// tests/stdlib/derive_test.fern — `@derive(Eq, Display, Ord, Hash,
-// Json)` on structs, over the real `core/cmp` + `std/json` traits.
-// Doubles as the self-host regression gate (compiled through the import-
-// resolving driver, so it exercises the primitive impls — unlike the
-// self-contained trait-test cases). The derived methods must agree with
-// the Go checker's synthesis byte-for-byte (the runner is differential
-// against the interpreter oracle). See docs/TRAITS.md.
-
 @derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash, json.Json)
 struct Point { x: i32, y: i32 }
 
@@ -70,14 +62,12 @@ function sign(n: i32): string {
 }
 
 function test_ord_first_field(): test.TestOutcome {
-  // First field decides when it differs.
   let a: Point = Point { x: 1, y: 9 };
   let b: Point = Point { x: 2, y: 0 };
   return test.assert_eq(sign(a.cmp(b)), "lt");
 }
 
 function test_ord_second_field(): test.TestOutcome {
-  // Equal first field falls through to the second.
   let a: Point = Point { x: 3, y: 7 };
   let c: Point = Point { x: 3, y: 9 };
   return test.assert_eq(sign(a.cmp(c)), "lt");
@@ -126,12 +116,10 @@ function test_enum_eq_diff_payload(): test.TestOutcome {
 }
 
 function test_enum_ord_within_variant(): test.TestOutcome {
-  // Same variant → payload decides.
   return test.assert_eq(sign(Circle(1).cmp(Circle(2))), "lt");
 }
 
 function test_enum_ord_across_variants(): test.TestOutcome {
-  // Earlier-declared variant sorts first, regardless of payload.
   let lt: test.TestOutcome = test.assert_eq(sign(Circle(9).cmp(Square(0))), "lt");
   match (lt) {
     Fail(_) => {
@@ -142,14 +130,7 @@ function test_enum_ord_across_variants(): test.TestOutcome {
   return test.assert_eq(sign(Empty.cmp(Circle(0))), "gt");
 }
 
-// Hash's contract is the law `a == b ⇒ a.hash() == b.hash()` —
-// equal values hash equal. (Distinguishing distinct values is a
-// distribution property, not a guarantee; the native-backend fixture
-// `testdata/cases/hash_struct_enum` exercises that the mix actually
-// spreads.) These law tests stay deterministic on every backend.
-
 function test_hash_law(): test.TestOutcome {
-  // Eq ⇒ equal hashes: equal-valued points must hash the same.
   let a: Point = Point { x: 3, y: 7 };
   let b: Point = Point { x: 3, y: 7 };
   if (a.hash() == b.hash()) {
@@ -159,7 +140,6 @@ function test_hash_law(): test.TestOutcome {
 }
 
 function test_enum_hash_law(): test.TestOutcome {
-  // Same variant + payload hashes equal.
   if (Circle(5).hash() == Circle(5).hash()) {
     return test.pass();
   }
@@ -179,12 +159,6 @@ function test_json_enum_unit(): test.TestOutcome {
   return test.assert_eq(Empty.to_json(), "\"Empty\"");
 }
 
-// Array `to_json` — the element-poly `(xs: T[]) to_json()` serialiser. On the
-// self-hosted compiler this call site is intercepted (lower_array_to_json) into
-// an inline loop whose per-element `arr[i].to_json()` dispatches on the static
-// element type; the loop was rewritten to a u8[] buffer (#4379). Exercises the
-// comma separators + the per-element derived struct to_json in one byte-exact
-// check, plus a scalar array to cover the primitive-impl element path.
 function test_json_array_struct(): test.TestOutcome {
   let pts: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
   return test.assert_eq(pts.to_json(), "[{\"x\":1,\"y\":2},{\"x\":3,\"y\":4}]");

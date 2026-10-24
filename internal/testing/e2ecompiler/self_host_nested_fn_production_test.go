@@ -10,16 +10,6 @@ import (
 	"testing"
 )
 
-// A nested `function` declaration is a source function the parser desugars to a
-// bound lambda, which `try_lift_binding` hoists to `__lam_N`. From there it was
-// indistinguishable from a lambda someone wrote, so it missed
-// `desugar_lambda_returns` — the pre-pass that rewrites a return-position lambda
-// to a binding the closure lift can box. Its return was hoisted to a bare
-// address instead, and `semsource.ident` refuses a function-typed name (#9772).
-//
-// Each case pairs a program with the SAME program written at the top level.
-// Where a function is written is not a fact about what the typed path can
-// lower, so the two must produce the same number of declarations.
 var nestedFnProductionCases = []struct {
 	name   string
 	nested string
@@ -39,9 +29,6 @@ function mk(): i32 { let g: (i32) => i32 = pick(3); return g(4); }
 function main(): i32 { return mk(); }
 `, 5},
 
-	// The capturing form refused at `unsupported expression` rather than at the
-	// closure-value leaf — a second histogram row with the same cause, so it is
-	// pinned separately.
 	{"capturing", `function mk(): i32 {
     function pick(b: i32): (i32) => i32 {
         return (x: i32) => x + b;
@@ -56,7 +43,6 @@ function main(): i32 { return mk(); }
 `, 7},
 }
 
-// censusCount reads one `<label> <n>` line out of a census report.
 func censusCount(t *testing.T, report, label string) int {
 	t.Helper()
 	m := regexp.MustCompile(`(?m)^` + label + `\s+(\d+)`).FindStringSubmatch(report)
@@ -67,8 +53,6 @@ func censusCount(t *testing.T, report, label string) int {
 	return n
 }
 
-// TestSelfHostNestedFnProduction is the gate: the nested spelling must reach
-// the same production as the flat one, and neither may leave a refusal behind.
 func TestSelfHostNestedFnProduction(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -118,8 +102,6 @@ func TestSelfHostNestedFnProduction(t *testing.T) {
 				t.Errorf("flat spelling produced %d of %d — the control regressed, so the "+
 					"nested/flat comparison below proves nothing.\n%s", fp, fm, flat)
 			}
-			// A body spliced into its caller is lowered there, so it counts with
-			// what was produced.
 			nl, fl := np+censusCount(t, nested, "spliced"), fp+censusCount(t, flat, "spliced")
 			if nl != fl {
 				t.Errorf("nested lowered %d, flat lowered %d: where the function is written "+
@@ -129,8 +111,6 @@ func TestSelfHostNestedFnProduction(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedFnProductionRunsX86_64 pins both spellings to the same
-// answer, so the production gain cannot be bought with a miscompile.
 func TestSelfHostNestedFnProductionRunsX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The SELF-ASSIGNMENT: the projected result is stored back into the
-// receiver's own binding, and on the in-place COW branch that is the
-// same handle the assignment is about to overwrite-dec. The distinct
-// shape of the four, and the one the #8276 retain does not fix.
-// Per iter: surviving "other" 3; 500x → 1500.
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

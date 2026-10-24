@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// A callee lent a string VIEW that hands the box straight back (#9328). The
-// view's box carries the immortal rc sentinel, so the result is not a unit of
-// the caller's own; the semantic lowering hands such a callee a copy, which
-// its result then owns. Before that the frame that sliced the view and the
-// holder of the result released one box twice, which the sanitizer reports
-// deterministically. `dup` is the fresh-result control.
 const lentViewHandbackSrc = `@noinline function keep(text: string): string { return text; }
 function dup(text: string): string { return text + "!"; }
 function scan(src: string): string {

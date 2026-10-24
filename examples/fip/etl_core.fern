@@ -83,7 +83,6 @@ pub fip function encode(own out: u8[], pos: i32, normalized: i32, data: u8[], at
   return out;
 }
 
-// Eight bytes: sensor, quality, signed little-endian centidegrees, sequence.
 pub function dataset(records: i32): u8[] {
   let data: u8[] = __alloc_u8(records * 8);
   for i in 0..records {

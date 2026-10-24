@@ -8,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Include parsing: Check mutates the input, so every iteration needs a fresh
-// program. The same fixture runs unchanged against the parent compiler.
 func BenchmarkEnumConstructionFrontend(b *testing.B) {
 	for _, enums := range []bool{false, true} {
 		for _, count := range []int{1, 16, 128} {

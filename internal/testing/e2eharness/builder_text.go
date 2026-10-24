@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// WriteBuilderTextFixture checks text extraction independently of the
-// decoder implementation, including reuse and the raw byte sibling.
 func WriteBuilderTextFixture(t testing.TB) string {
 	t.Helper()
 	cases := []struct {

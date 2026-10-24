@@ -1,8 +1,8 @@
-// std/regex (#2680) bulk operations across the native backends:
-// regex_find_all (all non-overlapping matches), regex_replace_all (literal
-// replacement, incl. groups + no-match passthrough), and regex_split
-// (separators dropped, empty fields kept). Each check sets a bit; all eight
-// hold → 255.
+
+
+
+
+
 import "std/regex";
 
 function main(): i32 {
@@ -25,7 +25,7 @@ function main(): i32 {
   if (require_regex_text(regex.regex_replace_all("(cat|dog)", "cat and dog", "pet")) == "pet and pet") {
     r = r + 16;
   }
-  if (require_regex_text(regex.regex_replace_all("z", "abc", "Q")) == "abc") {  // no match → unchanged
+  if (require_regex_text(regex.regex_replace_all("z", "abc", "Q")) == "abc") {
     r = r + 32;
   }
 

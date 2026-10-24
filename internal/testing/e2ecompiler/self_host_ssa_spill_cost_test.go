@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// A frequently read long interval should survive competition from a short
-// value, while a less frequently read one should still be evicted.
 func TestSelfHostSSASpillCost(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

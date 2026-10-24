@@ -18,18 +18,6 @@ import (
 	"time"
 )
 
-// The serve loop's own allocations per request under TLS 1.3
-// (`Config.with_tls`): a hello handler on one keep-alive TLS connection,
-// the same /count bracketing as CheckServeAllocs, so what one TLS record
-// pair (a request record in, a response record out) costs the loop and the
-// record layer is read net of the connection's handshake. A ceiling on the
-// mean like the HTTP/2 one, since the count moves a little with how the
-// client's records coalesce into reads.
-
-// TLSAllocsCert is a self-signed P-256 leaf for localhost and 127.0.0.1,
-// its certificate and key as PEM, and a pool trusting it, for a TLS hello
-// server the allocations gate drives. One certificate, self-signed, is all
-// the record-layer measurement needs.
 func TLSAllocsCert(t *testing.T) (certPEM, keyPEM []byte, pool *x509.CertPool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -70,10 +58,6 @@ func TLSAllocsCert(t *testing.T) (certPEM, keyPEM []byte, pool *x509.CertPool) {
 	return certPEM, keyPEM, pool
 }
 
-// ServeAllocsTLSServerSource is ServeAllocsServerSource under
-// `with_tls`, reading its certificate and key from the files at certPath
-// and keyPath (TLSAllocsCert's PEM, written by the gate), so the requests
-// arrive on one TLS 1.3 connection.
 func ServeAllocsTLSServerSource(port, rounds int, certPath, keyPath string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -118,12 +102,6 @@ function main(): i32 {
 `, certPath, keyPath, port, serveAllocsWarm+rounds+8)
 }
 
-// CheckServeAllocsTLS is CheckServeAllocs over one keep-alive TLS 1.3
-// connection trusting `pool`, against ServeAllocsTLSServerSource. The
-// count per request moves a little with how the client's records coalesce
-// into the server's reads, so `ceiling` bounds the mean: above it is a
-// regression, and a mean serveAllocsH2Drift or more under it lowers the
-// ceiling.
 func CheckServeAllocsTLS(t *testing.T, addr string, ceiling int64, rounds int, pool *x509.CertPool) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -131,9 +109,6 @@ func CheckServeAllocsTLS(t *testing.T, addr string, ceiling int64, rounds int, p
 	checkAllocsCeiling(t, "HTTP/1.1 TLS hello", total, seconds, rounds, ceiling)
 }
 
-// KeepAliveGETTLS opens one keep-alive HTTP/1.1-over-TLS connection to the
-// server at addr, trusting `pool`, closed when the test ends, and answers a
-// GET's body over it, as KeepAliveGET does in the clear.
 func KeepAliveGETTLS(t *testing.T, addr string, pool *x509.CertPool) func(path string) string {
 	t.Helper()
 	dialer := &net.Dialer{Timeout: 5 * time.Second}

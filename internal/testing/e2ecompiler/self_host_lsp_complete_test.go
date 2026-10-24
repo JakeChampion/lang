@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/lexer"
 )
 
-// `fern -lsp`'s completion, signature help, document symbols and inlay hints
-// (compiler/lspassist.fern), with the answers written out as data: completion
-// types every binding of the enclosing function and offers constants, members
-// after a `.` and nothing of a function the cursor is past; a signature's
-// parameters are named by offset; an outline entry spans its whole
-// declaration with its name selected, and the outline holds the document's
-// own declarations, methods included, and nothing else; and a hint names an
-// imported type as the document writes it.
-
 type lspItem struct {
 	Label  string `json:"label"`
 	Kind   int    `json:"kind"`
@@ -59,8 +50,6 @@ type lspInlay struct {
 	Kind     int    `json:"kind"`
 }
 
-// lspProbe is one request about the document `doc` — its params besides
-// textDocument — and how the answer is judged.
 type lspProbe struct {
 	name   string
 	method string
@@ -69,8 +58,6 @@ type lspProbe struct {
 	check  func(t *testing.T, result json.RawMessage)
 }
 
-// probeLSP opens `open` (names in dir, read from disk) in one server, sends
-// every probe, and judges each answer.
 func probeLSP(t *testing.T, s lspServers, dir string, open []string, probes []lspProbe) {
 	t.Helper()
 	var msgs []lspMsg
@@ -113,8 +100,6 @@ func decode(t *testing.T, result json.RawMessage, v any) {
 	}
 }
 
-// ---- Completion ----
-
 func completeAt(name, doc string, line, char int, check func(*testing.T, []lspItem)) lspProbe {
 	return lspProbe{name: "completion/" + name, method: "textDocument/completion", doc: doc, params: at(line, char), check: func(t *testing.T, result json.RawMessage) {
 		var c lspCompletion
@@ -131,8 +116,6 @@ func completeAt(name, doc string, line, char int, check func(*testing.T, []lspIt
 	}}
 }
 
-// builtinItems is what every scope offers besides its own names: the built-in
-// enums and their variants.
 var builtinItems = []lspItem{
 	{"Err", 20, "(variant of Result) Err(E)"},
 	{"None", 20, "(variant of Option) None"},
@@ -142,8 +125,6 @@ var builtinItems = []lspItem{
 	{"Some", 20, "(variant of Option) Some(T)"},
 }
 
-// scopeItems expects exactly `own` and builtinItems, in label order (equal
-// labels in the order given), then every keyword: the oracle lexer's list.
 func scopeItems(own ...lspItem) func(*testing.T, []lspItem) {
 	want := append(append([]lspItem{}, builtinItems...), own...)
 	sort.SliceStable(want, func(i, j int) bool { return want[i].Label < want[j].Label })
@@ -170,7 +151,6 @@ func scopeItems(own ...lspItem) func(*testing.T, []lspItem) {
 	}
 }
 
-// exactItems expects exactly `want`, in order.
 func exactItems(want ...lspItem) func(*testing.T, []lspItem) {
 	return func(t *testing.T, items []lspItem) {
 		t.Helper()
@@ -186,7 +166,6 @@ func exactItems(want ...lspItem) func(*testing.T, []lspItem) {
 	}
 }
 
-// someItems expects `want` among the items and no keyword.
 func someItems(want ...lspItem) func(*testing.T, []lspItem) {
 	return func(t *testing.T, items []lspItem) {
 		t.Helper()
@@ -207,9 +186,6 @@ func someItems(want ...lspItem) func(*testing.T, []lspItem) {
 	}
 }
 
-// TestSelfHostLSPCompletionX86_64 completes in a function body, a literate
-// document, the bindings of blocks, loops, arms and lambdas, past a function,
-// and constants and members.
 func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -251,8 +227,6 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 			"  let xs: i32[] = [1];\n" +
 			"  return n + xs.len();\n" +
 			"}\n",
-		// An access the editor sends before its member is written does not
-		// parse.
 		"unparsed.fern": "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.;\n}\n",
 	})
 	sDot := utf16Column(strings.Split(memberLine, "\n"), 1, len(memberLine)+1)
@@ -261,7 +235,6 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 	}
 	pointMembers := exactItems(lspItem{"sum", 2, "function sum(): i32"}, lspItem{"x", 5, "i32"}, lspItem{"y", 5, "i32"})
 	probes := []lspProbe{
-		// Every name offered written out.
 		completeAt("in-function-body", "body.fern", 2, 2, scopeItems(
 			lspItem{"a", 6, "(parameter) i32"}, lspItem{"add", 3, "function add(i32, i32): i32"},
 			lspItem{"b", 6, "(parameter) i32"}, lspItem{"sum", 6, "i32"})),
@@ -279,11 +252,7 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 		completeAt("literate", "t.fern.md", 3, 33, scopeItems(
 			lspItem{"greeting", 3, "function greeting(): i32"}, lspItem{"main", 3, "function main(): i32"})),
 
-		// Past a function's closing brace its locals, `t` among them, are out
-		// of scope.
 		completeAt("past-a-function", "past.fern", 1, 0, scopeItems(lspItem{"f", 3, "function f(): i32"})),
-		// Every binding of the function is offered, a loop's, an arm's and a
-		// lambda's included, and constants.
 		completeAt("scoped-bindings", "scoped.fern", 11, 2, scopeItems(
 			lspItem{"Circle", 20, "(variant of Shape) Circle(f64)"}, lspItem{"LIMIT", 21, "(const) i32"},
 			lspItem{"Shape", 13, "enum Shape"}, lspItem{"Square", 20, "(variant of Shape) Square(i32)"},
@@ -292,7 +261,6 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 			lspItem{"r", 6, "f64"}, lspItem{"s", 6, "(parameter) Shape"}, lspItem{"w", 6, "string"},
 			lspItem{"x", 6, "string"}, lspItem{"x", 6, "(parameter) i32"})),
 
-		// After a `.` what can follow it is offered.
 		completeAt("struct-members", "members.fern", 8, 17, pointMembers),
 		completeAt("member-being-written", "members.fern", 8, 18, pointMembers),
 		completeAt("module-exports", "members.fern", 8, 30, exactItems(
@@ -308,14 +276,11 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 	open := []string{"body.fern", "local.fern", "top.fern", "enum.fern", "sorted.fern", "message.fern", "t.fern.md", "past.fern", "scoped.fern", "members.fern", "unparsed.fern"}
 	probeLSP(t, s, dir, open, probes)
 
-	// A document the server does not have open is offered nothing.
 	frames, _ := runLSP(t, s.selfHost(), session(lspPosition(2, "textDocument/completion", fileURI(filepath.Join(dir, "body.fern")), 2, 2)))
 	if got := string(response(t, frames, "2").Result); got != `{"isIncomplete":false,"items":[]}` {
 		t.Errorf("completion in a document not open = %s, want an empty list", got)
 	}
 }
-
-// ---- Signature help ----
 
 func signatureAt(name, doc string, line, char int, label string, params [][2]int, active int) lspProbe {
 	return lspProbe{name: "signature/" + name, method: "textDocument/signatureHelp", doc: doc, params: at(line, char), check: func(t *testing.T, result json.RawMessage) {
@@ -340,11 +305,6 @@ func signatureAt(name, doc string, line, char int, label string, params [][2]int
 	}}
 }
 
-// TestSelfHostLSPSignatureHelpX86_64 covers a document's function, a UTF-16
-// position, a method, a module's function, a built-in method, a generic
-// function, a call that does not parse, and calls that have no signature to
-// show. A parameter is named by its offsets in the label, not by its text,
-// which `i32` would give for both of add's.
 func TestSelfHostLSPSignatureHelpX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -391,15 +351,11 @@ func TestSelfHostLSPSignatureHelpX86_64(t *testing.T) {
 		signatureAt("generic", "more.fern", 9, after("id("), "function id(T): T", [][2]int{{12, 13}}, 0),
 		signatureAt("more-arguments-than-parameters", "more.fern", 9, after("add(1, 2, "), "function add(i32, i32): i32", addParams, 1),
 		signatureAt("call-that-does-not-parse", "open.fern", 2, 22, "function add(i32, i32): i32", addParams, 1),
-		// In brackets inside the arguments there is no parameter to point at.
 		signatureAt("inside-brackets", "more.fern", 9, after("add([1, "), "", nil, 0),
-		// A local closure has a type, not a declaration to show.
 		signatureAt("local-closure", "more.fern", 9, after("f("), "", nil, 0),
 	}
 	probeLSP(t, s, dir, []string{"call.fern", "nested.fern", "outside.fern", "unknown.fern", "string.fern", "utf16.fern", "more.fern", "open.fern"}, probes)
 }
-
-// ---- Document symbols ----
 
 func symbolsOf(name, doc string, want []lspSymbol) lspProbe {
 	return lspProbe{name: "symbols/" + name, method: "textDocument/documentSymbol", doc: doc, check: func(t *testing.T, result json.RawMessage) {
@@ -419,17 +375,10 @@ func symbolsOf(name, doc string, want []lspSymbol) lspProbe {
 
 func span(l0, c0, l1, c1 int) lspRange { return lspRange{lspPos{l0, c0}, lspPos{l1, c1}} }
 
-// member is a field's or variant's entry, which spans its name.
 func member(name, detail string, kind int, r lspRange) lspSymbol {
 	return lspSymbol{Name: name, Detail: detail, Kind: kind, Range: r, SelectionRange: r}
 }
 
-// TestSelfHostLSPDocumentSymbolsX86_64 writes out each outline: functions,
-// structs and enums, generic, method, constant and `pub` declarations, a
-// literate document and one importing another. An entry spans its whole
-// declaration and selects its name; a field spans its own name rather than
-// its struct's; and the document's own declarations are listed, methods
-// included, and none of the checker's built-in structs.
 func TestSelfHostLSPDocumentSymbolsX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -473,8 +422,6 @@ func TestSelfHostLSPDocumentSymbolsX86_64(t *testing.T) {
 				member("Circle", "", 22, span(7, 13, 7, 19)), member("Square", "", 22, span(7, 26, 7, 32)),
 			}},
 			{Name: "LIMIT", Detail: "i32", Kind: 14, Range: span(1, 0, 1, 22), SelectionRange: span(1, 6, 1, 11)},
-			// K follows a string of one 2-byte, one 3-byte and one 4-byte
-			// character: 1 + 1 + 2 UTF-16 units.
 			{Name: "S", Detail: "string", Kind: 14, Range: span(2, 0, 2, 25), SelectionRange: span(2, 6, 2, 7)},
 			{Name: "K", Detail: "i32", Kind: 14, Range: span(2, 26, 2, 43), SelectionRange: span(2, 32, 2, 33)},
 		}),
@@ -491,8 +438,6 @@ func TestSelfHostLSPDocumentSymbolsX86_64(t *testing.T) {
 		t.Errorf("symbols of a document not open = %s, want []", got)
 	}
 }
-
-// ---- Inlay hints ----
 
 func inlayIn(name, doc string, r lspRange, want ...lspInlay) lspProbe {
 	return lspProbe{name: "inlay/" + name, method: "textDocument/inlayHint", doc: doc, params: lspMsg{"range": r}, check: func(t *testing.T, result json.RawMessage) {
@@ -514,11 +459,6 @@ func hint(line, char int, label string) lspInlay {
 	return lspInlay{Position: lspPos{line, char}, Label: label, Kind: 1}
 }
 
-// TestSelfHostLSPInlayHintsX86_64 hints plain lets, a destructuring, a
-// closure, lets in a loop and an arm, a let after non-ASCII text, the ends of
-// the range, an imported type and a literate document. A destructured name is
-// hinted, not the checker's hidden temporaries, and an imported type is named
-// as the document writes it (`util.Kind`), not by its bundled name.
 func TestSelfHostLSPInlayHintsX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()

@@ -1,28 +1,3 @@
-// tsort.fern — GNU-compatible `tsort`.
-//
-//   [FILE]   whitespace-separated pairs of names; `-` or nothing is stdin
-//
-// Each pair `a b` says a comes before b; a pair naming one thing twice
-// only declares it. The order written is GNU's exactly, which is a
-// particular algorithm rather than "a topological order":
-//
-//   - the names nothing precedes come out in byte order, and each name
-//     written frees the names it precedes, most recently declared
-//     first, onto the back of that queue (Knuth's algorithm T);
-//   - when the queue drains with names left, the input has a loop. It
-//     is found by walking PREDECESSORS in byte order: the smallest
-//     unresolved name seeds a chain, each pass over the names pushes
-//     every one that precedes the chain's head, and a name pushed a
-//     second time closes the loop, which is reported from the head
-//     down to it. The edge closing it is dropped and the queue resumes.
-//     The seed is not marked when it seeds, so it too can be pushed a
-//     second time — that is why `a b b c c a` reports `a b c` and not
-//     `b c a`.
-//
-// Tokens are separated by space, tab and newline only, and are cut at
-// a NUL the way a C string is. An odd token count is an error before
-// anything is written; a loop is reported on stderr while the order is
-// still written, and the exit status is then 1.
 import "std/string";
 import "std/array";
 import "std/io";
@@ -47,8 +22,6 @@ function is_separator(b: i32): boolean {
   return b == 32 || b == 9 || b == 10;
 }
 
-// A name retains a span of the raw input. Equality, hashing and ordering
-// inspect bytes; neither invalid UTF-8 nor NUL suffixes become text.
 struct Name { data: u8[], lo: i32, hi: i32, id: i32 }
 
 impl cmp.Eq for Name {
@@ -93,9 +66,6 @@ impl cmp.Ord for Name {
   }
 }
 
-// Intern names in first-appearance order. The integer map indexes hash
-// buckets; a collision chain compares complete spans before reusing an ID.
-// This uses the native hash-table path as well as the WASM hash table.
 function intern(text: u8[]): (Name[], i32[]) {
   let names: Name[] = [];
   let ids: i32[] = [];
@@ -142,7 +112,6 @@ function intern(text: u8[]): (Name[], i32[]) {
   return (names, ids);
 }
 
-// The indices of names in unsigned byte order.
 function byte_order(names: Name[]): i32[] {
   let order: i32[] = [];
   let sorted: Name[] = cmp.sort(names);
@@ -167,8 +136,6 @@ function error_name(name: Name): void {
   buf_free(b);
 }
 
-// The graph and both phases live in one function so every array is a
-// local the `.with` updates can take in place.
 function run(text: u8[], fname: string): i32 {
   let interned: (Name[], i32[]) = intern(text);
   let names: Name[] = interned.0;
@@ -179,8 +146,6 @@ function run(text: u8[], fname: string): i32 {
   }
   let n: i32 = names.len();
 
-  // Successor lists: `head[v]` is v's most recent edge, `edge_next`
-  // threads back through the earlier ones.
   let count: i32[] = [];
   let head: i32[] = [];
   let chain_next: i32[] = [];
@@ -208,8 +173,6 @@ function run(text: u8[], fname: string): i32 {
     t = t + 2;
   }
 
-  // Only the seeds need sorting for the queue; the byte order of every
-  // name is built the first time a loop has to be found.
   let seeds: Name[] = [];
   v = 0;
   while (v < n) {
@@ -305,8 +268,6 @@ function run(text: u8[], fname: string): i32 {
         found = true;
       }
     }
-    // The chain's links may form a cycle once the seed is pushed
-    // twice; clearing each link as it is followed ends the walk.
     let c2: i32 = chain_head;
     while (c2 >= 0) {
       let nx: i32 = chain_next[c2];
@@ -341,9 +302,6 @@ pub function main(): i32 {
       }
     }
   } else {
-    // GNU words an open failure and a read failure differently
-    // (`tsort: d: read error: Is a directory` for a directory, whose
-    // read-only open succeeds), so open first to tell them apart.
     match (open_reader(path)) {
       Ok(r) => {
         r.close();

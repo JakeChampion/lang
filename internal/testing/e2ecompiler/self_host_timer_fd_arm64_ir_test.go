@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// Native ARM64 timer_fd creates a real timer descriptor; the portable WASI
-// adapters select constants. Check both a timer becoming ready and the
-// constant values composing correctly. The runtime calls are absent from
-// emitted assembly. Execution runs on native ARM64 CI or under qemu.
 func TestSelfHostTimerFdIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

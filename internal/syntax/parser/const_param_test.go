@@ -8,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A function declares a const parameter as `const N: i32`. It is one of the
-// type parameters, and ConstParams names it (docs/CONST-GENERICS.md).
 func TestConstParamOnFunction(t *testing.T) {
 	prog, err := Parse("function count[const N: i32, T](x: T): i32 {\n  return N;\n}")
 	if err != nil {
@@ -24,7 +22,6 @@ func TestConstParamOnFunction(t *testing.T) {
 	}
 }
 
-// An unsuffixed integer in a type-argument list is a const argument.
 func TestConstArgInTypeArgList(t *testing.T) {
 	prog, err := Parse("function main(): i32 {\n  return count[3, string](\"a\");\n}")
 	if err != nil {
@@ -37,8 +34,6 @@ func TestConstArgInTypeArgList(t *testing.T) {
 	}
 }
 
-// A const argument may be spelled in any base and with `_` separators, and it
-// keeps its spelling for the formatter.
 func TestConstArgSpellings(t *testing.T) {
 	for src, want := range map[string]ast.ConstArg{
 		"0x10":  {Value: 16, Raw: "0x10"},
@@ -58,8 +53,6 @@ func TestConstArgSpellings(t *testing.T) {
 	}
 }
 
-// A const parameter is P001 everywhere but on a function, and its type must be
-// written, as i32.
 func TestConstParamRefusals(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"no type", "function f[const N](): i32 {\n  return 0;\n}", "const parameter N needs a type: write const N: i32"},

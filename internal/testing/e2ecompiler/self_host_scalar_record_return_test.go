@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// The caller only projects each result. All four scalar fields must survive
-// the return at full width, including NaN payloads, negative zero and u32's
-// high bit. A reference field, five fields or an escaping use stays boxed.
 func TestSelfHostScalarRecordReturns(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, c := range scalarReturnCases {
@@ -212,16 +209,12 @@ impl mem.Drop for Watched {function drop(self:Self):void {__store_i64(self.p,__l
 function main():i32 {let counter:i64[]=__alloc_i64(1);let p=(counter as usize)+8;__store_i64(p,0i64);let before=__heap_alloc_count();let i=0;while(i<1000){let q=record(i,p);if(q.a!=(i as i64)){return 29;}i=i+1;}let count=__heap_alloc_count()-before;if(__load_i64(p)!=1000i64||counter.len()!=1){return 30;}print(count.to_string());return 0;}
 `
 
-// Two arguments stay live across increment, producing two saved registers and
-// an alignment word. Removing that word must preserve sum's prepared arguments.
 const scalarPaddingTail = `@noinline function increment(c:i64):i64{return c+1i64;}
 @noinline function sum(a:i64,b:i64,c:i64):i64{return a+b+c;}
 @noinline function tail(a:i64,b:i64,c:i64):i64{let d=increment(c);return sum(a,b,d);}
 function main():i32{if(tail(1i64,2i64,3i64)!=7i64){return 31;}print("0");return 0;}
 `
 
-// The update's donor is encoded in record_new.imm, not in its field operands.
-// Passing a box back to a caller that reuses it must keep that existing box.
 const scalarRecordUpdateDonor = `import "std/i64";
 struct Quad {a:i64,b:i64,c:i64,d:i64}
 @noinline function make(i:i32):Quad{return Quad {a:i as i64,b:2i64,c:3i64,d:4i64};}

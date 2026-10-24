@@ -2,7 +2,6 @@ package e2eharness
 
 import "strings"
 
-// PasteByteCase uses file operands a, b and empty, or shared stdin (-).
 type PasteByteCase struct {
 	Name, A, B, Stdin string
 	Args              []string

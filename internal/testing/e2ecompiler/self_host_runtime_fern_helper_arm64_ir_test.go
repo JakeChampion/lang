@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// Issue #2649 — the arm64 sibling of TestSelfHostRuntimeHelpersAreFernIR.
-//
-// The syscall leaves that have reached arm64 as Fern runtime functions:
-// random_bytes over the __syscall3 sub-floor, the fs leaves (read_file /
-// write_file / remove_file / temp_dir / stat) over __syscall3 + __syscall4 +
-// __raw_scratch, and env over __raw_environ — each lowered through the IR
-// pipeline by
-// asm_arm64_ir.emit_ir_runtime_fern_fn. The register-ABI hand-asm they replace —
-// including two ~30-line getrandom / getentropy bodies forked on `darwin` — is
-// gone.
-//
-// Behaviour is covered under qemu by TestSelfHostAsmIRArm64Path/random-bytes-*
-// and TestSelfHostIoErrorIRArm64. This test is the emission lock-in and runs on
-// every x86 lane: the emitted aarch64 asm must define each Fern-compiled symbol,
-// must NOT define the hand-asm one, and must contain the __syscall3 op's number
-// load — the same instruction darwinize keys its Mach-O rewrite off.
-// The emitting compiler can run under QEMU; emitted target code is not run.
 func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -35,11 +18,6 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// One program touching every migrated leaf, so a single emit covers them all.
-	// `reverse` / `concat` come from std/array — an array carries only append /
-	// with / len on its own — so the probe imports it and the driver resolves
-	// that against the stdlib root. Without both the probe is a program native
-	// rejects (E043) and the compile path refuses it too (#7380).
 	prog := "import \"std/array\";\n" +
 		"function main(): i32 {\n" +
 		"    let b: u8[] = random_bytes(8);\n" +
@@ -56,12 +34,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
-		// open_writer -> Result[Writer, IoError] (#7758), matched like every other
-		// fallible fs leaf; that is what emits __fern_open_res.
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (random_i32() == 0) { return 12; }\n" +
-		// The two socket leaves that take only an fd. The probe is emitted, not
-		// run, so a bogus fd is fine — this only has to make the ops lower.
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
@@ -76,15 +50,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    if (proc_fork() == 123456) { return 22; }\n" +
 		"    if (tcp_send_bytes(999, [120u8]) >= 0) { return 23; }\n" +
-		// The three stdout/stderr leaves. Called for effect, not tested — the
-		// probe is emitted rather than run, and all this has to do is make the
-		// ops lower so the helpers are emitted.
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
-		// The two boxed-return Reader leaves. read_chunk and close share the
-		// `reader` need, so the Reader has to be both read from and closed for
-		// both to be reachable.
 		"    let rd: Reader = stdin();\n" +
 		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
@@ -103,62 +71,21 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 
 	for _, leaf := range []string{"random_bytes_u8", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
 		"arr_slice",
-		// The clocks (#2649): now_unix_ms / now_ns are Fern on every native
-		// target. monotonic_ns is NOT in this list — it is Fern on Linux but
-		// hand-asm on Darwin (mrs cntvct_el0 is not a syscall), so the "hand-asm
-		// is back" arm would be wrong for it. The Darwin test below covers that
-		// case from the other side.
 		"now_unix_ms", "now_ns",
-		// The directory pair (#2649) — the last two off the shape-diverging
-		// list. Darwin's getdirentries64 4th out-param is __syscall4 and its
-		// dirent name offset is a direntoff row, so no per-target body.
 		"read_dir", "remove_dir_all",
-		// The CSPRNG i32 and the Reader/Writer file opener (#2649). open_res
-		// carries the Darwin open-flag translation the hand-asm did inline; it
-		// has to stay a run-time check because the lowering picks the flags and has
-		// no target, so the Linux emit here simply has no translation to make.
 		"random_i32", "open_res",
-		// The socket leaves that take only an fd (#2649).
 		"tcp_close", "tcp_accept",
-		// sleep_ms is the first __syscall5 consumer — but only on Darwin, which
-		// sleeps with select(2). This Linux emit reaches it through nanosleep,
-		// so the assertion here is just that the helper is Fern at all; the
-		// Darwin test below is what pins the five-argument path.
 		"sleep_ms",
-		// poll reaches ppoll through __syscall5 on this target; x86-64 uses
-		// three-argument poll(2). Both are Fern.
 		"poll",
-		// wait4 plus the shell-style status decode. Four arguments on every
-		// target and only the number moves, so no per-target fork.
 		"proc_waitpid",
-		// timerfd_create + timerfd_settime over an itimerspec in __fern_scratch.
 		"timer_fd",
-		// socket + bind + listen over a byte-built sockaddr_in. Its first two
-		// bytes are the one per-target difference (XNU has sin_len).
 		"tcp_listen",
-		// socket + connect over a sockaddr built from the address bytes.
-		// darwin_sysno has no row for connect (203), so its number has to come
-		// from asmcore.sysno; the Darwin test below pins that.
 		"tcp_connect_with_u8",
-		// read(2) straight into the caller's packed u8[].
 		"tcp_recv_into_u8",
-		// execve over an argv built from the args array. The one leaf whose
-		// contract is that it does NOT return on success.
 		"proc_exec",
-		// clone(SIGCHLD, 0, 0, 0, 0) via __syscall5 — arm64 Linux has no bare
-		// fork(2). Fern on THIS target only; the Darwin test below pins the
-		// opposite, since XNU marks the child in x1 and no __syscall* sees it.
 		"proc_fork",
-		// sendto(2) straight out of the caller's packed u8[].
 		"tcp_send_bytes_u8",
-		// The stdout/stderr three (#2649): all plain write(2), so unlike the fs
-		// family they carry no per-target constant beyond the syscall number.
-		// putchar is the reason the group needed __raw_scratch: it staged its
-		// byte in a stack slot, which is the one thing a Fern helper cannot name.
 		"print_str", "putchar", "eprint_str",
-		// The two boxed-return Reader leaves (#2649). They use the same need
-		// gate as x86-64's, which is what makes them absent from a program that
-		// holds no Reader.
 		"reader_read_chunk", "reader_close"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
@@ -170,44 +97,21 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 			t.Errorf("the register-ABI hand-asm __fern_%s is back", leaf)
 		}
 	}
-	// monotonic_ns is Fern on arm64 LINUX (clock_gettime 113); only the Darwin
-	// form stays hand-written, so this leg gets the full three-way assertion
-	// while the shared loop above skips it.
-	//
-	// Note the probe never calls monotonic_ns() directly — temp_dir()'s body
-	// does. That is deliberate: the clocks are emitted by
-	// emit_rt_clock_and_print, which runs BEFORE the fs bundle, so a need
-	// marked while lowering temp_dir's own body would arrive too late. This
-	// assertion is what pins op_temp_dir marking it up front.
 	if !strings.Contains(asm, "__fn___fern_monotonic_ns:") {
 		t.Error("__fn___fern_monotonic_ns not defined — the Fern clock did not lower on arm64 Linux")
 	}
 	if strings.Contains(asm, "\n__fern_monotonic_ns:") {
 		t.Error("the register-ABI hand-asm __fern_monotonic_ns is back on arm64 Linux")
 	}
-	// The clocks are heap-independent, so their scratch buffer cannot share the
-	// fs runtime's gate — a pure-scalar timing program would reference a slot
-	// nothing defined. It is emitted by emit_rt_clock_and_print now.
 	if strings.Count(asm, "__fern_scratch: .skip 256") != 1 {
 		t.Errorf("want exactly one __fern_scratch definition, got %d", strings.Count(asm, "__fern_scratch: .skip 256"))
 	}
-	// The fs leaves call a Fern __fern_io_error bundled with them, rather than
-	// inlining the five-way errno classification — the "dependencies are the
-	// call graph" shape #2649 is aiming at. open_res joined the bundle when
-	// open_file started returning a Result (#7758) — it calls io_error too.
 	if !strings.Contains(asm, "bl __fn___fern_io_error") {
 		t.Error("the migrated fs leaves do not call the bundled Fern __fern_io_error")
 	}
-	// env has no syscall at all: it reads __fern_envp through the __raw_environ
-	// op. The .bss slot must still be emitted — _start's save is gated on `heap`,
-	// not on `env`, so a heap program that never calls env() stores here too.
-	// arr_slice allocates its fresh box through __raw_arr_box, which is the one
-	// array primitive that stays a call.
 	if !strings.Contains(asm, "bl __fern_arr_box") {
 		t.Error("__raw_arr_box did not emit the __fern_arr_box call")
 	}
-	// stat writes into the fixed .bss scratch through __raw_scratch, so both the
-	// slot and the op's address materialisation have to be there.
 	if !strings.Contains(asm, "__fern_scratch: .skip 256") {
 		t.Error("the __fern_scratch .bss slot is missing — stat has nowhere to land")
 	}
@@ -220,28 +124,13 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	if !matchShape(asm, `\n    adrp (x[0-9]+), __fern_envp\n    add \1, \1, :lo12:__fern_envp\n    ldr \1, \[\1\]\n`) {
 		t.Error("__raw_environ did not emit the arm64 envp load")
 	}
-	// write_file's O_CREAT mode arg makes it the __syscall4 user; its number
-	// load uses the same darwinize marker as __syscall3's. The arguments and
-	// the number are pushed and popped into x0..x3 and x8 (the last argument
-	// may instead move into x3 from wherever the allocator left it); the mode
-	// argument in x3 is what __syscall3 does not have, so it is what
-	// distinguishes this marshal from that one.
 	if !matchShape(asm, `\n    (?:mov x3, x[0-9]+|ldr x3, \[sp\], #16)\n    ldr x2, \[sp\], #16\n    ldr x1, \[sp\], #16\n    ldr x0, \[sp\], #16\n    ldr x8, \[sp\], #16\n    svc #0\n`) {
 		t.Error("__syscall4 did not emit the arm64 four-argument marshal + number + svc sequence")
 	}
-	// The __syscall3 op's number load. darwinize rewrites exactly this line to
-	// `ldr x16, ...` and flips the following trap, so a change to the operand
-	// order here silently breaks the Mach-O path — pin the instruction.
 	if !strings.Contains(asm, "    ldr x8, [sp], #16\n    svc #0\n") {
 		t.Error("__syscall3 did not emit the `ldr x8` + `svc #0` sequence darwinize matches")
 	}
 
-	// The other side of the Reader leaves' need gate (#2649). The hand-asm
-	// read_chunk / close bodies sat unconditionally inside the arm64 heap block,
-	// so ANY heap program carried them; the Fern ones are gated on `reader` like
-	// x86-64's. A heap program that holds no Reader must therefore emit none of
-	// the three — which is the half of the gating change the probe above, holding
-	// every leaf at once, cannot see.
 	noReader := filepath.Join(t.TempDir(), "no_reader.fern")
 	if err := os.WriteFile(noReader, []byte("function main(): i32 { let s: string = \"a\" + \"b\"; print(s); return s.len(); }\n"), 0o644); err != nil {
 		t.Fatalf("write no-reader probe: %v", err)
@@ -261,17 +150,6 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostSyscallLeavesDarwinizedArm64 pins the Mach-O half of the same
-// migration. darwinize cannot remap a syscall number it only sees at runtime
-// (its rule needs a literal `mov x8, #N`), so the generic __syscall3 /
-// __syscall4 ops instead carry the target's number in the Fern source, and
-// darwinize rewrites only the number register and the trap. Without that rule
-// the Mach-O binary would issue a Linux `svc #0` with a Linux number.
-//
-// It also pins the sticky-`pend_sys` fix: darwinize used to reset its pending
-// syscall on EVERY line, so it only rewrote an `svc` that came IMMEDIATELY
-// after the number load. The two abort paths load their exit status in between,
-// which left exit(125) / exit(134) trapping through the Linux vector on XNU.
 func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -292,27 +170,17 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
-		// open_writer -> Result[Writer, IoError] (#7758), matched like every other
-		// fallible fs leaf; that is what emits __fern_open_res.
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (random_i32() == 0) { return 12; }\n" +
-		// The two socket leaves that take only an fd. The probe is emitted, not
-		// run, so a bogus fd is fine — this only has to make the ops lower.
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
-		// connect is the one socket number darwin_sysno cannot remap, so the
-		// Darwin emit has to carry it from asmcore.sysno — assert below.
 		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false) == 0) { return 15; }\n" +
 		"    if (tcp_recv_into(999, [0u8, 0u8, 0u8, 0u8]) >= 0) { return 16; }\n" +
 		"    if (proc_fork() == 123456) { return 17; }\n" +
-		// The three stdout/stderr leaves, called for effect so the helpers are
-		// emitted and their write(2) number can be inspected below.
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
-		// The two Reader leaves, called for effect so their read(2) / close(2)
-		// numbers can be inspected below.
 		"    let rd: Reader = stdin();\n" +
 		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
@@ -329,10 +197,6 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	}
 	asm := string(out)
 
-	// Each leaf's Darwin number / flag-set, straight out of asmcore.sysno /
-	// oflag. These reach the syscall as an operand, so a wrong entry cannot be
-	// caught anywhere downstream — the Linux number would just be issued
-	// against the BSD vector (openat 56 is Darwin's `chdir`).
 	for _, c := range []struct {
 		what string
 		imm  string
@@ -341,42 +205,20 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		{"openat", "463"},
 		{"unlinkat", "472"},
 		{"O_WRONLY|O_CREAT|O_TRUNC", "1537"},
-		// fstat, which read_file sizes its buffer with. It was lseek (199)
-		// until #8265: lseek is wrong on directories (EINVAL on tmpfs, the htree
-		// sentinel on indexed ext4), and no helper in this set issues it any
-		// more, so asserting its number asserted nothing.
 		{"fstat", "339"},
 		{"mkdirat", "475"},
 		{"fstatat64", "470"},
 		{"st_size offset", "96"},
-		// gettimeofday, the clocks' Darwin stand-in: XNU has no clock_gettime
-		// syscall, and this number reaches the trap as a pushed operand, so
-		// darwinize never sees it and a wrong sysno row is invisible elsewhere.
 		{"gettimeofday", "116"},
 		{"getdirentries64", "344"},
 		{"AT_REMOVEDIR", "128"},
-		// select, XNU's stand-in for nanosleep — and the only reason
-		// __syscall5 exists. Linux sleeps through nanosleep, which takes two.
 		{"select", "93"},
-		// connect. darwin_sysno cannot remap this one — it has no 203 row — so
-		// before the Fern migration the Mach-O emit carried Linux's number and
-		// Linux's trap. This assertion is the regression guard for that.
 		{"connect", "98"},
 	} {
 		if !hasBakedImm(asm, c.imm) {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
 		}
 	}
-	// Constants above 65535 do not reach `mov x0, #N` at all: one a single
-	// shifted halfword spells is a `movz` with its shift, and everything wider
-	// goes in the literal pool. O_DIRECTORY is the one operand in this helper
-	// set that crosses the line.
-	//
-	// It is also the one whose value is NOT shared across targets — 0x100000 on
-	// XNU, 65536 on x86-64 Linux, 16384 on arm64 Linux. Every wrong choice is a
-	// silent wrong FLAG rather than a rejected constant: 65536 on Darwin means
-	// O_NDELAY|O_ASYNC (the open succeeds, the first read fails), and 65536 on
-	// arm64 Linux means O_RDONLY|O_DIRECT (EINVAL on /tmp).
 	for _, c := range []struct{ what, imm string }{
 		{"O_RDONLY|O_DIRECTORY", "#16, lsl #16"},
 	} {
@@ -384,24 +226,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
 		}
 	}
-	// There is deliberately NO matching negative assertion. A bare search for
-	// the Linux values cannot work: 65536 is also the getdents read buffer's
-	// size, which is target-independent and legitimately present, and 16384
-	// turns up elsewhere too. Nothing lexical separates "an open flag" from "a
-	// buffer size" once both are just an operand push, so the real coverage
-	// for the wrong-flag case is the arm64 runtime leg (dirs-fern under qemu) —
-	// which is in fact what caught the 16384 bug, after this emission test had
-	// been green on it.
 
-	// The three stdout/stderr leaves (#2649) trap through write(2), Darwin
-	// number 4, except eprint, which writes its line and newline in one
-	// writev(2), Darwin number 121. Those numbers cannot join the table above: 4
-	// is an ordinary literal this emit already holds fifteen of, so a file-wide
-	// search would pass whatever asmcore.sysno said. Scope each to its helper's
-	// own body instead. Like every migrated number they reach the trap as a
-	// pushed operand rather than the `mov x8, #N` darwinize rewrites, so a wrong
-	// row is invisible everywhere else — Linux's 64 or 66 would simply be issued
-	// against the BSD vector.
 	for _, leaf := range []struct{ sym, call, darwin, linux string }{
 		{"__fn___fern_print_str", "write", "4", "64"},
 		{"__fn___fern_putchar", "write", "4", "64"},
@@ -423,17 +248,6 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 			t.Errorf("the register-ABI hand-asm %s is back", strings.TrimPrefix(sym, "__fn_"))
 		}
 	}
-	// The read(2) users (#2649), Darwin number 3. Same reason for body-scoping,
-	// only more so: `mov x0, #3` followed by the operand push occurs seven times
-	// across this emit, so a file-wide match would pass whatever asmcore.sysno's
-	// `read` row said. The number reaches the trap as a pushed operand rather than
-	// the `mov x8, #N` darwinize rewrites, so a wrong row is invisible everywhere
-	// else — Linux's 63 would simply be issued against the BSD vector.
-	//
-	// tcp_recv_into is in this loop rather than the constant table for the same
-	// reason: scoping to the body is what makes its number checkable.
-	// reader_read_chunk joins it (#2649): the same read(2), up to n from the
-	// Reader's own fd.
 	for _, sym := range []string{"__fn___fern_tcp_recv_into_u8", "__fn___fern_reader_read_chunk"} {
 		body := extractFuncBody(asm, sym)
 		if body == "" {
@@ -450,10 +264,6 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 			t.Errorf("the register-ABI hand-asm %s is back", strings.TrimPrefix(sym, "__fn_"))
 		}
 	}
-	// reader_close is the one migrated leaf whose syscall is close(2) — Darwin 6,
-	// arm64 Linux 57. Body-scoped for the same reason as the read(2) group: 6 is
-	// an ordinary literal this emit holds many of, so a file-wide match would pass
-	// whatever asmcore.sysno's `close` row said.
 	{
 		const sym = "__fn___fern_reader_close"
 		body := extractFuncBody(asm, sym)
@@ -477,18 +287,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if !strings.Contains(asm, "    ldr x16, [sp], #16\n    svc #0x80\n") {
 		t.Error("darwinize did not rewrite the __syscall3 sequence to the Darwin trap")
 	}
-	// The generic syscall is fallible, so darwinize must also normalise the
-	// carry-flag errno back to Linux's -errno (what `if (r < 0)` in the helper
-	// tests). Without it a Darwin failure reads as a positive byte count.
 	if !strings.Contains(asm, "    svc #0x80\n    b.cc ") {
 		t.Error("darwinize did not emit the errno normalisation after the generic syscall")
 	}
-	// The abort paths (#11405): each trap loads its status and branches to
-	// __fern_report, whose write(2) and exit are the two syscalls darwinize
-	// must remap — `mov x8, #64` -> `mov x16, #4` with the errno fold, and
-	// `mov x8, #94` -> `mov x16, #1`, where only a sticky pending-syscall
-	// survives the status move between the number and the trap, and exit
-	// needs no normalisation.
 	for _, status := range []string{"125", "134"} {
 		if !strings.Contains(asm, "    mov x0, #"+status+"\n    b __fern_report\n") {
 			t.Errorf("the exit(%s) abort path does not branch to __fern_report", status)
@@ -503,52 +304,32 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if strings.Contains(asm, "mov x8, #94") {
 		t.Error("an exit kept Linux's number register in Mach-O output")
 	}
-	// arr_slice's range check is Fern, and it aborts through the shared trap
-	// rather than an exit syscall of its own, so no exit number reaches the
-	// stack and asmcore.sysno carries no `exit` row.
 	if !strings.Contains(asm, "__fn___fern_arr_slice:") {
 		t.Error("__fn___fern_arr_slice not defined — the Fern helper did not lower for Darwin")
 	}
 	if strings.Contains(asm, "\n__fern_arr_slice:") {
 		t.Error("the register-ABI hand-asm __fern_arr_slice is back")
 	}
-	// The two wall clocks migrate on Darwin too — gettimeofday is an ordinary
-	// syscall. monotonic_ns does NOT: XNU's monotonic clock on Apple Silicon is
-	// `mrs cntvct_el0` scaled by `cntfrq_el0`, not a syscall, and Fern has no
-	// system-register-read intrinsic. It keeps the __fn___ name anyway (a
-	// zero-arg helper's stack and register conventions coincide), so the call
-	// site does not branch on the target — which is exactly what makes the
-	// "is it really hand-asm here" question worth pinning.
 	for _, leaf := range []string{"now_unix_ms", "now_ns"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern clock did not lower for Darwin", leaf)
 		}
 	}
-	// proc_fork is the second helper after monotonic_ns that stays hand-written
-	// on Darwin for want of an expressible form rather than a syscall number.
-	// darwinize would have supplied the carry-flag errno fold for free; what it
-	// cannot supply is x1, which is the ONLY thing distinguishing the child from
-	// the parent. It keeps the __fn___ name so the call site does not branch.
 	if !strings.Contains(asm, "__fn___fern_proc_fork:") {
 		t.Error("__fn___fern_proc_fork not defined for Darwin")
 	}
-	// `Lpf_done`, not `.Lpf_done`: Mach-O's assembler-local prefix is a bare L.
 	if !strings.Contains(asm, "    cbz x1, Lpf_done\n") {
 		t.Error("Darwin proc_fork lost the x1 child/parent discrimination — the reason it is not Fern")
 	}
 	if !strings.Contains(asm, "    mov x16, #2\n    svc #0x80\n") {
 		t.Error("Darwin proc_fork is not trapping to BSD fork (2) through the Darwin vector")
 	}
-	// clone is Linux-only. If the Fern body were selected for Darwin, 220 would
-	// arrive as a pushed operand the way every other migrated number does.
 	if arm64Imm(asm, "220") {
 		t.Error("Darwin proc_fork pushed Linux's clone number (220) in Mach-O output")
 	}
 	if !strings.Contains(asm, "    mrs x9, cntvct_el0\n    mrs x10, cntfrq_el0\n") {
 		t.Error("Darwin monotonic_ns is not reading the architectural counter")
 	}
-	// Scoped to the clocks: 113 is also EHOSTUNREACH, which __fern_io_error
-	// carries in IoError.Other.
 	if strings.Contains(asm, "mov x8, #113") {
 		t.Error("Linux's clock_gettime (113) reached the number register in Mach-O output")
 	}
@@ -570,9 +351,6 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	}
 }
 
-// hasBakedImm reports whether imm reaches the emitted text as an immediate:
-// materialised by a MOVZ, or selected into an add, sub or cmp, in whichever
-// register the allocator chose.
 func hasBakedImm(asm, imm string) bool {
 	n := regexp.QuoteMeta(imm)
 	for _, form := range []string{`mov x[0-9]+, #` + n, `add x[0-9]+, x[0-9]+, #` + n, `sub x[0-9]+, x[0-9]+, #` + n, `cmp x[0-9]+, #` + n} {
@@ -583,8 +361,6 @@ func hasBakedImm(asm, imm string) bool {
 	return false
 }
 
-// pushedImm is the shape of a syscall number on its way to x8: materialised
-// in some register and that register pushed for the __syscallN helper.
 func pushedImm(n string) string {
 	return `\n    mov (x[0-9]+), #` + regexp.QuoteMeta(n) + `\n(?:.*\n)*?    str \1, \[sp, #-16\]!\n`
 }

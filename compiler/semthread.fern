@@ -1,16 +1,3 @@
-// Branches whose outcome the path to them already decided. The done-flag
-// chain the parser builds for nested patterns (#7524) tests a flag that is
-// `false` wherever it is read, since every arm that sets it leaves; and each
-// arm tests the scrutinee's variant again after an earlier arm failed on a
-// payload, so `Node(Red(), ..)` then `Node(Black(), ..)` tests `Node` twice
-// and reads every field twice.
-//
-// A branch on a constant, or on a variant test a dominating test decided,
-// becomes a jump. An edge into an empty block that jumps goes to its target,
-// and an edge into a block that only tests a variant goes to the side the
-// edge's own tests decide. A tested value is known by its projection path, so
-// a payload a later arm reads again is the payload an earlier arm tested.
-// An edge moves only into a block without phis, so no phi gains an operand.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -44,9 +31,6 @@ pub function thread(f: ssasem.Func): Threaded {
 
 struct Round { g: ssa.SFunc, changed: i32 }
 
-// Whether anything here could be decided: a branch on a constant, or two
-// variant tests of one value or of parts of one value. Most functions have
-// neither, and are left before anything is built for them.
 function decidable(g: ssa.SFunc): boolean {
   let up: i32[] = util.minus_ones(g.nvals);
   let constant: boolean[] = __alloc_bool(g.nvals);
@@ -87,9 +71,6 @@ function decidable(g: ssa.SFunc): boolean {
   return false;
 }
 
-// What a round reads of the graph it starts from. `head` is each block's
-// facts by position; `on_t` and `on_f` the facts on each side of its branch,
-// or -1 where it tests no variant.
 struct Seen { at: i32[], defs: ssa.SInst[], uses: i32[], facts: Facts, head: i32[], on_t: i32[], on_f: i32[] }
 
 function thread_round(f: ssasem.Func, g: ssa.SFunc): Round {
@@ -118,7 +99,6 @@ function thread_round(f: ssasem.Func, g: ssa.SFunc): Round {
   return Round { g: ssa.SFunc { ...fresh, blocks: untested(fresh) }, changed: changed };
 }
 
-// A branch the block's own facts decide, as a jump to the side it takes.
 function decided_term(f: ssasem.Func, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm {
   if (t.kind_tag != 3 || t.t == t.f) {
     return t;
@@ -133,8 +113,6 @@ function decided_term(f: ssasem.Func, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm
   return t;
 }
 
-// 1 when `cond` holds wherever the facts from `h` and those in `path` do, 0
-// when it fails, -1 when they do not say.
 function outcome(f: ssasem.Func, s: Seen, h: i32, path: Facts, cond: i32): i32 {
   let c: ssa.SInst = through_copies(s.defs, cond);
   if (c.kind_tag == 2) {
@@ -154,8 +132,6 @@ function outcome(f: ssasem.Func, s: Seen, h: i32, path: Facts, cond: i32): i32 {
   return 1 - d;
 }
 
-// Each edge out of block `bi` taken to the block it reaches through empty
-// jumps and decided tests.
 function moved_term(f: ssasem.Func, g: ssa.SFunc, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm {
   if (t.kind_tag == 2) {
     return jump(reached(f, g, s, s.head[bi], t.target));
@@ -180,11 +156,6 @@ function moved_term(f: ssasem.Func, g: ssa.SFunc, s: Seen, bi: i32, t: ssa.STerm
   return ssa.STerm { ...t, t: nt, f: nf };
 }
 
-// The block an edge into `id` reaches, with the facts from `h`: on through an
-// empty block that jumps, and through a block that only tests a variant the
-// facts decide, adding what that test decided. Never into the entry or a
-// block with phis. An edge that passes no decided test stays where it was:
-// the backend threads plain jumps away itself.
 function reached(f: ssasem.Func, g: ssa.SFunc, s: Seen, h: i32, id: i32): i32 {
   let cur: i32 = id;
   let landed: i32 = id;
@@ -217,7 +188,6 @@ function reached(f: ssasem.Func, g: ssa.SFunc, s: Seen, h: i32, id: i32): i32 {
   return landed;
 }
 
-// A block holding one variant test, read only by its own branch.
 function only_tests(s: Seen, b: ssa.SBlock): boolean {
   if (b.insts.len() != 1 || b.term.kind_tag != 3 || b.term.t == b.term.f) {
     return false;
@@ -226,23 +196,16 @@ function only_tests(s: Seen, b: ssa.SBlock): boolean {
   return ins.kind_tag == ssasem.variant_is() && ins.result == b.term.cond && s.uses[ins.result] == 1;
 }
 
-// ---- facts ------------------------------------------------------------------
-
-// What a path has tested, as a list linked through `up`: the value at `path`
-// from `root` is `variant` when `is`, and is not when not.
 struct Facts { root: i32[], path: string[], variant: string[], is: boolean[], up: i32[] }
 
 function no_facts(): Facts {
   return Facts { root: [], path: [], variant: [], is: [], up: [] };
 }
 
-// `facts` with what test `q` says on its `taken` side, linked to `up`.
 function with_fact(own facts: Facts, q: Test, taken: boolean, up: i32): Facts {
   return Facts { root: facts.root.append(q.root), path: facts.path.append(q.path), variant: facts.variant.append(q.variant), is: facts.is.append(taken == q.yes), up: facts.up.append(up) };
 }
 
-// A variant test a branch reads, through `!`: on the branch's true side the
-// value at `path` from `root` is `variant` exactly when `yes`.
 struct Test { ok: boolean, root: i32, path: string, variant: string, ty: typeinfo.Type, yes: boolean }
 
 function test_of(f: ssasem.Func, defs: ssa.SInst[], cond: i32): Test {
@@ -261,9 +224,6 @@ function test_of(f: ssasem.Func, defs: ssa.SInst[], cond: i32): Test {
   return Test { ok: true, root: k.root, path: k.path, variant: d.str, ty: f.values[d.args[0]], yes: yes };
 }
 
-// A value as the value it was read out of, through copies, and the reads
-// that reached it: two reads of one payload of one value share a key, and a
-// value read out of nothing has an empty path.
 struct Key { root: i32, path: string }
 
 function key_of(defs: ssa.SInst[], v: i32): Key {
@@ -277,10 +237,6 @@ function key_of(defs: ssa.SInst[], v: i32): Key {
   return Key { root: from.root, path: from.path + "." + util.i32_to_string(k) + ":" + util.i32_to_string(d.imm) + ":" + d.str };
 }
 
-// 1 when the facts say the tested value is the test's variant, 0 when they
-// say it is not, -1 when they do not say: a value ruled out of every variant
-// but one is that one. The facts are those in `path`, newest first, then
-// those from `h`.
 function decide(f: ssasem.Func, facts: Facts, h: i32, path: Facts, q: Test): i32 {
   let ruled: string[] = [];
   let i: i32 = path.root.len() - 1;
@@ -322,8 +278,6 @@ function decide(f: ssasem.Func, facts: Facts, h: i32, path: Facts, q: Test): i32
   return 1;
 }
 
-// What fact `i` says of test `q`: 1 or 0 when it decides it, -2 when it rules
-// out another variant of the same value, -1 when it is about another value.
 function fact_says(facts: Facts, i: i32, q: Test): i32 {
   if (facts.root[i] != q.root || facts.path[i] != q.path) {
     return 0 - 1;
@@ -340,9 +294,6 @@ function fact_says(facts: Facts, i: i32, q: Test): i32 {
   return 0 - 2;
 }
 
-// Each block's facts, by position, in a walk of the dominator tree: its
-// immediate dominator's, and, entered from that block alone, what that
-// block's branch says on the side that enters it.
 function block_facts(f: ssasem.Func, g: ssa.SFunc, s: Seen): Seen {
   let dom: ssadeps.Dom = ssadeps.dominates(g);
   let facts: Facts = no_facts();
@@ -381,8 +332,6 @@ function block_facts(f: ssasem.Func, g: ssa.SFunc, s: Seen): Seen {
   return Seen { ...s, facts: facts, head: head, on_t: on_t, on_f: on_f };
 }
 
-// ---- graph ------------------------------------------------------------------
-
 function jump(target: i32): ssa.STerm {
   return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
@@ -413,7 +362,6 @@ pub function reachable_only(g: ssa.SFunc): ssa.SBlock[] {
   return out;
 }
 
-// The blocks with each variant test no branch reads any more dropped.
 function untested(g: ssa.SFunc): ssa.SBlock[] {
   let uses: i32[] = ssa.use_counts(g);
   let out: ssa.SBlock[] = [];

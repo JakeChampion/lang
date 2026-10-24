@@ -9,9 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// fold parses src, runs Fold, and returns the post-fold program.
-// Tests then assert against the substituted shape (typically by
-// finding a function and inspecting its return statement).
 func fold(t *testing.T, src string) *ast.Program {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -24,7 +21,6 @@ func fold(t *testing.T, src string) *ast.Program {
 	return prog
 }
 
-// foldErr expects Fold to fail and returns the error message.
 func foldErr(t *testing.T, src string) string {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -38,10 +34,6 @@ func foldErr(t *testing.T, src string) string {
 	return ""
 }
 
-// returnLit fishes the literal returned by `function main` so a
-// test can compare against the resolved const value. The constfold
-// pass should have replaced any Ident reference with a literal node
-// before returning.
 func returnLit(t *testing.T, prog *ast.Program) ast.Expr {
 	t.Helper()
 	for _, fn := range prog.Funcs {
@@ -58,8 +50,6 @@ func returnLit(t *testing.T, prog *ast.Program) ast.Expr {
 	return nil
 }
 
-// A bare integer const folds and gets substituted as a NumberLit at
-// every reference site. The decl itself is dropped from the program.
 func TestFoldNumberLiteral(t *testing.T) {
 	prog := fold(t, `const N: i32 = 42;
 function main(): i32 { return N; }`)
@@ -75,9 +65,6 @@ function main(): i32 { return N; }`)
 	}
 }
 
-// Type annotations are optional — when omitted the value's natural
-// type is used and the substitution still produces a literal of the
-// matching kind.
 func TestFoldInferredType(t *testing.T) {
 	prog := fold(t, `const N = 7;
 function main(): i32 { return N; }`)
@@ -86,9 +73,6 @@ function main(): i32 { return N; }`)
 	}
 }
 
-// Const-expr arithmetic over earlier consts folds to a single
-// literal. This is the second-tier ability we promised in the design
-// — references to PI work because PI was declared and folded first.
 func TestFoldArithmeticOverEarlierConst(t *testing.T) {
 	prog := fold(t, `const PI: f32 = 3.14;
 const TWO_PI: f32 = PI * 2.0;
@@ -102,8 +86,6 @@ function main(): f32 { return TWO_PI; }`)
 	}
 }
 
-// Boolean operators fold too: `&&` / `||` / `!` all reduce when the
-// operands are constant.
 func TestFoldBooleanLogic(t *testing.T) {
 	prog := fold(t, `const A: boolean = true;
 const B: boolean = false;
@@ -118,8 +100,6 @@ function main(): boolean { return C; }`)
 	}
 }
 
-// String concatenation between constant strings folds. Bonus: the
-// resulting StringLit pretty-prints back to its source-text shape.
 func TestFoldStringConcat(t *testing.T) {
 	prog := fold(t, `const HELLO: string = "hello";
 const GREETING: string = HELLO + ", world";
@@ -133,9 +113,6 @@ function main(): string { return GREETING; }`)
 	}
 }
 
-// Forward references are rejected — consts must reference earlier
-// consts only. The error names the offending identifier so users
-// can re-order their declarations.
 func TestFoldRejectsForwardReference(t *testing.T) {
 	got := foldErr(t, `const X: i32 = Y;
 const Y: i32 = 5;`)
@@ -144,9 +121,6 @@ const Y: i32 = 5;`)
 	}
 }
 
-// A non-constant initialiser (function call, variable read, struct
-// literal …) is rejected with an explanatory message rather than
-// silently breaking later in the pipeline.
 func TestFoldRejectsRuntimeExpression(t *testing.T) {
 	got := foldErr(t, `function helper(): i32 { return 1; }
 const X: i32 = helper();`)
@@ -155,9 +129,6 @@ const X: i32 = helper();`)
 	}
 }
 
-// Type mismatches between annotation and resolved value surface as
-// fold-time errors so the user sees them at the const, not at
-// every downstream usage site.
 func TestFoldRejectsTypeMismatch(t *testing.T) {
 	got := foldErr(t, `const X: f32 = 5;`)
 	if !strings.Contains(got, "declared type") {
@@ -165,8 +136,6 @@ func TestFoldRejectsTypeMismatch(t *testing.T) {
 	}
 }
 
-// Division and modulo by zero in a constant initialiser are caught
-// here so the program never reaches codegen with the poison value.
 func TestFoldRejectsConstantDivByZero(t *testing.T) {
 	got := foldErr(t, `const X: i32 = 10 / 0;`)
 	if !strings.Contains(got, "division by zero") {
@@ -174,10 +143,6 @@ func TestFoldRejectsConstantDivByZero(t *testing.T) {
 	}
 }
 
-// The saturating operators (#5542) are rejected in a constant
-// initialiser rather than folded: folding runs BEFORE the checker, so
-// no operand width — and therefore no clamp bound — is known yet.
-// Guessing one would silently pick i32's bounds for a u8 const.
 func TestFoldRejectsSaturatingOperators(t *testing.T) {
 	for _, src := range []string{
 		`const X: i32 = 1 +| 2;`,
@@ -192,10 +157,6 @@ func TestFoldRejectsSaturatingOperators(t *testing.T) {
 	}
 }
 
-// Substitution reaches every expression position the language
-// supports — array elements, ternary arms, struct fields,
-// conditions inside loops and ifs. This guards against a regression
-// where a new expression node skips the walk.
 func TestFoldSubstitutesAcrossExpressionPositions(t *testing.T) {
 	prog := fold(t, `const N: i32 = 3;
 function main(): i32 {
@@ -209,9 +170,6 @@ function main(): i32 {
 	}
 }
 
-// countIdents walks the entire post-fold program and tallies any
-// Ident nodes whose name matches `target`. Used to confirm that
-// substitution didn't leave a stray reference behind.
 func countIdents(prog *ast.Program, target string) int {
 	count := 0
 	ast.WalkProgram(prog, func(n ast.Node) bool {
@@ -223,9 +181,6 @@ func countIdents(prog *ast.Program, target string) int {
 	return count
 }
 
-// A const may hold an array or tuple literal of constant elements (#7987).
-// Elements settle to the declared element type, an empty literal keeps its
-// declared element type, and every reference gets its own copy of the tree.
 func TestFoldCompositeConsts(t *testing.T) {
 	prog := fold(t, `const A: i32 = 2;
 const XS: i32[] = [A, A * 3];
@@ -262,8 +217,6 @@ function main(): i32 { let a: i32[] = XS; let b: i32[] = XS; let e: i32[] = E; l
 	}
 }
 
-// A const may hold a struct literal of constant fields, nested ones included
-// (#6685); each reference gets its own copy of the tree.
 func TestFoldStructConsts(t *testing.T) {
 	prog := fold(t, `struct P { x: i32, y: i32 }
 struct C { p: P, s: string }
@@ -311,8 +264,6 @@ func TestFoldCompositeConstRefusals(t *testing.T) {
 	}
 }
 
-// A const the folder refuses is a positioned diagnostic, so it renders with
-// the `error:` header and caret every other positioned diagnostic has.
 func TestFoldRefusalsRenderAsPositionedErrors(t *testing.T) {
 	for _, c := range []struct{ src, want string }{
 		{"const B: i32 = 6 /? 2;\n", "main.fern:1:1: error: const B: operator `/?` not allowed in integer constant expressions"},

@@ -1,37 +1,3 @@
-// du.fern — GNU-compatible `du`.
-//
-//   du [OPTION]... [FILE]...
-//   du [OPTION]... --files0-from=F
-//
-// Disk usage, summed post-order over each operand's tree and printed in
-// raw readdir order — du does not sort, and a directory's line follows
-// the lines of everything inside it.
-//
-// Four things about this are not obvious from the synopsis:
-//
-//   - The quantity is `st_blocks * 512`, so it is what the filesystem
-//     ALLOCATED. `--apparent-size` / `-b` switch to `st_size`, and a
-//     DIRECTORY then counts as zero rather than as its own st_size.
-//   - Every inode is counted and printed at most once per run, files
-//     with a single link included and across operands: `du -s a a`
-//     prints one line. The same set is what silently stops a symlink
-//     loop under `-L`, and `-l` turns the whole mechanism off.
-//   - A trailing slash on an operand collapses to exactly ONE in that
-//     operand's own line while its children are named with all of them
-//     stripped, and on a SYMLINK it forces traversal even under the
-//     default `-P`, because the kernel resolves `slink/` for lstat.
-//   - Every unit option — `-h` `--si` `-k` `-m` `-B` `-b` — is last
-//     wins, except that `-b`'s apparent-size half survives a later
-//     unit change.
-//
-// A failed operand or an unreadable directory costs the exit status and
-// not the run: the walk continues, and the directory still gets a line
-// of its own.
-//
-// Timestamps (`--time`) are rendered in UTC. Reading the zone — TZ and
-// the TZif files glibc's localtime consults — is a shared piece the
-// utilities that print times all need and it is not written yet
-// (#9076); the parity gate pins TZ=UTC, so every case there is exact.
 import "std/string";
 import "std/array";
 import "std/u64";
@@ -150,8 +116,6 @@ function opt_deref_args_h(): i32 {
   return 26;
 }
 
-// The three symlink modes -L / -D / -P choose between; they are one
-// setting and the last one typed wins.
 function deref_none(): i32 {
   return 0;
 }
@@ -164,7 +128,6 @@ function deref_all(): i32 {
   return 2;
 }
 
-// Which stat timestamp `--time` shows.
 function time_none(): i32 {
   return 0 - 1;
 }
@@ -181,13 +144,6 @@ function time_ctime(): i32 {
   return 2;
 }
 
-// `Conf` — every decision the option scan makes, read by the walk.
-//
-// The unit is `human` when that is non-zero (the count is scaled by
-// powers of it) and `block_size` otherwise (the count is divided by it,
-// rounding UP). `suffix` is what a bare `-BK` prints after each number,
-// derived from the final divisor rather than echoed from the spec —
-// which is why `--inodes -BKiB` prints `B` and not `KiB`.
 pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: timefmt.Format, zone: tz.Zone, excludes: fnmatch.BytePattern[], one_file_system: boolean, terminator: string }
 
 function help_text(): string {
@@ -234,10 +190,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- exclusion -------------------------------------------------------------
-// `excluded(c, name)` — whether any --exclude pattern matches the name
-// as printed, or any suffix of it starting just after a `/`, which is
-// what makes `--exclude=sub` drop `a/sub`.
 function excluded(c: Conf, name: string): boolean {
   let i: i32 = 0;
   while (i < c.excludes.len()) {
@@ -258,7 +210,6 @@ function excluded(c: Conf, name: string): boolean {
   return false;
 }
 
-// ---- the walk --------------------------------------------------------------
 function join_path(dir: string, name: string): string {
   if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
     return dir + name;
@@ -266,9 +217,6 @@ function join_path(dir: string, name: string): string {
   return dir + "/" + name;
 }
 
-// The operand with every trailing slash removed — the prefix its
-// children are named with. A name that is nothing but slashes keeps
-// one, and `//` keeps both: the kernel treats it as a root of its own.
 function walk_base(arg: string): string {
   let n: i32 = arg.len();
   while (n > 0 && arg[n - 1] as i32 == 47) {
@@ -283,9 +231,6 @@ function walk_base(arg: string): string {
   return slice_unchecked(arg, 0, n) + "";
 }
 
-// The operand's own line names it with its trailing slashes collapsed
-// to exactly one: `du -s a//` prints `a/` while its children print
-// `a/f1`.
 function display_name(arg: string): string {
   if (arg.len() == 0) {
     return arg;
@@ -300,10 +245,6 @@ function display_name(arg: string): string {
   return b + "/";
 }
 
-// The key an entry takes in the already-seen set. A string, because that
-// and an i32-sized scalar are the only key types Map takes and the pair
-// is two 64-bit words; the sixteen-raw-byte spelling was measured and is
-// SLOWER, since building it is sixteen `.with` calls on a fresh buffer.
 function inode_key(dev: i64, ino: i64): string {
   return dev.to_string() + "/" + ino.to_string();
 }
@@ -312,9 +253,6 @@ function is_symlink(st: FileStat): boolean {
   return (st.mode & 61440 as u32) == 40960 as u32;
 }
 
-// The bytes — or, under --inodes, the one inode — an entry contributes.
-// A directory has no apparent size: `du -b` reports 0 for it, never its
-// own st_size.
 function entry_size(c: Conf, st: FileStat, is_dir: boolean): u64 {
   if (c.inodes) {
     return 1 as u64;
@@ -348,9 +286,6 @@ function newer(a: i64, an: i64, b: i64, bn: i64): boolean {
   return an > bn;
 }
 
-// `cannot access` for a path that would not stat. A symlink whose
-// target is simply not there loses the errno — that is the one entry
-// kind fts reports without one — while every other failure keeps it.
 function access_failure(name: string, e: IoError): string {
   match (e) {
     NotFound(_) => {
@@ -371,8 +306,6 @@ function passes_threshold(c: Conf, size: u64): boolean {
   return size <= 0 as u64 - c.threshold as u64;
 }
 
-// Whether this entry earns a line: within --max-depth, and either a
-// directory, an operand, or anything at all under -a.
 function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
   if (depth as u64 > c.max_depth) {
     return false;
@@ -389,20 +322,8 @@ function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i6
   return w.write_string(display + c.terminator);
 }
 
-// `Frame` — a directory whose children are still being walked: where it
-// is, what readdir gave back, how far through that list the walk is, and
-// the two running sums. `full` is the true subtree total, which the
-// parent adds and which -c sums; `shown` is what this directory's own
-// line will print, which is the same number unless -S left the
-// subdirectories out of it. Each carries the newest stamp counted into
-// it, for --time. `dir` is the directory held open while its children are
-// statted by name, so the kernel resolves no path through its ancestors;
-// None when it could not be opened and its listing came back empty.
 struct Frame { path: string, display: string, dir: Option[Dir], names: string[], idx: i32, depth: i32, dev: i64, ino: i64, full: u64, shown: u64, ftime: i64, fnsec: i64, stime: i64, snsec: i64 }
 
-// `open_child(stack, sp, path, name, via_link)` — the directory to list:
-// opened by name inside its parent's handle, or by path for an operand and
-// for a directory a followed symlink reached, which a handle refuses.
 function open_child(stack: Frame[], sp: i32, path: string, name: string, via_link: boolean): Result[Dir, IoError] {
   if (sp > 0 && !via_link) {
     match (stack[sp - 1].dir) {
@@ -415,8 +336,6 @@ function open_child(stack: Frame[], sp: i32, path: string, name: string, via_lin
   return open_dir(path);
 }
 
-// `lstat_child(top, path, name)` / `stat_child` — a child's status through
-// its directory's handle when there is one.
 function lstat_child(top: Frame, path: string, name: string): Result[FileStat, IoError] {
   match (top.dir) {
     Some(d) => {
@@ -439,20 +358,6 @@ function stat_child(top: Frame, path: string, name: string): Result[FileStat, Io
   }
 }
 
-// `walk` — every operand, and everything under each of them.
-//
-// One function rather than a recursion, because the already-seen set has
-// to stay a LOCAL: a Map handed to a callee is aliased by the call, so
-// its next mutator copies the whole table instead of writing in place,
-// and the walk goes quadratic in the number of files. The directory
-// stack is explicit for the same reason, and it costs nothing that
-// matters — a deep tree is a longer array rather than a deeper frame.
-//
-// Each directory is held open while its children are listed and statted by
-// name (`Dir`), as GNU's fts does: the kernel resolves no path through the
-// ancestors, and a tree deeper than `PATH_MAX` walks like any other.
-//
-// Returns the exit status.
 function walk(c: Conf, names: string[], have_files0: boolean, list_name: string, from_stdin: boolean): i32 {
   let out: io_buffered.BufWriter = gnu.out_new();
   let seen: Map[string, i32] = map_new(1024);
@@ -485,9 +390,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
     if (excluded(c, display)) {
       continue;
     }
-    // Darwin lstat can accept a trailing slash on a file symlink or leave
-    // a symlink loop unresolved. A final dot requires a real directory,
-    // preserving GNU's ENOTDIR/ELOOP result while keeping the displayed name.
     let stat_name: string = arg;
     if (target_os() == "darwin" && arg[arg.len() - 1] as i32 == 47) {
       stat_name = arg + ".";
@@ -526,8 +428,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
 
     let root_dev: i64 = st.dev;
     let sp: i32 = 0;
-    // The entry waiting to be counted: the operand first, then each
-    // child the stack's top frame hands over.
     let pending: boolean = true;
     let p_path: string = walk_base(arg);
     let p_name: string = p_path;
@@ -535,8 +435,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
     let p_display: string = display;
     let p_st: FileStat = st;
     let p_depth: i32 = 0;
-    // What a finished entry contributes to its parent — or, with the
-    // stack empty, to this operand's total.
     let owed: boolean = false;
     let o_size: u64 = 0 as u64;
     let o_time: i64 = 0 as i64;
@@ -583,10 +481,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
 
       if (pending) {
         pending = false;
-        // Every inode is counted and printed at most once per run —
-        // files with a single link included, and across operands. The
-        // same set is what silently stops a symlink loop under -L; -l
-        // turns the whole mechanism off.
         let known: boolean = false;
         if (!c.count_links) {
           let key: string = inode_key(p_st.dev, p_st.ino);
@@ -606,12 +500,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         let own: u64 = entry_size(c, p_st, p_st.is_dir);
         let stamp: (i64, i64) = stamp_of(c, p_st);
         if (p_st.is_dir) {
-          // A directory already on the path from the operand to here is a
-          // CYCLE, which `-L` reaches through a symlink pointing at an
-          // ancestor. It is skipped whole — no line, nothing counted, and
-          // nothing said. The check is separate from the seen set above
-          // because `-l` turns that off, and the descent would then be
-          // endless; the stack IS the path, so this is a walk of it.
           let cycle: boolean = false;
           let f: i32 = 0;
           while (f < sp) {
@@ -628,8 +516,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
           let held: Option[Dir] = None;
           let listed: Result[string[], IoError] = Err(Unsupported);
           if (target_os() == "wasi") {
-            // No wasm backend lowers a directory handle yet (fsdir), so the
-            // listing is by path and so is each child's stat.
             listed = read_dir(p_path);
           } else {
             match (open_child(stack, sp, p_path, p_name, p_via_link)) {
@@ -673,7 +559,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
 
       let top: Frame = stack[sp - 1];
       if (top.idx >= top.names.len()) {
-        // Post-order: the directory's own line follows its contents.
         sp = sp - 1;
         match (top.dir) {
           Some(d) => {
@@ -731,9 +616,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
           continue;
         }
       }
-      // -x takes its device from the operand being walked, so naming a
-      // mount point directly still measures it; a crossing below one
-      // vanishes rather than appearing as a zero.
       if (c.one_file_system && cst.dev != root_dev) {
         continue;
       }
@@ -767,13 +649,8 @@ function zero_stat(): FileStat {
   return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
 }
 
-// ---- reading a list of names ------------------------------------------------
-// `Slurp` — a whole file read in, or the failure that stopped it.
-// `at_open` separates a name that could not be OPENED from one that
-// could not be READ, which du words differently.
 struct Slurp { bytes: u8[], ok: boolean, at_open: boolean, err: Option[IoError] }
 
-// The whole of `path`, or stdin for `-`.
 function slurp(path: string): Slurp {
   let r: Reader = stdin();
   if (path != "-") {
@@ -800,9 +677,6 @@ function slurp(path: string): Slurp {
   }
 }
 
-// The patterns of a -X file: one per line, a trailing carriage return
-// stripped, the line cut at an embedded NUL, and an empty line ignored.
-// Leading and trailing SPACES are significant.
 function exclude_patterns(text: u8[]): fnmatch.BytePattern[] {
   let out: fnmatch.BytePattern[] = [];
   let start: i32 = 0;
@@ -827,8 +701,6 @@ function exclude_patterns(text: u8[]): fnmatch.BytePattern[] {
   return out;
 }
 
-// The NUL-separated names of a --files0-from file. A trailing NUL is
-// optional; an empty name is reported with its ordinal and skipped.
 function files0_names(bytes: u8[], origin: string): Option[string[]] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -839,7 +711,6 @@ function files0_names(bytes: u8[], origin: string): Option[string[]] {
       end = bytes.len();
     }
     ordinal = ordinal + 1;
-    // A filename is text only after its complete record has been validated.
     match (utf8.from_bytes(array.slice(bytes, start, end))) {
       Some(name) => {
         out = out.append(name);
@@ -854,10 +725,6 @@ function files0_names(bytes: u8[], origin: string): Option[string[]] {
   return Some(out);
 }
 
-// ---- option values ---------------------------------------------------------
-// `--time=WORD`, which is argmatch over five words mapping to two
-// stamps: a prefix of several names that all mean the same stamp is NOT
-// ambiguous, which is why `--time=a` is atime.
 function time_word(v: string): i32 {
   let names: string[] = ["atime", "access", "use", "ctime", "status"];
   let kinds: i32[] = [time_atime(), time_atime(), time_atime(), time_ctime(), time_ctime()];
@@ -892,10 +759,6 @@ function time_word(v: string): i32 {
   return time_mtime();
 }
 
-// GNU's x_timestyle_match: the names unquoted, one per line, and the
-// `+FORMAT` escape hatch argmatch knows nothing about. `ls` offers the
-// `posix-` prefix and `du` does not. GNU <= 9.11 reported du's through
-// plain argmatch, which quoted the names and left out the last line.
 pub function die_time_style(spec: string, names: string[], posix: boolean, status: i32, what: string): void {
   gnu.error(what + " argument " + gnu.quote(spec) + " for " + gnu.quote("time style"));
   eprint("Valid arguments are:");
@@ -912,8 +775,6 @@ pub function die_time_style(spec: string, names: string[], posix: boolean, statu
   gnu.try_help(status);
 }
 
-// The strftime format a --time-style names. `+FORMAT` is its own
-// format; everything else is argmatch over the three ISO styles.
 function style_format(v: string): string {
   if (v.len() > 0 && v[0] as i32 == 43) {
     return slice_unchecked(v, 1, v.len()) + "";
@@ -922,8 +783,6 @@ function style_format(v: string): string {
   let formats: string[] = ["%Y-%m-%d %H:%M:%S.%N %z", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
   let k: i32 = gnu.argmatch_find(v, names, [0, 1, 2]);
   if (k < 0) {
-    // -2 is a prefix of several with different meanings; the empty
-    // string is a prefix of all three, so `--time-style=` is ambiguous.
     let what: string = "invalid";
     if (k == 0 - 2) {
       what = "ambiguous";
@@ -933,10 +792,6 @@ function style_format(v: string): string {
   return formats[k];
 }
 
-// TIME_STYLE, which is not --time-style: the literal `locale` is
-// accepted and renders as long-iso in the C locale, and anything else
-// has a leading `posix-` stripped before it is matched — so an invalid
-// value is reported under the STRIPPED spelling.
 function env_style(v: string): string {
   if (v == "locale") {
     return "%Y-%m-%d %H:%M";
@@ -948,14 +803,6 @@ function env_style(v: string): string {
   return style_format(s);
 }
 
-// The SIZE diagnostics quote differently from every other one here:
-// gnulib's xstrtol_fatal wraps the argument in apostrophes and escapes
-// NOTHING, so a tab is a tab and an apostrophe closes and reopens the
-// quotes. `invalid maximum depth`, `extra operand` and the argmatch
-// lists all use the C-escaping `quote` instead.
-// `--max-depth=N`, base 0 with blanks and a sign tolerated in FRONT of
-// the digits and nothing at all after them. A negative is refused:
-// GNU <= 9.4 let it wrap and `-d -1` came out unlimited.
 function parse_depth(spec: string): u64 {
   let i: i32 = 0;
   while (i < spec.len() && gnu.is_blank(spec[i] as i32)) {
@@ -975,7 +822,6 @@ function parse_depth(spec: string): u64 {
   return n.0;
 }
 
-// ---- main ------------------------------------------------------------------
 function declare_options(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("0", "null", opt_null()));
@@ -1136,9 +982,6 @@ pub function main(): i32 {
     gnu.error("warning: options --apparent-size and -b are ineffective with --inodes");
   }
   if (c.time_kind != time_none()) {
-    // The zone is resolved only when a timestamp will be printed: tzset(3)
-    // reads the environment and then a TZif file, and a du that prints no
-    // time should not pay for either.
     c = Conf { ...c, zone: tz.local_zone() };
     if (have_style) {
       c = Conf { ...c, time_format: timefmt.compile(style_format(style)) };
@@ -1190,9 +1033,6 @@ pub function main(): i32 {
   return walk(c, names, have_files0, list_name, from_stdin);
 }
 
-// -X is read where it stands in the scan, not afterwards, which is what
-// lets `du -X - --files0-from=-` take the whole of stdin for the
-// patterns and leave the name list empty.
 function read_exclude_file(have: fnmatch.BytePattern[], path: string): fnmatch.BytePattern[] {
   let r: Slurp = slurp(path);
   if (!r.ok) {

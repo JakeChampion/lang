@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// RunCopyByteCases exercises the shared copy engine through file contents.
-// mv uses two filesystems so the rename fast path cannot hide a copy failure.
 func RunCopyByteCases(t *testing.T, utility, bin string, runner []string, census func(*testing.T, string)) {
 	t.Helper()
 	name := utility

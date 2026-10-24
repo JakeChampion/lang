@@ -2,11 +2,6 @@ import "std/test";
 import "core/cmp";
 import "std/string";
 
-// tests/stdlib/sort_family_test.fern — core/cmp's sort family past what
-// sort_by_and_ci_test covers: the four `_in_place` heapsorts over empty,
-// single, reversed and duplicate-heavy input, stability of `sort_by` and
-// `sort_by_key` on tagged records, and std/string's `cmp_ignore_ascii_case`.
-
 struct Tagged { key: string, tag: i32 }
 
 function reversed(n: i32): i32[] {
@@ -88,7 +83,6 @@ function test_sort_by_key_in_place(): test.TestOutcome {
   return test.assert_eq_array(ws, ["", "a", "bb", "ccc"]);
 }
 
-// Equal keys keep their input order through the merge.
 function test_sort_by_stable_records(): test.TestOutcome {
   let ts: Tagged[] = [Tagged { key: "b", tag: 1 }, Tagged { key: "a", tag: 2 }, Tagged { key: "b", tag: 3 }, Tagged { key: "a", tag: 4 }];
   let out: Tagged[] = cmp.sort_by(ts, (x: Tagged, y: Tagged): i32 => x.key.cmp(y.key));
@@ -113,7 +107,6 @@ function test_cmp_ignore_ascii_case(): test.TestOutcome {
   return test.assert_true(lt && eq && gt);
 }
 
-// A prefix orders first, whatever the case of the shared part.
 function test_cmp_ignore_ascii_case_prefix(): test.TestOutcome {
   let shorter: boolean = "AB".cmp_ignore_ascii_case("abc") == -1;
   let longer: boolean = "abc".cmp_ignore_ascii_case("AB") == 1;

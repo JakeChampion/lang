@@ -11,23 +11,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRLargeFreelist pins the large-tier freelist on the
-// self-host wasm allocator (#7735).
-//
-// The small size-class table covers blocks up to fl_cells*8 = 512 KiB. Past
-// that a large tier must recycle dropped blocks, or every large array a
-// long-running program allocates and drops is gone for the life of the
-// process.
-//
-// __heap_bump_bytes is the metric that decides it: the cursor moves only on a
-// fresh bump, never on a freelist reuse, so a loop that allocates and drops the
-// same large block keeps it flat if the tier recycles and grows by one block per
-// iteration if it does not.
-//
-// The assertion compares two iteration counts rather than checking one number
-// against a constant, because the absolute figure depends on how the growth path
-// sizes its intermediates. Six extra iterations may not cost even one extra
-// block; bump-only cost six.
 func TestSelfHostWasmIRLargeFreelist(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -53,9 +36,6 @@ func TestSelfHostWasmIRLargeFreelist(t *testing.T) {
 		t.Fatalf("abs wit dir: %v", err)
 	}
 
-	// 160 000 i32 elements = 640 KB of payload, comfortably past the 512-KiB
-	// cliff, built by append so the growth path's own intermediates are in the
-	// measurement too. The bump reading is reported in KiB.
 	src := func(iters int) string {
 		return fmt.Sprintf(`function fill(n: i32): i32[] {
     let a: i32[] = [];
@@ -91,8 +71,6 @@ function main(): i32 {
 		if err != nil || len(wat) == 0 {
 			t.Fatalf("%s: wasm_ir_run failed: %v", name, err)
 		}
-		// The large tier is emitted as its own helper, so its absence would
-		// otherwise show up only as a number that happens to look fine.
 		if !strings.Contains(string(wat), "$__fern_large_push") {
 			t.Fatalf("%s: emitted WAT has no $__fern_large_push", name)
 		}
@@ -126,7 +104,7 @@ function main(): i32 {
 		return kib
 	}
 
-	const blockKiB = 1536 // what one round of the 640 KB build costs when leaked
+	const blockKiB = 1536
 	small := bumpKiB("iters2", 2)
 	large := bumpKiB("iters8", 8)
 

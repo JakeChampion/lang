@@ -7,32 +7,14 @@ import (
 	"testing"
 )
 
-// A MAIN-LESS module — a library compiled standalone — lowers on the self-host
-// IR path (#3457 slice 5): with no main, `_start` exits 0 rather than emitting
-// `call __fn_main`.
-//
-// This is not a hypothetical shape: most of the compiler's own sources are
-// main-less libraries, and compiling one standalone through a stdin driver
-// takes exactly this path.
-//
-// A script-shaped source (top-level statements, no `main`) is NOT this case:
-// asmcore.synth_script_main rewrites it into `function main()` upstream, which
-// TestSelfHostScriptMainIRX86_64 covers. Anything still main-less here is a
-// library with functions only.
 var noMainModuleCases = []struct {
 	name string
 	src  string
 }{
-	// The minimal shape: one exported function, nothing calls it.
 	{"single-fn", `pub function add(a: i32, b: i32): i32 { return a + b; }`},
-	// Several functions, one calling another — the intra-module call must still
-	// resolve with no entry point driving it.
 	{"internal-call", `
 function twice(n: i32): i32 { return n * 2; }
 pub function quad(n: i32): i32 { return twice(twice(n)); }`},
-	// Heap + string work, so the module pulls in the runtime (alloc / str_concat)
-	// and `_start` is emitted alongside it. A library whose functions allocate is
-	// the common real case (typeinfo.fern, asmcore.fern).
 	{"string-heap", `
 pub function label(i: i32): string {
     if (i % 2 == 0) { return "ab" + "!"; }
@@ -43,8 +25,6 @@ pub function total(xs: i32[]): i32 {
     for x in xs { t = t + x; }
     return t;
 }`},
-	// A struct + an enum decl with methods: the shapes whose layout/shape pools
-	// `_start`'s surrounding literal pool has to emit even with no main.
 	{"struct-and-enum", `
 struct P { name: string, n: i32 }
 enum C { Red, Blue }
@@ -52,10 +32,6 @@ pub function pick(p: P): i32 { return p.n + p.name.len(); }
 pub function code(c: C): i32 { match (c) { Red => { return 1; }, Blue => { return 2; } } }`},
 }
 
-// TestSelfHostNoMainModuleIRX86_64 asserts each main-less module (a) routes "ir",
-// (b) emits asm that assembles, and (c) links and RUNS to exit 0 — `_start`
-// exiting 0 directly is the whole behavioural contract of the no-main branch, and
-// running it is what distinguishes "exits 0" from "jumps to an absent __fn_main".
 func TestSelfHostNoMainModuleIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -73,7 +49,6 @@ func TestSelfHostNoMainModuleIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			// `_start` must exit 0 rather than call a __fn_main that isn't there.
 			if strings.Contains(string(asm), "call __fn_main") {
 				t.Errorf("%s: emitted `call __fn_main` for a module with no main", tc.name)
 			}
@@ -91,8 +66,6 @@ func TestSelfHostNoMainModuleIRX86_64(t *testing.T) {
 		})
 	}
 
-	// A main-less compiler SOURCE. This driver loads no imports, so the module
-	// is one of the import-free ones.
 	t.Run("typeinfo-fern-routes-ir", func(t *testing.T) {
 		src, err := os.ReadFile("../../../compiler/typeinfo.fern")
 		if err != nil {

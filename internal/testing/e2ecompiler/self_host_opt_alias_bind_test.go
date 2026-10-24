@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// --- An UNMATCHED Option local's alias bind gets a retain and a credit -------
-//
-// `let x: Option[T] = src`, where `src` has no consuming match of its own, must
-// not leak the box and its payload (#7687). The bind RETAINS the box, the
-// alias's release is the box dec alone, and the source keeps the one deep
-// release.
-//
-// EVERY ROW IS GATED ON `__rc_underflow_count()`, NOT BYTES. A release without
-// the retain, or a deep release on both slots, balances the census perfectly
-// (200/200 live 0) while corrupting memory; only the exit code (99 against 36)
-// separates them. Every row also runs a second leg under FERN_SANITIZE=1, whose
-// quarantining allocator reports an over-release directly.
-//
-// Every want was confirmed against `bin/fern -interp`, never read off the
-// self-host run.
 type optAliasBindCase struct {
 	name string
 	src  string
@@ -37,8 +22,6 @@ const optAliasBindMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 
 func optAliasBindCases() []optAliasBindCase {
 	return []optAliasBindCase{
 		{
-			// THE REPRO, in its barest form: the alias is never read at all, so
-			// nothing but the bind is different from the control below. Was 200/0.
 			name: "arr_alias_never_read",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -48,7 +31,6 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 36,
 		},
 		{
-			// Its control: the same program without the bind. Clean throughout.
 			name: "arr_no_alias",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -57,9 +39,6 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 36,
 		},
 		{
-			// The alias is itself matched — the commonest use of one. A bare-ident
-			// match scrutinee is a borrow of the box, so the box is still
-			// released, while a payload moved out of the arm must not be.
 			name: "arr_alias_matched",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -71,9 +50,6 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 34,
 		},
 		{
-			// Both matched. Clean before this change (the source's own
-			// consuming-match family owns it) and clean after — the row that would
-			// go to 99 if the alias took a second deep release.
 			name: "arr_both_matched",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -86,8 +62,6 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 68,
 		},
 		{
-			// Only the SOURCE is matched: the alias depends on the consuming-match
-			// family's own gate, not the unmatched one. Clean before and after.
 			name: "arr_source_matched",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -99,9 +73,6 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 34,
 		},
 		{
-			// The STRING payload class ("OPTSTR:"), whose release is
-			// __fern_str_free on the payload rather than a flat dec — a distinct
-			// release, so it needs its own row. Was 300/0 live 7200.
 			name: "str_alias_never_read",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -124,9 +95,6 @@ function round(i: i32): i32 {
 			want: 51,
 		},
 		{
-			// The NESTED-Option class ("OPTOPTRC:"), whose release is the guarded
-			// two-level walk. The one whose second deep release would free the
-			// inner string as well as the inner box.
 			name: "optopt_alias_never_read",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -137,10 +105,6 @@ function round(i: i32): i32 {
 			want: 36,
 		},
 		{
-			// A CONDITIONAL alias: the bind runs on half the rounds, so the alias
-			// slot is null on the others. The box-only release is null-guarded for
-			// exactly this, and a transfer model would leak the rounds where no
-			// bind happened.
 			name: "arr_conditional_alias",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -153,12 +117,6 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// THE CHAIN (#7750). `let t = …; let v = t; let u = v;` shares one box
-			// across three names; asking the three conditions one bind at a time
-			// refuses all of them, because the middle link's bare-ident use in the
-			// next bind reads as an escape. Every link retains at its bind and
-			// releases box-only, so N links are N extra retains and N extra box
-			// decs — the single-link arithmetic with more owners.
 			name: "arr_alias_chain",
 			src: `function round(i: i32): i32 {
     let t: Option[i32[]] = Some([i, i + 1]);
@@ -169,8 +127,6 @@ function round(i: i32): i32 {
 			want: 46,
 		},
 		{
-			// Three links: the closure is transitive, so the rule has no length it
-			// stops at.
 			name: "arr_alias_chain_three_links",
 			src: `function round(i: i32): i32 {
     let t: Option[i32[]] = Some([i, i + 1]);
@@ -182,9 +138,6 @@ function round(i: i32): i32 {
 			want: 46,
 		},
 		{
-			// The last link is MATCHED — the commonest use of a chain, and the row
-			// that needs the match-borrow reading to reach every link rather than
-			// just the first.
 			name: "arr_alias_chain_matched",
 			src: `function round(i: i32): i32 {
     let t: Option[i32[]] = Some([i, i + 1]);
@@ -197,7 +150,6 @@ function round(i: i32): i32 {
 			want: 4,
 		},
 		{
-			// The STRING payload class through a chain.
 			name: "str_alias_chain",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -209,9 +161,6 @@ function round(i: i32): i32 {
 			want: 46,
 		},
 		{
-			// The NESTED-Option class through a chain — the deepest release in the
-			// family, and the one whose second deep walk would free the inner
-			// string as well as the inner box.
 			name: "optopt_alias_chain",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -223,9 +172,6 @@ function round(i: i32): i32 {
 			want: 46,
 		},
 		{
-			// The chain lives in an IF ARM while the source outlives it: every link
-			// retains and releases on the taken path, and the source sweeps
-			// unconditionally.
 			name: "arr_alias_chain_conditional",
 			src: `function round(i: i32): i32 {
     let t: Option[i32[]] = Some([i, i + 1]);
@@ -240,7 +186,6 @@ function round(i: i32): i32 {
 			want: 20,
 		},
 		{
-			// A link hands the PAYLOAD out of an alias chain.
 			name: "refuses_alias_chain_payload_out",
 			src: `function round(i: i32): i32 {
     let t: Option[i32[]] = Some([i, i + 1]);
@@ -253,7 +198,6 @@ function round(i: i32): i32 {
 			want: 4,
 		},
 		{
-			// The last link is RETURNED, so the box outlives the frame.
 			name: "refuses_alias_chain_returned",
 			src: `function esc(i: i32): Option[i32[]] {
     let t: Option[i32[]] = Some([i, i + 1]);
@@ -269,10 +213,6 @@ function round(i: i32): i32 {
 			want: 4,
 		},
 		{
-			// The alias carries the PAYLOAD out of its arm, so the element
-			// buffer outlives the source. A release under it is a use-
-			// after-free that exits 99 with a perfectly balanced census,
-			// which is why the exit and the sanitizer leg are the guard.
 			name: "refuses_alias_carrying_payload_out",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -284,8 +224,6 @@ function round(i: i32): i32 {
 			want: 34,
 		},
 		{
-			// The alias is REASSIGNED, so its final value is not the box
-			// the credit describes.
 			name: "refuses_reassigned_alias",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -296,9 +234,6 @@ function round(i: i32): i32 {
 			want: 36,
 		},
 		{
-			// A LOOP-resident pair: both slots are re-declared each iteration, so
-			// the bind's dec-of-superseded-box and the sweep dec have to add up on
-			// every round rather than only at function exit.
 			name: "arr_alias_in_a_loop",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -316,9 +251,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostOptAliasBindX86_64 — every row balances at live_bytes 0 with no rc
-// underflow. Balance alone does not separate a correct build from either broken
-// one here; the exit code is what does.
 func TestSelfHostOptAliasBindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -352,9 +284,6 @@ func TestSelfHostOptAliasBindX86_64(t *testing.T) {
 					"credit again", tc.name, summary)
 			}
 
-			// The census cannot separate a correct build from a double-freeing
-			// one on this family, so every row runs again under the quarantining
-			// allocator, which reports the over-release directly.
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
 			sanBin := buildBin(t, gcc, dir, "optaliasbind_san_"+tc.name, sanAsm)
 			sanErr, sanExit := hevRun(t, runner, sanBin)
@@ -368,9 +297,6 @@ func TestSelfHostOptAliasBindX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptAliasBindWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend, and the underflow guard is
-// what carries the signal here.
 func TestSelfHostOptAliasBindWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping Option alias-bind wasm IR e2e")
@@ -409,7 +335,6 @@ func TestSelfHostOptAliasBindWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptAliasBindIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostOptAliasBindIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

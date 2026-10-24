@@ -2,22 +2,6 @@ package e2e
 
 import "testing"
 
-// wordsProgram pins UAX #29 word segmentation (#5552) across every
-// backend.
-//
-// The expectations are not hand-reasoned: every count below was taken
-// from `uniseg` (the same oracle cmd/unicodegen's table data comes
-// from) before it was written down, and the state machine itself was
-// checked against uniseg over every sequence of up to four code points
-// drawn from all nineteen Word_Break classes plus Extended_Pictographic.
-// What is here is the set of cases a naive `split(" ")` gets wrong.
-//
-// Two surfaces, and the difference between them is the point:
-// `word_segments` is lossless -- the pieces concatenate back to the
-// input, spaces and punctuation included -- while `words` keeps only
-// the word-like ones.
-//
-// Exits 0 on success, a distinct code per failed step.
 const wordsProgram = `
 import "std/unicode" as unicode;
 import "std/utf8" as utf8;

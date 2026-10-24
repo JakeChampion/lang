@@ -1,4 +1,4 @@
-// A match that omits one variant and has no wildcard arm.
+
 enum Color { Red, Green, Blue }
 
 function code(c: Color): i32 {

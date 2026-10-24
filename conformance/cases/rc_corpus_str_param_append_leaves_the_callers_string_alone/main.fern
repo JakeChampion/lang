@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8785: a reassigned string PARAMETER is consumed-threaded, and the
-// entry retain that pays for it is also what keeps the append correct.
-// The incoming buffer is the CALLER's, so `a = a + s` inside the
-// callee must copy — rc 2 sends __fern_str_append down its copy path
-// — and the caller's own name must still read the string it passed.
-//
-// Every check here is a LENGTH, which is the observable the in-place
-// grow moves: __fern_str_append restamps the length prefix of the
-// buffer it grows, so a wrongly-admitted in-place append shows up as
-// the caller's string having got longer. Drop the entry retain (or
-// admit the param at rc 1 some other way) and `base` reads 23.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function mk(n: i32): string {
     let s: string = "";
     let i: i32 = 0;

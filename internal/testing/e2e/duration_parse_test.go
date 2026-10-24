@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/format.parse_duration_ms across backends:
-// single units (ms/s/m/h/d), multi-part durations with and without
-// separating spaces, the i64 range beyond i32, and the None rejections
-// (empty, bare number, unknown unit, unit with no number). Returns 42 iff
-// every check holds. Each leg skips itself when its toolchain is absent.
 const durationParseProg = `
 import "std/format" as fmt;
 function chk(s: string, want: i64): boolean {

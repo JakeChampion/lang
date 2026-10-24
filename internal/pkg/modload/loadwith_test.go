@@ -1,21 +1,5 @@
 package modload_test
 
-// LoadWith in-memory overrides — the LSP "unsaved buffer" path.
-//
-// LoadWith threads an override map (canonical path → source) through
-// the loader; readSource consults it before touching disk, so an
-// editor's in-flight buffer is the source of truth while a file is
-// open even though it hasn't been saved. LoadSource (REPL / stdin /
-// playground / wasm) is a thin wrapper over the same mechanism. None
-// of this had a direct test, despite being the entry point every
-// in-memory compile path runs through.
-//
-// These pin three properties of the override contract:
-//   - an override shadows the on-disk file at the same path;
-//   - a module supplied only as an override (no file on disk) loads;
-//   - an overridden entry still pulls real on-disk imports, and
-//     mangling / qualified-call rewriting works across the mix.
-
 import (
 	"os"
 	"path/filepath"
@@ -24,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// TestLoadWithOverrideShadowsDisk: when an override is supplied for a
-// path that also exists on disk, the override wins.
 func TestLoadWithOverrideShadowsDisk(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.fern": `function main(): i32 { return 1; }`,
@@ -33,8 +15,6 @@ func TestLoadWithOverrideShadowsDisk(t *testing.T) {
 	entry := filepath.Join(dir, "main.fern")
 	entryAbs, _ := filepath.Abs(entry)
 
-	// The buffer differs from disk (returns 2, not 1) and adds a
-	// helper. If the loader read disk instead, `helper` wouldn't exist.
 	overrides := map[string]string{
 		entryAbs: `function helper(): i32 { return 2; }
 function main(): i32 { return helper(); }`,
@@ -48,11 +28,9 @@ function main(): i32 { return helper(); }`,
 	}
 }
 
-// TestLoadWithOverrideOnlyNoDiskFile: a path that exists *only* as an
-// override (never written to disk) loads from the buffer.
 func TestLoadWithOverrideOnlyNoDiskFile(t *testing.T) {
 	dir := t.TempDir()
-	entry := filepath.Join(dir, "ghost.fern") // never created on disk
+	entry := filepath.Join(dir, "ghost.fern")
 	entryAbs, _ := filepath.Abs(entry)
 
 	if _, statErr := os.Stat(entry); statErr == nil {
@@ -70,16 +48,9 @@ func TestLoadWithOverrideOnlyNoDiskFile(t *testing.T) {
 	}
 }
 
-// TestLoadWithOverriddenEntryImportsRealFile: the common LSP shape —
-// the open file (overridden) imports a sibling that's only on disk.
-// The override path and the disk path must compose: the import
-// resolves, the dependency's decl is mangled, and the qualified call
-// is rewritten to the flat name.
 func TestLoadWithOverriddenEntryImportsRealFile(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"util.fern": `pub function answer(): i32 { return 42; }`,
-		// main.fern on disk is a stale stub; the buffer below
-		// supersedes it and adds the import + call.
 		"main.fern": `function main(): i32 { return 0; }`,
 	})
 	entry := filepath.Join(dir, "main.fern")

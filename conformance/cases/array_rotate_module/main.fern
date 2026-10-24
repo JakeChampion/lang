@@ -1,6 +1,6 @@
-// std/array's rotate_left / rotate_right: cyclic shift by n mod len; negative n
-// rotates the other way.
-// The shipped module's free and method forms.
+
+
+
 import "std/array" as arr;
 function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
 function main(): i32 {
@@ -8,12 +8,12 @@ function main(): i32 {
     let xs: i32[] = [1, 2, 3, 4, 5];
     if (same(arr.rotate_left(xs, 2), [3, 4, 5, 1, 2])) { r = r + 1; }
     if (same(xs.rotate_right(2), [4, 5, 1, 2, 3])) { r = r + 2; }
-    if (same(xs.rotate_left(7), xs.rotate_left(2))) { r = r + 4; }       // wrap
-    if (same(xs.rotate_left(0), xs)) { r = r + 8; }                       // zero shift
+    if (same(xs.rotate_left(7), xs.rotate_left(2))) { r = r + 4; }
+    if (same(xs.rotate_left(0), xs)) { r = r + 8; }
     let e: i32[] = [];
-    if (arr.rotate_left(e, 3).len() == 0) { r = r + 16; }               // empty
+    if (arr.rotate_left(e, 3).len() == 0) { r = r + 16; }
     let ss: string[] = ["a", "b", "c"];
     let sr = ss.rotate_left(1);
-    if (sr[0] == "b" && sr[1] == "c" && sr[2] == "a") { r = r + 32; }   // strings
+    if (sr[0] == "b" && sr[1] == "c" && sr[2] == "a") { r = r + 32; }
     return r;
 }

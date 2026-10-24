@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnvX86_64 exercises the self-hosted x86-64 emitter's
-// `env(name)` builtin (std/test plan: the OS-syscall batch). env walks
-// the envp vector saved at _start and returns Option[string]:
-// Some(value) when the variable is set, None otherwise. The compiled
-// program is run twice — once with the variable set (expect exit 7),
-// once without it (expect the None arm, exit 1).
 func TestSelfHostEnvX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -57,7 +51,6 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 	})
 	t.Run("unset", func(t *testing.T) {
 		cmd := mkCmd()
-		// Filter the variable out of the inherited environment.
 		var env []string
 		for _, kv := range os.Environ() {
 			if len(kv) >= 22 && kv[:22] == "FERN_SELFHOST_ENV_TEST" {
@@ -71,9 +64,6 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 			t.Errorf("env(unset) exited %d, want 1 (None arm)", code)
 		}
 	})
-	// Entries sharing the name's first byte, or all of it but the '=', come
-	// first: the walk passes over each and still finds the name, and finds
-	// nothing when only they are there.
 	nearMisses := []string{"F=1", "FERN_SELFHOST_ENV_TES=short", "FERN_SELFHOST_ENV_TESTX=long", "=", "FERN"}
 	t.Run("near-misses-first", func(t *testing.T) {
 		cmd := mkCmd()
@@ -93,11 +83,6 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostEnvArm64 is the ARM64 counterpart: the self-hosted ARM64
-// emitter's env(name). The asm_ir_run (-target arm64-linux) driver (an x86 host binary)
-// compiles the same lookup program to aarch64 asm; the assembled binary
-// runs under qemu-aarch64 (which forwards the environment to the guest),
-// expecting exit 7 when the variable is set and 1 (None) when it isn't.
 func TestSelfHostEnvArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

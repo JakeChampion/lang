@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A `str` key column (#10761): the column holds an owned copy of each key,
-// since a view's box cannot be counted and `keys` would otherwise hand out
-// the column's own box. Keys from a split, an owned key, a shared copy, a
-// delete, `keys()` and iteration, against the interpreter, with the
-// allocations and frees balanced.
 const mapStrKeySrc = `import "core/map";
 import "std/i32";
 function count(m: Map[str, i32], k: str): Map[str, i32] { return m.insert(k, m.get_or(k, 0) + 1); }

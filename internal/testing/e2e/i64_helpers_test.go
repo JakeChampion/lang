@@ -2,22 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/i64 helpers that bring the wide
-// integer toward parity with std/i32.
-//
-// Two programs, split by what the wasmbin backend can lower today:
-//
-//	i64HelpersProg — signum, is_positive/negative/zero, and the
-//	saturating_add/sub boundary clamps. Pure i64, no enum payloads, so
-//	it runs on ALL four backends (interp = x86-64 = wasm = arm64).
-//
-//	i64CheckedProg — checked_add/sub, which return Option[i64]. An enum
-//	with an i64 payload is a known wasmbin coverage gap (the binary
-//	backend skips it via CompileAndRunWasmbinMain), so the wasm leg is
-//	intentionally omitted here; interp / x86-64 / arm64 cover it.
-//
-// Both return 42 iff every check holds; each leg skips when its
-// toolchain is absent.
 const i64HelpersProg = `
 import "std/i64";
 function main(): i32 {

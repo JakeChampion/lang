@@ -8,14 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// __sha256_hw and __sha1_hw answer a boolean, and __sha256_hw_blocks and
-// __sha1_hw_blocks take two `[u8]` views, so an owned `u8[]`, a slice and a
-// string's bytes all pass, and answer a fresh `u8[]`.
 func TestSHAHWBuiltinSignatures(t *testing.T) {
 	type sigCase struct {
 		name string
 		src  string
-		want string // "" = must type-check
+		want string
 	}
 	var cases []sigCase
 	for _, alg := range []string{"sha256", "sha1"} {

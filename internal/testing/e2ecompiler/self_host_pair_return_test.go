@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// A function returning a variant whose payloads fit a word, and whose every
-// caller takes the variant apart, returns its tag and the payload beside it
-// (sempair). The program covers a declared enum, Option and Result; returns
-// of constructions, of a parameter, of another paired call and of a recursive
-// one; and functions that stay boxed: one a caller keeps the variant of, and
-// one used as a value. `wide`'s i64 payload returns in the scalar lanes.
-//
-// The exit code: 1 for a wrong value, 2 for an allocation in the loop, which
-// only matches on what the paired functions return, 99 for a count that went
-// under.
 const pairReturnProg = `import "std/bench";
 
 enum Three { A(string), B, C(i32) }
@@ -206,15 +196,6 @@ function main(): i32 {
 }
 `
 
-// The pair half of the same pass: a function returning a tuple of two values
-// that each fit a word returns the first as its result and the second beside
-// it. The program covers a pair built at the return, one
-// returned from another paired call, one whose return joins two
-// constructions (so the callee projects it), a scalar first with a reference
-// second, a first wider than a word or a float, which the result carries
-// whole, a caller reading only the second element; and the ones that stay
-// boxed: a pair a caller keeps whole, a triple, and an element wider than a
-// word. The total is the interpreter's.
 const pairTupleProg = `import "std/bench";
 
 struct Box2 { n: i32, s: string }
@@ -330,13 +311,6 @@ function main(): i32 {
 }
 `
 
-// The pairing under the suspend pass: a function that may park returns in
-// two words like any other, since the pass keeps the read of the word with
-// the call's store, ahead of the mode test it adds after the call. The
-// program parks inside a task through a paired pair and a paired Result,
-// which must answer right after the rewind, and calls both, and a function
-// the classifier counts as able to park for its call through a value, in a
-// loop that must allocate nothing. The total is the interpreter's.
 const pairSuspendProg = `import "std/async";
 import "std/bench";
 
@@ -465,11 +439,6 @@ function main(): i32 {
 }
 `
 
-// A method pairs as a function does: a receiver method and a trait method
-// called through a generic return their variant's tag and payload, so the
-// loop builds only the Chunk boxes nested in the Ok payloads, six of them.
-// A trait's implementations reached through `dyn` stay boxed, since the
-// dispatch calls them with the boxed result.
 const pairMethodProg = `import "std/bench";
 
 enum Got { Chunk(string), Empty, Late }
@@ -583,12 +552,6 @@ function main(): i32 {
 }
 `
 
-// A variant whose payloads are all scalars, one of them wider than a word or
-// a tuple of up to three scalars, returns its position as a word and its
-// payload in the scalar lanes (semscalarreturn). The program covers Option of
-// i64 and of f64, Option and Result of a tuple, a declared enum with a
-// three-element tuple, a return of another such call, and a return of a
-// variable rather than a construction. None of them allocates in the loop.
 const pairLanesProg = `import "std/bench";
 
 enum Step { Go((i32, i64, i32)), Stop, Skip(f64) }
@@ -739,8 +702,6 @@ func TestSelfHostPairReturn(t *testing.T) {
 				var stderr string
 				var code int
 				if target == "wasm32-wasi" && prog.name == "suspend" {
-					// The task runtime imports wasi:io's poll, which only the
-					// component form provides.
 					src := filepath.Join(t.TempDir(), "main.fern")
 					if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
 						t.Fatal(err)

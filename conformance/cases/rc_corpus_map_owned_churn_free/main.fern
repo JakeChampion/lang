@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map reclamation: each build() owns its map, which is freed
-// (buf + handle returned to the freelist) at the function's
-// exit. 50 build/free cycles churn the same size classes — a
-// corrupted reuse or over-release would drift the checksum.
-// sum_{k=0..49} (16k + 120) = 16*1225 + 6000 = 25600.
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function build(seed: i32): i32 {

@@ -1,20 +1,11 @@
 import "std/test";
 import "std/math" as math;
 
-// tests/stdlib/math_test.fern — pure-Fern coverage of the deterministic
-// std/math surface: range / range_step (half-open i32 ranges), the numeric-
-// width constants (i32_max/min, i64_max/min) and the pack_rgb bit-packer.
-// random_int's SPECIFIC draw is non-deterministic, but its CONTRACT is
-// deterministic and is asserted below (in-bounds, full range reachable,
-// empty-range fallback). The Go-side suites unit-test the prelude origins;
-// this is the migration-shaped (pure-Fern, std/test-driven) companion.
-
 function test_range(): test.TestOutcome {
   return test.assert_eq_array(math.range(2, 5), [2, 3, 4]);
 }
 
 function test_range_empty(): test.TestOutcome {
-  // start >= end yields the empty range.
   return test.assert_eq(math.range(5, 2).len(), 0);
 }
 
@@ -27,12 +18,10 @@ function test_range_step(): test.TestOutcome {
 }
 
 function test_range_step_exact(): test.TestOutcome {
-  // end lands exactly on a step boundary — half-open excludes it.
   return test.assert_eq_array(math.range_step(0, 9, 3), [0, 3, 6]);
 }
 
 function test_range_step_nonpositive(): test.TestOutcome {
-  // step <= 0 is the empty range (no reverse ranges).
   return test.assert_eq(math.range_step(0, 10, 0).len(), 0);
 }
 
@@ -46,16 +35,13 @@ function test_i64_bounds(): test.TestOutcome {
 }
 
 function test_pack_rgb(): test.TestOutcome {
-  // 0xFF8040 = 16744512.
   return test.assert_eq(math.pack_rgb(255, 128, 64), 16744512);
 }
 
 function test_pack_rgb_wraps(): test.TestOutcome {
-  // Components are masked to their low 8 bits; 256 & 255 == 0.
   return test.assert_eq(math.pack_rgb(256, 256, 256), 0);
 }
 
-// parse_rgb_hex is the inverse of the pack_rgb / to_rgb_hex pipeline.
 function pr(s: string): i32 {
   match (math.parse_rgb_hex(s)) {
     Some(v) => {
@@ -68,7 +54,6 @@ function pr(s: string): i32 {
 }
 
 function test_parse_rgb_hex(): test.TestOutcome {
-  // 6-digit, optional '#', case-insensitive — all pack the same.
   if (pr("#ff8800") != math.pack_rgb(255, 136, 0)) {
     return test.fail("#ff8800");
   }
@@ -78,12 +63,10 @@ function test_parse_rgb_hex(): test.TestOutcome {
   if (pr("#FF8800") != math.pack_rgb(255, 136, 0)) {
     return test.fail("uppercase");
   }
-  // 3-digit shorthand doubles each nibble: #f80 == #ff8800.
   return test.assert_eq(pr("#f80"), math.pack_rgb(255, 136, 0));
 }
 
 function test_parse_rgb_hex_invalid(): test.TestOutcome {
-  // Wrong length, bad digit, and empty all return None (pr → -1).
   if (pr("#12345") != -1) {
     return test.fail("short");
   }
@@ -97,7 +80,6 @@ function test_parse_rgb_hex_invalid(): test.TestOutcome {
 }
 
 function test_rgb_luminance(): test.TestOutcome {
-  // Extremes, and the BT.601 weighting (green > red > blue at equal value).
   if (math.rgb_luminance(math.pack_rgb(255, 255, 255)) != 255) {
     return test.fail("white");
   }
@@ -111,7 +93,6 @@ function test_rgb_luminance(): test.TestOutcome {
 }
 
 function test_rgb_is_dark(): test.TestOutcome {
-  // Dark backgrounds want white text; light ones want black.
   if (!math.rgb_is_dark(math.pack_rgb(0, 0, 0))) {
     return test.fail("black is dark");
   }
@@ -124,14 +105,6 @@ function test_rgb_is_dark(): test.TestOutcome {
   return test.assert_false(math.rgb_is_dark(math.pack_rgb(255, 136, 0)));
 }
 
-// random_int's contract — deterministic even though the draw isn't.
-// Regression guard for the 24-bit truncation bug: before random_int
-// drew a full 32 bits, any range > 2^24 was silently capped to the
-// low ~16M (`u % range == u` when `u < 2^24 <= range`), so a large
-// range never yielded a value above 2^24. Over 4000 draws from
-// [0, 2e9) a correct impl exceeds 2^24 with probability ~1 (each draw
-// does so with p ~ 0.9916); the truncating impl NEVER does. We also
-// assert every draw is in-bounds and small ranges stay in-range.
 function test_random_int_range(): test.TestOutcome {
   let i: i32 = 0;
   let over: i32 = 0;
@@ -140,16 +113,14 @@ function test_random_int_range(): test.TestOutcome {
     if (v < 0 || v >= 2000000000) {
       return test.fail("random_int(0, 2e9) out of range: " + v.to_string());
     }
-    if (v > 16777215) {  // above 2^24 - 1
+    if (v > 16777215) {
       over = over + 1;
     }
     i = i + 1;
   }
-  // Full 32-bit draw ⇒ the upper range is reachable (truncating impl: over == 0).
   if (over == 0) {
     return test.fail("random_int never exceeded 2^24 over 4000 draws (24-bit truncation)");
   }
-  // Small range stays strictly in [5, 8).
   i = 0;
   while (i < 500) {
     let w: i32 = math.random_int(5, 8);
@@ -162,7 +133,6 @@ function test_random_int_range(): test.TestOutcome {
 }
 
 function test_random_int_empty(): test.TestOutcome {
-  // hi <= lo returns lo (empty-range fallback), deterministic.
   return test.assert_true(math.random_int(4, 4) == 4
     && math.random_int(9, 2) == 9);
 }

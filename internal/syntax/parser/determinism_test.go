@@ -1,27 +1,5 @@
 package parser_test
 
-// Determinism guard for the parser.
-//
-// parser.Parse is the entry point of the whole compilation pipeline:
-// every other stage (checker, modload, IR, codegen, interp) consumes
-// the *ast.Program it produces. Nondeterminism at this layer would
-// propagate to every downstream stage at once — strictly worse than
-// the per-stage determinism guards already in place (modload, ir,
-// codegen, interp), and harder to localize because it surfaces as
-// simultaneous multi-stage "mismatches".
-//
-// Recursive descent is normally deterministic by construction, but
-// the same was true of modload until TestLoadDeterministic caught a
-// real Go-map-iteration leak. Pinning this here means a future
-// change to the parser that uses a Go map to drive output order
-// (e.g. an interning table whose iteration ends up in the AST)
-// fails loudly at the source, not as a flaky downstream diff.
-//
-// The witness is printer.Print — it serialises function / struct /
-// enum order + every body, so byte-equal output across repeated
-// parses of the same source is a faithful indicator of an
-// identical AST (modulo pointer addresses, which printer ignores).
-
 import (
 	"testing"
 
@@ -29,13 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/printer"
 )
 
-// determinismMatrix favours surfaces that would be most prone to
-// ordering nondeterminism if the parser ever maintained interning
-// tables, dedup maps, or similar: many functions (declaration
-// order), several distinct string literals (per-literal data
-// records), structs + enums (decl tables), f-strings (multi-part
-// emit), and a representative real-world spread from std-style
-// code.
 var determinismMatrix = map[string]string{
 	"minimal": `function main(): i32 { return 0; }`,
 
@@ -87,12 +58,6 @@ function main(): i32 {
 }`,
 }
 
-// TestParseDeterministic parses each program several times and asserts
-// every parse produces a printer-byte-identical Program. A failure
-// means the parser's AST output depends on some non-deterministic
-// process state (most likely Go map iteration order, but pointer
-// hash dependence and runtime.GOMAXPROCS-influenced goroutine order
-// would also surface here).
 func TestParseDeterministic(t *testing.T) {
 	for name, src := range determinismMatrix {
 		name, src := name, src
@@ -109,8 +74,6 @@ func TestParseDeterministic(t *testing.T) {
 	}
 }
 
-// mustParsePrint parses src and returns the printed form of the
-// resulting Program. Fails the test on any parse error.
 func mustParsePrint(t *testing.T, src string) string {
 	t.Helper()
 	prog, err := parser.Parse(src)

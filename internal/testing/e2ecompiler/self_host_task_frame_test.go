@@ -12,10 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostTaskFrame pins what a parked frame keeps
-// (docs/NET-P3-SUSPENSION-PLAN.md §3.5): views and a shared mutated capture
-// read after a park answer what the plain run answers, on x86-64 and arm64
-// through the self-host CLI, and a park saves only the locals live across it.
 func TestSelfHostTaskFrame(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	t.Run("saves", func(t *testing.T) {
@@ -67,9 +63,6 @@ func TestSelfHostTaskFrame(t *testing.T) {
 	}
 }
 
-// checkRoundsSaves reads the suspend pass's dump of `rounds`: the slot the
-// first array literal, `gone`, is stored to is dead at the park and must not be saved, and
-// the park saves well under the body's locals.
 func checkRoundsSaves(t *testing.T, dump string) {
 	t.Helper()
 	before, after, ok := strings.Cut(dump, "== rounds after")
@@ -91,7 +84,6 @@ func checkRoundsSaves(t *testing.T, dump string) {
 	if array < 0 || locals == 0 {
 		t.Fatalf("no array slot or local count in the dump of rounds:\n%s", before)
 	}
-	// A saved slot is loaded, widened to a word, and stored to the save area.
 	var saved []int
 	lines = strings.Split(after, "\n")
 	for i, line := range lines {

@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// selfHostUtsname is the five utsname fields as the host reports them,
-// in the order the record holds them.
 func selfHostUtsname(t *testing.T) [5]string {
 	t.Helper()
 	var u syscall.Utsname

@@ -8,27 +8,6 @@ import (
 	"unicode/utf8"
 )
 
-// __memchr is the first kernel of docs/ATLAS-PLATFORM-PLAN.md §3 — the
-// intrinsic that std/string's single-byte search path is meant to route
-// through, and the shape the rest of the SIMD tier is modelled on.
-//
-// It is differential-tested against a Go reference rather than against
-// hand-written expectations, because the failures this class of code actually
-// has are at boundaries a human does not think to enumerate: the last byte, a
-// match exactly at `from`, a `from` past the end, and — once the body is
-// vectorised — every offset where a 16-byte block straddles the end of the
-// string. The corpus therefore sweeps LENGTH and POSITION exhaustively over a
-// small range rather than sampling interesting-looking strings.
-//
-// That sweep is the point, and it was worth it: the corpus was written while both
-// bodies were still scalar, so when they were replaced with 16-byte vector
-// loops (SSE2 on x86-64, NEON on arm64) it already covered every block
-// boundary they have, and it passed unchanged. Written afterwards it would
-// have been written to fit whatever the new code did.
-
-// memchrRef is the reference semantics, matching the interpreter builtin: the
-// first index of `b` at or after `from`, or -1. `from` clamps at 0; a byte
-// outside 0..255 never matches.
 func memchrRef(s string, b, from int) int {
 	if from < 0 {
 		from = 0
@@ -56,16 +35,9 @@ func memchrCases() []struct {
 	}
 	var out []c
 
-	// Exhaustive over length and match position, straddling the 16-byte
-	// block size the vector version will use (0..40 covers two full blocks
-	// plus a partial tail on either side).
 	for n := 0; n <= 40; n++ {
 		base := strings.Repeat("a", n)
-		// No match anywhere.
 		out = append(out, c{base, 'z', 0})
-		// A match at each position, with the scan starting before, at, and
-		// after it — `at` is where the needle goes, and the three starts
-		// exercise found / found-exactly-at-from / skipped-past.
 		for at := 0; at < n; at++ {
 			withHit := base[:at] + "z" + base[at+1:]
 			out = append(out, c{withHit, 'z', 0})
@@ -74,27 +46,20 @@ func memchrCases() []struct {
 		}
 	}
 
-	// Edge cases that the sweep above cannot express.
 	out = append(out,
-		c{"", 'a', 0},                         // empty haystack
-		c{"abc", 'a', 100},                    // from past the end
-		c{"abc", 'c', -5},                     // negative from clamps to 0
-		c{"abc", 256, 0},                      // byte above the range
-		c{"abc", -1, 0},                       // byte below the range
-		c{"aaa", 'a', 0},                      // first of several
-		c{"\x00b\x00", 0, 0},                  // NUL is an ordinary byte, not a terminator
-		c{"\x00b\x00", 0, 1},                  // ... and findable after a skip
-		c{"\xff\xfe", 0xff, 0},                // high bytes are unsigned, not sign-extended
-		c{"\xff\xfe", 0xfe, 0},                //
-		c{strings.Repeat("q", 300), 'q', 299}, // long, match at the very end
+		c{"", 'a', 0},
+		c{"abc", 'a', 100},
+		c{"abc", 'c', -5},
+		c{"abc", 256, 0},
+		c{"abc", -1, 0},
+		c{"aaa", 'a', 0},
+		c{"\x00b\x00", 0, 0},
+		c{"\x00b\x00", 0, 1},
+		c{"\xff\xfe", 0xff, 0},
+		c{"\xff\xfe", 0xfe, 0},
+		c{strings.Repeat("q", 300), 'q', 299},
 	)
 
-	// x86-64's __memchr widens to a 32-byte AVX2 main loop with the 16-byte
-	// SSE2 loop kept as its tail (issue: `wc -l` at 16 bytes/iteration ran
-	// 25% more user time than glibc's AVX2 memchr at the same task), so
-	// every length here also needs a hit at each position straddling the
-	// 32-byte block boundary and the boundary between the AVX2 loop and its
-	// SSE2 tail — lengths just below/at/above one and two 32-byte blocks.
 	for _, n := range []int{31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81} {
 		base := strings.Repeat("a", n)
 		out = append(out, c{base, 'z', 0})
@@ -106,8 +71,6 @@ func memchrCases() []struct {
 		}
 	}
 
-	// Deterministic randoms over a small alphabet, so matches are dense and
-	// land at irregular offsets rather than the neat ones above.
 	rng := rand.New(rand.NewSource(20260806))
 	for i := 0; i < 60; i++ {
 		n := rng.Intn(70)
@@ -121,14 +84,6 @@ func memchrCases() []struct {
 	return out
 }
 
-// runMemchrCorpus drives the whole corpus through one backend and compares
-// every answer against memchrRef. `run` compiles and runs a program and
-// returns its stdout — one decimal per case, in order.
-//
-// The three legs share this body deliberately: what differs between backends
-// is the kernel, not the expectation, so a divergence should show up as one
-// leg disagreeing with the same reference rather than as three drifting
-// copies of the comparison logic.
 func runMemchrCorpus(t *testing.T, run func(t *testing.T, src string) string) {
 	t.Helper()
 	cases := memchrCases()
@@ -179,12 +134,6 @@ func TestX86_64Memchr(t *testing.T) {
 	})
 }
 
-// fernQuote renders a Go string as a Fern expression holding exactly its
-// bytes. Valid UTF-8 is a string literal, escaping the bytes the lexer cannot
-// take raw; anything else goes through string_from_bytes_unchecked, since a
-// literal is always valid UTF-8 — the corpus carries non-UTF-8 haystacks
-// because __memchr is a BYTE search and must not care whether its input is
-// valid text.
 func fernQuote(s string) string {
 	var b strings.Builder
 	if !utf8.ValidString(s) {
@@ -217,23 +166,6 @@ func fernQuote(s string) string {
 	return b.String()
 }
 
-// The arm64 leg runs the SAME corpus. It is not redundant with the x86-64 one:
-// the two kernels differ in both ABI and algorithm, and each difference has
-// already produced a real bug.
-//
-//   - ABI. arm64 uses the two-word string representation, so a `string`
-//     argument occupies TWO operand-stack slots where x86-64 uses one. The
-//     first version of this call declared three arguments and no types, so
-//     arm64 popped three slots for four values and received the LENGTH as its
-//     data pointer — an immediate segfault, while x86-64 stayed green.
-//
-//   - Mask extraction. x86 has pmovmskb (one bit per byte, straight into
-//     bsf); NEON has no equivalent and must narrow with `shrn #4`, giving
-//     four mask bits per byte, so the lane index is the lowest set bit
-//     divided by four. An off-by-a-factor-of-four there is invisible on
-//     x86-64 by construction.
-//
-// Runs under qemu-aarch64 locally and natively on the arm64 CI lane.
 func TestArm64Memchr(t *testing.T) {
 	runMemchrCorpus(t, func(t *testing.T, src string) string {
 		out, exit := compileAndRunArm64(t, src)
@@ -244,25 +176,9 @@ func TestArm64Memchr(t *testing.T) {
 	})
 }
 
-// The wasm leg runs the SAME corpus again, and adds a case class neither
-// native leg has: on wasm a SHORT string is stored in its two words with no
-// address at all, so there is nothing for `v128.load` to point at and the
-// kernel has a second, scalar path for it. Every haystack under 8 bytes in
-// the corpus above — including the empty one — exercises that path, and a
-// kernel that ignored the distinction would read the length word as a
-// pointer.
-//
-// wasm is also the only one of the three targets whose mask extraction is
-// free: `i8x16.bitmask` is pmovmskb, one bit per byte, so `i32.ctz` of it is
-// the lane index directly.
 func TestWASMMemchr(t *testing.T) {
 	runMemchrCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
-		// wasmtime's --invoke prints main()'s return value as one extra
-		// line after the corpus. Check
-		// it — it is the leg's only signal that the program ran to
-		// completion rather than stopping early with the right prefix —
-		// then hand back just the corpus lines.
 		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
 			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])

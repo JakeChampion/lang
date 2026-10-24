@@ -7,8 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/memory"
 )
 
-// TestLoadOpcodes asserts each load opcode + a 1-byte align +
-// 1-byte offset round-trip to the expected 3 bytes.
 func TestLoadOpcodes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -69,10 +67,6 @@ func TestSizeGrow(t *testing.T) {
 	}
 }
 
-// TestBulkMemory pins the 0xFC-prefixed copy / fill encoders to the
-// exact byte sequences the backend's memcpy / memset helpers (and
-// the std/wasm Lang mirror) emit: copy carries two reserved memidx
-// bytes, fill one.
 func TestBulkMemory(t *testing.T) {
 	if got := memory.InstMemoryCopy(nil); !bytes.Equal(got, []byte{0xFC, 0x0A, 0x00, 0x00}) {
 		t.Errorf("memory.copy: got % x", got)
@@ -82,8 +76,6 @@ func TestBulkMemory(t *testing.T) {
 	}
 }
 
-// TestMemargMultiByteOffset confirms that a larger offset goes
-// through the uleb path correctly (e.g. 128 = 2 bytes).
 func TestMemargMultiByteOffset(t *testing.T) {
 	got := memory.InstI32Load(nil, 2, 128)
 	want := []byte{0x28, 0x02, 0x80, 0x01}

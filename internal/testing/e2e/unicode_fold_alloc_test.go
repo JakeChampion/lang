@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// to_lower / to_upper on ASCII input with nothing to remap hand the string
-// back rather than copying it, so folding an already-folded header name or
-// token allocates nothing; one letter to remap still builds a new string.
 const unicodeFoldAllocSrc = `import "std/unicode";
 
 function main(): i32 {

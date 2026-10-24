@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/f64.exp2 / exp10 — base-2 and base-10
-// exponentials, the inverses of log2 / log10, built on the natural exp via
-// 2^x = e^(x·ln2) and 10^x = e^(x·ln10). Whole exponents land on the exact
-// power up to rounding, and both round-trip against their logs, so the checks
-// use tolerance bands. Both f64 and f32. Returns 42 iff every check holds
-// across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const floatExp2Exp10Prog = `
 import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

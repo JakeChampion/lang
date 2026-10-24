@@ -7,25 +7,8 @@ import (
 	"testing"
 )
 
-// `isRuntimeHelperName` above and `is_runtime_helper_name` in
-// compiler/flatten.fern are the same rule in two compilers, and the
-// rule only works if they agree: `core/map`'s surface is declared as concrete
-// `_impl` functions because the language has no generic method on a generic
-// struct, every backend routes `map_new` / `__method_Map_get` onto them through
-// ONE alias table (ir.CodegenAliases), and a table cannot name a function two
-// ways. Before #9608 they did not agree — the self-host mangled the helpers to
-// `map____map_*` and native kept them bare — which is what stood between the
-// self-host and core/map's hash table.
-//
-// This reads the Fern predicate as data, so a row added on one side and not the
-// other fails a fast Go test instead of surfacing as a dangling label in a
-// backend. It builds nothing, for the same reason the caps and platforms parity
-// tests build nothing.
-
 const selfHostFlattenSrc = "../../../compiler/flatten.fern"
 
-// selfHostHelperRows pulls the string literals out of the Fern predicate's
-// body — its `map_new_impl` exact match and its two prefixes.
 func selfHostHelperRows(t *testing.T) []string {
 	t.Helper()
 	b, err := os.ReadFile(selfHostFlattenSrc)
@@ -38,9 +21,6 @@ func selfHostHelperRows(t *testing.T) []string {
 		t.Fatalf("no is_runtime_helper_name body found in %s — the extraction pattern has gone stale, "+
 			"which would make this test vacuous", selfHostFlattenSrc)
 	}
-	// Strip comments first, as the caps parity test's registry extraction does:
-	// a quoted name inside a comment in the predicate's body would otherwise
-	// read as a row and fail this test with a mismatch that names nothing real.
 	body := regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(m[1], "")
 	var out []string
 	for _, lit := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(body, -1) {
@@ -61,8 +41,6 @@ func TestSelfHostRuntimeHelperRowsMatch(t *testing.T) {
 			t.Fatalf("self-host predicate names %v, want %v", got, want)
 		}
 	}
-	// And each row is one this side exempts too, or the symbol the alias table
-	// names exists under only one compiler.
 	for _, probe := range []string{"map_new_impl", "__map_set_impl", "__mapiter_key_impl"} {
 		if !isRuntimeHelperName(probe) {
 			t.Errorf("the self-host keeps %q bare and this side mangles it", probe)
@@ -70,10 +48,6 @@ func TestSelfHostRuntimeHelperRowsMatch(t *testing.T) {
 	}
 }
 
-// The one row this side has and the self-host deliberately does not:
-// exempting `__method_*` there would move every stdlib method's symbol and buy
-// nothing for Map. Asserted rather than left as prose, so closing the gap is a
-// deliberate edit here and not a surprise.
 func TestSelfHostRuntimeHelperMethodRowIsNativeOnly(t *testing.T) {
 	if !isRuntimeHelperName("__method_Array_len") {
 		t.Fatal("this side stopped exempting __method_*; the self-host parity note above is now stale")
@@ -86,8 +60,6 @@ func TestSelfHostRuntimeHelperMethodRowIsNativeOnly(t *testing.T) {
 	}
 }
 
-// Neither side exempts an ordinary name, or module prefixing would stop
-// working altogether.
 func TestRuntimeHelperExemptionIsNarrow(t *testing.T) {
 	for _, probe := range []string{"map_new", "parse", "__fern_alloc", "mapper", "__mapped"} {
 		if isRuntimeHelperName(probe) {

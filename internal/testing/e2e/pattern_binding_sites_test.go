@@ -1,14 +1,3 @@
-// One pattern grammar at every irrefutable binding site (#5356). The five
-// sites the issue named all read `parseMatchPattern`, but each still kept its
-// own lookahead deciding whether a pattern was there at all, and the three
-// gates admitted different subsets: a `for` header took only a tuple head, and
-// neither `for` nor the `let` destructure took an `@` binding, which a
-// destructured parameter had.
-//
-// `atPatternHead` is now the one lookahead all of them ask, so a head admitted
-// at one site is admitted at all. What that opens up is exercised here: struct
-// patterns (with rename and `..`) and nested patterns in a `for` header, and
-// `@` bindings naming the whole value at the `for` and destructure sites.
 package e2e
 
 import (
@@ -38,7 +27,6 @@ function main(): i32 {
 		want: 46,
 	},
 	{
-		// `field: local` renames, exactly as in a match arm.
 		name: "for_struct_rename",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
@@ -50,7 +38,6 @@ function main(): i32 {
 		want: 34,
 	},
 	{
-		// `..` documents the fields left unbound.
 		name: "for_struct_rest",
 		src: `struct Point { x: i32, y: i32, z: i32 }
 function main(): i32 {
@@ -62,8 +49,6 @@ function main(): i32 {
 		want: 57,
 	},
 	{
-		// The element variable IS the whole value, so that is what the `@`
-		// binding names — the same placement a parameter's holder gets.
 		name: "for_at_struct",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
@@ -95,8 +80,6 @@ function main(): i32 {
 		want: 6,
 	},
 	{
-		// `_` is a discard at every binding site, so two of them in one
-		// pattern do not collide (#6346).
 		name: "for_struct_discard",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
@@ -108,9 +91,6 @@ function main(): i32 {
 		want: 7,
 	},
 	{
-		// The destructure's holding local already holds the whole value
-		// between the init's evaluation and the per-name loads, so an `@`
-		// binding names that rather than getting a slot of its own.
 		name: "var_at_struct",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
@@ -149,8 +129,6 @@ function main(): i32 {
 		want: 96,
 	},
 	{
-		// A string field is refcounted: the holder and the binding co-own it,
-		// and both are released on scope exit.
 		name: "at_struct_string_field",
 		src: `struct Named { id: i32, label: string }
 function main(): i32 {
@@ -218,9 +196,6 @@ func TestPatternBindingSitesWasm(t *testing.T) {
 	}
 }
 
-// A Map's key and value come off the entry cursor in separate columns, so no
-// whole value exists for an `@` binding to name. Admitting the head without
-// this check would bind nothing and leave the name undefined at its first use.
 func TestPatternBindingSitesMapAtRejected(t *testing.T) {
 	const src = `import "core/map";
 function main(): i32 {

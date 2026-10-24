@@ -1,6 +1,6 @@
-// A range is a core/iter Range value wherever it comes from — a local, a
-// function's return, a parenthesised `..=` — and `for` walks it as it walks
-// a range written in the loop head.
+
+
+
 import "core/iter";
 
 function upto(n: i32): iter.Range {

@@ -7,28 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64OffsetPairGas byte-checks the instruction forms the
-// arm64-darwin backend emits for *large* frames and runtime shifts, which
-// the GAS assembler originally did not handle:
-//
-//   - `stp Xt, Xt2, [Xn, #off]` / `ldp Xt, Xt2, [Xn, #off]` — the
-//     signed-offset (no-writeback) pair forms. asm_arm64 emits these to
-//     spill/reload many callee-saved registers at fixed offsets after a
-//     single `sub/add sp`. The old `ldp` handler assumed the 4-operand
-//     post-index form and indexed ops[3] out of range (bounds abort);
-//     the old `stp` handler silently mis-encoded the offset form as
-//     pre-index (writeback).
-//   - `sxtw Xd, Wn` — sign-extend word to doubleword (i32 -> i64).
-//   - `lsl/lsr/asr Rd, Rn, Rm` — the variable (register) shift forms
-//     (LSLV/LSRV/ASRV), 64- and 32-bit. The old `lsl`/`lsr` handlers only
-//     parsed the `#imm` form (mis-encoding the register form); `asr` was
-//     wholly unknown.
-//   - `eor Rd, Rn, Rm` (register, 64/32-bit) and `eor Xd, Xn, #imm` (the
-//     logical-immediate boolean-not idiom) — both were unknown; the
-//     immediate goes through the same verified-bitmask path as `and #imm`.
-//
-// Expected bytes pinned against llvm-mc. Run through the self-host wasm
-// pipeline; exit 0 = all pass, else the 1-based failing check id.
 func TestSelfHostArm64OffsetPairGas(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 offset-pair gas e2e")

@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// writeConcatDynFixture is writeConcatFixture with a `dyn` call whose trait,
-// dispatch site and implementers sit in different units: shapes.fern declares
-// the trait and the function that calls through it, and the entry declares
-// the two structs implementing it. A unit's emit builds a dispatch chain from
-// the functions it can see, so the chain in shapes' unit has an arm only if
-// the emit sees the whole program's functions, not its own unit's (#10891);
-// with only its own, the chain is empty and the call lands on the no-arm
-// trap (exit 134). The padding keeps the program in the over-budget
-// per-module concat band, the route asm_modload_run takes on its own for a
-// program this size; TestSelfHostPerModuleDynDispatchCrossModule drives the
-// explicit emit-all route.
 func writeConcatDynFixture(t *testing.T, dir string) string {
 	t.Helper()
 	const nMod, nFn = 7, 100
@@ -80,11 +69,6 @@ func writeConcatDynFixture(t *testing.T, dir string) string {
 	return entryPath
 }
 
-// TestSelfHostPerModuleConcatDynX86_64 pins that a `dyn` call dispatches
-// across units in the per-module concat: the trait and the call in one unit,
-// the implementers in another, both arms and both method slots. The test
-// program exits 2 when the dispatch answers wrong, and the no-arm trap is
-// exit 134.
 func TestSelfHostPerModuleConcatDynX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -105,8 +89,6 @@ func TestSelfHostPerModuleConcatDynX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPerModuleConcatDynArm64 is the arm64 leg, through the x86-64
-// driver's cross-emit as TestSelfHostPerModuleConcatArm64 runs it.
 func TestSelfHostPerModuleConcatDynArm64(t *testing.T) {
 	hostGcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

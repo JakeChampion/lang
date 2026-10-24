@@ -2,17 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// The two shapes #11073 found the self-host refusing under E068 while native
-// compiled them and ran them without allocating. Each program checks its own
-// allocation with __heap_bump_bytes, so a compile that succeeds but builds a
-// fresh box exits with a code naming that, not 0.
-
-// R7 of docs/REUSE-CONTRACT.md: `xs.map(f)` over an `own` i64 array whose
-// element type does not change writes through the donor's buffer. 200 maps of
-// a 64-element array must not move the bump cursor (90-92). The second half
-// is the soundness pin: `b` still holds the buffer `a` is handed in, so the
-// donor reaches the uniqueness test shared and must be copied, leaving `b`
-// unchanged (93-95).
 const selfHostFipOwnedMapSrc = `import "std/array";
 
 fip function dbl(x: i64): i64 { return x * (2 as i64); }
@@ -49,9 +38,6 @@ function main(): i32 {
 }
 `
 
-// A receiver read after the map does not die at the call, so R7 declines and
-// the map builds a fresh array: the receiver's elements must read back as
-// they were (1), and the result must be the mapped one (2).
 const selfHostOwnedMapReceiverLiveSrc = `import "std/array";
 
 function inc(x: i64): i64 { return x + (1 as i64); }
@@ -68,13 +54,6 @@ function main(): i32 {
 }
 `
 
-// The consuming match (R4): each Cons is rebuilt in the box of the Cons it
-// matched. 100 maps over a 50-cell list must not move the bump cursor (999)
-// and must sum to 6275 (998). The self-host turns the recursion into a loop
-// (tail recursion modulo cons), so the matched cell dies at its payload read
-// and the rebuilt one is constructed later in the same block. The shared half:
-// `b` holds the list `a` is handed in, so every cell reaches the uniqueness
-// test shared and is copied, leaving `b` summing to its original 15 (997).
 const selfHostFbipMapSrc = `enum List { Cons(i32, List), Nil }
 fbip function map_inc(own xs: List): List {
     match (xs) {
@@ -111,14 +90,6 @@ function main(): i32 {
     return 0;
 }`
 
-// A ragged enum, whose payloadful variants differ in field count, under the
-// same consuming match. The self-host pairs per arm: the box a Fork's payload
-// read names is a Fork's size, so the rebuilt Fork takes it, and the rebuilt
-// Tip takes the matched Tip's. Native's E068 refuses this program, because its
-// pairing requires one payloadful box size for the whole enum (R4 in
-// docs/REUSE-CONTRACT.md). After a first bump builds the 5-cell tree, 100 more
-// must not move the bump cursor (989) and must leave the leaves summing to 306
-// (988).
 const selfHostFbipRaggedSrc = `enum Tree { Tip(i32), Fork(Tree, Tree) }
 fbip function bump(own t: Tree): Tree {
     match (t) {

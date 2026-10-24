@@ -11,12 +11,6 @@ import (
 	"testing"
 )
 
-// TestStatFileContext pins `%C` against the host's own answer rather than the
-// oracle's. CI's GNU is built --without-selinux, where getfilecon is gnulib's
-// stub and every file is ENOTSUP; a libselinux build (any distribution's)
-// reads `security.selinux`, which is what this build does. So the expected
-// output comes from lgetxattr(2) itself: the label up to its NUL on an
-// SELinux host, and `?` with the errno's text everywhere else.
 func TestStatFileContext(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "f")
@@ -61,8 +55,6 @@ func TestStatFileContext(t *testing.T) {
 	}
 }
 
-// hostFileContext is what getfilecon(3) answers for path: the label up to
-// its NUL, or "?" and the errno's text.
 func hostFileContext(t *testing.T, path string) (string, string) {
 	t.Helper()
 	buf := make([]byte, 4096)

@@ -1,24 +1,9 @@
-// sort.fern — sort lines of text, like `sort(1)`.
-//
-//   -r   reverse the result order
-//   -n   compare as leading integers (numeric sort)
-//   -u   drop duplicate lines after sorting
-//   -f   fold case (case-insensitive compare)
-//
-//   $ printf 'banana\napple\ncherry\n' | ./sort
-//   apple
-//   banana
-//   cherry
-//
-// Showcases: core/cmp's generic `sort`, a case-insensitive `cmp.sort_by`
-// over std/string's `cmp_ignore_ascii_case`, and post-sort dedupe.
 import "std/string";
 import "std/i32";
 import "std/io";
 import "core/cmp";
 import "std/array";
 
-// fold_order compares two lines with ASCII case folded.
 function fold_order(a: string, b: string): i32 {
   return a.cmp_ignore_ascii_case(b);
 }
@@ -73,7 +58,6 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  // Gather every line from every input.
   let lines: string[] = [];
   let j: i32 = 0;
   while (j < inputs.len()) {
@@ -88,15 +72,12 @@ function main(): i32 {
 
   let sorted: string[] = [];
   if (o.numeric) {
-    // Key on the leading integer, but emit the original lines. We
-    // do a simple selection by stably pairing keys to lines.
     let keys: i32[] = [];
     let m: i32 = 0;
     while (m < lines.len()) {
       keys = keys.append(leading_int(lines[m]));
       m = m + 1;
     }
-    // Insertion sort keeping lines in step with keys (stable).
     let a: i32 = 1;
     while (a < lines.len()) {
       let kv: i32 = keys[a];

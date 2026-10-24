@@ -1,22 +1,4 @@
-// std/http/multipart — a `multipart/form-data` body (RFC 7578) read part
-// by part from the request's body stream, so a file part is never held
-// whole unless the handler asks for it, under caps on the part count, the
-// bytes of one part, the bytes of the body and the bytes of a part's
-// headers; and the builder a client makes such a body with.
-//
-//     let r: multipart.Reader = multipart.open(req, multipart.limits())?;
-//     match (r.next()?) {
-//       NextPart(part, r1) => {
-//         // part.name, part.filename, part.content_type, part.headers
-//         let (bytes, done, r2) = r1.read(65536)?;   // the part's content, a piece at a time
-//         let (rest, r3) = r2.content()?;             // or the rest of it, under the part cap
-//       },
-//       NoMoreParts => {}
-//     }
-//
-// `next` skips whatever of the current part was not read, so a handler
-// that wants one part reads only that one. `fields` is every part without
-// a filename as text, for a form with no file in it.
+// This module reads and writes multipart form data under RFC 7578.
 
 import "std/http";
 import "std/headers";
@@ -29,13 +11,8 @@ import "core/int";
 import "std/error";
 import "core/cmp";
 
-// Limits — the caps: parts in a body, bytes of one part's content, bytes
-// of the whole body read, and bytes of one part's header block.
 pub struct Limits { parts: i32, part_bytes: i32, total_bytes: i32, header_bytes: i32 }
 
-// limits() — the caps from `http.http_limits()`: as many parts as header
-// fields, a part and the body each as large as a body, a part's headers as
-// large as a header block.
 pub function limits(): Limits {
   return limits_from(http.http_limits());
 }
@@ -110,8 +87,6 @@ impl http.ToResponse for MultipartError {
   }
 }
 
-// __status: 415 for the wrong media type, 400 for a body this module
-// cannot read, 413 past a cap on content, 431 past the cap on headers.
 function __status(e: MultipartError): i32 {
   match (e) {
     NotMultipart(_) => {
@@ -133,14 +108,8 @@ function __status(e: MultipartError): i32 {
   return 500;
 }
 
-// Part — one part's head: the field name and, for a file, its name and
-// media type as the sender gave them ("" when absent), and every header.
 pub struct Part { name: string, filename: string, content_type: string, headers: HeaderMap }
 
-// Reader — the body's cursor: the stream, the delimiter (CRLF, two
-// hyphens, the boundary), the bytes pulled and not yet placed, whether the
-// stream is spent, the caps and the counts against them, and where the
-// cursor stands: inside a part or just past a delimiter.
 pub struct Reader { s: Stream, delim: u8[], carry: u8[], eof: boolean, limits: Limits, parts: i32, total: i32, part_total: i32, in_part: boolean, after_delim: boolean }
 
 pub enum Step {
@@ -148,10 +117,6 @@ pub enum Step {
   NoMoreParts,
 }
 
-// open — a reader over the request's body: 415 unless the Content-Type is
-// multipart/form-data, 400 when it names no boundary. The reader starts
-// with a CRLF in hand, so a body opening with its boundary and one with a
-// preamble before it are read alike.
 pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartError] {
   let ct: string = "";
   match (req.headers.get("content-type")) {
@@ -170,8 +135,6 @@ pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartErr
   return Ok(Reader { s: req.body_stream(), delim: ("\r\n--" + boundary).bytes(), carry: [13 as u8, 10 as u8], eof: false, limits: limits, parts: 0, total: 0, part_total: 0, in_part: false, after_delim: false });
 }
 
-// (r).next() — the next part's head, the rest of the current part
-// skipped; `NoMoreParts` past the closing boundary.
 pub function (r: Reader) next(): Result[Step, MultipartError] {
   let cur: Reader = r;
   if (!cur.after_delim) {
@@ -186,12 +149,10 @@ pub function (r: Reader) next(): Result[Step, MultipartError] {
   return __opened(head.0, head.1);
 }
 
-// __closing: the two hyphens after a delimiter that close the body.
 function __closing(r: Reader): boolean {
   return r.carry.len() >= 2 && r.carry[0] == 45 as u8 && r.carry[1] == 45 as u8;
 }
 
-// __opened counts the part against the cap and enters it.
 function __opened(part: Part, r: Reader): Result[Step, MultipartError] {
   if (r.parts + 1 > r.limits.parts) {
     return Err(TooManyParts(r.limits.parts));
@@ -199,9 +160,6 @@ function __opened(part: Part, r: Reader): Result[Step, MultipartError] {
   return Ok(NextPart(part, Reader { ...r, parts: r.parts + 1, part_total: 0, in_part: true, after_delim: false }));
 }
 
-// (r).read(n) — up to `n` bytes of the current part's content, whether
-// that was the last of it, and the reader; nothing and true outside a
-// part.
 pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), MultipartError] {
   let none: u8[] = [];
   if (!r.in_part || n <= 0) {
@@ -225,8 +183,6 @@ pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), Multipart
   return Ok((none, true, cur));
 }
 
-// __take hands out up to `n` of the first `limit` bytes of the carry,
-// consuming the delimiter when that empties the part.
 function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), MultipartError] {
   let take: i32 = n;
   if (take > limit) {
@@ -245,8 +201,6 @@ function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), 
   return Ok((bytes, false, Reader { ...r, carry: rest, part_total: r.part_total + take }));
 }
 
-// (r).content() — the rest of the current part's content, under the
-// part cap.
 pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError] {
   let out: u8[] = [];
   let cur: Reader = r;
@@ -260,8 +214,6 @@ pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError] {
   return Ok((out, cur));
 }
 
-// fields — every part without a filename, as text, each name to its
-// values in order; a part with a filename is skipped.
 pub function fields(req: HttpRequest, limits: Limits): Result[Map[string, string[]], MultipartError] {
   let m: Map[string, string[]] = map_new(8);
   let cur: Reader = open(req, limits)?;
@@ -303,7 +255,6 @@ function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[
   return Err(MultipartBody(http.NotUtf8));
 }
 
-// __to_delim discards up to and through the next delimiter.
 function __to_delim(r: Reader): Result[Reader, MultipartError] {
   let cur: Reader = r;
   while (true) {
@@ -323,8 +274,6 @@ function __to_delim(r: Reader): Result[Reader, MultipartError] {
   return Ok(cur);
 }
 
-// __boundary_line_end consumes the transport padding and the CRLF that
-// end a boundary line.
 function __boundary_line_end(r: Reader): Result[Reader, MultipartError] {
   let cur: Reader = r;
   let i: i32 = 0;
@@ -345,8 +294,6 @@ function __boundary_line_end(r: Reader): Result[Reader, MultipartError] {
   return Ok(cur);
 }
 
-// __part_head reads a part's header block, CRLF-terminated lines up to
-// an empty one, under the header cap.
 function __part_head(r: Reader): Result[(Part, Reader), MultipartError] {
   let cur: Reader = r;
   let h: HeaderMap = headers.header_map_new();
@@ -363,8 +310,6 @@ function __part_head(r: Reader): Result[(Part, Reader), MultipartError] {
   return Err(MalformedMultipart("a part's headers are cut short"));
 }
 
-// __line reads one CRLF-terminated line of at most `room` bytes plus its
-// CRLF, without the CRLF.
 function __line(r: Reader, room: i32): Result[(string, Reader), MultipartError] {
   let cur: Reader = r;
   while (true) {
@@ -397,8 +342,6 @@ function __header(h: HeaderMap, line: string): Result[HeaderMap, MultipartError]
   return Ok(h.append(line.slice_snap(0, colon).trim(), line.slice_snap(colon + 1, line.len()).trim()));
 }
 
-// __part reads the field from the Content-Disposition and the media type
-// from the Content-Type.
 function __part(h: HeaderMap): Part {
   let disposition: string = "";
   match (h.get("content-disposition")) {
@@ -417,7 +360,6 @@ function __part(h: HeaderMap): Part {
   return Part { name: __param(disposition, "name"), filename: __param(disposition, "filename"), content_type: ct, headers: h };
 }
 
-// __media_type is the type before any parameter, lowercased.
 function __media_type(ct: string): string {
   let kind: string = ct;
   if let Some(semi) = ct.index_of(";") {
@@ -426,9 +368,6 @@ function __media_type(ct: string): string {
   return kind.trim().to_lower();
 }
 
-// __param is a header value's parameter by name, its quotes removed and
-// a backslash escape inside them undone; "" when absent. A `;` inside
-// the quotes is part of the value.
 function __param(value: string, name: string): string {
   let bs: u8[] = value.bytes();
   let i: i32 = __param_end(bs, 0) + 1;
@@ -445,9 +384,6 @@ function __param(value: string, name: string): string {
   return "";
 }
 
-// __param_end is the index of the `;` ending the parameter at `from`,
-// skipping quoted strings and the pairs escaped inside them; the length
-// when it is the last.
 function __param_end(bs: u8[], from: i32): i32 {
   let i: i32 = from;
   let quoted: boolean = false;
@@ -486,7 +422,6 @@ function __unquote(v: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-// __need pulls until the carry holds `n` bytes or the stream is spent.
 function __need(r: Reader, n: i32): Result[Reader, MultipartError] {
   let cur: Reader = r;
   while (cur.carry.len() < n && !cur.eof) {
@@ -495,9 +430,6 @@ function __need(r: Reader, n: i32): Result[Reader, MultipartError] {
   return Ok(cur);
 }
 
-// __pull appends the stream's next piece to the carry, counting it
-// against the body cap; a stream that ends with a fault is the body's
-// own error.
 function __pull(r: Reader): Result[Reader, MultipartError] {
   let got: (u8[], Stream) = r.s.read_n(4096);
   if (got.0.len() == 0) {
@@ -512,8 +444,6 @@ function __pull(r: Reader): Result[Reader, MultipartError] {
   return Ok(Reader { ...r, s: got.1, carry: r.carry.concat(got.0), total: r.total + got.0.len() });
 }
 
-// __find is the index of `needle` in `hay` at or after `from`, -1 when
-// absent.
 function __find(hay: u8[], needle: u8[], from: i32): i32 {
   let i: i32 = from;
   while (i + needle.len() <= hay.len()) {
@@ -529,52 +459,38 @@ function __find(hay: u8[], needle: u8[], from: i32): i32 {
   return 0 - 1;
 }
 
-// Builder — a multipart/form-data body under construction, for a client:
-// fields and files in the order added, closed by `bytes`.
 pub struct Builder { boundary: string, body: u8[] }
 
-// builder() — a builder with a random boundary.
 pub function builder(): Builder {
   return builder_with(hex.encode(random_bytes(16)));
 }
 
-// builder_with(boundary) — a builder with the boundary given, for a body
-// that must come out the same twice.
 pub function builder_with(boundary: string): Builder {
   return Builder { boundary: boundary, body: [] };
 }
 
-// (b).field(name, value) — a text field.
 pub function (b: Builder) field(name: string, value: string): Builder {
   let head: string = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"\r\n\r\n";
   return Builder { ...b, body: b.body.concat(head.bytes()).concat(value.bytes()).concat([13 as u8, 10 as u8]) };
 }
 
-// (b).file(name, filename, content_type, content) — a file part.
 pub function (b: Builder) file(name: string, filename: string, content_type: string, content: u8[]): Builder {
   let head: string = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"; filename=\"" + __escape(filename) + "\"\r\nContent-Type: " + content_type + "\r\n\r\n";
   return Builder { ...b, body: b.body.concat(head.bytes()).concat(content).concat([13 as u8, 10 as u8]) };
 }
 
-// (b).content_type() — the header value naming the boundary.
 pub function (b: Builder) content_type(): string {
   return "multipart/form-data; boundary=" + b.boundary;
 }
 
-// (b).bytes() — the body, closed.
 pub function (b: Builder) bytes(): u8[] {
   return b.body.concat(("--" + b.boundary + "--\r\n").bytes());
 }
 
-// (b).request(method, path) — a request carrying the body and its
-// Content-Type, for a handler driven directly.
 pub function (b: Builder) request(method: string, path: string): HttpRequest {
   return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(b.bytes()), headers: headers.header_map_new().set("content-type", b.content_type()), trailers: headers.header_map_new() };
 }
 
-// __escape writes a name as a browser does inside the quotes: a quote,
-// CR and LF percent-encoded, a backslash doubled so the reader's unescape
-// gives it back.
 function __escape(s: string): string {
   return s.replace("\\", "\\\\").replace("\"", "%22").replace("\r", "%0D").replace("\n", "%0A");
 }

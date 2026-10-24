@@ -1,5 +1,5 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
+
+
 function make(i: i64): Result[i64, i64] {
     if (i % 2i64 == 0i64) { return Ok(i); }
     return Err(i);

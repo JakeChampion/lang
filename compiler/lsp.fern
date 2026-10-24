@@ -1,31 +1,14 @@
-// compiler/lsp.fern — the wire half of `fern -lsp`, the self-host
-// language server (#6641): JSON-RPC 2.0 messages framed by `Content-Length`
-// headers on stdin and stdout, and the LSP shapes the server answers with.
-// What a message asks for — checking a document, formatting one, describing a
-// name in it — is fern.fern's business; this module only reads and writes the
-// protocol, so it needs nothing of the compiler but util.
-//
-// Positions are where the two sides disagree. Fern counts 1-based lines and
-// 1-based UTF-8 byte columns; LSP counts 0-based lines and 0-based UTF-16
-// code units, its default positionEncoding. The two agree only on an ASCII
-// line, so every position crosses through utf16_col, as native's do (#8468).
-
 import "std/json";
 import "./util";
 
-// Input is stdin and whatever has been read from it past the last frame.
 pub struct Input { r: Reader, pending: string }
 
 pub function stdin_input(): Input {
   return Input { r: stdin(), pending: "" };
 }
 
-// Frame is one read: a message body, or the end of the session — `done`, with
-// `err` saying why when the stream could not be framed rather than closed.
 pub struct Frame { inp: Input, body: string, done: boolean, err: string }
 
-// fill reads one more chunk of input; false at end of input or on a read
-// error, either of which ends the session.
 function fill(inp: Input): (Input, boolean) {
   match (inp.r.read_chunk_bytes(65536)) {
     Ok(chunk) => {
@@ -41,9 +24,6 @@ function fill(inp: Input): (Input, boolean) {
   return (inp, false);
 }
 
-// read_frame reads one message. Input that ends between messages, or inside a
-// header block, is a client hanging up; input that ends inside a body it
-// announced is a broken stream.
 pub function read_frame(inp: Input): Frame {
   let at: i32 = util.index_of_sub(inp.pending, "\r\n\r\n");
   while (at < 0) {
@@ -71,9 +51,6 @@ pub function read_frame(inp: Input): Frame {
   return Frame { inp: Input { r: inp.r, pending: rest }, body: body, done: false, err: "" };
 }
 
-// content_length is the value of a header block's Content-Length, or -1 when
-// it has none. Header names are case-insensitive; every other header (the
-// spec's Content-Type is the only one) is ignored.
 function content_length(headers: string): i32 {
   let n: i32 = 0 - 1;
   let rest: string = headers;
@@ -112,13 +89,8 @@ function lower_ascii(s: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-// Message is one decoded JSON-RPC message. `id` is a request's id as JSON
-// text, echoed back verbatim in the response, and empty on a notification.
 pub struct Message { method: string, id: string, params: json.JsonValue }
 
-// parse_message decodes a frame body, or None when it is not JSON or has no
-// method: a message without one is a response, and this server sends no
-// requests to be answered.
 pub function parse_message(body: string): Option[Message] {
   match (json.json_parse(body)) {
     Some(v) => {
@@ -142,7 +114,6 @@ pub function parse_message(body: string): Option[Message] {
   return None;
 }
 
-// get_value is v's member `key`, or null when v has none.
 pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
   match (json.json_get(v, key)) {
     Some(m) => {
@@ -155,7 +126,6 @@ pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
   return JNull;
 }
 
-// get_string is v's string member `key`, or "" when v has none.
 pub function get_string(v: json.JsonValue, key: string): string {
   match (json.json_get_string(v, key)) {
     Some(s) => {
@@ -168,20 +138,14 @@ pub function get_string(v: json.JsonValue, key: string): string {
   return "";
 }
 
-// document_uri is the `textDocument.uri` every document request and
-// notification names.
 pub function document_uri(params: json.JsonValue): string {
   return get_string(get_value(params, "textDocument"), "uri");
 }
 
-// position is a position request's 0-based line and UTF-16 character, or
-// (-1, -1) when it carries none.
 pub function position(params: json.JsonValue): (i32, i32) {
   return position_in(get_value(params, "position"));
 }
 
-// position_in is the 0-based line and UTF-16 character of the Position `p`,
-// or (-1, -1) when it is not one.
 function position_in(p: json.JsonValue): (i32, i32) {
   match (json.json_get_i32(p, "line")) {
     Some(line) => {
@@ -197,8 +161,6 @@ function position_in(p: json.JsonValue): (i32, i32) {
   return (0 - 1, 0 - 1);
 }
 
-// request_range is a range request's start and end, each a 0-based line and
-// UTF-16 character, or all -1 when it carries none.
 pub function request_range(params: json.JsonValue): (i32, i32, i32, i32) {
   let r: json.JsonValue = get_value(params, "range");
   let (l0, c0) = position_in(get_value(r, "start"));
@@ -209,8 +171,6 @@ pub function request_range(params: json.JsonValue): (i32, i32, i32, i32) {
   return (l0, c0, l1, c1);
 }
 
-// changed_text is a didChange's new document text: the last content change,
-// which under full sync is the whole document. None when there is none.
 pub function changed_text(params: json.JsonValue): Option[string] {
   match (json.json_get_array(params, "contentChanges")) {
     Some(cs) => {
@@ -226,19 +186,14 @@ pub function changed_text(params: json.JsonValue): Option[string] {
   return None;
 }
 
-// send writes one message, framed. Content-Length counts bytes, which is what
-// a Fern string's len() is.
 pub function send(body: string): void {
   write("Content-Length: " + util.i32_to_string(body.len()) + "\r\n\r\n" + body);
 }
 
-// response answers request `id` with `result`, a JSON value.
 pub function response(id: string, result: string): string {
   return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":" + result + "}";
 }
 
-// method_not_found answers a request for a method this server does not
-// implement (JSON-RPC's -32601).
 pub function method_not_found(id: string, method: string): string {
   return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32601,\"message\":" + quote("unknown method: " + method) + "}}";
 }
@@ -251,11 +206,6 @@ function quote(s: string): string {
   return "\"" + json.json_escape(s) + "\"";
 }
 
-// initialize_result advertises what this server does: full-document sync
-// (every didChange carries the whole text), diagnostics, formatting, hover,
-// go-to-definition, completion (asked again after a `.`), signature help (after
-// a `(` or `,`), the document's outline, inlay hints, quick fixes, references,
-// renaming, and semantic tokens of the types semantic_token_types() lists.
 pub function initialize_result(): string {
   let types: string[] = [];
   for t in semantic_token_types() {
@@ -269,18 +219,12 @@ pub function initialize_result(): string {
   return "{\"capabilities\":{" + caps + "},\"serverInfo\":{\"name\":\"fern\"}}";
 }
 
-// semantic_token_types is the legend of semantic token types: a token's type
-// is its index here.
 pub function semantic_token_types(): string[] {
   return ["function", "method", "struct", "enum", "enumMember", "parameter", "variable", "property", "type", "keyword", "namespace"];
 }
 
-// SemanticToken is a token to send: its 0-based line, its start and length in
-// UTF-16 units, and its type's index in semantic_token_types().
 pub struct SemanticToken { line: i32, start: i32, len: i32, kind: i32 }
 
-// semantic_tokens is SemanticTokens holding `toks` in position order, each
-// token's line and start relative to the token before it, as LSP encodes them.
 pub function semantic_tokens(toks: SemanticToken[]): string {
   let out: string[] = [];
   let line: i32 = 0;
@@ -296,7 +240,6 @@ pub function semantic_tokens(toks: SemanticToken[]): string {
   return "{\"data\":" + json_array(out) + "}";
 }
 
-// sorted_tokens is `toks` in position order, by merging sorted halves.
 function sorted_tokens(toks: SemanticToken[]): SemanticToken[] {
   if (toks.len() <= 1) {
     return toks;
@@ -329,13 +272,10 @@ function token_range(toks: SemanticToken[], from: i32, to: i32): SemanticToken[]
   return out;
 }
 
-// completion_list is a CompletionList holding every item there is.
 pub function completion_list(items: string[]): string {
   return "{\"isIncomplete\":false,\"items\":" + json_array(items) + "}";
 }
 
-// completion_item is a CompletionItem of CompletionItemKind `kind`; an empty
-// `detail` is left out.
 pub function completion_item(label: string, kind: i32, detail: string): string {
   let out: string = "{\"label\":" + quote(label) + ",\"kind\":" + util.i32_to_string(kind);
   if (detail.len() > 0) {
@@ -344,10 +284,6 @@ pub function completion_item(label: string, kind: i32, detail: string): string {
   return out + "}";
 }
 
-// signature_help is a SignatureHelp offering one signature, `label`, whose
-// parameters are its bytes `starts[i]` to `ends[i]`, with `active` the one the
-// cursor is on. A parameter is named by its offsets in UTF-16 units rather
-// than its text, which another parameter of the same type would share.
 pub function signature_help(label: string, starts: i32[], ends: i32[], active: i32): string {
   let params: string[] = [];
   let i: i32 = 0;
@@ -362,8 +298,6 @@ pub function signature_help(label: string, starts: i32[], ends: i32[], active: i
   return "{\"signatures\":[" + sig + "}],\"activeSignature\":0,\"activeParameter\":" + util.i32_to_string(active) + "}";
 }
 
-// document_symbol is a DocumentSymbol of SymbolKind `kind`; an empty `detail`
-// and no `children` are left out.
 pub function document_symbol(name: string, detail: string, kind: i32, range: string, selection: string, children: string[]): string {
   let out: string = "{\"name\":" + quote(name);
   if (detail.len() > 0) {
@@ -376,14 +310,10 @@ pub function document_symbol(name: string, detail: string, kind: i32, range: str
   return out + "}";
 }
 
-// inlay_hint is a type InlayHint showing `label` at the 0-based `line` and
-// UTF-16 `character`.
 pub function inlay_hint(line: i32, character: i32, label: string): string {
   return "{\"position\":" + position_json(line, character) + ",\"label\":" + quote(label) + ",\"kind\":1}";
 }
 
-// hover_result is a Hover showing `code` as a Fern code block, followed by
-// `doc` when there is one, over `range`.
 pub function hover_result(code: string, doc: string, range: string): string {
   let value: string = "```fern\n" + code + "\n```";
   if (doc.len() > 0) {
@@ -392,18 +322,14 @@ pub function hover_result(code: string, doc: string, range: string): string {
   return "{\"contents\":{\"kind\":\"markdown\",\"value\":" + quote(value) + "},\"range\":" + range + "}";
 }
 
-// location is a Location: `range` in the document `uri` names.
 pub function location(uri: string, range: string): string {
   return "{\"uri\":" + quote(uri) + ",\"range\":" + range + "}";
 }
 
-// publish_diagnostics replaces the diagnostics the client shows for `uri`
-// with `diagnostics`, a JSON array.
 pub function publish_diagnostics(uri: string, diagnostics: string): string {
   return notification("textDocument/publishDiagnostics", "{\"uri\":" + quote(uri) + ",\"diagnostics\":" + diagnostics + "}");
 }
 
-// json_array joins already-encoded JSON values into an array.
 pub function json_array(items: string[]): string {
   let out: string = "[";
   let i: i32 = 0;
@@ -417,13 +343,6 @@ pub function json_array(items: string[]): string {
   return out + "]";
 }
 
-// diagnostic is one LSP Diagnostic in document `src`, at Fern's 1-based
-// `line` and byte `col`. With no line it covers nothing at the start of the
-// document; otherwise it covers the source character the position names,
-// or an empty range at EOF. `code` is sent only when it
-// is a real diagnostic code — the code a client deep-links, so the checker's
-// "type" marker is not one. `data`, when not empty, is a fix (fix_data) for a
-// code action to apply.
 pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: string, warning: boolean, data: string): string {
   return diagnostic_with_related(src, line, col, code, message, warning, data, []);
 }
@@ -460,16 +379,10 @@ pub function related_information(uri: string, src: Text, r: util.Related): strin
   return "{\"location\":{\"uri\":" + quote(uri) + ",\"range\":" + range + "},\"message\":" + quote(r.message) + "}";
 }
 
-// fix_data is a diagnostic's `data` for a fix replacing `range` with
-// `new_text`, which a client echoes back in a codeAction request: the request
-// alone then says what to apply.
 pub function fix_data(range: string, new_text: string, title: string): string {
   return "{\"range\":" + range + ",\"newText\":" + quote(new_text) + ",\"title\":" + quote(title) + "}";
 }
 
-// code_actions answers a codeAction request: a quick fix for each diagnostic
-// in its context whose `data` is a fix_data, editing the request's document.
-// The diagnostic is named in the action as the client sent it.
 pub function code_actions(params: json.JsonValue): string {
   let uri: string = document_uri(params);
   let out: string[] = [];
@@ -491,13 +404,10 @@ pub function code_actions(params: json.JsonValue): string {
   return json_array(out);
 }
 
-// text_edit is a TextEdit replacing `range` with `text`.
 pub function text_edit(range: string, text: string): string {
   return "{\"range\":" + range + ",\"newText\":" + quote(text) + "}";
 }
 
-// include_declaration is a references request's
-// `context.includeDeclaration`, true when it is not given.
 pub function include_declaration(params: json.JsonValue): boolean {
   match (json.json_get_bool(get_value(params, "context"), "includeDeclaration")) {
     Some(b) => {
@@ -508,8 +418,6 @@ pub function include_declaration(params: json.JsonValue): boolean {
   return true;
 }
 
-// workspace_edit is a WorkspaceEdit making `edits[i]`, TextEdits, in the
-// document `uris[i]` names.
 pub function workspace_edit(uris: string[], edits: string[][]): string {
   let out: string = "{\"changes\":{";
   let i: i32 = 0;
@@ -523,20 +431,15 @@ pub function workspace_edit(uris: string[], edits: string[][]): string {
   return out + "}}";
 }
 
-// span_range is the range of the `len` bytes at Fern's 1-based `line` and
-// byte `col` of `src`, which lie on one line.
 pub function span_range(src: Text, line: i32, col: i32, len: i32): string {
   let text: string = line_text(src, line);
   return range_json(line - 1, utf16_col(text, col), line - 1, utf16_col(text, col + len));
 }
 
-// lsp_position is the 0-based line and UTF-16 character of Fern's 1-based
-// `line` and byte `col` of `src`.
 pub function lsp_position(src: Text, line: i32, col: i32): (i32, i32) {
   return (line - 1, utf16_col(line_text(src, line), col));
 }
 
-// span_between is the range from Fern's `l0`, `c0` to `l1`, `c1` of `src`.
 pub function span_between(src: Text, l0: i32, c0: i32, l1: i32, c1: i32): string {
   return range_json(l0 - 1, utf16_col(line_text(src, l0), c0), l1 - 1, utf16_col(line_text(src, l1), c1));
 }
@@ -549,9 +452,6 @@ function position_json(line: i32, character: i32): string {
   return "{\"line\":" + util.i32_to_string(line) + ",\"character\":" + util.i32_to_string(character) + "}";
 }
 
-// whole_document_edit is a TextEdit replacing all of `src` with `text`. The
-// end position is the last line's length in UTF-16 units, since the client
-// replaces exactly that range and the last line may hold non-ASCII.
 pub function whole_document_edit(src: string, text: string): string {
   let t: Text = text_of(src);
   let last: i32 = t.starts.len() - 1;
@@ -559,8 +459,6 @@ pub function whole_document_edit(src: string, text: string): string {
   return text_edit(range_json(0, 0, last, utf16_units(tail, tail.len())), text);
 }
 
-// Text is a document's text and the offset each of its lines starts at, so a
-// position on any line converts without scanning the lines before it.
 pub struct Text { src: string, starts: i32[] }
 
 pub function text_of(src: string): Text {
@@ -575,9 +473,6 @@ pub function text_of(src: string): Text {
   return Text { src: src, starts: starts };
 }
 
-// line_text is the text's 1-based line n without its line ending, or "" when
-// it has no such line — which makes a stale position convert as ASCII rather
-// than fail.
 pub function line_text(t: Text, n: i32): string {
   if (n < 1 || n > t.starts.len()) {
     return "";
@@ -593,8 +488,6 @@ pub function line_text(t: Text, n: i32): string {
   return slice_unchecked(t.src, start, end) + "";
 }
 
-// utf16_col converts a 1-based byte column within `line` to the 0-based UTF-16
-// offset LSP counts. A column past the end of the line clamps to the end.
 pub function utf16_col(line: string, col: i32): i32 {
   if (col <= 1) {
     return 0;
@@ -606,10 +499,6 @@ pub function utf16_col(line: string, col: i32): i32 {
   return utf16_units(line, b);
 }
 
-// byte_col converts a 0-based UTF-16 offset within `line` to the 1-based byte
-// column Fern counts, the inverse of utf16_col. An offset past the end of the
-// line clamps to just past it, and one inside a surrogate pair to the start
-// of its scalar.
 pub function byte_col(line: string, units: i32): i32 {
   let u: i32 = 0;
   let i: i32 = 0;
@@ -634,9 +523,6 @@ pub function byte_col(line: string, units: i32): i32 {
   return line.len() + 1;
 }
 
-// utf16_units counts the UTF-16 code units in the first `n` bytes of `s`: one
-// per scalar, and a second for one outside the BMP, which is a 4-byte UTF-8
-// sequence. A continuation byte (10xxxxxx) starts no scalar.
 function utf16_units(s: string, n: i32): i32 {
   let units: i32 = 0;
   let i: i32 = 0;
@@ -653,10 +539,6 @@ function utf16_units(s: string, n: i32): i32 {
   return units;
 }
 
-// uri_path is the filesystem path a file:// URI names, percent-decoded, or ""
-// for any other URI (an untitled buffer, the playground's opaque ones) and
-// for one whose escapes do not decode. The authority, if any, is ignored, as
-// it is by native's url.Parse reading.
 pub function uri_path(uri: string): string {
   let scheme: string = "file://";
   if (uri.len() <= scheme.len() || slice_unchecked(uri, 0, scheme.len()) != scheme) {
@@ -670,8 +552,6 @@ pub function uri_path(uri: string): string {
   return percent_decode(slice_unchecked(rest, slash, rest.len()) + "");
 }
 
-// file_uri is the file:// URI naming the absolute `path`, every byte outside
-// RFC 3986's unreserved set and `/` percent-encoded.
 pub function file_uri(path: string): string {
   let hex: string = "0123456789ABCDEF";
   let out: u8[] = [];
@@ -692,8 +572,6 @@ function uri_unreserved(b: i32): boolean {
   return b >= 97 && b <= 122 || b >= 65 && b <= 90 || b >= 48 && b <= 57 || b == 45 || b == 46 || b == 95 || b == 126 || b == 47;
 }
 
-// percent_decode undoes a URI's %XX escapes, or returns "" when one is
-// malformed.
 function percent_decode(s: string): string {
   let out: u8[] = [];
   let i: i32 = 0;

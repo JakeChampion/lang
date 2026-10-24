@@ -6,16 +6,7 @@ import (
 	"testing"
 )
 
-// A deleted map entry's key and value are released (#9970): nothing visits a
-// deleted slot again, so a box left in it is stranded for the life of the
-// program.
-//
-// The assert is the churn gate's: over 1000 build-and-drop rounds the heap
-// bump is flat, `__rc_underflow_count()` reads zero, and the module is
-// produced whole by the typed path.
 var mapDeleteReleasePrograms = []mapChurnProgram{
-	// A string key column: the removed key takes __fern_str_free, and the
-	// re-insert of the same key afterwards proves the slot is reusable.
 	{"string-key", `import "core/map";
 import "core/cmp";
 function build(n: i32): i32 {
@@ -32,7 +23,6 @@ function build(n: i32): i32 {
     return m3.len() + m3.get_or("k3", 0) + n - n;
 }
 ` + mapChurnMain(39600)},
-	// A string value column (vkind 1).
 	{"string-value", `import "core/map";
 import "core/cmp";
 function build(n: i32): i32 {
@@ -45,8 +35,6 @@ function build(n: i32): i32 {
     return m2.len() + m2.get_or(4, "").len() + n - n;
 }
 ` + mapChurnMain(7700)},
-	// A string[] value column (vkind 2): the removed value's strings go with
-	// its buffer, the deep dec rather than the shallow one.
 	{"string-array-value", `import "core/map";
 import "core/cmp";
 function build(n: i32): i32 {
@@ -59,8 +47,6 @@ function build(n: i32): i32 {
     return m2.len() + m2.get_or(2, []).len() + n - n;
 }
 ` + mapChurnMain(5500)},
-	// A keyed column with a string field: the removed key takes the key
-	// type's own release, which frees its string before its box.
 	{"keyed", `import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -76,9 +62,6 @@ function build(n: i32): i32 {
     return m2.len() + m2.get_or(Name { first: "k5", rank: 5 }, 0) + n - n;
 }
 ` + mapChurnMain(11000)},
-	// A keyed column over a STRING value column (`_kfvs`) and over a column
-	// of string ARRAYS (`_kfvsa`): the key walk beside the value column's own
-	// free, at the map's death and at the delete.
 	{"keyed-string-value", `import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -108,8 +91,6 @@ function build(n: i32): i32 {
     return m2.len() + m2.get_or(Name { first: "k3", rank: 3 }, []).len() + n - n;
 }
 ` + mapChurnMain(5500)},
-	// A keyed column over a column of boxes (vkind 3): both releases, two
-	// deletes in a row.
 	{"keyed-boxed-value", `import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -131,9 +112,6 @@ function build(n: i32): i32 {
 ` + mapChurnMain(50600)},
 }
 
-// mapChurnMain is the main every churn program shares: warm up, read the
-// heap bump either side of 1000 rounds, read the underflow counter, and pin
-// the accumulated answer so the work is not dead.
 func mapChurnMain(acc int) string {
 	return `function main(): i32 {
     let acc: i32 = 0;

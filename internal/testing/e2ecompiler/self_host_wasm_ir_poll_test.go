@@ -10,32 +10,6 @@ import (
 	"time"
 )
 
-// TestSelfHostWasmIRPoll pins wasm_poll on the self-host wasm-IR path (#4316):
-// the wasi:io/poll.poll readiness multiplexer, which blocks until at least one
-// pollable in an i32[] is ready and yields the FIRST ready index (-1 on an
-// empty ready list).
-//
-// It is the first LIST-typed component import the self-host emits, and that is
-// what made it more than an import line. Three things it needs that the scalar
-// pollable ops (subscribe-duration / block / resource-drop) do not:
-//
-//  1. Component-type metadata. A list-typed import cannot be inferred from the
-//     core signature, so `component new` alone fails with "missing component
-//     metadata for import of wasi:io/poll@0.2.0::poll". The pipeline below runs
-//     `wasm-tools component embed -w fern` first, and cmd/fern/wit/deps/io/
-//     poll.wit had to declare the function (it was a subset carrying only
-//     pollable.block).
-//  2. An exported cabi_realloc — the returned list<u32> is materialised in
-//     GUEST memory. Without it: "module does not export a function named
-//     cabi_realloc".
-//  3. The self-host array layout, NOT native's. A self-host array pointer has
-//     its count at p+0 and elements at p+8; native's buildWasmPollBody reads
-//     count at p-4 / elements at p+0. Copying native verbatim made poll read a
-//     garbage length and return immediately without blocking.
-//
-// The assertions are behavioural on purpose — that poll BLOCKS, and picks the
-// right index — because every failure mode above produced a module that still
-// composed and still exited 0 while doing nothing.
 func TestSelfHostWasmIRPoll(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -62,9 +36,6 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 		t.Fatalf("abs wit dir: %v", err)
 	}
 
-	// build emits the WAT, embeds the `fern` world's component-type metadata,
-	// composes, validates, and runs — returning stdout and the wall time (the
-	// blocking assertion needs the latter).
 	build := func(t *testing.T, name, src string) (string, time.Duration) {
 		t.Helper()
 		var cmd *exec.Cmd
@@ -78,9 +49,6 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 		if err != nil || len(wat) == 0 {
 			t.Fatalf("driver failed: %v", err)
 		}
-		// The module must reach the IR path and call the helper — a bail to the
-		// AST backend would silently pass the behavioural checks below only if
-		// that backend also implemented poll, which it does not.
 		if !strings.Contains(string(wat), "call $__fern_wasm_poll") {
 			t.Fatalf("%s: emitted WAT has no `call $__fern_wasm_poll` (module bailed off the IR path?)", name)
 		}
@@ -114,9 +82,6 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 		return string(out), elapsed
 	}
 
-	// A 400ms timer, polled alone. poll must BLOCK for it — the bug that
-	// motivated the array-layout comment above returned instantly instead — and
-	// report index 0 as ready.
 	t.Run("blocks_until_ready", func(t *testing.T) {
 		out, elapsed := build(t, "poll_block", `function main(): i32 {
     let d: i64 = 400000000i64;
@@ -134,9 +99,6 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 		}
 	})
 
-	// Two timers. poll must return the index of whichever fires FIRST, and must
-	// not wait for the slow one — so the position of the fast timer decides the
-	// answer, and a helper that ignored the ready list would fail one of these.
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -176,8 +138,6 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 			if got := strings.TrimSpace(out); got != tc.want {
 				t.Errorf("stdout = %q, want %q", got, tc.want)
 			}
-			// The slow timer is 3s; returning anywhere near it would mean poll
-			// waited for ALL pollables rather than the first ready one.
 			if elapsed > 2*time.Second {
 				t.Errorf("poll returned after %v — it waited past the first ready pollable", elapsed)
 			}

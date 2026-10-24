@@ -34,8 +34,6 @@ function main(): i32 {
 }
 `
 
-// Literal pointers and unit bases must preserve the same alignment when a
-// module is split at any literal, including empty and multibyte strings.
 func TestSelfHostWasmStringAlignment(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

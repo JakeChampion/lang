@@ -1,13 +1,5 @@
 package e2e
 
-// Differential coverage for std/num `cumsum` / `cumproduct` — the running
-// (prefix) sums and products, the cumulative siblings of `sum` / `product`.
-// `out[i]` reduces `xs[0..=i]`, so the last element equals the full `sum` /
-// `product`. Checks the running values, the empty and single-element inputs,
-// and both i32 and i64 element widths (the `Add + Zero` / `Mul + One` bounds
-// are generic). Returns 42 iff every check holds across interp / x86-64 /
-// wasm / arm64.
-
 import "testing"
 
 const numCumulativeProg = `

@@ -8,31 +8,6 @@ import (
 	"testing"
 )
 
-// The scale-kernel map rewrite on the self-host (#9735 step 4, #6638).
-//
-// `xs.map((x: f64): f64 => x * 2.0)` IS the `scale_f64` shape. The self-host
-// had the intrinsic on all eight backends and no pass to reach it from `map`,
-// so it ran the scalar loop and paid an indirect call per element unless the
-// source named the wrapper.
-//
-// Two halves have to be proved, and neither is enough alone:
-//
-//   - the rewrite FIRES. Three signals were tried and discarded before one
-//     discriminated. `vmulpd` present proves nothing (std/array's scale_f64
-//     wrapper is in the bundle either way), a missing `array__map` label
-//     proves nothing (that name is in neither build -- the call is
-//     `__arrm_map__<elem>`), and the exit code proves nothing (the scalar
-//     loop returns the same answer). What does discriminate is reading the
-//     emitted body of the rewritten function: it calls the map helper if the
-//     rewrite declined, and inlines the kernel if it fired.
-//   - it still COMPUTES the same thing. Swapping a scalar loop for a
-//     vectorised kernel is exactly the transform that gives a
-//     plausible-looking wrong answer, so the program carries its own
-//     hand-written reference and compares against it.
-//
-// scaleMapKeptSrc is the control: an `x + 2.0` element function, which the
-// pass declines, so its map call must still be there.
-
 const scaleMapSrc = `import "std/array";
 
 // The shape the pass takes: an inline lambda whose body is one multiply by a
@@ -108,8 +83,6 @@ function main(): i32 {
 }
 `
 
-// The control: `x + 2.0` is not a multiply, so the pass declines and the map
-// helper survives. Same imports and same shape otherwise.
 const scaleMapKeptSrc = `import "std/array";
 
 @noinline function bump(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x + 2.0); }
@@ -123,13 +96,8 @@ function main(): i32 {
 }
 `
 
-// The call a declined map makes. After monomorphisation a receiver method is a
-// free call: `xs.m(ys)` folds to `__arrm_m[T]` and the worklist clones one
-// `__arrm_m__<elem>` per element type, not `array__map`, which is the module
-// mangling it would have had as a plain function.
 const arrayMapCall = "call __fn___arrm_map__"
 
-// emittedBody returns the lines of one emitted function, label included.
 func emittedBody(t *testing.T, asm, label string) string {
 	t.Helper()
 	lines := strings.Split(asm, "\n")
@@ -170,8 +138,6 @@ func TestSelfHostScaleMapX86_64(t *testing.T) {
 
 	t.Run("rewritten", func(t *testing.T) {
 		asm, code := runProg(t, "scale_map", scaleMapSrc)
-		// 1x/3x = the length at which a scaled shape disagreed with the loop;
-		// 9x = the result-shape and borrowed-receiver checks.
 		if code != 42 {
 			t.Errorf("scale map program exited %d, want 42", code)
 		}
@@ -179,16 +145,12 @@ func TestSelfHostScaleMapX86_64(t *testing.T) {
 		if strings.Contains(body, arrayMapCall) {
 			t.Errorf("__fn_scale2 still calls the map helper, so the rewrite declined:\n%s", body)
 		}
-		// The kernel splats its factor across the lanes. Scoped to this
-		// function, so std/array's own wrapper cannot supply it.
 		if !strings.Contains(body, "vbroadcastsd") {
 			t.Errorf("__fn_scale2 has no lane-wise splat, so the kernel was not "+
 				"inlined even though the map call is gone:\n%s", body)
 		}
 	})
 
-	// Without this, "no map call in __fn_scale2" would also pass on a build
-	// where the map call had moved or been renamed for unrelated reasons.
 	t.Run("declined-keeps-the-call", func(t *testing.T) {
 		asm, code := runProg(t, "scale_map_kept", scaleMapKeptSrc)
 		if code != 42 {
@@ -203,10 +165,6 @@ func TestSelfHostScaleMapX86_64(t *testing.T) {
 	})
 }
 
-// The wasm route lifts through its own normalisation, which runs the rewrite
-// before it as the asm routes' lift does (#9933). The kernel is a runtime
-// helper there rather than inlined, so the rewritten body calls
-// `$__fern_scale_f64` where a declined one calls the map helper.
 func TestSelfHostScaleMapWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

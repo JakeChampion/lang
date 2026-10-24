@@ -1,5 +1,3 @@
-// Usage: etl baseline|batched|fbip|fip records batch [samples]
-// The optional sample lines are emitted after the measured region.
 import "./etl_core";
 import "./etl_variants";
 import "core/cmp";
@@ -57,7 +55,6 @@ function main(): i32 {
       return 2;
     }
   }
-  // Both byte-region lengths must fit i32. Memory availability is a host limit.
   if (variant < 0 || records <= 0 || records > 268435455 || batch <= 0 || batch > 268435455) {
     return 2;
   }
@@ -99,8 +96,6 @@ function main(): i32 {
     let t0: i64 = monotonic_ns();
     s = process(variant, s, data, first * 8, count);
     samples = samples.with(r, monotonic_ns() - t0);
-    // Consume every encoded byte before reusing the output region. This work
-    // is in wall_ns and excluded from each process-batch latency sample.
     let i: i32 = 0;
     while (i < s.output_count * 8) {
       checksum = checksum + s.output[i] as i64;

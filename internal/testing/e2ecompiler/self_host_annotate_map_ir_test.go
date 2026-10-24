@@ -7,30 +7,18 @@ import (
 	"testing"
 )
 
-// annotateMapCases extend the typed-IR annotation (#5531) to map-valued calls.
-// type_to_irtag serialises a TypeMap to its "Map[K, V]" tag (the lowering's own
-// spelling), and the lowering reads a map-valued call's K/V from it. The
-// decisive case is a map-valued call in a TUPLE element (#3317), where a later
-// `t.0.get_or(...)` must recover the map's K/V. Oracle: the interpreter.
-//
-// Maps allocate a heap; the binary runs via the X86_64Tooling runner prefix
-// (nil on an x86_64 host) so it works in a cross-arch container too.
 var annotateMapCases = []struct {
 	name string
 	src  string
 }{
-	// map-valued call as a tuple element, then get_or on t.0.
 	{"tuple_map_elem", `import "core/map";
 function build(): Map[string, i32] { let m: Map[string, i32] = Map { }; m = m.insert("a", 10); return m; }
-function main(): i32 { let t = (build(), 5); return t.0.get_or("a", 0) + t.1; }`}, // 10 + 5 = 15
-	// map-valued call used directly for get_or (two lookups + len).
+function main(): i32 { let t = (build(), 5); return t.0.get_or("a", 0) + t.1; }`},
 	{"call_get_or", `import "core/map";
 function build(): Map[string, i32] { let m: Map[string, i32] = Map { }; m = m.insert("a", 10); m = m.insert("bb", 20); return m; }
-function main(): i32 { let m = build(); return m.get_or("a", 0) + m.get_or("bb", 0) + m.len(); }`}, // 10 + 20 + 2 = 32
+function main(): i32 { let m = build(); return m.get_or("a", 0) + m.get_or("bb", 0) + m.len(); }`},
 }
 
-// TestSelfHostAnnotateMapIR_X86_64 pins the checker-stamped Map[K,V] result type
-// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateMapIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

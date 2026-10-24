@@ -1,15 +1,5 @@
 package e2eharness
 
-// UdpSocketProbe exercises the datagram sockets (#9853) over loopback:
-// two sockets bound to ports the host picks, a datagram from one to the
-// other whose bytes and sender the receiver reads back, a reply through a
-// connected socket, a short receive buffer that truncates, the refusal a
-// second bind of a held port draws, the would-block a non-blocking receive
-// on an empty socket reports (on wasm, the -ENOTSUP the control answers on
-// a datagram socket too), and the close of both. Exit 42 and "ok" on
-// stdout iff every check holds, else the number of the first failing
-// check; a preview-2 wasm host reports only 0 or 1, so the wasm legs read
-// stdout.
 func UdpSocketProbe() string {
 	return `import "core/int";
 
@@ -87,14 +77,6 @@ function main(): i32 {
 `
 }
 
-// UdpReuseProbe exercises `udp_bind_with` over loopback: a socket that
-// asks for SO_REUSEPORT, the refusal of a second plain bind of its port and
-// of one with reuse_port false, then (not on wasi:sockets, which has no
-// SO_REUSEPORT and leaves the port one socket's) a second reuse_port socket
-// on the same port, a datagram that arrives on exactly one of the two, and
-// a second datagram from the same sender that arrives on the same one. The
-// same verdict channel as UdpSocketProbe: exit 42 and "ok", or the number
-// of the first failing check.
 func UdpReuseProbe() string {
 	return `import "core/int";
 
@@ -172,13 +154,6 @@ function main(): i32 {
 `
 }
 
-// NetUdpProbe is UdpSocketProbe through std/net's typed faces:
-// `udp_socket`, `local_port`, `send_to`, `recv_from`, `set_peer`,
-// `local_addr` (on the connected datagram socket, the shape
-// `dns.source_for` reads), `send`, `recv` and `close`, each answering a `Result` with the errno mapped, the
-// `AddrInUse` a second bind of a held port reports, and the `WouldBlock`
-// of a non-blocking receive. Same verdict
-// channel: exit 42 and "ok", or the first failing check.
 func NetUdpProbe() string {
 	return `import "core/int";
 import "std/net";
@@ -285,14 +260,6 @@ function main(): i32 {
 `
 }
 
-// ConnectProbe exercises `tcp_connect_with` and control op 5 (#9853): a
-// non-blocking connect to a listener on a host-picked port, settled by
-// asking op 5 until it stops answering -EINPROGRESS, then accepted and
-// used both ways; a completed connect answering 0 on every later ask; and
-// the connect to the port once nothing listens, refused either as the
-// connect starts or once it settles. The interpreter connects before
-// answering, so both legs accept either shape. Exit 42 and "ok" on stdout
-// iff every check holds, else the number of the first failing check.
 func ConnectProbe() string {
 	return `import "core/int";
 import "std/net";
@@ -377,11 +344,6 @@ function main(): i32 {
 `
 }
 
-// NetConnectProbe is ConnectProbe through std/net: `connect_start`,
-// `connect_result` (`InProgress` while under way, then `Ok`), the accepted
-// side used both ways, the `ConnectionRefused` a settled or a starting
-// connect to a closed port reports, and the same from a blocking
-// `connect`. Same verdict channel.
 func NetConnectProbe() string {
 	return `import "core/int";
 import "std/net";

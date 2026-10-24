@@ -1,16 +1,5 @@
 import "std/test";
 
-// tests/stdlib/set_eq_test.fern — order-independent
-// (multiset) array assertions for cases where the
-// production order isn't observable. Typical use sites:
-// `Map.keys()`, `read_dir(...)`, parallel-set-difference
-// output.
-//
-// "Multiset" because duplicates count: `[1, 1, 2]` and
-// `[1, 2, 2]` are NOT set-equal here — both element counts
-// must match. Use `assert_subset_*` when one array should
-// just CONTAIN the other.
-
 function test_set_eq_i32_same_order(): test.TestOutcome {
   return test.assert_set_eq([1, 2, 3], [1, 2, 3]);
 }
@@ -20,13 +9,10 @@ function test_set_eq_i32_reversed(): test.TestOutcome {
 }
 
 function test_set_eq_i32_multiset(): test.TestOutcome {
-  // Duplicates must match: two 1s on each side.
   return test.assert_set_eq([1, 1, 2], [2, 1, 1]);
 }
 
 function test_set_eq_i32_multiset_mismatch(): test.TestOutcome {
-  // `[1, 1, 2]` has two 1s; `[1, 2, 2]` has only one.
-  // Must fail.
   match (test.assert_set_eq([1, 1, 2], [1, 2, 2])) {
     Fail(_) => {
       return test.pass();
@@ -62,8 +48,6 @@ function test_subset_i32_pass(): test.TestOutcome {
 }
 
 function test_subset_i32_requires_multiplicity(): test.TestOutcome {
-  // Subset has two 1s but the superset only has one —
-  // must fail.
   match (test.assert_subset([1, 2, 3], [1, 1])) {
     Fail(msg) => {
       if (!msg.contains("not in superset")) {
@@ -83,9 +67,6 @@ function test_subset_string_pass(): test.TestOutcome {
 }
 
 function test_subset_empty_subset_always_passes(): test.TestOutcome {
-  // Empty subset is vacuously a subset of anything, including itself.
-  // (The empty array needs a type annotation: a bare `[]` can't infer
-  // the element type for the generic `assert_subset[T]`.)
   let empty: i32[] = [];
   return test.assert_subset([1, 2, 3], empty);
 }

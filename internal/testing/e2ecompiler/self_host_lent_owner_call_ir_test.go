@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// lentOwnerCallSrc hands a call a value it owns at its last use together with
-// a borrow of that value: a match payload (`columns(done, mt, recv)`, the
-// checker's `literal_insert_columns` shape) and a field (`relabel(done,
-// b.inner, b)`). Each callee consumes the owner, since one path returns it, and
-// on the other releases it before reading the borrow. The typed lowering moved
-// the owner's unit into the call, so the callee read freed memory (#10832).
 const lentOwnerCallSrc = `struct TU { reason: string }
 struct TI { w: i32 }
 struct TM { key: Ty, value: Ty }
@@ -90,8 +84,6 @@ func TestSelfHostLentOwnerCallIRX86_64(t *testing.T) {
 	if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", lentOwnerCallSrc)); code != 42 {
 		t.Fatalf("exit %d, want 42 (the code names the failing step)", code)
 	}
-	// Nothing is recycled under the quarantine, so a touch of a released
-	// block exits 124 instead of reading whatever reused it.
 	if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", lentOwnerCallSrc, "FERN_RC_FREE_DEBUG=1")); code != 42 {
 		t.Fatalf("quarantine run: exit %d, want 42 (124 is a use after free)", code)
 	}

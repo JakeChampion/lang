@@ -7,28 +7,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostReaderArm64 is the ARM64 counterpart of
-// TestSelfHostReaderX86_64: it exercises the self-hosted ARM64
-// emitter's Reader lowering (stdin, Reader.read_chunk,
-// Reader.close, Ok/Err construction, match on a Result binding
-// the Ok payload).
-//
-// The asm_ir_run (-target arm64-linux) driver is built as an x86 host binary (it runs
-// on the test host; only its OUTPUT is aarch64 asm). It compiles a
-// read-all-of-stdin echo program to aarch64 asm, which is assembled
-// with the aarch64 cross-gcc and run under qemu-aarch64 against
-// several stdin inputs — including a >4096-byte input that forces
-// the read_chunk loop through multiple non-empty chunks before Ok("").
-//
-// SKIPs cleanly when the aarch64 cross-toolchain / qemu-aarch64
-// aren't installed (see arm64Tooling); CI provides them.
 func TestSelfHostReaderArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 
-	// Build the asm_ir_run (-target arm64-linux) driver as an x86 host binary.
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	echoSrc := "function main(): i32 {\n" +
@@ -46,13 +30,10 @@ func TestSelfHostReaderArm64(t *testing.T) {
 		"    return 0;\n" +
 		"}\n"
 
-	// The driver runs on the x86 host; its output is aarch64 asm.
 	echoAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(echoSrc), "-target", "arm64-linux")
 	if len(echoAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the echo program")
 	}
-	// Both helpers are Fern runtime functions (#2649), so the branches carry the
-	// stack-ABI `__fn___` prefix.
 	for _, sym := range []string{"bl __fn___fern_reader_read_chunk", "bl __fn___fern_reader_close"} {
 		if !bytes.Contains(echoAsm, []byte(sym)) {
 			t.Fatalf("echo asm has no %q", sym)
@@ -85,13 +66,6 @@ func TestSelfHostReaderArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostReadFileArm64 is the ARM64 counterpart of
-// TestSelfHostReadFileX86_64: the self-hosted ARM64 emitter's
-// read_file(path) → Result[string, IoError] + Ok/Err match. The
-// asm_ir_run (-target arm64-linux) driver (x86 host binary) compiles a "cat" program to
-// aarch64 asm; the assembled binary runs under qemu-aarch64 (which
-// passes filesystem syscalls through to the host) against an existing
-// file (expect its contents, exit 0) and a missing file (exit 7).
 func TestSelfHostReadFileArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -137,11 +111,6 @@ func TestSelfHostReadFileArm64(t *testing.T) {
 	})
 }
 
-// TestSelfHostArgsArm64 gives the ARM64 emitter's args() → string[]
-// runtime CI coverage (the x86 side is exercised by the file-driver
-// test). The self-hosted ARM64 compiler builds a program that returns
-// args().len(); run under qemu-aarch64 with extra arguments, its exit
-// code must equal argc.
 func TestSelfHostArgsArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -158,7 +127,7 @@ func TestSelfHostArgsArm64(t *testing.T) {
 
 	cmd := runArm64Bin(qemu, progBin, "one", "two", "three")
 	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 4 { // argv[0] + 3 args
+	if code := cmd.ProcessState.ExitCode(); code != 4 {
 		t.Errorf("args().len() returned %d, want 4 (argv0 + 3)", code)
 	}
 }

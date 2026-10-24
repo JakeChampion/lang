@@ -7,12 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// FuzzCheck exercises the type checker against random programs that
-// happen to parse. Property: the checker must never panic, regardless
-// of the AST shape it's handed. Inputs that fail to parse are skipped
-// silently because they say nothing about the checker.
-//
-// Run with: go test -fuzz=FuzzCheck ./internal/check/checker
 func FuzzCheck(f *testing.F) {
 	seeds := []string{
 		`function f(): i32 { return 1; }`,
@@ -25,14 +19,8 @@ func FuzzCheck(f *testing.F) {
 			while (i < 10) { sum = sum + i; i = i + 1; }
 			return sum;
 		}`,
-		// Programs that already type-check incorrectly. The checker
-		// should still come back without panicking — it just collects
-		// errors.
 		`function f(): i32 { return true; }`,
 		`function f(): i32 { return undefined_thing; }`,
-		// The target parses before it checks, so parser recursion is on this
-		// fuzzer's crash surface too: nesting past the parser's bound is what
-		// took the nightly worker down in #7941.
 		"function f(): i32 { return " + strings.Repeat("(", 3000) + "1" + strings.Repeat(")", 3000) + "; }",
 	}
 	for _, s := range seeds {

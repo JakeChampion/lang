@@ -12,12 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The seccomp sandbox (FERN_SANDBOX=1, #6071) on the self-host's x86-64 output.
-// internal/testing/e2e/seccomp_test.go runs sandboxed programs on a real kernel; these
-// read what the compiler emits and what it refuses.
-
-// sandboxSocketProg reaches the socket helpers, Fern bodies over the raw floor,
-// so its allowlist has to carry their literal syscall numbers.
 const sandboxSocketProg = `function main(): i32 {
     let fd: i32 = tcp_listen(0);
     if (fd < 0) { return 1; }
@@ -28,9 +22,6 @@ const sandboxSocketProg = `function main(): i32 {
 }
 `
 
-// sandboxCompile runs the host self-host CLI on src for x86-64 Linux with
-// `args`, FERN_SANDBOX set as `sandbox` says, and returns the combined output
-// and whether it succeeded.
 func sandboxCompile(t *testing.T, src string, sandbox bool, args ...string) (string, bool) {
 	t.Helper()
 	return sandboxCompileWith(t, selfHostCLIForHost(t).cli, src, sandbox, args...)
@@ -53,7 +44,6 @@ func sandboxCompileWith(t *testing.T, compiler string, src string, sandbox bool,
 	return string(out), err == nil
 }
 
-// sandboxAsm emits src's x86-64 assembly.
 func sandboxAsm(t *testing.T, src string, sandbox bool) string {
 	t.Helper()
 	asmPath := filepath.Join(t.TempDir(), "out.s")
@@ -72,8 +62,6 @@ type sandboxBPF struct {
 	k            uint32
 }
 
-// parseSandboxFilter decodes the `.Lseccomp_filter` block, two `.long`s per
-// sock_filter: { u16 code; u8 jt; u8 jf } and k.
 func parseSandboxFilter(t *testing.T, asm string) []sandboxBPF {
 	t.Helper()
 	at := strings.Index(asm, "\n.Lseccomp_filter:\n")
@@ -103,10 +91,6 @@ func parseSandboxFilter(t *testing.T, asm string) []sandboxBPF {
 	return out
 }
 
-// TestSelfHostSandboxFilterShape pins the filter's structure: the arch guard,
-// an ascending allowlist whose every comparison jumps exactly to ALLOW, the
-// deny-by-default fall-through, and the numbers the program's own syscalls
-// need, without the prctl and seccomp that install it.
 func TestSelfHostSandboxFilterShape(t *testing.T) {
 	f := parseSandboxFilter(t, sandboxAsm(t, sandboxSocketProg, true))
 	if len(f) < 7 {
@@ -146,7 +130,6 @@ func TestSelfHostSandboxFilterShape(t *testing.T) {
 		}
 		allowed[f[i].k] = true
 	}
-	// close, socket, bind, listen, getsockname, exit_group.
 	for _, nr := range []uint32{3, 41, 49, 50, 51, 231} {
 		if !allowed[nr] {
 			t.Errorf("syscall %d is issued by the program but not allowed: the binary would be killed on a legitimate path", nr)
@@ -159,8 +142,6 @@ func TestSelfHostSandboxFilterShape(t *testing.T) {
 	}
 }
 
-// TestSelfHostSandboxOffEmitsNothing: without FERN_SANDBOX the output carries
-// no trace of the sandbox, and with it `_start` calls the installer.
 func TestSelfHostSandboxOffEmitsNothing(t *testing.T) {
 	off := sandboxAsm(t, sandboxSocketProg, false)
 	for _, needle := range []string{"__fern_seccomp_install", ".Lseccomp_filter"} {
@@ -174,9 +155,6 @@ func TestSelfHostSandboxOffEmitsNothing(t *testing.T) {
 	}
 }
 
-// TestSelfHostSandboxRefusesRunTimeSyscallNumber: a raw syscall whose number
-// is computed at run time cannot be allowlisted, so the sandbox refuses the
-// program rather than install a filter that kills it at that call.
 func TestSelfHostSandboxRefusesRunTimeSyscallNumber(t *testing.T) {
 	const src = `function main(): i32 {
     let r: i64 = __syscall3(args().len() + 38, 0, 0, 0);
@@ -197,8 +175,6 @@ func TestSelfHostSandboxRefusesRunTimeSyscallNumber(t *testing.T) {
 	}
 }
 
-// TestSelfHostSandboxRefusesPerModuleEmit: a per-module unit cannot see the
-// syscalls its siblings issue, so the sandbox refuses that emit.
 func TestSelfHostSandboxRefusesPerModuleEmit(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	driverBin := buildSelfHostBin(t, x86gcc, writeSelfHostModloadProject(t), "drivers/asm_modload_run.fern", "sandboxpermoduledriver")
@@ -217,9 +193,6 @@ func TestSelfHostSandboxRefusesPerModuleEmit(t *testing.T) {
 	}
 }
 
-// TestSelfHostSandboxNoBareSyscallEmit keeps the allowlist exact: the x86-64 emitters
-// write a `syscall` only through EmitState's syscall and raw_syscall, which
-// record it. A `syscall` written any other way is one the filter would kill.
 func TestSelfHostSandboxNoBareSyscallEmit(t *testing.T) {
 	files, err := filepath.Glob("../../../compiler/*.fern")
 	inDrivers, _ := filepath.Glob("../../../compiler/drivers/*.fern")
@@ -232,7 +205,7 @@ func TestSelfHostSandboxNoBareSyscallEmit(t *testing.T) {
 	var offenders []string
 	for _, f := range files {
 		if strings.Contains(filepath.Base(f), "arm64") {
-			continue // arm64 issues `svc`, and the sandbox is x86-64 only
+			continue
 		}
 		b, err := os.ReadFile(f)
 		if err != nil {

@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A MIXED-return function: fresh on one path, a bare projection of
-// a borrowed parameter on the other. The projection return takes
-// the Return lowering's transfer inc like any other alias, so the
-// caller holds a reference of its own on BOTH paths — which is
-// what lets `s` be reclaimed at all. The hazard the case watches
-// is the other direction: if that credit were ever extended to a
-// return the lowering does not inc, this drop would free a string
-// the array still owns and __rc_underflow_count() would report it.
+
+
+
+
+
+
+
+
+
+
+
 struct Reg { names: string[] }
 
 @noinline

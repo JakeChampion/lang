@@ -6,22 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStrRcBoxIRX86_64 pins the #2649 Option-A change: asm heap string boxes
-// are now rc-HEADERED. Every reclaimable box (a string literal via const_str, and every
-// fresh producer via the raw_string op — concat / i32 `.to_string()` / str_to_* / …) is
-// built by the centralized __fern_str_box helper as [rc=1][data][len] (box = base+8, so
-// data@0 / len@8 are unchanged), and __fern_str_free is now rc-aware: it decrements the
-// rc, frees the data buffer + the 24-byte box only at rc==1, and a decrement below 1
-// bumps the over-release counter instead of corrupting the heap (matching the array path
-// and the wasm $__fern_str_box model).
-//
-// Two contracts:
-//   - EMISSION: the driver emits `call __fern_str_box` (rc-headered construction) — the
-//     old raw `movq $16 / __fern_alloc / store data / store len` box is gone.
-//   - DOUBLE-FREE SAFETY NET: a long fresh-concat churn reclaims a box each iteration; a
-//     spurious double-free would tick __rc_underflow_count(), which main checks and
-//     maps to exit 99. Exit 0 proves the rc-aware free balances (flat heap, no
-//     over-release) over millions of allocate/reclaim cycles.
 func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -49,21 +33,12 @@ func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 		}
 	}
 
-	// DOUBLE-FREE SAFETY NET at scale: 2,000,000 fresh concat chains, each reclaimed. A
-	// double-free would bump __rc_underflow_count() -> exit 99; a leak would exhaust
-	// the heap (SIGKILL 137). r = "aaxbb" len 5, t stays 0, underflow 0 -> exit 0.
 	run(t, `function churn(n: i32): i32 { let pre: string = "aa"; let suf: string = "bb"; let t: i32 = 0; let i: i32 = 0; while (i < n) { let r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"rcbox-churn-no-underflow", 0, true)
 
-	// VALUE + underflow check on a fresh concat reclaimed at scope exit. "hi" goes
-	// through ids so the concat is built on the heap rather than folded to a
-	// constant, and the literal is on the left so it is the exact concatenation
-	// rather than a grow of a consumed left operand. "!"+"hi" = len 3; underflow 0.
 	run(t, `@noinline function ids(s: string): string { return s; } function mk(): i32 { let s: string = "!" + ids("hi"); return s.len(); } function main(): i32 { let r: i32 = mk(); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
 		"rcbox-scope-exit", 3, true)
 
-	// i32 `.to_string()` churn: the digit-string box is rc-headered too; reclaimed each iter,
-	// no over-release. Every decimal string has len >= 1, so ok stays 0 -> exit 0.
 	run(t, `import "std/i32";
 function churn(n: i32): i32 { let ok: i32 = 0; let i: i32 = 0; while (i < n) { let s: string = i.to_string(); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { let r: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
 		"rcbox-i32-to-string-churn", 0, true)

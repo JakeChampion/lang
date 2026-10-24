@@ -1,23 +1,9 @@
-// std/tls/message — the TLS 1.3 handshake messages of RFC 8446 §4 and the
-// extensions TLS 1.3 reads, encoded and decoded, and the split of handshake
-// records into the messages they carry.
-//
-//   let s: message.Split = message.split(buffered)?;     // keep s.rest
-//   let m: message.Message = message.decode(s.messages[0])?;
-//   let out: u8[] = message.encode(message.Finished(verify_data));
-//
-// Decoding is strict: a length that disagrees with what it covers, bytes
-// left over, a repeated extension or a field TLS 1.3 fixes holding another
-// value is refused, each with the alert RFC 8446 answers it with.
-// Extensions stay as a kind and its bytes; `find` picks one out, and each
-// kind TLS 1.3 reads has an `ext_*` encoder and a decoder named after it.
-
+// This module reads and writes TLS records and handshake messages.
 import "core/int";
 import "std/utf8";
 import "std/error";
 import "core/cmp";
 
-// HandshakeType codes.
 pub const CLIENT_HELLO: i32 = 1;
 
 pub const SERVER_HELLO: i32 = 2;
@@ -38,7 +24,6 @@ pub const FINISHED: i32 = 20;
 
 pub const KEY_UPDATE: i32 = 24;
 
-// ExtensionType codes.
 pub const EXT_SERVER_NAME: i32 = 0;
 
 pub const EXT_SUPPORTED_GROUPS: i32 = 10;
@@ -59,29 +44,17 @@ pub const EXT_PSK_KEY_EXCHANGE_MODES: i32 = 45;
 
 pub const EXT_KEY_SHARE: i32 = 51;
 
-// quic_transport_parameters (RFC 9001 §8.2): QUIC's, opaque here.
 pub const EXT_QUIC_TRANSPORT_PARAMETERS: i32 = 57;
 
-// The supported_versions code of TLS 1.3, and the legacy_version every
-// TLS 1.3 hello carries.
 pub const TLS13: i32 = 0x0304;
 
 pub const LEGACY_VERSION: i32 = 0x0303;
 
-// MsgError — why a handshake message was refused, each with its alert.
 pub enum MsgError {
-  // A message or extension that does not parse, naming the field:
-  // decode_error.
   DecodeError(string),
-  // A field TLS 1.3 fixes holding another value, or a repeated extension
-  // or key share, naming it: illegal_parameter.
   IllegalParameter(string),
-  // A hello whose legacy_version is not TLS 1.2's: protocol_version.
   ProtocolVersion(i32),
-  // A HandshakeType that is not TLS 1.3's: unexpected_message.
   UnexpectedMessage(i32),
-  // A message of the given kind and length over its limit:
-  // unexpected_message.
   TooLarge(i32, i32),
 }
 
@@ -114,12 +87,10 @@ pub function (e: MsgError) message(): string {
   return "";
 }
 
-// Extension — one extension, its kind and its extension_data.
 pub struct Extension { kind: i32, data: u8[] }
 
 pub struct ClientHello { random: u8[], session_id: u8[], cipher_suites: i32[], extensions: Extension[] }
 
-// ServerHello — also a HelloRetryRequest, whose random is fixed (`is_retry`).
 pub struct ServerHello { random: u8[], session_id: u8[], cipher_suite: i32, extensions: Extension[] }
 
 pub struct NewSessionTicket { lifetime: u32, age_add: u32, nonce: u8[], ticket: u8[], extensions: Extension[] }
@@ -132,8 +103,6 @@ pub struct Certificate { context: u8[], entries: CertificateEntry[] }
 
 pub struct CertificateVerify { scheme: i32, signature: u8[] }
 
-// Message — a decoded handshake message. A KeyUpdate holds whether the
-// peer asks for one back.
 pub enum Message {
   ClientHelloMsg(ClientHello),
   ServerHelloMsg(ServerHello),
@@ -147,7 +116,6 @@ pub enum Message {
   KeyUpdate(boolean),
 }
 
-// One arm per variant.
 // fern-lint: allow cyclomatic-complexity
 pub function (m: Message) kind(): i32 {
   match (m) {
@@ -185,10 +153,8 @@ pub function (m: Message) kind(): i32 {
   return 0;
 }
 
-// The random of a HelloRetryRequest, SHA-256("HelloRetryRequest") (§4.1.3).
 const RETRY_RANDOM: u8[] = [207, 33, 173, 116, 229, 154, 97, 17, 190, 29, 140, 2, 30, 101, 184, 145, 194, 162, 17, 22, 122, 187, 140, 94, 7, 158, 9, 226, 200, 168, 51, 156];
 
-// retry_random is the random every HelloRetryRequest carries.
 pub function retry_random(): u8[] {
   return RETRY_RANDOM;
 }
@@ -204,8 +170,6 @@ pub function (s: ServerHello) is_retry(): boolean {
   }
   return true;
 }
-
-// Writing.
 
 function __u8(own out: u8[], v: i32): u8[] {
   return out.append((v & 255) as u8);
@@ -285,7 +249,6 @@ function __certificate_body(c: Certificate): u8[] {
   return __vec24(__vec8([], c.context), list);
 }
 
-// One arm per variant.
 // fern-lint: allow cyclomatic-complexity
 function __body(m: Message): u8[] {
   match (m) {
@@ -326,17 +289,11 @@ function __body(m: Message): u8[] {
   return [];
 }
 
-// encode is the message with its four-byte header, as the transcript
-// hashes it and a handshake record carries it.
 pub function encode(m: Message): u8[] {
   let body: u8[] = __body(m);
   return __bytes(__u24(__u8([], m.kind()), body.len()), body);
 }
 
-// Reading. Each reader takes the bytes of exactly one structure, so a
-// length can only be checked against what encloses it.
-
-// Span — the contents of a length-prefixed vector, `from` up to `to`.
 struct Span { from: i32, to: i32 }
 
 function __decode_error(what: string): MsgError {
@@ -362,8 +319,6 @@ function __get32(b: [u8], at: i32): u32 {
   return b[at] as u32 << 24 | b[at + 1] as u32 << 16 | b[at + 2] as u32 << 8 | b[at + 3] as u32;
 }
 
-// __vec reads a vector at `at` whose length is n bytes, between min and
-// max.
 function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
   let from: i32 = __need(b, at, n, what)?;
   let len: i32 = b[at] as i32;
@@ -380,7 +335,6 @@ function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Resu
   return Ok(Span { from: from, to: to });
 }
 
-// __whole reads a vector that must fill b.
 function __whole(b: [u8], n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
   let s: Span = __vec(b, 0, n, min, max, what)?;
   if (s.to != b.len()) {
@@ -412,7 +366,6 @@ function __read_u16s(b: [u8], what: string): Result[i32[], MsgError] {
   return Ok(out);
 }
 
-// __read_exts reads the contents of an extensions vector.
 function __read_exts(b: [u8]): Result[Extension[], MsgError] {
   let out: Extension[] = [];
   let at: i32 = 0;
@@ -433,8 +386,6 @@ function __read_exts(b: [u8]): Result[Extension[], MsgError] {
   return Ok(out);
 }
 
-// __hello_head reads legacy_version, random and the session id common to
-// both hellos, returning where the session id ends.
 function __hello_head(b: [u8], what: string): Result[Span, MsgError] {
   __need(b, 0, 34, what)?;
   let v: i32 = __get16(b, 0);
@@ -528,12 +479,8 @@ function __key_update(b: [u8]): Result[Message, MsgError] {
   return Ok(KeyUpdate(b[0] == 1));
 }
 
-// Raw — one handshake message as it arrived, its header included: what the
-// transcript hashes, and what `decode` reads.
 pub struct Raw { kind: i32, bytes: u8[] }
 
-// decode reads one message.
-// One arm per message kind.
 // fern-lint: allow cyclomatic-complexity
 pub function decode(r: Raw): Result[Message, MsgError] {
   let b: [u8] = r.bytes[4:r.bytes.len()];
@@ -574,8 +521,6 @@ pub function decode(r: Raw): Result[Message, MsgError] {
   return Err(UnexpectedMessage(r.kind));
 }
 
-// Split — the whole messages at the front of the handshake bytes received,
-// and the bytes of the one still arriving.
 pub struct Split { messages: Raw[], rest: u8[] }
 
 const KINDS: i32[] = [CLIENT_HELLO, SERVER_HELLO, NEW_SESSION_TICKET, END_OF_EARLY_DATA, ENCRYPTED_EXTENSIONS, CERTIFICATE, CERTIFICATE_REQUEST, CERTIFICATE_VERIFY, FINISHED, KEY_UPDATE];
@@ -591,7 +536,6 @@ function __known(kind: i32): boolean {
   return false;
 }
 
-// A Certificate may carry a chain up to 2^18 bytes; any other message 2^16.
 function __limit(kind: i32): i32 {
   if (kind == CERTIFICATE) {
     return 262144;
@@ -599,9 +543,6 @@ function __limit(kind: i32): i32 {
   return 65536;
 }
 
-// split cuts buf into messages. A header is checked as soon as it arrives:
-// an unknown type or a length over the limit is refused without waiting for
-// the body.
 pub function split(buf: [u8]): Result[Split, MsgError] {
   let out: Raw[] = [];
   let at: i32 = 0;
@@ -623,7 +564,6 @@ pub function split(buf: [u8]): Result[Split, MsgError] {
   return Ok(Split { messages: out, rest: __copy(buf, at, buf.len()) });
 }
 
-// find is the data of the extension of a kind, if present.
 pub function find(exts: Extension[], kind: i32): Option[u8[]] {
   let i: i32 = 0;
   while (i < exts.len()) {
@@ -635,9 +575,6 @@ pub function find(exts: Extension[], kind: i32): Option[u8[]] {
   return None;
 }
 
-// Extensions. Each decoder takes extension_data and must consume it all.
-
-// server_name: one host_name (RFC 6066 §3).
 pub function ext_server_name(host: string): Extension {
   let entry: u8[] = __vec16(__u8([], 0), host.bytes());
   return Extension { kind: EXT_SERVER_NAME, data: __vec16([], entry) };
@@ -664,8 +601,6 @@ pub function server_name(d: [u8]): Result[string, MsgError] {
   return Err(__decode_error("server_name"));
 }
 
-// supported_versions: the client's list, or the one version the server
-// chose.
 pub function ext_supported_versions(versions: i32[]): Extension {
   return Extension { kind: EXT_SUPPORTED_VERSIONS, data: __vec8([], __u16s(versions)) };
 }
@@ -704,15 +639,12 @@ pub function signature_algorithms(d: [u8]): Result[i32[], MsgError] {
   return __read_u16s(d[s.from:s.to], "signature_algorithms");
 }
 
-// KeyShareEntry — a group and its key_exchange.
 pub struct KeyShareEntry { group: i32, key: u8[] }
 
 function __entry(own out: u8[], e: KeyShareEntry): u8[] {
   return __vec16(__u16(out, e.group), e.key);
 }
 
-// key_share: the client's shares, one per group; the server's one share;
-// or, in a HelloRetryRequest, the group the server wants a share for.
 pub function ext_key_shares(entries: KeyShareEntry[]): Extension {
   let list: u8[] = [];
   let i: i32 = 0;
@@ -768,8 +700,6 @@ pub function retry_group(d: [u8]): Result[i32, MsgError] {
   return Ok(__get16(d, 0));
 }
 
-// application_layer_protocol_negotiation (RFC 7301): the client's list, or
-// the server's one choice as a list of one.
 pub function ext_alpn(protocols: string[]): Extension {
   let list: u8[] = [];
   let i: i32 = 0;
@@ -799,17 +729,10 @@ pub function alpn(d: [u8]): Result[string[], MsgError] {
   return Ok(out);
 }
 
-// PskIdentity — a ticket offered for resumption and the client's view of
-// its age in milliseconds, obfuscated by the ticket's age_add (§4.2.11).
 pub struct PskIdentity { identity: u8[], obfuscated_age: u32 }
 
-// OfferedPsks — the identities a ClientHello offers and a binder per
-// identity, in the same order.
 pub struct OfferedPsks { identities: PskIdentity[], binders: u8[][] }
 
-// pre_shared_key in a ClientHello: the identities, then the binders. The
-// binders are last in the extension and the extension last in the hello,
-// which is what lets a binder be computed over the hello without it.
 pub function ext_pre_shared_key(offer: OfferedPsks): Extension {
   let ids: u8[] = [];
   let i: i32 = 0;
@@ -830,9 +753,6 @@ function __binders(binders: u8[][]): u8[] {
   return out;
 }
 
-// binders_length is how many bytes the binders vector of an offer takes at
-// the end of a ClientHello, its two-byte length included: what the binder
-// transcript leaves out (§4.2.11.2).
 pub function binders_length(binders: u8[][]): i32 {
   return 2 + __binders(binders).len();
 }
@@ -863,7 +783,6 @@ pub function pre_shared_key(d: [u8]): Result[OfferedPsks, MsgError] {
   return Ok(out);
 }
 
-// pre_shared_key in a ServerHello: the index of the identity taken.
 pub function ext_selected_psk(index: i32): Extension {
   return Extension { kind: EXT_PRE_SHARED_KEY, data: __u16([], index) };
 }
@@ -875,7 +794,6 @@ pub function selected_psk(d: [u8]): Result[i32, MsgError] {
   return Ok(__get16(d, 0));
 }
 
-// psk_key_exchange_modes: 1 is psk_dhe_ke.
 pub function ext_psk_modes(modes: i32[]): Extension {
   let list: u8[] = [];
   let i: i32 = 0;

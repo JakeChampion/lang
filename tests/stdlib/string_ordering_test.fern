@@ -1,16 +1,6 @@
 import "std/test";
 import "core/cmp" as cmp;
 
-// tests/stdlib/string_ordering_test.fern — the `<` / `<=` / `>` / `>=`
-// operators on strings (#7110). Byte order, ties broken by length: the FIRST
-// differing byte decides, and a string that is a prefix of another sorts
-// first. Not case-folded and not codepoint-ordered, so "Z" < "a".
-//
-// The last group is the essential one: `core/cmp`'s `Ord for string` is
-// defined in terms of these operators, so its three-way results must agree
-// with them sign-for-sign. A divergence
-// here means the operator and the generic ordering have drifted apart.
-
 function test_first_diff_byte(): test.TestOutcome {
   return test.assert_true("abc" < "abd");
 }
@@ -55,8 +45,6 @@ function test_empty_le_empty(): test.TestOutcome {
   return test.assert_true("" <= "");
 }
 
-// Byte order, not a case-insensitive or locale collation: every uppercase
-// ASCII letter sorts before every lowercase one.
 function test_byte_order_case(): test.TestOutcome {
   return test.assert_true("Z" < "a");
 }
@@ -65,7 +53,6 @@ function test_byte_order_digits(): test.TestOutcome {
   return test.assert_true("1" < "A");
 }
 
-// Non-literal operands, so nothing can constant-fold the comparison away.
 function test_vars(): test.TestOutcome {
   let a: string = "alpha";
   let b: string = "beta";
@@ -78,14 +65,11 @@ function test_long_operands(): test.TestOutcome {
   return test.assert_true(a < b && b > a);
 }
 
-// A computed operand is a fresh owned temp; the lowering has to release it
-// without reading freed bytes.
 function test_computed_operand(): test.TestOutcome {
   let a: string = "ab";
   return test.assert_true(a + "c" < "abd" && "abb" < a + "c");
 }
 
-// The operators and the generic three-way ordering are one thing.
 function test_ord_agrees_lt(): test.TestOutcome {
   return test.assert_eq("abc".cmp("abd"), 0 - 1);
 }

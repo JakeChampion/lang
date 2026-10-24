@@ -8,36 +8,6 @@ import (
 	"testing"
 )
 
-// Self-host RC: a match over read_chunk owns the payload it binds
-// (#8402, the self-host half of native's #8396 / #8399).
-//
-// The runtime hands back an Option / Result box whose success payload is a fresh
-// rc=1 string built for this caller. The payload's unit is the caller's, and
-// nothing released it: the arm binding was a borrow, so every chunk of a
-// streaming-reader loop leaked. FERN_LEAKCHECK on 20 MB of stdin through the
-// pass-through loop read allocs=461 frees=0 live_bytes=20,201,064. The BOX is a
-// separate owner with a separate release (#8811); a shallow box free never
-// reaches the payload, so these legs measure the same thing either way.
-//
-// The two shapes each leg pins:
-//
-//   - RECLAIM. The same call count at a 64x chunk size must cost the SAME
-//     live bytes. That separates the payload from the per-call immortal box,
-//     which is a constant a doubling test cannot tell from a leak (the trap
-//     docs/rc-log/2026-09-05-owned-payload-builtins.md records). With the
-//     payloads leaking the wide round costs 64x the narrow one.
-//   - The runtime's own half: a SHORT read is copied into an exact-size block
-//     and the oversized one given back, so a pipe — 64 KiB a read against a
-//     larger request — recycles instead of stranding the slack below the
-//     freelist class the block lands in.
-//
-// The HAZARD group is the other direction: a binding that escapes its arm keeps
-// today's leak rather than being released under the destination's own claim, so
-// each of those must still compute the right answer and not over-release.
-
-// readChunkDrainSrc drains `rounds` chunks of `size` bytes and returns the
-// summed length modulo 251, so a wrong answer is an exit code rather than a
-// silent pass.
 func readChunkDrainSrc(size, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let r: Reader = stdin();
@@ -54,9 +24,6 @@ func readChunkDrainSrc(size, rounds int) string {
 }`, rounds, size)
 }
 
-// readChunkDiscardSrc is the same drain with the payload DISCARDED: `Ok(_)` at
-// an owned position has no binding to own the payload, so the arm releases it on
-// the spot.
 func readChunkDiscardSrc(size, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let r: Reader = stdin();
@@ -71,9 +38,6 @@ func readChunkDiscardSrc(size, rounds int) string {
 }`, rounds, size)
 }
 
-// runWithStdin runs a built binary against `stdin` and returns its stderr and
-// exit code. hevRun gives the child no stdin at all, and a reader probe needs
-// bytes to read.
 func runWithStdin(t *testing.T, runner []string, bin string, stdin []byte) (string, int) {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -89,7 +53,6 @@ func runWithStdin(t *testing.T, runner []string, bin string, stdin []byte) (stri
 	return errBuf.String(), cmd.ProcessState.ExitCode()
 }
 
-// leakSummaryOf pulls the leakcheck triple out of a program's stderr.
 func leakSummaryOf(t *testing.T, label, stderr string) (allocs, frees, live int64) {
 	t.Helper()
 	summary := ""
@@ -107,7 +70,6 @@ func leakSummaryOf(t *testing.T, label, stderr string) (allocs, frees, live int6
 	return allocs, frees, live
 }
 
-// TestSelfHostOwnedPayloadReclaimX86_64 — the reclaim leg.
 func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -162,9 +124,6 @@ func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 				t.Fatalf("nothing was freed (narrow %d/%d, wide %d/%d) — the payload is still a borrow",
 					na, nf, wa, wf)
 			}
-			// The reclaim shape: 64x the payload bytes at the same call count
-			// must cost the same live bytes. A leaked payload makes the wide
-			// round ~64x the narrow one.
 			if nl != wl {
 				t.Errorf("live_bytes narrow=%d wide=%d (allocs %d/%d, frees %d/%d): the owned "+
 					"payload must not scale with the chunk size — what is left is the per-call "+
@@ -175,22 +134,12 @@ func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOwnedPayloadPipeReclaimX86_64 — the runtime half on its own.
-//
-// A pipe hands back at most 64 KiB a read, so a 128 KiB request is always SHORT.
-// Boxing the oversized block at the short length hands the freelist a block
-// bigger than the class it lands in, so nothing recycles and the loop bumps a
-// fresh chunk per iteration. Reading the SAME bytes from a pipe and from a
-// regular file must therefore cost the same live bytes.
 func TestSelfHostOwnedPayloadShortReadReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// 24 rounds of 1024 bytes requested; the input holds 24 x 16, so EVERY
-	// read is short by 1008 bytes and the answers still match the full-read
-	// probe above.
 	const rounds = 24
 	src := readChunkDrainSrc(1024, rounds)
 	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
@@ -224,13 +173,6 @@ func TestSelfHostOwnedPayloadShortReadReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOwnedPayloadHazardsX86_64 — the shapes the admission must REFUSE.
-//
-// Each binding leaves the arm, so releasing it at the bind site or at the exit
-// sweep would free a value another owner still names. The only safe outcome is
-// today's leak, and it is asserted through behaviour: a wrongly-admitted binding
-// is a use-after-free, which shows up as a wrong answer, a non-zero underflow
-// count, or a crash.
 func TestSelfHostOwnedPayloadHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -244,8 +186,6 @@ func TestSelfHostOwnedPayloadHazardsX86_64(t *testing.T) {
 		want  int
 	}{
 		{
-			// The payload is APPENDED to an array that outlives the loop and
-			// is read back after it — the escape-through-append probe.
 			name: "escapes_through_append",
 			src: `function main(): i32 {
     let r: Reader = stdin();
@@ -264,11 +204,6 @@ func TestSelfHostOwnedPayloadHazardsX86_64(t *testing.T) {
 			want:  32,
 		},
 		{
-			// The payload is handed to a USER function that KEEPS it — an
-			// argument position no registry proves borrowing — and the result
-			// is read back after an allocating churn, so a released payload
-			// reads as the allocator's filler rather than as luck. Admitting
-			// this binding answers 27 instead of 32.
 			name: "passed_to_user_fn_that_keeps_it",
 			src: `function eat(n: i32): i32 {
     let s: string = "x";
@@ -299,7 +234,6 @@ function main(): i32 {
 			want:  32,
 		},
 		{
-			// The payload is RETURNED, so its reference leaves the frame.
 			name: "returned_from_arm",
 			src: `function first(r: Reader): string {
     match (r.read_chunk(16)) {
@@ -317,8 +251,6 @@ function main(): i32 {
 			want:  16,
 		},
 		{
-			// A GUARDED arm keeps today's leak: a failed guard falls through to
-			// a sibling that re-reads the same payload.
 			name: "guarded_arm",
 			src: `function main(): i32 {
     let r: Reader = stdin();
@@ -334,14 +266,10 @@ function main(): i32 {
     }
     return acc + __rc_underflow_count();
 }`,
-			// 40 bytes: two full 16-byte reads take the guarded arm, then an
-			// 8-byte one and the EOF read take the unguarded sibling — so both
-			// arms bind, which is the shape the guard exists to withhold.
 			stdin: bytes.Repeat([]byte{'x'}, 40),
 			want:  34,
 		},
 		{
-			// The payload is stored into an outer local that outlives the arm.
 			name: "stored_to_outer_local",
 			src: `function main(): i32 {
     let r: Reader = stdin();

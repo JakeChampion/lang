@@ -1,5 +1,5 @@
 function main(): i32 {
-    let a: str = slice_unchecked("abcdef", 0, 3); // inline "abc"
-    let b: string = "xyz";          // heap "xyz" — could go inline-or-heap
+    let a: str = slice_unchecked("abcdef", 0, 3);
+    let b: string = "xyz";
     return (a + b).len();
 }

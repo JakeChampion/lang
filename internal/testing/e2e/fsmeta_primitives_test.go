@@ -1,24 +1,3 @@
-// The filesystem-metadata primitives (#9059) end to end on every backend
-// that provides them: rename / set_file_times everywhere, plus `chmod` on the
-// natives.
-//
-// What these assert that no unit test can: each backend builds the syscall
-// arguments by hand — the arm64 and x86-64 emitters from hand-written
-// assembly, the wasm emitter from two WASI previews — and each is a place to swap the
-// two path operands of a rename, to write a timespec pair in the wrong order,
-// or to drop an omit sentinel. Every one of those produces a plausible call
-// that succeeds against the wrong thing, so the probe reads the metadata BACK
-// with `stat` / `lstat` rather than trusting the return value.
-//
-// `chmod` is native-only: neither WASI preview has permission bits, so E066
-// refuses it there (capability `fsmode`) and the wasm probes are the same
-// program with that block removed.
-//
-// The wasm leg runs TWICE, once per preview, because the two are separate
-// hand-written bodies over separate WASI calls — `path_rename` /
-// `path_filestat_set_times` against `descriptor.rename-at` /
-// `descriptor.set-times-at`, one an errno return and the other a return area,
-// one an `fstflags` bit for an omitted timestamp and the other a variant arm.
 package e2e
 
 import (
@@ -33,16 +12,6 @@ import (
 	"testing"
 )
 
-// fsMetaSource is the probe, parameterised by the directory its relative
-// paths resolve against — "" for the backends that run with their cwd already
-// there (wasm under its preopen), an absolute prefix for the rest.
-//
-// `withChmod` is off for wasm. `withNoFollow` is off only for the interpreter
-// on a platform whose `syscall` package exposes no utimensat, where the
-// nofollow flag is refused rather than downgraded to a follow — see
-// internal/oracle/interp/utimensat_other.go.
-//
-// Every failure returns its own exit code, so the number names the step.
 func fsMetaSource(prefix string, withChmod, withNoFollow bool) string {
 	p := func(name string) string {
 		if prefix == "" {
@@ -140,10 +109,6 @@ func fsMetaSource(prefix string, withChmod, withNoFollow bool) string {
 	return src
 }
 
-// fsMetaCheckTree asserts the filesystem the probe left behind, which is the
-// half a return value cannot prove: one file under the renamed-to name with
-// the bytes of the last thing moved onto it, nothing under either name it was
-// moved away from, and the mode the final chmod asked for.
 func fsMetaCheckTree(t *testing.T, dir string, withChmod bool) {
 	t.Helper()
 	for _, gone := range []string{"a.txt", "c.txt", "missing.txt"} {
@@ -187,8 +152,6 @@ func TestArm64FsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// The interpreter is another implementation and the one an in-language test
-// suite runs under. Its Linux and Darwin syscalls both support nofollow.
 func TestInterpFsMetaPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	noFollow := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
@@ -198,15 +161,11 @@ func TestInterpFsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// runPreview1Module runs a preview-1 core module with `workDir` as its only
-// preopen and answers main's return value, which `--invoke` prints.
 func runPreview1Module(t *testing.T, modPath, workDir string) int {
 	t.Helper()
 	return runPreview1ModuleStdin(t, modPath, workDir, nil)
 }
 
-// runPreview1ModuleStdin is runPreview1Module with `stdin` as the module's
-// standard input; nil leaves it empty.
 func runPreview1ModuleStdin(t *testing.T, modPath, workDir string, stdin *os.File) int {
 	t.Helper()
 	cmd := exec.Command("wasmtime", "run", "--dir="+workDir+"::/", "--invoke", "main", modPath)
@@ -239,10 +198,6 @@ func runPreview1ModuleStdin(t *testing.T, modPath, workDir string, stdin *os.Fil
 	return 0
 }
 
-// Preview 1 answers these with path_rename and path_filestat_set_times, over
-// an errno return rather than a return area, and it spells an omitted
-// timestamp as a cleared `fstflags` bit rather than a variant arm — so it is
-// a separate body from the component leg below and gets its own run.
 func TestWASMPreview1FsMetaPrimitives(t *testing.T) {
 	mod := buildWasmCore(t, fsMetaSource("", false, true))
 	dir := t.TempDir()
@@ -252,10 +207,6 @@ func TestWASMPreview1FsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, false)
 }
 
-// The component leg runs under its preopen, so its paths are relative and
-// `chmod` is absent: neither WASI preview has permission bits and E066
-// refuses the builtin on that target, which is the correct answer rather than
-// a mode word that describes nothing.
 func TestWASMFsMetaPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	out := runResultStdout(t, fsMetaSource("", false, true), runOpts{workDir: dir})

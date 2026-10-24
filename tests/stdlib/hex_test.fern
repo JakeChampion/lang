@@ -3,23 +3,11 @@ import "std/hex" as hex;
 import "std/codec";
 import "std/string";
 
-// tests/stdlib/hex_test.fern — pure-Fern coverage of std/hex's
-// lowercase hex encode / decode: round-trip fidelity, empty input,
-// case-insensitive decode, and typed errors for malformed input.
-//
-// std/hex carries bytes as `u8[]` on both sides (#5730). These fixtures
-// are all ASCII, so `text()` reads decoded bytes back to assert against
-// a literal, and `s.bytes()` feeds a literal into the encoder.
-
-// The decoded bytes in this file are ASCII by construction, so reading
-// them back is safe without the `std/utf8.from_bytes` check a real
-// ingest path would use.
 function text(b: u8[]): string {
   return string_from_bytes_unchecked(b);
 }
 
 function test_encode(): test.TestOutcome {
-  // 'A'=0x41 'B'=0x42 'C'=0x43.
   return test.assert_eq(hex.encode("ABC".bytes()), "414243");
 }
 
@@ -36,7 +24,6 @@ function test_decode_empty(): test.TestOutcome {
 }
 
 function test_decode_uppercase(): test.TestOutcome {
-  // Decode accepts upper-case hex digits ('4A' = 0x4A = 'J').
   return test.assert_eq(text(__codec_bytes(hex.decode("4A"))), "J");
 }
 
@@ -71,13 +58,9 @@ function test_roundtrip(): test.TestOutcome {
 }
 
 function test_encode_lowercase_digits(): test.TestOutcome {
-  // 0xFF is emitted lowercase ('ff', not 'FF'). A round-trip through
-  // decode keeps this byte-exact — and since #5730 both sides carry
-  // `u8[]`, so the 0xFF byte never has to masquerade as a `string`.
   return test.assert_eq(hex.encode(__codec_bytes(hex.decode("ff"))), "ff");
 }
 
-// Decode returns Ok(bytes) for valid input.
 function test_decode_checked_valid(): test.TestOutcome {
   match (hex.decode("48656c6c6f")) {
     Ok(v) => {
@@ -89,7 +72,6 @@ function test_decode_checked_valid(): test.TestOutcome {
   }
 }
 
-// An odd length and an invalid byte both return an error.
 function hex_is_err(s: string): boolean {
   match (hex.decode(s)) {
     Ok(v) => {
@@ -105,7 +87,6 @@ function test_decode_checked_rejects(): test.TestOutcome {
   return test.assert_true(hex_is_err("414") && hex_is_err("zz") && hex_is_err("48656c6c6fzz"));
 }
 
-// encode_upper emits uppercase A-F; decode accepts it (either case).
 function test_encode_upper(): test.TestOutcome {
   if (hex.encode_upper("z".bytes()) != "7A") {
     return test.fail("7A");
@@ -113,7 +94,6 @@ function test_encode_upper(): test.TestOutcome {
   if (hex.encode_upper("".bytes()) != "") {
     return test.fail("empty");
   }
-  // Round-trips through the case-insensitive decoder.
   return test.assert_eq(text(__codec_bytes(hex.decode(hex.encode_upper("Hello".bytes())))), "Hello");
 }
 
@@ -135,7 +115,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

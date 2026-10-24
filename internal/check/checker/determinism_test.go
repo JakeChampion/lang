@@ -1,37 +1,11 @@
 package checker
 
-// Determinism guard for diagnostic reporting.
-//
-// The checker accumulates diagnostics into a flat slice (c.errors)
-// during its walk and returns them as a diag.Errors aggregate with no
-// sorting step — the reported order IS the walk order. Diagnostic
-// ordering is the single most regression-prone surface for error UX:
-// users (and the test suite, and the LSP) read the *first* error
-// first, golden-output tests pin the sequence, and a reorder is an
-// invisible change until it breaks. Yet nothing pinned that a given
-// invalid program reports the same diagnostics in the same order on
-// every run.
-//
-// The risk is concrete: checking walks Go maps along the way (the
-// builtin-injection dedup tables, struct/enum/func symbol tables,
-// method-set maps), and Go map iteration order is randomized. If any
-// diagnostic is emitted from inside a map range — or if the order of
-// two errors depends on map-driven resolution order — the reported
-// sequence would shuffle run-to-run. This test locks the current
-// (verified-stable) behaviour so a future change that introduces
-// map-order dependence fails loudly here instead of as flaky golden
-// diffs elsewhere.
-
 import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// errorString runs parse + check on src and returns the aggregated
-// diagnostic text. It requires src to be invalid (Check must return a
-// non-nil error); a program that suddenly type-checks would mask a
-// reordering, so that's a test failure, not a skip.
 func errorString(t *testing.T, src string) string {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -45,12 +19,6 @@ func errorString(t *testing.T, src string) string {
 	return cerr.Error()
 }
 
-// errorMatrix is a set of programs that each produce multiple
-// diagnostics, biased toward the map-walking resolution paths where
-// ordering could drift: several offending top-level functions,
-// multiple bad struct fields, and a mix of error kinds (return
-// mismatch, undefined identifier, bad assignment, non-boolean
-// condition) whose relative order is what we're pinning.
 var errorMatrix = map[string]string{
 	"two_errors_one_func": `
 function f(): i32 {
@@ -86,13 +54,6 @@ function main(): i32 {
 }`,
 }
 
-// TestDiagnosticOrderDeterministic checks each invalid program several
-// times and asserts the aggregated diagnostic text is byte-identical
-// to the first run. A failure means diagnostic ordering has become
-// nondeterministic (most likely a diagnostic emitted from inside a Go
-// map range, or error order made dependent on map-driven resolution) —
-// which would surface elsewhere as flaky golden-output tests and an
-// inconsistent first-error experience for users and the LSP.
 func TestDiagnosticOrderDeterministic(t *testing.T) {
 	for name, src := range errorMatrix {
 		name, src := name, src

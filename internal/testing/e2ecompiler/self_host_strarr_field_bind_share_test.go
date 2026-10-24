@@ -4,44 +4,12 @@ import (
 	"testing"
 )
 
-// --- A string[] FIELD READ bound to a LOCAL, then stored ----------------------
-//
-// `let tt: string[] = q.f; let p: P = P { f: tt, n: i }` — the hoisted spelling
-// of the inline share self_host_strarr_field_share_read_test.go pins (#5338).
-// The holders must release the shared array exactly once between them; left
-// undropped it measured 800 allocs / 300 frees, 16800 live.
-//
-// WHAT THE BIND NEEDS THAT THE INLINE POSITION DOES NOT. In `P { f: q.f }` the
-// read is consumed where it is made: the construction retains an array field
-// unconditionally, and the new holder co-owns a counted reference. Through a
-// local that is no longer true — `tt` is an ordinary string[] local, and an
-// unchecked release would let `return tt[0]` outlive the holder's deep free.
-//
-// THE FAILURE MODE IS AN OVER-RELEASE, not a leak, so the `refused_*` rows are
-// essential rather than decorative: each one escapes something (an element,
-// the array, a bound element) or mutates `tt`, then reads every value back
-// after 200 rounds of churn have recycled the freelist. They answer
-// identically under `bin/fern -interp` and the self-host, and every row
-// balances.
-//
-// `escaping_holder_now_clean` returns the literal holding `tt`: the returned
-// field value is a bare ident, so the caller's binding is the one that
-// releases it. self_host_strarr_field_share_read_test.go pins the inline
-// spelling; both answer 8.
-//
-// The target was re-run under FERN_SANITIZE=1 with FERN_RC_UNDERFLOW_TRAP=1 and
-// FERN_RC_FREE_DEBUG=1: clean, no trap, no quarantine hit.
-
 const strarrBindShareDecl = `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
 function churn(i: i32): i32 { let a: string[] = mkv(i); let b: string[] = mkv(i + 1); return a[0].len() + b[1].len(); }
 `
 
-// strarrBindChurnMain drives 200 rounds and separates the three failure modes:
-// a negative round result (an element read back wrong, i.e. an over-release)
-// exits 100, a non-zero underflow counter exits 99, and reading freed memory
-// segfaults on its own.
 const strarrBindChurnMain = `
 function main(): i32 {
     let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
@@ -62,9 +30,6 @@ function main(): i32 {
 func strarrBindShareCases() []arrenumShareCase {
 	return []arrenumShareCase{
 		{
-			// THE CELL. 800/300 before, 800/800 now — and the same 72 the
-			// inline spelling answers, which is the point: the two programs
-			// differ only in whether the read is named.
 			name: "bind_then_store",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -75,9 +40,6 @@ func strarrBindShareCases() []arrenumShareCase {
 			want: 72,
 		},
 		{
-			// The holder escapes with the bind inside the callee. The walk can
-			// see `tt` reaches only the returned holder's field, so it is
-			// admitted and balances. Reads every element back after churn.
 			name: "escaping_holder_now_clean",
 			src: strarrBindShareDecl + `function make(i: i32): P {
     let q: P = P { f: mkv(i), n: i };
@@ -96,9 +58,6 @@ function round(i: i32): i32 {
 			want: 8,
 		},
 		{
-			// Control: a local-to-local bind of a FRESH array, clean before
-			// this change. If it moves, the admission widened past the field
-			// read it is scoped to.
 			name: "fresh_local_bind_unchanged",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     let src: string[] = mkv(i);
@@ -109,8 +68,6 @@ function round(i: i32): i32 {
 			want: 71,
 		},
 		{
-			// An ELEMENT of `tt` escapes the frame. The holders' deep
-			// free would dangle it, so the read stays marked.
 			name: "refused_element_escapes",
 			src: strarrBindShareDecl + `function grab(i: i32): string {
     let q: P = P { f: mkv(i), n: i };
@@ -128,8 +85,6 @@ function round(i: i32): i32 {
 			want: 8,
 		},
 		{
-			// The ARRAY itself escapes, so a second holder outlives
-			// both structs.
 			name: "refused_array_escapes",
 			src: strarrBindShareDecl + `function grab(i: i32): string[] {
     let q: P = P { f: mkv(i), n: i };
@@ -148,8 +103,6 @@ function round(i: i32): i32 {
 			want: 8,
 		},
 		{
-			// An element is BOUND to a local and read after churn — a lasting
-			// element alias that must stay valid.
 			name: "refused_element_bound",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     let want: i32 = w("a").len();
@@ -164,10 +117,6 @@ function round(i: i32): i32 {
 			want: 40,
 		},
 		{
-			// Was REFUSED, and is not any more. `tt` is rebound by a
-			// self-append, which copies the shared buffer; the copy now
-			// retains the elements it shares and the superseded buffer is
-			// released (#9209), so this balances.
 			name: "appended_now_clean",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -179,10 +128,6 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// `for s in tt` binds an element per iteration. A transient binder
-			// does not take the array's credit away (see
-			// self_host_forin_strarr_binder_test.go), so the share behind it is
-			// admitted and this balances. The interpreter answers 43.
 			name: "iterated_now_clean",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -195,9 +140,6 @@ function round(i: i32): i32 {
 			want: 43,
 		},
 		{
-			// `tt` is handed to a call. The borrowable registry is not
-			// built at admission time, so every call argument is a hazard —
-			// the direction that can only refuse.
 			name: "refused_call_argument",
 			src: strarrBindShareDecl + `function keep(xs: string[]): i32 { let k: string[] = xs; return k[0].len() + k.len(); }
 function round(i: i32): i32 {
@@ -212,9 +154,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostStrArrFieldBindShareX86_64 — a `q.f` string[] read BOUND to a
-// local and stored into a string[] field is the same counted share as the
-// inline spelling, and every other use of that local still refuses it.
 func TestSelfHostStrArrFieldBindShareX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

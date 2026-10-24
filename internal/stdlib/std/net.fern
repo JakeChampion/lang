@@ -1,39 +1,4 @@
-// std/net — IP addresses, socket addresses, and the typed error every
-// networking primitive reports. It is the P0 floor (#9853) of the
-// networking plan in #9851.
-//
-// Three types:
-//
-//   - `IpAddr` — `V4(bytes)` / `V6(bytes)`, 4 or 16 bytes in network
-//     order. Build one with `ipv4(a, b, c, d)`, `ipv6(bytes)` or
-//     `ip_parse(text)`; render it with `to_string()`, which writes IPv6
-//     in the RFC 5952 canonical form (lowercase, no leading zeros, the
-//     longest zero run compressed, `::ffff:a.b.c.d` for a mapped address).
-//   - `SocketAddr` — an `IpAddr` plus a port. `socket_addr_parse` reads
-//     `a.b.c.d:port` and the bracketed `[v6]:port` form.
-//   - `NetError` — the closed enum every socket primitive of this module
-//     reports. `error_from_host(n)` maps the errno a builtin returns
-//     (negated or not, in the target's own numbering) onto it, and
-//     `errno()` answers in Linux numbering on every target, as
-//     `IoError` does, so it compares equal to the `std/errno` constants.
-//
-// The socket controls (`listen_with`, `listen_at`, the options,
-// `shutdown`), the stream verbs on a connection (`read` into the caller's
-// buffer, `read_deadline`, `write`), the datagram sockets (`udp_socket`, `send_to`,
-// `recv_from`, …), the connects and the Unix-domain sockets are typed
-// faces over the descriptor builtins, further down; every primitive that
-// takes an address takes either family as its bytes, so an IPv6
-// `SocketAddr` goes through unchanged. `packed_v4()` packs an IPv4
-// address into one `i32`, the form `gethostid` and a per-peer key use.
-//
-// The predicates (`is_loopback`, `is_private`, `is_link_local`,
-// `is_multicast`, `is_unspecified`) and `to_canonical()` are the vocabulary
-// the client hardening of #9851 P2 checks a dialled address against, so
-// they are defined here once and IPv4-mapped IPv6 addresses are unwrapped
-// before a range check rather than at every call site.
-//
-// No prelude: these are in scope only after a program declares
-// `import "std/net";` (docs/PRELUDE-TO-MODULES.md, Phase 5).
+// This module provides IP addresses, socket addresses, and network error types.
 
 import "std/i32";
 import "std/errno";
@@ -42,29 +7,16 @@ import "std/time";
 import "std/async";
 import "core/cmp";
 
-// IpAddr — an IPv4 or IPv6 address as its network-order bytes: exactly 4
-// for `V4`, exactly 16 for `V6`. The constructors below keep that
-// invariant; a raw `V6(bytes)` of any other length is a caller bug.
 pub enum IpAddr {
   V4(u8[]),
   V6(u8[]),
 }
 
-// SocketAddr — an address and a port (0..65535).
 pub struct SocketAddr {
   ip: IpAddr,
   port: i32,
 }
 
-// NetError — what a networking primitive reports when the OS refuses.
-//
-// Closed: every variant but `Other` names one errno, and `Other(errno)`
-// carries any other, in Linux numbering (0 for one the target numbers past
-// the strerror table, as `errno.from_host` reads it). `WouldBlock` is both
-// `EAGAIN` and `EWOULDBLOCK` (one number on every target this module runs
-// on). `Interrupted` and `Other` share
-// their names with `IoError`, so they are written `NetError.Interrupted`
-// and `NetError.Other(n)`.
 pub enum NetError {
   AddrInUse,
   AddrNotAvailable,
@@ -80,9 +32,6 @@ pub enum NetError {
   Other(i32),
 }
 
-// ---------------------------------------------------------------------------
-// Constructors
-
 function __zero_bytes(n: i32): u8[] {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -93,8 +42,6 @@ function __zero_bytes(n: i32): u8[] {
   return out;
 }
 
-// `ipv4(a, b, c, d)` — the address `a.b.c.d`; each octet is masked to
-// 0..255.
 pub function ipv4(a: i32, b: i32, c: i32, d: i32): IpAddr {
   let out: u8[] = [];
   out = out.append((a & 255) as u8);
@@ -104,8 +51,6 @@ pub function ipv4(a: i32, b: i32, c: i32, d: i32): IpAddr {
   return V4(out);
 }
 
-// `ipv6(bytes)` — an IPv6 address from its 16 network-order bytes, or
-// `None` for any other length.
 pub function ipv6(bytes: u8[]): Option[IpAddr] {
   if (bytes.len() != 16) {
     return None;
@@ -113,36 +58,27 @@ pub function ipv6(bytes: u8[]): Option[IpAddr] {
   return Some(V6(bytes));
 }
 
-// `ipv4_unspecified()` — `0.0.0.0`, the "every interface" bind address.
 pub function ipv4_unspecified(): IpAddr {
   return ipv4(0, 0, 0, 0);
 }
 
-// `ipv6_unspecified()` — `::`.
 pub function ipv6_unspecified(): IpAddr {
   return V6(__zero_bytes(16));
 }
 
-// `ipv4_loopback()` — `127.0.0.1`.
 pub function ipv4_loopback(): IpAddr {
   return ipv4(127, 0, 0, 1);
 }
 
-// `ipv6_loopback()` — `::1`.
 pub function ipv6_loopback(): IpAddr {
   let b: u8[] = __zero_bytes(15);
   return V6(b.append(1 as u8));
 }
 
-// `socket_addr(ip, port)` — pair an address with a port.
 pub function socket_addr(ip: IpAddr, port: i32): SocketAddr {
   return SocketAddr { ip: ip, port: port };
 }
 
-// ---------------------------------------------------------------------------
-// IpAddr accessors and predicates
-
-// `bytes()` — the network-order bytes: 4 for a `V4`, 16 for a `V6`.
 pub function (a: IpAddr) bytes(): u8[] {
   match (a) {
     V4(b) => {
@@ -180,13 +116,11 @@ function __all_zero(b: u8[], from: i32, to: i32): boolean {
   return true;
 }
 
-// `is_unspecified()` — `0.0.0.0` or `::`.
 pub function (a: IpAddr) is_unspecified(): boolean {
   let b: u8[] = a.bytes();
   return __all_zero(b, 0, b.len());
 }
 
-// `is_loopback()` — `127.0.0.0/8` or `::1`.
 pub function (a: IpAddr) is_loopback(): boolean {
   match (a) {
     V4(b) => {
@@ -198,8 +132,6 @@ pub function (a: IpAddr) is_loopback(): boolean {
   }
 }
 
-// `is_private()` — RFC 1918 (`10/8`, `172.16/12`, `192.168/16`) or the
-// RFC 4193 unique-local block `fc00::/7`.
 pub function (a: IpAddr) is_private(): boolean {
   match (a) {
     V4(b) => {
@@ -217,7 +149,6 @@ pub function (a: IpAddr) is_private(): boolean {
   }
 }
 
-// `is_link_local()` — `169.254/16` or `fe80::/10`.
 pub function (a: IpAddr) is_link_local(): boolean {
   match (a) {
     V4(b) => {
@@ -229,7 +160,6 @@ pub function (a: IpAddr) is_link_local(): boolean {
   }
 }
 
-// `is_multicast()` — `224/4` or `ff00::/8`.
 pub function (a: IpAddr) is_multicast(): boolean {
   match (a) {
     V4(b) => {
@@ -241,8 +171,6 @@ pub function (a: IpAddr) is_multicast(): boolean {
   }
 }
 
-// `is_v4_mapped()` — a `V6` in `::ffff:0:0/96`, the form a dual-stack
-// socket reports an IPv4 peer as.
 pub function (a: IpAddr) is_v4_mapped(): boolean {
   match (a) {
     V4(b) => {
@@ -254,9 +182,6 @@ pub function (a: IpAddr) is_v4_mapped(): boolean {
   }
 }
 
-// `to_canonical()` — the `V4` inside an IPv4-mapped `V6`; any other
-// address unchanged. Range checks (`is_private`, an allow list) go through
-// this first, or `::ffff:10.0.0.1` reads as a public IPv6 address.
 pub function (a: IpAddr) to_canonical(): IpAddr {
   if (!a.is_v4_mapped()) {
     return a;
@@ -265,21 +190,6 @@ pub function (a: IpAddr) to_canonical(): IpAddr {
   return ipv4(b[12] as i32, b[13] as i32, b[14] as i32, b[15] as i32);
 }
 
-// `is_global()` — an address that is reachable from anywhere, so the
-// one an outbound request may dial from inside a network without
-// reaching the network itself. False for the unspecified address,
-// loopback, the private blocks (RFC 1918, RFC 4193), link-local (169.254/16,
-// where the cloud metadata services sit, and fe80::/10), the shared block
-// 100.64/10 (RFC 6598), this-network 0/8, the IETF protocol block
-// 192.0.0.0/24, the documentation blocks (192.0.2/24, 198.51.100/24,
-// 203.0.113/24, 2001:db8::/32), benchmarking 198.18/15, multicast, the
-// reserved 240/4 and broadcast. An IPv6 address carrying an IPv4 one
-// (IPv4-mapped, NAT64's well-known 64:ff9b::/96, 6to4's 2002::/16) answers
-// for the address it carries, so `::ffff:10.0.0.1` reads as `10.0.0.1`;
-// one in NAT64's local-use 64:ff9b:1::/48 (RFC 8215), whose prefix
-// length the operator chooses, is global only when the address it would
-// carry under each length is. A NAT64 address under a network's own
-// prefix is not recognisable here: `dns.nat64_carried` names it.
 pub function (a: IpAddr) is_global(): boolean {
   match (a) {
     V4(b) => {
@@ -302,10 +212,6 @@ pub function (a: IpAddr) is_global(): boolean {
   return false;
 }
 
-// `embedded_v4(bits)` — the IPv4 address a NAT64 address carries under a
-// prefix of `bits` (32, 40, 48, 56, 64 or 96), in RFC 6052 §2.2's layout:
-// the four bytes after the prefix, skipping byte 8. `None` for an IPv4
-// address or a length the RFC does not define.
 pub function (a: IpAddr) embedded_v4(bits: i32): Option[IpAddr] {
   match (a) {
     V4(b) => {
@@ -337,16 +243,10 @@ function __nat64_bytes(b: u8[], bits: i32): u8[] {
   return out;
 }
 
-// `64:ff9b:1::/48`, RFC 8215's local-use NAT64 space.
 function __local_nat64(b: u8[]): boolean {
   return b[0] == 0 && b[1] == 100 && b[2] == 255 && b[3] == 155 && b[4] == 0 && b[5] == 1;
 }
 
-// Whether every address a local-use NAT64 address would carry, under
-// each prefix length an operator may pick inside the /48, is global. A
-// length counts only when the address is laid out as RFC 6052 §2.2 would
-// under it (byte 8 and the bytes after the carried address zero) and
-// carries an address at all, since the unspecified one is no target.
 function __local_nat64_global(b: u8[]): boolean {
   let lengths: i32[] = [48, 56, 64, 96];
   let i: i32 = 0;
@@ -359,9 +259,6 @@ function __local_nat64_global(b: u8[]): boolean {
   return true;
 }
 
-// Whether `b` could be a synthesis under a prefix of `bits`: byte 8 is
-// zero when the carried address straddles it, every byte after the
-// carried address is zero, and the carried address is not 0.0.0.0.
 function __nat64_laid_out(b: u8[], bits: i32): boolean {
   let start: i32 = bits / 8;
   let end: i32 = start + 4;
@@ -374,13 +271,10 @@ function __nat64_laid_out(b: u8[], bits: i32): boolean {
   return __all_zero(b, end, 16) && !__all_zero(__nat64_bytes(b, bits), 0, 4);
 }
 
-// The IPv4 blocks `is_global` refuses.
 function __v4_special(b: u8[]): boolean {
   return __v4_low_blocks(b) || __v4_doc_blocks(b) || (b[0] & 240) >= 224;
 }
 
-// This-network 0/8, private 10/8, loopback 127/8, shared 100.64/10,
-// link-local 169.254/16 and private 172.16/12.
 function __v4_low_blocks(b: u8[]): boolean {
   if (b[0] == 0 || b[0] == 10 || b[0] == 127) {
     return true;
@@ -394,8 +288,6 @@ function __v4_low_blocks(b: u8[]): boolean {
   return b[0] == 172 && (b[1] & 240) == 16;
 }
 
-// Private 192.168/16, the IETF protocol block 192.0.0/24, the three
-// documentation nets and the benchmarking range 198.18/15.
 function __v4_doc_blocks(b: u8[]): boolean {
   if (b[0] == 192) {
     return b[1] == 168 || b[1] == 0 && (b[2] == 0 || b[2] == 2);
@@ -406,9 +298,6 @@ function __v4_doc_blocks(b: u8[]): boolean {
   return b[0] == 203 && b[1] == 0 && b[2] == 113;
 }
 
-// The IPv6 blocks `is_global` refuses, once an embedded IPv4 address has
-// been ruled out: unspecified, loopback, unique-local fc00::/7, link-local
-// fe80::/10, multicast ff00::/8 and documentation 2001:db8::/32.
 function __v6_special(b: u8[]): boolean {
   if (__all_zero(b, 0, 15)) {
     return b[15] == 0 || b[15] == 1;
@@ -422,10 +311,6 @@ function __v6_special(b: u8[]): boolean {
   return b[0] == 32 && b[1] == 1 && b[2] == 13 && b[3] == 184;
 }
 
-// The IPv4 address an IPv6 one carries: the low four bytes of an
-// IPv4-mapped (`::ffff:a.b.c.d`) or NAT64 well-known-prefix
-// (`64:ff9b::a.b.c.d`) address, bytes 2 to 5 of a 6to4 one
-// (`2002:abcd:ef01::`); `None` for any other.
 function __carried_v4(b: u8[]): Option[u8[]] {
   if (__all_zero(b, 0, 10) && b[10] == 255 && b[11] == 255) {
     return Some([b[12], b[13], b[14], b[15]]);
@@ -440,8 +325,6 @@ function __carried_v4(b: u8[]): Option[u8[]] {
   return None;
 }
 
-// `packed_v4()` — a `V4` as one network-order `i32`
-// (`a | b << 8 | c << 16 | d << 24`); `None` for a `V6`.
 pub function (a: IpAddr) packed_v4(): Option[i32] {
   match (a) {
     V4(b) => {
@@ -454,7 +337,6 @@ pub function (a: IpAddr) packed_v4(): Option[i32] {
   }
 }
 
-// `eq(other)` — same family and same bytes.
 pub function (a: IpAddr) eq(other: IpAddr): boolean {
   if (a.is_v4() != other.is_v4()) {
     return false;
@@ -475,14 +357,10 @@ impl cmp.Eq for IpAddr {}
 
 impl cmp.Display for IpAddr {}
 
-// ---------------------------------------------------------------------------
-// Formatting
-
 function __v4_text(b: u8[]): string {
   return (b[0] as i32).to_string() + "." + (b[1] as i32).to_string() + "." + (b[2] as i32).to_string() + "." + (b[3] as i32).to_string();
 }
 
-// The eight 16-bit groups of a V6.
 function __v6_groups(b: u8[]): i32[] {
   let g: i32[] = [];
   let i: i32 = 0;
@@ -493,9 +371,6 @@ function __v6_groups(b: u8[]): i32[] {
   return g;
 }
 
-// The start of the longest run of zero groups worth compressing (two or
-// more, leftmost on a tie) as `(start, len)`, or `(-1, 0)` when there is
-// none. RFC 5952 §4.2.
 function __v6_zero_run(g: i32[]): (i32, i32) {
   let best_start: i32 = -1;
   let best_len: i32 = 0;
@@ -551,9 +426,6 @@ function __v6_text(b: u8[]): string {
   return __v6_join(g, 0, run.0) + "::" + __v6_join(g, run.0 + run.1, 8);
 }
 
-// `to_string()` — dotted decimal for a `V4`; the RFC 5952 canonical text
-// for a `V6` (lowercase hex, no leading zeros, the longest zero run
-// compressed, a mapped address as `::ffff:a.b.c.d`).
 pub function (a: IpAddr) to_string(): string {
   match (a) {
     V4(b) => {
@@ -565,7 +437,6 @@ pub function (a: IpAddr) to_string(): string {
   }
 }
 
-// `to_string()` — `a.b.c.d:port`, or `[v6]:port` (RFC 3986 host form).
 pub function (s: SocketAddr) to_string(): string {
   if (s.ip.is_v4()) {
     return s.ip.to_string() + ":" + s.port.to_string();
@@ -573,7 +444,6 @@ pub function (s: SocketAddr) to_string(): string {
   return "[" + s.ip.to_string() + "]:" + s.port.to_string();
 }
 
-// `eq(other)` — same address and port.
 pub function (s: SocketAddr) eq(other: SocketAddr): boolean {
   return s.port == other.port && s.ip.eq(other.ip);
 }
@@ -582,18 +452,11 @@ impl cmp.Eq for SocketAddr {}
 
 impl cmp.Display for SocketAddr {}
 
-// `Prefix` — an address block, `ip/bits` (RFC 4632 for IPv4, RFC 4291
-// §2.3 for IPv6): the addresses whose first `bits` bits are `ip`'s.
 pub struct Prefix {
   ip: IpAddr,
   bits: i32,
 }
 
-// `prefix_parse(s)` — `10.0.0.0/8`, `2001:db8::/32`, or a bare address as
-// the block of that one address; None for a length past the family's
-// width, or host bits set below it (`10.0.0.1/8`), which is a typo for one
-// of two different blocks. An IPv4-mapped block of 96 bits or more is the
-// IPv4 block it maps (`::ffff:10.0.0.0/104` is `10.0.0.0/8`).
 pub function prefix_parse(s: string): Option[Prefix] {
   let slash: Option[i32] = s.index_of("/");
   let text: string = s;
@@ -621,8 +484,6 @@ pub function prefix_parse(s: string): Option[Prefix] {
   }
 }
 
-// `__prefix_bits(s, width)` — a prefix length of one to three digits, at
-// most `width`; -1 otherwise.
 function __prefix_bits(s: string, width: i32): i32 {
   if (s.len() == 0 || s.len() > 3) {
     return 0 - 1;
@@ -652,7 +513,6 @@ function __host_bits_clear(b: u8[], bits: i32): boolean {
   return true;
 }
 
-// `__low_mask(keep)` — the bits of a byte past its first `keep`.
 function __low_mask(keep: i32): i32 {
   if (keep <= 0) {
     return 255;
@@ -660,11 +520,6 @@ function __low_mask(keep: i32): i32 {
   return 255 >> keep;
 }
 
-// `(p).contains(ip)` — whether `ip` is in the block, read in the block's
-// family: against an IPv4 block an IPv4-mapped address is its IPv4 one, so
-// a dual-stack listener's peers match IPv4 blocks, and against an IPv6
-// block an IPv4 address is its mapped form. An IPv6 address that maps no
-// IPv4 one is in no IPv4 block.
 pub function (p: Prefix) contains(ip: IpAddr): boolean {
   let a: u8[] = p.ip.bytes();
   let b: u8[] = __in_family(ip, a.len() == 4);
@@ -683,9 +538,6 @@ pub function (p: Prefix) contains(ip: IpAddr): boolean {
   return true;
 }
 
-// `__in_family(ip, v4)` — `ip`'s bytes as an IPv4 address (canonical, so
-// still 16 bytes when it maps none) or as an IPv6 one (an IPv4 address
-// mapped, `::ffff:a.b.c.d`).
 function __in_family(ip: IpAddr, v4: boolean): u8[] {
   if (v4) {
     return ip.to_canonical().bytes();
@@ -700,16 +552,10 @@ function __in_family(ip: IpAddr, v4: boolean): u8[] {
   }
 }
 
-// `(p).to_string()` — `ip/bits`.
 pub function (p: Prefix) to_string(): string {
   return p.ip.to_string() + "/" + p.bits.to_string();
 }
 
-// ---------------------------------------------------------------------------
-// Parsing
-
-// The pieces of `s` between occurrences of the byte `sep`, as owned
-// strings; an empty input is one empty piece.
 function __pieces(s: string, sep: i32): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -735,12 +581,6 @@ function __has_byte(s: string, b: i32): boolean {
   return false;
 }
 
-// The bytes of `s` from `from` up to its first `sep` or its end, as a
-// decimal 0..255 with no sign and no leading zero (`0` itself is fine),
-// and where it stopped, packed as `value | end << 8`; -1 for anything
-// else. It is the only IPv4 octet spelling accepted, because `010` is
-// octal to some parsers and decimal to others, and an address that reads
-// two ways is how an allow list is bypassed.
 function __octet(s: string, from: i32, sep: i32): i32 {
   let i: i32 = from;
   let v: i32 = 0;
@@ -758,7 +598,6 @@ function __octet(s: string, from: i32, sep: i32): i32 {
   return v | i << 8;
 }
 
-// `ipv4_parse(s)` — `a.b.c.d`, four octets exactly.
 pub function ipv4_parse(s: string): Option[IpAddr] {
   let a: i32 = __octet(s, 0, 46);
   if (a < 0 || a >> 8 >= s.len()) {
@@ -779,9 +618,6 @@ pub function ipv4_parse(s: string): Option[IpAddr] {
   return Some(V4([(a & 255) as u8, (b & 255) as u8, (c & 255) as u8, (d & 255) as u8]));
 }
 
-// `is_ipv4(s)` — whether `ipv4_parse(s)` would read an address, found
-// without building one: the same four octets, each `__octet` ending
-// where the next begins.
 pub function is_ipv4(s: string): boolean {
   let at: i32 = 0;
   let n: i32 = 0;
@@ -809,7 +645,6 @@ function __hex_digit(c: i32): i32 {
   return -1;
 }
 
-// One IPv6 group: one to four hex digits, or -1.
 function __v6_group(s: string): i32 {
   let n: i32 = s.len();
   if (n == 0 || n > 4) {
@@ -828,10 +663,6 @@ function __v6_group(s: string): i32 {
   return v;
 }
 
-// The groups of one side of a `::` (or the whole address when there is
-// none). The last piece may be a dotted quad, which counts as two groups;
-// it is only allowed where the address ends (`v4_tail`). `None` on any
-// malformed piece; an empty side is an empty list.
 function __v6_side(s: string, v4_tail: boolean): Option[i32[]] {
   let groups: i32[] = [];
   if (s.len() == 0) {
@@ -864,7 +695,6 @@ function __v6_side(s: string, v4_tail: boolean): Option[i32[]] {
   return Some(groups);
 }
 
-// The index of the first `::` in `s`, or -1.
 function __find_double_colon(s: string): i32 {
   let i: i32 = 0;
   while (i + 1 < s.len()) {
@@ -900,10 +730,6 @@ function __v6_from_groups(left: i32[], right: i32[]): IpAddr {
   return V6(out);
 }
 
-// Both sides of a `::` at `at`, each parsed with `__v6_side`; `None`
-// when either side is malformed, when the right side holds another `::`,
-// or when the two sides already fill all eight groups (a `::` stands for
-// at least one).
 function __v6_compressed(s: string, at: i32): Option[IpAddr] {
   let left_text: string = slice_unchecked(s, 0, at) + "";
   let right_text: string = slice_unchecked(s, at + 2, s.len()) + "";
@@ -934,10 +760,6 @@ function __v6_compressed(s: string, at: i32): Option[IpAddr] {
   return Some(__v6_from_groups(left, right));
 }
 
-// `ipv6_parse(s)` — RFC 4291 §2.2 text: eight hex groups, at most one
-// `::`, an optional dotted-quad tail for the low 32 bits. Brackets and
-// zone ids (`%eth0`) are not part of an address and are rejected;
-// `socket_addr_parse` strips the brackets of the `[v6]:port` form.
 pub function ipv6_parse(s: string): Option[IpAddr] {
   if (s.len() == 0) {
     return None;
@@ -959,7 +781,6 @@ pub function ipv6_parse(s: string): Option[IpAddr] {
   }
 }
 
-// `ip_parse(s)` — either family, told apart by the presence of a colon.
 pub function ip_parse(s: string): Option[IpAddr] {
   if (__has_byte(s, 58)) {
     return ipv6_parse(s);
@@ -967,7 +788,6 @@ pub function ip_parse(s: string): Option[IpAddr] {
   return ipv4_parse(s);
 }
 
-// A port: one to five decimal digits, at most 65535, or -1.
 function __port(s: string): i32 {
   let n: i32 = s.len();
   if (n == 0 || n > 5) {
@@ -989,8 +809,6 @@ function __port(s: string): i32 {
   return v;
 }
 
-// The `[v6]:port` form: the bytes between the brackets are the address
-// and a `:port` must follow the closing bracket.
 function __socket_addr_bracketed(s: string): Option[SocketAddr] {
   let close: i32 = -1;
   let i: i32 = 1;
@@ -1018,10 +836,6 @@ function __socket_addr_bracketed(s: string): Option[SocketAddr] {
   }
 }
 
-// `socket_addr_parse(s)` — `a.b.c.d:port` or `[v6]:port`. A bare IPv6
-// address with a port is ambiguous and is rejected; an address without a
-// port is `None` too, since a port of "0 by default" is a silent bind to
-// an ephemeral port.
 pub function socket_addr_parse(s: string): Option[SocketAddr] {
   if (s.len() > 0 && s[0] == 91) {
     return __socket_addr_bracketed(s);
@@ -1051,11 +865,6 @@ pub function socket_addr_parse(s: string): Option[SocketAddr] {
   }
 }
 
-// ---------------------------------------------------------------------------
-// NetError
-
-// The errno each variant stands for, in declaration order (`Other` has
-// none).
 function __net_errnos(): i32[] {
   return [errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.ECONNREFUSED, errno.ECONNRESET, errno.ECONNABORTED, errno.ETIMEDOUT, errno.EAGAIN, errno.EINPROGRESS, errno.ENETUNREACH, errno.EHOSTUNREACH, errno.EINTR];
 }
@@ -1101,8 +910,6 @@ function __net_error_at_high(i: i32, n: i32): NetError {
   return NetError.Other(n);
 }
 
-// `error_from_host(n)` — the variant for errno `n` as the compile target
-// numbers it, the form a socket builtin returns: negated (`-98`) or not.
 pub function error_from_host(n: i32): NetError {
   let e: i32 = errno.from_host(n);
   let table: i32[] = __net_errnos();
@@ -1157,8 +964,6 @@ function __net_error_index(e: NetError): i32 {
   }
 }
 
-// `errno()` — the errno this error stands for, in Linux numbering;
-// `Other(n)` answers `n`.
 pub function (e: NetError) errno(): i32 {
   match (e) {
     NetError.Other(n) => {
@@ -1170,8 +975,6 @@ pub function (e: NetError) errno(): i32 {
   }
 }
 
-// `message()` — a short description in the wording of glibc's
-// `strerror`, so a log line reads like one from a C program.
 pub function (e: NetError) message(): string {
   match (e) {
     AddrInUse => {
@@ -1224,13 +1027,10 @@ function __net_error_message_high(e: NetError): string {
   }
 }
 
-// `to_string()` — `message()`, so a `NetError` prints like any other
-// `Display` value.
 pub function (e: NetError) to_string(): string {
   return e.message();
 }
 
-// `eq(other)` — same variant, and the same errno for `Other`.
 pub function (e: NetError) eq(other: NetError): boolean {
   let i: i32 = __net_error_index(e);
   if (i != __net_error_index(other)) {
@@ -1239,76 +1039,31 @@ pub function (e: NetError) eq(other: NetError): boolean {
   return i >= 0 || e.errno() == other.errno();
 }
 
-// `ipv6_unavailable()` — whether this is how a `::` listener fails on a host
-// without IPv6: EAFNOSUPPORT from socket(2), or `AddrNotAvailable` from a
-// bind where the family exists but is switched off.
 pub function (e: NetError) ipv6_unavailable(): boolean {
   return e.eq(AddrNotAvailable) || e.errno() == errno.EAFNOSUPPORT;
 }
 
-// ---------------------------------------------------------------------------
-// Socket controls
-//
-// Typed faces over the descriptor builtins `tcp_listen_with` and
-// `tcp_socket_ctl` (#9853): a negative errno becomes the `NetError` it
-// names. The descriptors are the same `i32` the `tcp_*` builtins use, so
-// a listener from `listen_with` goes to `accept` and an accepted or
-// dialled socket to any control here.
-//
-// wasi:sockets 0.2 has no Nagle switch and no blocking mode to turn off, so
-// on wasm `set_nodelay` and `set_nonblocking` answer `Other(errno.ENOTSUP)`
-// rather than claiming a setting the host does not have, and
-// `reuse_port` is ignored: a port is one socket's there.
-
-// ListenOptions — what `listen_with` asks of the listener: the accept
-// queue depth, and whether other listeners may share the port
-// (`SO_REUSEPORT`, the kernel balancing accepted connections across them).
 pub struct ListenOptions {
   backlog: i32,
   reuse_port: boolean,
 }
 
-// `listen_options()` — what `tcp_listen` uses: a backlog of 128 and the
-// port held by one listener.
 pub function listen_options(): ListenOptions {
   return ListenOptions { backlog: 128, reuse_port: false };
 }
 
-// `listen_with(port, opts)` — a listening socket on every IPv4 interface
-// at `port` (0 lets the host pick, and `local_port` reads it back), or the
-// error the bind or listen reported.
 pub function listen_with(port: i32, opts: ListenOptions): Result[i32, NetError] {
   return listen_at(socket_addr(ipv4_unspecified(), port), opts);
 }
 
-// `listen_at(addr, opts)` — a listening socket bound to `addr`, of either
-// family: `::` takes every interface of both families (`IPV6_V6ONLY` is
-// cleared, whatever the host's default) except on wasi:sockets, which
-// keeps an IPv6 socket IPv6-only. An IPv4 peer of such a listener is a
-// v4-mapped `V6` to `peer_key` and the raw controls, and the `V4` it is to
-// `peer_addr`.
 pub function listen_at(addr: SocketAddr, opts: ListenOptions): Result[i32, NetError] {
   return __socket_count(tcp_listen_with(addr.ip.bytes(), addr.port, opts.backlog, opts.reuse_port));
 }
 
-// ---------------------------------------------------------------------------
-// Streams
-//
-// Typed faces over `tcp_recv_into` and `tcp_send_bytes`.
-
-// `read(sock, buf)` — one read from a connected stream socket into `buf`,
-// up to its length: the byte count, `Ok(0)` at the end of the stream, or
-// the error the read reported. A non-blocking socket with nothing to read
-// answers `WouldBlock`, and so does every socket on wasi:sockets, whose
-// reads never block: wait for readability first there.
 pub function read(sock: i32, buf: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_recv_into(sock, buf));
 }
 
-// `read_up_to(sock, max)` — `read` into a fresh buffer of `max` bytes, the
-// bytes it took: none at the end of the stream, or the error the read
-// reported. The buffer is shortened in place, so the read costs the one
-// array it answers.
 pub function read_up_to(sock: i32, max: i32): Result[u8[], NetError] {
   let buf: u8[] = __alloc_u8(max);
   let n: i32 = read(sock, buf)?;
@@ -1316,36 +1071,16 @@ pub function read_up_to(sock: i32, max: i32): Result[u8[], NetError] {
   return Ok(buf);
 }
 
-// `write(sock, data)` — `data` written to a connected stream socket: the
-// bytes the socket accepted, which on a non-blocking socket may be fewer
-// than `data` holds, or the error the write reported. A peer that has
-// gone answers `ConnectionReset` or the broken pipe's `Other`; the write
-// never raises SIGPIPE.
 pub function write(sock: i32, data: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_send_bytes(sock, data));
 }
 
-// Recv — what a read with a deadline answers when the socket did not
-// fail: `Chunk`, the bytes read, none at the end of the stream;
-// `Elapsed`, the deadline passed with nothing; `Abandoned`, the task
-// waiting was cancelled (`async.cancelled()`) before either.
 pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
 
-// `read_deadline(sock, max, deadline)` — up to `max` bytes off a connected
-// stream socket, waiting at most `deadline` for it to become readable, or
-// the error the read reported. The wait is `async.wait_any`, so under a
-// scheduler the caller's task parks, and a cancelled task's read is
-// `Abandoned`.
 pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError] {
   return read_watched(sock, max, deadline.as_millis(), 1);
 }
 
-// `read_watched(sock, max, ms, interest)` — `read_deadline` with the wait
-// in milliseconds and its interest word given: readable (1), with
-// `async.KEEP` or `async.WATCHED` from a caller whose descriptor stays
-// watched across its waits. A wake that finds nothing to read (`WouldBlock`,
-// which wasi:sockets answers after a readiness it reported) waits again for
-// what is left of the deadline.
 pub function read_watched(sock: i32, max: i32, ms: i64, interest: i32): Result[Recv, NetError] {
   let until: i64 = monotonic_ns() + ms * 1000000i64;
   let set: i32[] = [sock, interest];
@@ -1375,48 +1110,28 @@ pub function read_watched(sock: i32, max: i32, ms: i64, interest: i32): Result[R
   return Ok(Elapsed);
 }
 
-// Shutdown — the half of a connection `shutdown` closes: `Read` stops
-// receiving, `Write` sends the end of stream the peer reads as EOF, `Both`
-// does both.
 pub enum Shutdown {
   Read,
   Write,
   Both,
 }
 
-// `set_nodelay(sock, on)` — send segments as they are written instead of
-// waiting to coalesce them (`TCP_NODELAY`). On by default for every socket
-// `connect`, `connect_start` and `accept` answer, as Go and Node have it;
-// `false` turns Nagle's coalescing back on.
 pub function set_nodelay(sock: i32, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 1, on);
 }
 
-// `set_keepalive(sock, on)` — probe an idle connection so a vanished peer
-// is noticed (`SO_KEEPALIVE`).
 pub function set_keepalive(sock: i32, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 2, on);
 }
 
-// `set_nonblocking(sock, on)` — make `read` answer `WouldBlock` at once
-// when nothing is queued instead of waiting (`O_NONBLOCK`).
 pub function set_nonblocking(sock: i32, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 3, on);
 }
 
-// `send_queue(sock)` — how many bytes handed to the socket the peer has
-// not acknowledged yet, unsent and in flight alike (`SIOCOUTQ` on Linux,
-// `SO_NWRITE` on Darwin): how far a peer has got with what was written.
 pub function send_queue(sock: i32): Result[i32, NetError] {
   return __socket_count(tcp_socket_ctl(sock, 6, 0));
 }
 
-// `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for a
-// socket with no peer: an IPv4 address packed as `packed_v4` packs it
-// (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
-// one, any other IPv6 address the two words of its first eight bytes
-// XORed, so the peers of one /64 share a key. What a per-client
-// connection cap counts by (`serve.Config.max_connections_per_ip`).
 pub function peer_key(sock: i32): Option[i32] {
   let k: i32 = tcp_socket_ctl(sock, 7, 0);
   if (k == 0) {
@@ -1425,8 +1140,6 @@ pub function peer_key(sock: i32): Option[i32] {
   return Some(k);
 }
 
-// `shutdown(sock, how)` — close one or both directions while keeping the
-// descriptor; `tcp_close` still releases it.
 pub function shutdown(sock: i32, how: Shutdown): Result[void, NetError] {
   let arg: i32 = 2;
   match (how) {
@@ -1465,40 +1178,23 @@ function __socket_count(r: i32): Result[i32, NetError] {
   return Ok(r);
 }
 
-// ---------------------------------------------------------------------------
-// Datagram sockets
-//
-// Typed faces over `udp_bind`, `udp_connect`, `udp_sendto` and
-// `udp_recvfrom`, on the same `i32` descriptors as the rest, each taking
-// the address of either family as its bytes.
-
-// `udp_socket(addr)` — a datagram socket bound to `addr` (port 0 lets the
-// host pick, and `local_port` reads it back), or the error the bind
-// reported. It receives from any peer until `set_peer` fixes one.
 pub function udp_socket(addr: SocketAddr): Result[i32, NetError] {
   return __socket_count(udp_bind(addr.ip.bytes(), addr.port));
 }
 
-// `set_peer(sock, peer)` — fix the peer a datagram socket sends to with
-// `send` and receives from (`connect(2)` on a datagram socket).
 pub function set_peer(sock: i32, peer: SocketAddr): Result[void, NetError] {
   return __socket_result(udp_connect(sock, peer.ip.bytes(), peer.port));
 }
 
-// `send_to(sock, data, to)` — one datagram to `to`: the bytes accepted, or
-// the error the send reported.
 pub function send_to(sock: i32, data: u8[], to: SocketAddr): Result[i32, NetError] {
   return __socket_count(udp_sendto_bytes(sock, to.ip.bytes(), to.port, data));
 }
 
-// `send(sock, data)` — one datagram to the peer `set_peer` fixed.
 pub function send(sock: i32, data: u8[]): Result[i32, NetError] {
   let peer: u8[] = [];
   return __socket_count(udp_sendto_bytes(sock, peer, 0, data));
 }
 
-// The sender `udp_recvfrom` reports: the family at 0, the address bytes
-// from 1, the port at 17 and 18.
 function __sender(from: u8[]): SocketAddr {
   let n: i32 = 4;
   if (from[0] == 6u8) {
@@ -1517,10 +1213,6 @@ function __sender(from: u8[]): SocketAddr {
   return socket_addr(ip, from[17] as i32 << 8 | from[18] as i32);
 }
 
-// `recv_from(sock, buf)` — one datagram read into `buf`, up to its length
-// (a longer datagram keeps its first bytes): the byte count and the
-// sender, or the error the receive reported. A non-blocking socket with
-// nothing queued answers `WouldBlock`.
 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError] {
   let from: u8[] = __zero_bytes(19);
   let n: i32 = udp_recvfrom(sock, buf, from);
@@ -1530,48 +1222,27 @@ pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError
   return Ok((n, __sender(from)));
 }
 
-// `recv(sock, buf)` — `recv_from` without the sender.
 pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
   let none: u8[] = [];
   return __socket_count(udp_recvfrom(sock, buf, none));
 }
 
-// ---------------------------------------------------------------------------
-// Connecting
-//
-// Typed faces over `tcp_connect_with` and control op 5 of `tcp_socket_ctl`.
-
-// `connect(addr)` — a connection to `addr`, or the error the dial reported.
 pub function connect(addr: SocketAddr): Result[i32, NetError] {
   return __tcp_socket(tcp_connect_with(addr.ip.bytes(), addr.port, false));
 }
 
-// `connect_start(addr)` — a non-blocking socket whose connect to `addr` is
-// under way: the socket, or the error that stopped the connect from
-// starting. `connect_result` says how it ended; until then the socket is
-// not one to send on.
 pub function connect_start(addr: SocketAddr): Result[i32, NetError] {
   return __tcp_socket(tcp_connect_with(addr.ip.bytes(), addr.port, true));
 }
 
-// `connect_result(sock)` — how a started connect ended: `Ok(())` once the
-// socket is connected, `Err(InProgress)` while it is still under way, and
-// otherwise the error it failed with (once; the socket is then only good
-// for `close`). The interpreter connects before `connect_start` answers,
-// so there it is `Ok(())` at once.
 pub function connect_result(sock: i32): Result[void, NetError] {
   return __socket_result(tcp_socket_ctl(sock, 5, 0));
 }
 
-// `accept(sock)` — the next connection a listener has queued, or the error
-// the accept reported.
 pub function accept(sock: i32): Result[i32, NetError] {
   return __tcp_socket(tcp_accept(sock));
 }
 
-// __tcp_socket(r) — `__socket_count` for a stream socket just made, with
-// TCP_NODELAY on. Where the option is not the program's (wasm, a Unix
-// socket) the refusal leaves the socket as it was.
 function __tcp_socket(r: i32): Result[i32, NetError] {
   if (r >= 0) {
     tcp_socket_ctl(r, 1, 1);
@@ -1579,41 +1250,18 @@ function __tcp_socket(r: i32): Result[i32, NetError] {
   return __socket_count(r);
 }
 
-// ---------------------------------------------------------------------------
-// Unix-domain sockets
-//
-// Native only: neither WASI world has a filesystem namespace for socket
-// endpoints, so a program that names these does not compile for wasm.
-
-// `listen_unix(path, backlog)` — a stream socket listening at the filesystem
-// path with that accept queue, or the error the bind or listen reported:
-// `AddrInUse` while a socket file is there (remove it first when it is a
-// stale one), `Other(ENAMETOOLONG)` for a path longer than the address
-// holds (107 bytes on Linux, 103 on Darwin). `accept`, `read`, `write`
-// and `close` take the sockets.
 pub function listen_unix(path: string, backlog: i32): Result[i32, NetError] {
   return __socket_count(unix_listen(path, backlog));
 }
 
-// `connect_unix(path)` — a stream socket connected to the listener at the
-// filesystem path, or the error the dial reported (`Other(ENOENT)` when
-// nothing is there).
 pub function connect_unix(path: string): Result[i32, NetError] {
   return __socket_count(unix_connect(path));
 }
 
-// `local_addr(sock)` — the address and port a socket is bound to: the
-// address the host picked for a connected socket, `0.0.0.0` or `::` for
-// a listener bound to every interface.
 pub function local_addr(sock: i32): Result[SocketAddr, NetError] {
   return __name_of(sock, 9);
 }
 
-// `peer_addr(sock)` — the address and port of the peer a socket is
-// connected to, with an IPv4 peer of a dual-stack listener as the `V4` it
-// is rather than the v4-mapped `V6` the socket reports, so a range check
-// or a per-address count sees the same address whichever listener took
-// the connection. `NetError.Other(ENOTCONN)` for a socket with no peer.
 pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
   match (__name_of(sock, 10)) {
     Ok(a) => {
@@ -1625,9 +1273,6 @@ pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
   }
 }
 
-// Control op 9 (the socket's own address) and op 10 (its peer's) answer
-// the address as 16-bit groups, two for an IPv4 address and eight for an
-// IPv6 one, the family at arg 8 and the port at arg 9.
 function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
   let fam: i32 = tcp_socket_ctl(sock, op, 8);
   if (fam < 0) {
@@ -1658,13 +1303,10 @@ function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
   return Ok(socket_addr(V4(b), port));
 }
 
-// `local_port(sock)` — the port a socket is bound to, which is how a
-// socket bound to port 0 learns the one the host picked.
 pub function local_port(sock: i32): Result[i32, NetError] {
   return __socket_count(tcp_local_port(sock));
 }
 
-// `close(sock)` — release a socket of either kind.
 pub function close(sock: i32): Result[void, NetError] {
   return __socket_result(tcp_close(sock));
 }

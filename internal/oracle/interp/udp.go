@@ -6,13 +6,6 @@ import (
 	"syscall"
 )
 
-// The datagram sockets (#9853) are raw descriptors from the syscall package
-// rather than net.UDPConn values: a connect after the bind, a sendto on a
-// connected socket and the kernel's own errno are what the native runtime
-// bodies do, and the interpreter reports the same numbers. A handle shares
-// the tcp id space, so tcp_close, tcp_local_port and tcp_socket_ctl take
-// either kind.
-
 func numberArgs(name string, args []Value, want int) ([]int64, error) {
 	if len(args) != want {
 		return nil, fmt.Errorf("%s: expected %d args, got %d", name, want, len(args))
@@ -28,8 +21,6 @@ func numberArgs(name string, args []Value, want int) ([]int64, error) {
 	return out, nil
 }
 
-// sockaddrOf is the sockaddr for a builtin's address argument (four or
-// sixteen network-order bytes) and port, or nil for another length.
 func sockaddrOf(name string, addr Value, port int64) (syscall.Sockaddr, error) {
 	ip, err := ipArg(name, addr)
 	if err != nil {
@@ -48,8 +39,6 @@ func sockaddrOf(name string, addr Value, port int64) (syscall.Sockaddr, error) {
 	return nil, nil
 }
 
-// senderInto writes a datagram's sender the way the natives fill `from`:
-// the family byte, the address bytes from 1, the port at 17 and 18.
 func senderInto(from Array, sa syscall.Sockaddr) {
 	if len(from.E) < 19 {
 		return
@@ -92,9 +81,6 @@ func builtinUdpBind(i *Interp, args []Value) (Value, error) {
 	return i.udpBind("udp_bind", args[0], args[1], false, false)
 }
 
-// builtinUdpBindWith is `udp_bind_with(addr, port, reuse_port)`: udp_bind
-// with IPV6_V6ONLY cleared on an IPv6 socket and SO_REUSEPORT set before the
-// bind when asked, as the native runtimes set them.
 func builtinUdpBindWith(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("udp_bind_with: expected 3 args, got %d", len(args))
@@ -106,8 +92,6 @@ func builtinUdpBindWith(i *Interp, args []Value) (Value, error) {
 	return i.udpBind("udp_bind_with", args[0], args[1], true, bool(reuse))
 }
 
-// udpBind opens a datagram socket bound to addr:port; dual clears
-// IPV6_V6ONLY on an IPv6 one, and reuse sets SO_REUSEPORT.
 func (i *Interp) udpBind(name string, addr, port Value, dual, reuse bool) (Value, error) {
 	n, err := numberArgs(name, []Value{port}, 1)
 	if err != nil {
@@ -222,7 +206,6 @@ func udpSendto(i *Interp, args []Value, raw bool) (Value, error) {
 	if !ok {
 		return Number(-int64(syscall.EBADF)), nil
 	}
-	// An empty address sends to the connected peer.
 	var to syscall.Sockaddr
 	if addr, ok := args[1].(Array); ok && len(addr.E) != 0 {
 		to, err = sockaddrOf(name, args[1], n[1])
@@ -235,7 +218,6 @@ func udpSendto(i *Interp, args []Value, raw bool) (Value, error) {
 	} else if !ok {
 		return nil, fmt.Errorf("%s: expected u8[] addr arg, got %T", name, args[1])
 	}
-	// A datagram goes out whole or not at all, so the count is the length.
 	if err := syscall.Sendto(fd, data, 0, to); err != nil {
 		return negErrno(err), nil
 	}
@@ -274,9 +256,6 @@ func builtinUdpRecvfrom(i *Interp, args []Value) (Value, error) {
 	return Number(n), nil
 }
 
-// udpClose, udpLocalPort and udpSocketCtl are the datagram arms of the
-// socket builtins that take any handle. Each answers false for a handle
-// that is not a datagram socket.
 func (i *Interp) udpClose(id int64) (Value, bool) {
 	fd, ok := i.udpSocks[id]
 	if !ok {
@@ -333,10 +312,6 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 	return Number(0), true
 }
 
-// The Unix-domain sockets go through the net package like the tcp ones,
-// so tcp_accept, tcp_recv_into, tcp_send_bytes and tcp_close take them. A path longer
-// than a sockaddr_un holds is refused with the natives' errno, where the
-// net package would report EINVAL.
 const sunPathMax = 107
 
 func builtinUnixListen(i *Interp, args []Value) (Value, error) {
@@ -357,8 +332,6 @@ func builtinUnixListen(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return negErrno(err), nil
 	}
-	// The natives leave the socket file for the program to remove; the
-	// net package would unlink it on close.
 	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	if i.tcpListeners == nil {
 		i.tcpListeners = map[int64]tcpListenerHandle{}

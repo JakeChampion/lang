@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// A scalar leaf is spliced into its callers by the semantic lowering
-// (seminline, #10498), and a tuple it returns is read apart instead of
-// allocated. Each probe runs 100 rounds and prints its result times 1000 plus
-// the heap allocations the rounds made. divmod's one return and scan's two
-// returns joined by a phi allocate nothing once spliced; kept is the same body
-// as divmod under @noinline, so the call stays, and its pair returns in two
-// words (sempair) rather than a box. clamp returns a scalar through three
-// blocks and allocates nothing either way. span reads two fields of a record
-// parameter into a tuple, and kept_span is the same body under @noinline,
-// paired the same way. pick reads the fields of a record a phi
-// chooses, which is not a parameter, so it is no leaf; pick_rounds is its only
-// caller, so it is spliced there all the same and its tuple read apart. kind
-// takes a variant apart into a tuple, which a leaf may do: spliced into
-// kind_rounds, the match reads probe's Got off its two-word return (probe
-// keeps its body under @noinline), and the rounds allocate nothing; with
-// the pass off, every Hit is a box and every tuple another.
 const semInlineProgram = `struct Range { lo: i32, hi: i32 }
 function span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
 @noinline function kept_span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
@@ -130,12 +114,6 @@ function main(): i32 {
 var semInlineProduced = []string{"divmod", "scan", "clamp", "kept", "divmod_rounds", "scan_rounds", "clamp_rounds", "kept_rounds", "kind", "probe", "kind_rounds",
 	"span", "kept_span", "span_rounds", "kept_span_rounds", "pick", "pick_rounds"}
 
-// A function whose only calls are to leaves is a leaf once they are spliced
-// into it. parts calls first and second and returns a triple, which no pair
-// return carries; it has three callers, so neither the once nor the shared
-// splice takes it. As a leaf after the first round it is spliced into all
-// three and the triple is read apart, so the rounds allocate nothing; with the
-// pass off, every call boxes its triple.
 const grownLeafProgram = `struct Box3 { a: i32, b: i32, c: i32 }
 function first(r: Box3): i32 { return r.a; }
 function second(r: Box3): i32 { return r.b + r.c; }
@@ -180,18 +158,12 @@ func TestSelfHostSemanticInline(t *testing.T) {
 		semInlineWants("1950000\n1225000\n1845000\n1950000\n2343000\n5950000\n5950000\n900000\n"), "kept", "kept_span", "probe")
 }
 
-// FERN_SEM_INLINE= turns off both splicing and pair returns, so every tuple
-// is a box again.
 func TestSelfHostSemanticInlineOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "seminline-off", semInlineProgram, semInlineProduced,
 		semInlineWants("1950100\n1225100\n1845000\n1950100\n2343134\n5950100\n5950100\n900100\n"))
 }
 
-// A record update names its base in `imm`, not as an operand, so a splice
-// has to renumber it with the operands. bump is called once and spliced into
-// run; the update it brings must name the element its kept fields are read
-// from, not whatever caller value carries bump's own parameter number.
 const splicedUpdateProgram = `struct P { a: i32, b: i32, name: string }
 function bump(p: P): P { return P { ...p, a: p.a + 1 }; }
 @noinline function run(ps: P[]): P[] {

@@ -2,8 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// The checker preserves written scalar own contracts. Lowering still uses
-// the ordinary scalar ABI, including callbacks stored inside composites.
 func TestSelfHostCallableScalarOwn(t *testing.T) {
 	const program = `enum Callback { Call((own boolean) => boolean) }
 struct Holder { call: (own boolean) => boolean }

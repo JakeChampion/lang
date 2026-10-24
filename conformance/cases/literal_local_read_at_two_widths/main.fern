@@ -1,5 +1,5 @@
-// One unannotated local has one slot, so it cannot be read as both an i32 and
-// an i64 (#10123): the first width-fixing use decides its type.
+
+
 function main(): i32 {
     let x = 2147483647;
     x = x + 1;

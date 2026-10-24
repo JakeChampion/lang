@@ -1,33 +1,3 @@
-// split.fern — GNU-compatible `split`.
-//
-//   split [OPTION]... [FILE [PREFIX]]
-//
-// Pieces of FILE, written to PREFIXaa, PREFIXab, … — 1000 lines each by
-// default, PREFIX `x`. `-` and no operand both mean stdin. The size of a
-// piece is chosen four mutually exclusive ways (`cannot split in more
-// than one way` when two are given): `-l` lines, `-b` bytes, `-C` whole
-// records up to a byte budget, `-n` a chunk count.
-//
-// Three things here are older or stranger than they look:
-//
-//   - The suffix is a base-N counter that WIDENS rather than wrapping,
-//     and the widening reserves a digit: `xaa` … `xyz`, then `xzaaa` …
-//     `xzyzz`, then `xzzaaaa`. The leading `z` is what marks a widened
-//     suffix, so it is never a counting digit — which is why `xza` is
-//     not a name and 650, not 676, two-letter names exist. `-a N` fixes
-//     the width instead, and running out is then
-//     `output file suffixes exhausted`.
-//   - `-n` sizes the suffix up front from the chunk count (`-n 700`
-//     writes `xaaa`), because it knows how many names it needs; `-a`
-//     too small for that count is refused rather than widened.
-//   - `-n` needs the input's SIZE, and a pipe cannot answer. GNU spools
-//     a non-seekable input to `$TMPDIR/cutmpXXXXXX`, opened
-//     `O_CREAT|O_EXCL` and unlinked at once, then reads it back; this
-//     does the same through `open_exclusive` (#8776). `-n r/…` is the
-//     exception — round robin needs no size and streams.
-//
-// `--filter=COMMAND` makes each piece the stdin of `$SHELL -c COMMAND`
-// rather than a file, with the name it would have had in `$FILE`.
 import "std/string";
 import "std/array";
 import "std/i32";
@@ -35,10 +5,6 @@ import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/signals";
 
-// ---- options ---------------------------------------------------------------
-// Ids in GNU's DECLARATION order, which is visible: the ambiguity list
-// prints candidates in it, so `--s` names '--suffix-length' before
-// '--separator' and `--n` '--number' before '--numeric-suffixes'.
 function opt_bytes(): i32 {
   return 1;
 }
@@ -133,8 +99,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- settings --------------------------------------------------------------
-// mode: which of the four ways the input is cut.
 function mode_none(): i32 {
   return 0;
 }
@@ -155,7 +119,6 @@ function mode_chunks(): i32 {
   return 4;
 }
 
-// chunk style: how `-n` divides the input.
 function style_bytes(): i32 {
   return 0;
 }
@@ -168,9 +131,6 @@ function style_round(): i32 {
   return 2;
 }
 
-// `Settings` — everything the option scan decides. `units` is lines,
-// bytes or chunks by `mode`; `chunk_k` is 0 unless `-n K/N` asked for one
-// chunk on stdout.
 struct Settings { mode: i32, units: u64, chunk_k: u64, style: i32, alpha: string, suffix_len: i32, start: u64, have_start: boolean, add_suffix: string, sep: i32, elide: boolean, verbose: boolean, filter: boolean, command: string, sigpipe_default: boolean, prefix: string }
 
 function alpha_alpha(): string {
@@ -189,8 +149,6 @@ function settings_new(): Settings {
   return Settings { mode: mode_none(), units: 1000 as u64, chunk_k: 0 as u64, style: style_bytes(), alpha: alpha_alpha(), suffix_len: 0, start: 0 as u64, have_start: false, add_suffix: "", sep: 10, elide: false, verbose: false, filter: false, command: "", sigpipe_default: false, prefix: "x" };
 }
 
-// One split mode may be chosen; a second is GNU's `cannot split in more
-// than one way`, which is a USAGE error (it carries the `Try …` line).
 function set_mode(s: Settings, m: i32): Settings {
   if (s.mode != mode_none()) {
     gnu.die_usage("cannot split in more than one way", 1);
@@ -198,12 +156,6 @@ function set_mode(s: Settings, m: i32): Settings {
   return Settings { ...s, mode: m };
 }
 
-// ---- number operands -------------------------------------------------------
-// `size_of(value, noun)` — a `-b` / `-C` SIZE: gnulib's multiplier
-// suffixes, and a value past uintmax_t saturates rather than failing
-// (xstrtoumax hands back UINTMAX_MAX on ERANGE and split takes it). Zero
-// is refused. `noun` is the word the diagnostic uses — `-C` says "lines"
-// for a byte count, which is GNU's wording, not a slip here.
 function size_operand(value: string, noun: string): u64 {
   let r: (u64, i32) = gnu.parse_units(value);
   if (gnu.count_malformed(r.1)) {
@@ -221,8 +173,6 @@ function size_operand(value: string, noun: string): u64 {
   return n;
 }
 
-// `-l NUMBER` takes no multiplier suffix (`-l 1K` is invalid), which is
-// the one place `-l` and `-b` part.
 function lines_operand(value: string): u64 {
   let r: (u64, i32) = gnu.parse_number(value);
   if (gnu.count_malformed(r.1)) {
@@ -244,10 +194,6 @@ function u64_max(): u64 {
   return 18446744073709551615 as u64;
 }
 
-// `-a N`. A negative operand is strtoumax's wrap rather than a parse
-// failure, and gnulib reserves ERANGE for a bound the CALLER imposed —
-// split imposes none, so a wrap and digits past uintmax_t carry the same
-// EOVERFLOW text.
 function suffix_length_operand(value: string): i32 {
   let r: (u64, i32) = gnu.parse_number(value);
   if (gnu.count_malformed(r.1)) {
@@ -269,8 +215,6 @@ function suffix_length_operand(value: string): i32 {
   return r.0 as i32;
 }
 
-// Blanks, then `-`, then a number and nothing else: what strtoumax reads
-// as a negation.
 function negated_number(value: string): boolean {
   let i: i32 = 0;
   while (i < value.len() && gnu.is_blank(value[i] as i32)) {
@@ -284,8 +228,6 @@ function negated_number(value: string): boolean {
   return !gnu.count_malformed(r.1);
 }
 
-// `--numeric-suffixes=FROM` / `--hex-suffixes=FROM`. `alpha` names the
-// wording: "numerical" for decimal, "hexadecimal" for hex.
 function start_operand(value: string, hex: boolean): u64 {
   let word: string = "numerical";
   let base: i32 = 10;
@@ -328,7 +270,6 @@ function digit_value(c: i32, base: i32): i32 {
   if (c >= 48 && c <= 57) {
     v = c - 48;
   } else if (base == 16 && c >= 97 && c <= 102) {
-    // Lower case only: GNU refuses `--hex-suffixes=A`.
     v = c - 87;
   }
   if (v >= base) {
@@ -337,9 +278,6 @@ function digit_value(c: i32, base: i32): i32 {
   return v;
 }
 
-// `-t SEP`. One byte, or the two characters `\0` for NUL — the only
-// escape the option reads, so `-t '\n'` is a two-character separator and
-// refused as one.
 function separator_operand(value: string): i32 {
   if (value == "\\0") {
     return 0;
@@ -355,9 +293,6 @@ function separator_operand(value: string): i32 {
   return value[0] as i32;
 }
 
-// `-n CHUNKS`: `N`, `K/N`, and each with an `l/` or `r/` style prefix.
-// The diagnostic names what is left to parse at the point it fails, so
-// `-n 2/3/4` reports '3/4' while `-n r/l/3` reports the whole 'l/3'.
 function chunk_operand(value: string, s: Settings): Settings {
   let body: string = value;
   let style: i32 = style_bytes();
@@ -386,8 +321,6 @@ function chunk_operand(value: string, s: Settings): Settings {
   return Settings { ...set_mode(s, mode_chunks()), units: n, chunk_k: k, style: style };
 }
 
-// One number inside a `-n` operand. `blame` is what the diagnostic
-// quotes, which is not always what failed to parse.
 function chunk_count(value: string, blame: string): u64 {
   let r: (u64, i32) = gnu.parse_number(value);
   if (gnu.count_malformed(r.1)) {
@@ -409,12 +342,6 @@ function chunk_count(value: string, blame: string): u64 {
   return n;
 }
 
-// ---- the suffix counter ----------------------------------------------------
-// `Suffix` — the output-name counter. `idx` is one alphabet index per
-// position; the first `reserved` of them are pinned at the alphabet's
-// LAST character, which is what marks a widened suffix. `auto` widens on
-// overflow instead of failing, and is off whenever the width was decided
-// rather than defaulted (an explicit `-a`, a `-n` count, a start value).
 struct Suffix { alpha: string, idx: i32[], reserved: i32, auto: boolean, done: boolean }
 
 function suffix_new(alpha: string, width: i32, auto: boolean, start: u64): Suffix {
@@ -448,11 +375,6 @@ function suffix_name(x: Suffix): string {
   return string_from_bytes_unchecked(bs);
 }
 
-// The next name, or `done` when the width is fixed and every name in it
-// has been used. Widening triggers one position EARLY: the leading
-// counting digit reaching the alphabet's last character is what says the
-// space is nearly spent, and that character then becomes the reserved
-// marker of the wider suffix rather than a name of its own.
 function suffix_next(x: Suffix): Suffix {
   let idx: i32[] = x.idx;
   let last: i32 = x.alpha.len() - 1;
@@ -488,7 +410,6 @@ function suffix_widen(x: Suffix): Suffix {
   return Suffix { ...x, idx: idx, reserved: reserved };
 }
 
-// The narrowest suffix that can name `n` files in `base` characters.
 function suffix_needed(n: u64, base: i32): i32 {
   let w: i32 = 1;
   let cap: u64 = base as u64;
@@ -506,27 +427,15 @@ function suffix_needed(n: u64, base: i32): i32 {
   return w;
 }
 
-// ---- the output cursor -----------------------------------------------------
-// `Out` — where pieces go: a lazily opened output file (so an empty piece
-// costs no file unless one is due), or stdout for `-n K/N`. `w` is the
-// buffered file and `so` the buffered stdout, which `--verbose` also
-// writes to.
 struct Out { s: Settings, sfx: Suffix, w: io_buffered.BufWriter, open: boolean, name: string, so: io_buffered.BufWriter, to_stdout: boolean, pid: i32 }
 
-// Until a piece is open, `w` borrows the stdout buffer as its placeholder.
-// This avoids allocating a separate buffer that never receives output.
-// `open` guards every use and close of the piece writer.
 function out_new(s: Settings, sfx: Suffix, to_stdout: boolean): Out {
   let so: io_buffered.BufWriter = gnu.out_with(65536);
   return Out { s: s, sfx: sfx, w: so, open: false, name: "", so: so, to_stdout: to_stdout, pid: 0 };
 }
 
-// The name a piece would take, and the counter moved on. Running out of
-// names is fatal — GNU has already written the pieces before it.
 function out_name(o: Out): (string, Out) {
   if (o.sfx.done) {
-    // gnulib's error() flushes stdout first, so a --verbose line already
-    // buffered is not overtaken by the diagnostic.
     gnu.flush(o.so);
     gnu.error("output file suffixes exhausted");
     exit(1);
@@ -535,9 +444,6 @@ function out_name(o: Out): (string, Out) {
   return (name, Out { ...o, sfx: suffix_next(o.sfx) });
 }
 
-// Start the next piece. A piece that is never written to is still a file
-// when the caller asks for one (`-n` without `-e`), so opening is
-// explicit rather than implied by the first write.
 function out_begin(o: Out): Out {
   if (o.to_stdout) {
     return o;
@@ -546,9 +452,6 @@ function out_begin(o: Out): Out {
   let r: (string, Out) = out_name(closed);
   let name: string = r.0;
   let next: Out = r.1;
-  // Flushed per line rather than at the end: GNU prints the line before
-  // the open, so a piece whose open FAILS has still announced itself, and
-  // the diagnostic exits without a chance to flush.
   next = out_verbose(next, name);
   let pc: Piece = piece_open(next.s, next.so, name);
   return Out { ...next, w: io_buffered.buf_writer_new(pc.w, 65536), open: true, name: name, pid: pc.pid };
@@ -591,10 +494,6 @@ function out_finish(o: Out): void {
   gnu.finish(done.so);
 }
 
-// ---- the input -------------------------------------------------------------
-// `Src` — the input as a stream of blocks. `mem` is what has already been
-// read (the size probe's prefix, or a whole small input); the Reader
-// supplies the rest once it is drained.
 struct Src { r: Reader, name: string, mem: u8[], pos: i32, eof: boolean }
 
 function copy_bytes(bytes: u8[], lo: i32, hi: i32): u8[] {
@@ -635,9 +534,6 @@ function read_size(): i32 {
   return 65536;
 }
 
-// Up to `n` more bytes, or an empty array at end of input. A read failure is GNU's
-// `split: NAME: <strerror>` and exit 1 — the same shape whether NAME is
-// an operand or the `-` that stands for stdin.
 function src_read(s: Src, n: i32): (u8[], Src) {
   if (s.pos < s.mem.len()) {
     let end: i32 = s.pos + n;
@@ -669,9 +565,6 @@ function src_read(s: Src, n: i32): (u8[], Src) {
   return ([], s);
 }
 
-// ---- the temporary spool ---------------------------------------------------
-// gnulib's path_search: $TMPDIR when it names a directory, else /tmp.
-// `temp_dir()` cannot serve here — it chooses the directory itself.
 function tmp_root(): string {
   match (env("TMPDIR")) {
     Some(d) => {
@@ -706,15 +599,6 @@ function temp_name(root: string): string {
   return root + "/cutmp" + string_from_bytes_unchecked(bs);
 }
 
-// `spool(s)` — copy a non-seekable input to an unlinked temporary file
-// and hand back a Reader over it plus its size. `open_exclusive` is what
-// makes the name safe to choose: a name an attacker planted comes back
-// as AlreadyExists and the loop tries another, where `open_writer` would
-// truncate their file instead (#8776).
-//
-// The Reader is opened, and the name removed, before anything is written,
-// as GNU's create_temp_file unlinks at creation: the input never exists
-// under a name, so a signal mid-spool leaves at most an empty file.
 function spool(s: Src, first: u8[]): (Src, i64) {
   let root: string = tmp_root();
   let path: string = "";
@@ -781,8 +665,6 @@ function spool(s: Src, first: u8[]): (Src, i64) {
   return (src_new(back, s.name), total);
 }
 
-// `drop_spool(path)` — best-effort unlink of the spool file's name. The
-// open descriptors keep the inode alive until they close.
 function drop_spool(path: string): void {
   match (remove_file(path)) {
     Ok(_) => {},
@@ -790,10 +672,6 @@ function drop_spool(path: string): void {
   }
 }
 
-// `sized(s, r)` — the input's byte count, with the input still readable
-// from its start. A regular file answers from fstat; anything else is
-// read once, and spooled only if it does not end inside the first block
-// (which is where GNU's `$TMPDIR/cutmpXXXXXX` comes from).
 function sized(s: Src, r: Reader): (Src, i64) {
   match (r.stat()) {
     Ok(st) => {
@@ -823,10 +701,6 @@ function sized(s: Src, r: Reader): (Src, i64) {
   return spool(rest, first);
 }
 
-// ---- the split modes -------------------------------------------------------
-// `-l N`: N records per file. One `__count_byte_bytes` decides a whole block —
-// fewer separators in it than are still wanted and it goes out unsplit —
-// so only the block that reaches the count is walked.
 function split_lines(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
@@ -868,7 +742,6 @@ function split_lines(s: Settings, o: Out, src: Src): Out {
   return out;
 }
 
-// `-b N`: N bytes per file, the last piece short.
 function split_bytes(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
@@ -908,11 +781,6 @@ function split_bytes(s: Settings, o: Out, src: Src): Out {
   return out;
 }
 
-// `-C N`: whole records, up to N bytes per file. The last separator
-// inside the remaining budget is found with one `__rmemchr_bytes`, so a file is
-// filled in one write rather than one per record; a record longer than N
-// on its own is cut at exactly N, which is the only way a `-C` piece ends
-// mid-record.
 function split_line_bytes(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
@@ -926,11 +794,6 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
     if (avail < hi as u64) {
       hi = avail as i32;
     }
-    // The last record that ends inside what is left of this file's
-    // budget: everything up to it goes out in one write. Scanning BEFORE
-    // reading more is what keeps the buffer one record long instead of
-    // `-C SIZE` long — with `-C 8M` the other order copies a growing
-    // 8 MiB buffer once per read.
     let j: i32 = __rmemchr_bytes(buf, s.sep, hi - 1);
     if (j >= 0) {
       if (!started) {
@@ -947,9 +810,6 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
       continue;
     }
     if (!eof && buf.len() as u64 < avail) {
-      // A partial record can span many reads. Accumulate it in one builder
-      // and inspect only newly read bytes, rather than recopying and rescanning
-      // the entire prefix on every read.
       if (buf.len() > 0) {
         let more: (u8[], Src, boolean) = extend_record(input, buf, avail, s.sep);
         buf = more.0;
@@ -974,7 +834,6 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
       return out;
     }
     if (eof && buf.len() as u64 <= avail) {
-      // The tail is a final unterminated record that fits.
       if (!started) {
         out = out_begin(out);
         started = true;
@@ -982,8 +841,6 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
       out = out_put(out, buf);
       return out;
     }
-    // No record ends inside the budget: start a new file if this one has
-    // anything in it, else cut the over-long record at exactly SIZE.
     if (used > 0 as u64) {
       used = 0 as u64;
       started = false;
@@ -1001,8 +858,6 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
   return out;
 }
 
-// Extend a separator-free prefix until a record ends, the byte budget is
-// exhausted, or input ends. The builder grows geometrically for long records.
 function extend_record(src: Src, prefix: u8[], budget: u64, sep: i32): (u8[], Src, boolean) {
   let input: Src = src;
   let h: usize = buf_new(prefix.len());
@@ -1030,11 +885,6 @@ function extend_record(src: Src, prefix: u8[], budget: u64, sep: i32): (u8[], Sr
   return (bytes, input, eof);
 }
 
-// ---- `-n` ------------------------------------------------------------------
-// The end offset of chunk `k` of `n` over `size` bytes: every chunk gets
-// `size / n`, and the first `size % n` of them one byte more. Not
-// `k * size / n`, which distributes the remainder differently and puts
-// the short chunk in the wrong place.
 function chunk_end(k: u64, n: u64, size: u64): u64 {
   let each: u64 = size / n;
   let extra: u64 = size % n;
@@ -1045,7 +895,6 @@ function chunk_end(k: u64, n: u64, size: u64): u64 {
   return k * each + bonus;
 }
 
-// `-n N` and `-n K/N`: chunks by byte count.
 function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
   let out: Out = o;
   let input: Src = src;
@@ -1081,28 +930,12 @@ function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
   return out_end(out);
 }
 
-// `-n l/N` and `-n l/K/N`: chunks that never cut a record. A chunk runs
-// to the first record boundary at or after its byte end, so the bytes
-// before that end need no scanning at all — one `__memchr_bytes` per chunk
-// finds the boundary.
-//
-// GNU asserts `n <= file_size` here and, with the assertion compiled out,
-// keeps opening pieces past N when it does not hold AND the input ends on
-// a record boundary — until the suffixes run out. An input whose last
-// record is unterminated, an empty one, and the `K/N` form (a different
-// extraction path) all stop where they should. That is reproduced rather
-// than corrected: it is what the reference does with the same argv.
 function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
   let out: Out = o;
   let input: Src = src;
   let total: u64 = size as u64;
   let pos: u64 = 0 as u64;
   let k: u64 = 1 as u64;
-  // Whether the byte before `pos` ended a record. A chunk stops at the
-  // first boundary at or after its byte end, so one that lands exactly on
-  // a boundary takes nothing more. `ends_sep` is the same question about
-  // the last byte CONSUMED, which is what decides whether the piece loop
-  // runs away past N.
   let at_boundary: boolean = true;
   let ends_sep: boolean = false;
   while (true) {
@@ -1116,8 +949,6 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
       out = out_begin(out);
       opened = true;
     }
-    // Everything before the chunk's byte end belongs to it whatever is
-    // in it; only from there on does a record boundary have to be found.
     while (pos < end) {
       let n: i32 = read_size();
       if (end - pos < n as u64) {
@@ -1140,7 +971,6 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
       ends_sep = at_boundary;
       pos = pos + r.0.len() as u64;
     }
-    // Then the tail of the record the byte end landed inside.
     while (!at_boundary && pos < total) {
       let rr: (u8[], Src) = src_read(input, read_size());
       input = rr.1;
@@ -1180,9 +1010,6 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
   return out_end(out);
 }
 
-// Give back bytes read past a record boundary, so the next chunk sees
-// them. The block a `read_chunk_bytes` hands over is the only place they can
-// live; `mem` is empty here because the scan drained it first.
 function src_pushback(s: Src, rest: u8[]): Src {
   if (s.pos < s.mem.len()) {
     return Src { ...s, mem: join_bytes(rest, copy_bytes(s.mem, s.pos, s.mem.len())), pos: 0 };
@@ -1190,22 +1017,12 @@ function src_pushback(s: Src, rest: u8[]): Src {
   return Src { ...s, mem: rest, pos: 0 };
 }
 
-// `-n r/N` and `-n r/K/N`: records dealt round robin. No size is needed
-// — record i goes to file i mod N — so this is the one `-n` form that
-// streams a pipe without spooling it.
-//
-// Find complete record ends once per block, then collect each output's
-// ranges in a reusable builder for one write. An unfinished record goes to
-// its current output immediately, without advancing the slot. One shared
-// builder collects each batch instead of keeping a buffer per output file.
 function split_round(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
   if (s.chunk_k != 0 as u64) {
     return split_round_one(s, out, input);
   }
-  // Every file exists up front unless -e says an unused one should not,
-  // which is also the order GNU opens them in.
   let ws: Writer[] = [];
   let pids: i32[] = [];
   let names: string[] = [];
@@ -1239,8 +1056,6 @@ function split_round(s: Settings, o: Out, src: Src): Out {
     if (buf.len() == 0) {
       break;
     }
-    // Include the trailing fragment in writes, but advance the slot only
-    // for completed records. The next block may continue that fragment.
     let ends: i32[] = [];
     let at: i32 = 0;
     while (at < buf.len()) {
@@ -1294,13 +1109,10 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   return out;
 }
 
-// The read block for round robin: bigger than the streaming one, so each
-// output file's share of a block is still a write worth making.
 function round_block(): i32 {
   return 262144;
 }
 
-// `-n r/K/N`: only the Kth share, on stdout.
 function split_round_one(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
@@ -1343,8 +1155,6 @@ function out_verbose(o: Out, name: string): Out {
     line = "executing with FILE=" + gnu.quotef(name);
   }
   let so: io_buffered.BufWriter = gnu.put(o.so, line + "\n");
-  // A filter's output shares stdout, so the line is buffered the way GNU's
-  // stdio buffers it: line by line only on a terminal.
   if (o.s.filter && !isatty(1)) {
     return Out { ...o, so: so };
   }
@@ -1373,8 +1183,6 @@ function write_fd(s: Settings, so: io_buffered.BufWriter, w: Writer, name: strin
   }
 }
 
-// A failed write or close ends the program, except a filter that stopped
-// reading: the rest of its piece is dropped, as GNU's `ignorable` does.
 function write_failed(s: Settings, so: io_buffered.BufWriter, name: string, e: IoError): void {
   if (s.filter && gnu.is_broken_pipe(e)) {
     return;
@@ -1382,18 +1190,12 @@ function write_failed(s: Settings, so: io_buffered.BufWriter, name: string, e: I
   fail(so, name + ": " + gnu.io_error_text(e), 1);
 }
 
-// gnulib's error() flushes stdout first, so a --verbose line still buffered
-// is not overtaken by the diagnostic.
 function fail(so: io_buffered.BufWriter, msg: string, status: i32): void {
   gnu.flush(so);
   gnu.error(msg);
   exit(status);
 }
 
-// ---- filters ---------------------------------------------------------------
-// With --filter a piece is the stdin of `$SHELL -c COMMAND` (/bin/sh when
-// SHELL is unset), started when the piece is and reaped when it is closed.
-// `pid` is 0 for a plain output file.
 struct Piece { w: Writer, pid: i32 }
 
 function sig_pipe(): i32 {
@@ -1404,8 +1206,6 @@ function piece_open(s: Settings, so: io_buffered.BufWriter, name: string): Piece
   if (!s.filter) {
     return Piece { w: open_out(name), pid: 0 };
   }
-  // No wasi world has a process to start; the arm the target does not take
-  // is pruned before the capability gate, so the spawn compiles elsewhere.
   if (target_os() == "wasi") {
     fail(so, "--filter is not supported on this system", 1);
     return Piece { w: stdout(), pid: 0 };
@@ -1422,9 +1222,6 @@ function spawn_filter(s: Settings, so: io_buffered.BufWriter, name: string): Pie
     prog = shell.0;
   }
   let p: Pipe = open_pipe(so);
-  // GNU spawns with posix_spawn, which reports a failed exec to the parent
-  // rather than as the child's status. A close-on-exec pipe carries the errno
-  // back the same way: it reads EOF when the exec succeeds.
   let ep: Pipe = open_pipe(so);
   let pid: i32 = proc_fork();
   if (pid == 0) {
@@ -1462,7 +1259,6 @@ function open_pipe(so: io_buffered.BufWriter): Pipe {
   return open_pipe(so);
 }
 
-// The errno a child wrote before its exec failed, or 0 at EOF.
 function exec_errno(r: Reader): i32 {
   let text: string = "";
   match (r.read_chunk(16)) {
@@ -1480,7 +1276,6 @@ function exec_errno(r: Reader): i32 {
   return n;
 }
 
-// `envp` with FILE set to `name`, replacing any FILE already there.
 function with_file(envp: string[], name: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -1493,8 +1288,6 @@ function with_file(envp: string[], name: string): string[] {
   return out.append("FILE=" + name);
 }
 
-// Reap a piece's filter. A non-zero exit ends split with that status, and
-// a signal other than SIGPIPE with 128 + its number, as GNU's closeout does.
 function piece_wait(s: Settings, so: io_buffered.BufWriter, name: string, pid: i32): void {
   if (pid <= 0) {
     return;
@@ -1523,7 +1316,6 @@ function reap(s: Settings, so: io_buffered.BufWriter, name: string, pid: i32): v
   }
 }
 
-// ---- main ------------------------------------------------------------------
 function declare_options(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("b", "bytes", opt_bytes()));
@@ -1531,8 +1323,6 @@ function declare_options(): gnu.Opt[] {
   opts = opts.append(gnu.valued("C", "line-bytes", opt_line_bytes()));
   opts = opts.append(gnu.valued("n", "number", opt_number()));
   opts = opts.append(gnu.flag("e", "elide-empty-files", opt_elide()));
-  // -u says WHEN `-n r/…` copies, not what it copies, so nothing reads
-  // its id back: the option is declared for the scan and does nothing.
   opts = opts.append(gnu.flag("u", "unbuffered", opt_unbuffered()));
   opts = opts.append(gnu.valued("a", "suffix-length", opt_suffix_length()));
   opts = opts.append(gnu.valued("", "additional-suffix", opt_additional()));
@@ -1602,10 +1392,6 @@ function scan(argv: string[]): (Settings, string[]) {
   return (s, g.operands());
 }
 
-// The suffix width: 2 and widening on overflow unless something fixed
-// it — an explicit `-a`, a start value, or a `-n` count that says how
-// many names are needed. `-a` too small for that count is refused; GNU
-// will not widen a width it was given.
 function make_suffix(s: Settings): Suffix {
   let width: i32 = 2;
   let auto: boolean = true;

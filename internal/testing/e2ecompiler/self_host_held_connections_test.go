@@ -10,19 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The per-held-connection bound of #9853 and #9854: the serve loop
-// compiled by the production self-host driver, with complete semantic
-// lowering required, holds 64 idle connections, then 64 more, and the bump
-// allocator's growth the second batch cost must be under 1 KiB per
-// connection. "accepted" holds connections that never send a request;
-// "kept" holds connections each left on keep-alive after one served
-// request, each shape on a server of its own, and each again on a loop
-// waiting on an io_uring (`FERN_IO_URING=1`, docs/NET-P7-IO-URING-PLAN.md),
-// whose per-descriptor state is mapped once with the ring and so adds
-// nothing per connection. "suspended" holds connections each with a
-// handler parked on the fetch upstream, and "streams" parks the same
-// handlers on the streams of one HTTP/2 connection, so the growth is a
-// parked stream's.
 func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires the Linux x86-64 native target")
@@ -61,10 +48,6 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 			}
 		})
 	}
-	// The P3 shape (docs/NET-P3-SUSPENSION-PLAN.md §4, slice 5): every held
-	// connection carries a request whose handler is parked on the upstream,
-	// so the growth is a suspended handler's — its flight, its saved frames
-	// and its fetch client's connection and buffers.
 	t.Run("suspended", func(t *testing.T) {
 		up := e2eharness.StartFetchUpstream(t)
 		e2eharness.SetFetchProxy(t, up)
@@ -77,9 +60,6 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 				e2eharness.HeldConnectionsBatch, per, e2eharness.HeldSuspendedBytesPerHandler)
 		}
 	})
-	// The P6 shape (docs/NET-P6-HTTP2-PLAN.md slice 8): the same parked
-	// handlers, each on a stream of one HTTP/2 connection, so the growth is
-	// a stream's slot and its flight, with no connection of its own.
 	t.Run("streams", func(t *testing.T) {
 		up := e2eharness.StartFetchUpstream(t)
 		e2eharness.SetFetchProxy(t, up)
@@ -94,8 +74,6 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	})
 }
 
-// startHeldConnectionsServer compiles the server source with the
-// self-host driver, starts it, and answers its address.
 func startHeldConnectionsServer(t *testing.T, runner []string, driver, stdlib string, source func() string) string {
 	t.Helper()
 	dir := t.TempDir()

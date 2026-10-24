@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-// A local bound from an enum struct field (`let g = h.e`) shares the struct's
-// enum box, so the bind dups the box and the local takes the release the
-// struct gives the same field, rc-gated because it is never the sole owner. An
-// uncounted bind lets rebinding the struct free the box under the local, and
-// the next same-size allocation reads back through it (#10310): the census
-// balances and the answer is wrong.
-//
-// Every shape churns a same-size box after the struct lets go, so a stale read
-// returns the churned value. fresh_moved_into_struct and rc_shared cover the
-// two releases a counted alias has to get right: a slot a construction moved
-// must not be released again, and the struct's re-declaration must not
-// deep-drop an enum field whose box is shared. peek_first reads through a
-// method receiver, a source the plan cannot type.
 const enumFieldAliasCountSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
@@ -112,13 +99,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const enumFieldAliasCountWant = 24
 
-// A returned alias (and a returned fresh enum local, the same family's sweep)
-// hands its count to the caller, whose binding releases it as an "ENUM:" call
-// result (#10365). Before #10356 the returning frame's own sweep freed the box
-// it returned.
 const enumFieldAliasReturnSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
@@ -157,11 +139,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const enumFieldAliasReturnWant = 9
 
-// checkEnumFieldAlias runs src on target, requiring the answer and a balanced
-// census.
 func checkEnumFieldAlias(t *testing.T, target, src string, want int) {
 	cli := buildSelfHostCLI(t)
 	stderr, exit := cli.exitOf(t, src, target, "FERN_LEAKCHECK=1")
@@ -175,8 +154,6 @@ func TestSelfHostEnumFieldAliasCountX86_64(t *testing.T) {
 	checkEnumFieldAlias(t, "x86-64-linux", enumFieldAliasCountSrc, enumFieldAliasCountWant)
 }
 
-// checkEnumFieldAliasSanitized runs src on x86-64 under FERN_SANITIZE,
-// requiring the answer and a silent sanitizer.
 func checkEnumFieldAliasSanitized(t *testing.T, src string, want int) {
 	cli := buildSelfHostCLI(t)
 	stderr, exit := cli.exitOf(t, src, "x86-64-linux", "FERN_SANITIZE=1")

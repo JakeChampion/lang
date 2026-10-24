@@ -1,6 +1,3 @@
-// Mandelbrot tiles as PNG images.
-// At zoom z, a 2^z by 2^z grid covers the square from -2.5 - 2i to 1.5 + 2i.
-// Each tile has 256 pixels per side. The x axis points right and the y axis points down.
 import "std/png";
 import "std/result";
 import "./linear";
@@ -10,7 +7,6 @@ pub const SIZE: i32 = 256;
 
 const ROW_BYTES: i32 = SIZE * 3;
 
-// Higher zoom levels exceed f64 pixel precision.
 pub const MAX_ZOOM: i32 = 42;
 
 pub enum RenderError { InvalidTile, Cancelled, Image(png.EncodeError) }
@@ -31,7 +27,6 @@ pub fip function valid(z: i32, x: i64, y: i64): boolean {
   return x >= 0 && y >= 0 && x < tiles_per_side && y < tiles_per_side;
 }
 
-// Deeper views need more iterations to resolve boundary detail.
 pub fip function max_iterations(z: i32): i32 {
   let limit: i32 = 256 + 64 * z;
   if (limit > 3000) {
@@ -40,7 +35,6 @@ pub fip function max_iterations(z: i32): i32 {
   return limit;
 }
 
-// Validate coordinates before any shifts or pixel allocation.
 pub function render_reference(z: i32, x: i64, y: i64): Result[Tile, RenderError] {
   return render_batch(z, x, y, (): boolean => false, false);
 }
@@ -88,23 +82,18 @@ function render_batch(z: i32, x: i64, y: i64, stop: () => boolean, fast: boolean
   return finish(kernel.Pixels { counts: counts, magnitudes: magnitudes, iterations: iterations }, started, stop, fast);
 }
 
-// The default renderer uses a shared orbit prefix when it saves enough work.
 pub function render(z: i32, x: i64, y: i64): Result[Tile, RenderError] {
   return render_cancellable(z, x, y, (): boolean => false);
 }
 
-// The server yields in this callback and checks its request cancellation token.
 pub function render_cancellable(z: i32, x: i64, y: i64, stop: () => boolean): Result[Tile, RenderError] {
   return render_kernel(z, x, y, true, stop);
 }
 
-// Keep a direct path for differential tests and numerical comparisons.
 pub function render_exact(z: i32, x: i64, y: i64): Result[Tile, RenderError] {
   return render_kernel(z, x, y, false, (): boolean => false);
 }
 
-// A short center orbit selects the smaller scheduler for cheap exterior tiles.
-// This is only a cost estimate. The selected renderer still computes every pixel.
 fip function short_orbit(real: f64, imaginary: f64): boolean {
   let zr: f64 = 0.0;
   let zi: f64 = 0.0;
@@ -210,9 +199,6 @@ fip function known_interior(real: f64, imaginary: f64): boolean {
   return q * (q + real - 0.25) <= 0.25 * imaginary_squared || bulb_x * bulb_x + imaginary_squared <= 0.0625;
 }
 
-// Each lane retains its first escape result. Negative magnitudes identify bounded pixels.
-// Four updates share one vector-mask test. An escaping lane replays those updates.
-// The separate lane paths preserve exact escape times and magnitudes.
 // fern-lint: allow cyclomatic-complexity
 fip function escape_batch(own result: EscapeBatch, real0: f64, real1: f64, real2: f64, real3: f64, imaginary: f64): EscapeBatch {
   let done: i32 = 0;
@@ -397,7 +383,6 @@ fip function escape_batch(own result: EscapeBatch, real0: f64, real1: f64, real2
         }
       }
     }
-    // Equality uses the complete orbit, with no tolerance.
     if ((steps & 15) == 0) {
       if ((done & 1) == 0 && __f64x2_lane(z_real01, 0) == __f64x2_lane(saved_real01, 0) && __f64x2_lane(z_imaginary01, 0) == __f64x2_lane(saved_imaginary01, 0)) {
         steps0 = steps;
@@ -450,8 +435,6 @@ fip function write_pixel(own raw: u8[], offset: i32, red: u8, green: u8, blue: u
   return raw.with(offset, red).with(offset + 1, green).with(offset + 2, blue);
 }
 
-// The color gradient cycles through deep blue, white, gold, near black, and blue.
-// These tables use static storage. Indexed reads need no heap allocation.
 const STOPS: f64[] = [0.0, 0.16, 0.42, 0.6425, 0.8575, 1.0];
 
 const RGB: f64[] = [
@@ -463,7 +446,6 @@ const RGB: f64[] = [
   0.0, 7.0, 100.0,
 ];
 
-// The gradient position is in [0, 1). Components 0, 1, and 2 select red, green, and blue.
 fip function channel(position: f64, component: i32): u8 {
   let stop: i32 = 0;
   while (position >= STOPS[stop + 1]) {

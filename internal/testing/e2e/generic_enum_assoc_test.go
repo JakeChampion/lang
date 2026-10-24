@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// genericEnumAssocSrc reaches a generic enum's associated function, a derived
-// `default()`, directly, from a `return`, and through a bound (#12088): none
-// carries a receiver value to say which instance it is.
 const genericEnumAssocSrc = `import "core/cmp";
 
 @derive(cmp.Default, cmp.Display)

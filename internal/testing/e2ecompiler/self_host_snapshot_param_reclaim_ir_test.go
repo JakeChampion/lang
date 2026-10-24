@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSnapshotParamReclaimIRX86_64 checks that threaded struct
-// parameters release their intermediate boxes while preserving the caller's
-// original value and any shared fields. The typed ownership pipeline handles
-// these releases without the legacy snapshot runtime helper.
 func TestSelfHostSnapshotParamReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -46,11 +42,6 @@ func TestSelfHostSnapshotParamReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// CHURN: heavy() threads its struct param `c` 200x via a method receiver
-	// (`c = c.step(k)`) and returns an i32 (not c). Without the per-rebind
-	// snapshot reclaim the 200 intermediate boxes per call leak; 3M calls then
-	// OOM (exit 137). With it they reclaim → exit 0. (Scalar struct, so the box is
-	// the whole allocation — no array field to confound the measurement.)
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function heavy(c: C): i32 {
@@ -68,9 +59,6 @@ function main(): i32 {
     return 0;
 }`, "snap_param_churn", 0)
 
-	// CALLER-ORIGINAL-INTACT: thread() reassigns its param `c` twice and returns
-	// an i32; main reads `seed` AFTER the call. If the snapshot reclaim wrongly
-	// freed the caller's box, seed.a would be corrupted. 5 + (5+10+20) = 40.
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 @noinline function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
@@ -80,9 +68,6 @@ function main(): i32 {
     return seed.a + t;
 }`, "snap_param_caller_intact", 40)
 
-	// HEAP-FIELD param builder threaded + RETURNED (`return e`): the param's final
-	// value is moved out to the caller and read back; a wrong free of a shared
-	// field buffer would corrupt the array. buf = [1,2,3] (sum 6) + n 3 = 9.
 	run(t, `struct E { buf: i32[], n: i32 }
 function (e: E) emit(v: i32): E { return E { buf: e.buf.append(v), n: e.n + 1 }; }
 function build(e: E): E { e = e.emit(1); e = e.emit(2); e = e.emit(3); return e; }
@@ -95,8 +80,6 @@ function main(): i32 {
 }`, "snap_param_heapfield", 9)
 }
 
-// TestSelfHostSnapshotParamReclaimArm64 checks the same ownership behavior
-// on ARM64, without the long churn loop used by the x86-64 leg.
 func TestSelfHostSnapshotParamReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -121,7 +104,6 @@ func TestSelfHostSnapshotParamReclaimArm64(t *testing.T) {
 		}
 	}
 
-	// CALLER-ORIGINAL-INTACT: a wrong free of the snapshot corrupts seed.a. 40.
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
@@ -131,11 +113,6 @@ function main(): i32 {
     return seed.a + t;
 }`, "snap_param_caller_intact_arm64", 40)
 
-	// SCALAR-STRUCT CHURN: threads a scalar struct param 50x via a method
-	// receiver (`c = c.step(k)`), so each rebind releases the intermediate box
-	// it replaces and never the caller's; returns an i32 (not c). A double-free /
-	// wrong free across the 50 rebinds would crash or corrupt. sum(0..49) = 1225,
-	// so build == 1225 and the program returns 7.
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 @noinline function build(c: C): i32 {
@@ -149,12 +126,6 @@ function main(): i32 {
 }`, "snap_param_scalar_churn_arm64", 7)
 }
 
-// TestSelfHostSnapshotParamReclaimWasm is the wasm32 correctness gate for
-// rebinding a borrowed struct parameter: each rebind frees the dead intermediate
-// box and never the caller's still-owned entry box. Verified by CORRECTNESS under
-// wasmtime — a wrong free of the caller's box corrupts the read-back — plus a
-// WAT-content check that the rebinding function releases its intermediates
-// (`call $__fern_arr_dec` in its body). The heavy OOM-churn is x86-only.
 func TestSelfHostSnapshotParamReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm snapshot-param reclaim e2e")
@@ -191,7 +162,6 @@ func TestSelfHostSnapshotParamReclaimWasm(t *testing.T) {
 		}
 	}
 
-	// CALLER-ORIGINAL-INTACT: a wrong free of the snapshot corrupts seed.a. 40.
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
@@ -201,10 +171,6 @@ function main(): i32 {
     return seed.a + t;
 }`, "snap_param_caller_intact_wasm", "thread", 40)
 
-	// SCALAR-STRUCT CHURN: threads a scalar struct param 50x via a method receiver,
-	// so each rebind frees an intermediate box; returns an i32 (not c).
-	// A double-free / wrong free across the 50 rebinds would corrupt the read-back.
-	// sum(0..49) = 1225, so build == 1225 and the program returns 7.
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function build(c: C): i32 {

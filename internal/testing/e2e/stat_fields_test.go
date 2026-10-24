@@ -11,16 +11,8 @@ import (
 	"time"
 )
 
-// The mtime every probe below pins. A fixed instant rather than "whatever the
-// filesystem said" is the point: a backend that reported the WRONG timestamp
-// field — Darwin's st_birthtimespec sits two slots past st_mtimespec, and
-// preview 1 reports nanoseconds where stat(2) reports seconds — would still
-// produce a plausible-looking number if the assertion were only "non-zero".
 const statProbeMtime int64 = 1_600_000_000
 
-// statProbeTree writes the file every probe reads: 0640, a pinned mtime, five
-// bytes of content, and a hard link beside it so `dev` + `ino` (a shell's
-// `-ef`) and `nlink` have something to say.
 func statProbeTree(t *testing.T) (dir, file, link, other string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -28,7 +20,6 @@ func statProbeTree(t *testing.T) (dir, file, link, other string) {
 	if err := os.WriteFile(file, []byte("hello"), 0o640); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	// WriteFile applies the process umask to the mode, so set it explicitly.
 	if err := os.Chmod(file, 0o640); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
@@ -47,10 +38,6 @@ func statProbeTree(t *testing.T) (dir, file, link, other string) {
 	return dir, file, link, other
 }
 
-// statFieldsNativeSource asserts every FileStat field a kernel fills. Each
-// failure returns its own exit code so the number names the field. The birth
-// time, `dev` and `/dev/null`'s `rdev` are compared with what the host itself
-// reports, since a test cannot arrange them.
 func statFieldsNativeSource(t *testing.T, file, link, other string, euid, egid int) string {
 	t.Helper()
 	bt, btn := hostBirth(t, file)
@@ -116,15 +103,6 @@ function main(): i32 {
 `, file, link, other, statProbeMtime, euid, egid, bt, btn, dev, nullRdev)
 }
 
-// TestX86_64StatFields / TestArm64StatFields read a known file through the
-// full `stat(2)` record: the mode a chmod set, the mtime a chtimes pinned, and
-// the (dev, ino) pair a hard link shares.
-//
-// Every target fills this struct from one field list (compiler/asmcore.fern's
-// stat_fields_src); statoff / statkind say which kernel field feeds which slot,
-// which is per-target and, on Darwin, shares almost no offset with Linux. A wrong source offset is silent —
-// it reads a real number out of the neighbouring field — so the assertions are
-// on values a test can arrange rather than on "not zero".
 func TestX86_64StatFields(t *testing.T) {
 	_, file, link, other := statProbeTree(t)
 	src := statFieldsNativeSource(t, file, link, other, os.Geteuid(), os.Getegid())
@@ -143,9 +121,6 @@ func TestArm64StatFields(t *testing.T) {
 	}
 }
 
-// TestNativeStatFields runs the same probe through the native compiler's four
-// Linux emitters. Each builds FileStat from statx(2) by its own projection,
-// and the coreutils harness compiles with them.
 func TestNativeStatFields(t *testing.T) {
 	fern := buildFernCLI(t)
 	_, file, link, other := statProbeTree(t)
@@ -178,10 +153,6 @@ func TestNativeStatFields(t *testing.T) {
 	}
 }
 
-// The interpreter answers `stat` from Go's os.FileInfo plus a per-GOOS
-// projection of syscall.Stat_t (Linux's Atim vs Darwin's Atimespec), so it is a
-// fourth implementation of the same record and gets the same probe. It is also
-// the one a migrated in-language test suite runs under.
 func TestInterpStatFields(t *testing.T) {
 	_, file, link, other := statProbeTree(t)
 	src := statFieldsNativeSource(t, file, link, other, os.Geteuid(), os.Getegid())
@@ -190,15 +161,6 @@ func TestInterpStatFields(t *testing.T) {
 	}
 }
 
-// statFieldsWasmSource is the WASI half of the same probe, and it is a
-// different assertion because WASI answers a different question.
-//
-// Preview 1's `filestat` has dev, ino, nlink, size and the three timestamps,
-// and preview 2's `descriptor-stat` the same less dev and ino; neither has
-// mode, uid, gid, rdev, blksize or blocks at all. Those read ZERO, which is
-// the checker's documented contract for `stat` — so a zero here is the
-// assertion, not an absence of one. A backend that left the tail of the struct
-// uninitialised would fail this exactly as a wrong value would.
 func statFieldsWasmSource() string {
 	return fmt.Sprintf(`function main(): i32 {
     match (stat("probe.txt")) {
@@ -225,8 +187,6 @@ func statFieldsWasmSource() string {
 `, statProbeMtime)
 }
 
-// Preview 1 fills the record from path_filestat_get, the component from
-// stat-at's descriptor-stat: two bodies, so two runs.
 func TestWASMPreview1StatFields(t *testing.T) {
 	mod := buildWasmCore(t, statFieldsWasmSource())
 	if got := runPreview1Module(t, mod, statProbeWasmDir(t)); got != 0 {
@@ -241,9 +201,6 @@ func TestWASMStatFields(t *testing.T) {
 	}
 }
 
-// statProbeWasmDir seeds the probe file and stamps its mtime before the wasm
-// runs; runWasmInDir's own seeding cannot, since it writes the files itself
-// and nothing there sets a time.
 func statProbeWasmDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -258,7 +215,6 @@ func statProbeWasmDir(t *testing.T) string {
 	return dir
 }
 
-// parseMainResult reads main's integer result from the last line of stdout.
 func parseMainResult(t *testing.T, stdout string) int {
 	t.Helper()
 	lines := strings.Split(stdout, "\n")

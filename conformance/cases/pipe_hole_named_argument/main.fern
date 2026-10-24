@@ -1,5 +1,5 @@
-// `x |> f(b = _)` puts the piped value in the named argument the hole stands
-// for, whatever order the names are written in.
+
+
 function diff(a: i32, b: i32 = 0): i32 { return a - b; }
 
 function main(): i32 {

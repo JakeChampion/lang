@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// stringOrderingProgram exercises `<` / `<=` / `>` / `>=` on strings (#7110),
-// the primitive byte-order comparison that lowers to ir.OpStrCmp and each
-// backend's three-way runtime helper. Every step is a distinct exit code so a
-// backend that gets one relation wrong names it.
-//
-// The cases pin the two halves of the order: the FIRST differing byte decides,
-// and a common prefix falls back to the length (shorter sorts first). Byte
-// order — not case-folded, not codepoint — so "Z" < "a" and a high byte sorts
-// after ASCII. Operands cover both the heap and inline (SSO) string forms and
-// both operand positions, since the helpers materialise each side separately.
 const stringOrderingProgram = `import "std/string";
 
 function main(): i32 {

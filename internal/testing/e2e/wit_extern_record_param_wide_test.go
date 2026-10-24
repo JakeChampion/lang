@@ -12,15 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordParamWideCustomProvider extends the record-parameter gate to
-// a mixed-width record (docs/WIT-BRING-YOUR-OWN.md): a field that flattens to
-// `i32` alongside one that flattens to `i64`. This exercises the 8-byte field's
-// offset (the s64 sits at offset 8 after alignment padding) and its i64.load +
-// i64 flat valtype, which the all-i32 record test doesn't reach.
-//
-// The provider exports `combine: func(m: mix) -> s64` over a
-// `record mix { a: s32, b: s64 }`, receiving the flattened (a, b) and returning
-// a (sign-extended) + b. The Fern side passes Mix{ a: 10, b: 32 } (sum 42).
 func TestExternRecordParamWideCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -38,7 +29,6 @@ func TestExternRecordParamWideCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-point. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -48,8 +38,6 @@ func TestExternRecordParamWideCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-point receives the record flattened to (x, y) — two i32 params — and
-	// returns their sum.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -64,7 +52,6 @@ func TestExternRecordParamWideCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom sink iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -99,7 +86,6 @@ func TestExternRecordParamWideCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: pass Point{ x: 10, y: 32 } (sum 42) to the extern. ---
 	const want = "mix-ok"
 	src := `struct Mix { a: i32, b: i64 }
 

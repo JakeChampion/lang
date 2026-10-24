@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The safety net for #6885's Cell[string] reclamation: `get` hands out
-// a RETAINED reference, so every borrowing consumer now releases it
-// and the cell's own drop / `set` pre-drop FREE the slot buffer rather
-// than merely decrementing. This is the case that says each of those
-// releases is guarded by the buffer's own count — the element aliases
-// a live local, the read is returned, stored into an array that
-// outlives the cell, and written back into the cell it came from, and
-// every check is on CONTENT, which a premature free turns into wrong
-// bytes rather than a wrong length. The literal / inline-SSO / empty
-// sources cover what __fern_str_dec short-circuits on instead of
-// freeing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 function two(a: string, b: string): string { return a + b; }

@@ -17,21 +17,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/tv"
 )
 
-// tvStrengthSeeds is how many fernsmith programs a sweep compiles;
-// FERN_TV_SEEDS overrides it.
 const tvStrengthSeeds = 256
 
-// TestDifferential_TranslationValidationStrength proves every strength
-// reduction the compiler makes on fernsmith's programs (and the stdlib code they
-// reach) equivalent to the code it replaced, for all inputs (#5543).
-//
-// Each program is compiled with FERN_TV_DUMP=strength, which has
-// reduce_strength_ex write each op list it rewrote, before and after. The tv
-// package splits each pair of lists at the ops it does not model, which the
-// pass must leave alone, and Z3 proves each differing straight-line run
-// equivalent over any entry stack and any locals. A counterexample is a
-// miscompile on a concrete input, reported with the solver's model and the
-// program that reached it.
 func TestDifferential_TranslationValidationStrength(t *testing.T) {
 	z3 := tv.Z3(t)
 	cli := e2eharness.SelfHostCLI(t)
@@ -70,8 +57,6 @@ func TestDifferential_TranslationValidationStrength(t *testing.T) {
 	close(work)
 	wg.Wait()
 
-	// The stdlib functions every program reaches rewrite identically each
-	// time, so each distinct query is proved once, against its first seed.
 	var queries []string
 	origin := map[string]uint64{}
 	for _, r := range results {
@@ -122,8 +107,6 @@ func TestDifferential_TranslationValidationStrength(t *testing.T) {
 	}
 }
 
-// strengthPairs compiles src with the strength dump on and returns the
-// differing runs of every rewrite the pass made.
 func strengthPairs(t *testing.T, cli, target, src string) ([]tv.Pair, error) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// Error payloads own their path independently of the caller. A heap-backed
-// path used again after the Result is dropped catches missing retains that a
-// static literal cannot expose. Census also covers fresh, payloadless errors.
 func TestSelfHostWasmIoErrorOwnsPath(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -87,8 +84,6 @@ function main(): i32 {
 				t.Run("component", func(t *testing.T) {
 					componentSource := source
 					if tc.name == "write" {
-						// The current wrapper supports read+write+args, but not
-						// write-only+args. Read the fixture to use that framing.
 						componentSource = strings.Replace(source, "function main(): i32 {", `function main(): i32 {
   match (read_file("1")) { Ok(s) => { if (s != "file") { return 9; } }, Err(_) => { return 10; } }`, 1)
 					}

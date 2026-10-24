@@ -2,15 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A box dying in one block is carried to a construction of its slot count in
-// a later block (ssarc's carried pairs), past blocks that build only other
-// counts: took rebuilds its table twice, and between the two rebuilds one arm
-// builds a two-slot Bad, where the table has three. The table's first rebuild
-// dies after the arms join, so its box is carried across them to the second
-// rebuild, which takes it over; only the 33 Bad boxes are allocated in the
-// rounds. Holding the box for the next construction on the way alone would
-// drop it at Bad and allocate a table every round. The probe prints its
-// result times 1000 plus the allocations the rounds made.
 const reuseCarryProgram = `struct Tab { a: i32[], b: i32[], c: i32[] }
 enum Kind { Pip, Idle, Bad(i32) }
 @noinline function note(k: Kind): i32 {

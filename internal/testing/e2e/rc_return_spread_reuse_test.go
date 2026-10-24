@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// Return-position struct-update reuse (computeReturnSpreadReuse): `return T {
-// ...p, f: v }` writes p's own box in place when the frame owns it and it is
-// uniquely referenced at run time, instead of filling a fresh box, retaining
-// every carried field into it, and deep-dropping p on the way out.
-//
-// The shape is the state threading every self-host emitter is built out of
-// (`s = s.emit(op)`), and an rc miscount here is a leak or a double free in
-// every one of them — so each case below asserts the VALUES first (a wrong box
-// or a freed field shows up there) and then returns __rc_underflow_count(),
-// which is non-zero on any over-release.
-//
-// The two gates are: the frame owns p (freeEligible — an owned-by-default
-// parameter, whose caller retained an argument it keeps and moved one it does
-// not), and the runtime is_unique test at the site (a surviving caller-side
-// alias makes rc>1, so the reuse declines to a fresh box and the alias keeps
-// the old value intact). The `survives` cases below are that second gate.
-
-// threading: the measured shape, 200 updates deep, with an array field grown
-// per call and a string + bool carried the whole way.
 const retSpreadThreadingSrc = `struct St { ops: i32[], tag: string, ok: boolean, ctrl: i32 }
 function (s: St) emit(op: i32): St {
     let nctrl: i32 = s.ctrl;
@@ -43,9 +24,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// method_recv_survives: the caller keeps `a` across the call, so the caller
-// retains its argument and the callee sees rc>1 — the reuse must decline and
-// leave a's box, its array and its string exactly as they were.
 const retSpreadRecvSurvivesSrc = `struct St { ops: i32[], tag: string, ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 }; }
 function main(): i32 {
@@ -62,7 +40,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// free_param_survives: the same hole through a free function's parameter.
 const retSpreadFreeParamSurvivesSrc = `struct St { ops: i32[], ctrl: i32 }
 function bump(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
 function main(): i32 {
@@ -76,9 +53,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// alias_in_callee: the callee itself aliases the receiver before the update,
-// so rc>1 there — the decline arm dec's the reference the frame owns and the
-// alias reads the ORIGINAL values out of the box that was not repurposed.
 const retSpreadAliasInCalleeSrc = `struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St {
     let keep: St = s;
@@ -94,10 +68,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// replaced_ptr_field: the displaced array is released on the reuse branch. A
-// FRESH array each turn means the old one reaches rc 0 and is freed (a flat dec
-// would strand it); the loop's values only come out right if the store landed
-// in the reused box.
 const retSpreadReplacedPtrSrc = `struct St { items: i32[], n: i32 }
 function (s: St) reset(v: i32): St { return St { ...s, items: [v, v + 1, v + 2], n: s.n + 1 }; }
 function main(): i32 {
@@ -116,9 +86,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// nested_struct_field: a struct-typed field (the LowerFrame shape) is carried
-// through every update, so the reuse branch must leave the reference it holds
-// alone — releasing it would free the frame out from under the result.
 const retSpreadNestedStructSrc = `struct Frame { name: string, depth: i32 }
 struct St { frame: Frame, ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + op }; }
@@ -133,8 +100,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// own_param: an explicitly consumed parameter is the frame's outright, and the
-// caller moved its reference — the reuse fires and nothing double-releases.
 const retSpreadOwnParamSrc = `struct St { ops: i32[], ctrl: i32 }
 function eat(own s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
 function main(): i32 {
@@ -147,9 +112,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// address_taken: reached through a function value, so the parameter is
-// borrowed — no call-site retain exists to pay for a repurposed box. The
-// caller's `keep` must still read the original after the call.
 const retSpreadAddressTakenSrc = `struct St { ops: i32[], ctrl: i32 }
 function bump(s: St): St { return St { ...s, ops: s.ops.append(9), ctrl: s.ctrl + 1 }; }
 function apply(f: (St) => St, s: St): St { return f(s); }
@@ -162,8 +124,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// two_returns: two update sites in one function, on different branches. Each
-// empties the parameter's slot on the path that runs; the other never does.
 const retSpreadTwoReturnsSrc = `struct St { ops: i32[], tag: string, ctrl: i32 }
 function (s: St) step(v: i32): St {
     if (v % 2 == 0) { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }

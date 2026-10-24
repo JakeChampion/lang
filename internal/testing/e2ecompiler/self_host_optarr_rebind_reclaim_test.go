@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// --- Rebound Option[<flat scalar array>] reclaim (#6127) ---------------------
-//
-// A REBOUND Option[i32[]] — reassigned in a loop and consumed by a match — must
-// release every superseded payload buffer and option box, as the single-bind
-// forms do. A name released at its consuming match must not also be released
-// as a rebind; the mixed test below pins that.
-//
-// These assert allocs == frees alongside live_bytes == 0, because the two
-// directions mean different things: frees > allocs is a double free (one box
-// released twice), frees < allocs is an unclaimed box.
-
-// TestSelfHostOptArrRebindReclaimX86_64 — a rebound Option[i32[]] reclaims every
-// superseded payload buffer and option box, and the single-bind forms that were
-// already correct stay correct.
 func TestSelfHostOptArrRebindReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -79,8 +65,6 @@ function main(): i32 {
 	})
 
 	t.Run("single_bind_top_level_unchanged", func(t *testing.T) {
-		// A single-bind Option released at its consuming match. Releasing it
-		// again as a rebind would dec its box twice.
 		src := `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[i32[]] = Some([i, i + 1]);
@@ -101,8 +85,6 @@ function main(): i32 {
 	})
 
 	t.Run("single_bind_nested_block_unchanged", func(t *testing.T) {
-		// Owned by the per-block call added in #4357 — same disjointness check one
-		// scope deeper.
 		src := `function round(i: i32): i32 {
     let acc: i32 = 0;
     let k: i32 = 0;
@@ -127,9 +109,6 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostOptArrRebindHazardsX86_64 — the shapes the class must still REFUSE.
-// A wrongly-granted credit frees a buffer something else still reads, so these
-// assert behaviour: the failure mode is a wrong answer or a crash, not a leak.
 func TestSelfHostOptArrRebindHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -142,10 +121,6 @@ func TestSelfHostOptArrRebindHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The Some-arm payload leaves as a bare ident, so the callee may retain
-			// the buffer. Note `a[0]` and `a.len()` are BORROWS and stay admissible —
-			// distinguishing those from this is why the arr-of-arr payload walker
-			// could not be reused (there `g[i]` extracts a row pointer).
 			name: "payload_escapes_into_call",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(i: i32): i32 {
@@ -165,9 +140,6 @@ function main(): i32 {
 			want: 49,
 		},
 		{
-			// A rebind whose payload is a live local's buffer, not a fresh literal.
-			// Freeing it at the next rebind would dangle `shared`, which is read
-			// after the match.
 			name: "rebind_payload_not_fresh",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -187,8 +159,6 @@ function main(): i32 {
 			want: 35,
 		},
 		{
-			// Matched twice — not dead after the first, so freeing there would read a
-			// released box in the second.
 			name: "used_after_match",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -208,7 +178,6 @@ function main(): i32 {
 			want: 57,
 		},
 		{
-			// The option itself escapes by return, so the callee must not free it.
 			name: "escaping_return",
 			src: `function build(i: i32): Option[i32[]] {
     let o: Option[i32[]] = Some([i, i + 1]);

@@ -13,8 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// sysCopyFileRange is copy_file_range(2)'s number on the host, which the
-// stdlib syscall package does not name.
 func sysCopyFileRange(t *testing.T) uintptr {
 	switch runtime.GOARCH {
 	case "amd64":
@@ -26,9 +24,6 @@ func sysCopyFileRange(t *testing.T) uintptr {
 	return 0
 }
 
-// `--sparse=never` is never handed to copy_file_range, which may keep a hole
-// the copy must not have: with every copy_file_range failing EIO, a hard
-// error under the default, both a dense and a sparse source still copy.
 func TestCpSparseNeverIsNotOffloaded(t *testing.T) {
 	dir := t.TempDir()
 	dense := bytes.Repeat([]byte("dense\n"), 50000)
@@ -70,9 +65,6 @@ func TestCpSparseNeverIsNotOffloaded(t *testing.T) {
 			t.Errorf("cp --sparse=never %s: copy differs from the source", c.src)
 		}
 	}
-	// The default sparse mode does offload, so the same filter is an error
-	// there; that keeps this test honest about the filter reaching cp at all.
-	// No clone, which a reflink-capable filesystem would answer first.
 	argv := append(e2eharness.RunX86_64Bin(runner, bin).Args, "--reflink=never", "dense", "dense.auto")
 	if out, err := underSeccompErrno(t, dir, syscall.EIO, []uintptr{nr}, argv...).CombinedOutput(); err == nil {
 		t.Errorf("cp with copy_file_range failing EIO succeeded:\n%s", out)

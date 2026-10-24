@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// unionTupleElemReclaimCases pin the release of a TAGGED UNION constructed at a
-// tuple element position — a built-in `Some(x)` / `Ok(x)` / `Err(x)` box or a
-// user-enum variant.
-//
-// emit_tuple_child_drops had arms for array, string, nested-tuple and
-// reclaim-struct elements and none for a union, so once the tuple around it was
-// reclaimed the union's own box was still never released: exactly one leaked box
-// per union element, whatever its payload. Measured per round before the fix, as
-// x86-64 | arm64 | wasm, native flat on every row: 40 | 40 | 16 for one element,
-// 80 | 80 | 32 for two.
-//
-// The box is [tag, payload] and this construction allocated it, so a shallow
-// __fern_rc_dec is balanced. The PAYLOAD is deliberately left alone — releasing
-// it needs the variant's own drop plan, and leaking it is safe where freeing an
-// aliased one would not be. `union-payload-alias-safe` pins that residue as a
-// value, not a byte count.
 var unionTupleElemReclaimCases = []struct {
 	name string
 	src  string
@@ -49,8 +33,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// Two union elements leaked two boxes; the release is per position, so this
-	// separates "the walk reached one element" from "the walk reached them all".
 	{"two-option-elems-reclaimed", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -71,9 +53,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The USER-ENUM path is a different test from the built-in one: the ctor
-	// resolves against the program's declared variants, not the built-in
-	// Option shape.
 	{"user-enum-variant-elem-reclaimed", `enum Tag { Num(i32), Nil }
 function churn(n: i32): i32 {
     let acc: i32 = 0;
@@ -95,10 +74,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// ALIASING negative: a bare IDENT of union type at an element position is a
-	// live local's box, not a construction. Only construction makes the box
-	// fresh, so this position must keep its skip — `o` is read after the tuple's
-	// reclaim point, and freeing it corrupts the read or ticks the detector.
 	{"ident-union-elem-alias-safe", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -119,9 +94,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 3},
-	// PAYLOAD negative: the box is freed, its rc payload is not. The payload is
-	// read back through the tuple, so a shallow dec that wrongly took the
-	// payload with it would corrupt this or tick the detector.
 	{"union-payload-alias-safe", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

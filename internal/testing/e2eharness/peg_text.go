@@ -9,8 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-// WritePegTextFixture compares every byte range of mixed-width text with
-// Go's independent UTF-8 validator, including empty interior ranges.
 func WritePegTextFixture(t testing.TB) string {
 	t.Helper()
 	var source strings.Builder

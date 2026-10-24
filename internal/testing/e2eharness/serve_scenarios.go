@@ -15,13 +15,6 @@ import (
 	"time"
 )
 
-// The serve-loop scenarios internal/testing/e2e runs on the native backends and
-// internal/testing/e2ecompiler runs through the self-host compiler: each is a
-// server program and the client-side check against a started process.
-
-// HTTPRoundTrip sends one GET on a fresh connection, asking for the
-// close, and returns whatever bytes came back ("" for a reset or no
-// response).
 func HTTPRoundTrip(t *testing.T, addr, path string, timeout time.Duration) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, timeout)
@@ -32,21 +25,16 @@ func HTTPRoundTrip(t *testing.T, addr, path string, timeout time.Duration) strin
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", path)
 	if _, err := conn.Write([]byte(req)); err != nil {
-		// The write can race a worker's death; that is no response,
-		// the same as a reset on the read side.
 		return ""
 	}
 	resp, _ := io.ReadAll(conn)
 	return string(resp)
 }
 
-// ContainsStatus200 reports whether resp starts with a 200 status line.
 func ContainsStatus200(resp string) bool {
 	return strings.HasPrefix(resp, "HTTP/1.1 200 OK")
 }
 
-// ResponseBodyTail is the body of an HTTP/1.1 response, or "" when the
-// response has no header terminator (a closed connection).
 func ResponseBodyTail(resp string) string {
 	i := strings.Index(resp, "\r\n\r\n")
 	if i < 0 {
@@ -55,9 +43,6 @@ func ResponseBodyTail(resp string) string {
 	return resp[i+4:]
 }
 
-// WaitStderrContains polls the server's stderr file until needle shows
-// up: a supervisor's log write races the client's observation of the
-// reset it logs.
 func WaitStderrContains(t *testing.T, path, needle string, within time.Duration) string {
 	t.Helper()
 	limit := time.Now().Add(within)
@@ -78,9 +63,6 @@ func readFileString(path string) string {
 	return string(b)
 }
 
-// ThreadedStateServerSource serves with a Map threaded through the
-// handler (`serve.run_with`): the count of each path's requests, which
-// only threading can carry from one request to the next.
 func ThreadedStateServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -104,9 +86,6 @@ function main(): i32 {
 `)
 }
 
-// CheckThreadedState is the client of ThreadedStateServerSource: one
-// path's count climbs across requests, a second path starts at one, and
-// the first keeps counting from where it was.
 func CheckThreadedState(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -123,12 +102,8 @@ func CheckThreadedState(t *testing.T, addr string) {
 	}
 }
 
-// LargeResponseBytes is the body length of LargeResponseServerSource:
-// more than a socket's send buffer takes in one write.
 const LargeResponseBytes = 1500000
 
-// LargeResponseServerSource answers every request with LargeResponseBytes
-// of body, so the loop has to finish the write on later waits.
 func LargeResponseServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
@@ -143,9 +118,6 @@ function main(): i32 {
 `, LargeResponseBytes)
 }
 
-// CheckLargeResponse reads the whole response twice over: the client
-// asks for the close and reads to end of stream, so the loop must also
-// hold the close until the deferred write has drained.
 func CheckLargeResponse(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -177,8 +149,6 @@ func CheckLargeResponse(t *testing.T, addr string) {
 	}
 }
 
-// RecvDeadlineServerSource serves under a 400 ms per-request read
-// deadline.
 func RecvDeadlineServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
@@ -193,10 +163,6 @@ function main(): i32 {
 `)
 }
 
-// CheckRecvDeadline sends a partial header and never finishes it: the
-// server closes the connection at the deadline without a response, and
-// a well-formed request right after still answers 200, so the loop was
-// not pinned by the slow client.
 func CheckRecvDeadline(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -223,13 +189,6 @@ func CheckRecvDeadline(t *testing.T, addr string) {
 	}
 }
 
-// CheckIncompleteRequestAtEOF half-closes a connection with a request
-// left incomplete: a head cut short, a body cut short, and a head that
-// expects a body, which is answered `100 Continue` first. Each is answered
-// 400 before the close, whatever the read that saw the end of stream held
-// (#11649). The blank line a client may send between requests is no
-// request, so that close gets no response; and the loop still answers a
-// whole request after. Pair it with RecvDeadlineServerSource.
 func CheckIncompleteRequestAtEOF(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -266,9 +225,6 @@ func CheckIncompleteRequestAtEOF(t *testing.T, addr string) {
 	}
 }
 
-// TrappingServerSource is a supervised server with one worker whose
-// handler answers 200 on /ok and traps (an array index out of range) on
-// /boom.
 func TrappingServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -289,19 +245,11 @@ function main(): i32 {
 `, port)
 }
 
-// CheckSurvivesHandlerTrap drives TrappingServerSource: /ok answers, /boom
-// gets no 200 and the supervisor logs the worker's death with the raw
-// exit code 134, and /ok answers again from the reforked worker.
 func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 	t.Helper()
 	checkSurvivesHandlerTrap(t, addr, stderrPath, false)
 }
 
-// CheckOwnListenersSurviveHandlerTrap is CheckSurvivesHandlerTrap for
-// workers that bind their own listeners (ReusePortWorkersServerSource). The
-// dead worker's listener goes with it, and a dial is refused until its
-// sibling or its replacement has bound one, which a loaded host can leave
-// until after the death, so the request after it waits for a listener.
 func CheckOwnListenersSurviveHandlerTrap(t *testing.T, addr, stderrPath string) {
 	t.Helper()
 	checkSurvivesHandlerTrap(t, addr, stderrPath, true)
@@ -317,8 +265,6 @@ func checkSurvivesHandlerTrap(t *testing.T, addr, stderrPath string, ownListener
 		t.Fatalf("/boom answered 200:\n%s", resp)
 	}
 	WaitStderrContains(t, stderrPath, "worker died with exit code 134", 10*time.Second)
-	// The refork backoff starts at 100 ms; a parent-owned listener keeps
-	// the connection in its backlog meanwhile.
 	if ownListeners {
 		WaitServerReady(t, addr, 10*time.Second)
 	}
@@ -327,9 +273,6 @@ func checkSurvivesHandlerTrap(t *testing.T, addr, stderrPath string, ownListener
 	}
 }
 
-// ReusePortServerSource serves through serve.run with a backlog of
-// 4 and SO_REUSEPORT on the listener, in place of tcp_listen's fixed
-// 128 and one listener per port.
 func ReusePortServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -344,8 +287,6 @@ function main(): i32 {
 `, port)
 }
 
-// soReusePort is SO_REUSEPORT, which Go's syscall package spells only on
-// the BSDs: 15 on Linux, 0x200 on Darwin.
 var soReusePort = func() int {
 	if runtime.GOOS == "darwin" {
 		return 0x200
@@ -353,11 +294,6 @@ var soReusePort = func() int {
 	return 15
 }()
 
-// CheckReusePortReachesListener drives ReusePortServerSource: the proof
-// that the option reached the kernel is a second SO_REUSEPORT socket
-// binding the served port while the loop holds it, which a plain
-// listener refuses with EADDRINUSE; the loop still answers 200 through
-// the first.
 func CheckReusePortReachesListener(t *testing.T, port int) {
 	t.Helper()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
@@ -378,10 +314,6 @@ func CheckReusePortReachesListener(t *testing.T, port int) {
 	}
 }
 
-// DefaultBacklogServerSource is a server on `port` under the default
-// accept queue depth, bound itself (with SO_REUSEPORT, for ReservedPort)
-// rather than inheriting a listener whose depth the test would choose, and
-// with no per-client cap, since every connection comes from loopback.
 func DefaultBacklogServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -396,17 +328,8 @@ function main(): i32 {
 `, port)
 }
 
-// backlogBurst is how many connections arrive while the loop accepts none:
-// four times the 128 the default once was.
 const backlogBurst = 512
 
-// CheckDefaultBacklogHoldsBurst drives DefaultBacklogServerSource. With the
-// server stopped, the kernel completes handshakes only into the listener's
-// accept queue and drops the SYNs past it, so every one of backlogBurst
-// connections completing within a second proves the default queue holds
-// the burst; resumed, the loop answers each with 200. The kernel clamps the
-// queue to `net.core.somaxconn`, so a host that caps it under the burst
-// cannot run the check.
 func CheckDefaultBacklogHoldsBurst(t *testing.T, cmd *exec.Cmd, port int) {
 	t.Helper()
 	if b, err := os.ReadFile("/proc/sys/net/core/somaxconn"); err == nil {
@@ -471,10 +394,6 @@ func CheckDefaultBacklogHoldsBurst(t *testing.T, cmd *exec.Cmd, port int) {
 	}
 }
 
-// StalledSurvivorServerSource is WorkersServerSource with /stall holding its
-// worker in the handler for a minute, through the bag's clock as /slow does
-// (a handler may not reach `sleep_ms` around its bag, E080): the worker the
-// crash loop never reaches.
 func StalledSurvivorServerSource() string {
 	return strings.Replace(WorkersServerSource(), `    return http.ok("ok");`, `    if (req.path == "/stall") {
         if (burn(plat, 60000000000 as i64) == 0 - 1) { return http.ok("never"); }
@@ -482,12 +401,6 @@ func StalledSurvivorServerSource() string {
     return http.ok("ok");`, 1)
 }
 
-// CheckCrashLoopStopsSurvivor drives StalledSurvivorServerSource: one
-// worker is held in /stall while the other and its replacements
-// crash-loop on /boom; at the give-up the stalled worker is alive and
-// holding the listener, and the supervisor stops it (SIGTERM, which a
-// handler-held worker cannot act on, then SIGKILL five seconds later)
-// before exiting, so the port refuses connections afterwards.
 func CheckCrashLoopStopsSurvivor(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -497,13 +410,6 @@ func CheckCrashLoopStopsSurvivor(t *testing.T, cmd *exec.Cmd, addr, stderrPath s
 	CheckCrashLoopGivesUp(t, cmd, addr, stderrPath)
 }
 
-// CheckCrashLoopGivesUp drives TrappingServerSource with /boom in a
-// reconnect loop: each queued connection is accepted by the next worker
-// as soon as it forks and kills it within the 100 ms fast-death window,
-// and after eight such deaths the supervisor exits with the child's
-// code (134) instead of reforking forever, with no worker left holding
-// the port. The doubling backoff waits sum to about 11 s before the
-// give-up.
 func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -523,7 +429,7 @@ func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string)
 			}
 			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 			_, _ = conn.Write([]byte("GET /boom HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n"))
-			_, _ = io.ReadAll(conn) // the reset, so the requests serialise
+			_, _ = io.ReadAll(conn)
 			conn.Close()
 		}
 	}
@@ -544,18 +450,12 @@ func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string)
 	if n := strings.Count(stderr, "worker died with exit code 134"); n < 8 {
 		t.Errorf("worker-death lines = %d, want at least 8:\n%s", n, stderr)
 	}
-	// The fast deaths are counted over every worker, so another may have
-	// been alive at the give-up: the supervisor stops it before exiting,
-	// and nothing is left to accept.
 	if conn, err := net.DialTimeout("tcp", addr, 2*time.Second); err == nil {
 		conn.Close()
 		t.Errorf("the port still accepts after the supervisor gave up: a worker survived it\n--- stderr ---\n%s", stderr)
 	}
 }
 
-// CheckTrapThenShutdownExitsClean drives TrappingServerSource through a
-// trap and a refork, then SIGTERM: the exit is the shutdown's 0, not
-// the earlier death's 134.
 func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	CheckSurvivesHandlerTrap(t, addr, stderrPath)
@@ -565,9 +465,6 @@ func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPa
 	}
 }
 
-// MaxConnectionsFloorServerSource serves with `max_connections: 0`,
-// which the loop takes as 1: the listener is read whenever no
-// connection is held, so requests one at a time are answered.
 func MaxConnectionsFloorServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -581,8 +478,6 @@ function main(): i32 {
 `)
 }
 
-// CheckMaxConnectionsFloor drives MaxConnectionsFloorServerSource: three
-// requests in turn are each answered 200.
 func CheckMaxConnectionsFloor(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -593,10 +488,6 @@ func CheckMaxConnectionsFloor(t *testing.T, addr string) {
 	}
 }
 
-// WorkersServerSource is a supervised server with two workers: /slow
-// burns pure work until 1.5 s of the bag's monotonic clock has passed, so
-// it holds its worker that long on any runner; /boom traps, /ok answers at
-// once.
 func WorkersServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -633,20 +524,10 @@ function main(): i32 {
 `)
 }
 
-// ReusePortWorkersServerSource is TrappingServerSource over two workers
-// that each bind their own SO_REUSEPORT listener (`reuse_port`): a
-// worker's death takes its listener with it, and its replacement binds
-// anew, so CheckOwnListenersSurviveHandlerTrap proves the service is back
-// on the port after a trap.
 func ReusePortWorkersServerSource(port int) string {
 	return strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2, reuse_port: true }", 1)
 }
 
-// CheckWorkersServeSideBySide drives WorkersServerSource: a request on a
-// second connection is answered while the first worker is deep in
-// /slow, which one worker could not do since its handlers run to
-// completion; and a worker's death leaves the other serving, before and
-// after the refork.
 func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -673,8 +554,6 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 	if err != nil || !strings.Contains(string(b), "slow") {
 		t.Fatalf("/slow itself: %q, %v", b, err)
 	}
-	// The proof needs /slow to have outlasted the /ok round trip by far;
-	// a burn the machine finishes in a blink would prove nothing.
 	if held := time.Since(started); held < 500*time.Millisecond {
 		t.Fatalf("/slow held its worker for only %v; too short to show the other worker answered /ok", held)
 	}
@@ -687,11 +566,6 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 	}
 }
 
-// BlockingHandlerServerSource is a one-worker server whose /slow handler
-// waits on `plat.http` to the fetch upstream's /slow target (through the
-// forward proxy SetFetchProxy names, since the upstream is on loopback)
-// while /ok answers at once. It is the networking plan's blocking-handler
-// conformance case (#9851 §5, #9857).
 func BlockingHandlerServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -712,14 +586,6 @@ function main(): i32 {
 `)
 }
 
-// CheckHandlersOverlap drives BlockingHandlerServerSource and asserts what
-// P3 (#9857) gives a one-worker server: a handler parked on its upstream's
-// answer holds nothing, so /ok on a second connection is answered inside
-// the upstream's delay; two /slow requests on two connections finish inside
-// one delay rather than in turn; two requests pipelined on one connection
-// are answered in order, the /ok behind the /slow; and a client that sends
-// /slow and goes away leaves the worker serving, before and after its
-// upstream answers.
 func CheckHandlersOverlap(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -729,8 +595,6 @@ func CheckHandlersOverlap(t *testing.T, addr string) {
 	slow := dialSlow(t, addr)
 	defer slow.Close()
 	started := time.Now()
-	// Give the worker time to read /slow and park its handler before the
-	// second connection arrives.
 	time.Sleep(20 * time.Millisecond)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("/ok beside /slow: want 200, got\n%s", resp)
@@ -741,7 +605,6 @@ func CheckHandlersOverlap(t *testing.T, addr string) {
 	if b, err := io.ReadAll(slow); err != nil || !strings.Contains(string(b), "slow 200") {
 		t.Fatalf("/slow itself: %q, %v", b, err)
 	}
-	// Two parked handlers overlap each other too.
 	first, second := dialSlow(t, addr), dialSlow(t, addr)
 	defer first.Close()
 	defer second.Close()
@@ -754,8 +617,6 @@ func CheckHandlersOverlap(t *testing.T, addr string) {
 	if elapsed := time.Since(started); elapsed >= 2*SlowUpstreamDelay {
 		t.Fatalf("two /slow on two connections took %v, not inside the upstream's %v doubled: the handlers ran in turn", elapsed, SlowUpstreamDelay)
 	}
-	// Requests pipelined on one connection stay in order: the /ok behind a
-	// /slow is answered after it.
 	piped, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -772,9 +633,6 @@ func CheckHandlersOverlap(t *testing.T, addr string) {
 	if at < 0 || !strings.Contains(string(all[at:]), "\r\n\r\nok") {
 		t.Fatalf("pipelined /slow then /ok: want the slow answer first, got\n%s", all)
 	}
-	// A request cut short behind a parked one, with the end of stream in the
-	// same write: the parked request is still answered, and nothing is
-	// refused ahead of it.
 	cut, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -793,8 +651,6 @@ func CheckHandlersOverlap(t *testing.T, addr string) {
 	if !strings.HasPrefix(string(cutAll), "HTTP/1.1 200") || !strings.Contains(string(cutAll), "slow 200") || strings.Contains(string(cutAll), " 400 ") {
 		t.Fatalf("parked /slow then a cut-short request and the end of stream: want only the slow answer, got\n%s", cutAll)
 	}
-	// A client that goes away mid-wait: the worker keeps serving while the
-	// handler is parked and after its upstream answers to a closed connection.
 	gone := dialSlow(t, addr)
 	gone.Close()
 	time.Sleep(20 * time.Millisecond)
@@ -807,8 +663,6 @@ func CheckHandlersOverlap(t *testing.T, addr string) {
 	}
 }
 
-// dialSlow opens a connection to addr and sends it a /slow request whose
-// response closes the connection.
 func dialSlow(t *testing.T, addr string) net.Conn {
 	t.Helper()
 	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -821,19 +675,10 @@ func dialSlow(t *testing.T, addr string) net.Conn {
 	return c
 }
 
-// InitStateServerSource is ThreadedStateServerSource with no `main`: an
-// `init(): S` and a state-taking `handle` are the two-phase lifecycle the
-// compilers synthesise a main for, which serves on `PORT` under the
-// supervisor and hands init()'s value to the loop rather than building
-// the state per request or dropping it. `init` takes the platform and
-// answers the serve config beside the state: one worker, so the count
-// every request sees is the one the request before it left.
 func InitStateServerSource() string {
 	return initStateServerSource(`import "std/serve";`, "serve")
 }
 
-// InitStateAliasedServerSource is InitStateServerSource importing std/serve
-// as `web`: the config is known by its module, not by the qualifier.
 func InitStateAliasedServerSource() string {
 	return initStateServerSource(`import "std/serve" as web;`, "web")
 }
@@ -860,8 +705,6 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
 `)
 }
 
-// HandleOnlyServerSource is a handler program with neither `init` nor
-// `main`: the synthesised main serves `handle` on `PORT`.
 func HandleOnlyServerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -873,8 +716,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 `
 }
 
-// CheckInitState is CheckThreadedState's first half: one path's count
-// climbs and a second path starts at one.
 func CheckInitState(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -888,7 +729,6 @@ func CheckInitState(t *testing.T, addr string) {
 	}
 }
 
-// CheckHandleOnly asks the handle-only server for one path.
 func CheckHandleOnly(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -897,9 +737,6 @@ func CheckHandleOnly(t *testing.T, addr string) {
 	}
 }
 
-// ResultHandlerServerSource is a handler program whose `handle` answers
-// `Result[HttpResponse, http.HttpError]` and fails with `?`: the
-// compilers wrap it so the failure is answered as a problem.
 func ResultHandlerServerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -917,16 +754,10 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
 `
 }
 
-// DynErrorHandlerServerSource is a handler program whose `handle` answers
-// `Result[HttpResponse, dyn error.Error]`, failing with a concrete error
-// that `?` boxes: the compilers adapt it with `respond_error`.
 func DynErrorHandlerServerSource() string {
 	return dynErrorHandlerSource(`import "std/error";`, "error")
 }
 
-// DynErrorHandlerAliasedServerSource is DynErrorHandlerServerSource with
-// std/error imported under an alias: the adapter is chosen by the trait's
-// identity, not by the spelling the entry gives it.
 func DynErrorHandlerAliasedServerSource() string {
 	return dynErrorHandlerSource(`import "std/error" as err;`, "err")
 }
@@ -955,9 +786,6 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
 `
 }
 
-// CheckDynErrorHandler drives DynErrorHandlerServerSource: /items/1
-// answers 200 with its name, another path a bare 500 problem that does not
-// carry the error's message, and the message is on the server's stderr.
 func CheckDynErrorHandler(t *testing.T, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -984,9 +812,6 @@ func CheckDynErrorHandler(t *testing.T, addr, stderrPath string) {
 	}
 }
 
-// StatefulResultHandlerServerSource threads a count through a handler
-// answering `(Map[string, i32], Result[HttpResponse, http.HttpError])`:
-// a failure is answered as a problem and the state survives it.
 func StatefulResultHandlerServerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -1009,9 +834,6 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
 `
 }
 
-// CheckResultHandler drives ResultHandlerServerSource: /items/1 answers
-// 200 with its name, and another path the 404 problem the lookup failed
-// with.
 func CheckResultHandler(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -1027,9 +849,6 @@ func CheckResultHandler(t *testing.T, addr string) {
 	}
 }
 
-// CheckStatefulResultHandler drives StatefulResultHandlerServerSource:
-// the count climbs, /boom answers a 404 problem, and the count climbs on
-// from where it was.
 func CheckStatefulResultHandler(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -1044,10 +863,6 @@ func CheckStatefulResultHandler(t *testing.T, addr string) {
 	}
 }
 
-// ShutdownHookServerSource threads a request count and declares a
-// `shutdown(reason, state)` hook: the compilers wire it to the loop, which
-// calls it once it has stopped with the reason and the count as the last
-// request left it, and the hook reports both on stderr.
 func ShutdownHookServerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -1068,17 +883,11 @@ function shutdown(reason: string, hits: i32): void {
 `
 }
 
-// CheckShutdownHook drives ShutdownHookServerSource: two requests, then
-// SIGTERM; the process exits 0 and its stderr carries the hook's line
-// with the reason and the count.
 func CheckShutdownHook(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGTERM, "sigterm")
 }
 
-// CheckShutdownHookOnSigint is CheckShutdownHook with SIGINT, what Ctrl-C
-// sends: the supervisor forwards it, the worker drains the same way, and
-// the hook's reason names it.
 func CheckShutdownHookOnSigint(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGINT, "sigint")
@@ -1103,17 +912,10 @@ func checkShutdownHookOn(t *testing.T, cmd *exec.Cmd, addr, stderrPath string, s
 	}
 }
 
-// StallServerSource is WorkersServerSource with one worker: the shape
-// whose handler, running to completion, holds the whole worker.
 func StallServerSource() string {
 	return strings.Replace(WorkersServerSource(), "workers: 2", "workers: 1", 1)
 }
 
-// CheckHandlerStallsItsWorker drives StallServerSource: a request on a
-// second connection is answered only once the first worker's /slow has
-// run to completion, since a handler runs on the worker's own thread of
-// control and nothing else runs there meanwhile. This pins what P1
-// documents so that the phase which changes it inherits a failing test.
 func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -1145,8 +947,6 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 	if r.err != nil || !strings.Contains(r.body, "slow") {
 		t.Fatalf("/slow itself: %q, %v", r.body, r.err)
 	}
-	// The proof is the order; /slow's 1.5 s deadline keeps it well past the
-	// 200 ms head start, and this floor catches a source that loses that.
 	if held := r.done.Sub(started); held < 400*time.Millisecond {
 		t.Fatalf("/slow held its worker for only %v; too short to show /ok waited behind it", held)
 	}
@@ -1155,8 +955,6 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 	}
 }
 
-// ListenFailureServerSource serves on `port` through the single loop
-// (`serve.run`) or the supervisor (`serve.supervise`).
 func ListenFailureServerSource(port int, supervised bool) string {
 	entry := "run"
 	if supervised {
@@ -1174,9 +972,6 @@ function main(): i32 {
 `, entry, port)
 }
 
-// CheckListenFailure runs a server built from ListenFailureServerSource
-// on a port something else holds: it exits 98, and stderr names the
-// address it tried and the error in words.
 func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	t.Helper()
 	var stderr strings.Builder
@@ -1195,17 +990,12 @@ func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	if code := cmd.ProcessState.ExitCode(); code != 98 {
 		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
 	}
-	// `::` where the host has IPv6, `0.0.0.0` where it has not.
 	want := regexp.MustCompile(fmt.Sprintf(`serve: cannot listen on (\[::\]|0\.0\.0\.0):%d: Address already in use`, port))
 	if !want.MatchString(stderr.String()) {
 		t.Errorf("stderr does not match %q:\n%s", want, stderr.String())
 	}
 }
 
-// FetchDeadlineUpstreams starts two loopback upstreams for
-// FetchDeadlineSource: one that accepts and never replies, and one that
-// answers one canned 200 per connection. A loopback listener that cannot
-// be had is a failure, not a skip: every networking lane has one.
 func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
 	t.Helper()
 	silent, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1245,11 +1035,6 @@ func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
 	return silent.Addr().(*net.TCPAddr).Port, live.Addr().(*net.TCPAddr).Port
 }
 
-// FetchDeadlineSource is a std/fetch client under its timeouts (#4385):
-// against the silent upstream a 400 ms inactivity bound answers
-// `Timeout(Inactivity)` and a 300 ms total bound `Timeout(Total)`, each
-// checked by the message a caller would print, and against the live one
-// the default bounds give a 200 in time. Exit 0 when all three hold.
 func FetchDeadlineSource(silentPort, livePort int) string {
 	return fmt.Sprintf(`import "std/fetch";
 import "std/time";
@@ -1278,8 +1063,6 @@ function main(): i32 {
 `, silentPort, livePort)
 }
 
-// CheckFetchDeadline runs a FetchDeadlineSource client: it exits 0, and
-// well before the silent upstream could have been waited out.
 func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	start := time.Now()
@@ -1293,8 +1076,6 @@ func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// LimitsServerSource serves with the parser's caps lowered through
-// `serve.Config.limits`: a 16-byte body and three header fields.
 func LimitsServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -1309,9 +1090,6 @@ function main(): i32 {
 `)
 }
 
-// CheckServeLimits drives LimitsServerSource: a request inside the caps
-// is answered 200, a body past 16 bytes 413 and a fourth header field
-// 431, each before the handler runs.
 func CheckServeLimits(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

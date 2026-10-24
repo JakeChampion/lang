@@ -47,8 +47,6 @@ func TestInventory(t *testing.T) {
 	}
 }
 
-// Weighted assignment is longest-first to the least-loaded worker, so two
-// heavy tests never share a worker while a light one runs alone.
 func TestInventoryWeighted(t *testing.T) {
 	weights := map[string]float64{"TestSlow": 100, "TestAlsoSlow": 90, "TestMid": 10}
 	got, err := inventory([]byte("TestA\nTestSlow\nTestB\nTestAlsoSlow\nTestMid\n"), 2, weights)

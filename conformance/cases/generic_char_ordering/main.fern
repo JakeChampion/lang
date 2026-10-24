@@ -1,6 +1,6 @@
 import "core/cmp";
 
-// An Ord-bounded comparison also orders char values after instantiation.
+
 function lt_op[T: cmp.Ord](a: T, b: T): boolean { return a < b; }
 function ge_op[T: cmp.Ord](a: T, b: T): boolean { return a >= b; }
 function same_op[T: cmp.Eq](a: T, b: T): boolean { return a == b; }

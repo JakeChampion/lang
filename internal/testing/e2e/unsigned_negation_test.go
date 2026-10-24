@@ -6,10 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Unary minus on an unsigned integer wraps at the operand's width: `-x` is
-// `0 - x` (docs/INTEGER-SEMANTICS.md, #12657). Both checkers accepted it and
-// the oracle wrapped, while lowering refused it as `operator contract: - u32`.
-// Each program returns 42 iff every check holds.
 const unsignedNegationProg = `
 function neg32(x: u32): u32 {
     return -x;
@@ -28,9 +24,6 @@ function main(): i32 {
 }
 `
 
-// The byte and the address, apart: the self-host interpreter holds both in an
-// i32, wrapping no u8 arithmetic (#12686) and comparing a usize signed
-// (#12663), so it runs only the u32 and u64 program.
 const unsignedNegationU8UsizeProg = `
 function neg8(x: u8): u8 {
     return -x;
@@ -90,8 +83,6 @@ func TestUnsignedNegationArm64(t *testing.T) {
 	}
 }
 
-// The compile runs ahead of the wasmtime lookup, so the lowering is held on
-// this target where no runtime is installed.
 func TestUnsignedNegationWasm(t *testing.T) {
 	for _, tc := range unsignedNegationCases {
 		t.Run(tc.name, func(t *testing.T) {

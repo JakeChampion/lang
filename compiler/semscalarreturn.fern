@@ -1,6 +1,3 @@
-// Private, closed-call scalar record returns. sempair proves that every caller
-// projects the result before this changes its ABI. Each lane holds scalar bits;
-// none carries an ownership unit. References and finalizers stay boxed.
 import "./ssa";
 import "./ssasem";
 import "./semrecords";
@@ -57,7 +54,6 @@ function value(f: ssasem.Func, t: typeinfo.Type): ssasem.Func {
 }
 
 function contract(f: ssasem.Func, name: string, from: typeinfo.Type, to: typeinfo.Type): ssasem.Func {
-  // Type spellings distinguish signatures in the semantic call registry.
   let row: ssasem.Contract = ssasem.Contract { name: name, params: [from], modes: [ssasem.value_mode()], result: to };
   let at: i32 = ssasem.find_contract_in(f.calls, name);
   if (at >= 0) {
@@ -112,9 +108,6 @@ pub function callee(f0: ssasem.Func): ssasem.Func {
   return ssasem.Func { ...f, result: word_type() };
 }
 
-// Negative call metadata packs contiguous capture locals and the number of
-// auxiliary lanes: -(base*4+count). Positive metadata remains sempair's legacy
-// pointer-sized second word. Capture runs before any ownership cleanup call.
 pub function capture_base(imm: i32): i32 {
   return ssasem.scalar_capture_base(imm);
 }
@@ -167,9 +160,6 @@ pub function caller(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
   return ssasem.Func { ...out.f, calls: calls, graph: graph };
 }
 
-// The caller's kept record constructions can reuse boxes read through their
-// scalar fields. Trace those fields back to reference values before changing
-// a return ABI: throwing away such a donor can add an allocation in the caller.
 pub function donors(f: ssasem.Func, defs: ssa.SInst[], whole0: boolean[]): boolean[] {
   let pending: i32[] = kept_fields(f.graph, whole0);
   if (pending.len() == 0) {
@@ -217,11 +207,6 @@ function donation_edges(reference: boolean, kind: i32): boolean {
   return !reference || kind == 7 || kind == 8 || kind == ssasem.record_new();
 }
 
-// ---- variant payloads in lanes (sempair) ------------------------------------
-
-// The lanes a variant payload of type `t` takes: a scalar takes one, and a
-// tuple of scalars takes one an element. None where `t` is anything else or
-// needs more than the three auxiliary lanes.
 pub function lanes_of(t: typeinfo.Type): typeinfo.Type[] {
   let parts: typeinfo.Type[] = payload_parts(t);
   if (parts.len() > 3) {
@@ -245,8 +230,6 @@ function payload_parts(t: typeinfo.Type): typeinfo.Type[] {
   return [];
 }
 
-// Whether a paired `e` returns in lanes: every payload fits them, and one
-// word would carry at least one of them only as a pointer to a box.
 pub function variant_in_lanes(e: semrecords.Enum): boolean {
   let boxed: boolean = false;
   for v in e.variants {
@@ -266,7 +249,6 @@ pub function variant_in_lanes(e: semrecords.Enum): boolean {
 
 pub struct Lanes { f: ssasem.Func, insts: ssa.SInst[], value: i32 }
 
-// `insts` ending with `payload`'s parts set in lanes 0 and up.
 pub function set_lanes(f: ssasem.Func, insts: ssa.SInst[], payload: i32, t: typeinfo.Type): Lanes {
   let parts: typeinfo.Type[] = lanes_of(t);
   let out: Build = Build { f: f, insts: insts, result: payload };
@@ -284,7 +266,6 @@ pub function set_lanes(f: ssasem.Func, insts: ssa.SInst[], payload: i32, t: type
   return Lanes { f: out.f, insts: out.insts, value: 0 - 1 };
 }
 
-// `insts` ending with the word a variant's position `at` returns as.
 pub function tag_word(f: ssasem.Func, insts: ssa.SInst[], at: i32): Lanes {
   let tag: i32 = f.values.len();
   let out: Build = Build { f: value(f, dummy_type()), insts: insts.append(ssa.SInst { kind_tag: 1, result: tag, args: [], imm: at, str: "" }), result: tag };
@@ -292,13 +273,11 @@ pub function tag_word(f: ssasem.Func, insts: ssa.SInst[], at: i32): Lanes {
   return Lanes { f: out.f, insts: out.insts, value: out.result };
 }
 
-// `insts` ending with the position a call's result word `w` names.
 pub function word_tag(f: ssasem.Func, insts: ssa.SInst[], w: i32): Lanes {
   let out: Build = call(Build { f: f, insts: insts, result: w }, conversion(as_name(), dummy_type()), w, word_type(), dummy_type());
   return Lanes { f: out.f, insts: out.insts, value: out.result };
 }
 
-// `insts` ending with a payload of type `t` built from the lane words `words`.
 pub function from_lanes(f: ssasem.Func, insts: ssa.SInst[], words: i32[], t: typeinfo.Type): Lanes {
   let parts: typeinfo.Type[] = lanes_of(t);
   let out: Build = Build { f: f, insts: insts, result: 0 - 1 };
@@ -316,14 +295,12 @@ pub function from_lanes(f: ssasem.Func, insts: ssa.SInst[], words: i32[], t: typ
   return Lanes { f: value(out.f, t), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.tuple_new(), result: v, args: args, imm: 0, str: "" }), value: v };
 }
 
-// `insts` ending with lane `k`'s word read after a call whose result is `w`.
 pub function lane_word(f: ssasem.Func, insts: ssa.SInst[], w: i32, lane: i32, k: i32): Lanes {
   let name: string = word_prefix() + util.i32_to_string(k);
   let g: ssasem.Func = contract(f, name, word_type(), word_type());
   return Lanes { f: g, insts: insts.append(ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [w], imm: 0, str: name }), value: lane };
 }
 
-// The call metadata that captures `count` lanes into the values from `base`.
 pub function capture_imm(base: i32, count: i32): i32 {
   return 0 - (base * 4 + count);
 }

@@ -1,7 +1,3 @@
-// Position index for exact byte names. Empty instruction placeholders are
-// omitted; every stored position still addresses the original input array.
-// Proof entry points construct this from their own supplied text, never from
-// an external index or previously decoded program.
 import "std/string";
 
 pub struct Names { names: string[], order: i32[], duplicate: i32 }
@@ -100,8 +96,6 @@ pub function position(ix: Names, name: string): i32 {
   return if (at < 0) { -1 } else { ix.order[at] };
 }
 
-// Some scoped proofs reject ambiguity only for names they actually bind.
-// Equal names are adjacent even when the original definitions are far apart.
 pub function unique_position(ix: Names, name: string): i32 {
   let at = sorted_position(ix, name);
   if (at < 0) {

@@ -3,10 +3,6 @@ import "std/hex";
 import "std/codec";
 import "std/crypto/field25519" as fe;
 
-// tests/stdlib/field25519_test.fern: std/crypto/field25519 on the values
-// at its edges, against Python's integers. Inputs run up to 2^255 - 1, so p
-// and the values above it arrive unreduced; to_bytes must answer each mod p.
-
 const ZERO: string = "0000000000000000000000000000000000000000000000000000000000000000";
 
 const ONE: string = "0100000000000000000000000000000000000000000000000000000000000000";
@@ -695,7 +691,6 @@ function test_unary(): test.TestOutcome {
   return test.pass();
 }
 
-// cswap and cmov swap or select by mask.
 function test_select(): test.TestOutcome {
   let s: (fe.Fe, fe.Fe) = fe.cswap(el(ONE), el(MIXED), 1);
   let k: (fe.Fe, fe.Fe) = fe.cswap(el(ONE), el(MIXED), 0);
@@ -718,7 +713,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

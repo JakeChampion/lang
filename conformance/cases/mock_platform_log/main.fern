@@ -5,12 +5,12 @@ import "std/headers";
 import "std/stream";
 import "std/i32";
 
-// Exercises std/mock_platform's recording seam on every backend: a handler
-// is handed the mock as its Platform and reaches its capabilities through
-// it, the calls land in the mock's log, and
-// `calls()` parses the log back into MockCall values. Nothing here reaches
-// the host — the `.log` lines would go to stderr on a host bag.
-// FEATURE-AUDIT std/mock_platform row.
+
+
+
+
+
+
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("serving " + req.path);
     match (plat.env("REGION")) {
@@ -25,27 +25,27 @@ function main(): i32 {
     let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
     let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
     let resp: HttpResponse = handle(req, m);
-    print(resp.body_string());                            // body-/a
-    print(m.call_count().to_string());           // 4
+    print(resp.body_string());
+    print(m.call_count().to_string());
     let cs: mock_platform.MockCall[] = m.calls();
-    print(cs[0].name);                           // log
-    print(cs[0].args);                           // serving /a
-    print(cs[1].name);                           // env
-    print(cs[1].args);                           // REGION
+    print(cs[0].name);
+    print(cs[0].args);
+    print(cs[1].name);
+    print(cs[1].args);
     if (m.has_call("env")) { print("has-env"); } else { print("no-env"); }
     if (m.has_call("fetch")) { print("has-fetch"); } else { print("no-fetch"); }
     match (m.find_call("log")) {
-        Some(c) => { print(c.args); },           // serving /a (first match)
+        Some(c) => { print(c.args); },
         None => { print("none"); },
     }
     match (m.find_call("nope")) {
         Some(c) => { print("unexpected"); },
         None => { print("find-none"); },
     }
-    // A hand-driven entry lands in the same log as the handler's.
+
     m.record("kv_set", "k=v");
-    print(m.call_count().to_string());           // 5
+    print(m.call_count().to_string());
     m.reset();
-    print(m.call_count().to_string());           // 0
+    print(m.call_count().to_string());
     return 0;
 }

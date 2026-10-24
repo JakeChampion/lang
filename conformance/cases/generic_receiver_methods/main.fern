@@ -1,7 +1,7 @@
-// Methods on a generic struct / enum receiver: the type variable in
-// the receiver (`T` in `Box[T]`) is an implicit method type parameter,
-// inferred from the receiver at the call site, so one method body
-// serves every instantiation.
+
+
+
+
 struct Box[T] { v: T }
 function (b: Box[T]) get(): T { return b.v; }
 
@@ -19,8 +19,8 @@ function main(): i32 {
     let p: Pair[i32, i32] = Pair { fst: 10, snd: 20 };
     let some: Opt[i32] = Has(5);
     let none: Opt[i32] = Nil;
-    return bi.get()                       // 42
-         + p.first() + p.second()         // 30
-         + some.unwrap_or(0)              // 5
-         + none.unwrap_or(7);             // 7  -> 84
+    return bi.get()
+         + p.first() + p.second()
+         + some.unwrap_or(0)
+         + none.unwrap_or(7);
 }

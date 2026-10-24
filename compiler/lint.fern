@@ -1,15 +1,3 @@
-// compiler/lint.fern — `fern -lint`: checks that flag code which compiles but
-// reads badly. Lints work off the parse tree, before type-checking, so a file
-// with a type error still lints and a large tree costs a parse per file.
-//
-// A rule has a stable kebab-case name and a default severity. Severity is
-// overridable three ways, innermost wins: the rule's default, a [lint] table
-// in the governing fern.toml, and `-lint-set NAME=SEVERITY`; options are
-// `<rule>.<key>`, in [lint.options] or `-lint-opt`. A `// fern-lint: allow
-// RULE` comment silences one site and `// fern-lint: allow-file RULE` a file.
-// The change-risk rule also reads a saved `-cover` run, given with
-// `-lint-cover FILE`; without one it does not run.
-
 import "./ast";
 import "./astwalk";
 import "./coverreport";
@@ -20,22 +8,14 @@ import "./util";
 
 pub const COMPLEXITY: string = "cyclomatic-complexity";
 
-// RISK is CRAP1 (Savoia and Evans, 2007): complexity^2 * (1 - coverage)^3 +
-// complexity, where coverage is the share of a function's instrumented lines
-// a -cover run hit. Complex code nobody tests scores high; complex code under
-// test and simple untested code both score near the complexity alone.
 pub const RISK: string = "change-risk";
 
-// DIRECTIVE names the findings about `fern-lint:` comments themselves.
 pub const DIRECTIVE: string = "lint-directive";
 
 const DEFAULT_MAX: i32 = 10;
 
-// Savoia's own threshold: a method over 30 is the anti-pattern.
 const DEFAULT_RISK_MAX: i32 = 30;
 
-// Severity: 0 allow (the rule does not run), 1 warn (printed, exit status
-// unchanged), 2 deny (printed, the run fails).
 pub const ALLOW: i32 = 0;
 
 pub const WARN: i32 = 1;
@@ -50,14 +30,9 @@ pub struct Finding {
   col: i32,
   msg: string,
   help: string,
-  // value is the measurement behind the finding — a complexity score — or 0.
   value: i32,
 }
 
-// Config is a run's resolved configuration: each rule's severity and
-// threshold. `risk_configured` is set when a [lint] table or a flag names the
-// change-risk rule, so a run that would score it and was given no coverage
-// refuses rather than passing the rule vacuously.
 pub struct Config {
   complexity: i32,
   max: i32,
@@ -97,7 +72,6 @@ function severity_name(sev: i32): string {
   return "warn";
 }
 
-// set_option applies `<rule>.<key> = value`, or says why it cannot.
 pub function set_option(c: Config, dotted: string, value: string): (Config, string) {
   let dot: i32 = util.index_of_sub(dotted, ".");
   if (dot < 0) {
@@ -124,8 +98,6 @@ pub function set_option(c: Config, dotted: string, value: string): (Config, stri
   return (Config { ...c, max: n }, "");
 }
 
-// set_pair applies one `key = value` from a [lint] table or -lint-set: a
-// dotted key is an option, anything else a severity.
 pub function set_pair(c: Config, key: string, value: string): (Config, string) {
   if (util.index_of_sub(key, ".") >= 0) {
     return set_option(c, key, value);
@@ -143,7 +115,6 @@ pub function set_pair(c: Config, key: string, value: string): (Config, string) {
   return (Config { ...c, complexity: sev }, "");
 }
 
-// rules_listing is `fern -lint-rules`.
 pub function rules_listing(): string {
   return COMPLEXITY + "  [warn]\n"
     + "    function has more independent control-flow paths than the configured limit\n"
@@ -153,11 +124,6 @@ pub function rules_listing(): string {
     + "    option " + RISK + ".max = " + util.i32_to_string(DEFAULT_RISK_MAX) + " (default)\n";
 }
 
-// score is a function's cyclomatic complexity: 1 for the entry path plus one
-// per fork — `if` (an `else if` nests a second one), `while` / `for` / `loop`,
-// each match arm that can fail to match plus each guard, `&&` / `||`, and `?`.
-// `assert` and `todo` add nothing, and a lambda's body counts into the
-// function that holds it.
 pub function score(fd: parser.FuncDecl): i32 {
   return 1 + stmts_forks(fd.body);
 }
@@ -178,8 +144,6 @@ function arm_forks(arms: ast.MatchArm[]): i32 {
   return n;
 }
 
-// arm_fork is what one written arm adds: one when its pattern can fail to
-// match, and its guard as a second test.
 function arm_fork(wild: boolean, has_guard: boolean, guard: ast.Expr, body: ast.Stmt[]): i32 {
   let n: i32 = stmts_forks(body);
   if (!wild) {
@@ -203,9 +167,6 @@ function is_wild(p: ast.Pattern): boolean {
   return false;
 }
 
-// sugar_forks scores a match the parser lowered to an `if` chain (a tuple,
-// struct, literal or nested-variant pattern) by the arms as written, so the
-// score is the source's and not the chain's.
 function sugar_forks(sg: ast.MatchSugar): i32 {
   let n: i32 = expr_forks(sg.scrut);
   for a in sg.tup {
@@ -233,8 +194,6 @@ function stmt_forks(st: ast.Stmt): i32 {
       if (has_sugar(i.sugar)) {
         return sugar_forks(i.sugar);
       }
-      // A C-style `for` desugars to an `if (true)` around a flagged loop;
-      // it is one loop, scored as written.
       let cf: printer.ForCSugar = printer.as_c_for(i);
       if (cf.ok) {
         return 1 + stmts_forks(cf.init) + expr_forks(cf.cond) + stmts_forks(cf.step) + stmts_forks(cf.body);
@@ -355,9 +314,6 @@ function expr_forks(e: ast.Expr): i32 {
   return 0;
 }
 
-// display_name is how a finding names a function: `Type.method` for a method
-// on a named, non-generic type, the plain name otherwise — a primitive or a
-// generic instance receiver reads as the bare method name.
 pub function display_name(fd: parser.FuncDecl): string {
   let t: string = fd.receiver_type;
   if (t.len() == 0 || util.index_of_sub(t, "[") >= 0 || util.has_str(PRIMITIVES, t)) {
@@ -368,9 +324,6 @@ pub function display_name(fd: parser.FuncDecl): string {
 
 const PRIMITIVES: string[] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64", "boolean", "char", "string", "str"];
 
-// Suppressions are a file's `fern-lint:` directives: the rules silenced for
-// the whole file, the (line, rule) pairs silenced at one site, and findings
-// for the malformed ones.
 struct Suppressions {
   file_rules: string[],
   lines: i32[],
@@ -382,7 +335,6 @@ function is_blank(line: string): boolean {
   return util.trim(line).len() == 0;
 }
 
-// split_src is src's lines, split on "\n" as the line numbers count them.
 function split_src(src: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -406,8 +358,6 @@ function comment_only(lines: string[], c: lexer.Comment): boolean {
   return before >= 0 && before <= text.len() && util.trim(slice_unchecked(text, 0, before)).len() == 0;
 }
 
-// target_line is the line an `allow` directive covers: its own line when code
-// precedes it there, else the next line holding code, or 0 when none does.
 function target_line(lines: string[], comments: lexer.Comment[], c: lexer.Comment): i32 {
   if (!comment_only(lines, c)) {
     return c.line;
@@ -524,10 +474,6 @@ function before(a: Finding, b: Finding): boolean {
   return util.str_less(a.rule, b.rule);
 }
 
-// scored reports whether `fd` is a function the source wrote with a body: not
-// a `const`, a declaration the parser synthesised (a derive, line 0), a trait
-// default materialised into an impl that did not write it, or a body-less WIT
-// import binding.
 pub function scored(m: parser.Module, fd: parser.FuncDecl): boolean {
   if (fd.is_const || fd.line == 0 || fd.body.len() == 0 && fd.import_wit.len() > 0) {
     return false;
@@ -535,10 +481,6 @@ pub function scored(m: parser.Module, fd: parser.FuncDecl): boolean {
   return fd.impl_trait.len() == 0 || !parser.is_inherited_default(m.impls, m.trait_reqs, fd);
 }
 
-// span_end is the last line a function's body reaches: the highest line any
-// statement or expression in it starts on. The closing brace may sit lower,
-// but no instrumented line can, so [fd.line, span_end] holds every cover row
-// of the function and of the lambdas it spells.
 function span_end(fd: parser.FuncDecl): i32 {
   let end: i32 = fd.line;
   for st in fd.body {
@@ -563,12 +505,6 @@ function max_expr_line(e: ast.Expr, own acc: i32): i32 {
   return acc;
 }
 
-// cover_of is the slot in `cover` of the run's file that is `file`: the one
-// spelled identically, else the longest name that is `file` with leading
-// directories added or removed, since the run names a file as the compile
-// was told it and the lint as it was walked. -1 when none. A run that names
-// a file bare matches every linted file of that name, so `src/a.fern` and
-// `tests/a.fern` are both scored from a run naming `a.fern`.
 pub function cover_of(cover: coverreport.File[], file: string): i32 {
   let best: i32 = 0 - 1;
   let i: i32 = 0;
@@ -585,7 +521,6 @@ pub function cover_of(cover: coverreport.File[], file: string): i32 {
   return best;
 }
 
-// cover_names lists the files a run names, for the error that none matched.
 pub function cover_names(cover: coverreport.File[]): string {
   let out: string = "";
   for f in cover {
@@ -597,9 +532,6 @@ pub function cover_names(cover: coverreport.File[]): string {
   return out;
 }
 
-// lines_hit counts the run's rows on lines `lo` through `hi` of `f` and how
-// many of them ran; the rows are sorted, so the scan starts at the first row
-// at or past `lo`.
 function lines_hit(f: coverreport.File, lo: i32, hi: i32): (i32, i32) {
   let a: i32 = 0;
   let b: i32 = f.lines.len();
@@ -623,9 +555,6 @@ function lines_hit(f: coverreport.File, lo: i32, hi: i32): (i32, i32) {
   return (total, hit);
 }
 
-// risk_score is CRAP1 in integers: complexity^2 * missed^3 / total^3,
-// rounded, plus the complexity. A function wholly covered scores its
-// complexity; one wholly uncovered scores complexity^2 + complexity.
 function risk_score(complexity: i32, total: i32, hit: i32): i32 {
   let c: i64 = complexity as i64;
   let t: i64 = total as i64;
@@ -635,11 +564,6 @@ function risk_score(complexity: i32, total: i32, hit: i32): i32 {
   return complexity + ((num + den / 2) / den) as i32;
 }
 
-// lint_file runs every enabled rule over one parsed file and returns the
-// findings in source order, the directive findings among them. `cover` is the
-// -cover run the change-risk rule scores from; with none, or none naming this
-// file, that rule says nothing, and a function the run holds no row for is
-// code it never instrumented, not code it never ran.
 pub function lint_file(c: Config, file: string, src: string, m: parser.Module, comments: lexer.Comment[], cover: coverreport.File[]): Finding[] {
   let sup: Suppressions = collect_suppressions(src, comments);
   let out: Finding[] = [];
@@ -653,7 +577,6 @@ pub function lint_file(c: Config, file: string, src: string, m: parser.Module, c
   if (c.risk != ALLOW && cf >= 0) {
     out = risk_findings(c, file, m, sup, cover[cf], out);
   }
-  // Insertion sort, stable: findings arrive nearly in order.
   let i: i32 = 1;
   while (i < out.len()) {
     let f: Finding = out[i];
@@ -730,7 +653,6 @@ function plural(n: i32, word: string): string {
   return util.i32_to_string(n) + " " + word + "s";
 }
 
-// summary is the closing "N errors and M warnings generated" line, or "".
 pub function summary(fs: Finding[]): string {
   let warns: i32 = 0;
   let denies: i32 = 0;

@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// std/simd's own suite (tests/stdlib/simd_test.fern) on the compiled
-// engines the test-runner gate does not cover, x86-64 and wasm; the
-// self-host interpreter's run is TestSelfHostInterpSimdSuite in
-// e2ecompiler. The kernels are generic over Lanes and Math, so each leg is the
-// monomorphiser and the lowering of a parametric impl as much as the
-// arithmetic; the double-double cases hold the compiled float operations to
-// the one rounding per operation the algorithms assume.
 func simdSuiteSrc(t *testing.T) string {
 	t.Helper()
 	src, err := os.ReadFile(langSrcAbs(t, "tests/stdlib/simd_test.fern"))

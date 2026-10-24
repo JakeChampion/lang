@@ -1,12 +1,4 @@
-// std/io_outcome — `.failure()`, the IoError a handle operation with no value
-// reports, read off either shape it has: the pinned stage0 types the handle
-// writes and closes as Option[IoError], the current checkers as
-// Result[void, IoError]. The sources stage0 compiles (std/io,
-// std/io_buffered and the compiler's interpreter) read their outcomes through
-// it so they build under both. Delete it once the pin is refreshed (#12844).
-//
-// It imports nothing, so std/io_buffered reads an outcome without reaching
-// the host capabilities std/io does.
+// This module reads I/O failures from `Option` and `Result` values.
 
 pub function (o: Option[IoError]) failure(): Option[IoError] {
   return o;

@@ -1,8 +1,8 @@
-// `@derive(Json)` synthesises a field/variant-wise `to_json(): string`
-// (canonical JSON text), composing through each field's own `Json` impl
-// — a struct becomes a JSON object, an enum is externally tagged, string
-// values are escaped. The structural-serialisation spine for edge
-// handlers (serialise a response struct with no hand-written encoder).
+
+
+
+
+
 import "std/json";
 import "std/string";
 
@@ -39,20 +39,20 @@ function main(): i32 {
     r = check(Wrap { who: u, tag: "hi" }.to_json(),
               "{\"who\":{\"id\":7,\"name\":\"Gloin\",\"admin\":true},\"tag\":\"hi\"}", 5);
     if (r != 0) { return r; }
-    // String escaping: quote + newline must be backslash-escaped.
+
     let m: User = User { id: 0, name: "a\"b\nc", admin: false };
     r = check(m.to_json(), "{\"id\":0,\"name\":\"a\\\"b\\nc\",\"admin\":false}", 6);
     if (r != 0) { return r; }
-    // Floats serialise as their decimal form (valid JSON numbers).
+
     let d: Measure = Measure { value: 3.14, unit: "m" };
     r = check(d.to_json(), "{\"value\":3.14,\"unit\":\"m\"}", 7);
     if (r != 0) { return r; }
-    // Array fields: a `T[]` whose element type is `Json` renders as a JSON
-    // array. Scalar + string elements both compose through the element's impl.
+
+
     let bag: Bag = Bag { items: [1, 2, 3], names: ["a", "b"] };
     r = check(bag.to_json(), "{\"items\":[1,2,3],\"names\":[\"a\",\"b\"]}", 8);
     if (r != 0) { return r; }
-    // A bare array also serialises directly via the element-poly array to_json.
+
     let nums: i32[] = [10, 20];
     r = check(nums.to_json(), "[10,20]", 9);
     if (r != 0) { return r; }

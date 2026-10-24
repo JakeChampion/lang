@@ -1,7 +1,7 @@
-// C2: a consuming match whose Cons arm rebuilds a same-enum variant hands the
-// consumed scrutinee box straight to the construction via the reuse token (true
-// zero-alloc FBIP). Differentially pinned: reuse-on == reuse-off and free-on ==
-// free-off byte-identical, plus the interp oracle.
+
+
+
+
 enum List { Cons(i32, List), Nil }
 
 function map_inc(own xs: List): List {
@@ -19,5 +19,5 @@ function build(n: i32): List {
 }
 
 function main(): i32 {
-    return sum(map_inc(build(10)));   // [10..1] +1 each: sum(2..11) = 65
+    return sum(map_inc(build(10)));
 }

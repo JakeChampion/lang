@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCreateDirAllIR pins `create_dir_all(path)` lowering on the
-// self-host x86-64 IR path (#6749). It is the one filesystem builtin that can
-// BUILD a directory tree, so `fern -vendor` — and any program that writes into
-// a layout it does not already have — is gated on it.
-//
-// The program creates a chain two levels deeper than anything that exists,
-// writes into the leaf (the proof the WHOLE chain is there: a walk that created
-// only the last component leaves a path write_file cannot reach), re-creates it
-// to pin that an existing path is Ok rather than EEXIST, and finally asks for a
-// chain under a regular file to pin that a real failure is still Err.
 func TestSelfHostCreateDirAllIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

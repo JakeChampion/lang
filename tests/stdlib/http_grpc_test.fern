@@ -6,10 +6,6 @@ import "std/hex";
 import "std/codec";
 import "std/stream";
 
-// tests/stdlib/http_grpc_test.fern — std/http/grpc: the message framing
-// read back whole and in parts, the grpc-timeout header's units and
-// refusals, what makes a request gRPC's, and the status trailers.
-
 function test_framing(): test.TestOutcome {
   let framed: u8[] = grpc.frame("abc".bytes()).concat(grpc.frame([]));
   let got: string = hex.encode(framed) + " ";
@@ -122,7 +118,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

@@ -7,17 +7,9 @@ import (
 	"testing"
 )
 
-// SyscallFloorProbe exercises the native runtime's raw floor from a program:
-// `__syscall4` opens a file, `__syscall6` maps it at a nonzero offset (which
-// makes every operand observable, since offset zero maps different bytes),
-// `__load_u8` reads the mapped bytes, `__syscall3` unmaps and closes, a
-// negative descriptor pins the signed -errno result, and `__store_u8` writes
-// two bytes into an allocated block that `__load_u8` reads back. The numbers
-// are the target's: x86-64-linux, arm64-linux or arm64-darwin. Exit 0 iff
-// every step holds; each failing step has its own code.
 func SyscallFloorProbe(t *testing.T, dir, target string) string {
 	t.Helper()
-	const page = 65536 // aligned on both 4 KiB and 16 KiB page hosts
+	const page = 65536
 	data := make([]byte, page*2)
 	data[page], data[len(data)-1] = 91, 37
 	path := filepath.Join(dir, "mapped.bin")

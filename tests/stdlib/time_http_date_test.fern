@@ -1,33 +1,17 @@
 import "std/test";
 import "std/time" as time;
 
-// tests/stdlib/time_http_date_test.fern — RFC 9110 §5.6.7 HTTP-dates:
-// IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`) formatting + parsing, the
-// two obsolete forms a recipient must also accept (asctime, and RFC 850
-// with its two-digit year read against a given time), fields out of
-// range refused, plus the
-// weekday/month name tables added alongside it (#4388 item 5). This is
-// the HTTP `Date:` / `Expires:` / `If-Modified-Since` support an edge
-// handler needs. All values are computed from std/time's civil-date
-// arithmetic (`instant_from_unix` → serial days → Y/M/D + weekday), so
-// this exercises Instant, Option[Instant], and the name tables through
-// the self-host IR path on real stdlib bodies.
-
-// The RFC 9110 canonical example: 784111777 = 1994-11-06T08:49:37Z,
-// a Sunday. (verified: 784111777 / 86400 = 9075 days after 1970-01-01.)
 function test_format_canonical(): test.TestOutcome {
   let i = time.instant_from_unix(784111777 as i64);
   return test.assert_eq(i.format_http_date(), "Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
 function test_format_epoch(): test.TestOutcome {
-  // The Unix epoch itself: 1970-01-01T00:00:00Z was a Thursday.
   let i = time.instant_from_unix(0 as i64);
   return test.assert_eq(i.format_http_date(), "Thu, 01 Jan 1970 00:00:00 GMT");
 }
 
 function test_format_drops_subsecond(): test.TestOutcome {
-  // HTTP-date is second-resolution; a half-second offset must not leak in.
   let i = time.instant_from_unix(784111777 as i64).add_duration(time.duration_millis(500 as i64));
   return test.assert_eq(i.format_http_date(), "Sun, 06 Nov 1994 08:49:37 GMT");
 }
@@ -44,7 +28,6 @@ function test_parse_canonical(): test.TestOutcome {
 }
 
 function test_round_trip(): test.TestOutcome {
-  // format then parse recovers the same second count.
   let i = time.instant_from_unix(1720000000 as i64);
   match (time.http_date_parse(i.format_http_date())) {
     Some(j) => {
@@ -79,8 +62,6 @@ function test_parse_bad_month(): test.TestOutcome {
 }
 
 function test_parse_multibyte_month(): test.TestOutcome {
-  // A 3-byte multibyte char filling the month field keeps the string
-  // 29 bytes; it matches no month name and must parse to None.
   match (time.http_date_parse("Sun, 06 € 1994 08:49:37 GMT")) {
     Some(i) => {
       return test.fail("expected None for multibyte month");
@@ -92,7 +73,6 @@ function test_parse_multibyte_month(): test.TestOutcome {
 }
 
 function test_parse_bad_zone(): test.TestOutcome {
-  // Anything but a "GMT" suffix is rejected.
   match (time.http_date_parse("Sun, 06 Nov 1994 08:49:37 UTC")) {
     Some(i) => {
       return test.fail("expected None for non-GMT zone");
@@ -104,7 +84,6 @@ function test_parse_bad_zone(): test.TestOutcome {
 }
 
 function test_parse_bad_sep(): test.TestOutcome {
-  // Missing comma after the weekday.
   match (time.http_date_parse("Sun  06 Nov 1994 08:49:37 GMT")) {
     Some(i) => {
       return test.fail("expected None for wrong separator");
@@ -129,7 +108,6 @@ function test_month_name(): test.TestOutcome {
 }
 
 function test_weekday_name(): test.TestOutcome {
-  // 1994-11-06 is a Sunday; 1970-01-01 a Thursday.
   if (time.date_make(1994, 11, 6).weekday_name() != "Sunday") {
     return test.fail("nov 6 1994");
   }
@@ -153,8 +131,6 @@ function test_parse_asctime(): test.TestOutcome {
   return test.assert_eq(a + "|" + b, "Sun, 06 Nov 1994 08:49:37 GMT|Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
-// RFC 850's two-digit year is read against a time, so the parser without
-// one refuses the form and the one with one takes it.
 function test_parse_rfc850(): test.TestOutcome {
   let now = time.instant_from_unix(1791768000 as i64);
   let without: string = show(time.http_date_parse("Sunday, 06-Nov-94 08:49:37 GMT"));
@@ -162,8 +138,6 @@ function test_parse_rfc850(): test.TestOutcome {
   return test.assert_eq(without + "|" + with_now, "None|Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
-// Against 2026, the latest year ending in the digits that is not more than
-// 50 years ahead: 76 is 2076, 77 is 1977, 26 is 2026.
 function test_rfc850_year_window(): test.TestOutcome {
   let now = time.instant_from_unix(1791768000 as i64);
   let a: string = show(time.http_date_parse_at("Friday, 01-Jan-76 00:00:00 GMT", now));
@@ -187,7 +161,6 @@ function test_parse_out_of_range(): test.TestOutcome {
   return test.assert_eq(show(time.http_date_parse("Thu, 29 Feb 1996 00:00:00 GMT")), "Thu, 29 Feb 1996 00:00:00 GMT");
 }
 
-// A leap second is a 60th second, the instant one past the 59th.
 function test_parse_leap_second(): test.TestOutcome {
   return test.assert_eq(show(time.http_date_parse("Sat, 31 Dec 2016 23:59:60 GMT")), "Sun, 01 Jan 2017 00:00:00 GMT");
 }

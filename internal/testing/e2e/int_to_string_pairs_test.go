@@ -1,28 +1,5 @@
 package e2e
 
-// core/int's integer→string conversion.
-//
-// It was one divide AND one modulo per decimal digit, written backwards into
-// an over-sized scratch buffer, followed by a full copy pass into a
-// right-sized one — so a ten-digit number cost ten divisions, ten modulos, and
-// two allocations.
-//
-// It now consumes TWO digits per division against a 200-byte digit-pair table,
-// and `__int_u32_digits` gives the width before the loop starts so the result
-// is written straight into an exactly-sized buffer with nothing to re-pack.
-// Five divisions and one allocation for that same ten-digit number.
-//
-// Measured on 4M i32 conversions, x86-64: 0.721s → 0.463s.
-//
-// The risk this change carries is entirely in the ODD/EVEN digit boundary. A
-// two-at-a-time loop leaves either one or two digits at the end, and the
-// leftover has to be emitted at the right width and the right offset — an
-// off-by-one there produces a leading zero, a dropped digit, or a stray byte
-// only for inputs of one particular parity. So the coverage is exhaustive over
-// small values and dense around every power of ten, differentialled against a
-// naive one-digit-at-a-time reference in the same program rather than against
-// a table of expected strings.
-
 import "testing"
 
 const intToStringPairsProg = `

@@ -7,21 +7,6 @@ import (
 	"time"
 )
 
-// TestSelfHostSleepMsWideCount covers #9492: the register runtime body behind
-// sleep_ms declared `ms: i32` while the builtin's parameter — and the IR call —
-// is i64, so any count past the i32 range was truncated to its low word before
-// the body looked at it.
-//
-// The count here is 2^32 ms, 49.7 days, chosen because its low word is exactly
-// zero: a truncated count takes the `ms <= 0` early-out and the program runs to
-// completion in microseconds, where an honoured one is still sleeping. So the
-// assertion is that the process is STILL RUNNING after a short deadline, which
-// is the observable difference between the two and costs the suite that
-// deadline rather than the sleep.
-//
-// TestSelfHostSleepMsI64IR pins the i64 argument reaching the runtime, but
-// sleeps 1 ms — a count the truncation cannot distort, which is why it stayed
-// green throughout.
 func TestSelfHostSleepMsWideCount(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -65,14 +50,9 @@ func TestSelfHostSleepMsWideCount(t *testing.T) {
 			"low word and took the non-positive early-out (#9492)",
 			sleepMsWideDeadline, run.ProcessState.ExitCode())
 	case <-time.After(sleepMsWideDeadline):
-		// Still sleeping, which is the whole of what this asserts. Nothing is
-		// going to wake it in this suite's lifetime, so end it here.
 		_ = run.Process.Kill()
 		<-done
 	}
 }
 
-// sleepMsWideDeadline is how long the program above must stay asleep. It only
-// has to outlast the microseconds a truncated count returns in; the honoured
-// count is seven weeks, so there is no value in waiting longer.
 const sleepMsWideDeadline = 500 * time.Millisecond

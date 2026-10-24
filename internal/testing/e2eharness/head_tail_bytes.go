@@ -8,8 +8,6 @@ type HeadTailByteCase struct {
 	File        bool
 }
 
-// HeadTailByteCases crosses both read sizes with malformed bytes and tests
-// record and byte boundaries on seekable inputs and streams.
 func HeadTailByteCases(utility string) []HeadTailByteCase {
 	all := make([]byte, 256)
 	for i := range all {

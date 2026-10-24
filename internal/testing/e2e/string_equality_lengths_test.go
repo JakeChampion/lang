@@ -1,24 +1,5 @@
 package e2e
 
-// String EQUALITY across every length class, checked against a byte-wise
-// oracle in the same program.
-//
-// `__fern_strcmp` compares 8 bytes at a time on x86-64 and 4 at a time on
-// arm64, and each ends with a final load anchored at the END of the operands
-// that deliberately overlaps what the loop already read. That tail, and the
-// sub-word classes below it, are the shapes a length table is least likely to
-// cover by accident: the boundaries are 1/2/3, 4, 8, and the first length past
-// a whole number of words. Every length from 0 to 41 is compared here — equal,
-// differing at each individual position, and against its own prefix — so a
-// mis-sized tail shows up as a disagreement with the oracle rather than as a
-// rare wrong answer somewhere downstream.
-//
-// The equal operands are built two different ways (a slice of the alphabet vs
-// a byte-at-a-time concatenation) so the two sides are never the same pointer
-// and the comparison cannot pass on the identity fast path. Lengths up to 7
-// additionally cross the inline/SSO seam, where one operand is packed in a
-// register and has to be spilled to reach a byte pointer.
-
 import "testing"
 
 const stringEqualityLengthsProg = `

@@ -1,20 +1,20 @@
-// A consuming (`own`) rebuild of a list whose spine the CALLER still holds.
-//
-// `Cons(7, shared)` is a fresh construction, so E051 admits it as an owned
-// argument — but its tail is borrowed, and the construction retains it. One
-// level in, the walk therefore meets a cell two owners reach.
-//
-// The walk decides per level, from that cell's own refcount, whether it may
-// take the box. Declining at the shared cell is not sufficient: the cell BELOW
-// it is reached only through the surviving box's tail field, so its count reads
-// 1, the level below calls itself the sole owner, and it reclaims a cell
-// `shared` still reaches. `sum(shared)` then walks the rebuilt list — 8 rather
-// than 6, off a block the allocator had handed back out (#6720).
-//
-// So the stop has to propagate down the spine. The loop runs the same shape
-// with the freed cells recycled into later rounds, which is the form the defect
-// takes in a real traversal: on both natives it was a segfault, not a wrong
-// answer.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "core/int";
 

@@ -1,18 +1,12 @@
 import "std/test";
 import "std/glob" as glob;
 
-// tests/stdlib/glob_test.fern — pure-Fern coverage of std/glob's
-// shell-style matcher: literals, `*` (non-separator), `?`, `**`
-// (globstar, incl. the zero-directory elision), and `[...]` character
-// classes with ranges and negation.
-
 function test_literal(): test.TestOutcome {
   return test.assert_true(glob.glob_match("abc", "abc")
     && !glob.glob_match("abc", "abd"));
 }
 
 function test_star_no_cross(): test.TestOutcome {
-  // `*` matches within a segment, not across '/'.
   return test.assert_true(glob.glob_match("*.fern", "a.fern")
     && !glob.glob_match("*.fern", "src/a.fern")
     && glob.glob_match("src/*.fern", "src/a.fern")
@@ -32,7 +26,6 @@ function test_globstar(): test.TestOutcome {
   if (!glob.glob_match("src/**", "src/a/b/c")) {
     return test.fail("src/** deep");
   }
-  // `**/` matches zero directories (elides the slash).
   if (!glob.glob_match("**/*.fern", "a.fern")) {
     return test.fail("**/ zero dirs");
   }
@@ -72,7 +65,7 @@ function test_negated_class(): test.TestOutcome {
 function test_edges(): test.TestOutcome {
   return test.assert_true(glob.glob_match("", "")
     && !glob.glob_match("", "x")
-    && glob.glob_match("ab*", "ab")  // trailing * matches empty
+    && glob.glob_match("ab*", "ab")
     && glob.glob_match("**", "any/thing"));
 }
 

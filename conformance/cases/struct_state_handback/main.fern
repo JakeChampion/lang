@@ -1,10 +1,10 @@
-// The state travels back inside a fresh result struct: `let st: Stash =
-// stash(sc, i); sc = st.state;`. For the alias `sc` that is a use whose result
-// is bound under another name, and for the callee's parameter a move into the
-// returned literal — both now count as the box coming back to the caller
-// rather than escaping, so `sc` keeps its snapshot-guarded rebind reclaim and
-// the callee's parameter stays consume-safe. Every result is read back after
-// churn.
+
+
+
+
+
+
+
 struct Builder { ops: i32[], n: i32 }
 struct Stash { state: Builder, slot: i32 }
 

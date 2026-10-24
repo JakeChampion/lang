@@ -1,63 +1,4 @@
-// std/path — POSIX path manipulation (string-level, no FS
-// interaction).
-//
-// POSIX separator (`/`) only; Windows paths aren't a target
-// (Fern's targets are Linux, Android, macOS, WASI and no OS at
-// all). Matches Go `path/filepath` (Unix mode) and Zig
-// `std.fs.path` minimally.
-//
-// Functions:
-//   join(parts)    — joins parts with single `/` between,
-//                         collapses double separators.
-//   parent(p)      — leading-everything before the last
-//                         `/`; "" for paths with no separator.
-//   file_name(p)   — last component.
-//   extension(p)   — substring after the LAST `.` of the
-//                         last component, or "" if none. A
-//                         leading-dot file (`.bashrc`) has no
-//                         extension.
-//   clean(p)       — lexically normalise a path: collapse
-//                         duplicate `/`, drop `.` elements, and
-//                         resolve `..` against the preceding
-//                         element (Go `path.Clean`, Unix).
-//   is_absolute(p) — true iff `p` starts at the root (`/`).
-//   stem(p)        — last component minus its final extension.
-//   with_extension(p, ext)
-//                       — replace/append the final extension.
-//
-// PATHS ARE ASSUMED TO BE VALID UTF-8. Every function here
-// takes and returns plain `string`, and that is a deliberate
-// simplification rather than an oversight: on Linux and macOS a
-// path is really an arbitrary byte sequence, so a path that is
-// not valid UTF-8 is representable by the OS but not by these
-// functions.
-//
-// There is NO `OsStr`-style type, and none is planned. Rust
-// needs `OsStr` / `Path` (and WTF-8) because Windows paths are
-// UTF-16 that may contain lone surrogates while Unix paths are
-// arbitrary bytes; Python needs `surrogateescape`; Haskell added
-// `OsPath`. Fern targets Linux, macOS and WASI, where in practice
-// paths are UTF-8, and the whole-language cost of a second string
-// type is not worth the cases it would buy.
-//
-// A path that is not valid UTF-8 is therefore a BOUNDARY ERROR,
-// not a value to thread through the program: it should surface
-// where the path enters — a command-line argument, a directory
-// listing, a config file — and not deep inside path manipulation,
-// where these functions would already have mangled it.
-//
-// If you genuinely need to handle such a path, do not reach for
-// this module. Work on the raw bytes instead: `s.as_bytes()` gives
-// a non-copying `[u8]` view (see std/string), and the byte-level
-// file APIs let you carry the name through unmodified.
-//
-// The same honesty applies here as in docs/FLOAT-SEMANTICS.md and
-// docs/INTEGER-SEMANTICS.md: say what is and is not portable
-// rather than leaving it to be discovered.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/path";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
+// This module processes POSIX paths without filesystem access.
 
 pub function join(parts: string[]): string {
   let n: i32 = parts.len();
@@ -74,13 +15,9 @@ pub function join(parts: string[]): string {
       if (out.len() == 0) {
         out = p;
       } else {
-        // Strip a trailing `/` from out (unless out is
-        // just "/", which is the root path and must be
-        // preserved as a separator-sentinel).
         while (out.len() > 1 && out[out.len() - 1] == 47) {
           out = slice_unchecked(out, 0, out.len() - 1) + "";
         }
-        // Strip any leading `/`s from p.
         let start: i32 = 0;
         while (start < p.len() && p[start] == 47) {
           start = start + 1;
@@ -103,14 +40,10 @@ pub function parent(p: string): string {
   if (n == 0) {
     return "";
   }
-  // Walk back from the end skipping a trailing `/`, find the
-  // last separator, and return everything before it.
   let i: i32 = n - 1;
-  // Special case: a single "/" parents to itself.
   if (n == 1 && p[0] == 47) {
     return "/";
   }
-  // Trim trailing slashes for the search.
   while (i > 0 && p[i] == 47) {
     i = i - 1;
   }
@@ -131,7 +64,6 @@ pub function file_name(p: string): string {
   if (n == 0) {
     return "";
   }
-  // Trim trailing slashes — "a/b/" → "b".
   let end: i32 = n;
   while (end > 0 && p[end - 1] == 47) {
     end = end - 1;
@@ -156,29 +88,12 @@ pub function extension(p: string): string {
   while (i > 0 && name[i] != 46) {
     i = i - 1;
   }
-  // Hidden files (leading dot, no other dot) have no
-  // extension: `.bashrc` → "", not "bashrc".
   if (i <= 0) {
     return "";
   }
   return slice_unchecked(name, i + 1, n) + "";
 }
 
-// clean lexically normalises `p` (no FS access), matching Go
-// `path.Clean` in Unix mode. It applies, purely on the string:
-//   - collapse runs of `/` into a single separator;
-//   - drop `.` (current-dir) elements;
-//   - resolve each `..` (parent-dir) against the preceding non-`..`
-//     element, popping it — but a `..` that would climb above the
-//     root of a ROOTED path is dropped (can't go above `/`), while a
-//     leading `..` in a RELATIVE path is kept (it can climb).
-// The result keeps a leading `/` iff `p` was rooted, ends in `/` only
-// when it is the bare root, and is never empty: an empty input or a
-// path that cleans away entirely (e.g. "a/..", "./") returns ".".
-// seg_pop returns a fresh array with the last element of `xs` removed
-// (clean's `..` resolution). A rebuild-by-append, mirroring
-// std/array's `take` idiom — array slice-assignment yields a distinct
-// slice type, and std/path keeps zero module dependencies.
 function seg_pop(xs: string[]): string[] {
   let out: string[] = [];
   let last: i32 = xs.len() - 1;
@@ -195,13 +110,10 @@ pub function clean(p: string): string {
   if (n == 0) {
     return ".";
   }
-  let rooted: boolean = p[0] == 47;  // leading '/'
-  // Walk the segments, maintaining a stack. `.` is skipped; `..`
-  // pops a real preceding element or (relative only) is pushed.
+  let rooted: boolean = p[0] == 47;
   let segs: string[] = [];
   let i: i32 = 0;
   while (i < n) {
-    // Skip separator run.
     while (i < n && p[i] == 47) {
       i = i + 1;
     }
@@ -214,21 +126,17 @@ pub function clean(p: string): string {
       }
       let seg: str = slice_unchecked(p, start, i);
       if (seg == ".") {} else if (seg == "..") {
-        // current dir — drop
         let slen: i32 = segs.len();
         if (slen > 0 && segs[slen - 1] != "..") {
-          segs = seg_pop(segs);  // pop the preceding element
+          segs = seg_pop(segs);
         } else if (!rooted) {
-          segs = segs.append("..");  // relative path may climb
+          segs = segs.append("..");
         }
-        // rooted with nothing to pop: drop (can't pass root)
       } else {
-        // Copied: the array holds the segment past `p`'s own lifetime.
         segs = segs.append(seg + "");
       }
     }
   }
-  // Re-join the surviving segments with single separators.
   let joined: string = "";
   let k: i32 = 0;
   while (k < segs.len()) {
@@ -238,7 +146,7 @@ pub function clean(p: string): string {
     joined = joined + segs[k];
     k = k + 1;
   }
-  if (rooted) {  // "/"+"" = "/" (bare root)
+  if (rooted) {
     return "/" + joined;
   }
   if (joined.len() == 0) {
@@ -247,19 +155,10 @@ pub function clean(p: string): string {
   return joined;
 }
 
-// is_absolute(p) — true iff `p` begins at the filesystem root
-// (a leading `/`). Relative paths, `./x`, and the empty string are
-// all false. The POSIX-only counterpart to Rust `Path::is_absolute`.
 pub function is_absolute(p: string): boolean {
   return p.len() > 0 && p[0] == 47;
 }
 
-// stem(p) — the last component with its final extension removed;
-// the leading half of the `stem` / `extension` split.
-//   "a/b/foo.txt"    → "foo"
-//   "archive.tar.gz" → "archive.tar"  (only the final extension goes)
-//   ".bashrc"        → ".bashrc"      (a leading-dot file has no ext)
-//   "foo"            → "foo"          (no dot: whole name)
 pub function stem(p: string): string {
   let name: string = file_name(p);
   let n: i32 = name.len();
@@ -270,25 +169,14 @@ pub function stem(p: string): string {
   while (i > 0 && name[i] != 46) {
     i = i - 1;
   }
-  // A dot only at index 0 (hidden file) is not an extension
-  // separator, so the whole name is the stem.
   if (i <= 0) {
     return name;
   }
   return slice_unchecked(name, 0, i) + "";
 }
 
-// with_extension(p, ext) — `p` with its final extension replaced
-// by `ext` (given WITHOUT a leading dot). If the last component has no
-// extension, `ext` is appended; an empty `ext` drops the extension
-// (and its dot) entirely. The directory portion is preserved.
-//   ("a/b/foo.txt", "md") → "a/b/foo.md"
-//   ("foo", "md")         → "foo.md"
-//   ("archive.tar.gz", "") → "archive.tar"
-//   (".bashrc", "txt")    → ".bashrc.txt"  (hidden file has no ext)
 pub function with_extension(p: string, ext: string): string {
   let n: i32 = p.len();
-  // Locate the real last component, ignoring any trailing slashes.
   let end: i32 = n;
   while (end > 0 && p[end - 1] == 47) {
     end = end - 1;
@@ -303,9 +191,7 @@ pub function with_extension(p: string, ext: string): string {
   while (fs >= 0 && p[fs] != 47) {
     fs = fs - 1;
   }
-  fs = fs + 1;  // first char of the file name
-  // Find the extension dot inside (fs, end); a dot at fs is a
-  // hidden-file leading dot, not an extension separator.
+  fs = fs + 1;
   let dot: i32 = end;
   let j: i32 = end - 1;
   while (j > fs && p[j] != 46) {

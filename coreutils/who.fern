@@ -1,41 +1,3 @@
-// who.fern — GNU-compatible `who`.
-//
-//   who [OPTION]... [ FILE | ARG1 ARG2 ]
-//   -a -b -d -H -l -m -p -q -r -s -t -T/-w -u --lookup
-//
-// The accounting database, printed as columns. Which RECORDS appear is
-// one set of options and which COLUMNS appear is another, and the two
-// are independent: `-b` asks for the boot record and `-u` for the
-// logins, while `-T` adds the message-status column and `-u` also adds
-// the idle and pid ones. With no record option at all the logins are
-// what is printed, which is why plain `who` and `who -u` differ only in
-// the columns.
-//
-// A row is a single format with pieces left out, rather than a format
-// per record type:
-//
-//   NAME.....  M  LINE........ TIME.......  IDLE.. .......PID COMMENT.  EXIT
-//
-// NAME is at least 8 wide and LINE at least 12 — a longer value pushes
-// the rest of its own row right and leaves every other row where it is,
-// so the columns are per-row minimum widths and not a table. The
-// message status is present only under -T, the idle and pid columns only
-// when the mode asked for them, and the exit column only under -d / -a.
-// Trailing blanks are cut, so a row with no comment ends at its last
-// value.
-//
-// The two columns that are not in the record are read off the TERMINAL:
-// stat(/dev/LINE) gives the message status from the group-write bit and
-// the idle time from the atime. A line that is an absolute path is used
-// as it stands, which is the shape that makes the idle column testable
-// at all.
-//
-// -q is a different program: the names on one line and a count, with no
-// columns, no heading and no terminal lookups.
-//
-// -m restricts the output to the terminal on standard input. Two
-// operands mean the same thing — `who am i` is the idiom, and the words
-// are not read, so `who mom likes` is the same request.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -130,8 +92,6 @@ function help_text(): string {
   return out;
 }
 
-// What the invocation asked for: which records to print, which columns
-// to print them in, and the two whole-output modes.
 struct Mode { users: boolean, boot: boolean, dead: boolean, login: boolean, init: boolean, runlevel: boolean, clock: boolean, idle: boolean, exit_col: boolean, mesg: boolean, heading: boolean, short_output: boolean, count: boolean, mine: boolean, lookup: boolean }
 
 function mode_new(): Mode {
@@ -139,9 +99,6 @@ function mode_new(): Mode {
 }
 
 function parse_mode(argv: string[]): (Mode, string[]) {
-  // Declaration order is the ambiguity list's order, so `--l` names
-  // `--login` before `--lookup` and `--h` names `--heading` before the
-  // standard `--help`.
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("a", "all", opt_all()));
   opts = opts.append(gnu.flag("b", "boot", opt_boot()));
@@ -173,19 +130,12 @@ function parse_mode(argv: string[]): (Mode, string[]) {
       }
     }
   }
-  // Asking for no record at all asks for the logins, which is what
-  // makes plain `who` and `who -u` the same rows in different columns.
   if (!m.users && !m.boot && !m.dead && !m.login && !m.init && !m.runlevel && !m.clock) {
     m = Mode { ...m, users: true, short_output: true };
   }
   return (m, g.operands());
 }
 
-// -s asks for the three-column row, and asking for no record at all is
-// the same request, which is why plain `who` prints one. It is not a
-// last-one-wins flag: `-s -u` and `-u -s` are both short, and `-s -d`
-// and `-d -s` are both long, because the exit column -a and -d turn on
-// carries the idle and pid columns with it whatever -s said.
 function apply(m: Mode, id: i32): Mode {
   if (id == opt_all()) {
     return Mode { ...m, users: true, boot: true, dead: true, login: true, init: true, runlevel: true, clock: true, idle: true, exit_col: true, mesg: true };
@@ -232,7 +182,6 @@ function apply(m: Mode, id: i32): Mode {
   return m;
 }
 
-// ---- the row ----------------------------------------------------------------
 function pad_right(s: string, w: i32): string {
   let out: string = s;
   let n: i32 = s.len();
@@ -264,13 +213,10 @@ function trim_right(s: string): string {
   return slice_unchecked(s, 0, n) + "";
 }
 
-// Whether the row carries the idle and pid columns.
 function long_row(m: Mode): boolean {
   return m.exit_col || !m.short_output;
 }
 
-// One row of every kind, the pieces the mode does not want left out.
-// `state` is the message status and is only reached under -T.
 function row(m: Mode, user: string, state: string, line: string, at: string, idle: string, pid: string, comment: string, exit_text: string): string {
   let out: string = pad_right(user, 8);
   if (m.mesg) {
@@ -296,8 +242,6 @@ function heading(m: Mode): string {
   return row(m, "NAME", " ", "LINE", "TIME", "IDLE", "PID", "COMMENT", "EXIT");
 }
 
-// `%b %e %H:%M` in the C locale: the month's abbreviation, the day
-// blank-padded to two columns, and the hour and minute.
 function time_string(z: tz.Zone, sec: i64): string {
   let dt: DateTime = z.civil(sec);
   let name: string = time.month_name(dt.date.month);
@@ -311,10 +255,6 @@ function two(v: i32): string {
   return v.to_string();
 }
 
-// How long since the terminal was last read, in the four spellings who
-// has. A terminal it cannot stat has no answer at all; one whose last
-// read is in the future, more than a day ago, or older than the boot it
-// is counted from, is `old`.
 function idle_string(now: i64, at: i64, boottime: i64): string {
   if (at == 0 as i64) {
     return "  ?";
@@ -331,11 +271,6 @@ function idle_string(now: i64, at: i64, boottime: i64): string {
   return " old ";
 }
 
-// ---- the records ------------------------------------------------------------
-// What a row needs beyond the entry itself, gathered once: the zone the
-// times are rendered in, the clock the idle column counts back from, and
-// the boot time seen so far, which only an entry AFTER the boot record
-// is measured against.
 struct Ctx { m: Mode, z: tz.Zone, now: i64, boot: i64 }
 
 function print_user(c: Ctx, e: utmp.Entry): string {
@@ -356,14 +291,6 @@ function print_user(c: Ctx, e: utmp.Entry): string {
   return row(c.m, e.user, state, e.line, time_string(c.z, e.sec), idle_string(c.now, last, c.boot), e.pid.to_string(), comment, "");
 }
 
-// The host as the comment column shows it. An X display is written on
-// the end of the field after a colon — `build:0.0` — and it is not part
-// of the host name: --lookup canonicalizes what comes BEFORE the colon
-// and the display is put back unchanged.
-//
-// --lookup is getaddrinfo's AI_CANONNAME: the name the host answers to
-// rather than the one the session was opened with. A name that resolves
-// to nothing keeps what the record holds.
 function host_text(m: Mode, host: string): string {
   let name: string = host;
   let display: string = "";
@@ -386,9 +313,6 @@ function print_boottime(c: Ctx, e: utmp.Entry): string {
   return row(c.m, "", " ", "system boot", time_string(c.z, e.sec), "", "", "", "");
 }
 
-// The run level is two bytes of the pid: the level now, and the one
-// before it, which is reported as `S` when it was none and not at all
-// when the record carries no previous level.
 function print_runlevel(c: Ctx, e: utmp.Entry): string {
   let curr: i32 = e.pid & 255;
   let last: i32 = e.pid >> 8 & 255;
@@ -417,9 +341,6 @@ function print_login(c: Ctx, e: utmp.Entry): string {
   return row(c.m, e.user, " ", e.line, time_string(c.z, e.sec), "", e.pid.to_string(), "id=" + e.id, "");
 }
 
-// A dead process keeps its terminal and its id but not its name — the
-// row leaves NAME empty however the record was written — and carries
-// the two halves of the wait status.
 function print_dead(c: Ctx, e: utmp.Entry): string {
   let exit_text: string = "term=" + e.term.to_string() + " exit=" + e.exit.to_string();
   return row(c.m, "", " ", e.line, time_string(c.z, e.sec), "", e.pid.to_string(), "id=" + e.id, exit_text);
@@ -433,9 +354,6 @@ function print_clockchange(c: Ctx, e: utmp.Entry): string {
   return row(c.m, "", " ", "clock change", time_string(c.z, e.sec), "", "", "", "");
 }
 
-// The one row an entry produces, or "" when the mode asked for none of
-// what it is. The order of the tests is the order who tries them in, and
-// it matters: an entry is printed by the FIRST kind that claims it.
 function print_entry(c: Ctx, e: utmp.Entry): string {
   if (c.m.users && e.is_login()) {
     return print_user(c, e);
@@ -461,10 +379,6 @@ function print_entry(c: Ctx, e: utmp.Entry): string {
   return "";
 }
 
-// ---- the two output shapes --------------------------------------------------
-// -q: the login names in file order on one line, then the count. The
-// count line is printed even when there are no names, so the output is
-// never empty.
 function count_output(path: string): string {
   let entries: utmp.Entry[] = utmp.read_logins(path);
   let line: string = "";
@@ -502,9 +416,6 @@ function scan(m: Mode, path: string): string {
     if (!m.mine || entries[i].line == only) {
       out = out + print_entry(c, entries[i]);
     }
-    // The boot time an idle column is measured against is the latest one
-    // seen SO FAR, so a session listed above the boot record it follows
-    // is measured against the boot before it.
     if (entries[i].kind == utmp.boot_time()) {
       c = Ctx { ...c, boot: entries[i].sec };
     }
@@ -524,7 +435,6 @@ pub function main(): i32 {
   if (operands.len() == 1) {
     path = operands[0];
   } else if (operands.len() == 2) {
-    // `who am i`: the words name nothing, they only ask for -m.
     m = Mode { ...m, mine: true };
   }
   let out: string = "";

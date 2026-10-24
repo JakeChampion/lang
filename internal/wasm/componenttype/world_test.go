@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// TestDecodeWorldRoundTrip is P1's oracle: decoding the type and export
-// sections of each shipped world and re-encoding them must reproduce the
-// original section bodies byte-for-byte. That proves the whole nested type
-// grammar (component/instance types, decls, externdescs, aliases, value
-// types) decodes losslessly.
 func TestDecodeWorldRoundTrip(t *testing.T) {
 	for _, world := range []string{"fern", "http"} {
 		t.Run(world, func(t *testing.T) {
@@ -41,8 +36,6 @@ func TestDecodeWorldRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWorldImports checks the decoder surfaces the fern world's import
-// interface names (what P2 will classify), in order.
 func TestWorldImports(t *testing.T) {
 	w, err := DecodeWorld("fern")
 	if err != nil {
@@ -80,9 +73,6 @@ func TestWorldImports(t *testing.T) {
 	}
 }
 
-// worldImportNames pulls the import-decl names out of the inner world
-// component (Types[0] is the outer wrapper component; its first type decl is
-// the world component whose import decls name the interfaces).
 func worldImportNames(w *World) []string {
 	if len(w.Types) == 0 || w.Types[0].Tag != tagComponent {
 		return nil
@@ -91,7 +81,7 @@ func worldImportNames(w *World) []string {
 		if d.Kind == 0x01 && d.Type != nil && d.Type.Tag == tagComponent {
 			var names []string
 			for _, inner := range d.Type.Decls {
-				if inner.Kind == 0x03 { // import
+				if inner.Kind == 0x03 {
 					names = append(names, inner.Name)
 				}
 			}

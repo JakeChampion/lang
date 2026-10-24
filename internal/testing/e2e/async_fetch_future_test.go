@@ -10,18 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The redesign's main benefit (docs/ASYNC-REDESIGN.md): two parallel
-// outbound fetches that return their response BODIES, expressed purely
-// through the supported combinator surface — `fetch.fetch_future` (the
-// awaitable fetch) fanned out through `async.gather`. Both connections'
-// reads overlap on one thread; each future's continuation recvs and
-// returns the body. This is the edge-handler fan-out (fetch a cache + a
-// primary, take both bodies) with NO `concurrent`/`await` keywords, no
-// hand-rolled reactor, no `IoStep` — just `gather([fetch_future, …])`.
-//
-// A Go upstream answers both connections "hello-world"; exit 42 iff
-// both bodies came back as expected. x86-64 + arm64 (arm64 under qemu
-// connects to the host upstream).
 func TestAsyncFetchFutureFanout(t *testing.T) {
 	bin := buildFernCLI(t)
 	port := e2eharness.StartBodyUpstream(t, []byte("hello-world"))
@@ -58,11 +46,6 @@ func TestAsyncFetchFutureFanout(t *testing.T) {
 	}
 }
 
-// fetch_future must read the WHOLE response, not just one recv buffer: the
-// upstream returns a 10000-byte body (well past a single 4 KiB tcp_recv), so a
-// single-recv read would truncate it. The streaming __fetch_drain chain
-// re-suspends per chunk and accumulates, so http_body comes back at full
-// length. Guest checks the body length == 10000 → exit 42.
 func TestAsyncFetchFutureLargeBody(t *testing.T) {
 	bin := buildFernCLI(t)
 	const bodyLen = 10000

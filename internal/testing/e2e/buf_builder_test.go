@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// bufBuilderProbe exercises every builtin of the capacity-carrying string
-// builder (#8773) on one program: the reserve, a whole-string push, a byte, a
-// heap-form push past the inline cap, a byte range out of a heap string and
-// one out of an inline (SSO) string, the zero-copy take, the re-arm a take
-// leaves behind, an empty take, growth past the reserved capacity, and the
-// release. Each check has its own exit code so a failure names the step.
-//
-// The byte assertions matter as much as the lengths: a take that handed back
-// the wrong pointer, or an arm64 two-word return whose second word was
-// dropped, still reports a plausible length.
 const bufBuilderProbe = `function main(): i32 {
     let b: usize = buf_new(8);
     if (buf_len(b) != 0) { return 1; }
@@ -55,7 +45,6 @@ const bufBuilderProbe = `function main(): i32 {
 }
 `
 
-// bufTwoBuildersProbe is two builders accumulating at once, interleaved, each keeping its own bytes.
 const bufTwoBuildersProbe = `function main(): i32 {
     let a: usize = buf_new(16);
     let c: usize = buf_new(16);
@@ -73,10 +62,6 @@ const bufTwoBuildersProbe = `function main(): i32 {
 }
 `
 
-// bufNestedProbe builds an inner string through one builder while an outer one
-// is mid-accumulation, then pushes the result into the outer. Nesting is the
-// second thing the singleton forbids, and it is the shape every stdlib writer
-// built on the builder will take.
 const bufNestedProbe = `function join(parts: string[], sep: string): string {
     let inner: usize = buf_new(32);
     let i: i32 = 0;
@@ -102,11 +87,6 @@ function main(): i32 {
 }
 `
 
-// bufPushU64Probe exercises the eight-byte push (#9221): the byte ORDER (least
-// significant first, which is the order every target stores a u64 in), a value
-// with the high bit set so a sign-extension anywhere shows as 0xff filler, a
-// value that is computed rather than a literal, interleaving with the byte and
-// string pushes, and growth past the reserve.
 const bufPushU64Probe = `function main(): i32 {
     let b: usize = buf_new(8);
     buf_push_u64(b, 0x0807060504030201);
@@ -155,12 +135,6 @@ const bufPushU64Probe = `function main(): i32 {
 }
 `
 
-// TestBufBuilder runs the builder probes on every backend the builtins reach:
-// the interpreter (the reference oracle), x86-64, arm64 and wasm. A builder is
-// a usize handle rather than a value of its own type, so the legs differ in
-// what that handle addresses -- a 32-byte control block on the natives, a
-// 16-byte one on wasm32, a table key in the interp -- and agreeing on all four
-// is what says the layouts are consistent.
 func TestBufBuilder(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	probes := []struct {
@@ -194,8 +168,6 @@ func TestBufBuilder(t *testing.T) {
 					t.Errorf("wasm exit %d, want 0", code)
 				}
 			})
-			// The arm64 assembly runs natively here through the Mach-O
-			// backend, so Apple Silicon covers it without qemu.
 			t.Run("arm64_darwin", func(t *testing.T) {
 				if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 					t.Skip("arm64-darwin execution only runs on Apple Silicon")
@@ -208,8 +180,6 @@ func TestBufBuilder(t *testing.T) {
 	}
 }
 
-// runArm64Darwin builds src for arm64-darwin through the in-process Mach-O
-// backend and runs it, returning the exit code.
 func runArm64Darwin(t *testing.T, src string) int {
 	t.Helper()
 	bin := buildFernCLI(t)

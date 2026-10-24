@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// --- A map cursor is freed on the typed lowering (#9562, self-host half) -----
-//
-// Every `m.iter()`, and so every `for (k, v) in m`, used to strand its cursor:
-// the register backends built it with a bare `__fern_alloc` and the typed
-// planner counted no unit of a MapIter. The cursor is now an rc-headed box the
-// planner owns, holding a unit of its map. Each shape runs 8 rounds, so a
-// stranded cursor shows as live bytes on every backend.
-
 const mapIterReclaimProlog = "import \"core/map\";\n" +
 	"function drain(it: MapIter[string, i32]): i32 {\n" +
 	"    let t: i32 = 0;\n" +
@@ -61,9 +53,6 @@ func TestSelfHostMapIterIsReclaimed(t *testing.T) {
 	}
 }
 
-// runMapIterCensus runs src under FERN_LEAKCHECK on x86-64, arm64 and wasm,
-// each a subtest named name/target, and wants exit `want` and a balanced
-// census from all three.
 func runMapIterCensus(t *testing.T, cli *selfHostCLI, file, name, src string, want int) {
 	path := writeEnumMapSrc(t, file, src)
 	t.Run(name+"/x86-64", func(t *testing.T) {
@@ -93,10 +82,6 @@ func runMapIterCensus(t *testing.T, cli *selfHostCLI, file, name, src string, wa
 	})
 }
 
-// A cursor holds a unit of its map, so it may leave the frame that made it:
-// returned bare over a map its caller passed in, inside a tuple and an array,
-// and passed straight through. Each is drained after the caller has inserted
-// into its map, which must not show through a cursor made before the insert.
 const mapIterOutlivesFrameSrc = `import "core/map";
 function over(m: Map[string, i32]): MapIter[string, i32] { return m.iter(); }
 function pair(m: Map[string, i32], n: i32): (MapIter[string, i32], i32) { return (m.iter(), n); }
@@ -143,8 +128,6 @@ func assertMapIterRun(t *testing.T, stderr string, exit, want int) {
 	assertBalancedCensus(t, stderr)
 }
 
-// A module that iterates a cursor it did not make: the sibling's `drain` reads
-// and advances one its caller made, which the caller releases.
 func TestSelfHostMapIterAcrossModules(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

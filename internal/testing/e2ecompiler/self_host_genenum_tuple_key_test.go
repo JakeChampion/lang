@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// enumKeysDriver prints each enum's name and explicit clone origin. Generic
-// templates remain available for partially inferred constructors.
 const enumKeysDriver = `import "../parser";
 import "./rundriver";
 
@@ -20,9 +18,6 @@ function main(): i32 {
 }
 `
 
-// A generic enum at a tuple argument is cloned under native's mangle for the
-// tuple (`tup`, then each element, an array element suffixed `_arr`). A tuple
-// holding a generic enum has no clone name, so its enum stays generic.
 func TestSelfHostGenericEnumTupleKey(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

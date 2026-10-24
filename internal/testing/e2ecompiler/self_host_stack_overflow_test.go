@@ -11,10 +11,6 @@ import (
 	"testing"
 )
 
-// A hosted executable runs main on a 1 GiB stack of its own, and running off
-// its end is reported as a stack overflow with a backtrace and exit 134
-// rather than a bare SIGSEGV (#12691). A fault anywhere else is still the
-// SIGSEGV it was.
 func TestSelfHostStackOverflow(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	const runaway = "function f(n: i32): i32 {\n  return 1 + f(n - 1);\n}\nfunction main(): i32 {\n  return f(1);\n}\n"
@@ -37,7 +33,6 @@ func TestSelfHostStackOverflow(t *testing.T) {
 			})
 			t.Run("other-fault", func(t *testing.T) {
 				r := runStackProgram(t, cli, target, wild)
-				// qemu-user names the guest's signal on stderr; the program says nothing.
 				if !r.segv || strings.Contains(r.stderr, "fern:") {
 					t.Errorf("exit %d, signalled %t, stderr %q; want a bare SIGSEGV", r.code, r.segv, r.stderr)
 				}
@@ -52,8 +47,6 @@ type stackRun struct {
 	segv           bool
 }
 
-// runStackProgram compiles source for target the way `fern -o` does, in
-// process, and runs it.
 func runStackProgram(t *testing.T, cli *selfHostCLI, target, source string) stackRun {
 	t.Helper()
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -81,7 +74,6 @@ func runStackProgram(t *testing.T, cli *selfHostCLI, target, source string) stac
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() == syscall.SIGSEGV {
 		r.segv = true
 	}
-	// qemu-user dies of the guest's signal itself; a shell reports it as 139.
 	if r.code == 139 {
 		r.segv = true
 	}

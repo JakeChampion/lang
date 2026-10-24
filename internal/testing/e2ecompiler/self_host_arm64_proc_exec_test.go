@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64ProcExecRuns EXECUTES the self-host arm64
-// `__fern_proc_exec` runtime helper. Assembling proves nothing about whether
-// the syscall it builds is right: a wrong argv pointer, a wrong register, or
-// the wrong syscall number all assemble perfectly and fail only when run.
-//
-// The program execs `/bin/sh -c "exit 9"`, so a 9 means execve really
-// replaced the process image AND argv reached the shell intact — an exec
-// that silently failed would fall through to `return 1`, and a mangled
-// argv would give the shell's usage error instead.
-//
-// The helper is Fern now (#2649), so both legs below compile the same source;
-// what still differs between them is which needs the emit plants.
-//
-// The Darwin form (BSD syscall 59) still only assembles; there is no macOS
-// runner in this lane.
 func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
@@ -49,9 +34,6 @@ func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			args := c.args
 			if c.name == "wholeprogram" {
-				// The per-module emit only plants the runtime helpers this
-				// unit declares a need for; the whole-program union is the
-				// driver's own -per-module-needs answer.
 				needs := runDriverFile(t, x86runner, driverBin, src, "-target", "arm64-linux", "-per-module-needs")
 				for _, n := range strings.Split(string(needs), "\n") {
 					if n = strings.TrimSpace(n); n != "" {

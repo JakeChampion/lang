@@ -10,14 +10,6 @@ import (
 	"testing"
 )
 
-// selfHostHandleMethodSource drives `Reader.stat()` / `Writer.stat()`,
-// `Reader.seek(offset, whence)` / `Writer.seek(offset, whence)` and
-// `Writer.truncate(length)` through the self-host's lowering: the
-// `fd_stat`, `reader_seek` and `writer_truncate` ops, and the Fern runtime
-// leaves behind them. Both seeks are one op there, because a Reader and a
-// Writer are both their fd. Every failure returns its own
-// exit code; the reads after each seek are the assertion that the position
-// moved, and the stat after the resize is the assertion that the length did.
 func selfHostHandleMethodSource(path string, out string, app string) string {
 	return fmt.Sprintf(`function main(): i32 {
     let minus2: i64 = (0 as i64) - (2 as i64);
@@ -138,8 +130,6 @@ func selfHostHandleProbeFile(t *testing.T, dir string) string {
 	return p
 }
 
-// runPiped runs cmd with stdin and stdout both pipes, so a seek on stdin has
-// to answer ESPIPE and stdout's stat describes something that is not a file.
 func runPiped(t *testing.T, cmd *exec.Cmd) (string, int) {
 	t.Helper()
 	cmd.Stdin = strings.NewReader("")
@@ -152,10 +142,6 @@ func runPiped(t *testing.T, cmd *exec.Cmd) (string, int) {
 	return out.String(), cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostHandleMethodsIR is the x86-64 IR leg: the three ops lower to
-// calls into the Fern-compiled __fern_fd_stat / __fern_reader_seek /
-// __fern_writer_truncate, which share stat's record projection, lseek's
-// 64-bit result and ftruncate's.
 func TestSelfHostHandleMethodsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -183,8 +169,6 @@ func TestSelfHostHandleMethodsIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostHandleMethodsArm64IR is the arm64 leg of the same programme,
-// through asm_ir_run -target arm64-linux under qemu.
 func TestSelfHostHandleMethodsArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -213,11 +197,6 @@ func TestSelfHostHandleMethodsArm64IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostHandleStatSeekWasmIR is the preview-1 leg: the self-host's wasm
-// emitter backs the two ops with fd_filestat_get and fd_seek. wasmtime's
-// preopen is the temp dir, so the file is named relative to it; stdin is
-// /dev/null under `wasmtime run`, which lseek accepts, so the stdin case is
-// the one assertion this leg does not make.
 func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host handle stat/seek wasm IR e2e")

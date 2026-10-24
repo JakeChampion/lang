@@ -1,19 +1,19 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The case above with ONE line changed at the caller — `a = bump(a)`
-// instead of `let b = bump(a)` — and that line was the whole gap
-// (#6057). The callee's `.with` self-reassign released the receiver a
-// second time (__fern_arr_cow_inplace decs its own source on the copy
-// branch, unlike __map_cow_inplace, whose policy the shared code path
-// applied to both), and the caller's binding is what made that release
-// land on a buffer nothing else was keeping alive: `a` reached rc -1
-// while the program still printed the right answer.
-//
-// The sibling above passes either way, because its caller keeps `a`
-// live and the #4873 grow bracket's inc/dec pair happens to absorb the
-// extra release. That is why the corpus had this construct covered and
-// still missed the bug for as long as it existed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function bump(xs: i32[]): i32[] { xs = xs.with(0, 99); return xs; }
 function main(): i32 {
     let a: i32[] = [1, 2];

@@ -6,8 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// idxNodes returns every `arr[idx]` Index node (both operands the named idents)
-// reachable from prog, in source order.
 func idxNodes(t *testing.T, src, arr, idx string) []*ast.Index {
 	t.Helper()
 	prog, err := Parse(src)
@@ -28,7 +26,6 @@ func idxNodes(t *testing.T, src, arr, idx string) []*ast.Index {
 	return out
 }
 
-// wantElided asserts exactly one matching `arr[idx]` exists and it IS marked.
 func wantElided(t *testing.T, name, src string) {
 	t.Helper()
 	nodes := idxNodes(t, src, "a", "i")
@@ -40,8 +37,6 @@ func wantElided(t *testing.T, name, src string) {
 	}
 }
 
-// wantChecked asserts exactly one matching `arr[idx]` exists and it is NOT
-// marked (the conservative pass must leave the check in place).
 func wantChecked(t *testing.T, name, src string) {
 	t.Helper()
 	nodes := idxNodes(t, src, "a", "i")
@@ -85,7 +80,6 @@ func TestElideLenBounded_Eligible(t *testing.T) {
 			while (i < a.len()) { if (s > 0) { s = s + a[i]; } i = i + 1; }
 			return s;
 		}`},
-		// The length captured in a variable of the same block.
 		{"captured_len", `function f(a: i32[]): i32 {
 			let n: i32 = a.len();
 			let s: i32 = 0; let i: i32 = 0;
@@ -105,7 +99,6 @@ func TestElideLenBounded_Eligible(t *testing.T) {
 
 func TestElideLenBounded_Ineligible(t *testing.T) {
 	cases := []struct{ name, src string }{
-		// A captured length the array outgrows, or that moves, is no bound.
 		{"captured_len_array_grows_before", `function f(a: i32[]): i32 {
 			let n: i32 = a.len(); a = a.append(0);
 			let s: i32 = 0; let i: i32 = 0;
@@ -181,9 +174,6 @@ func TestElideLenBounded_Ineligible(t *testing.T) {
 			while (i < a.len()) { let i: i32 = 999; s = s + a[i]; i = i + 1; }
 			return s;
 		}`},
-		// A tuple pattern binds at every depth, so a nested element and a
-		// variant payload sub-pattern shadow the index just as a top-level
-		// element does.
 		{"index_shadowed_by_nested_tuple_elem", `function f(a: i32[], t: (i32, (i32, i32))): i32 {
 			let s: i32 = 0; let i: i32 = 0;
 			while (i < a.len()) {

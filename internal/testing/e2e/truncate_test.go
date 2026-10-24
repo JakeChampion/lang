@@ -1,21 +1,3 @@
-// `truncate` end to end on every backend that provides it — all of them.
-//
-// What no unit test can assert: four separate hand-written implementations
-// build this call. x86-64 and arm64-linux each issue truncate(2)
-// from hand-written assembly; the interpreter goes through Go's syscall
-// package; and wasmbin has two bodies over WASI, neither of which has a
-// path-based set-size to call — both open a descriptor without CREATE or
-// TRUNCATE, set the size on it, and drop it. Each of those is a place to
-// truncate the LENGTH to 32 bits, to pass the operands in the wrong order, or
-// to let the open create or empty the file before the size is set. Every one
-// of those produces a call that succeeds against the wrong thing, so the
-// probe reads the size and the bytes BACK rather than trusting the return
-// value, and the Go side checks the tree the program left behind through
-// os.Stat.
-//
-// The 4 GiB + 1 step is the one that justifies reading the size back: a length
-// truncated to 32 bits is 1 there, and a helper that did that would report
-// success either way.
 package e2e
 
 import (
@@ -25,15 +7,8 @@ import (
 	"testing"
 )
 
-// truncateBigLen is 2^32 + 1: past the 32-bit boundary, and with a low half of
-// 1 so a truncated length is a plausible size rather than an obvious zero.
 const truncateBigLen = 4294967297
 
-// truncateSource is the probe, parameterised by the directory its relative
-// paths resolve against — "" for the backends that run with their cwd already
-// there (wasm under its preopen), an absolute prefix for the rest.
-//
-// Every failure returns its own exit code, so the number names the step.
 func truncateSource(prefix string) string {
 	p := func(name string) string {
 		if prefix == "" {
@@ -92,10 +67,6 @@ func truncateSource(prefix string) string {
 `, p("a.txt"), p("missing.txt"), p("big.txt"), truncateBigLen)
 }
 
-// truncateCheckTree asserts the filesystem the probe left behind through Go's
-// own stat rather than Fern's, so a broken reader cannot make the probe
-// self-consistent: a `stat` that answered whatever `truncate` was last handed
-// would pass every check inside the program and fail here.
 func truncateCheckTree(t *testing.T, dir string) {
 	t.Helper()
 	fi, err := os.Stat(filepath.Join(dir, "a.txt"))
@@ -151,10 +122,6 @@ func TestInterpTruncate(t *testing.T) {
 	truncateCheckTree(t, dir)
 }
 
-// Preview 1 answers this with path_open + fd_filestat_set_size + fd_close over
-// an errno return, where the component leg below goes through
-// get-directories, open-at, descriptor.set-size and a resource drop. Two
-// separate hand-written bodies, so two runs.
 func TestWASMPreview1Truncate(t *testing.T) {
 	mod := buildWasmCore(t, truncateSource(""))
 	dir := t.TempDir()

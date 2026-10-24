@@ -1,24 +1,9 @@
-// Ownership of a vtable-dispatched method's parameters (#6465).
-//
-// `OpCallDyn` jumps through a function pointer read out of the vtable, so the
-// call site has no callee NAME: `calleeParamOwnedByDefault` is never consulted
-// and no caller-side retain is emitted. Under the owned model the impl method's
-// exit nevertheless ran an `is_unique`-gated `__fern_box_free` on each
-// owned-by-default param, freeing values nobody had retained — the caller's
-// receiver, and any struct argument passed alongside it.
-//
-// `paramVerdict` now returns borrowed for every parameter of a vtable-listed
-// method, so the two models agree. These cases pin that: the same programs
-// under BOTH `ast.BorrowInferEnabled` settings, on all three backends.
 package e2e
 
 import (
 	"testing"
 )
 
-// dynVtableParamSrc dispatches through the vtable twice per iteration: once on
-// the receiver alone, once passing a second owned-by-default struct that lives
-// across the loop. Per iteration 9 + 15 + 5 = 29.
 const dynVtableParamSrc = `trait Shape {
     function area(self: Self): i32;
     function scaled(self: Self, by: Factor): i32;
@@ -41,11 +26,6 @@ function main(): i32 {
     return (acc - 116) + __rc_underflow_count();
 }`
 
-// TestDynVtableParamOwnership: a receiver passed through a vtable call is
-// released once. When the callee freed it and the caller freed it again,
-// `FERN_SANITIZE=1` reported a use-after-free on both natives and wasm trapped
-// with "pointer not aligned" once the corrupted freelist handed back a
-// misaligned block.
 func TestDynVtableParamOwnership(t *testing.T) {
 	t.Run("x86_64", func(t *testing.T) {
 		if _, code := compileAndRunX86_64FreeOn(t, dynVtableParamSrc); code != 0 {
@@ -64,10 +44,6 @@ func TestDynVtableParamOwnership(t *testing.T) {
 	})
 }
 
-// dynVtableParamBumpSrc reports a VERDICT — 0 when a churn four times as long
-// adds no fresh high-water, 1 when it grows. See dynAssignOverwriteBumpSrc for
-// why the verdict rather than the byte count (main()'s value is an exit code,
-// so a byte count is read modulo 256).
 func dynVtableParamBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
@@ -94,9 +70,6 @@ function main(): i32 {
 }`
 }
 
-// TestDynVtableParamBounded: the caller is the receiver's only reclaimer, so
-// the loop must stay bump-bounded — borrowing did not turn the callee's free
-// into a leak.
 func TestDynVtableParamBounded(t *testing.T) {
 	src := dynVtableParamBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {

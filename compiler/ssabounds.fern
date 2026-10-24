@@ -1,43 +1,3 @@
-// Index reads and writes a dominating guard proves in range: an `array_get`,
-// `str_index` or `with` whose index the branches into its block show to be at
-// least zero and below the length of what it reads is marked unchecked (`imm`
-// 1), the flag the parser's len-bounded loop pass already sets and every
-// backend honours. It runs on the typed semantic graphs every backend lowers
-// from. `grouped_reads` then checks a run of reads at one index plus constants
-// once instead of at every read.
-//
-// A block learns a compare when its only predecessor ends in a two-way `brif`
-// on it: true on the `t` edge, false on the `f` edge. Every block it dominates
-// learns it too. Only compares of two i32 values count, each as `lo < hi` or
-// `lo <= hi`.
-//
-// `length(b)` is a `length` read of `b`, or the size `b` was built at: the
-// argument of the `__alloc_*` call `b` is, carried through each `with`, which
-// writes one element of an array of that size, and through a phi whose
-// operands all carry it, the phi assumed to as a loop carries the array it
-// writes.
-//
-// An index `x` is below `length(b)` when
-//   - a fact says `x < y` and `y` is `length(b)`, or `y` is below it;
-//   - a fact says `x <= y` and `y` is below `length(b)`;
-//   - `x` is `length(b) - c` for a constant `c >= 1`;
-//   - `x` is `y - c` for a constant `c >= 0`, with `y` below `length(b)` and at
-//     least zero where `x` is computed, so the subtraction cannot wrap;
-//   - `x` is a phi whose operands are all below `length(b)`, the phi itself
-//     assumed to be: induction over the loop's trips;
-//   - `x` is a constant, or `y & c` for a constant `c`, below the element
-//     count of the array literal `b` is.
-// An index `x` is at least zero when
-//   - it is a constant at least zero, or a `length`;
-//   - a fact says `c <= x` or `c < x` for a constant `c` that settles it, or
-//     `y <= x` or `y < x` with `y` at least zero;
-//   - `x` is `y + 1` with `y` at least zero and, where `x` is computed, below
-//     some i32, so the addition cannot wrap;
-//   - `x` is `length(b) - c` with a fact putting `length(b)` at `c` or more;
-//   - `x` is a phi whose operands are all at least zero, assuming the phi is;
-//   - `x` is `y & c` for a constant `c` at least zero;
-//   - `x` is what a byte-set scan or a bit count returns, never negative;
-//   - `x` widens an unsigned integer, or sign-extends one at least zero.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -46,13 +6,6 @@ import "./util";
 
 struct Rel { lo: i32, hi: i32, strict: boolean }
 
-// One function indexed for the proofs. `defs[v]` is value v's defining
-// instruction and `home[v]` the position of its block. The facts block b
-// learns from its own edge are `rels[first[b] .. first[b] + count[b]]`. `up[b]`
-// is b when it learns any, else its nearest dominator that does, and -1 when
-// none does; `above[b]` is the nearest strict dominator that does.
-// `widens[v]` is 1 when v widens an unsigned integer (never negative), 2 when
-// it sign-extends a signed one (negative only when its operand is), else 0.
 struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[] }
 
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
@@ -88,7 +41,6 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
 }
 
-// index_read is a byte or element read `b[i]` of an array or a string.
 function index_read(ins: ssa.SInst): boolean {
   return (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.str_index()) && ins.args.len() == 2;
 }
@@ -97,8 +49,6 @@ function checked_index(ins: ssa.SInst): boolean {
   return index_read(ins) && ins.imm == 0;
 }
 
-// checked_write is an element write `b.with(i, v)` whose index is still
-// checked.
 function checked_write(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.with() && ins.args.len() == 3 && ins.imm == 0;
 }
@@ -129,8 +79,6 @@ function proven(g: Graph, b: i32, idx: i32, base: i32): boolean {
   return nonneg(g, b, idx, [], depth()) && below(g, b, idx, base, [], depth());
 }
 
-// How many steps a proof may take: guard chains in real code are short, and
-// the bound keeps a proof's cost independent of the graph's size.
 function depth(): i32 {
   return 6;
 }
@@ -184,8 +132,6 @@ function graph_of(f: ssasem.Func): Graph {
   return with_dominators(g, ssadeps.dominates(f.graph), nb);
 }
 
-// learn adds what knowing `cond` is `truth` says, when `cond` compares two i32
-// values: directly, or through `!`.
 function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
   if (cond < 0 || cond >= g.defs.len() || hops <= 0) {
     return g;
@@ -220,9 +166,6 @@ function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
   return g;
 }
 
-// fact records `lo < hi` (`strict`) or `lo <= hi` when `held`, else the
-// converse: `hi <= lo` for a strict relation that failed, `hi < lo` for a weak
-// one.
 function fact(g: Graph, lo: i32, hi: i32, held: boolean, strict: boolean): Graph {
   if (held) {
     return Graph { ...g, rels: g.rels.append(Rel { lo: lo, hi: hi, strict: strict }) };
@@ -230,8 +173,6 @@ function fact(g: Graph, lo: i32, hi: i32, held: boolean, strict: boolean): Graph
   return Graph { ...g, rels: g.rels.append(Rel { lo: hi, hi: lo, strict: !strict }) };
 }
 
-// with_dominators fills `up` and `above` from a walk of the dominator tree in
-// preorder: an ancestor stays on the stack while its interval holds the block.
 function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
   let up: i32[] = [];
   let above: i32[] = [];
@@ -241,7 +182,6 @@ function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
     above = above.append(0 - 1);
     b = b + 1;
   }
-  // `pre` and `post` share one clock, so a preorder number is below 2 * nb.
   let order: i32[] = [];
   while (order.len() < 2 * nb) {
     order = order.append(0 - 1);
@@ -282,7 +222,6 @@ function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
   return Graph { ...g, up: up, above: above };
 }
 
-// root sees through copies, which name the value they copy.
 function root(g: Graph, v: i32): i32 {
   let hops: i32 = 0;
   while (v >= 0 && v < g.defs.len() && g.defs[v].kind_tag == 7 && g.defs[v].args.len() == 1 && hops < 8) {
@@ -292,10 +231,6 @@ function root(g: Graph, v: i32): i32 {
   return v;
 }
 
-// same reports whether two values are one quantity: the same value, or the
-// same projection of the same values. A field, tuple element, element or
-// length read twice from one value reads the same thing, since every one of
-// them is immutable.
 function same(g: Graph, a: i32, b: i32): boolean {
   return equal(g, a, b, 4);
 }
@@ -354,11 +289,6 @@ function is_length_of(g: Graph, v: i32, base: i32): boolean {
   return n >= 0 && same(g, v, n);
 }
 
-// built_len is the value `base` was sized by when it was built, or -1: the
-// argument of the `__alloc_*` call it is, through the `with`s that replace an
-// element of it, and through a phi whose operands all carry one value. -2 is
-// an operand that comes back to a phi already assumed, which carries whatever
-// the rest of its operands do.
 function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
   if (steps <= 0) {
     return 0 - 1;
@@ -401,8 +331,6 @@ function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
   return n;
 }
 
-// sized_alloc names the runtime allocations whose one argument is the length
-// of the array they return: each aborts on a negative size.
 function sized_alloc(name: string): boolean {
   return name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool";
 }
@@ -420,7 +348,6 @@ function assumed(assume: i32[], v: i32): boolean {
   return false;
 }
 
-// masked is the constant `c` of `x = y & c`, or -1.
 function masked(g: Graph, x: i32): i32 {
   let d: ssa.SInst = g.defs[x];
   if (!binary(d, "&")) {
@@ -435,7 +362,6 @@ function masked(g: Graph, x: i32): i32 {
   return 0 - 1;
 }
 
-// literal_len is the element count of the array literal `base` is, or -1.
 function literal_len(g: Graph, base: i32): i32 {
   let d: ssa.SInst = def_of(g, base);
   if (d.kind_tag == ssasem.bytes_new()) {
@@ -447,7 +373,6 @@ function literal_len(g: Graph, base: i32): i32 {
   return 0 - 1;
 }
 
-// below reports whether `x` is less than `length(base)` wherever block b runs.
 function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): boolean {
   if (steps <= 0) {
     return false;
@@ -509,7 +434,6 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   return false;
 }
 
-// nonneg reports whether `x` is at least zero wherever block b runs.
 function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
   if (steps <= 0) {
     return false;
@@ -590,8 +514,6 @@ function nonneg_call(name: string): boolean {
     || name == "__clz64" || name == "__ctz64" || name == "__popcount64";
 }
 
-// below_a_length reports whether a fact at block b puts `y` strictly below
-// some i32, which caps `y + 1` at the largest i32.
 function below_a_length(g: Graph, b: i32, y: i32): boolean {
   if (b < 0) {
     return false;
@@ -612,7 +534,6 @@ function below_a_length(g: Graph, b: i32, y: i32): boolean {
   return false;
 }
 
-// at_least reports whether a fact at block b puts `y` at `n` or more.
 function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
   if (n <= 0 && is_length(g, y)) {
     return true;
@@ -639,10 +560,6 @@ function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
   return false;
 }
 
-// nonneg_quotients turns a signed i32 `x / 2^k` into `x >> k`, and `x % 2^k`
-// into `x & (2^k - 1)`, where `x` is at least zero. Rounding toward zero and
-// toward negative infinity agree there, so the division needs none of the
-// sign fixup a signed one by a power of two otherwise costs.
 pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
   if (!any_pow2_quotient(f)) {
     return f;
@@ -698,9 +615,6 @@ function any_pow2_quotient(f: ssasem.Func): boolean {
   return false;
 }
 
-// small_const is the value of `v` when it is an i32 constant at least zero,
-// one widened (`8 as i64`), or an i64 constant (carried as decimal text)
-// that fits an i32; -1 otherwise.
 function small_const(g: Graph, v: i32): i32 {
   let r: i32 = root(g, v);
   let d: ssa.SInst = g.defs[r];
@@ -716,8 +630,6 @@ function small_const(g: Graph, v: i32): i32 {
   return 0 - 1;
 }
 
-// int_const defines `result`, of integer type `t`, as `n`: in the immediate,
-// or as decimal text for a type whose constants are carried that way.
 function int_const(t: typeinfo.Type, result: i32, n: i32): ssa.SInst {
   if (ssasem.text_constant(t)) {
     return ssa.SInst { kind_tag: 1, result: result, args: [], imm: 0, str: util.i32_to_string(n) };
@@ -725,8 +637,6 @@ function int_const(t: typeinfo.Type, result: i32, n: i32): ssa.SInst {
   return ssa.SInst { kind_tag: 1, result: result, args: [], imm: n, str: "" };
 }
 
-// widening is Graph.widens for `ins`: a cast from an unsigned integer to a
-// wider signed one (1), or from a signed integer to a wider one (2).
 function widening(f: ssasem.Func, ins: ssa.SInst): i32 {
   if (ins.kind_tag != ssasem.cast() || ins.args.len() != 1) {
     return 0;
@@ -745,8 +655,6 @@ function widening(f: ssasem.Func, ins: ssa.SInst): i32 {
   return 0;
 }
 
-// pow2_divisor is k when `ins` is `x / 2^k` or `x % 2^k` for a constant
-// divisor 2^k with k at least 1, and 0 otherwise.
 function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
   if (!binary(ins, "/") && !binary(ins, "%")) {
     return 0;
@@ -763,18 +671,6 @@ function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
   return k;
 }
 
-// grouped_reads checks a run of reads of one array or string at one index
-// plus constants, `bs[off]` then `bs[off + 1]` ... `bs[off + 63]` in any order,
-// or at constant indexes, once rather than at every read. Before the run's
-// first read, a check (a read with `imm` ssasem.check_only()) of the index
-// `(lo + span) | (lo >> 31)` stands for every read: `lo` is the lowest index
-// and `span` the distance to the highest, so it is in range exactly when all of
-// them are, a negative `lo` making it -1 and an `lo + span` past INT32_MAX
-// wrapping negative. The reads are then unchecked. Of reads all at one index,
-// the first keeps its check. Between the first read and the last, nothing may
-// abort another way or be observed (`silent`), so aborting at the check
-// instead of at the read that would have failed cannot be told apart: the
-// abort names no index.
 pub function grouped_reads(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
@@ -799,8 +695,6 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
         let v: i32 = values.len();
         let idx: i32 = v;
         if (plan.x[p] < 0) {
-          // Constant indexes: the highest is in range exactly when all are,
-          // unless the lowest is negative.
           let c: i32 = plan.lo[p] + plan.span[p];
           if (plan.lo[p] < 0) {
             c = 0 - 1;
@@ -843,10 +737,6 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
   return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
 }
 
-// Where a block's checks go: before the instruction at `at[i]`, a check of
-// the same array covering `x[i] + lo[i]` to `x[i] + lo[i] + span[i]`, `x[i]`
-// -1 for constant indexes; `unchecked` marks the reads they cover, and `any`
-// says whether any is.
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
 
 function definitions(f: ssasem.Func): ssa.SInst[] {
@@ -881,8 +771,6 @@ function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probe
   return out;
 }
 
-// The groups among the reads of insts[start .. end), a run of silent
-// instructions, each checked before its first read.
 function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, own out: Probes): Probes {
   let reads: i32[] = [];
   let k: i32 = start;
@@ -922,7 +810,6 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
       j = j + 1;
     }
     if (members.len() >= 2) {
-      // Reads all at one index keep the first one's check.
       let m: i32 = 1;
       if (high > low) {
         out = Probes { ...out, at: out.at.append(reads[i]), x: out.x.append(x), lo: out.lo.append(low), span: out.span.append(high - low) };
@@ -938,9 +825,6 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
   return out;
 }
 
-// offset_base is the `x` of an index `x + c` with `c` a constant, -1 for a
-// constant index, or the index itself; offset_of is that `c`, the constant,
-// or 0.
 function offset_base(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (constant_index(f, defs, v)) {
     return 0 - 1;
@@ -967,8 +851,6 @@ function constant_index(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
   return defs[v].kind_tag == 1 && ssasem.is_i32(f.values[v]);
 }
 
-// constant_operand is which operand of an i32 `+` defining v is a constant,
-// or -1.
 function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   let d: ssa.SInst = defs[v];
   if (d.kind_tag != 9 || d.str != "+" || d.args.len() != 2 || !ssasem.is_i32(f.values[v])) {
@@ -985,16 +867,10 @@ function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   return 0 - 1;
 }
 
-// A check's result is never used, so only a read of a scalar, which owns
-// nothing, may be grouped under one.
 function scalar(f: ssasem.Func, v: i32): boolean {
   return ssasem.is_integer(f.values[v]) || ssasem.is_bool(f.values[v]);
 }
 
-// silent reports whether an instruction can neither abort nor be observed:
-// integer and boolean arithmetic other than division, an integer conversion, a
-// constant, a phi, a length or an array or string read, whose own abort says
-// the same as the probe's.
 function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == 35 || k == ssasem.param()) {
@@ -1019,17 +895,6 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   return false;
 }
 
-// word_loads rewrites a word assembled from a byte array or a string —
-// `b[x] as u32 | b[x + 1] as u32 << 8 | … | b[x + 3] as u32 << 24`, or the
-// eight-byte u64 form — into one load of the word, which every target reads
-// unaligned and stores little-endian (#8782). A big-endian word, the bytes'
-// places mirrored, is that load byte swapped (#10615). Only the `or` that
-// completes the word is replaced. A checked read stays, as its own bounds
-// check; the unchecked ones, which grouped_reads leaves under one check, go.
-// `contracts` are the calls the load is made of, which the function gains when
-// it fuses; `view_words` names the four- and eight-byte word reads of a `[u8]`
-// view, which reaches its bytes through a decoded data pointer rather than its
-// box, and `swaps` the four- and eight-byte byte swaps.
 pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words: string[], swaps: string[]): ssasem.Func {
   if (!any_index_read(f)) {
     return f;
@@ -1051,8 +916,6 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
       parts = word_parts(defs, ins.args, w, parts);
       let v: i32 = values.len();
       let i32_t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
-      // v + 1 is the word's first index: the base plus the lowest offset, or
-      // that offset alone.
       insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: w.off, str: "" });
       if (w.x < 0) {
         insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 1, args: [], imm: w.off, str: "" });
@@ -1084,16 +947,8 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
   return ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
 }
 
-// The instructions a function is being rebuilt into and the types of its
-// values, which they extend.
 struct Load { insts: ssa.SInst[], values: typeinfo.Type[] }
 
-// load_word appends the load of word `w` from `arr`, a value of type `t`,
-// starting at index value `first`, as `result` in its unsigned type. A `[u8]`
-// view reads its bytes through a decoded data pointer (`view_words`), an
-// array's bytes start eight bytes into its box on every target, and a
-// string's at the address `__raw_data` reads. The eight and the index are
-// added to the address, not to the i32 index, so neither can wrap.
 function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i32, view_words: string[], swaps: string[]): Load {
   let wide: typeinfo.Type = typeinfo.TypeI32 { width: w.bytes * 8, unsigned: false, is_char: false, polymorphic: false };
   let addr_t: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
@@ -1132,8 +987,6 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
   return Load { insts: insts, values: values };
 }
 
-// text_data appends the address of string `arr`'s bytes. `__raw_data` takes
-// an owned string, so a view is first retagged as one, as `lend` does.
 function text_data(own l: Load, t: typeinfo.Type, arr: i32, addr_t: typeinfo.Type): Load {
   let insts: ssa.SInst[] = l.insts;
   let values: typeinfo.Type[] = l.values;
@@ -1147,9 +1000,6 @@ function text_data(own l: Load, t: typeinfo.Type, arr: i32, addr_t: typeinfo.Typ
   return Load { insts: insts, values: values.append(addr_t) };
 }
 
-// in_order appends the cast that gives the word `loaded` its unsigned type as
-// `result`, byte swapping it first, as value loaded + 1, when it is
-// big-endian.
 function in_order(own insts: ssa.SInst[], w: Word, swaps: string[], loaded: i32, result: i32): ssa.SInst[] {
   let v: i32 = loaded;
   if (w.big) {
@@ -1163,9 +1013,6 @@ function in_order(own insts: ssa.SInst[], w: Word, swaps: string[], loaded: i32,
   return insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: result, args: [v], imm: 0, str: "" });
 }
 
-// word_parts adds to `acc` the values a fused word was assembled from: its
-// `or`s, shifts and casts, the unchecked byte reads and their index arithmetic.
-// The array, the base index and a checked read are never among them.
 function word_parts(defs: ssa.SInst[], args: i32[], w: Word, acc: i32[]): i32[] {
   for v in args {
     if (v == w.arr || v == w.x || v < 0 || v >= defs.len() || has_value(acc, v)) {
@@ -1190,8 +1037,6 @@ function has_value(xs: i32[], v: i32): boolean {
   return false;
 }
 
-// without_unused drops the instructions defining `parts` that nothing reads,
-// until none is left to drop. `n` bounds the value numbers.
 function without_unused(blocks: ssa.SBlock[], parts: i32[], n: i32): ssa.SBlock[] {
   let part: boolean[] = falses(n);
   for v in parts {
@@ -1258,12 +1103,8 @@ function has_contract(calls: ssasem.Contract[], name: string): boolean {
   return false;
 }
 
-// A word `ins` completes: `bytes` of a u8 array `arr` read at `x + off` up,
-// each shifted to its little-endian place, or each to its big-endian one when
-// `big`; `bytes` 0 when `ins` is not one.
 struct Word { bytes: i32, arr: i32, x: i32, off: i32, big: boolean }
 
-// One byte of a word: array `arr` read at `x + off`, shifted left `shift`.
 struct WordByte { ok: boolean, arr: i32, x: i32, off: i32, shift: i32 }
 
 function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
@@ -1301,7 +1142,6 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
       lo = p.off;
     }
   }
-  // Each byte sits at its own place, so n distinct places are the whole word.
   let seen: boolean[] = falses(n);
   let le: boolean = true;
   let be: boolean = true;
@@ -1320,7 +1160,6 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
   return Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo, big: !le };
 }
 
-// or_terms flattens the `|` tree of type `t` rooted at `v` into its leaves.
 function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinfo.Type, acc: i32[]): i32[] {
   let d: ssa.SInst = defs[v];
   if (d.kind_tag == 9 && d.str == "|" && typeinfo.spelling(values[v]) == typeinfo.spelling(t) && acc.len() < 8) {
@@ -1329,7 +1168,6 @@ function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinf
   return acc.append(v);
 }
 
-// word_byte reads one leaf: `b[i] as T`, or that shifted left by a constant.
 function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): WordByte {
   let no: WordByte = WordByte { ok: false, arr: 0, x: 0, off: 0, shift: 0 };
   let d: ssa.SInst = defs[v];
@@ -1351,7 +1189,6 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   let x: i32 = g.args[1];
   let off: i32 = 0;
   let a: ssa.SInst = defs[x];
-  // A constant index is an offset from no base, which `x` -1 stands for.
   if (a.kind_tag == 1) {
     return WordByte { ok: true, arr: g.args[0], x: 0 - 1, off: a.imm, shift: shift };
   }
@@ -1365,13 +1202,11 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   return WordByte { ok: true, arr: g.args[0], x: x, off: off, shift: shift };
 }
 
-// const_through_cast is an integer constant, read through one cast, or -1.
 function const_through_cast(defs: ssa.SInst[], v: i32): i32 {
   let d: ssa.SInst = defs[v];
   if (d.kind_tag == ssasem.cast() && d.args.len() == 1) {
     d = defs[d.args[0]];
   }
-  // A constant of an unsigned or wide type carries its value as its spelling.
   if (d.kind_tag == 1 && d.str.len() > 0) {
     let n: i64 = util.lit_to_i64(d.str);
     if (n > 0i64 && n < 64i64) {

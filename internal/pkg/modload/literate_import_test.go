@@ -16,9 +16,6 @@ func write(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-// A plain `.fern` import that resolves to a single-root `.fern.md`
-// tangles the document and loads it as a module; the literate
-// provenance is reported for diagnostic remapping.
 func TestImportSingleRootLiterate(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "greet.fern.md",
@@ -46,8 +43,6 @@ func TestImportSingleRootLiterate(t *testing.T) {
 	}
 }
 
-// Importing a multi-file (`file=`) document is an error — it has no
-// single importable module.
 func TestImportMultiFileLiterateErrors(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "multi.fern.md",
@@ -62,7 +57,6 @@ func TestImportMultiFileLiterateErrors(t *testing.T) {
 	}
 }
 
-// A plain `.fern` wins over a same-named `.fern.md`.
 func TestImportPrefersPlainFern(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "dup.fern", "pub function v(): i32 { return 1; }\n")

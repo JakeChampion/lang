@@ -5,10 +5,6 @@ import (
 	"unicode/utf8"
 )
 
-// builderText replaces each malformed maximal subpart with one U+FFFD.
-// DecodeRune alone consumes one byte on a truncated sequence; this boundary
-// must instead consume its complete valid prefix, without eating the next
-// scalar or a continuation that violates a lead's restricted second byte.
 func builderText(raw []byte) String {
 	if utf8.Valid(raw) {
 		return String(raw)

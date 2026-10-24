@@ -14,15 +14,7 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestUtilitiesFreeWhatTheyAllocate builds utilities with FERN_LEAKCHECK and
-// requires each invocation to free every allocation it made. The parity
-// suites compare output with GNU and cannot see a leak; `ls -l` and `stat`
-// leaked the string builder behind every mode column they printed, and every
-// directory listing lost 8 bytes per name whose length is a multiple of 8.
 func TestUtilitiesFreeWhatTheyAllocate(t *testing.T) {
-	// A name of every length from 1 to 33: a name buffer sized off by a byte
-	// is freed into the wrong size class only when its length is a multiple
-	// of 8.
 	dir := t.TempDir()
 	for n := 1; n <= 33; n++ {
 		seedWrite(t, dir, strings.Repeat("f", n), "contents\n")
@@ -63,9 +55,6 @@ var (
 	leakcheckBinDir string
 )
 
-// leakcheckBin compiles coreutils/<util>.fern with FERN_LEAKCHECK, which the
-// compiler reads at emit time, so it is a separate build from fernBin's; once
-// per test process, like fernBin's.
 func leakcheckBin(t *testing.T, util string) string {
 	t.Helper()
 	leakcheckBinsMu.Lock()
@@ -93,11 +82,6 @@ func leakcheckBin(t *testing.T, util string) string {
 	return bin
 }
 
-// census is the leakcheck line a run under FERN_LEAKCHECK prints as it exits,
-// parsed: the counts, whether the exit() builtin printed it (` from=exit`)
-// rather than a return from main, and whether there was one. The line is
-// found wherever it starts: a prompt the utility left unterminated puts it
-// mid-line.
 func census(stderr []byte) (allocs, frees, live int64, exited, ok bool) {
 	i := strings.LastIndex(string(stderr), "leakcheck: allocs=")
 	if i < 0 {
@@ -113,39 +97,17 @@ func census(stderr []byte) (allocs, frees, live int64, exited, ok bool) {
 	return allocs, frees, live, strings.HasSuffix(line, " from=exit"), true
 }
 
-// TestCorpusFreesWhatItAllocates runs every utility's corpus — the same
-// cases the GNU parity gate runs — against a build with FERN_LEAKCHECK and
-// requires each run that returned from main to have freed every allocation
-// it made. The parity gate compares output and cannot see a leak; this is
-// the leak gate over the largest programs in the tree after the compiler.
-//
-// Three kinds of run cannot be held to that. A run the exit() builtin ended
-// (the census says ` from=exit`) never unwound the frames above the call,
-// so what they held is not something the program could have freed: the
-// usage errors, `--help` and `--version`, and the diagnostics that leave
-// through `gnu.die`. A run that exec'd another program (env, nice, nohup,
-// chroot) left no census at all, its frames abandoned the same way. A run a
-// signal ended has no exit to report at: a `tail -f` the harness stops with
-// SIGTERM, a writer killed by SIGPIPE on a closed pipe, a case that overran
-// its bound. All three are counted, not checked, and a utility none of whose
-// cases returned fails when one of them left through exit() with status 0
-// rather than passing on nothing: its success path leaves that way, and the
-// census can say nothing about it until it returns. A utility whose every
-// case failed has no success path to judge here, as chroot unprivileged,
-// where chroot(2) is EPERM before anything runs.
 func TestCorpusFreesWhatItAllocates(t *testing.T) {
 	for _, util := range utilNames(t) {
 		cases, ok := corpusRegistry[util]
 		if !ok {
-			continue // reported by TestSelfHostCoreutilsCoverage
+			continue
 		}
 		t.Run(util, func(t *testing.T) {
 			bin := leakcheckBin(t, util)
 			var checked, exited, exitedOK, execd, unended int64
 			for _, inv := range cases(t) {
 				t.Run(inv.name, func(t *testing.T) {
-					// One process per case and the cost in spawning it, so the
-					// cases run concurrently where the self-host leg's do.
 					if inv.stdoutPath == "" && len(inv.follow) == 0 &&
 						inv.prepare == nil && len(inv.artifacts) == 0 {
 						t.Parallel()

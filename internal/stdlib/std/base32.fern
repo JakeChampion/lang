@@ -1,21 +1,19 @@
-// std/base32 implements RFC 4648 with the uppercase A-Z and 2-7 alphabet.
-// Encode borrows bytes and emits padding. Decode checks the complete input.
-// Decode accepts padded or unpadded text and rejects nonzero trailing bits.
+// This module encodes and decodes Base32 data under RFC 4648.
 
 import "std/codec";
 
 function __b32_alphabet(v: i32): i32 {
-  if (v < 26) {  // 'A' + v
+  if (v < 26) {
     return v + 65;
   }
-  return v + 24;  // 26 → '2' (50)
+  return v + 24;
 }
 
 function __b32_decode_char(c: i32): i32 {
-  if (c >= 65 && c < 91) {  // A-Z
+  if (c >= 65 && c < 91) {
     return c - 65;
   }
-  if (c >= 50 && c < 56) {  // 2-7 → 26..31
+  if (c >= 50 && c < 56) {
     return c - 24;
   }
   return 0 - 1;
@@ -37,12 +35,10 @@ pub function encode(bs: [u8]): string {
     i = i + 1;
   }
   if (bits > 0) {
-    // Flush the final partial group, zero-padding the low bits.
     out = out.append(__b32_alphabet(acc << 5 - bits & 31) as u8);
   }
-  // Pad with '=' to a multiple of 8 characters.
   while (out.len() % 8 != 0) {
-    out = out.append(61 as u8);  // '='
+    out = out.append(61 as u8);
   }
   return string_from_bytes_unchecked(out);
 }

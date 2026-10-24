@@ -1,6 +1,6 @@
-// A program's own enum may share a bare name with a builtin IoError variant.
-// Naming the type resolves to the enum, not to IoError's variant of that name,
-// and std/error's `message()` still matches IoError's `Other` and `Unsupported`.
+
+
+
 import "std/error";
 import "std/i32";
 

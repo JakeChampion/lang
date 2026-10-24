@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// resultElemReclaimCases pin a tuple one of whose elements is a freshly
-// constructed built-in `Result` — `(i, Ok(i))` / `(i, Err(i))`. The element's
-// box is released along with the rest of the tuple (buffer, array elements, its
-// own box), as the Option twin `(i, Some(i))`'s is. The byte cases return
-// measured bytes per round, so a leaked element box reads non-zero.
-//
-// The last three cases are safety controls. `Ok` shadowed by a free function
-// returns a box from a call that did not allocate it, so releasing it would
-// over-release a value `keep` still holds.
 var resultElemReclaimCases = []struct {
 	name string
 	src  string
@@ -64,9 +55,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The array sibling isolates the union box as the only thing leaking: this
-	// shape's buffer and array element already reclaimed, so it measured the
-	// same 40 | 40 | 16 as the two-element tuple above.
 	{"result-elem-beside-array", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -88,8 +76,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// SHADOW negative: a free function named `Ok` returns a box `keep` still
-	// holds, so the element is not a construction and must keep its leak.
 	{"ok-shadowed-by-free-fn", `function Ok(r: Result[i32, i32]): Result[i32, i32] { return r; }
 function churn(n: i32): i32 {
     let acc: i32 = 0;
@@ -112,8 +98,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 2},
-	// BARE-IDENT negative: the element aliases a live local, so it is skipped
-	// by the literal-driven walk exactly as before.
 	{"bare-ident-elem-still-refused", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -135,9 +119,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 2},
-	// POINTER-PAYLOAD safety: the arm binds the `Ok` payload and carries it out
-	// of the loop, so it outlives every reclaim point. The reclaim releases the
-	// union BOX and never its payload, which is what keeps this readable.
 	{"ok-payload-carried-out-safe", `function churn(n: i32): i32 {
     let keep: i32[] = [0, 0];
     let acc: i32 = 0;

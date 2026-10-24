@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWatEncode exercises the binary-wasm byte-emission primitives
-// (compiler/wat_encode.fern) — slice 4a of the self-hosted
-// binary backend (section framing, vecs, names, valtypes, magic/version)
-// the module-walker builds on.
-//
-// wat_encode.fern depends on leb128.fern's leb_u32 but is otherwise
-// import-free, so the test concatenates leb128.fern + wat_encode.fern + a
-// self-test main() that builds each primitive and asserts the bytes, then
-// runs it through the self-host wasm pipeline (wasm_run -> WAT ->
-// wasmtime). Exit 0 = all checks pass; a failing check returns its 1-based
-// id.
 func TestSelfHostWatEncode(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wat_encode e2e")
@@ -49,10 +38,6 @@ func TestSelfHostWatEncode(t *testing.T) {
 	}
 }
 
-// watEncodeSelfTestMain checks each byte-emission primitive: the module
-// preamble, a name (LEB len + bytes), a section (id + LEB len + body), a
-// vec (LEB count + elems), valtype codes, and raw concat. Each `return N`
-// is a distinct failing-check id (0 = pass).
 const watEncodeSelfTestMain = `
 function main(): i32 {
     let m: i32[] = wmagic();

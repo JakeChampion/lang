@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The other side of #8833's guard, and the reason it is narrow: a
-// callee that hands its argument back leaves the slot naming the
-// same pointer it already named, but the return-transfer inc means
-// the reference DID change hands and the release is owed. Guarding
-// the release on pointer identity alone reads this as a self-store
-// and strands one map a round — green on every other gate, which is
-// how the wide guard nearly shipped.
+
+
+
+
+
+
+
+
+
+
 import "core/map";
 @noinline
 function idm(x: Map[string, i32]): Map[string, i32] { return x; }

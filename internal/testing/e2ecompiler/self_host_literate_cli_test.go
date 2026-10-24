@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// literateRun writes doc to doc.fern.md in a fresh directory, runs the
-// self-host CLI with args and that path, and returns the directory, stdout,
-// stderr and the exit status. -doctest also gets the stdlib root.
 func literateRun(t *testing.T, doc string, args ...string) (string, string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -32,17 +29,12 @@ func literateRun(t *testing.T, doc string, args ...string) (string, string, stri
 	return dir, stdout.String(), strings.ReplaceAll(stderr.String(), path, "DOC"), cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostTangle pins `-tangle`'s output: a tangled module IS the program,
-// so a line in the wrong place or an indent the expansion failed to carry
-// changes what compiles.
 func TestSelfHostTangle(t *testing.T) {
 	for _, c := range []struct{ name, doc, want string }{
-		// The indent of a `<<ref>>` line prefixes every line it expands to.
 		{"root-and-indented-ref", "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n    <<compute>>\n}\n```\n\n```fern\n<<compute>>=\nlet n: i32 = 20;\nreturn n + 2;\n```\n",
 			"function main(): i32 {\n    let n: i32 = 20;\n    return n + 2;\n}\n"},
 		{"nested-refs", "```fern\n<<*>>=\n<<outer>>\n```\n\n```fern\n<<outer>>=\nfunction main(): i32 {\n    <<inner>>\n}\n```\n\n```fern\n<<inner>>=\nreturn 4;\n```\n",
 			"function main(): i32 {\n    return 4;\n}\n"},
-		// Same-name pieces concatenate in document order.
 		{"chunk-continued", "```fern\n<<*>>=\nfunction main(): i32 {\n    <<body>>\n}\n```\n\n```fern\n<<body>>=\nlet a: i32 = 1;\n```\n\n```fern\n<<body>>=\nreturn a + 1;\n```\n",
 			"function main(): i32 {\n    let a: i32 = 1;\n    return a + 1;\n}\n"},
 		{"prose-and-other-fences", "Some prose.\n\n```text\nnot fern, ignore me\n```\n\n```fern\n<<*>>=\nfunction main(): i32 { return 1; }\n```\n\nMore prose.\n",
@@ -51,14 +43,10 @@ func TestSelfHostTangle(t *testing.T) {
 			"// ==> lib.fern <==\npub function tag(): i32 { return 5; }\n\n// ==> main.fern <==\nimport \"./lib\";\nfunction main(): i32 { return lib.tag(); }\n"},
 		{"escaped-marker", "```fern\n<<*>>=\nfunction main(): i32 {\n    <<body>>\n}\n```\n\n```fern\n<<body>>=\n  \\<<not a ref>>\nreturn 0;\n```\n",
 			"function main(): i32 {\n      <<not a ref>>\n    return 0;\n}\n"},
-		// Upper-case fence language, a quoted path, and an example or file root
-		// that opens with a header (never a chunk).
 		{"fence-forms", "```FERN\n<<*>>=\nok();\n```\n```fern test\n<<*>>=\nbad();\n```\n",
 			"ok();\n"},
 		{"quoted-file", "```fern file=\"q.fern\"\nx\n```\n",
 			"// ==> q.fern <==\nx\n"},
-		// A fence left open at the end does not take the final newline's empty
-		// line into its body.
 		{"unclosed-fence", "```fern\n<<*>>=\nfn main() {}\n",
 			"fn main() {}\n"},
 	} {
@@ -85,7 +73,6 @@ func TestSelfHostTangle(t *testing.T) {
 		}
 	})
 
-	// `-chunk NAME` expands one definition rather than the document.
 	t.Run("chunk", func(t *testing.T) {
 		doc := "```fern\n<<*>>=\nfunction main(): i32 {\n    <<compute>>\n}\n```\n\n```fern\n<<compute>>=\nlet n: i32 = 20;\nreturn n + 2;\n```\n"
 		if _, out, errOut, code := literateRun(t, doc, "-tangle", "-chunk", "compute"); code != 0 || out != "let n: i32 = 20;\nreturn n + 2;\n" {
@@ -96,8 +83,6 @@ func TestSelfHostTangle(t *testing.T) {
 		}
 	})
 
-	// Under `-o`, a multi-file document writes one module per path into that
-	// directory, subdirectories created; a single module writes the file.
 	t.Run("output", func(t *testing.T) {
 		doc := "```fern file=sub/lib.fern\npub function tag(): i32 { return 5; }\n```\n\n```fern file=main.fern entry\nimport \"./sub/lib\";\nfunction main(): i32 { return lib.tag(); }\n```\n"
 		dir := t.TempDir()
@@ -124,9 +109,6 @@ func TestSelfHostTangle(t *testing.T) {
 	})
 }
 
-// weaveGolden reads testdata/weave/NAME. The goldens were recorded from the
-// Go engine `-weave` replaced; regenerate one with
-// `fern -weave [-html] testdata/weave/doc.fern.md`.
 func weaveGolden(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "weave", name))
@@ -136,11 +118,6 @@ func weaveGolden(t *testing.T, name string) string {
 	return string(b)
 }
 
-// TestSelfHostWeave pins `-weave` and `-weave -html` on a document using
-// every construct they render: chunk labels and continuations, references
-// and an escaped one (not a use), display and example blocks, a file root,
-// the chunk index's four kinds of entry, the prose's Markdown, the table of
-// contents and the highlighter, non-ASCII text included.
 func TestSelfHostWeave(t *testing.T) {
 	doc := weaveGolden(t, "doc.fern.md")
 	for _, c := range []struct {
@@ -161,8 +138,6 @@ func TestSelfHostWeave(t *testing.T) {
 		})
 	}
 
-	// One chunk has nothing to index, one heading no table of contents, and
-	// with no chunks at all the page has no index.
 	t.Run("trivial", func(t *testing.T) {
 		one := "# Only\n```fern\n<<*>>=\nfn main() {}\n```\n"
 		if _, out, _, _ := literateRun(t, one, "-weave"); strings.Contains(out, "## Chunk index") {
@@ -187,7 +162,6 @@ func TestSelfHostWeave(t *testing.T) {
 	})
 }
 
-// firstDifference shows where two long outputs part.
 func firstDifference(got, want string) string {
 	gl, wl := strings.Split(got, "\n"), strings.Split(want, "\n")
 	for i := 0; i < len(gl) && i < len(wl); i++ {
@@ -198,9 +172,6 @@ func firstDifference(got, want string) string {
 	return "one is a prefix of the other: got " + strconv.Itoa(len(gl)) + " lines, want " + strconv.Itoa(len(wl))
 }
 
-// TestSelfHostDoctest runs `-doctest`: each example tangles on its own against
-// the document's chunks and passes when main returns 0, reported as TAP with a
-// failure's reasons as comments, its diagnostics placed on the document.
 func TestSelfHostDoctest(t *testing.T) {
 	t.Run("pass-and-fail", func(t *testing.T) {
 		doc := "# d\n```fern\n<<greet>>=\npub function greet(): string { return \"hi\"; }\n```\n" +
@@ -221,7 +192,6 @@ func TestSelfHostDoctest(t *testing.T) {
 		}
 	})
 
-	// An example's imports resolve from the document's directory.
 	t.Run("relative-import", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
@@ -253,8 +223,6 @@ func TestSelfHostDoctest(t *testing.T) {
 	})
 }
 
-// TestShippedFernLiterateTakesOneDocument: past the document, flags are no
-// longer parsed, so a second argument is refused rather than dropped.
 func TestShippedFernLiterateTakesOneDocument(t *testing.T) {
 	fern := e2eharness.ShippedFern(t)
 	for _, mode := range []string{"-tangle", "-weave", "-doctest"} {

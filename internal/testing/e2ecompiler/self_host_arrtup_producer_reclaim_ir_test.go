@@ -7,22 +7,11 @@ import (
 	"testing"
 )
 
-// arrtupProducerReclaimCases pin the #4353 CALL-BOUND array-of-boxes reclaim:
-// `let ps: (i32, i32[])[] = mk(k)` — and its array-of-structs sibling — must
-// release the buffer, every element box and every inner array when the binding
-// dies, as a literal initialiser does. Leaking them costs 80 B (x86-64 / arm64)
-// and 48 B (wasm) per round.
-//
-// A producer whose EVERY return is a fresh array literal of fresh tuple (resp.
-// struct) literals hands its caller a structure the caller solely owns. The
-// negatives pin the shapes where that does not hold — a param array at an
-// element position, a forwarded return, an element box held past the release.
 var arrtupProducerReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn, array of tuples from a producer call.
 	{"arrtup-producer-churn", `function mk(n: i32): (i32, i32[])[] { return [(n, [n, n + 1]), (n + 1, [n + 2, n + 3])]; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -37,7 +26,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Core churn, array of structs from a producer call.
 	{"arrstruct-producer-churn", `struct Q { xs: i32[] }
 function mkqs(n: i32): Q[] { return [Q { xs: [n, n + 1] }, Q { xs: [n + 2, n + 3] }]; }
 function main(): i32 {
@@ -53,8 +41,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// VALUE: both classes still read correctly through every position after the
-	// reclaim. 5 + 5 + 8 + 2 + 3 + 4 + 1 = 28.
 	{"arrtup-producer-value", `struct Q { xs: i32[] }
 function mkps(n: i32): (i32, i32[])[] { return [(n, [n, n + 1]), (n + 1, [n + 2, n + 3])]; }
 function mkqs(n: i32): Q[] { return [Q { xs: [n, n + 1] }]; }
@@ -65,10 +51,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 28},
-	// NON-FRESH PRODUCER negative: `mkbad` puts a PARAM array at an element
-	// position, so the returned structure aliases the caller's own array. The
-	// registry must refuse it — a deep free here would release `shared` and the
-	// reads after the loop would see freed bytes (97) or tick the detector (99).
 	{"arrtup-producer-nonfresh-safe", `function mkbad(xs: i32[], n: i32): (i32, i32[])[] { return [(n, xs)]; }
 function main(): i32 {
     let shared: i32[] = [1, 2];
@@ -84,9 +66,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// FORWARDED RETURN negative: `keepit` binds the producer's result and hands it
-	// straight back, so its local escapes and must keep the shallow dec — the
-	// caller's own binding is the one that frees.
 	{"arrtup-producer-forwarded-safe", `function mk(n: i32): (i32, i32[])[] { return [(n, [n, n + 1])]; }
 function keepit(n: i32): (i32, i32[])[] { let ps: (i32, i32[])[] = mk(n); return ps; }
 function main(): i32 {
@@ -97,8 +76,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ELEMENT-ALIAS negative: `let t = ps[0]` holds an element tuple box past the
-	// reclaim point, so the release must not free what `t` still reads.
 	{"arrtup-producer-elem-alias-safe", `function mk(n: i32): (i32, i32[])[] { return [(n, [n, n + 1])]; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -115,8 +92,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostArrTupProducerReclaimIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler, heap-bump + underflow guarded.
 func TestSelfHostArrTupProducerReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

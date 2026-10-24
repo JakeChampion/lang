@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// A trait's default methods inherited by an impl in another module (#12123):
-// `fold[A]` declares a type parameter of its own, and `map[U]` returns a
-// struct of the trait's module at it. The copy an impl in `main.fern`
-// inherits is made after the trait's module was parsed, so its variables
-// must already be respelled as variables there. The project is two files on
-// disk so the import is resolved end to end.
 const crossModuleTraitDefaultLib = `pub trait It[T] {
   function next(self: Self): Option[(T, Self)];
   function fold[A](self: Self, init: A, f: (A, T) => A): A {

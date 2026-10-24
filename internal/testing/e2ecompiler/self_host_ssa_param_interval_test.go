@@ -2,14 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// ssaParamIntervalCases pin the register allocator's view of a parameter: it
-// arrives at entry, so it is live from the first position, not from its first
-// read. When a parameter's interval began at its first read, a parameter read
-// only late (an array a defer walks) and one read early shared a home, and the
-// entry's moves wrote the early one over the late one before it was read: the
-// defer then walked an i64 as an array pointer and the program segfaulted. The
-// division in the early return is what moves `n` out of %rax and so puts a
-// move on the entry. Reduced from a fernsmith repro.
 var ssaParamIntervalCases = []struct {
 	name string
 	src  string

@@ -5,19 +5,9 @@ import (
 	"testing"
 )
 
-// `Some(mk("abc"))` passed as a call argument, with mk a producer that always
-// returns a fresh string: the Option box and its payload are both released —
-// the opt_str__callarg__read matrix cell. An aliased producer
-// (`wrap(s) { return Some(s); }` and every param/field return) stays refused,
-// which the refused pins in self_host_unmatched_optstr_reclaim_test.go assert.
-//
-// Exits confirmed against `bin/fern -interp`. Each case re-runs under
-// FERN_SANITIZE=1 (identical exit, no over-release / use-after-free).
-
 func optstrCallargCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The matrix cell opt_str__callarg__read verbatim.
 			name: "callarg_producer_payload",
 			src: `function mk(a: string): string { return a + "!"; }
 function peek(o: Option[string]): i32 {
@@ -37,10 +27,6 @@ function main(): i32 {
 			want: 14,
 		},
 		{
-			// The freed-block-reuse net: 200 rounds of same-size string churn
-			// between the sweeps, and a kept string read back by CONTENT at
-			// the end — a sweep that freed the wrong buffer surfaces here (or
-			// in the sanitize leg's quarantine), not in the census.
 			name: "callarg_churn_read_back",
 			src: `function mk(a: string): string { return a + "!"; }
 function peek(o: Option[string]): i32 {

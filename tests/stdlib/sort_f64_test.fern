@@ -1,14 +1,6 @@
 import "std/test";
 import "core/cmp" as cmp;
 
-// tests/stdlib/sort_f64_test.fern — pure-Fern coverage of core/cmp's generic
-// `sort` / `sort_desc` over an f64[] (the retired sort_f64_asc / sort_f64_desc,
-// #5397): bottom-up merge sort, the floating-point exercise of the `Ord` sorts.
-// Covers ascending / descending order, input immutability, the single / empty
-// edge cases, and negatives. f64 arrays are scalar-payload, so this runs on all
-// four native backends and both self-host gates. The Go-side TestSortF64 pins
-// the native backends; this is the migration-shaped companion.
-
 function near(a: f64, b: f64): boolean {
   let d: f64 = a - b;
   if (d < 0.0) {
@@ -41,7 +33,6 @@ function test_descending(): test.TestOutcome {
 function test_immutable(): test.TestOutcome {
   let xs: f64[] = [3.5, 1.2, 4.8];
   let sorted: f64[] = cmp.sort(xs);
-  // original untouched
   if (!near(xs[0], 3.5)) {
     return test.fail("input mutated");
   }

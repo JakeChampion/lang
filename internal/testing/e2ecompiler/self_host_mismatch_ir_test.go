@@ -9,32 +9,6 @@ import (
 	"testing"
 )
 
-// `__mismatch(a, ao, b, bo, n)` on the self-host IR path — the fifth fused SIMD
-// kernel (#8791), and the comparison one the other four left out.
-//
-// ONE kernel answers both questions a caller can ask: equality is
-// `__mismatch(..) == n`, ordering is one indexed load at the returned offset.
-// So the same corpus that proves the offset right proves both callers right,
-// which is why these tests check the offset itself rather than a boolean.
-//
-// The three self-host backends run three different bodies — SSE2 on x86-64,
-// NEON on arm64, v128 on wasm — and the sub-16 band on the two native tiers
-// takes memcmp's overlapping 8- and 4-byte windows rather than the vector loop.
-// Holding all of them to one expectation is what these tests are for: a length
-// sweep that crosses every one of those boundaries, run identically on each.
-
-// mismatchIRProg is SELF-CHECKING: it carries its own reference implementation
-// written in Fern and compares `__mismatch` against it, so the corpus can be
-// swept exhaustively without a Go-side expectation list to keep in step.
-//
-// The sweep runs length 0..40 with the difference at every position, in both
-// operand orders, with a truncated `n`, and with both ranges offset one byte
-// into a longer buffer. That range reaches the scalar remainder, both
-// overlapping windows, one full 16-byte block and two, so every boundary a
-// vector body can get wrong is swept on every backend.
-//
-// A failure returns a small distinct code rather than a count, so the exit
-// status says WHICH shape disagreed. 42 means every comparison matched.
 const mismatchIRProg = `function ref(a: string, ao: i32, b: string, bo: i32, n: i32): i32 {
     let xa: i32 = ao;
     if (xa < 0) { xa = 0; }
@@ -88,8 +62,6 @@ function main(): i32 {
 }
 `
 
-// runMismatchIR compiles mismatchIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runMismatchIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -134,16 +106,6 @@ func TestSelfHostMismatchIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMismatchIRWasm runs the same program through the self-hosted wasm
-// IR driver. This leg is NOT redundant with the two above: the self-host wasm
-// string is a single `[len@0][bytes@4]` block, so both operands always have an
-// address and this tier runs a v128 body where the native wasm backend keeps a
-// scalar one for its two-word SSO strings.
-//
-// The op lowers to a call rather than inline code: the body needs a loop over
-// its own locals, and the operand stack here is the wasm value stack. The
-// helper's presence in the emitted text is asserted, so a module that silently
-// stopped needing it would fail rather than pass by not exercising anything.
 func TestSelfHostMismatchIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host mismatch wasm IR e2e")

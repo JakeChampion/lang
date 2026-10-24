@@ -9,40 +9,26 @@ import (
 	"testing"
 )
 
-// Generic trait + a bound on a PARAMETRISED-trait instantiation
-// (`function f[I: Iterator[i32]](…)`) on the self-host IR path. Before the
-// bound-parser fix the self-host parser stopped at the `[` in `Iterator[i32]`
-// and the function bailed the whole module to the legacy AST emitter; the
-// parser now consumes the trait's bracketed type-arg list, so generic-trait
-// bounds monomorphise and lower through the IR path on every backend — the
-// keystone for a generic (not i32-locked) `Iterator[T]` (#2691 step 1 / #2686).
-// The non-parametrised bound (`[T: Area]`) already worked; this pins the
-// parametrised case, oracle-checked against the native backend.
 var genericTraitBoundCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// generic trait, scalar method, bound on Trait[i32]
 	{"generic-scalar", `pub trait Box[T] { function get(self: Self): T; }
 struct IBox { v: i32 }
 impl Box[i32] for IBox { function get(self: Self): i32 { return self.v; } }
 function unwrap[B: Box[i32]](b: B): i32 { return b.get(); }
 function main(): i32 { let b = IBox { v: 42 }; return unwrap(b); }`, 42},
-	// generic trait, method returns Option[T], bound on Trait[i32]
 	{"generic-option", `pub trait Peek[T] { function peek(self: Self): Option[T]; }
 struct R { cur: i32, end: i32 }
 impl Peek[i32] for R { function peek(self: Self): Option[i32] { if (self.cur >= self.end) { return None; } return Some(self.cur); } }
 function head[P: Peek[i32]](p: P): i32 { match (p.peek()) { Some(v) => { return v + 8; }, None => { return 0; } } }
 function main(): i32 { let r = R { cur: 2, end: 5 }; return head(r); }`, 10},
-	// full generic Iterator[T]: Option[(T, Self)] + a bounded-generic driver
 	{"generic-iterator-sum", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 function sum_it[I: Iterator[i32]](it: I): i32 { let total = 0; let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { total = total + t.0; cur = t.1; }, None => { go = false; }, } } return total; }
 function main(): i32 { let r = RangeIter { cur: 0, end: 5 }; return sum_it(r); }`, 10},
-	// TWO impls of one generic trait driven by ONE bounded-generic function →
-	// two monomorphic clones, each dispatching to its own impl.
 	{"generic-two-impls", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
@@ -52,9 +38,6 @@ function sum_it[I: Iterator[i32]](it: I): i32 { let total = 0; let cur = it; let
 function main(): i32 { return sum_it(RangeIter { cur: 0, end: 5 }) + sum_it(Single { v: 7, done: false }); }`, 17},
 }
 
-// TestNativeGenericTraitBound runs the parametrised-trait-bound programs
-// through the native interpreter + x86-64 + wasm backends (full pipeline incl.
-// monomorph), oracle-checked.
 func TestNativeGenericTraitBound(t *testing.T) {
 	for _, tc := range genericTraitBoundCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,7 +59,6 @@ func TestNativeGenericTraitBound(t *testing.T) {
 	}
 }
 
-// TestNativeGenericTraitBoundArm64 is the arm64 leg (CI-gated; runs under qemu).
 func TestNativeGenericTraitBoundArm64(t *testing.T) {
 	for _, tc := range genericTraitBoundCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,9 +74,6 @@ func TestNativeGenericTraitBoundArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenericTraitBoundIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, pins routing to "ir" (the parser fix keeps parametrised-
-// trait bounds on the IR path), and oracle-checks the exit code.
 func TestSelfHostGenericTraitBoundIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -128,7 +107,6 @@ func TestSelfHostGenericTraitBoundIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenericTraitBoundIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostGenericTraitBoundIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host generic-trait-bound wasm IR e2e")

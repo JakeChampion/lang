@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `.with` straight off a fresh container read. The read owns what it
-// produced, so cow_inplace takes that reference; the borrow-shaped
-// siblings — a field of a live struct, an element of a live array —
-// must still copy, or the container is mutated through the receiver.
-// This row is the guard on the borrow half — a classification that
-// widens changes the answer here; the leak the fresh half used to
-// pay is invisible to an exit code and is gated by
-// TestX86_64AllocScaling instead.
+
+
+
+
+
+
+
+
+
+
+
 struct S { xs: i32[], tag: i32 }
 function mk(): S { return S { xs: [1, 2], tag: 0 }; }
 function borrowed_field(s: S): i32 {

@@ -1,13 +1,13 @@
-// The task combinators called from main, with no scheduler driving it: a
-// program that never depends on which entry runs first answers the same
-// bytes whether its parks suspend (the self-host compiler's transform) or
-// block (the Go compiler's and the interpreter's fallback,
-// docs/NET-P3-SUSPENSION-PLAN.md §3.2). The entries nap through
-// `wait_any` on an empty set under a bound, which no target needs a
-// descriptor for; their naps ascend in input order, so their defers run
-// in that order either way; the race's fastest entry is also its first;
-// and a figure built from an i64, an f64 and a string held across two
-// parks is the plain run's.
+
+
+
+
+
+
+
+
+
+
 import "std/async";
 import "std/i32";
 import "std/time";
@@ -60,9 +60,9 @@ function top(n: i32): i32 {
   return ((a - 5000000000i64) as i32) * 100 + s.len() + ((h * 2.0) as i32);
 }
 
-// held drives a task by hand to its result, waiting out each park's bound
-// itself; how many times it parked is the one thing the two lowerings
-// answer differently, so only the result is printed.
+
+
+
 function held(): i32 {
   let t: async.Task[i32] = async.task_new(() => top(5));
   let st: async.TaskStatus[i32] = async.task_start(t);

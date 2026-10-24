@@ -9,34 +9,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRPerModuleLink exercises the emit half of the per-module
-// compilation epic (#3451 step 1 / #3453, step 3 / #3455): a multi-module
-// program emitted as SEPARATE translation units that link into one binary.
-//
-// asm_ir_run `-ir-unit entry|lib` drives asm_ir.emit_module_ir_unit:
-//   - lib   → emit_module_ir_unit(is_entry=false, globl_defs=true): a library
-//     module exposing only its `.globl __fn_*` definitions, with no
-//     `_start` and no runtime.
-//   - entry → emit_module_ir_unit(is_entry=true, globl_defs=true): the program
-//     entry — `_start` (→ call __fn_main + exit) plus the shared
-//     runtime, defs exported.
-//
-// The entry module A calls `bfoo`, defined in library module B. In A's unit
-// that call is `call __fn_bfoo` against an UNRESOLVED extern; B's unit defines
-// and exports `__fn_bfoo`. Assembling + linking the two .s files resolves the
-// extern, and the binary computes 6*7 = 42. This is exactly #3453's emit
-// acceptance: "A's output references __fn_bfoo as an extern, and the linked
-// binary runs correctly," with eligibility's program-wide known set (the
-// `-ir-extern bfoo` already pinned by TestSelfHostIRExternProbe) admitting the
-// cross-module call.
 func TestSelfHostIRPerModuleLink(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
-	// emit runs the driver over prog (on stdin) with the given args, returning
-	// stdout (the emitted .s).
 	emit := func(t *testing.T, prog string, args ...string) string {
 		t.Helper()
 		var cmd *exec.Cmd
@@ -53,7 +31,6 @@ func TestSelfHostIRPerModuleLink(t *testing.T) {
 		return string(out)
 	}
 
-	// Library module B: defines bfoo. Emitted as a non-entry unit.
 	libSrc := "function bfoo(x: i32): i32 { return x * 7; }"
 	libAsm := emit(t, libSrc, "-ir-unit", "lib")
 	if !strings.Contains(libAsm, ".globl __fn_bfoo") {
@@ -63,8 +40,6 @@ func TestSelfHostIRPerModuleLink(t *testing.T) {
 		t.Fatalf("lib (non-entry) unit must not emit _start\n--- lib.s ---\n%s", libAsm)
 	}
 
-	// Entry module A: calls the imported bfoo (extern), defines main. The
-	// typed lowering checks the unit against B's source (-ir-sigs).
 	sigPath := filepath.Join(dir, "pm_lib.fern")
 	if err := os.WriteFile(sigPath, []byte(libSrc), 0o644); err != nil {
 		t.Fatalf("write pm_lib.fern: %v", err)
@@ -86,8 +61,6 @@ func TestSelfHostIRPerModuleLink(t *testing.T) {
 	if err := os.WriteFile(libPath, []byte(libAsm), 0o644); err != nil {
 		t.Fatalf("write lib.s: %v", err)
 	}
-	// Link the two separately-emitted units into one binary — the cross-module
-	// __fn_bfoo extern is resolved here.
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", entryPath, libPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("link two units failed: %v\n%s", err, out)
 	}

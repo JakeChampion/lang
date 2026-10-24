@@ -1,69 +1,21 @@
-// tests/proposals/jsonpretty.fern — proposal turn, line 5:
-// "A JSON pretty-printer that sorts object keys and normalises number
-// formatting."
-//
-// A pretty-printer that sorts keys and normalises numbers is not a formatter,
-// it is a CANONICALISER — and that is a much stronger thing to be, because it
-// makes two claims that can be checked without a single expected output:
-//
-//   - **It is idempotent.** `pretty(pretty(x)) == pretty(x)`. A printer that
-//     reformats its own output differently is broken in a way no eyeball
-//     catches, and it is what makes a canonical form useless for diffing or
-//     hashing.
-//   - **It is invariant under everything it is supposed to erase.** Reorder an
-//     object's keys, respell `1.50` as `1.5`, add or remove whitespace, and
-//     the output must be byte-identical. This is the property the feature
-//     exists for, and it is swept over generated permutations rather than
-//     asserted on one example.
-//
-// Both are stated over pairs of DIFFERENT inputs that must agree, so neither
-// can be satisfied by a printer that happens to echo its input.
-//
-// Against that sit two tests that stop the canonicaliser from cheating by
-// throwing information away — the failure mode "output the empty string" would
-// otherwise satisfy both properties above:
-//
-//   - the output must PARSE, and parse back to the same value;
-//   - inputs that differ in something the format does NOT erase (a different
-//     number, an extra key, a nested change) must produce different output.
-//
-// Number normalisation is where the interesting decisions live, and they are
-// stated rather than left to a reader: an integral value prints without a
-// fractional part (`1.0` -> `1`), a leading `+` and leading zeros go, `-0`
-// prints as `0`, and a trailing fractional zero goes (`1.50` -> `1.5`). Values
-// are carried as a scaled integer rather than a float so that the same input
-// text prints the same way on every backend — a float round-trip through
-// decimal is exactly the kind of thing that differs between them, and this
-// file wants the differential to be about the printer.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
-
 import "std/test";
 import "std/i32";
 import "std/string";
 
-// A JSON value, flattened into a tag plus payload rather than a recursive
-// enum: children are indices into one arena, which keeps the printer and the
-// parser simple and makes the whole document one comparable value.
-//
-//   kind 0 = null, 1 = bool, 2 = number, 3 = string, 4 = array, 5 = object
 struct Val {
   kind: i32,
   b: boolean,
-  // A number as sign * mantissa / 10^scale, so no float is ever involved.
   neg: boolean,
   mant: i32,
   scale: i32,
   s: string,
-  kids: i32[],  // element indices for arrays; value indices for objects
-  keys: string[],  // object keys, parallel to kids
+  kids: i32[],
+  keys: string[],
 }
 
 struct Doc { vals: Val[], root: i32 }
 
 struct ParseR { ok: boolean, doc: Doc, err: string }
-
-// ------------------------------------------------------------- utilities
 
 function is_digit(c: u8): boolean {
   return c >= 48 && c <= 57;
@@ -97,8 +49,6 @@ function empty_val(): Val {
   };
 }
 
-// ---------------------------------------------------------------- parsing
-
 struct Cursor { at: i32, ok: boolean, err: string }
 
 function skip_ws(text: string, at: i32): i32 {
@@ -109,7 +59,6 @@ function skip_ws(text: string, at: i32): i32 {
   return i;
 }
 
-// A string literal's bytes, with the escapes JSON requires.
 struct StrR { ok: boolean, s: string, at: i32, err: string }
 
 function parse_string(text: string, at: i32): StrR {
@@ -152,8 +101,6 @@ function parse_string(text: string, at: i32): StrR {
   return StrR { ok: false, s: "", at: i, err: "unterminated string" };
 }
 
-// A number as sign, mantissa and scale — no float, so the printed form is a
-// pure function of the digits that were written.
 struct NumR { ok: boolean, neg: boolean, mant: i32, scale: i32, at: i32, err: string }
 
 function parse_number(text: string, at: i32): NumR {
@@ -200,7 +147,7 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
   }
   let c: u8 = text[at];
 
-  if (c == 110) {  // null
+  if (c == 110) {
     if (at + 4 > text.len() || slice_unchecked(text, at, at + 4) != "null") {
       return fail_val(d, at, "expected null");
     }
@@ -208,7 +155,7 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
     d = Doc { vals: d.vals.append(v), root: d.root };
     return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: at + 4, err: "" };
   }
-  if (c == 116 || c == 102) {  // true / false
+  if (c == 116 || c == 102) {
     let lit: string = "true";
     if (c == 102) {
       lit = "false";
@@ -224,7 +171,7 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
     d = Doc { vals: d.vals.append(vb), root: d.root };
     return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: at + lit.len(), err: "" };
   }
-  if (c == 34) {  // string
+  if (c == 34) {
     let sr: StrR = parse_string(text, at);
     if (!sr.ok) {
       return fail_val(d, at, sr.err);
@@ -237,7 +184,7 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
     d = Doc { vals: d.vals.append(vs), root: d.root };
     return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: sr.at, err: "" };
   }
-  if (c == 91) {  // array
+  if (c == 91) {
     let kids: i32[] = [];
     let i: i32 = skip_ws(text, at + 1);
     if (i < text.len() && text[i] == 93) {
@@ -271,7 +218,7 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
     d = Doc { vals: d.vals.append(va), root: d.root };
     return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: i, err: "" };
   }
-  if (c == 123) {  // object
+  if (c == 123) {
     let okids: i32[] = [];
     let okeys: string[] = [];
     let j: i32 = skip_ws(text, at + 1);
@@ -315,7 +262,6 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
     d = Doc { vals: d.vals.append(vo), root: d.root };
     return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: j, err: "" };
   }
-  // number
   let nr: NumR = parse_number(text, at);
   if (!nr.ok) {
     return fail_val(d, at, nr.err);
@@ -343,8 +289,6 @@ function parse(text: string): ParseR {
   return ParseR { ok: true, doc: Doc { vals: r.doc.vals, root: r.idx }, err: "" };
 }
 
-// -------------------------------------------------------------- printing
-
 function repeat(s: string, n: i32): string {
   let out: string = "";
   let i: i32 = 0;
@@ -355,8 +299,6 @@ function repeat(s: string, n: i32): string {
   return out;
 }
 
-// The normalisation rules, in one place: strip trailing fractional zeros,
-// drop an empty fraction entirely, and never print a negative zero.
 function number_text(neg: boolean, mant0: i32, scale0: i32): string {
   let mant: i32 = mant0;
   let scale: i32 = scale0;
@@ -408,8 +350,6 @@ function escape(s: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// The object's keys in sorted order, as indices into its own key list, so the
-// sort is a permutation and cannot lose or duplicate a member.
 function sorted_positions(keys: string[]): i32[] {
   let pos: i32[] = [];
   let i: i32 = 0;
@@ -494,8 +434,6 @@ function pretty(text: string): PrettyR {
   return PrettyR { ok: true, text: print_at(p.doc, p.doc.root, 0), err: "" };
 }
 
-// ---------------------------------------------------------------- corpus
-
 function documents(): string[] {
   return [
     "{\"b\":1,\"a\":2}",
@@ -516,8 +454,6 @@ function documents(): string[] {
   ];
 }
 
-// Inputs that must all canonicalise to the SAME text — the invariance the
-// feature exists for. Each row is a group of equivalent spellings.
 function equivalence_groups(): string[][] {
   return [
     [
@@ -532,8 +468,6 @@ function equivalence_groups(): string[][] {
   ];
 }
 
-// Pairs that must canonicalise DIFFERENTLY — the guard against a printer that
-// satisfies invariance by discarding information.
 function distinct_pairs(): string[] {
   return [
     "{\"a\":1}|{\"a\":2}",
@@ -549,9 +483,6 @@ function distinct_pairs(): string[] {
   ];
 }
 
-// ----------------------------------------------------------------- tests
-
-// Idempotence: the canonical form of the canonical form is itself.
 function test_pretty_printing_is_idempotent(): test.TestOutcome {
   let ds: string[] = documents();
   let i: i32 = 0;
@@ -574,8 +505,6 @@ function test_pretty_printing_is_idempotent(): test.TestOutcome {
   return test.pass();
 }
 
-// Invariance: everything the format is supposed to erase, erased. Every
-// spelling in a group must give byte-identical output.
 function test_equivalent_spellings_canonicalise_identically(): test.TestOutcome {
   let gs: string[][] = equivalence_groups();
   let checked: i32 = 0;
@@ -608,8 +537,6 @@ function test_equivalent_spellings_canonicalise_identically(): test.TestOutcome 
   return test.pass();
 }
 
-// The guard: a canonicaliser that erases too much satisfies the two properties
-// above and is worthless. Documents that genuinely differ must differ.
 function test_distinct_documents_stay_distinct(): test.TestOutcome {
   let ps: string[] = distinct_pairs();
   let i: i32 = 0;
@@ -629,8 +556,6 @@ function test_distinct_documents_stay_distinct(): test.TestOutcome {
   return test.pass();
 }
 
-// The output is valid JSON, and reading it back gives the same document —
-// which is what stops the printer from being merely self-consistent.
 function test_the_output_parses_back_to_the_same_value(): test.TestOutcome {
   let ds: string[] = documents();
   let i: i32 = 0;
@@ -644,7 +569,6 @@ function test_the_output_parses_back_to_the_same_value(): test.TestOutcome {
       return test.fail("document " + i.to_string() + " printed unparseable JSON ("
         + reparsed.err + "):\n" + p.text);
     }
-    // Same value, via the canonical form of the reparse.
     let again: PrettyR = pretty(p.text);
     if (!again.ok || again.text != p.text) {
       return test.fail("document " + i.to_string() + " changed on reparse");
@@ -654,8 +578,6 @@ function test_the_output_parses_back_to_the_same_value(): test.TestOutcome {
   return test.pass();
 }
 
-// Object keys come out sorted, at every depth — checked structurally rather
-// than against an expected string.
 function test_object_keys_are_sorted_at_every_depth(): test.TestOutcome {
   let ds: string[] = documents();
   let d: i32 = 0;
@@ -681,7 +603,6 @@ function test_object_keys_are_sorted_at_every_depth(): test.TestOutcome {
           }
           i = i + 1;
         }
-        // The sort is a permutation: every original position appears once.
         let q: i32 = 0;
         while (q < keys.len()) {
           let seen: i32 = 0;
@@ -706,7 +627,6 @@ function test_object_keys_are_sorted_at_every_depth(): test.TestOutcome {
   return test.pass();
 }
 
-// The stated number rules, each one named.
 function test_the_number_normalisation_rules(): test.TestOutcome {
   let cases: string[] = [
     "1.0|1", "1.50|1.5", "1.500|1.5", "+7|7", "007|7", "-0|0", "-0.0|0",
@@ -728,7 +648,6 @@ function test_the_number_normalisation_rules(): test.TestOutcome {
   return test.pass();
 }
 
-// Malformed input is reported rather than half-printed.
 function test_malformed_input_is_rejected(): test.TestOutcome {
   let bad: string[] = [
     "", "{", "}", "[1,", "{\"a\"}", "{\"a\":}", "{a:1}",

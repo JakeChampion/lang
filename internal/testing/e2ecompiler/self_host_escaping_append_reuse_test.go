@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// #4702 regression: a loop-local array buffer that ESCAPES via `out.append(grp)`
-// must not have its buffer reused for the next iteration's `grp`. The self-host
-// RC pass treated `grp` as dead after the owned append (arr_push_owned stores its
-// pointer with no counted reference), so the `let grp = []` loop-rebind reinit-drop
-// freed a buffer `out` still held — every appended group then aliased the last
-// (`chunks2([1,2,3,4])` read back as [[3,4],[3,4]], so c[0][0] == 3 instead of 1).
-// The fix retains a bare owned pointer-array element on append (the same Perceus
-// dup the struct-field construction applies), so `out` holds a counted reference
-// and grp's dec no longer frees it early. Native + interp were always correct;
-// this pins the self-host backends to the same result.
 const escapingAppendChunksProg = `function chunks2(xs: i32[]): i32[][] {
     let out: i32[][] = [];
     let i: i32 = 0;
@@ -39,8 +29,6 @@ function main(): i32 {
     return 1;
 }`
 
-// TestSelfHostEscapingAppendReuseIRX86_64 drives the #4702 repro through the
-// self-host x86-64 IR driver (asm_run) and checks the read-back is correct (exit 7).
 func TestSelfHostEscapingAppendReuseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -70,8 +58,6 @@ func TestSelfHostEscapingAppendReuseIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEscapingAppendReuseWasm is the wasm32 mirror (same shared
-// lowering, so the retain-on-append fix reaches every backend).
 func TestSelfHostEscapingAppendReuseWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm escaping-append reuse e2e")

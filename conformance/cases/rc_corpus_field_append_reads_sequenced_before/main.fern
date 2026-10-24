@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8523 arm 2, the sequenced no-overlap arm, on the .append it was
-// written for: the length and the element read both precede the grow,
-// so the site is admitted where the flow-insensitive rule refused it.
-// The value is the same either way — what this pins is that admitting
-// it neither corrupts the buffer those reads produced nor unbalances
-// the container's own reference.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

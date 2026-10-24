@@ -1,13 +1,3 @@
-// compiler/wit_fern_world.fern — the `component-type` payload of
-// the `fern` world in cmd/fern/wit/fern.wit, the world `-target wasm32-wasi`
-// composes a program declaring `@import` externs against (wit_compose.fern).
-// The bytes are what `wasm-tools component embed -w fern` writes, exactly as
-// internal/wasm/componenttype/fern.bin holds them; a Go test pins the two
-// equal, and internal/wasm/componenttype/doc.go says how to regenerate both
-// when the WIT changes.
-
-// fern_world_payload is the payload in hex, two digits a byte: a component
-// binary whose type section (id 7) is the world's type body.
 pub function fern_world_payload(): string {
   return "0061736d0d0001000019167769742d636f6d706f6e656e742d656e636f64696e67040007b2380141020141330142010400056572726f720301030013"
     + "776173693a696f2f6572726f7240302e322e300500014208040008706f6c6c61626c6503010168000140010473656c660101000400165b6d6574686f"

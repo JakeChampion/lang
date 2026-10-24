@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// TestWasmArrayMethodSyntax guards the wasm backend's array method-syntax
-// dispatch: `a.<field>(args)` on a pinned array receiver method lowers to a
-// call of that method (the wasm mirror of the asm-backend fix). Before it, a
-// non-intercepted array method fell through to `(i32.const 0)`. The methods are
-// defined inline so the single-file wasm driver exercises the dispatch without
-// an import/bundle step.
-//
-// TestWasm* so the test-e2e-wasm workflow (which installs wasmtime) runs it.
 func TestWasmArrayMethodSyntax(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm array-method-syntax e2e")
@@ -33,10 +25,7 @@ func TestWasmArrayMethodSyntax(t *testing.T) {
 		source string
 		exit   int
 	}{
-		// scalar-returning via method syntax.
 		{"sum_squared", sumSq + "function main(): i32 { let a: i32[] = [5, 3, 8, 1]; return a.sum_squared(); }", 99},
-		// array-returning via method syntax: result must be a live array
-		// (indexable) and rc-swept, not garbage.
 		{"reversed-index", reversed + "function main(): i32 { let a: i32[] = [5, 3, 8, 1]; let b: i32[] = a.reversed(); return b[0]; }", 1},
 		{"reversed-sum", reversed + "function main(): i32 { let a: i32[] = [5, 3, 8, 1]; let b: i32[] = a.reversed(); let s: i32 = 0; for x in b { s = s + x; } return s; }", 17},
 	}

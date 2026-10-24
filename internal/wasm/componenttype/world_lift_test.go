@@ -2,9 +2,6 @@ package componenttype
 
 import "testing"
 
-// TestWorldInterfaces checks the lifted per-interface model against the fern
-// world: import order, and each interface's exported functions + resources
-// (cross-checked with `wasm-tools component wit` on fern.bin).
 func TestWorldInterfaces(t *testing.T) {
 	w, err := DecodeWorld("fern")
 	if err != nil {
@@ -38,7 +35,6 @@ func TestWorldInterfaces(t *testing.T) {
 		}
 	}
 
-	// Spot-check inventories against the known WIT.
 	checkInv(t, byName, "wasi:io/error@0.2.0", nil, []string{"error"})
 	checkInv(t, byName, "wasi:io/streams@0.2.0",
 		[]string{
@@ -50,12 +46,6 @@ func TestWorldInterfaces(t *testing.T) {
 		},
 		[]string{"input-stream", "output-stream"})
 	checkInv(t, byName, "wasi:cli/stdout@0.2.0", []string{"get-stdout"}, nil)
-	// `poll` (the list<borrow<pollable>> -> list<u32> multiplexer) joined the
-	// vendored interface for the self-host wasm backend's wasm_poll (#4316):
-	// that path composes via `wasm-tools component embed` + `component new`,
-	// which resolves imports against the WIT, and a list-typed import cannot be
-	// inferred from the core signature alone. Native is unaffected — it composes
-	// in Go and never reads this.
 	checkInv(t, byName, "wasi:io/poll@0.2.0", []string{"[method]pollable.block", "poll"}, []string{"pollable"})
 	checkInv(t, byName, "wasi:filesystem/preopens@0.2.0", []string{"get-directories"}, nil)
 	checkInv(t, byName, "wasi:random/random@0.2.0", []string{"get-random-bytes", "get-random-u64"}, nil)
@@ -79,14 +69,6 @@ func TestWorldInterfaces(t *testing.T) {
 		[]string{"incoming-datagram-stream", "outgoing-datagram-stream", "udp-socket"})
 }
 
-// TestClassifyEqAliasedRecordResult guards the eq-alias resolution in
-// liftInterface: wall-clock `now: func() -> datetime` returns the `datetime`
-// record through a `(type (eq N))` re-export. The record's two fields flatten
-// to two core values (> the single-flat-result cap), so `now` must classify as
-// KindMem — a memory trampoline whose `canon lower` carries the `memory`
-// option. If the decoder failed to follow the eq-alias the result resolved to
-// a nil def (an opaque handle, flat 1) and `now` mis-classified as KindNoOpt,
-// dropping the memory option and producing a component wasm-tools rejects.
 func TestClassifyEqAliasedRecordResult(t *testing.T) {
 	w, err := DecodeWorld("fern")
 	if err != nil {
@@ -145,8 +127,6 @@ func eqStrings(a, b []string) bool {
 	return true
 }
 
-// TestWorldInterfacesHTTP sanity-checks the http world lifts without error
-// and surfaces its key interfaces.
 func TestWorldInterfacesHTTP(t *testing.T) {
 	w, err := DecodeWorld("http")
 	if err != nil {
@@ -167,9 +147,6 @@ func TestWorldInterfacesHTTP(t *testing.T) {
 	}
 }
 
-// TestWorldFuncSignatures checks P2 slice 2: exported functions resolve to
-// their decoded signatures, and param/result types resolve to the right
-// defined-type kind through the interface's local type space.
 func TestWorldFuncSignatures(t *testing.T) {
 	w, err := DecodeWorld("fern")
 	if err != nil {
@@ -185,7 +162,6 @@ func TestWorldFuncSignatures(t *testing.T) {
 	if bwf.Sig == nil || len(bwf.Sig.Params) != 2 {
 		t.Fatalf("bwf signature wrong: %+v", bwf.Sig)
 	}
-	// param 0 is the receiver handle (borrow), param 1 is contents: list<u8>.
 	if d := streams.ResolveDef(bwf.Sig.Params[0].Ty); d == nil || d.Tag != tagBorrow {
 		t.Errorf("bwf param0 = %v, want borrow", d)
 	}
@@ -199,8 +175,6 @@ func TestWorldFuncSignatures(t *testing.T) {
 		t.Errorf("bwf result = %v, want result", d)
 	}
 
-	// blocking-read returns result<list<u8>, stream-error>: the result's ok
-	// payload is a list (drives mem+realloc classification later).
 	br := findSig(t, streams, "[method]input-stream.blocking-read")
 	rd := streams.ResolveDef(br.Sig.Result)
 	if rd == nil || rd.Tag != tagResult || rd.has_ok() == false {
@@ -210,7 +184,6 @@ func TestWorldFuncSignatures(t *testing.T) {
 		t.Errorf("blocking-read result ok = %v, want list", okd)
 	}
 
-	// get-stdout: no params, returns own<output-stream> (a handle).
 	gs := findSig(t, by["wasi:cli/stdout@0.2.0"], "get-stdout")
 	if gs.Sig == nil || len(gs.Sig.Params) != 0 {
 		t.Fatalf("get-stdout params = %v", gs.Sig)
@@ -233,9 +206,6 @@ func findSig(t *testing.T, wi WorldInterface, name string) WorldFunc {
 	return WorldFunc{}
 }
 
-// TestWorldExportedInterfaces checks P6's export query: the http world's
-// exported wasi:http/incoming-handler interface is lifted with its `handle`
-// function (docs/WIT-BRING-YOUR-OWN.md).
 func TestWorldExportedInterfaces(t *testing.T) {
 	w, err := DecodeWorld("http")
 	if err != nil {

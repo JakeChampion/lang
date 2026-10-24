@@ -1,5 +1,3 @@
-// Ordinary array FIFO control: append and copy the suffix when dropping front.
-// This deliberately uses the existing std/array API; operations may allocate.
 import "std/array";
 
 pub struct Ring {

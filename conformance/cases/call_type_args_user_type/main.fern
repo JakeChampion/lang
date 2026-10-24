@@ -1,8 +1,8 @@
-// Explicit type arguments naming user-defined types (#7040). A lone name in
-// the bracket parses as an index and is retagged once the base is known to be
-// a generic function; a comma or a nested type bracket makes it a type list
-// at parse time. A call inside the bracket keeps it an index. Before a `{`
-// any name list is a struct literal's type arguments.
+
+
+
+
+
 import "./lib";
 
 struct Loc { n: i32 }

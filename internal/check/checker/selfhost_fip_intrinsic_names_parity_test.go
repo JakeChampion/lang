@@ -11,16 +11,8 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Two name lists in compiler/checker.fern mirror a native table and
-// are pinned to it entry for entry here: registered_intrinsics, the `__` names
-// a free function may not take (E006), and fip_builtin_callees' literal, the
-// builtins a `fip` function may call (fipNonAllocBuiltins, #9607). A name
-// missing on either side is a program the two checkers disagree on.
-
 var quotedNameRE = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
 
-// selfHostNameList returns the quoted names in the first `[ ... ]` after the
-// declaration of `fn` in the self-host checker.
 func selfHostNameList(t *testing.T, fn string) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", "checker.fern"))

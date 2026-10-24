@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// okReturnArrProg pins move-on-return through a built-in wrapper: `return Ok(a)`
-// / `return Some(a)` over an owned array LOCAL moves the local into the
-// Result/Option box, so the exit sweep must not also release it. A stray
-// release is a use-after-free for an EMPTY array (`[]`), whose block the
-// caller's next string allocation recycles — so `names` aliases `s` and
-// `names.len()` reads `s`'s length. `__fern_read_dir` on an empty directory
-// returns exactly this `Ok([])` (#2649/#5290; the filesystem_ops /
-// string_count_and_dir_listing std/test gates).
-//
-// probe returns 0*100 + 10 = 10 when sound; the UAF makes names.len() read the
-// recycled string box, so probe != 10 (exit 97/96); a double-free trips the
-// underflow detector (exit 99).
 const okReturnArrProg = `function mk_ok(): Result[string[], i32] { let names: string[] = []; return Ok(names); }
 function mk_some(): Option[string[]] { let names: string[] = []; return Some(names); }
 function probe_ok(): i32 {
@@ -45,8 +33,6 @@ function main(): i32 {
     return 0;
 }`
 
-// TestSelfHostOkReturnArrReclaimIRX86_64 pins the move-on-return of an owned
-// array local wrapped in Ok(...) / Some(...) on the x86-64 IR path.
 func TestSelfHostOkReturnArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -76,7 +62,6 @@ func TestSelfHostOkReturnArrReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOkReturnArrReclaimWasmIR is the wasm sibling under wasmtime.
 func TestSelfHostOkReturnArrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping Ok-return array reclaim wasm IR e2e")
@@ -111,7 +96,6 @@ func TestSelfHostOkReturnArrReclaimWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostOkReturnArrReclaimIRArm64 is the arm64 sibling under qemu.
 func TestSelfHostOkReturnArrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

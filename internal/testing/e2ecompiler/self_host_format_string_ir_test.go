@@ -2,16 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// formatStringIRCases exercise std/format's `format(fmt, args)` — `{}`-
-// placeholder substitution — through the self-host IR path on x86-64 + wasm.
-// (TestSelfHostFormatBytesIR already covers format_bytes; `format` itself was a
-// "self-host pending" audit gap.) The body is inlined as `fmt_format`; this
-// verifies the constructs `format` compiles to lower on the IR path: string
-// `.len()`, byte index `s[i]`, single-char `slice_unchecked`, string concat,
-// and `string[]` index/`.len()` across a while loop. Each program returns the
-// rendered string's length (kept <= 126) and is oracle-checked against the
-// reference interpreter (cf. the hardcoded-expectation gap in #2908).
-// FEATURE-AUDIT std/format row.
 const formatStringIRPrelude = `function fmt_format(fmt: string, args: string[]): string {
     let n: i32 = fmt.len();
     let out: string = "";
@@ -45,22 +35,13 @@ var formatStringIRCases = []struct {
 	name string
 	main string
 }{
-	// "a{}b{}c" + ["x","yy"] -> "axbyyc" (6).
 	{"two-args", `let a: string[] = ["x", "yy"]; return fmt_format("a{}b{}c", a).len();`},
-	// underflow: "{}{}" + ["x"] -> "x{}" (3) — the missing arg stays literal.
 	{"underflow", `let a: string[] = ["x"]; return fmt_format("{}{}", a).len();`},
-	// no placeholder: "hello" + [] -> "hello" (5).
 	{"no-placeholder", `let a: string[] = []; return fmt_format("hello", a).len();`},
-	// trailing text after a placeholder: "{}-end" + ["ab"] -> "ab-end" (6).
 	{"trailing-text", `let a: string[] = ["ab"]; return fmt_format("{}-end", a).len();`},
-	// escaped braces (Python/Rust convention): "{{}}" + [] -> "{}" (2); the
-	// `{{`/`}}` are NOT consumed as a placeholder.
 	{"escaped-empty", `let a: string[] = []; return fmt_format("{{}}", a).len();`},
-	// `{{` -> literal "{" amid text: "a{{b" + [] -> "a{b" (3).
 	{"escaped-open", `let a: string[] = []; return fmt_format("a{{b", a).len();`},
-	// escape + placeholder: "{{{}}}" + ["X"] -> "{X}" (3).
 	{"escape-then-arg", `let a: string[] = ["X"]; return fmt_format("{{{}}}", a).len();`},
-	// `}}` -> literal "}": "x}}y" + [] -> "x}y" (3).
 	{"escaped-close", `let a: string[] = []; return fmt_format("x}}y", a).len();`},
 }
 
@@ -68,8 +49,6 @@ func formatStringIRSrc(mainBody string) string {
 	return formatStringIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostFormatStringIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostFormatStringIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

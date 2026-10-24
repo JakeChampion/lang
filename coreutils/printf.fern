@@ -1,43 +1,3 @@
-// printf.fern — GNU-compatible `printf`.
-//
-//   printf FORMAT [ARGUMENT]...
-//
-// The format is walked once per group of arguments: every `%`
-// directive consumes one argument (a missing one reads as the empty
-// string, which is 0 for a number), and when arguments are left over
-// the whole format runs again, so `printf '%s\n' a b c` prints three
-// lines. Backslash escapes in the format are interpreted; `\c` ends
-// all output there and then.
-//
-// printf(1) does not use getopt: `--help` and `--version` are answered
-// only as the SOLE argument, a leading `--` is skipped, and everything
-// else is the format followed by its operands — `printf --v` prints
-// `--v`.
-//
-// Conversions are C's (d i o u x X f F e E g G a A c s) plus GNU's
-// `%b` (the argument with escapes interpreted, `\0NNN` octal) and `%q`
-// (the argument shell-quoted). Every argument is parsed as C would:
-// integers with strtoimax/strtoumax (base 0, so `010` is octal and
-// `0x1f` hex), floats with strtold, and a leading `'` or `"` names a
-// character constant. A bad number is reported and the program goes
-// on, exiting 1 at the end.
-//
-// FLOATS ARE LONG DOUBLE, because GNU's are — and which format that
-// is belongs to the machine rather than to this file: x87 80-bit
-// extended on x86-64, IEEE binary128 on arm64 and wasm32, plain
-// binary64 on Darwin. `lib/ld.fern` is the model and picks the
-// target's. So `1e400` is finite except where the type is binary64,
-// `0.1` prints as many exact decimal digits as the significand holds,
-// and `%a` of 1 is `0x8p-3` where the integer bit is stored against
-// `0x1p+0` where it is implied. Arguments are parsed with correct
-// rounding and printed from the exact binary value, which is the only
-// way to match glibc digit for digit.
-//
-// glibc refuses a single conversion whose output would reach INT_MAX-1
-// bytes — the directive prints nothing and the stream carries an error
-// that close_stdout reports as `write error`, exit 1. That refusal is
-// reproduced (`werr`), the two-gigabyte successes below it are not
-// something anyone can test.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -45,12 +5,6 @@ import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/ld";
 
-// ---- program state ---------------------------------------------------------
-// `Pf` threads through every formatter: the buffered stdout, the exit
-// status accumulated from non-fatal argument errors, whether a
-// directive was refused the way glibc refuses one (see the header),
-// whether POSIXLY_CORRECT is set, and the target's long double, which
-// every float conversion is parsed into and printed from.
 struct Pf { o: io_buffered.BufWriter, status: i32, werr: boolean, posix: boolean, ldbl: ld.Format }
 
 function emit(p: Pf, s: string): Pf {
@@ -62,7 +16,6 @@ function emit_byte(p: Pf, b: i32): Pf {
   return Pf { ...p, o: p.o.settle() };
 }
 
-// A range can contain partial UTF-8 scalars; only the backing source is text.
 function emit_range(p: Pf, s: string, lo: i32, hi: i32): Pf {
   if (hi <= lo) {
     return p;
@@ -73,15 +26,12 @@ function emit_range(p: Pf, s: string, lo: i32, hi: i32): Pf {
   return Pf { ...p, o: p.o.write_range(s, lo, hi) };
 }
 
-// `diag(p, msg)` — a diagnostic the way error() prints one: stdout is
-// flushed first, and a flush that fails drops what it held.
 function diag(p: Pf, msg: string): Pf {
   let o: io_buffered.BufWriter = p.o.flush();
   gnu.error(msg);
   return Pf { ...p, o: o };
 }
 
-// Preserve diag's unconditional stdout flush while reporting a raw span.
 function diag_range(p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: string): Pf {
   let o: io_buffered.BufWriter = p.o.flush();
   let h: usize = buf_new(prefix.len() + hi - lo + suffix.len());
@@ -98,15 +48,11 @@ function diag_range(p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: 
   return Pf { ...p, o: o };
 }
 
-// `close_stdout(p, code)` — the end of the program by any route. A
-// refused conversion is the stream's error flag, as it is in glibc.
 function close_stdout(p: Pf, code: i32): void {
   gnu.close_stdout(p.o, p.werr);
   exit(code);
 }
 
-// A fatal diagnostic keeps what was already printed, like
-// error(EXIT_FAILURE, …) ahead of close_stdout.
 function fatal(p: Pf, msg: string): void {
   close_stdout(diag(p, msg), 1);
 }
@@ -151,7 +97,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- byte classes ----------------------------------------------------------
 function is_digit(b: i32): boolean {
   return b >= 48 && b <= 57;
 }
@@ -160,7 +105,6 @@ function is_octal_digit(b: i32): boolean {
   return b >= 48 && b <= 55;
 }
 
-// The value of one hex digit, or -1 for a byte that is not one.
 function hex_digit(b: i32): i32 {
   if (b >= 48 && b <= 57) {
     return b - 48;
@@ -184,7 +128,6 @@ function hex_char(v: i32, upper: boolean): i32 {
   return 87 + v;
 }
 
-// isspace in the C locale.
 function is_space(b: i32): boolean {
   return b == 32 || b >= 9 && b <= 13;
 }
@@ -208,11 +151,6 @@ function octal3(b: i32): string {
   return string_from_bytes_unchecked(d);
 }
 
-// ---- quoting ---------------------------------------------------------------
-//
-// Diagnostics quote their argument with gnu.quote; %q is the shell
-// style below.
-// The letter C spells a control byte with, or -1.
 function control_letter(b: i32): i32 {
   if (b == 7) {
     return 97;
@@ -248,22 +186,10 @@ function append_str(out: u8[], s: string): u8[] {
   return bs;
 }
 
-// A byte the shell gives meaning to wherever it stands.
 function shell_special(b: i32): boolean {
   return b == 32 || b == 33 || b == 34 || b == 36 || b == 38 || b == 39 || b == 40 || b == 41 || b == 42 || b == 59 || b == 60 || b == 61 || b == 62 || b == 63 || b == 91 || b == 92 || b == 94 || b == 96 || b == 124 || !is_print(b);
 }
 
-// `shell_quote(s)` — %q: gnulib's shell-escape quoting. A word the
-// shell would read back unchanged is left bare. One containing a
-// single quote goes in double quotes when every other byte is one C
-// and shell quoting agree on — printable, not shell-special, not a
-// brace, and `#` / `~` only in first position. Everything else is
-// single-quoted, with `'` spelled `'\''` and each run of
-// non-printable bytes in its own $'…' segment.
-//
-// A string holding a `'` is scanned twice, and the second pass starts
-// afresh: GNU <= 9.9 carried the first pass's "inside $'…'" state
-// into it, which opened such a string with the segment already open.
 function shell_quote(s: string): string {
   if (s.len() == 0) {
     return "''";
@@ -337,16 +263,6 @@ function shell_quote(s: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-// ---- escapes ---------------------------------------------------------------
-// `print_esc(p, s, i, octal_0)` — interpret the escape whose backslash
-// is at `s[i]`, returning the index after it and whether it was `\c`.
-// `octal_0` is the %b rule, where `\0` starts an octal escape of up to
-// three MORE digits; in the format a leading 0 is just the first of at
-// most three.
-//
-// `\u` and `\U` take exactly four / eight hex digits. In the C locale
-// only ASCII can be encoded, so any other code point is written back
-// as its escape with upper-case hex; a surrogate is refused outright.
 function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolean) {
   let n: i32 = s.len();
   let j: i32 = i + 1;
@@ -461,8 +377,6 @@ function hex_padded(v: i64, width: i32, upper: boolean): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `print_b(p, s)` — %b: the argument with its escapes interpreted.
-// The boolean is true when `\c` ended the output.
 function print_b(p: Pf, s: string): (Pf, boolean) {
   let q: Pf = p;
   let n: i32 = s.len();
@@ -488,9 +402,6 @@ function print_b(p: Pf, s: string): (Pf, boolean) {
   return (q, false);
 }
 
-// ---- numeric arguments -----------------------------------------------------
-// `IntParse` — what strtoimax / strtoumax report: the value's bits,
-// ERANGE, and where parsing stopped (0 when no number was found).
 struct IntParse { bits: u64, erange: boolean, end: i32 }
 
 function u64_max(): u64 {
@@ -501,10 +412,6 @@ function i64_min_mag(): u64 {
   return 9223372036854775808 as u64;
 }
 
-// `strtox(s, unsigned)` — strtoimax / strtoumax with base 0: leading
-// white space, a sign, then `0x` hex, `0b` binary (glibc 2.38+, not
-// Apple's libc), a leading `0` for octal, else decimal. Overflow keeps consuming digits
-// and clamps; an unsigned negative wraps modulo 2^64 as glibc does.
 function strtox(s: string, unsigned: boolean): IntParse {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -565,8 +472,6 @@ function strtox(s: string, unsigned: boolean): IntParse {
   return IntParse { bits: bits, erange: erange, end: i };
 }
 
-// `char_constant(s)` — `'x` / `"x` names the byte after the quote;
-// -1 when `s` is not that shape.
 function char_constant(s: string): i32 {
   if (s.len() >= 2 && (s[0] as i32 == 39 || s[0] as i32 == 34)) {
     return s[1] as i32;
@@ -581,11 +486,6 @@ function warn_char_rest(p: Pf, s: string): Pf {
   return p;
 }
 
-// `verify_numeric(p, s, erange, end)` — the diagnostic after a number
-// conversion, in the order verify_numeric checks: nothing converted
-// first, then ERANGE, then trailing bytes. An empty argument therefore
-// reaches the first of the three rather than passing silently. None is
-// fatal; the exit status becomes 1.
 function verify_numeric(p: Pf, s: string, erange: boolean, end: i32): Pf {
   if (end == 0) {
     return Pf { ...diag(p, gnu.quote(s) + ": expected a numeric value"), status: 1 };
@@ -599,7 +499,6 @@ function verify_numeric(p: Pf, s: string, erange: boolean, end: i32): Pf {
   return p;
 }
 
-// `arg_int(p, s, unsigned)` — the integer an argument names, as bits.
 function arg_int(p: Pf, s: string, unsigned: boolean): (Pf, u64) {
   let cc: i32 = char_constant(s);
   if (cc >= 0) {
@@ -609,7 +508,6 @@ function arg_int(p: Pf, s: string, unsigned: boolean): (Pf, u64) {
   return (verify_numeric(p, s, r.erange, r.end), r.bits);
 }
 
-// `arg_float(p, s)` — the long double an argument names.
 function arg_float(p: Pf, s: string): (Pf, ld.LD) {
   let cc: i32 = char_constant(s);
   if (cc >= 0) {
@@ -619,37 +517,22 @@ function arg_float(p: Pf, s: string): (Pf, ld.LD) {
   return (verify_numeric(p, s, r.erange, r.end), r.v);
 }
 
-// ---- conversion specifications -------------------------------------------
-// `Spec` — one parsed `%` directive. `width` and `prec` are -1 when
-// absent; a negative width from `*` has already become the `-` flag.
 struct Spec { minus: boolean, plus: boolean, space: boolean, hash: boolean, zero: boolean, width: i64, prec: i64, conv: i32 }
 
 function none(): i64 {
   return 0 as i64 - 1 as i64;
 }
 
-// `Field` — one conversion laid out for `pad`. `prefix` is the sign or
-// radix, which a `0` flag pads AFTER; `head` and `tail` sandwich the
-// `zeros` a precision wider than the digits calls for — for an integer
-// the digits are all `tail`, for `%e` and `%a` the exponent is.
 struct Field { prefix: string, head: string, zeros: i64, tail: string }
 
 function signed(prefix: string, body: string): Field {
   return Field { prefix: prefix, head: "", zeros: 0 as i64, tail: body };
 }
 
-// `fill_block()` — how much of a run of padding one write carries. A
-// field may run to INT_MAX bytes, which is not a string to allocate.
 function fill_block(): i32 {
   return 65536;
 }
 
-// glibc's vfprintf abandons a directive at the first write that fails
-// INSIDE it, leaving the buffer empty, so nothing of that directive is
-// pending at the close and close_stdout reports a bare `write error`.
-// A directive that starts on an already-failing stream keeps writing,
-// and what it leaves pending is what close_stdout names the errno for.
-// `was` below is that distinction.
 function stream_failed(p: Pf): boolean {
   match (p.o.error()) {
     Some(_) => {
@@ -671,8 +554,6 @@ function put_part(p: Pf, was: boolean, s: string): Pf {
   return emit(p, s);
 }
 
-// `fill_part(p, was, ch, n)` — `n` copies of a one-byte string, a block
-// at a time.
 function fill_part(p: Pf, was: boolean, ch: string, n: i64): Pf {
   let q: Pf = p;
   let left: i64 = n;
@@ -692,11 +573,6 @@ function fill_part(p: Pf, was: boolean, ch: string, n: i64): Pf {
   return q;
 }
 
-// `pad(p, spec, f, zero_ok)` — emit one conversion: the field's pieces
-// in order, with the width made up by zeros between prefix and head
-// when the `0` flag applies and by spaces on the side `-` selects
-// otherwise. A field glibc could not produce is dropped and remembered
-// (see the header).
 function pad(p: Pf, spec: Spec, f: Field, zero_ok: boolean): Pf {
   let len: i64 = f.prefix.len() as i64 + f.head.len() as i64 + f.zeros + f.tail.len() as i64;
   let total: i64 = len;
@@ -728,7 +604,6 @@ function pad(p: Pf, spec: Spec, f: Field, zero_ok: boolean): Pf {
   return put_part(q, was, f.tail);
 }
 
-// %s precision and %c select bytes, with the same width/error rules as pad.
 function pad_range(p: Pf, spec: Spec, s: string, lo: i32, hi: i32): Pf {
   let len: i64 = (hi - lo) as i64;
   let total: i64 = len;
@@ -766,7 +641,6 @@ function sign_prefix(spec: Spec, neg: boolean): string {
   return "";
 }
 
-// Digits of `v` in `base`, most significant first.
 function radix_digits(v: u64, base: u64, upper: boolean): string {
   if (v == 0 as u64) {
     return "0";
@@ -786,12 +660,10 @@ function radix_digits(v: u64, base: u64, upper: boolean): string {
   return string_from_bytes_unchecked(out);
 }
 
-// The sign bit of an intmax_t, which is where %d and %i read one.
 function top_bit(): u64 {
   return 9223372036854775808 as u64;
 }
 
-// %d %i %o %u %x %X.
 function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
   let conv: i32 = spec.conv;
   let neg: boolean = false;
@@ -818,8 +690,6 @@ function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
       }
     }
   }
-  // Zeros a precision wider than the digits calls for go to `pad` as a
-  // count: at INT_MAX they are not a string to build.
   let zeros: i64 = 0 as i64;
   if (spec.prec >= 0 as i64) {
     if (spec.prec == 0 as i64 && mag == 0 as u64) {
@@ -837,7 +707,6 @@ function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
   return pad(p, spec, Field { prefix: prefix, head: "", zeros: zeros, tail: digits }, spec.prec < 0 as i64);
 }
 
-// %f %F %e %E %g %G %a %A.
 function fmt_float(p: Pf, spec: Spec, v: ld.LD): Pf {
   let conv: i32 = spec.conv;
   let upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
@@ -871,8 +740,6 @@ function fmt_float(p: Pf, spec: Spec, v: ld.LD): Pf {
   return emit_body(p, spec, prefix, ld.general(d, prec, spec.hash, upper, extra));
 }
 
-// A body glibc would refuse is the stream's error flag rather than
-// output (see the header).
 function emit_body(p: Pf, spec: Spec, prefix: string, b: ld.Body): Pf {
   if (b.refused) {
     return Pf { ...p, werr: true };
@@ -880,11 +747,6 @@ function emit_body(p: Pf, spec: Spec, prefix: string, b: ld.Body): Pf {
   return pad(p, spec, Field { prefix: prefix, head: b.head, zeros: b.zeros, tail: b.tail }, true);
 }
 
-// %a: the significand in hex from lib/ld's model of the target's long
-// double — how many digits it carries, and whether its leading one is
-// the stored integer bit or the implied 1, are the format's to say. The
-// refusal check is here because the length it bounds counts the sign
-// and the `0x` this function adds.
 function fmt_hex_float(p: Pf, spec: Spec, v: ld.LD, prefix: string, upper: boolean): Pf {
   let radix: string = "0x";
   let b: ld.Body = p.ldbl.hex_parts(v, spec.prec, spec.hash);
@@ -895,14 +757,6 @@ function fmt_hex_float(p: Pf, spec: Spec, v: ld.LD, prefix: string, upper: boole
   return pad(p, spec, Field { prefix: prefix + radix, head: b.head, zeros: b.zeros, tail: b.tail }, true);
 }
 
-// ---- the format walk ---------------------------------------------------------
-// `Args` — GNU's `arg_cursor`. `base` is where the operands start in
-// argv; the other four are offsets from it and all start at -1. `curr`
-// selects the operand the directive being printed reads, `seq` is the
-// position a directive without an index advances, `used` is the highest
-// offset any directive touched — which is what one pass over the format
-// consumes — and `direc` is the index an explicit `N$` on the directive
-// itself named.
 struct Args { argv: string[], base: i32, curr: i32, seq: i32, used: i32, direc: i32 }
 
 function args_new(argv: string[], base: i32): Args {
@@ -913,9 +767,6 @@ function arg_count(a: Args): i32 {
   return a.argv.len() - a.base;
 }
 
-// Whether the operand `curr` selects exists. It does not once a format
-// asks for more than were given, and GNU prints zero or the empty
-// string for that rather than diagnosing it.
 function arg_present(a: Args): boolean {
   return a.curr >= 0 && a.curr < arg_count(a);
 }
@@ -927,9 +778,6 @@ function arg_text(a: Args): string {
   return a.argv[a.base + a.curr];
 }
 
-// Operands one pass over the format consumed: one past the highest
-// offset it read, which for an indexed format is not the count of
-// directives.
 function args_consumed(a: Args): i32 {
   let n: i32 = a.used + 1;
   if (n > arg_count(a)) {
@@ -938,11 +786,6 @@ function args_consumed(a: Args): i32 {
   return n;
 }
 
-// `index_arg(s, j)` — the `N$` at `s[j]`, as a 1-based operand number,
-// or 0 when what is there is not one. Read a digit at a time rather
-// than through the number parser, which would take the `$` for part of
-// the number in some locales; an N past INT_MAX becomes INT_MAX, which
-// is simply past the end of any argv.
 function index_arg(s: string, j: i32): (i32, i32) {
   let n: i32 = s.len();
   if (j >= n || !is_digit(s[j] as i32)) {
@@ -968,11 +811,6 @@ function index_arg(s: string, j: i32): (i32, i32) {
   return (0, j);
 }
 
-// `cursor(pos, s, j, a)` — GNU's `get_curr_arg`: point the cursor at
-// the operand the next piece of the directive reads. `pos` is 0 for the
-// directive itself, 1 for a `*` width, 2 for a `*` precision and 3 for
-// the conversion; only the first three may carry an `N$`, and the
-// conversion falls back to the directive's own index when it has one.
 function cursor(pos: i32, s: string, j: i32, a: Args): (i32, Args) {
   let ac: Args = a;
   let nj: i32 = j;
@@ -1017,8 +855,6 @@ function is_conversion(b: i32): boolean {
   return b == 100 || b == 105 || b == 111 || b == 117 || b == 120 || b == 88 || b == 102 || b == 70 || b == 101 || b == 69 || b == 103 || b == 71 || b == 97 || b == 65 || b == 99 || b == 115;
 }
 
-// Digits of a literal width or precision, saturating well past the
-// point glibc refuses.
 function read_number(s: string, i: i32): (i64, i32) {
   let j: i32 = i;
   let v: i64 = 0 as i64;
@@ -1039,8 +875,6 @@ function bad_spec(p: Pf, s: string, from: i32, to: i32): void {
   close_stdout(diag_range(p, "", s, from, stop, ": invalid conversion specification"), 1);
 }
 
-// A `*` width: an int, or a fatal diagnostic naming it. An operand the
-// format asked for but was not given is a width of zero.
 function star_width(p: Pf, a: Args): (Pf, i64) {
   if (!arg_present(a)) {
     return (p, 0 as i64);
@@ -1054,8 +888,6 @@ function star_width(p: Pf, a: Args): (Pf, i64) {
   return (r.0, v);
 }
 
-// A `*` precision: any negative value means "none", however negative;
-// only one past INT_MAX is a fault.
 function star_precision(p: Pf, a: Args): (Pf, i64) {
   if (!arg_present(a)) {
     return (p, 0 as i64);
@@ -1072,9 +904,6 @@ function star_precision(p: Pf, a: Args): (Pf, i64) {
   return (r.0, v);
 }
 
-// `directive(p, s, i, a)` — parse and print the `%` directive at
-// `s[i]`; returns the index after it and whether `\c` (inside a %b)
-// ended the output.
 function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) {
   let n: i32 = s.len();
   let j: i32 = i + 1;
@@ -1199,8 +1028,6 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
   return (fmt_int(ir.0, spec, ir.1), j + 1, args, false);
 }
 
-// `print_formatted(p, s, a)` — one pass over the format; the boolean
-// is true when `\c` ended the output.
 function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
   let q: Pf = p;
   let args: Args = a;

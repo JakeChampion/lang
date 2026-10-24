@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrReclaimIRX86_64 checks typed release of nested arrays:
-// row buffers, string elements and the outer buffer are reclaimed while
-// borrowed rows and strings remain readable, with no underflow.
 func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -41,8 +38,6 @@ func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// string[][] churn — the slice target: rows + string elements all fresh,
-	// whole structure freed per rebind, flat at detector zero.
 	run(t, `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -65,8 +60,6 @@ func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
     return 0;
 }`, "arrarr-str-flat", 0)
 
-	// i32[][] churn with EXPRESSION inner elements (idents / binaries — value-
-	// copied scalars, admitted by the lax rows-are-literals credit), flat.
 	run(t, `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -89,9 +82,6 @@ func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
     return 0;
 }`, "arrarr-scalar-flat", 0)
 
-	// ROW-ALIAS exclusion: `let row = g[1]` binds an inner buffer pointer, so
-	// the candidate is rejected — row stays readable at detector zero (the
-	// structure keeps its prior sound leak).
 	run(t, `function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -107,9 +97,6 @@ func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
     return 0;
 }`, "arrarr-row-alias-safe", 0)
 
-	// STRING-VAR inner element: `[[s1]]` stores a live local's pointer — the
-	// strict "ARRARRS:" credit is withheld (string-kind slot, non-fresh
-	// element), so nothing is freed and s1 survives at detector zero.
 	run(t, `function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;

@@ -12,11 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The constant-time gate (docs/NET-P4-TLS-PLAN.md slice 2). `__ct_secret`
-// marks bytes undefined for valgrind's memcheck and `__ct_public` marks them
-// defined again, so memcheck reports a branch or an address computed from a
-// secret byte. Each program answers 0 when it computed the right thing, and
-// a flagged one makes `valgrind --error-exitcode=3` exit 3.
 type ctGateCase struct {
 	name    string
 	src     string
@@ -24,9 +19,6 @@ type ctGateCase struct {
 }
 
 var ctGateCases = []ctGateCase{
-	// The secret branches return through a call, so they stay branches: arms
-	// that only pick a constant would be a conditional move (ssa.select_branches),
-	// which steers nothing.
 	{"secret-branch", `@noinline function zero(): i32 { return 0; }
 function main(): i32 {
   let k: u8[] = __alloc_u8(16);
@@ -59,8 +51,6 @@ function main(): i32 {
   return 1;
 }
 `, false},
-	// A string's byte view is a tagged descriptor, not a packed array: the
-	// mark must land on the string's own bytes.
 	{"string-view-secret", `@noinline function zero(): i32 { return 0; }
 function main(): i32 {
   let s: string = "pass" + "word";
@@ -83,8 +73,6 @@ function main(): i32 {
   return 1;
 }
 `, false},
-	// The AEAD over a secret key and plaintext: open's tag verdict is the one
-	// secret-derived value it branches on, and it declassifies exactly that.
 	{"chacha20poly1305", `import "std/crypto/chacha20poly1305";
 
 function filled(n: i32, seed: i32): u8[] {
@@ -150,8 +138,6 @@ function main(): i32 {
   return 6;
 }
 `, false},
-	// AES-GCM over a secret key and plaintext, AES-128 and AES-256: the
-	// kernels branch on lengths only, and open declassifies only its verdict.
 	{"aes_gcm", `import "std/crypto/aes_gcm";
 
 function filled(n: i32, seed: i32): u8[] {
@@ -225,8 +211,6 @@ function main(): i32 {
   return round_trip(32);
 }
 `, false},
-	// The key exchange over two secret scalars: the ladder swaps by mask, and
-	// the low-order refusal declassifies only its all-zero verdict.
 	{"x25519", `import "std/crypto/x25519";
 
 function filled(seed: i32): u8[] {
@@ -287,8 +271,6 @@ function main(): i32 {
   return 6;
 }
 `, false},
-	// The KEM over secret seeds: a round trip, then implicit rejection of a
-	// modified ciphertext, which must yield another secret without a branch.
 	{"mlkem768", `import "std/crypto/mlkem768";
 
 function filled(seed: i32): u8[] {
@@ -360,8 +342,6 @@ function main(): i32 {
   return 6;
 }
 `, false},
-	// The hybrid key exchange over secret entropy on both sides: the shares
-	// are public, and the two shared secrets must agree.
 	{"tls_keyshare", `import "std/tls/keyshare";
 
 function filled(n: i32, seed: i32): u8[] {
@@ -425,9 +405,6 @@ function main(): i32 {
   return 5;
 }
 `, false},
-	// Signing under a secret seed: the base-point multiplication reads every
-	// table entry and keeps one by mask. The public key and the signature
-	// are public outputs, and verification runs on them alone.
 	{"ed25519", `import "std/crypto/ed25519";
 
 function filled(n: i32, seed: i32): u8[] {
@@ -470,10 +447,6 @@ function main(): i32 {
   return 5;
 }
 `, false},
-	// ECDSA signing under a secret scalar, on both curves: the field and
-	// order arithmetic choose by mask, the base-point multiplication reads
-	// every table entry, and only the range verdicts and the signature are
-	// declassified. Verification runs on public values.
 	{"ecdsa", `import "std/crypto/ecdsa";
 import "std/crypto/sha2";
 
@@ -525,8 +498,6 @@ function main(): i32 {
   return signs(ecdsa.P256, sha2.Sha256, 32) + 10 * signs(ecdsa.P384, sha2.Sha384, 48);
 }
 `, false},
-	// ECDH over P-256 with both scalars secret: the peer's point is public,
-	// and only the two shared secrets are declassified, to compare.
 	{"p256-ecdh", `import "std/crypto/ecdsa";
 
 function filled(seed: i32): u8[] {
@@ -598,9 +569,6 @@ function main(): i32 {
 
 const ctUninitialised = "depends on uninitialised value"
 
-// ctCompile writes each case's source and compiles it for target with the
-// self-host CLI, through the compiler's own assembler and linker as `fern -o`
-// does, returning the binaries by case name.
 func ctCompile(t *testing.T, runner []string, cli, stdlib, target string) map[string]string {
 	t.Helper()
 	dir := t.TempDir()
@@ -623,7 +591,6 @@ func ctCompile(t *testing.T, runner []string, cli, stdlib, target string) map[st
 	return bins
 }
 
-// exitOf runs cmd and answers its exit status and stderr.
 func exitOf(t *testing.T, cmd *exec.Cmd) (int, string) {
 	t.Helper()
 	var stderr strings.Builder
@@ -636,9 +603,6 @@ func exitOf(t *testing.T, cmd *exec.Cmd) (int, string) {
 	return cmd.ProcessState.ExitCode(), stderr.String()
 }
 
-// ctGate runs every case natively, where the marks change nothing, and then
-// under memcheck, where a flagged case must exit 3 naming the uninitialised
-// value and every other case must be clean.
 func ctGate(t *testing.T, valgrind string, bins map[string]string) {
 	t.Helper()
 	for _, c := range ctGateCases {
@@ -669,8 +633,6 @@ func TestSelfHostCtGateX86_64(t *testing.T) {
 	ctGate(t, valgrind, ctCompile(t, cli.runner, cli.bin, cli.stdlib, "x86-64-linux"))
 }
 
-// The arm64 leg needs an arm64 host: memcheck cannot run an aarch64 binary
-// under qemu. There the self-host CLI is built for the host itself.
 func TestSelfHostCtGateArm64(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Skip("memcheck runs arm64 binaries only on an arm64 Linux host; TestSelfHostCtMarksArm64 runs the marks under qemu")
@@ -682,8 +644,6 @@ func TestSelfHostCtGateArm64(t *testing.T) {
 	ctGate(t, valgrind, ctCompile(t, nil, cli, langSrcAbs(t, "internal/stdlib"), "arm64-linux"))
 }
 
-// wasm has no valgrind, so the marks compile to nothing there: every case
-// runs to its own answer under wasmtime.
 func TestSelfHostCtMarksWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
@@ -701,8 +661,6 @@ func TestSelfHostCtMarksWasm(t *testing.T) {
 	}
 }
 
-// Both interpreters treat the marks as no-ops: every single-file case runs to
-// its own answer under the Go interpreter and the self-host one.
 func TestSelfHostInterpCtMarks(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
@@ -724,8 +682,6 @@ func TestSelfHostInterpCtMarks(t *testing.T) {
 	}
 }
 
-// Outside valgrind the arm64 client request is a no-op: every case, the
-// flagged ones included, runs to its own answer under qemu.
 func TestSelfHostCtMarksArm64(t *testing.T) {
 	qemu := e2eharness.Arm64Runner(t)
 	cli := buildSelfHostCLI(t)

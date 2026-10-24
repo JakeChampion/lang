@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptStructReclaimWasmIR is the wasm port of
-// TestSelfHostOptStructReclaimIRX86_64: the option release is shared lowering, and
-// on wasm the option box is [tag@0, payload@4], so the inline tag-check and the
-// struct-field deep drop need no dedicated runtime helper. Case table shared with
-// the x86-64 leg.
 func TestSelfHostOptStructReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optStructReclaimCases {

@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// `return xs.with(..)` on an `own` array writes in place even when another
-// `.with` on the same receiver sits in a sibling branch or in the enclosing
-// loop (#9844). That other site is textually later but never on the returning
-// path, and nothing reads the receiver after a return, so it must not count as
-// a later use and force the copy. Before the fix bump_ret and one_ret each
-// copied the buffer once per call; bump_assign, the self-reassign spelling,
-// was already free and stays here as the control.
-//
-// Each receiver is written once before its count starts: the self-host emits a
-// constant array literal as a static block, which its first write copies.
 const returnWithInPlaceSrc = `function bump_ret(own idx: i32[], shape: i32[]): i32[] {
 	let k: i32 = shape.len() - 1;
 	while (k >= 0) {
@@ -71,8 +61,6 @@ function main(): i32 {
 }
 `
 
-// 90/92/94 name the spelling that still copies; 91/93/95 mean a result is
-// wrong.
 func TestReturnWithWritesInPlace(t *testing.T) {
 	check := func(t *testing.T, code int, out string) {
 		t.Helper()

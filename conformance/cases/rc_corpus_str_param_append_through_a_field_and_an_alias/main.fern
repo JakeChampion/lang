@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The same admission reached through a STRUCT FIELD and a second live
-// name for one buffer. The argument is `b.buf`, so the reference the
-// callee sees is held by the box, not by a local the analysis can see
-// dying; and `alias` names the same buffer across the call. A field
-// read before and after the call must agree, and so must the alias.
-//
-// The loop is what makes it a regression net rather than a one-shot:
-// each iteration re-enters the callee with the field at whatever
-// count the previous one left, so a retain that leaks or a release
-// that over-fires drifts into a wrong length or an underflow.
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct Buf { buf: string, n: i32 }
 function mk(n: i32): string {
     let s: string = "";

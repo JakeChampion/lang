@@ -19,8 +19,6 @@ func TestSelfHostHTTPHandlerCensus(t *testing.T) {
 	checkSelfHostHTTPHandlerCensus(t, []string{"x86-64-linux", "arm64-linux"}, e2eharness.RunHTTPHandlerCensus, 32)
 }
 
-// The persistent-connection twin (#9854): HTTPKeepAliveRequests against the
-// same bounded loop, compiled by the self-host compiler.
 func TestSelfHostHTTPKeepAlive(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
@@ -95,17 +93,10 @@ func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string, client func(
 
 func requireCompleteHTTPSemanticLowering(t *testing.T, report []byte) {
 	t.Helper()
-	// Correct responses alone would not show that the typed lowering produced
-	// every declaration and instance.
 	rows := regexp.MustCompile(`FERN_SEM_IR: module: produced ([0-9]+) of ([0-9]+) declarations and ([0-9]+) of ([0-9]+) instances`).FindAllStringSubmatch(string(report), -1)
 	if len(rows) == 0 || strings.Contains(string(report), "refused") {
 		t.Fatalf("HTTP fixture must use semantic ownership: %s", report)
 	}
-	// A refused declaration or instance exits the compile (semlower), so
-	// reaching here means nothing fell back. Reachability drops the dead
-	// instances of the module (the plain server's unbuilt TLS generics), so
-	// produced instances may be fewer than created; the typed-pipeline check
-	// is that every kept declaration lowered.
 	for _, row := range rows {
 		if row[1] == "0" || row[1] != row[2] {
 			t.Fatalf("HTTP fixture partially fell back: %s", report)

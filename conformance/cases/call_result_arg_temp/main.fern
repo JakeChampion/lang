@@ -1,10 +1,10 @@
-// A call result handed straight to another call — `has(targets(xs, []), v)`
-// — is a temp no slot owns: the callee returns the accumulator it was
-// handed, so the caller owns one reference to it, and nothing released it
-// once the borrowing call returned. One buffer per call leaked, and in the
-// compiler that is the walk result every release analysis hands to
-// `index_of_str` at the head of each nested block. The temp is now stashed
-// and released after the call, like a fresh literal in the same position.
+
+
+
+
+
+
+
 function targets(xs: i32[], acc: i32[]): i32[] {
     for x in xs {
         acc = acc.append(x * 2);

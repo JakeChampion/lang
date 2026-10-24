@@ -9,9 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-// ReadLineTextProgram reads stdin line by line through io.read_line,
-// framing each line with its length, then checks that end of input stays
-// Ok(None) and that a read of the closed stream is an error.
 const ReadLineTextProgram = `import "std/io";
 
 function emit_length(n: i32): void {
@@ -48,8 +45,6 @@ function main(): i32 {
 }
 `
 
-// Length frames distinguish complete lines from chunks that happen to
-// concatenate to the original input. Expected bytes come only from Go.
 func CheckReadLineText(t *testing.T, command func() *exec.Cmd, census func(*testing.T, string)) {
 	t.Helper()
 	cases := []struct{ name, input string }{

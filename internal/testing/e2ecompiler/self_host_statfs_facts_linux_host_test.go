@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// selfHostFsFacts reads what the self-host's `statfs` must agree with for
-// `dir`, through the same `statfs(2)` the emitted helper issues. Linux reports
-// the whole record including `f_namelen`, and has no pathconf syscall at all,
-// so PATH_MAX is the kernel's own 4096 — what `getconf PATH_MAX` reports for
-// every filesystem it mounts.
 func selfHostFsFacts(t *testing.T, dir string) hostFs {
 	t.Helper()
 	var st syscall.Statfs_t

@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// mergeChainProg is an else-if chain of twenty arms inside a loop, each arm
-// writing three values every arm writes (stack, n, seen) beside its own sum.
-// The chain lowers to twenty nested merges, laid out innermost first, each
-// falling through to the next with a phi per value an arm below it wrote.
-// A phi that takes the arm's home copies the value arriving from the inner
-// merge on every path through it; one that takes the inner merge's home
-// (ssa.phi_mates) copies nothing there and the arm pays its one move. f is
-// called once, so @noinline keeps the inliner out.
 const mergeChainProg = `@noinline function f(ops: i32[]): i32 {
   let v0: i32 = 0;
   let v1: i32 = 0;
@@ -52,12 +44,6 @@ const mergeChainProg = `@noinline function f(ops: i32[]): i32 {
 function main(): i32 { let xs: i32[] = [1, 2, 3, 19, 0, 7]; return f(xs); }
 `
 
-// The merge blocks between the innermost merge and the loop latch are
-// fall-through blocks holding only moves: in the listing, the longest run of
-// lines that are each a label or a move. Before the fall-through hint the
-// run held 24 moves on x86-64, a register ping-pong per level for each
-// value still in a register; what remains is the innermost merge's and the
-// latch's own copies.
 func TestSelfHostSSAMergeChainMovesNothing(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()

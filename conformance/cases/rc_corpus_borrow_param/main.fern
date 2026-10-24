@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Borrowed parameter: function reads an array through a
-// borrow; caller still owns it afterward.
+
+
+
+
+
 import "core/int";
 function sum3(a: i32[]): i32 { return a[0] + a[1] + a[2]; }
 function main(): i32 {

@@ -2,19 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// bareIdentPayloadReclaimCases pin a union element whose payload is a BARE
-// IDENT rather than a construction — `(i, Some(xs))`. A bare-ident ARRAY payload
-// is released with the tuple; a bare-ident STRING payload is refused and keeps
-// its leak.
-//
-// That freeing it is balanced is measured, not argued. The construction
-// retains the payload, so the element's release spends that reference and the
-// local is still readable afterwards — `bare-ident-array-payload` reads `xs`
-// after the tuple, and `bare-ident-array-carried-out` reads a binding taken out
-// of the arm past every reclaim point.
-//
-// Byte cases return measured bytes per round, so a regression reports its own
-// size; 99 is an over-release.
 var bareIdentPayloadReclaimCases = []struct {
 	name string
 	src  string
@@ -42,8 +29,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The same shape with the local DEAD after the tuple: its own sweep fires at
-	// a different point, so it is a separate measurement rather than a variant.
 	{"bare-ident-array-payload-dead", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -66,9 +51,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// ALIASING control: the arm carries the payload out to a local read after the
-	// loop, past every reclaim point, and decoy allocations would be handed its
-	// block if the dec had really freed it. 72 on native too.
 	{"bare-ident-array-carried-out", `function churn(n: i32): i32 {
     let keep: i32[] = [0, 0];
     let acc: i32 = 0;
@@ -91,9 +73,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 72},
-	// REFUSAL control: a bare-ident STRING payload. It keeps its leak, so this
-	// pins the value and __rc_underflow_count() rather than a byte count — what must
-	// not happen is an over-release, which would show as 99.
 	{"bare-ident-string-refused", `import "std/i32";
 function churn(n: i32): i32 {
     let acc: i32 = 0;

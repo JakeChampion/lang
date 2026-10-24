@@ -19,12 +19,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/serve with `Config.proxy_protocol`: every connection starts with a
-// PROXY protocol header, whose source becomes `plat.peer()`. Version 1 and
-// version 2 (IPv6), a header that arrives in two writes, a LOCAL header
-// keeping the socket's own peer, a connection with no header closed
-// unanswered, and TLS behind the header. The interpreter and the x86-64
-// backend.
 func TestProxyProtocolServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	w := newProxyWorld(t)
@@ -142,8 +136,6 @@ func proxyV2(cmd byte, family byte, payload []byte) []byte {
 
 const proxyRequest = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
 
-// proxyExchange writes each part with a pause between, then reads the
-// response; "" when the server closed without one.
 func proxyExchange(t *testing.T, addr string, parts ...[]byte) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -163,9 +155,6 @@ func proxyExchange(t *testing.T, addr string, parts ...[]byte) string {
 	return readProxyAnswer(t, conn)
 }
 
-// readProxyAnswer is the response body, or "" when there is none; the read
-// error is logged, so a missing answer says whether the server closed or the
-// deadline passed.
 func readProxyAnswer(t *testing.T, conn net.Conn) string {
 	t.Helper()
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
@@ -200,8 +189,6 @@ func checkProxyPlain(t *testing.T, addr string) {
 	}
 }
 
-// checkProxyTLS: the header in the clear, then the TLS handshake and the
-// request through it.
 func checkProxyTLS(t *testing.T, addr string, pool *x509.CertPool) {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -209,8 +196,6 @@ func checkProxyTLS(t *testing.T, addr string, pool *x509.CertPool) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	// The handshake's signature and key exchange run interpreted, so this
-	// takes the 60 s tls_server_test.go gives the interpreter.
 	conn.SetDeadline(time.Now().Add(60 * time.Second))
 	if _, err := conn.Write([]byte("PROXY TCP4 203.0.113.8 192.0.2.1 5555 443\r\n")); err != nil {
 		t.Fatal(err)
@@ -219,8 +204,6 @@ func checkProxyTLS(t *testing.T, addr string, pool *x509.CertPool) {
 	if err := tc.Handshake(); err != nil {
 		t.Fatalf("TLS behind PROXY: %v", err)
 	}
-	// The request and its answer run interpreted too, so they get a budget
-	// of their own rather than what the handshake left.
 	tc.SetDeadline(time.Now().Add(60 * time.Second))
 	if _, err := tc.Write([]byte(proxyRequest)); err != nil {
 		t.Fatal(err)

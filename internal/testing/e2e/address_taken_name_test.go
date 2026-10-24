@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// A param or local that shares a function's name is not a reference to the
-// function (#10671): `shift`'s param and `pick`'s then-branch local both
-// share `label`'s name, the else branch reads `label` as a value, and every
-// read resolves to the binding it names. Before the rename the else branch
-// read the then branch's slot as a function value and crashed.
 const addressTakenNameSrc = `import "std/i32";
 function label(n: i32): Option[string] {
     if (n < 0) { return None; }

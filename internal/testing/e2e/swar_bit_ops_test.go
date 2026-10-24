@@ -1,22 +1,5 @@
 package e2e
 
-// Differential coverage for the SWAR bit-counting primitives in std/i32,
-// std/i64, std/u32 and std/u64.
-//
-// count_ones / leading_zeros / trailing_zeros were 32- and 64-iteration
-// software loops (the source comment said "no intrinsics surface in lang").
-// They are now branchless SWAR: the count accumulates in-place in 2-, then 4-,
-// then 8-bit fields of the word itself. This program checks all twelve
-// functions against the loop implementations they replaced — the references
-// are recomputed inside the program, so it is a true differential rather than
-// a table of expected answers.
-//
-// Coverage is aimed where bit tricks break: every 1<<k and its neighbours
-// (1<<k)-1 and (1<<k)+1 for all k, at both widths; 3000 pseudo-random values
-// including negatives so the sign bit is set; and the zero / all-ones
-// boundaries, where smear-and-count and the x^(x-1) identity are least
-// obviously correct. Returns 42 iff every case agrees.
-
 import "testing"
 
 const swarBitOpsProg = `

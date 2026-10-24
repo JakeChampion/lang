@@ -1,13 +1,3 @@
-// `mounts()` (#9104) end to end on the Linux backends. The table is whatever
-// the runner has mounted, so each compiled leg is compared against the
-// interpreter's reading of the same table, and the root row is pinned to the
-// device Go's own stat of `/` reports: a misparsed MAJ:MIN or a field taken
-// one column off still prints a plausible table.
-//
-// The compiled legs run under the leak census and read the table several
-// times, so a row, a field or the read buffer left behind on each call shows
-// up as live bytes. Darwin's leg is the Mach-O test's `mounts` case; wasm has
-// none, since `fsinfo` withholds the builtin there.
 package e2e
 
 import (
@@ -44,8 +34,6 @@ function main(): i32 {
 }
 `
 
-// checkMountsTable compares a compiled leg's table with the interpreter's and
-// pins the root row's device to the host's stat of `/`.
 func checkMountsTable(t *testing.T, got, stderr string, code int) {
 	t.Helper()
 	if code != 0 {
@@ -85,8 +73,6 @@ func TestArm64Mounts(t *testing.T) {
 	checkMountsTable(t, out, stderr, code)
 }
 
-// Both wasm worlds refuse it: a preopen is a capability handle, not a mount,
-// so there is no table to list.
 func TestWASMMountsRefused(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
     match (mounts()) { Ok(_) => { return 0; }, Err(_) => { return 1; } }

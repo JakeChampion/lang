@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// genericCaptureCases read a captured generic struct or enum value inside a
-// lambda. The checker records each capture's type before monomorphisation, as
-// `Same[i32]`; the monomorphisers rename it to the clone, or the lifted lambda's
-// parameter names a struct that no longer exists and the typed lowering refuses
-// the projection (#10911). Each exit code is the native interpreter's.
 var genericCaptureCases = []struct {
 	name     string
 	src      string

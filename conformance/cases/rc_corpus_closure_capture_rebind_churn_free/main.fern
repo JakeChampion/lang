@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8441: every outer rebind of a captured reference stranded the
-// value it superseded. BoxMutatedCaptures rewrites `s` into a
-// shared one-element cell and the store went through it raw — no
-// retain of the new value, no release of the old — so a rebinding
-// loop leaked one buffer a round (32 bytes here, unbounded in
-// general) while the same loop without the capture was clean.
-//
-// The concat spelling rather than the f-string keeps the case about
-// the capture cell: an f-string RHS had its own superseded-store
-// leak, pinned by fstring_reassign_releases_superseded above.
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

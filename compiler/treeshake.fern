@@ -1,46 +1,9 @@
-// compiler/treeshake.fern — reachability-based dead-code
-// elimination for the self-hosted compiler.
-//
-// Loading a stdlib module (`import "core/cmp"`) pulls in its WHOLE transitive
-// closure — core/sort, core/int, char-predicate helpers, generic comparison
-// helpers (`min`/`max`/`lt`/…) — most of which a given program never uses.
-// That bloats the merged module past asm_ir's 512-function IR budget (and the
-// uninstantiated generics individually bail the IR-eligibility gate), so a
-// stdlib-importing program could not compile at all. `treeshake`
-// prunes `mod.funcs` to the functions REACHABLE from `main` (+ top-level
-// statements + WIT exports + Drop finalizers + async entry points), so a
-// program that uses only `i32`'s `eq`/`hash` drops the hundreds of unrelated
-// stdlib functions and fits the IR path.
-//
-// SOUNDNESS — the prune must never drop a function the program can reach. It
-// over-approximates reachability by NAME: a function is kept if its name
-// appears anywhere reachable as
-//   * an identifier read (`f(...)`, a function value, a mangled call target),
-//   * a called method, by its receiver's type where the checker stamped a
-//     declared one (`x.eq(...)` on a `P` keeps `P.eq`) and by name otherwise
-//     (keeping every `*.eq`); a field read names nothing, since a method is
-//     never a value,
-//   * the trait method an operator desugars to (`a < b` keeps `*.cmp`,
-//     `a + b` keeps `*.add`, …) — covering operator overloading even if the
-//     `+`→`.add()` rewrite has not run yet,
-//   * the conversion a `?` may make (`e?` keeps `*.from`),
-//   * the method an array-method helper or an interposed collision provider was
-//     renamed away from (ts_kept_name), neither of which the syntax spells.
-// The collector uses astwalk's fold spine, so it reaches every Expr/Stmt
-// form the parser produces, and, unlike astwalk's capture analysis, does NOT
-// subtract lambda-local bindings — for reachability, keeping an extra
-// same-named function is harmless; dropping a referenced one is not.
-// Over-keeping only costs IR budget; it never changes behaviour.
-
 import "./ast";
 import "./astwalk";
 import "./lexer";
 import "./parser";
 import "./util";
 
-// ts_op_method maps a (possibly overloadable) operator to the trait method it
-// dispatches to, so `a <op> b` keeps that method even before the operator-
-// overload desugar rewrites it to an explicit call. "" for non-overloadable.
 function ts_op_method(op: string): string {
   let named: string = ast.operator_method(op);
   if (named != "") {
@@ -55,28 +18,10 @@ function ts_op_method(op: string): string {
   return "";
 }
 
-// ts_op_overloads reports whether `op` dispatches to a method that
-// ts_recv_kept resolves by receiver, so its root is worth qualifying.
-//
-// True for the operators with an overload method and false for the comparisons. The
-// comparisons are not worth qualifying: measured on a minimal std/string
-// program, stubbing the operator roots out entirely leaves every `*.eq` and
-// `*.cmp` in place anyway, held by explicit `.eq(...)` / `.cmp(...)` field
-// accesses in reachable stdlib code (docs/PERFORMANCE-AUDIT-2026-08.md §4f).
 function ts_op_overloads(op: string): boolean {
   return ast.operator_method(op) != "";
 }
 
-// ts_recv_tag is the type a receiver-qualified root is qualified by — an
-// operator's operand, or a display argument: the type of that OPERAND, which
-// is what ts_recv_kept matches against a method's receiver_type. Not the type
-// of the whole expression — those differ exactly where a composite operator
-// overload does not return Self, and `a * b` whose `mul` returns f64 would
-// look for `f64|mul` while the method that implements it is `V.mul`. Every
-// failing case of that shape is a scalar-returning overload.
-//
-// "" for the forms annotate_module does not stamp — the caller falls back to
-// the bare root there, which over-keeps and stays sound.
 function ts_recv_tag(e: ast.Expr): string {
   if let ast.ExprStructLit(lit) = e {
     return lit.type_name;
@@ -84,17 +29,10 @@ function ts_recv_tag(e: ast.Expr): string {
   return ast.expr_ty(e);
 }
 
-// ts_qualified_root builds the receiver-qualified root `<type tag>|<method>`.
-// The `|` cannot occur in either half — a type tag is a scalar keyword, a
-// struct name or a Map spelling, and a method name is an identifier — so a
-// qualified root can never collide with the bare names sharing the set.
 function ts_qualified_root(tag: string, method: string): string {
   return ts_canonical_tag(tag) + "|" + method;
 }
 
-// ts_canonical_tag is the spelling a type's methods are declared under, for a
-// type the language spells two ways: `str` is a `string` view, and `bool` and
-// `float` are `boolean` and `f64`.
 function ts_canonical_tag(tag: string): string {
   if (tag == "str") {
     return "string";
@@ -105,14 +43,10 @@ function ts_canonical_tag(tag: string): string {
   return tag;
 }
 
-// ts_free_root is the root a bare identifier contributes: the qualified
-// spelling with no receiver, which only a receiver-less function answers to.
 function ts_free_root(name: string): string {
   return ts_qualified_root("", name);
 }
 
-// ts_named_tag reports a tag that is one bare name — a struct, enum or scalar
-// — as opposed to "" or a composite spelling.
 function ts_named_tag(tag: string): boolean {
   if (tag.len() == 0) {
     return false;
@@ -127,17 +61,6 @@ function ts_named_tag(tag: string): boolean {
   return true;
 }
 
-// ts_name_of contributes the names ONE node could reference; astwalk's fold
-// supplies the walk, including lambda bodies (their calls are reachable, and
-// lambda-local bindings are deliberately not subtracted). Every variant is
-// spelled out rather than wildcarded so a new expression kind fails E030 here
-// and gets a reachability decision, not a silent empty contribution — the
-// soundness property the hand-written walk this replaces had.
-// ts_routed_map_roots are the core/map functions the typed lowering calls for
-// a map it routes onto core/map (ssarc.routed_map_site), which no source
-// spells. They are rooted wherever a map can reach the program
-// (ts_reaches_map), not wherever core/map is loaded: map_new_impl draws the
-// hash seed, which on wasm is an import a program without maps must not carry.
 function ts_routed_map_roots(): string[] {
   return [
     "map_new_impl", "__map_put_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
@@ -153,10 +76,6 @@ function ts_routed_map_roots(): string[] {
   ];
 }
 
-// ts_with_key_roots adds to `rs` the cmp.Eq `eq` and cmp.Hash `hash` of every
-// live struct and enum (ts_live_type_names), derived or written by hand: a map
-// keyed by one probes through them (ssasem.keyed_map_key_fn), and no source
-// spells that call. A type nothing kept names keys no map.
 function ts_with_key_roots(mod: parser.Module, rs: RefSet): RefSet {
   let live: util.NameIndex = ts_live_type_names(mod, rs);
   for fd in mod.funcs {
@@ -179,7 +98,6 @@ function ts_with_root(rs: RefSet, root: string): RefSet {
   return refset_add(rs, root);
 }
 
-// ts_nominal reports a struct or enum `mod` declares under the name `t`.
 function ts_nominal(mod: parser.Module, t: string): boolean {
   for st in mod.structs {
     if (st.name == t || st.enum_owner == t) {
@@ -200,11 +118,6 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     },
     ast.ExprIdent(id) => {
-      // A bare identifier names a free function (or a local): it keeps the
-      // free functions of that name, not a method that happens to share
-      // it. `handle` is every wasi:http handler's entry, and std/async's
-      // driver has a `.handle()` method that reaches the reactor — kept by
-      // name, it failed E066 on the one target without a reactor.
       return acc.append(ts_free_root(id.name));
     },
     ast.ExprBinary(b) => {
@@ -212,7 +125,6 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       if (m.len() == 0) {
         return acc;
       }
-      // Qualified where the tag identifies the impl, bare otherwise.
       if (ts_op_overloads(b.op)) {
         let bt: string = ts_recv_tag(b.left);
         if (bt.len() > 0) {
@@ -222,8 +134,6 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       return acc.append(m);
     },
     ast.ExprUnary(u) => {
-      // A `?` whose error types differ converts through the target's
-      // `from`, which the syntax does not name.
       if (u.op == "try_") {
         return acc.append("from");
       }
@@ -288,13 +198,6 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-// ts_called_method appends what a call through `fa` names: every function
-// with that simple name.
-//
-// A method whose receiver carries a stamped named type contributes the
-// qualified root instead, so `q.to_string()` — the call the checker's Display
-// rewrite spells for `print(q)` — keeps Q's method and not every type's. A
-// receiver with no stamp, a `dyn` one (`dyn Display`) or an array stays bare.
 function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
   let tag: string = ts_recv_tag(fa.obj);
   let ft: string = util.base_type_name(tag);
@@ -304,18 +207,10 @@ function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] 
   return acc.append(fa.field);
 }
 
-// ts_any_root is what every typed call of `method` also contributes, for a
-// method whose receiver is its own type parameter: a template any receiver
-// type may instantiate (ts_recv_kept).
 function ts_any_root(method: string): string {
   return ts_qualified_root("*", method);
 }
 
-// ts_widened is `names` plus the bare method of every qualified root whose tag
-// no receiver can spell: one of `open` (ts_open_tags), a type parameter of
-// `fd`, or a trait bound (ts_bound_type), which a type can meet with a plain
-// method as well as an impl. Such a call reaches whatever type stands there,
-// so it keeps every method of that name.
 function ts_widened(names: string[], open: RefSet, fd: parser.FuncDecl): string[] {
   let out: string[] = names;
   for n in names {
@@ -330,9 +225,6 @@ function ts_widened(names: string[], open: RefSet, fd: parser.FuncDecl): string[
   return out;
 }
 
-// ts_open_tags is every name a receiver's type can be spelled by that is not
-// the type a method is declared on: the module's type parameters, aliases and
-// traits.
 function ts_open_tags(mod: parser.Module): RefSet {
   let names: string[] = [];
   for fd in mod.funcs {
@@ -353,14 +245,10 @@ function ts_open_tags(mod: parser.Module): RefSet {
   return refset_of(names);
 }
 
-// ts_names_stmt appends every name `st` could reference to `acc`.
 function ts_names_stmt(st: ast.Stmt, own acc: string[]): string[] {
   return astwalk.fold_stmt(st, acc, ts_name_of);
 }
 
-// ts_func_names appends every name function `fd`'s body references to `acc`. A
-// method called on a name `fd` binds with a declared type is qualified by that
-// type (typed_method_name_of), which the checker's stamps do not always carry.
 function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
   let lt: LocalTypes = local_types(fd);
   function name_of(e: ast.Expr, own names: string[]): string[] {
@@ -371,9 +259,6 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
     }
     return ts_name_of(e, names);
   }
-  // The typed ndarray planner may replace inner with its checked adapter.
-  // Keep that synthetic dependency until the typed rewrite and final DCE;
-  // otherwise the planner can never find the adapter's body and contract.
   if (fd.name == "inner" && util.base_type_name(fd.receiver_type) == "ndarray__NdArray") {
     acc = acc.append("ndarray__inner_kernel");
   }
@@ -385,17 +270,6 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
   return acc;
 }
 
-// ts_interposed_method_name returns the `<m>` of a method name
-// parser.claim_method_name INTERPOSED — `B.scale` for a second trait providing
-// `scale` for one type, `__entry.add` for a second module providing `add` for
-// one type — or "" when `name` carries no interposition.
-//
-// The interposed name is one every call site is UNABLE to spell: the source
-// writes `.scale`, and which of the two definitions that means is settled after
-// this pass by dyn_arm_matches / dyn_provider_name. So the walk has to undo the
-// rename the way those two do, or it prunes the loser of every collision. An
-// ordinary name cannot be mistaken for one: module mangling joins with `__`,
-// and a `.` reaches a FuncDecl name only from claim_method_name.
 function ts_interposed_method_name(name: string): string {
   let last_dot: i32 = 0 - 1;
   let i: i32 = 0;
@@ -411,21 +285,6 @@ function ts_interposed_method_name(name: string): string {
   return slice_unchecked(name, last_dot + 1, name.len()) + "";
 }
 
-// ts_recv_kept resolves a method BY RECEIVER, which is the half of an
-// over-approximated root worth removing: a bare `add` root keeps `add` for
-// every type in the program, and on a minimal std/string program that is 24
-// functions — 12 of them core/bigint's `BigInt.add` / `sub` / `negate` and the
-// `__bi_*` helpers behind them, reached by nothing the program does (§4f).
-// An interposed method (ts_interposed_method_name) resolves by the name its
-// call sites spell: the bare name for flatten's `ns.m` interposition, and the
-// renamed `Trait.m` itself for a collision provider a routed call spells in
-// full (parser.route_inherited_defaults, the bound rewrite).
-//
-// A receiver spelled as the decl's OWN type parameter is a template no concrete
-// tag can name — monomorph instantiates it after this pass — so any typed call
-// of its name keeps it (ts_any_root). `base_type_name` strips the argument
-// list, so `impl Add for Box[T]` resolves on `Box`, which is the tag a struct
-// carries.
 function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (fd.receiver_type.len() == 0) {
     return false;
@@ -448,25 +307,8 @@ function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
   return refset_has(refs, ts_qualified_root(base, name)) || name != fd.name && refset_has(refs, ts_qualified_root(base, fd.name));
 }
 
-// RefSet is the reachable-name set with a chained hash index over it — the
-// irtables.SigReg idiom. The set is probed once per name a kept body spells
-// and up to three times per pending function per round, against a set that
-// reaches ~12,000 names on the compiler compiling itself, so a miss scanning
-// all of it was most of this pass. Membership is the only question
-// asked, so a chain's order carries no meaning and a new name is pushed at
-// the front of its bucket.
 pub struct RefSet { names: string[], head: i32[], next: i32[] }
 
-// body_refs is the names `fd`'s body spells, and refs_name whether `fd` is one
-// they reach — the two halves of the shake's reachability, for a caller walking
-// a call graph function by function (ambient.fern). A method is reached only by
-// a method or operator spelling: a bare name is a local or a free function, as
-// native's call graph reads it, so `let close` does not reach a `close` method.
-// A bare name `fd`'s own parameters, receiver or declarations bind reaches
-// nothing: a local spelled like a free function is not a reference to it. A
-// method spelled on a receiver of known declared type reaches that type's
-// method (`methods` holds the qualified root); its bare spelling stays in
-// `any` for the helpers only a bare name reaches.
 pub struct BodyRefs { any: RefSet, methods: RefSet }
 
 pub function body_refs(fd: parser.FuncDecl): BodyRefs {
@@ -475,8 +317,6 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
     return method_name_of(e, lt, acc);
   }
   let methods: string[] = [];
-  // The bare spellings too: an interposed trait method (`B.scale`) is
-  // reached by `.scale` alone, which no qualified root names.
   let bare: string[] = [];
   let i: i32 = 0;
   while (i < fd.body.len()) {
@@ -505,10 +345,6 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
   return BodyRefs { any: refset_of(any), methods: refset_of(methods) };
 }
 
-// LocalTypes pairs the names a function binds with a declared type — its
-// receiver, its parameters, every annotated `let` and every `let` of a struct
-// literal — with that type. A type parameter, and a name bound again under
-// another spelling, map to "".
 struct LocalTypes { names: string[], types: string[] }
 
 function lt_bind(own lt: LocalTypes, name: string, ty: string): LocalTypes {
@@ -571,23 +407,14 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
   return lt;
 }
 
-// ts_bound_type is the local type recorded for a parameter typed by a
-// trait-bounded type parameter: its bounds behind a marker no declared type
-// spells, so a method on it reaches the bounds' impls (ts_impl_tag).
 function ts_bound_type(bounds: string): string {
   return "impl " + bounds;
 }
 
-// ts_impl_tag is the receiver tag of every method an impl of `tr` has.
 function ts_impl_tag(tr: string): string {
   return "impl " + parser.trait_simple_name(tr);
 }
 
-// method_name_of is ts_method_name_of with a method spelled on a receiver of
-// known declared type qualified by it: `plat.log` reaches the platform's `log`
-// and not every `log`, as native's typed dispatch reads it. On a receiver
-// whose type is a trait-bounded type parameter it is qualified by each bound,
-// reaching the impls of those traits.
 function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
   if let ast.ExprCall(c) = e {
     if let ast.ExprFieldAccess(fa) = c.callee {
@@ -598,9 +425,6 @@ function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[
   return ts_method_name_of(e, acc);
 }
 
-// typed_method_name_of is the method a call through `fa` names: qualified by
-// the receiver's declared type when `fa.obj` is a name bound with one, as
-// method_name_of says, and ts_called_method's spelling otherwise.
 function typed_method_name_of(fa: ast.ExprFieldAccess, lt: LocalTypes, own acc: string[]): string[] {
   if let ast.ExprIdent(id) = fa.obj {
     let k: i32 = util.index_of_str(lt.names, id.name);
@@ -621,7 +445,6 @@ function typed_method_name_of(fa: ast.ExprFieldAccess, lt: LocalTypes, own acc: 
   return ts_called_method(fa, acc);
 }
 
-// free_names is the receiver-less functions `br` names.
 pub function free_names(br: BodyRefs): string[] {
   let out: string[] = [];
   let root: string = ts_free_root("");
@@ -647,9 +470,6 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
     let im: string = ts_interposed_method_name(fd.name);
     return im.len() > 0 && refset_has(br.any, im);
   }
-  // A free function is named by a bare identifier: `plat.log` is a method
-  // or a field whatever free `log` the program also declares, where the
-  // shake's own ts_kept_name keeps both.
   if (refset_has(br.any, ts_free_root(fd.name))) {
     return true;
   }
@@ -706,10 +526,6 @@ function refset_add(rs: RefSet, name: string): RefSet {
   return RefSet { names: names, head: head, next: next };
 }
 
-// ts_kept_name reports whether `fd` is reachable: by exact name, by the one an
-// interposed method was renamed away from — a name the syntax spells where the
-// FUNCTION does not — or, for a receiver-rooted method only, by its receiver
-// type.
 function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (refset_has(refs, fd.name)) {
     return true;
@@ -724,18 +540,8 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   return ts_recv_kept(fd, refs);
 }
 
-// treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
-// from the roots (`main`, top-level statements, WIT exports, Drop finalizers,
-// body-bearing async functions, and where a map reaches the program the map
-// runtime and the map-key `eq` / `hash` methods). Structs / enums / aliases / imports /
-// top_stmts / exports are preserved unchanged (only the function list — the
-// IR-budget axis — is pruned). Idempotent.
 struct TsGrown { rs: RefSet, pending: i32[] }
 
-// ts_grow grows `rs` to a fixpoint over the functions in `pending`: any
-// function whose name is reachable contributes the names ITS body references,
-// and leaves `pending`. The names a body references do not change between
-// rounds, so each function contributes once.
 function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
   let open: RefSet = ts_open_tags(mod);
   let rs: RefSet = rs0;
@@ -767,11 +573,6 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
   return TsGrown { rs: rs, pending: pending };
 }
 
-// ts_reaches_map reports whether a map can reach the kept program: a map
-// constructor is reachable, a kept function or a lambda in one takes or
-// returns a map, or a struct holding one, or an enum a variant of which holds
-// one, is live (ts_live_type_names) — the enum's drop walks that variant
-// whichever variant the program built.
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
     || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) {
@@ -806,13 +607,6 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   return false;
 }
 
-// ts_live_type_names are the types a kept body names (a struct, an enum, or
-// one of its variants) or a kept function's signature names (or a lambda's or
-// nested function's in its body), closed over the fields and variant payloads
-// of those types. Each is a type whose drop the lowering emits glue for,
-// whether or not the program ever builds one: a nested function nothing calls
-// still releases its parameters, and an enum's drop releases every variant's
-// payload.
 function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
   let live: util.NameIndex = util.name_index([]);
   for fd in mod.funcs {
@@ -857,8 +651,6 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
   return live;
 }
 
-// ts_add_type_words adds each identifier a type spelling names to `names`,
-// once.
 function ts_add_type_words(names: util.NameIndex, t: string): util.NameIndex {
   let i: i32 = 0;
   while (i < t.len()) {
@@ -897,10 +689,6 @@ function ts_mentions_map(types: string[]): boolean {
   return false;
 }
 
-// ts_named_types are the types a function names: its parameter, return and
-// receiver types (a `self: Self` parameter names the receiver), those of every
-// lambda or nested function in its body, and the type of every struct literal
-// there.
 function ts_named_types(fd: parser.FuncDecl): string[] {
   let types: string[] = [fd.ret_type, fd.receiver_type];
   for p in fd.params {
@@ -912,8 +700,6 @@ function ts_named_types(fd: parser.FuncDecl): string[] {
   return types;
 }
 
-// ts_expr_types collects the parameter and return types of a lambda or nested
-// function, and a struct literal's type.
 function ts_expr_types(e: ast.Expr, own acc: string[]): string[] {
   if let ast.ExprLambda(l) = e {
     acc = acc.append(l.ret_type);
@@ -927,7 +713,6 @@ function ts_expr_types(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-// `refs` and the names `mod`'s top-level statements reference.
 pub function top_level_names(mod: parser.Module, own refs: string[]): string[] {
   for st in mod.top_stmts {
     refs = ts_names_stmt(st, refs);
@@ -936,7 +721,6 @@ pub function top_level_names(mod: parser.Module, own refs: string[]): string[] {
 }
 
 pub function treeshake(mod: parser.Module): parser.Module {
-  // Seed the reachable-name set from the roots.
   let refs: string[] = top_level_names(mod, ["main"]);
   let ei: i32 = 0;
   while (ei < mod.exports.len()) {
@@ -944,13 +728,6 @@ pub function treeshake(mod: parser.Module): parser.Module {
     ei = ei + 1;
   }
 
-  // A Drop finalizer has no call site to reach: its only caller is the
-  // `__drop_struct_<C>` glue lowering synthesises after this pass, so the walk
-  // would prune it and leave that glue naming a symbol nothing emitted.
-  // Rooted whole-program for the reason native's DropImplMethods is — gating
-  // it on whether a live function can hold a `C` is type reachability this
-  // pass does not compute. `trait_name` is already the simple name here, so
-  // `impl mem.Drop for W` matches without demangling.
   let di: i32 = 0;
   while (di < mod.impls.len()) {
     if (mod.impls[di].trait_name == "Drop") {
@@ -963,10 +740,6 @@ pub function treeshake(mod: parser.Module): parser.Module {
     di = di + 1;
   }
 
-  // An `async function` with a body is an entry point from outside: the
-  // component-level export the wasm path lifts it as. A body-less
-  // `@import(...) async` declaration is an import instead, and is excluded by
-  // the same `import_iface` test native uses.
   let ai: i32 = 0;
   while (ai < mod.funcs.len()) {
     if (mod.funcs[ai].async && mod.funcs[ai].import_iface.len() == 0) {
@@ -975,19 +748,6 @@ pub function treeshake(mod: parser.Module): parser.Module {
     ai = ai + 1;
   }
 
-  // Grow `refs` to a fixpoint: any function whose name is reachable
-  // contributes the names ITS body references. Only genuinely NEW names are
-  // appended (membership-checked), so `refs` grows monotonically toward a
-  // bounded set and the loop terminates.
-  //
-  // Each function contributes AT MOST ONCE, tracked by carrying the
-  // not-yet-contributed indices in `pending` and rebuilding it each round.
-  // A body's name set does not change between rounds, so re-walking it can
-  // only re-derive what the first walk already appended — which made the
-  // whole-body walk and its per-name membership scan cost one round each
-  // rather than one in total. On the compiler compiling itself (6,259
-  // functions) that was 26 s of the 82 s compile; contributing once takes the
-  // pass to under a second and leaves the result identical.
   let pending: i32[] = [];
   let pi0: i32 = 0;
   while (pi0 < mod.funcs.len()) {
@@ -1005,7 +765,6 @@ pub function treeshake(mod: parser.Module): parser.Module {
   }
   let rs: RefSet = grown.rs;
 
-  // Keep only the reachable functions.
   let kept: parser.FuncDecl[] = [];
   let ki: i32 = 0;
   while (ki < mod.funcs.len()) {
@@ -1017,14 +776,6 @@ pub function treeshake(mod: parser.Module): parser.Module {
   return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts, todo_sites: mod.todo_sites, sights: mod.sights };
 }
 
-// without_extern_callers drops every `@import` extern declaration and every
-// function whose body reaches one, by callee name. An extern has no body on
-// a native target, so a unit emitted whole, as the per-module concat emits
-// a module, must carry no call to it: with the branch on the target pruned
-// first, the callers left are the other target's transport (std/fetch's
-// `__send_hosted`, std/wasi_http's client), which that unit leaves out. The
-// whole-program emit never needs this: its shake from `main` drops such
-// callers with everything else nothing reaches.
 pub function without_extern_callers(mod: parser.Module): parser.Module {
   let dropped: string[] = [];
   for f in mod.funcs {
@@ -1054,7 +805,6 @@ pub function without_extern_callers(mod: parser.Module): parser.Module {
   return parser.Module { ...mod, funcs: kept };
 }
 
-// calls_any reports whether `f`'s body names one of `names` as a callee.
 function calls_any(f: parser.FuncDecl, names: string[]): boolean {
   let ids: string[] = [];
   for st in f.body {

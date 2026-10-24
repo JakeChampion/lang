@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// `w.close()` / `r.close()` report a FAILING close, rather than answering Ok
-// whatever the kernel said (#8569).
-//
-// gnulib's close_stream contract is exactly "did the close fail", so a
-// swallowed errno made `printf ... >&-` print `write error` where GNU prints
-// `write error: Bad file descriptor`. The coreutils self-host gate
-// (internal/testing/coreutils) found it; this is the reduced case.
-//
-// Closing the same fd twice is the portable way to reach EBADF: the first close
-// succeeds, the second has nothing to close. The exit code carries both answers
-// — 1 for Ok, 7 for Err(Other) with glibc's text — so the whole outcome is
-// one number, 17, and the interp is the oracle for it. A self-host that
-// swallows the error returns 11.
 const closeIoErrorSrc = `function code_of(o: Result[void, IoError]): i32 {
     match (o) {
         Err(e) => {
@@ -39,7 +26,6 @@ function main(): i32 {
     return first * 10 + second;
 }`
 
-// TestSelfHostCloseIoErrorIRX86_64 — the x86-64 IR path.
 func TestSelfHostCloseIoErrorIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -63,7 +49,6 @@ func TestSelfHostCloseIoErrorIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCloseIoErrorIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostCloseIoErrorIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -82,9 +67,6 @@ func TestSelfHostCloseIoErrorIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCloseIoErrorWasmIR — the wasm leg. The errno is WASI's `badf`
-// rather than a Linux one, and `needs_io_error` has to fold the close in so the
-// classifier and the strerror texts reach a module that only closes.
 func TestSelfHostCloseIoErrorWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping close IoError wasm IR e2e")

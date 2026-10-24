@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7914 frontier. A fresh string built in argument position for a
-// callee that stores its parameter via `.append` stranded once per
-// call — the checker's derived block-scope shape, one 64 B temp per
-// `child(w(...))` (14/round measured, 44,800 B over 50 rounds).
-// The push element is a COUNTED store, so stringParamCounted now
-// credits the position (the array tier's #7867 slice-1/4 argument)
-// and the caller's stage-(b) release fires. The bare-return
-// hazard keeps its refusal (h_ret_bare probe, leak-safe).
+
+
+
+
+
+
+
+
+
+
+
 struct Tab { xs: i32[], n: i32 }
 struct Env { names: string[], t: Tab, depth: i32 }
 

@@ -10,13 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSemTryOfAVariantLiteral pins two conformance cases whose `?`
-// sources are variant literals to the typed path. Under the default mixed
-// lowering a refused function falls back to the AST body and the fixture
-// still answers right, so the fixture legs cannot see a regression here; the
-// tally can. `Some(3.25)?` has no destination, and its payload settles at the
-// f64 default only because semsource's `settled` reaches a union's type
-// arguments.
 func TestSelfHostSemTryOfAVariantLiteral(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

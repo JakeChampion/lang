@@ -8,20 +8,8 @@ import (
 	"unsafe"
 )
 
-// direntNameOffset is where d_name sits within one directory record.
-// Linux's getdents64 packs d_ino, d_off, d_reclen and d_type ahead of
-// it; XNU's getdirentries64 packs d_ino, d_seekoff, d_reclen, d_namlen
-// and d_type, so the two do not agree and the offset is read from the
-// platform's own struct.
 var direntNameOffset = int(unsafe.Offsetof(syscall.Dirent{}.Name))
 
-// readDirAll lists every entry a directory holds — `.` and `..`
-// included — in the order the kernel reports them.
-//
-// `os.ReadDir` and `File.Readdirnames` both drop the dot entries, and
-// the first also sorts, so neither can answer this. The raw drain is
-// getdents, whose records `syscall.ParseDirent` would walk except that
-// it applies the same filter, so the record walk is here.
 func readDirAll(path string) ([]dirent, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -47,8 +35,6 @@ func readDirAll(path string) ([]dirent, error) {
 			}
 			rec := buf[off+direntNameOffset : off+reclen]
 			off += reclen
-			// A record the filesystem has vacated reads back with a
-			// zero inode; glibc's readdir and Go's own both skip it.
 			if d.Ino == 0 {
 				continue
 			}
@@ -56,7 +42,6 @@ func readDirAll(path string) ([]dirent, error) {
 			for end < len(rec) && rec[end] != 0 {
 				end++
 			}
-			// d_type is the mode's file-type bits shifted down by 12.
 			entries = append(entries, dirent{name: string(rec[:end]), ino: uint64(d.Ino), kind: uint32(d.Type) << 12})
 		}
 	}

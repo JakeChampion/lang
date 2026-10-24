@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// suspendShapesProgram parks inside task-run code through two routes: a
-// suspendable call whose value is used in place (a condition, an operand, an
-// argument), and a lifted closure that parks, called through a value of its
-// own type. `apply` calls through a value of another type, which can never
-// reach the parking closure.
 const suspendShapesProgram = `import "std/async";
 
 function wait(): i32 {
@@ -78,9 +73,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostSuspendShapes: a task parking at a call whose value is used in
-// place answers what the plain run answers, and only a function calling
-// through a value of a parking closure's type is rewritten for suspension.
 func TestSelfHostSuspendShapes(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")

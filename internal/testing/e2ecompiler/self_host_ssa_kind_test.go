@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSSAKindRegistry exercises the self-hosted SSA layer's integer
-// kind registry (compiler/ssa.fern's kind_id / kind_name /
-// kind_count for SInst and term_id / term_name / term_count for STerm,
-// issue #4394 lever 2 / #5351 — the string->int kind conversion foundation,
-// mirroring ir.fern's landed op-kind registry).
-//
-// The ssa_kind_run driver walks both registries and asserts the id<->name
-// bijections and both sentinel contracts (SInst: unknown -> 0 / 0 and
-// out-of-range -> "invalid"; STerm: the t_none empty-string kind <-> tag 0),
-// printing a deterministic report and exiting with the failure count. A kind
-// added to only one direction, or a duplicate id, fails the golden here
-// rather than silently misdispatching a backend once the tag is wired.
-//
-// The negative ids of the typed semantic phase are named from a positional
-// table, so they are printed in order too: inserting a tag anywhere but the
-// tail renames every later one, and this golden is what catches it.
 func TestSelfHostSSAKindRegistry(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

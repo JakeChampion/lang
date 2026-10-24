@@ -1,5 +1,5 @@
 import "std/i32";
-// Negative literals, unary minus, and abs(). 50 - 8 = 42.
+
 function main(): i32 {
     let x: i32 = 0 - 50;
     let y: i32 = -8;

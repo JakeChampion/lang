@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// genericEnumCtorLocalCases bind an unannotated local from a generic enum's
-// variant construction and then match it. Both monomorphisers have to type the
-// local from the payload: the struct pass so a literal in an arm can infer its
-// own instantiation (#10302), and the enum pass so the arms rewrite to the
-// instantiated variants, for a qualified `Tree.Leaf` and a two-parameter enum.
-// Each exit code is the native interpreter's.
 var genericEnumCtorLocalCases = []struct {
 	name     string
 	src      string

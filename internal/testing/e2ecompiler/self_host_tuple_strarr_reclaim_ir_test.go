@@ -7,18 +7,11 @@ import (
 	"testing"
 )
 
-// tupleStrArrReclaimCases pin the #4353 `string[]` ELEMENT POSITION of an rc-tuple:
-// releasing a `(i32, string[])` tuple — bare or as an `Option[(i32, string[])]`
-// payload — frees the array's element strings, not just its buffer, so nothing
-// leaks per round. An element that is a bare ident naming a live local is never
-// freed out from under it.
 var tupleStrArrReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: a loop-local (i32, string[]) rebuilt each iteration with fresh
-	// concat elements. Pre-fix the two element boxes leaked per round → 98.
 	{"tuple-strarr-churn", `function main(): i32 {
     let pre: string = "ab";
     let acc: i32 = 0;
@@ -33,8 +26,6 @@ var tupleStrArrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The TYPE-driven release: an Option payload has no construction literal at
-	// the drop site, so the release is read off the `(i32, string[])` type.
 	{"tuple-strarr-opt-payload", `function main(): i32 {
     let pre: string = "ab";
     let acc: i32 = 0;
@@ -57,8 +48,6 @@ var tupleStrArrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// VALUE: the reclaimed tuple still reads correctly through both element
-	// positions and the array length. 7 + 3 + 4 + 2 = 16.
 	{"tuple-strarr-value", `function main(): i32 {
     let pre: string = "ab";
     let t: (i32, string[]) = (7, [pre + "x", pre + "yy"]);
@@ -66,10 +55,6 @@ var tupleStrArrReclaimCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 16},
-	// ALIASED-ELEMENT negative: a bare string ident at an element position aliases
-	// a live local, so the position must stay on the shallow buffer dec. The
-	// element box is read after the tuple's reclaim point; a deep free here would
-	// tick the over-release detector (99) or corrupt the read (97).
 	{"tuple-strarr-alias-safe", `function main(): i32 {
     let pre: string = "ab";
     let acc: i32 = 0;
@@ -84,9 +69,6 @@ var tupleStrArrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE negative: `keep = t.1` extracts the string array out of the
-	// tuple, so the local is not credited and the extracted boxes stay live.
-	// keep[0] = "abx" (3), keep[1] = "abyy" (4).
 	{"tuple-strarr-escape-safe", `function main(): i32 {
     let pre: string = "ab";
     let keep: string[] = ["z"];
@@ -103,8 +85,6 @@ var tupleStrArrReclaimCases = []struct {
 }`, 0},
 }
 
-// TestSelfHostTupleStrArrReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler, heap-bump + underflow guarded.
 func TestSelfHostTupleStrArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

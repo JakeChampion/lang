@@ -59,9 +59,6 @@ func TestReaderBytesRetainedShortReads(t *testing.T) {
 				{"short-sanitized", 65536, true},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					// Bootstrap Reader and IoError values still use immortal
-					// headers (rcResultImmortal). Measure their fixed retention
-					// with a no-read control; every additional read must balance.
 					var retained, retainedBytes int64
 					for _, reads := range []int{0, 64} {
 						dir := t.TempDir()

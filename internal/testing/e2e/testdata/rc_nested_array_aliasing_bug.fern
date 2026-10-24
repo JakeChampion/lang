@@ -1,42 +1,42 @@
-// Regression gate for a (now fixed) reference-counting codegen bug in
-// the native + wasm backends: an aliasing-built nested-array structure
-// (ChunkDef[] whose .body is a BodyLine[] of structs with string fields)
-// is consumed by an `expand`-style function and the inner strings were
-// freed too early — a use-after-free.
-//
-// Before the fix (compiler @ main, June 2026):
-//   -interp          → 12   (correct: "fn main() {}".len())
-//   -target x86-64-linux   → 255  (abort)
-//   -target arm64-linux    → 137  (SIGKILL)
-//   -target wasm32-wasi     → trap
-// After the fix: 12 on every backend.
-//
-// Root cause: `def_body.append(body[k])` retains the inner BodyLine
-// structs (and their string pointers) out of `body` WITHOUT an inc, but
-// computeFreeEligible's escape analysis only tainted a directly-named
-// pushed element — it missed the `body[k]` projection, so `body` stayed
-// free-eligible and its scope-exit deep-drop freed strings `def_body`
-// still aliased. The fix taints the root container of a pointer-shaped
-// projection (index / field / array-slice) at the non-inc retain sinks.
-//
-// Bisection (see TestRCNestedArrayAliasingBug): the divergence needed the
-// FULL combination and disappeared if any one dimension was removed:
-//   * parse_defs must build `def_body` by re-pushing `body[k]` (so the
-//     inner BodyLine structs — and their string fields — are ALIASED
-//     out of the intermediate `body` array, which is then dropped); a
-//     hardcoded ChunkDef[] does NOT reproduce.
-//   * `expand` must combine the union return, the `indent + text` string
-//     concat, the `active.append(name)` copy, and the (here untaken)
-//     is_ref/chunk_defined recursion branch; dropping any single one
-//     makes it run correctly.
-//
-// This matches PR #1771's own deferred-work list: "Inner arrays of
-// rc / string elements keep the flat __fern_drop_arr_ptr — recursive
-// inner deep-drop is a later slice" and "String concat results
-// (bound-let under-reclaim + statement temporaries)". #1771 fixed the
-// i32[][] *leak*; this *use-after-free* on string-bearing nested arrays
-// is still open. The self-hosted literate engine sidesteps it by using
-// a flat Piece[] model (see compiler/literate.fern).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 struct BodyLine { text: string, line: i32 }
 struct ChunkDef { name: string, body: BodyLine[] }

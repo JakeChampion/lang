@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// asyncStreamProvider exports test:dep/s. prod / prodi / prodf return the
-// readable end of a stream through task.return, then write into it: three
-// u8s, forty s32s (1..40, more than the consumer's first buffer holds) and
-// three f64s. sink / sinki read a stream to EOF and return the sum of its
-// elements. Every write and read is async and waits when it is blocked.
 const asyncStreamProvider = `(component
   (type $su8 (stream u8))
   (type $ss32 (stream s32))
@@ -154,11 +149,6 @@ const asyncStreamProvider = `(component
   (export "test:dep/s" (instance $x)))
 `
 
-// TestSelfHostWasmAsyncStream pins `Stream[T]` in an async import's
-// signature. A stream result is read to EOF into the T[] the call returns,
-// and a T[] argument is written out through a stream the import reads. The
-// provider writes and reads two elements at a time, so both sides wait on
-// a blocked op, and prodi's forty elements make the consumer's buffer grow.
 func TestSelfHostWasmAsyncStream(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)

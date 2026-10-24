@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// The committed module must be what the generator makes of the committed
-// dictionary.
 func TestCommittedFileIsUpToDate(t *testing.T) {
 	const path = "../../" + outputPath
 	want, err := os.ReadFile(path)
@@ -26,7 +24,6 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 	}
 }
 
-// A byte changed is refused, not written.
 func TestRefusesAnotherDictionary(t *testing.T) {
 	data, err := os.ReadFile("dictionary.bin")
 	if err != nil {

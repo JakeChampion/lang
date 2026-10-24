@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostDynStructReclaimIRX86_64 pins the #4351 slice: a dyn-Trait local
-// holding a statically-known STRUCT payload (`let d: dyn T = C { ... }` — the
-// struct flows UNBOXED behind the coercion, so the local holds the concrete's
-// rc-headered box) is released at scope exit: the concrete's rc fields are
-// dropped (only when it has any), then the box. An escaping dyn local must
-// stay valid for its caller.
 func TestSelfHostDynStructReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -45,11 +39,6 @@ func TestSelfHostDynStructReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// RECLAIM, BOUNDED HIGH-WATER: the Circle behind the dyn (with an rc array
-	// field) is built and dropped every call. Pre-slice the box + its tags
-	// buffer leaked per call (the coarse "dyn Show" slot type kept it out of
-	// every reclaim class); now the sweep deep-drops tags then frees the box —
-	// a second 3000-iteration churn stays flat.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r * self.r + self.tags[0]; } }
@@ -58,8 +47,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-struct-reclaim-flat", 0)
 
-	// SCALAR-ONLY concrete: no deep-drop emitted (no reclaimable field), the
-	// box alone is freed — still flat, no underflow.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Dot { r: i32 }
 impl Show for Dot { function show(self: Self): i32 { return self.r + 1; } }
@@ -68,8 +55,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-scalar-struct-reclaim-flat", 0)
 
-	// ESCAPING dyn: `return d` hands the box to the caller, whose use stays
-	// valid, detector 0.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r + self.tags[0]; } }
@@ -79,9 +64,6 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-escaping-excluded", 0)
 
-	// REASSIGNED dyn excluded: `d = C{..}` rebind — the concretes could
-	// differ, so the candidate is rejected (both boxes leak, sound). Values +
-	// detector checked.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r; } }
@@ -91,7 +73,6 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"dyn-reassigned-excluded", 0)
 }
 
-// TestSelfHostDynStructReclaimWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostDynStructReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping dyn struct reclaim wasm IR e2e")
@@ -149,7 +130,6 @@ function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0
 	}
 }
 
-// TestSelfHostDynStructReclaimIRArm64: the arm64 sibling under qemu.
 func TestSelfHostDynStructReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

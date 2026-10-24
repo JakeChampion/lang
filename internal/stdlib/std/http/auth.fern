@@ -1,32 +1,10 @@
-// std/http/auth — the HTTP authentication framework (RFC 9110 §11) for a
-// handler: a bearer token (RFC 6750) or a basic credential (RFC 7617)
-// read from `Authorization`, checked by the program, and the principal
-// handed to the rest of the handler as a value; a 401 with its
-// `WWW-Authenticate` challenge otherwise.
-//
-//     import "std/http/auth";
-//
-//     function me(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-//       use user <- auth.bearer(req, (token: string): Option[User] => users.by_token(token));
-//       return Ok(http.json_of(user));
-//     }
-//
-// A middleware by std/http/router's convention, producing a value: `verify`
-// is the program's check, answering the principal for a credential it
-// accepts, and `next` takes that principal. A missing or malformed
-// credential, and one `verify` refuses, is answered 401 as a problem
-// document with the challenge; the handler behind it never runs.
-// `token_eq` compares two secrets in time that does not depend on where
-// they differ, for a `verify` over a static token.
+// This module authenticates HTTP requests with bearer tokens or Basic credentials.
 
 import "std/http";
 import "std/base64";
 import "std/string";
 import "std/utf8";
 
-// `bearer(req, verify, next)` — `Authorization: Bearer TOKEN`, with
-// `token68` characters (RFC 9110 §11.2). The challenge is `Bearer`, with
-// `error="invalid_token"` when a token was sent and refused.
 pub function bearer[U](req: HttpRequest, verify: (string) => Option[U], next: (U) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   match (credential(req, "Bearer")) {
     Some(token) => {
@@ -49,9 +27,6 @@ pub function bearer[U](req: HttpRequest, verify: (string) => Option[U], next: (U
   return Ok(__challenge(401, "a bearer token is required", "Bearer"));
 }
 
-// `basic(req, realm, verify, next)` — `Authorization: Basic BASE64`, the
-// base64 of `user:password` in UTF-8; `verify` takes the two. The challenge
-// names the realm: `Basic realm="REALM", charset="UTF-8"`.
 pub function basic[U](req: HttpRequest, realm: string, verify: (string, string) => Option[U], next: (U) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   let challenge: string = "Basic realm=\"" + __quoted(realm) + "\", charset=\"UTF-8\"";
   match (credential(req, "Basic")) {
@@ -79,9 +54,6 @@ pub function basic[U](req: HttpRequest, realm: string, verify: (string, string) 
   return Ok(__challenge(401, "credentials are required", challenge));
 }
 
-// `credential(req, scheme)` — the credential after `scheme` in
-// `Authorization`, the scheme matched without case, None when the header
-// is absent, names another scheme, or carries nothing after it.
 pub function credential(req: HttpRequest, scheme: string): Option[string] {
   match (req.headers.get("authorization")) {
     Some(v) => {
@@ -102,8 +74,6 @@ pub function credential(req: HttpRequest, scheme: string): Option[string] {
   return None;
 }
 
-// `token_eq(a, b)` — whether two secrets are equal, in time that depends on
-// their lengths and not on where they differ.
 pub function token_eq(a: string, b: string): boolean {
   if (a.len() != b.len()) {
     return false;
@@ -119,7 +89,6 @@ pub function token_eq(a: string, b: string): boolean {
   return diff == 0;
 }
 
-// __has_control: a C0 control or DEL among the bytes.
 function __has_control(bytes: u8[]): boolean {
   for b in bytes {
     if (b < 32 || b == 127) {
@@ -129,14 +98,10 @@ function __has_control(bytes: u8[]): boolean {
   return false;
 }
 
-// __challenge is the problem document answered with `WWW-Authenticate`.
 function __challenge(status: i32, detail: string, challenge: string): HttpResponse {
   return http.problem(status, "", detail).with_header("WWW-Authenticate", challenge);
 }
 
-// __user_pass decodes `user:password`, split at the first colon; a user
-// name may not hold one, a password may. Neither may hold a control
-// character (RFC 7617 §2).
 function __user_pass(encoded: string): Option[(string, string)] {
   match (base64.decode(encoded)) {
     Ok(bytes) => {
@@ -162,8 +127,6 @@ function __user_pass(encoded: string): Option[(string, string)] {
   return None;
 }
 
-// __token68: one or more of ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" /
-// "/", then any number of "=".
 function __token68(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len() && __token68_byte(s[i] as i32)) {

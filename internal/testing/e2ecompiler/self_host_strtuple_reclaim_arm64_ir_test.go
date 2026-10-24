@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStrTupleReclaimIRArm64 is the arm64 port of
-// TestSelfHostStrTupleReclaimIRX86_64: the string-element tuple release is
-// shared lowering, through op_tuple_get and the rc-aware __fern_str_free. Case
-// table shared with the x86-64 leg.
 func TestSelfHostStrTupleReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range strTupleReclaimCases {

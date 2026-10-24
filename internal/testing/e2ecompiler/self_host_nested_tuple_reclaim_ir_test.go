@@ -7,20 +7,11 @@ import (
 	"testing"
 )
 
-// nestedTupleReclaimCases pin the #4365 nested-tuple-with-inner-array reclaim: a
-// tuple whose element is ITSELF a tuple literal carrying a fresh array
-// (`((i, [i, i+1]), i)`) releases all three levels — the inner array buffer, the
-// inner tuple box, and the outer box — depth-first, per loop iteration and per
-// discard. A bare-ident element (nested or flat) aliases a live local and is
-// not freed with the tuple (leak-safe); a returned tuple escapes and is never
-// freed. A nested tuple element is not a scalar, so a discard must not take the
-// shallow scalar-tuple release and leak its inner box.
 var nestedTupleReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: nested-tuple loop-local rebuilt per iteration, len/scalar read.
 	{"nested-tuple-churn", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -34,8 +25,6 @@ var nestedTupleReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Nested-read: the inner array is BORROW-read through `t.0.1[i]` before the
-	// rebind free — reads precede the drop, values exact, still bounded.
 	{"nested-tuple-read", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -57,8 +46,6 @@ var nestedTupleReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative: the nested tuple is returned — ownership moves out, the
-	// local is non-reclaimable, nothing freed (values exact, no dangle).
 	{"nested-tuple-escape-safe", `function mk(i: i32): ((i32, i32[]), i32) {
     let t: ((i32, i32[]), i32) = ((i, [i, i + 1]), i);
     return t;
@@ -70,9 +57,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 16},
-	// IDENT-inner negative: the nested tuple's array element is a bare ident
-	// (`((w, xs), w)`) aliasing a live local — skipped by the deep-drop (only the
-	// fresh inner box is freed, xs stays valid), no double-free at detector zero.
 	{"nested-tuple-ident-elem-safe", `function main(): i32 {
     let xs: i32[] = [7, 8];
     let acc: i32 = 0;
@@ -83,7 +67,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Deeper nesting (three tuple levels) — the recursion frees every level.
 	{"nested-tuple-deep", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -97,8 +80,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Mixed: a fresh array in the OUTER tuple alongside a nested-tuple element —
-	// both the outer array and the nested inner array are freed.
 	{"nested-tuple-mixed", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -112,9 +93,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// DISCARDED nested tuple statement (`((w, [w, w+1]), w);`) — the discarded
-	// statement takes the same depth-first release; a shallow scalar-tuple
-	// discard would leak the inner box.
 	{"nested-tuple-discarded", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -130,8 +108,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostNestedTupleReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostNestedTupleReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

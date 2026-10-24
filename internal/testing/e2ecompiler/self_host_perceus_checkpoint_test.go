@@ -10,7 +10,6 @@ import (
 	"testing"
 )
 
-// Copy dictionaries at each checkpoint, independent of the persistent tree.
 func perceusCheckpointOracle(n, frequency int) [][]int64 {
 	m := make(map[int64]bool)
 	snapshot := func() []int64 {

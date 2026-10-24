@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// TRMC beyond the canonical `match (xs) { Cons(h,t) => Cons(g(h), self(t)),
-// Nil => Nil }` (#5344). Each function here exercises one of the widened
-// detector shapes and is checked for VALUE correctness — the hole-passing
-// rewrite reorders when each node's payload is written, so a mis-placed hole
-// or a mis-ordered arm chain shows up as a wrong list rather than a crash.
-//
-// TestInterpTrmcWidened is the real gate: the interpreter, which has no TRMC,
-// must produce the same answer, so a widened shape that lowers wrong cannot
-// hide behind a self-consistent expectation.
-//
-// build_signed(6) = [-5, 4, -3, 2, -1, 0] (sum -3).
 const trmcWidenSrc = `enum List { Cons(i32, List), Nil }
 enum Rev { Node(Rev, i32), End }
 
@@ -118,9 +107,6 @@ func TestInterpTrmcWidened(t *testing.T) {
 	}
 }
 
-// The O(1)-stack win has to reach the widened shapes too: `drop_neg` mixes a
-// bare tail self-call with a constructor-wrapped one, and only the second
-// builds a node — the loop must still hold the stack flat across both.
 const trmcWidenDeepSrc = `enum List { Cons(i32, List), Nil }
 function drop_neg(xs: List): List {
     match (xs) {

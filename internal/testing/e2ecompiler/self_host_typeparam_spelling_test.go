@@ -2,18 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// typeParamSpellingCases name a user type exactly like a generic's type
-// parameter (#9577). The self-host monomorphiser reads types as spellings, so
-// `PMap[K, V]` taken at a user `struct K` must still produce a clone distinct
-// from its template, or the instantiations never register and the build stops
-// on calls to the bare templates. Every case's expected value comes from an
-// independent build of the same program, never from the self-host run.
 var typeParamSpellingCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The issue's program: a struct `K` as the key of std/pmap's `PMap[K, V]`.
 	{"struct-named-like-map-key-param", `import "std/pmap" as pmap;
 import "std/option";
 import "std/i32";
@@ -31,8 +24,6 @@ function main(): i32 {
     return n % 113;
 }
 `, 112},
-	// An enum `V` as the value of `PMap[K, V]`, read back through `get`'s
-	// `Option[V]`.
 	{"enum-named-like-map-value-param", `import "std/pmap" as pmap;
 import "std/option";
 import "std/i32";
@@ -53,9 +44,6 @@ function main(): i32 {
     return (n + m.len()) % 113;
 }
 `, 43},
-	// A struct `T` beside generics whose own parameter is `T`: an erased
-	// function (`pick`), bounded ones that are cloned (`first_eq`, `count_eq`),
-	// and a generic struct `Box[T]` taken at the struct.
 	{"struct-named-like-fn-param", `import "core/cmp";
 
 @derive(cmp.Eq)
@@ -83,9 +71,6 @@ function main(): i32 {
     return (t.a * 10 + t.b + count_eq(ts, T { a: 1, b: 2 }) * 100 + pick(names, 2).len() + bx.get().a + f) % 113;
 }
 `, 20},
-	// A value named like a type variable is a value: the respelling of `T` in
-	// `T.default()` must not reach a parameter, a local or a bounded clone's
-	// parameter of the same name.
 	{"param-named-like-type-param", `function pick[T](T: T[]): i32 { return T.len(); }
 function main(): i32 { return pick([4, 5, 6]) + pick(["a"]) * 10; }
 `, 13},
@@ -97,17 +82,11 @@ function main(): i32 { return first([7, 8]) + count(["a", "b", "c"]) * 10; }
 function pick3[T: cmp.Eq](T: T): T { return T; }
 function main(): i32 { return pick3(40) + pick3("abc").len(); }
 `, 43},
-	// `f[T](x)` parses as an index until the type argument is recognised, so
-	// its bracket is respelled like any type variable — but an index that is a
-	// value of the same name stays a value.
 	{"type-param-in-call-bracket-and-value-index", `function at[T](xs: T[], T: i32): T { return xs[T]; }
 function id[T](a: T): T { return a; }
 function pass[T](a: T): T { return id[T](a); }
 function main(): i32 { return at([10, 20, 30], 2) + pass(5); }
 `, 35},
-	// A MODULE-level name is not a type variable either, in the index and
-	// the field-access positions alike: a const read as an index, an enum
-	// qualifying a variant, a struct qualifying an associated call (#10427).
 	{"module-const-shadows-type-param-index", `const T: i32 = 2;
 function at[T](xs: T[]): T { return xs[T]; }
 function main(): i32 { return at([5, 6, 7, 8]); }
@@ -125,7 +104,6 @@ impl G for T { function get(): i32 { return 1; } }
 function pick[T](n: T): i32 { return T.get(); }
 function main(): i32 { return pick(1); }
 `, 1},
-	// Out of the value's scope, `T.default()` names the type variable again.
 	{"type-param-object-after-shadow-scope", `import "core/cmp";
 function mk[T: cmp.Default](x: T): T {
     if (true) { let T: i32 = 3; }
@@ -136,8 +114,6 @@ function main(): i32 { return mk(7) + mk("zz").len() + 4; }
 `, 4},
 }
 
-// TestSelfHostTypeParamSpelling compiles each case with the self-host CLI for
-// every target.
 func TestSelfHostTypeParamSpelling(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi", "arm64-linux"} {

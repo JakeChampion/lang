@@ -1,32 +1,9 @@
-// std/error — a common supertype for error values.
-//
-// `Error` is the shared vocabulary for "a thing that went wrong": any type
-// that can describe itself with a human-readable message implements it.
-// Returning `Result[T, dyn error.Error]` lets a function propagate
-// heterogeneous concrete error types through `?` — each boxes into
-// `dyn error.Error` on the failure path (the `?` dyn-error conversion) —
-// and lets callers handle any of them uniformly via `message()`:
-//
-//     import "std/error" as error;
-//
-//     function load(path: string): Result[Config, dyn error.Error] {
-//         let text: string = read_file(path)?;  // boxes an IoError
-//         let cfg: Config  = parse(text)?;       // boxes a ParseError
-//         return Ok(cfg);
-//     }
-//
-// A type opts in with `impl error.Error for MyError { function message(...) … }`.
-// The builtin `IoError` has no module of its own, so its impl is here, in the
-// trait's module, as `core/cmp` holds the primitive types' `Display` impls.
+// This module defines a common supertype for error values.
 
-// Error supplies a human-readable message for an error value.
 pub trait Error {
   function message(self: Self): string;
 }
 
-// `e.message()` says why a filesystem or stream operation failed. Like
-// `NetError`'s, it does not repeat the operand: the path is the variant's
-// payload, for a caller that wants to name it.
 pub function (e: IoError) message(): string {
   match (e) {
     NotFound(_) => {

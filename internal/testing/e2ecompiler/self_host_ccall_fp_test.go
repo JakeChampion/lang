@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// The FP __c_call shims hand the C callee's result back where a Fern caller
-// reads every result, %rax / x0, an f32 widened first to the f64 a Fern f32
-// is held as (#11485). The x86-64 shims are also run, under dlopen, by the
-// std/jni FP tests in internal/testing/e2e/shared_lib_test.go; a static arm64 program
-// has no C function to call, so its shims are pinned here by their text.
 func TestSelfHostCCallFPShimsReturnInTheResultRegister(t *testing.T) {
 	cli := newStrictCLI(t)
 	src := `function d(p: usize): f64 { return __c_call1_f64(p, 7 as usize); }
@@ -50,7 +45,6 @@ function main(): i32 { return (d(0 as usize) + (f(0 as usize) as f64)) as i32; }
 	}
 }
 
-// shimBody is the text from label's line to its first ret.
 func shimBody(asm, label string) string {
 	_, rest, ok := strings.Cut(asm, "\n"+label+":\n")
 	if !ok {

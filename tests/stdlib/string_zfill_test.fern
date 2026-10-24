@@ -1,21 +1,11 @@
 import "std/test";
 import "std/string";
 
-// tests/stdlib/string_zfill_test.fern — pure-Fern coverage of
-// std/string.zfill(width): left-pad a numeric string with '0' to at least
-// `width` bytes, keeping a leading sign ('+' / '-') in FRONT of the zeros
-// (Python's str.zfill), unlike pad_start. Covers unsigned, both signs, already
-// wide, empty, lone sign, width 0, and non-numeric. Kept as its own suite so the
-// self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
-// The Go-side TestStringZfill pins these across all four backends; this is the
-// migration-shaped (pure-Fern, std/test-driven) companion.
-
 function test_unsigned(): test.TestOutcome {
   return test.assert_true("42".zfill(5) == "00042");
 }
 
 function test_negative(): test.TestOutcome {
-  // Sign stays in front of the zeros.
   return test.assert_true("-42".zfill(5) == "-0042");
 }
 
@@ -43,7 +33,6 @@ function test_width_zero(): test.TestOutcome {
 }
 
 function test_non_numeric(): test.TestOutcome {
-  // No leading sign → plain zero-pad.
   return test.assert_true("abc".zfill(5) == "00abc");
 }
 

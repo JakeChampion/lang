@@ -1,5 +1,5 @@
-// A destructuring parameter binds unconditionally, so it reads only the
-// irrefutable half of the shared pattern grammar (#5356).
+
+
 struct Point { x: i32, y: i32 }
 function f(Point { x, y }: i32): i32 { return x + y; }
 function main(): i32 { return f(1); }

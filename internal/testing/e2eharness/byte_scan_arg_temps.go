@@ -1,8 +1,5 @@
 package e2eharness
 
-// ByteScanArgTempsProgram hands each byte-scan builtin a fresh temporary
-// (an array literal, a call's result, a concatenation) 100 times and exits
-// 0 when every answer is right; a leak census over it must balance.
 const ByteScanArgTempsProgram = `const SET: u8[] = [0u8, 1u8, 0u8];
 function fresh(): u8[] {
     return __alloc_u8(4);

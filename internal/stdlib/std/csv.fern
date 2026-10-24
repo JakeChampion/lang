@@ -1,4 +1,4 @@
-// std/csv supplies CSV fields, records, and documents.
+// This module reads and writes CSV fields, records, and documents under RFC 4180.
 
 import "std/string";
 import "std/error";
@@ -13,7 +13,7 @@ pub enum ParseErrorKind {
   UnexpectedRecordTerminator,
 }
 
-// offset is a zero-based byte offset. An unclosed quote reports end of input.
+// offset counts bytes from zero. An unclosed quote reports the end of the input.
 @derive(cmp.Eq)
 pub struct ParseError { offset: i32, kind: ParseErrorKind }
 
@@ -44,13 +44,6 @@ pub function (e: ParseError) to_string(): string {
   return "CSV byte " + e.offset.to_string() + ": " + reason;
 }
 
-// === CSV escape / join ===
-//
-// `escape(s)` — return a CSV field per RFC 4180. Fields
-// containing comma / double-quote / newline get wrapped in
-// "..." with interior quotes doubled. Other inputs pass
-// through unchanged.
-// `join(arr)` — join with "," after escaping each field.
 pub function escape(s: string): string {
   if (!s.contains(",") && !s.contains("\"")
     && !s.contains("\n") && !s.contains("\r")) {
@@ -64,15 +57,10 @@ pub function join(arr: string[]): string {
   if (n == 0) {
     return "";
   }
-  // Two-pass exact-size buffer (#4379): the naive `out = out + escape(…)`
-  // recopied the whole growing record on every field — O(total²). escape
-  // is a pure O(len) transform, so a sizing pass that escapes once per field
-  // (plus the `,` separators) stays O(total) overall, then a fill pass
-  // re-escapes into one __alloc_u8 buffer. Byte-for-byte identical output.
   let total: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
-    if (i > 0) {  // ","
+    if (i > 0) {
       total = total + 1;
     }
     total = total + escape(arr[i]).len();
@@ -82,7 +70,7 @@ pub function join(arr: string[]): string {
   let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    if (i > 0) {  // ','
+    if (i > 0) {
       buf = buf.with(pos, 44 as u8);
       pos = pos + 1;
     }
@@ -100,14 +88,14 @@ pub function join(arr: string[]): string {
 }
 
 // parse_line decodes one record. Quoted fields can contain newlines.
-// The empty input produces one empty field.
+// Empty input produces one empty field.
 pub function parse_line(s: string): Result[string[], ParseError] {
   let rows: string[][] = __parse(s, true)?;
   return Ok(rows[0]);
 }
 
 // parse accepts LF, CRLF, and CR record separators. Empty input produces no rows.
-// A trailing separator does not produce an extra row. Row widths can differ.
+// A separator at the end does not produce an extra row. Row widths can differ.
 pub function parse(s: string): Result[string[][], ParseError] {
   return __parse(s, false);
 }
@@ -183,10 +171,6 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
   return Ok(rows);
 }
 
-// `serialize(rows)` — the inverse of `parse`: escape + join each
-// record's fields (via `join`) and join the records with CRLF
-// (`\r\n`, the RFC 4180 record separator). `parse(serialize(rs))`
-// round-trips `rs`.
 pub function serialize(rows: string[][]): string {
   let lines: string[] = [];
   for row in rows {

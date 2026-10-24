@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// A generic's result spelled through a projection on its own type parameter
-// (`first[H: Holder](h: H): H::Item`) names a concrete type only once the call
-// binds H. The self-host resolved projections at parse time alone, when H is
-// still a variable, so the call's result stayed untyped and `.len()` on it read
-// the array header instead of the string length (#9311). Every term turns on
-// the type, since an i32 payload is right whether or not the projection resolved.
 const boundProjectionSrc = `trait Holder { type Item; function get(self: Self): Self::Item; }
 struct SBox { v: string }
 struct ABox { xs: string[] }

@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostU32WrapArm64IR is the arm64 sibling of TestSelfHostU32WrapIR:
-// it proves the arm64 backend (asm_arm64_ir.fern) wraps u32 arithmetic at
-// 2^32 and shifts u32 `>>` logically, so std/crypto's
-// SHA-256 is correct — the bug #2861 tracked. The oracle is the interpreter
-// (runInterpExit). CI-gated arm64 (qemu).
-//
-// Reuses shaCoreSrc from self_host_u32_wrap_ir_test.go.
 func TestSelfHostU32WrapArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -60,7 +53,7 @@ function main(): i32 { let a: u32 = 1; let b: u32 = a + (0xfffffffe + 1); let c:
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			want := runInterpExit(t, tc.src) // the interpreter is the oracle
+			want := runInterpExit(t, tc.src)
 			if got := emitAndRunIR(t, tc.src); got != want {
 				t.Errorf("self-host arm64 IR %q: exit = %d, want %d (interpreter)", tc.name, got, want)
 			}

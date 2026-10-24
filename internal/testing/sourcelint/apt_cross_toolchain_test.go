@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// Execute the action's actual readiness predicate with a controlled command
-// lookup. A static emulator on the runner must not satisfy a lane explicitly
-// requesting qemu-aarch64, or the action skips installation before CI fails.
 func TestCrossToolchainRequiresRequestedEmulator(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {

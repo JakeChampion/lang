@@ -4,17 +4,6 @@ import (
 	"testing"
 )
 
-// --- Passing a struct-array local to a BORROWING callee -----------------------
-//
-// A struct-array local handed to a callee that only reads its header must keep
-// its element walk, and a callee that lets an element outlive the call (in a
-// returned struct, bare, as a field, appended elsewhere) must not have it freed
-// under the caller. Every row balances at live_bytes 0 on the typed lowering;
-// the exit codes guard the values read back after churn.
-//
-// Every want was confirmed against bin/fern -interp and the native x86-64
-// backend, never read off the self-host run.
-
 type arrstructBorrowCase struct {
 	name string
 	src  string
@@ -26,10 +15,6 @@ function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i
 function seed(): i32 { return 7; }
 `
 
-// arrstructBorrowMain keeps `keep` genuinely live across a loop. A constant
-// producer argument (`mkv(7)`) instead of `mkv(seed())` makes the local DEAD and
-// moves its release to a precise box-only site, which leaks for an unrelated
-// reason and reads exactly like this bug — the #7364 const-fold trap.
 func arrstructBorrowMain(src, use string) string {
 	return `
 function main(): i32 {
@@ -41,10 +26,6 @@ function main(): i32 {
 }`
 }
 
-// arrstructHandout wraps a callee that lets something from the array outlive the
-// call, with allocation churn between the handout and the read so a freed box is
-// reused before the payload is checked. `ret` is the callee's return type, `read`
-// pulls the two seeded values back out of the returned `g`.
 func arrstructHandout(callee, ret, read string) string {
 	return `struct Inner { xs: i32[] }
 struct H { e: Inner, n: i32 }
@@ -81,56 +62,39 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 	readOnly := `function rd(src: Inner[], i: i32): i32 { return (src.len() + i) % 101; }`
 	return []arrstructBorrowCase{
 		{
-			// The repro: a callee that only reads the header. 4/2 before.
 			name: "borrowed_arg",
 			src:  mk(readOnly, producer, "rd(keep, r)"),
 			want: 6,
 		},
 		{
-			// The same, literal-bound — the binding source is not the axis. The
-			// payload goes through id so it is built on the heap rather than
-			// placed as a constant.
 			name: "borrowed_arg_literal",
 			src:  mk(readOnly+"\nfunction id(xs: i32[]): i32[] { return xs; }", literal, "rd(keep, r)"),
 			want: 6,
 		},
 		{
-			// Control: never passed anywhere. Clean before and after.
 			name: "not_passed",
 			src:  mk(``, producer, "(keep.len() + r) % 101"),
 			want: 6,
 		},
 		{
-			// The callee binds an element to a local (`let e = src[0]`) that dies
-			// inside the callee, so the caller keeps its element walk and the row
-			// balances. The four handout rows below must still keep their elements
-			// alive.
 			name: "callee_extracts_element",
 			src: mk(`function rd(src: Inner[], i: i32): i32 { let e: Inner = src[0]; return e.xs.len() + i; }`,
 				producer, "rd(keep, r)"),
 			want: 9,
 		},
 		{
-			// The callee hands the array back, so the caller does not sole-
-			// own it while the result lives.
 			name: "callee_returns_param",
 			src: mk(`@noinline function rd(src: Inner[], i: i32): Inner[] { return src; }`,
 				producer, "rd(keep, r).len()"),
 			want: 3,
 		},
 		{
-			// The callee stores the array into a struct field: a counted store, so
-			// the reference it keeps is retained and the row balances. The four
-			// handout rows below must still keep their elements alive.
 			name: "callee_stores_field",
 			src: mk(`struct P { f: Inner[], n: i32 }
 function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				producer, "rd(keep, r)"),
 			want: 6,
 		},
-		// The four handout shapes: something from the array outlives the call.
-		// Each reads its payload back after churn, so a release under the live
-		// reference shows as exit 100 or 139.
 		{
 			name: "element_handed_out_in_struct",
 			src: arrstructHandout(
@@ -162,9 +126,6 @@ function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (
 	}
 }
 
-// TestSelfHostArrStructBorrowedArgX86_64 — a struct-array local handed to a
-// callee, or letting an element outlive a call, reclaims everything and reads
-// its values back intact.
 func TestSelfHostArrStructBorrowedArgX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

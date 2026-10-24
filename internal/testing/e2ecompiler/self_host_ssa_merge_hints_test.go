@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// mergeHintProg is an else-if chain inside a loop over sixteen values, more
-// than x86-64 has registers for. At each merge down the chain, the operand
-// from the paths that leave a value alone is the loop header's phi, live
-// through the whole body, so a merge phi hinted at it never shares a home and
-// the arm's fresh sums went to the frame instead (ssa.phi_mates).
 const mergeHintProg = `@noinline function carry(n: i64, x: i64): i64 {
     let a: i64 = 1i64; let b: i64 = 2i64; let c: i64 = 3i64; let d: i64 = 4i64;
     let e: i64 = 5i64; let f: i64 = 6i64; let g: i64 = 7i64; let h: i64 = 8i64;
@@ -40,8 +35,6 @@ const mergeHintProg = `@noinline function carry(n: i64, x: i64): i64 {
 function main(): i32 { return (carry(1000i64, 3i64) % 200i64) as i32; }
 `
 
-// No arm of carry's chain stores a sum to the frame and reads it straight
-// back.
 func TestSelfHostSSAMergePhiHintsADyingOperand(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -98,10 +91,6 @@ func TestSelfHostSSAMergePhiHintsADyingOperand(t *testing.T) {
 	}
 }
 
-// evictionProg is ssa.prune_mark, whose values sharing a register include one
-// still live after one whose interval ended: they are not ordered by where
-// their intervals end. An eviction spills every one still live, not only those
-// before the first that ended (ssa.still_holds).
 const evictionProg = `struct Inst { result: i32, args: i32[] }
 struct Blk { insts: Inst[] }
 struct Fn { nvals: i32, blocks: Blk[] }
@@ -163,7 +152,6 @@ function main(): i32 {
 }
 `
 
-// Values 0 to 5 are reachable from 5 and 6 and 7 are not: 0b11111100.
 func TestSelfHostSSAEvictionSpillsEveryLiveSharer(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()

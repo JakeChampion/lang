@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// TestFloatShortestRoundTrip is the correctness guard for the shortest-
-// round-trip f64 formatter (#5536): whatever `(v).to_string()` produces must
-// parse back (via Go's correctly-rounded strconv) to the exact same f64, and
-// must be no longer than Go's shortest. Covers edge cases + a seeded-random
-// spread of f64 bit patterns. Notation-agnostic (Fern's fixed/scientific
-// thresholds differ from Go's 'g'); the invariant is round-trip + minimality.
 func TestFloatShortestRoundTrip(t *testing.T) {
 	edge := []float64{
 		0.1 + 0.2, 1.0 / 3.0, 1.5, 0.1, 2.25, 100.0, 123456.789,
@@ -34,7 +28,6 @@ func TestFloatShortestRoundTrip(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("import \"std/f64\";\nfunction main(): i32 {\n")
 	for _, v := range vals {
-		// f64_from_bits takes an i64; convert the bit pattern to its signed form.
 		bi := int64(math.Float64bits(v))
 		b.WriteString(fmt.Sprintf("    write(f64_from_bits(%d).to_string()); write(\"\\n\");\n", bi))
 	}
@@ -59,7 +52,6 @@ func TestFloatShortestRoundTrip(t *testing.T) {
 			t.Errorf("v=%v (%#x): to_string=%q parses back to %v (%#x) — not round-trip",
 				v, math.Float64bits(v), got, parsed, math.Float64bits(parsed))
 		}
-		// Minimality: no more significant digits than Go's shortest.
 		wantSig := sigDigits(strconv.FormatFloat(v, 'g', -1, 64))
 		if gotSig := sigDigits(got); gotSig > wantSig {
 			t.Errorf("v=%v: to_string=%q has %d sig digits, Go shortest %q has %d",
@@ -68,11 +60,6 @@ func TestFloatShortestRoundTrip(t *testing.T) {
 	}
 }
 
-// sigDigits counts significant decimal digits in a formatted float: the digits
-// from the first non-zero to the last non-zero, inclusive (ignoring sign,
-// decimal point, exponent, and leading/trailing zeros — trailing zeros in a
-// fixed-point integer like "100000000000000000000" are place-value, not
-// significant, so its significand is just "1").
 func sigDigits(s string) int {
 	if i := strings.IndexAny(s, "eE"); i >= 0 {
 		s = s[:i]

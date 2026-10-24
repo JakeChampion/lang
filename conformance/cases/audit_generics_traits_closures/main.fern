@@ -1,13 +1,13 @@
 import "core/int";
 
-// Audit fixture: generics, traits, and closures/function values on every
-// native backend (interp / x86-64 / arm64 / wasm). Each failing check
-// prints "FAIL <id>" and returns a distinct non-zero code; success "OK".
-//
-// Covers (docs/FEATURE-AUDIT.md §A): generic function + struct + method,
-// trait + impl method dispatch, lambdas, closure capture, function
-// values, higher-order functions, and tail-call optimisation (deep
-// self-recursion must not overflow the stack).
+
+
+
+
+
+
+
+
 
 function id[T](x: T): T { return x; }
 
@@ -23,35 +23,35 @@ function named_inc(x: i32): i32 { return x + 1; }
 
 function sum_to(n: i32, acc: i32): i32 {
     if (n == 0) { return acc; }
-    return sum_to(n - 1, acc + n); // tail call
+    return sum_to(n - 1, acc + n);
 }
 
 function main(): i32 {
-    // --- generic function + struct + method ---
+
     if (id(42) != 42) { print("FAIL generic-fn"); return 11; }
     let box: Box[i32] = Box { v: 33 };
     if (box.v != 33 || box.get() != 33) { print("FAIL generic-struct"); return 12; }
 
-    // --- trait + impl dispatch ---
+
     if ((21).dbl() != 42) { print("FAIL trait"); return 13; }
 
-    // --- lambda ---
+
     let inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     if (inc(41) != 42) { print("FAIL lambda"); return 14; }
 
-    // --- closure capture ---
+
     let n: i32 = 10;
     let addn: (i32) => i32 = (x: i32): i32 => { return x + n; };
     if (addn(5) != 15) { print("FAIL closure"); return 15; }
 
-    // --- function value (named fn used as a value) ---
+
     let fv: (i32) => i32 = named_inc;
     if (fv(7) != 8) { print("FAIL fn-value"); return 16; }
 
-    // --- higher-order: pass a closure to a function ---
+
     if (apply(inc, 100) != 101) { print("FAIL higher-order"); return 17; }
 
-    // --- tail-call optimisation (no stack overflow at depth 5000) ---
+
     if (sum_to(5000, 0) != 12502500) { print("FAIL tco"); return 18; }
 
     print("OK");

@@ -9,20 +9,6 @@ import (
 	"testing"
 )
 
-// TestWasmRouteProbe covers `wasm_run -decide`, the wasm routing probe: what
-// the routing gates (ircore.gate, then wasm_ir.ir_route_final) decline.
-//
-// Enumerating from Go test literals is not a substitute, and the attempt is
-// worth recording: a sweep over every backtick literal in the files that
-// mention wasm_run.fern produced a confident-looking decline count that was
-// almost entirely artifacts — Go comment prose, multi-entry test tables spliced
-// into one "program", fmt.Sprintf templates still holding %s/%d, and (the part
-// that is not obvious) REAL programs belonging to a DIFFERENT driver, because
-// self_host_x86_gas_test.go mentions wasm_run.fern while its programs are x86.
-// A file naming a driver does not mean its programs are fed to that driver.
-//
-// The probe reuses the emitter's own decision rather than restating it
-// (wasm_ir.ir_route_ok), so it cannot drift from what it describes.
 func TestWasmRouteProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -30,10 +16,6 @@ func TestWasmRouteProbe(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// A generic whose body only PASSES the type variable through stays on the IR
-	// path (the widened-erased shape); one whose body USES it at the erased width
-	// is what module_erased_wide declines. The pair is the point: it pins that the
-	// probe reports the gate boundary, not merely "did it parse".
 	const passthrough = "function pick2[T](a: T, b: T, useA: boolean): T { if (useA) { return a; } return b; }\n" +
 		"function main(): i32 {\n" +
 		"    let x: i64 = 5000000000;\n" +
@@ -42,14 +24,6 @@ func TestWasmRouteProbe(t *testing.T) {
 		"    if (z == 7) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
-	// A single-typevar fn with a bare-scalar param and a CONCRETE return. Its
-	// value never leaves through the type variable, so neither the widening path
-	// nor the container promotion covered it, and on wasm it was a SILENT
-	// MISCOMPILE: the erased param is i32 there, so an i64 argument crosses the
-	// boundary as a box POINTER and `a == b` compared two distinct boxes —
-	// returning 1 where the interpreter (and the register backends, whose erased
-	// slots are 8 bytes, emitting a `cmpq`) return 42. Parser clause (c'') now
-	// promotes the shape so monomorphize_module gives the body a concrete width.
 	const usesTypevar = "function eqf[T](a: T, b: T): boolean { return a == b; }\n" +
 		"function main(): i32 {\n" +
 		"    let x: i64 = 5000000000;\n" +
@@ -57,8 +31,6 @@ func TestWasmRouteProbe(t *testing.T) {
 		"    if (eqf(x, y)) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
-	// A two-var sibling, also promoted: every var is bound by a bare-scalar param
-	// and the return is concrete, so nothing is stranded in the clone.
 	const twoTypevars = "function both[T, U](a: T, b: U): boolean { return a == a && b == b; }\n" +
 		"function main(): i32 {\n" +
 		"    let x: i64 = 5000000000;\n" +
@@ -66,17 +38,6 @@ func TestWasmRouteProbe(t *testing.T) {
 		"    if (both(x, y)) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
-	// The fold shape: an ARRAY-param type var, so clause (c'') cannot promote it
-	// and erased_passthrough_safe excludes it because the body uses the value.
-	// Clause (c-arr) promotes on
-	// ANY mention of the var in the return, which covers the bare `T` here, so it
-	// monomorphises to a concrete `sum_all__i64` and lowers.
-	//
-	// Worth keeping the history: through the AST emitter this shape returned 1
-	// where the interpreter says 42, then became a refusal when that emitter
-	// retired, and now it runs and returns 42. The refusal was the right
-	// intermediate state — a silent wrong answer is worse than a loud one — but
-	// it was never the end state.
 	const foldShape = "function sum_all[T](xs: T[], seed: T): T { let acc: T = seed; for x in xs { acc = x; } return acc; }\n" +
 		"function main(): i32 {\n" +
 		"    let xs: i64[] = [1, 2, 5000000000];\n" +
@@ -84,14 +45,6 @@ func TestWasmRouteProbe(t *testing.T) {
 		"    if (s == 5000000000) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
-	// Declined by the AST lowering, and the refusal test needs a case that is:
-	// a TWO-typevar generic over a wide-element array. The typed lowering
-	// instantiates both vars and produces it. `U` is bound only by the callback's return, not
-	// by any bare-scalar or bare-array param, so promoting `T` alone would leave
-	// `U` erased in the clone — the stranded-sibling hazard the `all_tp_count == 1`
-	// guard exists for. Left erased, the callee indexes an 8-byte-element array at
-	// the i32 stride on wasm32, which is silently wrong rather than a trap, so a
-	// refusal is the correct outcome here and not a placeholder for one.
 	const twoVarArrayShape = "function map2[T, U](xs: T[], f: (T) => U): U[] {\n" +
 		"    let out: U[] = [];\n" +
 		"    for x in xs { out = out.append(f(x)); }\n" +
@@ -125,9 +78,6 @@ func TestWasmRouteProbe(t *testing.T) {
 		})
 	}
 
-	// Both IR-routed programs must RUN to the interpreter's answer. usesTypevar
-	// is the regression guard for the box-pointer miscompile described above: it
-	// returned 1 before clause (c'').
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -135,8 +85,6 @@ func TestWasmRouteProbe(t *testing.T) {
 		{"ir-route-runs", passthrough},
 		{"erased-wide-uses-typevar-runs", usesTypevar},
 		{"erased-wide-two-typevars-runs", twoTypevars},
-		// The former declined case. Asserting its VALUE is the point: it returned
-		// 1 through the AST emitter, so pinning that emit would have pinned a bug.
 		{"erased-wide-fold-shape-runs", foldShape},
 		{"erased-wide-two-var-array-runs", twoVarArrayShape},
 	} {
@@ -161,8 +109,6 @@ func TestWasmRouteProbe(t *testing.T) {
 	}
 }
 
-// runCaptureArgs is runCapture with extra argv for the driver — the probe needs
-// `-decide`, and every other wasm driver call in the suite passes none.
 func runCaptureArgs(t *testing.T, runner []string, bin string, stdin []byte, args ...string) []byte {
 	t.Helper()
 	var cmd *exec.Cmd

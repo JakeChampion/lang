@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructFreshRetFieldIRX86_64 covers a nested-struct field whose
-// value is a CALL returning a fresh struct (`Outer { inner: mk_inner() }`). The
-// callee hands back a sole-owned box, so the construction takes no extra count
-// and the outer struct's field drop frees the inner box. The inner struct holds
-// only scalars, so the box is all there is to free.
-//
-// The leak signal is heap exhaustion: a long churn allocating Outer+Inner each
-// iteration, with the Inner box retained once too often, exhausts the bump heap
-// → SIGKILL (137); released, the churn stays bounded (exit 0).
 func TestSelfHostStructFreshRetFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -47,11 +38,6 @@ func TestSelfHostStructFreshRetFieldIRX86_64(t *testing.T) {
 		}
 	}
 
-	// FRESH-RET FIELD + CHURN: `o.inner` is `mk_inner()`, a call to a strict-fresh-
-	// struct-returning fn, so the inner box is NOT alias-inc'd and the field-drop
-	// reclaims it. 150M alloc→drop cycles stay bounded (exit 0); under the pre-slice
-	// alias-inc the Inner box leaked every call → heap exhausted → SIGKILL (137).
-	// The IR path is pinned by the emitted `__fn___struct_drop_Outer`.
 	run(t, `struct Inner { a: i32, b: i32 }
 struct Outer { inner: Inner, tag: i32 }
 function mk_inner(): Inner { return Inner { a: 1, b: 2 }; }
@@ -65,8 +51,6 @@ function main(): i32 {
     return s - 10;
 }`, "struct_freshret_field_churn", 0)
 
-	// VALUE-CORRECTNESS: the inner is read back before the drop; a wrong free of a
-	// live box would corrupt it. a(1) + b(2) + tag(7) = 10.
 	run(t, `struct Inner { a: i32, b: i32 }
 struct Outer { inner: Inner, tag: i32 }
 function mk_inner(): Inner { return Inner { a: 1, b: 2 }; }

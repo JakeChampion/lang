@@ -1,13 +1,13 @@
-// A string element read out of a PARAMETER string[] and stored into another
-// container is a second owner of that string: the caller frees its array deep
-// at its own exit, so the store must be counted. The self-host lowering
-// retained a struct parameter stored this way (#7853) but not a string
-// element — the compiler's own reclaimable_credit copied a parameter's rows
-// into a second registry, and the caller's sweep freed them under it, which is
-// what stopped the self-built compiler compiling the compiler (#6644). Each
-// store form below shares the elements a different way; after the source
-// array is dead and the heap has been churned, every shared string must still
-// read back intact.
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 
 function rows(n: i32): string[] {
@@ -20,34 +20,34 @@ function rows(n: i32): string[] {
   return out;
 }
 
-// self-append of a direct index read
+
 function by_index(src: string[], out: string[]): string[] {
   let i: i32 = 0;
   while (i < src.len()) { out = out.append(src[i]); i = i + 1; }
   return out;
 }
 
-// self-append through a local the read bound
+
 function by_local(src: string[], out: string[]): string[] {
   let i: i32 = 0;
   while (i < src.len()) { let e: string = src[i]; out = out.append(e); i = i + 1; }
   return out;
 }
 
-// self-append of the loop variable
+
 function by_for(src: string[], out: string[]): string[] {
   for e in src { out = out.append(e); }
   return out;
 }
 
-// value-form append bound to a new local
+
 function by_value_append(src: string[], out: string[]): string[] {
   let i: i32 = 0;
   while (i < src.len()) { let grown: string[] = out.append(src[i]); out = grown; i = i + 1; }
   return out;
 }
 
-// array literal of two index reads
+
 function by_literal(src: string[], out: string[]): string[] {
   let i: i32 = 0;
   while (i + 1 < src.len()) {
@@ -59,7 +59,7 @@ function by_literal(src: string[], out: string[]): string[] {
   return out;
 }
 
-// the clone form: appending onto a struct field
+
 struct Bag { rows: string[] }
 function by_field(src: string[], out: string[]): string[] {
   let b: Bag = Bag { rows: [] };

@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternSingleFieldRecordResultCustomProvider is the self-host port
-// of the single-field record-result direct-return (docs/WIT-BRING-YOUR-OWN.md,
-// Go-side TestExternSingleFieldRecordResultCustomProvider). A single-field
-// record flattens to exactly one core value (fits MAX_FLAT_RESULTS=1), so the
-// canonical ABI returns it by value: the import returns the field's i32
-// directly (no return area / cabi_realloc), and the self-host wrapper
-// materializes the one-field struct ([type-id@0][field@+4]) from that value.
-// The provider exports `make-wrapped: func(a: s32) -> record wrapped { v: s32 }`
-// returning {v: a} by value; the Fern side reads w.v and expects 42.
 func TestSelfHostExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,8 +38,6 @@ func TestSelfHostExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// Single-field record result is returned by value (1 flat result), so the
-	// export is `(param $a i32) (result i32)` — no return area, no cabi_realloc.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/src@0.1.0#make-wrapped") (param $a i32) (result i32)

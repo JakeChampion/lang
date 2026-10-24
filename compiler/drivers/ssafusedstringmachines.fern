@@ -71,8 +71,6 @@ function memory(s: string): void {
   mutation(s, "leaq __fern_freelist(%rip), %r8", "leaq __fern_large_freelist(%rip), %r8", false);
 }
 
-// The grown box's arm (#8770): its capacity word, its base and the branch
-// to it are each proven, so a wrong one is refused.
 function grown(s: string): void {
   for line in ["movq -8(%rax), %rdx", "movl -16(%rax), %edx", "movq -12(%rax), %rdx", "movq 8(%rax), %rdx"] {
     mutation(s, "movq -16(%rax), %rdx", line, false);

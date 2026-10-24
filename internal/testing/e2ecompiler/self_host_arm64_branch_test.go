@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64Branches byte-checks the AArch64 control-flow encoders
-// added in slice 3b of arm64_encode.fern — compare (cmp reg / cmp imm) and
-// the branch family (b / b.cond / cbz / cbnz) — against the ground-truth
-// little-endian encodings, run through the self-host wasm pipeline. Exit 0
-// = all checks pass; a failing check returns its 1-based id.
 func TestSelfHostArm64Branches(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 branches e2e")
@@ -39,19 +34,10 @@ func TestSelfHostArm64Branches(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOLoopRuns extends the no-external-tool
-// arm64-darwin proof to control flow: a Fern program assembles a loop
-// (acc=0; repeat 7×: acc += 6; counter -= 1; cbnz counter, loop) and exits
-// with acc — exercising the immediate ALU encoders plus a backward cbnz —
-// then wraps it with macho.fern into an ad-hoc-signed Mach-O that exits
-// 42 (= 6 × 7).
 func TestSelfHostArm64DarwinMachOLoopRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "loop42", main: arm64MachOLoopDriverMain, wantExit: 42})
 }
 
-// arm64BranchSelfTestMain asserts the compare + branch encoders against
-// their ground-truth little-endian bytes. Each `return N` is a distinct
-// failing-check id (0 = all pass).
 const arm64BranchSelfTestMain = `
 function main(): i32 {
     // cmp x1, #1 (subs xzr, x1, #1) -> 0xF100043F -> 3F 04 00 F1
@@ -84,10 +70,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOLoopDriverMain assembles a backward-branch loop computing
-// 6 × 7 = 42, then a Darwin exit(acc). Offsets: 0 movz x0,#0; 4 movz
-// x1,#7; 8 (loop) add x0,x0,#6; 12 sub x1,x1,#1; 16 cbnz x1,loop(-8);
-// 20 movz x16,#1; 24 svc #0x80.
 const arm64MachOLoopDriverMain = `
 function main(): i32 {
     let code: i32[] = [];

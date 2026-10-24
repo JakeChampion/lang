@@ -1,32 +1,8 @@
-// coreutils/lib/resolv.fern — the IPv4 name lookup glibc's gethostid makes.
-//
-// gethostid resolves the machine's own hostname through NSS: the `hosts:`
-// line of /etc/nsswitch.conf names the sources in order — `files`
-// (/etc/hosts) and `dns` (the nameservers of /etc/resolv.conf, walked
-// with its search list) — and the first AF_INET answer wins. This module
-// is that walk; the two sources are std/dns, which reads the files and
-// speaks RFC 1035. hostid(1) is the consumer today; `who --lookup`
-// reaches for the canonical-name walk beside it.
-//
-// An address is carried as the in_addr WORD: the four octets in memory
-// order read as a little-endian integer, `a | b<<8 | c<<16 | d<<24`. That
-// is the form `packed_v4` answers and the one gethostid shifts.
-//
-// Where this differs from glibc, and why (docs/COREUTILS.md):
-//   - Only `files` and `dns` are implemented. Any other source on the
-//     hosts line (mdns4_minimal, myhostname, resolve, …) reports UNAVAIL,
-//     as glibc does for a source with no module installed.
-//   - What std/dns does not read, this does not either: RES_OPTIONS,
-//     LOCALDOMAIN and HOSTALIASES, and a nameserver with an IPv6 zone.
 import "std/string";
 import "std/array";
 import "std/net";
 import "std/dns";
 
-// ---- statuses ---------------------------------------------------------------
-//
-// What a source says about a name, in glibc's vocabulary. Every lookup
-// below returns one of these beside its answer.
 pub function success(): i32 {
   return 0;
 }
@@ -39,8 +15,6 @@ pub function unavail(): i32 {
   return 2;
 }
 
-// A DNS failure as NSS reports it: a name the servers do not know, or
-// know no address for, is NOTFOUND; everything else is UNAVAIL.
 function nss_status(e: dns.DnsError): i32 {
   match (e) {
     NoSuchName => {
@@ -56,14 +30,10 @@ function nss_status(e: dns.DnsError): i32 {
   return unavail();
 }
 
-// ---- addresses --------------------------------------------------------------
-// `ipv4_word(a, b, c, d)` — the in_addr word of `a.b.c.d`.
 pub function ipv4_word(a: i32, b: i32, c: i32, d: i32): i32 {
   return a & 255 | (b & 255) << 8 | (c & 255) << 16 | (d & 255) << 24;
 }
 
-// The in_addr word of the first IPv4 address among `xs`, which is the
-// first AF_INET answer gethostid takes.
 function first_v4_word(xs: net.IpAddr[]): Option[i32] {
   let i: i32 = 0;
   while (i < xs.len()) {
@@ -78,27 +48,16 @@ function first_v4_word(xs: net.IpAddr[]): Option[i32] {
   return None;
 }
 
-// ---- /etc/nsswitch.conf -----------------------------------------------------
-// `Source` — one entry of the `hosts:` line: its name and, for each
-// status it can report, whether that status ENDS the lookup. glibc's
-// defaults are success=return and everything else continue; a bracketed
-// action after the source (`[NOTFOUND=return]`, `[!UNAVAIL=return]`)
-// overrides them.
 pub struct Source { name: string, success_return: boolean, notfound_return: boolean, unavail_return: boolean }
 
 pub function source(name: string): Source {
   return Source { name: name, success_return: true, notfound_return: false, unavail_return: false };
 }
 
-// `default_sources()` — glibc's compiled-in `hosts:` line, used when
-// /etc/nsswitch.conf is missing: `files dns`.
 pub function default_sources(): Source[] {
   return [source("files"), source("dns")];
 }
 
-// `nsswitch_hosts(contents)` — the sources of the `hosts:` line, in order,
-// with their actions. No `hosts:` line means the compiled-in default; a
-// present but empty one means no sources at all.
 pub function nsswitch_hosts(contents: string): Source[] {
   let lines: string[] = contents.lines();
   let i: i32 = 0;
@@ -113,7 +72,6 @@ pub function nsswitch_hosts(contents: string): Source[] {
   return default_sources();
 }
 
-// The line up to its `#`, if any.
 function strip_comment(line: string): string {
   let Some(h) = line.index_of("#") else {
     return line;
@@ -121,8 +79,6 @@ function strip_comment(line: string): string {
   return slice_unchecked(line, 0, h) + "";
 }
 
-// The tokens after `hosts:`: a bare word is a source, and a bracketed
-// group applies its `STATUS=action` pairs to the source before it.
 function parse_sources(rest: string): Source[] {
   let out: Source[] = [];
   let toks: string[] = rest.fields();
@@ -153,9 +109,6 @@ function parse_sources(rest: string): Source[] {
   return out;
 }
 
-// One `[!]STATUS=action` pair applied to `s`. Case-insensitive; `!`
-// negates the status, so the action lands on every OTHER status. An
-// action other than `return` is `continue` (`merge` continues too).
 function apply_action(s: Source, pair: string): Source {
   let Some(eq) = pair.index_of("=") else {
     return s;
@@ -185,8 +138,6 @@ function apply_action(s: Source, pair: string): Source {
   return r;
 }
 
-// `(s).stops(status)` — whether a source reporting `status` ends the
-// lookup, per its actions.
 pub function (s: Source) stops(status: i32): boolean {
   if (status == success()) {
     return s.success_return;
@@ -197,7 +148,6 @@ pub function (s: Source) stops(status: i32): boolean {
   return s.unavail_return;
 }
 
-// The `hosts:` line of this machine's nsswitch.conf, or the default.
 function system_sources(): Source[] {
   match (read_file("/etc/nsswitch.conf")) {
     Ok(c) => {
@@ -210,9 +160,6 @@ function system_sources(): Source[] {
   return default_sources();
 }
 
-// ---- the lookups --------------------------------------------------------------
-// `lookup(name, sources)` — the NSS walk for an IPv4 address: each source
-// in turn until one answers or one's action ends the walk.
 pub function lookup(name: string, sources: Source[]): Option[i32] {
   let i: i32 = 0;
   while (i < sources.len()) {
@@ -229,9 +176,6 @@ pub function lookup(name: string, sources: Source[]): Option[i32] {
   return None;
 }
 
-// The `files` source is the hosts file's first IPv4 address for the
-// name, UNAVAIL when the file cannot be read; the `dns` source the first
-// A record res_search finds.
 function lookup_source(src: string, name: string): (i32, i32) {
   if (src == "files") {
     return files_lookup(name);
@@ -266,7 +210,6 @@ function dns_lookup(name: string): (i32, i32) {
   return (unavail(), 0);
 }
 
-// SUCCESS with the word, or NOTFOUND.
 function found_word(w: Option[i32]): (i32, i32) {
   match (w) {
     Some(v) => {
@@ -279,17 +222,10 @@ function found_word(w: Option[i32]): (i32, i32) {
   return (notfound(), 0);
 }
 
-// `resolve(name)` — gethostid's lookup of `name`: the in_addr word of its
-// first IPv4 address through this machine's `hosts:` sources.
 pub function resolve(name: string): Option[i32] {
   return lookup(name, system_sources());
 }
 
-// `canon_host(name)` — getaddrinfo's AI_CANONNAME for `name` over the
-// same walk, for `who --lookup`: an address literal is its own canonical
-// name; the files backend answers the first name of the first hosts line
-// naming it, of either address family; the dns backend the owner of the
-// A record at the end of the CNAME chain.
 pub function canon_host(name: string): Option[string] {
   match (net.ip_parse(name)) {
     Some(_) => {

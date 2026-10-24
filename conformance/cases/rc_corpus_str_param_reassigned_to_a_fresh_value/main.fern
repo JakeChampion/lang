@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The reassignment with no append in it at all: the RHS is a fresh
-// concat of the OTHER parameter, so nothing can grow in place and the
-// only question is who owns the value the slot was overwritten with.
-// The callee does, and must release it — that is the promotion's leak
-// half. Returning the param on one path and not the other keeps the
-// exit sweep's move-on-return exclusion correct at the same time.
+
+
+
+
+
+
+
+
+
 function mk(n: i32): string {
     let s: string = "";
     let i: i32 = 0;

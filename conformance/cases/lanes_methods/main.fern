@@ -1,6 +1,6 @@
-// A lane type takes methods and associated functions from a trait impl, and
-// a generic function takes a lane type as its type argument, written or
-// inferred from a lane argument.
+
+
+
 import "std/f64";
 import "std/num" as num;
 
@@ -21,7 +21,7 @@ impl Scale for f64x2 {
   function first(self: f64x2): f64 {
     return __f64x2_lane(self, 0);
   }
-  // No f64 value in the body: the float class holds only lane values.
+
   function plus(self: f64x2, o: f64x2): f64x2 {
     return self + o;
   }
@@ -42,7 +42,7 @@ impl Scale for f32x4 {
   }
 }
 
-// A method with no lane operation of its own.
+
 function twice[T: Scale](x: T): T {
   return x.scale(2.0);
 }

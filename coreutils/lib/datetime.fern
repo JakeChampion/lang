@@ -1,46 +1,11 @@
-// coreutils/lib/datetime.fern — GNU parse_datetime, the grammar behind
-// `date -d`, `date -f` and `touch -d`.
-//
-// The C original is a bison grammar over a hand-written lexer, with the
-// answer assembled by mktime(3) afterwards; this is the same three
-// pieces, and every place where the original is odd is odd here in the
-// same way, because a string that GNU accepts must give the same
-// instant and one it refuses must be refused:
-//
-//   - The lexer drops a `+` or `-` that is not followed by a digit, so
-//     `17-JUN-1992` is the three tokens 17, JUN, -1992 and `- tomorrow`
-//     is `tomorrow`. A word is letters and periods, uppercased, looked
-//     up in the tables in a fixed order — meridian, month or weekday
-//     (three letters, or three and a period, abbreviate), zone, `DST`,
-//     time unit with an `S` stripped, relative word, one-letter
-//     military zone, and the zone table once more with the periods
-//     dropped, which is how `e.s.t` is EST and `d.s.t` is nothing.
-//   - The grammar takes one token of lookahead and always prefers to
-//     continue an item, so `12:30 -5 days` is 12:30 in zone -5 and then
-//     one more day, and `1 jan 12:00` fails where `jan 1 12:00` parses.
-//   - The fields are resolved by an mktime whose behaviour in a gap, in
-//     an ambiguous hour and under a demanded DST flag is glibc's, and
-//     the offset it settles on is remembered as the first guess of the
-//     next call in the process, which is why the second parse `touch
-//     -d -r` makes can differ from the first at a transition.
-//
-// Only the local zone is consulted through `tz`; a `TZ="…"` prefix
-// swaps it for the parse. The caller supplies `now`, which is the
-// clock for `date` and the reference file's own timestamp for
-// `touch -r`. `date --debug` wants the original's running commentary
-// on stderr, so the parse can keep one, line for line.
 import "std/string";
 import "std/array";
 import "std/utf8";
 import "std/tz";
 import "./timefmt";
 
-// `hint` is the offset the parse settled on, the next parse's first
-// guess; `dbg` is the `--debug` commentary, empty unless asked for.
 pub struct Result { ok: boolean, sec: i64, nsec: i64, hint: i64, dbg: string }
 
-// The ordinary trace is valid text. A failed raw parse can additionally
-// report the untouched input tail, which may begin inside a UTF-8 scalar.
 pub struct ByteResult { result: Result, tail: u8[] }
 
 function byte_result(r: Result): ByteResult {
@@ -61,7 +26,6 @@ function failed_tail(bytes: [u8], start: i32): u8[] {
   return out;
 }
 
-// ---- tokens -----------------------------------------------------------------
 function t_eof(): i32 {
   return 0;
 }
@@ -146,42 +110,26 @@ function t_ago(): i32 {
   return 20;
 }
 
-// The letter T on its own: the ISO 8601 date/time separator after a
-// date, the military zone otherwise.
 function t_tsep(): i32 {
   return 21;
 }
 
-// Any other byte, carried in `value`.
 function t_char(): i32 {
   return 22;
 }
 
-// A word no table knows, or a number too large to hold.
 function t_bad(): i32 {
   return 23;
 }
 
-// The letter J on its own, which is "local time" and counts as a zone
-// without setting one.
 function t_j(): i32 {
   return 24;
 }
 
-// The middle number of `DD.MM.YYYY`: a number whose `.` the lexer has
-// already decided is a separator rather than a decimal point. It is
-// the only thing that tells a date from a second and a fraction, and
-// the grammar takes it in one place and nowhere else.
 function t_unumber_dotted(): i32 {
   return 25;
 }
 
-// A number carries `value`, its `digits`, and whether it was written
-// with a minus sign, which is what tells `-00:30` from `+00:30`; a
-// decimal number carries the whole seconds in `value` and `nsec`; a
-// word carries its table value. `end` is where the token stops in the
-// text. The struct holds no string so that copying one is a plain
-// copy.
 pub struct Tok { kind: i32, value: i64, digits: i32, negative: boolean, nsec: i64, end: i32 }
 
 function tok(kind: i32, value: i64): Tok {
@@ -204,12 +152,6 @@ function is_alpha(c: i32): boolean {
   return c >= 65 && c <= 90 || c >= 97 && c <= 122;
 }
 
-// ---- the word tables --------------------------------------------------------
-// The local zone's own abbreviations, which the lexer checks before the
-// fixed table: `EST` under TZ=America/New_York is "local time,
-// standard" rather than the fixed offset the table gives it, and the
-// two resolve differently at a transition. `isdst` is -1 when the same
-// abbreviation names both halves of the year.
 struct LocalTable { names: string[], isdst: i32[] }
 
 function meridian_value(w: string): i32 {
@@ -222,10 +164,6 @@ function meridian_value(w: string): i32 {
   return 0;
 }
 
-// `month_or_day(w, abbrev)` — a month (kind 6) or weekday (kind 7)
-// name, or the first three letters of one when `abbrev` allows it.
-// Dispatched on the first letter so a word costs a handful of
-// comparisons rather than a walk of the table.
 function month_or_day(w: string, abbrev: boolean): Option[Tok] {
   if (abbrev) {
     return month_or_day_abbrev(w[0] as i32 * 65536 + w[1] as i32 * 256 + w[2] as i32);
@@ -322,8 +260,6 @@ function month_or_day(w: string, abbrev: boolean): Option[Tok] {
   return None;
 }
 
-// `month_or_day_abbrev(key)` — the three-letter abbreviations, keyed
-// on their bytes packed into one number.
 function month_or_day_abbrev(key: i32): Option[Tok] {
   let months: i32[] = [4866382, 4605250, 5062994, 4280402, 5063001, 4871502, 4871500, 4281671, 5457232, 5194580, 5132118, 4474179];
   let i: i32 = 0;
@@ -352,8 +288,6 @@ function dayzone(off: i32): Option[Tok] {
   return Some(tok(t_dayzone(), off as i64));
 }
 
-// `fixed_zone(w)` — the abbreviation table: seconds east, a daylight
-// entry adding an hour. Dispatched on the first letter.
 function fixed_zone(w: string): Option[Tok] {
   let c: i32 = w[0] as i32;
   if (c == 87) {
@@ -533,8 +467,6 @@ function fixed_zone(w: string): Option[Tok] {
   return None;
 }
 
-// `unit(w)` — a time unit: year, month, fortnight, week, day, hour,
-// minute, min, second, sec.
 function unit(w: string): Option[Tok] {
   let c: i32 = w[0] as i32;
   if (c == 89 && w == "YEAR") {
@@ -567,7 +499,6 @@ function unit(w: string): Option[Tok] {
   return None;
 }
 
-// `relative(w)` — the day shifts, ordinals and AGO / HENCE.
 function relative(w: string): Option[Tok] {
   let c: i32 = w[0] as i32;
   if (c == 84) {
@@ -648,8 +579,6 @@ function relative(w: string): Option[Tok] {
   return None;
 }
 
-// The one-letter military zones: A..I are +1..+9, K..M +10..+12, N..Y
-// -1..-12, Z zero, J local time and T the separator.
 function military(c: i32): Tok {
   if (c == 84) {
     return tok(t_tsep(), 0);
@@ -669,8 +598,6 @@ function military(c: i32): Tok {
   return tok(t_zone(), (0 - (c - 77) * 3600) as i64);
 }
 
-// `lookup_zone(w, lt)` — GMT, UT and UTC first, then the local zone's
-// own names, then the fixed table.
 function lookup_zone(w: string, lt: LocalTable): Option[Tok] {
   let c: i32 = w[0] as i32;
   if (c == 71 && w == "GMT" || c == 85 && (w == "UT" || w == "UTC")) {
@@ -701,9 +628,6 @@ function strip_periods(w: string): (string, boolean) {
   return (string_from_bytes_unchecked(out), found);
 }
 
-// `lookup_word(w, lt)` — the table walk, in the original's order. A
-// word no table knows answers `t_bad` and its spelling as the walk
-// left it, periods dropped, which is what the trace names.
 function lookup_word(w: string, lt: LocalTable): (Tok, string) {
   let m: i32 = meridian_value(w);
   if (m != 0) {
@@ -760,9 +684,6 @@ function lookup_word(w: string, lt: LocalTable): (Tok, string) {
   return (tok(t_bad(), 0), stripped.0);
 }
 
-// ---- the lexer --------------------------------------------------------------
-// `upper(s, start, end)` — the bytes of `s` from `start` to `end`,
-// uppercased, as one string.
 function upper(s: [u8], start: i32, end: i32): string {
   let h: usize = buf_new(end - start);
   let i: i32 = start;
@@ -783,17 +704,10 @@ function with_end(t: Tok, end: i32): Tok {
   return Tok { ...t, end: end };
 }
 
-// `lex(s, lt)` — the token list, ending in EOF or in the `?` the
-// original returns for a number that overflows or a word it does not
-// know, whose spelling comes back beside the list. A `(` opens a
-// comment that runs to its matching `)`; one that never closes
-// swallows the rest of the string silently.
 function lex(s: [u8], lt: LocalTable): (Tok[], string) {
   let out: Tok[] = [];
   let i: i32 = 0;
   let n: i32 = s.len();
-  // Set when a number's fraction turned out to hold a second `.`, and
-  // read by the next number, which is then the month of a dotted date.
   let not_decimal: boolean = false;
   while (true) {
     let c: i32 = 0;
@@ -834,9 +748,6 @@ function lex(s: [u8], lt: LocalTable): (Tok[], string) {
         if (digit < 0 || digit > 9) {
           break;
         }
-        // The sign is applied to each DIGIT, as the original applies it,
-        // so that the most negative number there is — `@-9223372036854775808`
-        // — is a number and not an overflow.
         let d: i64 = digit as i64;
         if (sign < 0) {
           d = 0 as i64 - d;
@@ -871,9 +782,6 @@ function lex(s: [u8], lt: LocalTable): (Tok[], string) {
         while (digits <= 9) {
           ns = ns * (10 as i64);
           if (p < n && s[p] as i32 == 46) {
-            // A second `.` where the fraction should be: the text is a
-            // dotted date, so the number ends at the first one and the
-            // next number is the month.
             p = dot;
             not_decimal = true;
             decimal = false;
@@ -885,7 +793,6 @@ function lex(s: [u8], lt: LocalTable): (Tok[], string) {
           digits = digits + 1;
         }
         if (decimal) {
-          // Excess digits truncate toward minus infinity.
           if (sign < 0) {
             while (p < n && is_digit(s[p] as i32)) {
               if (s[p] as i32 != 48) {
@@ -965,14 +872,6 @@ function lex(s: [u8], lt: LocalTable): (Tok[], string) {
   return (out, "");
 }
 
-// ---- the parser -------------------------------------------------------------
-// What the grammar collects: the absolute fields, the relative offset,
-// the zone, and how many of each kind of item were seen, since more
-// than one date, time, weekday or zone is a refusal. `la` says whether
-// the item just parsed could have gone on — the original reads one
-// more token before closing such an item, which decides the order of
-// two debug lines. The `d_*` flags are the debug trace's memory of
-// what it has already shown.
 struct Pc { ok: boolean, next: i32, year: i64, year_digits: i32, month: i64, day: i64, hour: i64, minutes: i64, sec: i64, nsec: i64, meridian: i32, time_zone: i64, local_isdst: i32, day_ordinal: i64, day_number: i32, rels_seen: boolean, timespec_seen: boolean, ts_sec: i64, ts_nsec: i64, dates_seen: i32, days_seen: i32, times_seen: i32, local_zones_seen: i32, zones_seen: i32, j_zones_seen: i32, dsts_seen: i32, year_seen: boolean, rel: Rel, la: boolean, debug: boolean, dbg: string, d_dates: boolean, d_days: boolean, d_times: boolean, d_local: boolean, d_zones: boolean, d_year: boolean, d_ordinal: boolean }
 
 struct Rel { year: i64, month: i64, day: i64, hour: i64, minutes: i64, seconds: i64, ns: i64 }
@@ -981,8 +880,6 @@ function rel_zero(): Rel {
   return Rel { year: 0, month: 0, day: 0, hour: 0, minutes: 0, seconds: 0, ns: 0 };
 }
 
-// `rel_unit(kind, n, unit_value)` — the relative offset a count of
-// one unit means.
 function rel_unit(kind: i32, n: i64, unit_value: i64): Rel {
   let r: Rel = rel_zero();
   if (kind == t_year_unit()) {
@@ -1013,9 +910,6 @@ function set_hhmmss(pc: Pc, hour: i64, minutes: i64, sec: i64, nsec: i64): Pc {
   return Pc { ...pc, hour: hour, minutes: minutes, sec: sec, nsec: nsec };
 }
 
-// ---- the debug trace --------------------------------------------------------
-// `pad(v, width)` — C's `%0Nd`: zero-padded to `width`, the sign
-// counted in the width.
 function pad(v: i64, width: i32): string {
   let neg: boolean = v < 0 as i64;
   let mag: string = v.to_string();
@@ -1042,8 +936,6 @@ function signed(v: i64): string {
   return "+" + v.to_string();
 }
 
-// `time_zone_str(tz)` — `+HH`, `+HH:MM` or `+HH:MM:SS`, as short as the
-// offset allows.
 pub function time_zone_str(t: i64): string {
   let sign: string = "+";
   if (t < 0 as i64) {
@@ -1074,8 +966,6 @@ function dline(pc: Pc, s: string): Pc {
   return Pc { ...pc, dbg: pc.dbg + "date: " + s + "\n" };
 }
 
-// `str_days(pc)` — the weekday item as the trace names it, `last wed`
-// or `thu`, the ordinal spelled out where the table has a word for it.
 function str_days(pc: Pc): string {
   let ordinals: string[] = ["last", "this", "next/first", "(SECOND)", "third", "fourth", "fifth", "sixth", "seventh", "eight", "ninth", "tenth", "eleventh", "twelfth"];
   let days: string[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1096,8 +986,6 @@ function str_days(pc: Pc): string {
   return out;
 }
 
-// `trace_current(pc, item)` — "parsed X part:" and whatever the item
-// added that the trace has not shown yet.
 function trace_current(pc: Pc, item: string): Pc {
   if (!pc.debug) {
     return pc;
@@ -1197,10 +1085,6 @@ function trace_relative(pc: Pc, item: string): Pc {
   return dline(pc, "parsed " + item + " part: " + out);
 }
 
-// ---- items ------------------------------------------------------------------
-// `time_zone_hhmm(pc, s, mm)` — a zone written as a signed number: one
-// or two digits are hours, more are HHMM, and `:MM` after it is
-// minutes carrying the number's sign.
 function time_zone_hhmm(pc: Pc, s: Tok, mm: i64): Pc {
   let v: i64 = s.value;
   if (s.digits <= 2 && mm < 0 as i64) {
@@ -1226,9 +1110,6 @@ function time_zone_hhmm(pc: Pc, s: Tok, mm: i64): Pc {
   return Pc { ...pc, ok: true, time_zone: n * (60 as i64) };
 }
 
-// `digits_to_date_time(pc, n)` — a bare number: a year when a date
-// without one has been seen, a YYYYMMDD date when it is longer than
-// four digits, a time otherwise.
 function digits_to_date_time(pc: Pc, n: Tok): Pc {
   if (pc.dates_seen != 0 && pc.year_digits == 0 && !pc.rels_seen && (pc.times_seen != 0 || 2 < n.digits)) {
     return Pc { ...pc, year: n.value, year_digits: n.digits, year_seen: true };
@@ -1256,10 +1137,6 @@ function is_char(t: Tok, c: i32): boolean {
   return t.kind == t_char() && t.value == c as i64;
 }
 
-// Every item answers the state with `ok` and `next` set: the index
-// past the item, or on failure the index of the token the grammar had
-// no move for. A struct comes back in registers where a tuple holding
-// one would be boxed, which is why the two are stored inside `Pc`.
 function done(pc: Pc, i: i32, la: boolean): Pc {
   return Pc { ...pc, ok: true, next: i, la: la };
 }
@@ -1268,8 +1145,6 @@ function fail_at(pc: Pc, i: i32): Pc {
   return Pc { ...pc, ok: false, next: i };
 }
 
-// The optional `:MM` after a zone number: (ok, minutes or -1, next),
-// the failure index being the token after the colon.
 function colon_minutes(toks: Tok[], i: i32): (boolean, i64, i32) {
   if (is_char(at(toks, i), 58)) {
     let m: Tok = at(toks, i + 1);
@@ -1281,8 +1156,6 @@ function colon_minutes(toks: Tok[], i: i32): (boolean, i64, i32) {
   return (true, -1, i);
 }
 
-// `zone_offset(pc, toks, i)` — `tSNUMBER o_colon_minutes` at `i`,
-// counted as a zone.
 function zone_offset(pc: Pc, toks: Tok[], i: i32): Pc {
   let s: Tok = at(toks, i);
   let cm: (boolean, i64, i32) = colon_minutes(toks, i + 1);
@@ -1296,7 +1169,6 @@ function zone_offset(pc: Pc, toks: Tok[], i: i32): Pc {
   return done(Pc { ...r, zones_seen: r.zones_seen + 1 }, cm.2, cm.1 < 0 as i64);
 }
 
-// `unsigned_seconds(t)` — a whole or decimal number of seconds.
 function unsigned_seconds(t: Tok): (boolean, i64, i64) {
   if (t.kind == t_unumber()) {
     return (true, t.value, 0);
@@ -1307,12 +1179,6 @@ function unsigned_seconds(t: Tok): (boolean, i64, i64) {
   return (false, 0, 0);
 }
 
-// `relunit(toks, i)` — a count and a unit, the count being an unsigned
-// number, a signed one, a decimal one (seconds only), an ordinal word,
-// or absent, which means one. Answers the offset and the next index,
-// or `false` when there is no unit at `i`.
-// A relunit's answer: the offset it names, whether there was one, and
-// the index past it.
 struct RelUnit { ok: boolean, r: Rel, next: i32 }
 
 function relunit(toks: Tok[], i: i32): RelUnit {
@@ -1331,7 +1197,6 @@ function relunit(toks: Tok[], i: i32): RelUnit {
   return RelUnit { ok: false, r: rel_zero(), next: i + 1 };
 }
 
-// `rel_item(pc, toks, i)` — a relunit and an optional AGO or HENCE.
 function rel_item(pc: Pc, toks: Tok[], i: i32): Pc {
   let r: RelUnit = relunit(toks, i);
   if (!r.ok) {
@@ -1348,8 +1213,6 @@ function rel_item(pc: Pc, toks: Tok[], i: i32): Pc {
   return done(trace_relative(apply_relative(pc, r.r, factor), "relative"), j, la);
 }
 
-// `snumber_unit(toks, i)` — `tSNUMBER unit`, the form that may follow a
-// zone or a bare number.
 function snumber_unit(toks: Tok[], i: i32): RelUnit {
   if (at(toks, i).kind == t_snumber() && is_unit(at(toks, i + 1).kind)) {
     return relunit(toks, i);
@@ -1357,9 +1220,6 @@ function snumber_unit(toks: Tok[], i: i32): RelUnit {
   return RelUnit { ok: false, r: rel_zero(), next: i };
 }
 
-// `iso_time(pc, toks, i)` — the time after the `T` of an ISO 8601
-// date-time: hours with a zone, or hours, minutes and optional
-// seconds with an optional zone.
 function iso_time(pc: Pc, toks: Tok[], i: i32): Pc {
   let h: Tok = at(toks, i);
   if (h.kind != t_unumber()) {
@@ -1395,8 +1255,6 @@ function iso_time(pc: Pc, toks: Tok[], i: i32): Pc {
   return done(p, j, true);
 }
 
-// `time_item(pc, toks, i)` — a clock time starting with the number at
-// `i`, which is followed by a colon or a meridian.
 function time_item(pc: Pc, toks: Tok[], i: i32): Pc {
   let h: Tok = at(toks, i);
   let a: Tok = at(toks, i + 1);
@@ -1434,8 +1292,6 @@ function time_item(pc: Pc, toks: Tok[], i: i32): Pc {
   return done(trace_current(p, "time"), j, true);
 }
 
-// `slash_date(pc, toks, i)` — `M/D` or `M/D/Y`, the last read as
-// `Y/M/D` when the first number has four digits or more.
 function slash_date(pc: Pc, toks: Tok[], i: i32): Pc {
   let n: Tok = at(toks, i);
   let b: Tok = at(toks, i + 2);
@@ -1460,10 +1316,6 @@ function slash_date(pc: Pc, toks: Tok[], i: i32): Pc {
   return done(trace_current(Pc { ...p, dates_seen: p.dates_seen + 1 }, "date"), i + 5, false);
 }
 
-// `dot_date(pc, toks, i)` — `D.M.` and `D.M.Y`, the European order.
-// The middle number is the one the lexer marked, which is the whole of
-// what tells the two apart: `1.2.3` is the first of February in the
-// year 3, `1.2` a second and a fraction.
 function dot_date(pc: Pc, toks: Tok[], i: i32): Pc {
   let b: Tok = at(toks, i + 2);
   if (b.kind != t_unumber() && b.kind != t_unumber_dotted()) {
@@ -1484,8 +1336,6 @@ function dot_date(pc: Pc, toks: Tok[], i: i32): Pc {
   return done(trace_current(Pc { ...p, year: y.value, year_digits: y.digits }, "date"), i + 5, false);
 }
 
-// `number_item(pc, toks, i)` — every item that opens with an unsigned
-// number, chosen by the token after it.
 function number_item(pc: Pc, toks: Tok[], i: i32): Pc {
   let n: Tok = at(toks, i);
   let a: Tok = at(toks, i + 1);
@@ -1667,8 +1517,6 @@ function item(pc: Pc, toks: Tok[], i: i32): Pc {
   return fail_at(pc, i);
 }
 
-// `unknown_word(pc, t, word)` — the lexer's complaint, at the moment
-// the original would have read the token.
 function unknown_word(pc: Pc, t: Tok, word: string): Pc {
   if (t.kind == t_bad() && word.len() > 0) {
     return dline(pc, "error: unknown word '" + word + "'");
@@ -1676,9 +1524,6 @@ function unknown_word(pc: Pc, t: Tok, word: string): Pc {
   return pc;
 }
 
-// `parse_items(pc, toks)` — the whole string: `@` and a count of
-// seconds, or any number of items. On failure the index is the token
-// the grammar stopped at.
 function parse_items(pc: Pc, toks: Tok[], bad_word: string): Pc {
   if (is_char(at(toks, 0), 64)) {
     let s: Tok = at(toks, 1);
@@ -1715,9 +1560,6 @@ function parse_items(pc: Pc, toks: Tok[], bad_word: string): Pc {
       p = Pc { ...p, dbg: p.dbg + lines };
       return fail_at(unknown_word(p, at(toks, r.next), bad_word), r.next);
     }
-    // An item that could have gone on is closed only once the next
-    // token is in hand, so a word the lexer rejects there is reported
-    // before the item is.
     if (p.la && at(toks, r.next).kind == t_bad()) {
       p = unknown_word(p, at(toks, r.next), bad_word);
       p = Pc { ...p, dbg: p.dbg + lines };
@@ -1729,16 +1571,12 @@ function parse_items(pc: Pc, toks: Tok[], bad_word: string): Pc {
   return done(p, i, false);
 }
 
-// ---- mktime -----------------------------------------------------------------
-// The result of one mktime: the instant, the fields localtime gives it
-// back as, the flag and offset in force, and whether it worked at all.
 struct Mk { ok: boolean, t: i64, f: tz.Civil, isdst: boolean, gmtoff: i64 }
 
 function mk_fail(): Mk {
   return Mk { ok: false, t: 0, f: tz.civil_at(0), isdst: false, gmtoff: 0 };
 }
 
-// A year whose distance from 1900 fits the int tm_year is.
 function year_ok(y: i64): boolean {
   return y >= 0 as i64 - 2147481748 as i64 && y <= 2147485547 as i64;
 }
@@ -1747,17 +1585,6 @@ function big(v: i64): boolean {
   return v > 4000000000 as i64 || v < 0 as i64 - 4000000000 as i64;
 }
 
-// `mktime(z, y, mon, mday, h, m, s, isdst, hint)` — glibc's mktime: the
-// fields are turned into a count of local seconds, the offset is
-// guessed as `hint` and corrected from what localtime says until the
-// guess reproduces itself. A time that no instant converts to — a
-// spring-forward gap — settles on the offset that held before the
-// change. When `isdst` is 0 or 1 and the instant found does not
-// agree, the nearest instant that does, a week at a time to either
-// side for up to eight years, lends its offset; when there is none,
-// the requested flag is taken to mean an hour's difference. On Darwin
-// GNU links gnulib's replacement instead, which searches a year and
-// then ignores the flag.
 function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, isdst: i32, hint: i64): Mk {
   let q: i64 = tz.floor_div(mon, 12 as i64);
   let m: i32 = (mon - q * (12 as i64)) as i32 + 1;
@@ -1785,7 +1612,6 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
     if (t1 == t) {
       found = true;
     } else if (n > 0 && t1 == prev) {
-      // A gap: the two offsets take turns. The earlier one wins.
       let lo: i64 = off;
       if (prev_off < lo) {
         lo = prev_off;
@@ -1838,8 +1664,6 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
   return Mk { ok: year_ok(f.year), t: t, f: f, isdst: e.dst, gmtoff: e.off as i64 };
 }
 
-// `mktime_ok(y, mon, mday, h, m, s, f)` — whether mktime handed the
-// fields back unchanged, which is what makes a date valid.
 function mktime_ok(year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, f: tz.Civil): boolean {
   return f.year == year && (f.month - 1) as i64 == mon && f.day as i64 == mday && f.hour as i64 == hour && f.min as i64 == min && f.sec as i64 == sec;
 }
@@ -1877,12 +1701,7 @@ function fail(pc: Pc, hint: i64): Result {
   return Result { ok: false, sec: 0, nsec: 0, hint: hint, dbg: pc.dbg };
 }
 
-// `fields_text(y, mon, mday, h, m, s)` — the trace's `(Y-M-D) …` form
-// of a set of fields, normalised or not.
 function fields_text(year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64): string {
-  // The original renders this line with the C library's strftime, so
-  // the year is that library's `%Y`. `parsed date part` is a printf of
-  // its own and always pads to four.
   return "(Y-M-D) " + timefmt.c_year(year) + "-" + pad(mon + 1 as i64, 2) + "-" + pad(mday, 2) + " " + pad(hour, 2) + ":" + pad(min, 2) + ":" + pad(sec, 2);
 }
 
@@ -1890,8 +1709,6 @@ function civil_text(f: tz.Civil): string {
   return fields_text(f.year, (f.month - 1) as i64, f.day as i64, f.hour as i64, f.min as i64, f.sec as i64);
 }
 
-// The same with the written zone appended, as the trace shows a time
-// that carries one.
 function fields_tz(pc: Pc, s: string): string {
   if (pc.zones_seen != 0) {
     return s + " TZ=" + time_zone_str(pc.time_zone);
@@ -1914,9 +1731,6 @@ function mark(same: boolean, dashes: string): string {
   return dashes;
 }
 
-// `trace_not_ok(pc, …)` — what the trace says when mktime moved the
-// fields: both versions, dashes under the fields that differ, and the
-// stock list of reasons.
 function trace_not_ok(pc: Pc, year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, r: Mk, zone_seen: boolean): Pc {
   if (!pc.debug) {
     return pc;
@@ -1933,8 +1747,6 @@ function trace_not_ok(pc: Pc, year: i64, mon: i64, mday: i64, hour: i64, min: i6
     }
     p = dline(p, slice_unchecked(line, 0, end) + "");
   }
-  // The first two are printed whatever went wrong; only the overflow
-  // is conditional, on mktime having failed rather than moved a field.
   p = dline(p, "     possible reasons:");
   p = dline(p, "       nonexistent due to daylight-saving time;");
   p = dline(p, "       invalid day/month combination;");
@@ -1947,12 +1759,6 @@ function trace_not_ok(pc: Pc, year: i64, mon: i64, mday: i64, hour: i64, min: i6
   return dline(p, "       missing timezone");
 }
 
-// `resolve(pc, z, now_isdst, hint, tzstring)` — the instant the parsed
-// fields name, in the original's order: the absolute fields through
-// mktime, retried at the written zone's offset when the local zone
-// refused them; the weekday; the relative years, months and days
-// through mktime again; the written zone's offset; then the relative
-// hours, minutes, seconds and nanoseconds, which are plain arithmetic.
 function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
   let pc: Pc = pc_in;
   if (pc.timespec_seen) {
@@ -1977,8 +1783,6 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     return fail(pc, hint);
   }
   let year: i64 = pc.year;
-  // The original computes tm_year as -1900 - year for a negative year,
-  // which is the year negated.
   if (year < 0 as i64) {
     year = 0 as i64 - year;
   }
@@ -2051,9 +1855,6 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     if (pc.zones_seen == 0) {
       return fail(trace_not_ok(pc, year, mon, mday, hour, min, sec, r, false), h);
     }
-    // Near a transition the local zone can refuse a time that the
-    // written zone makes unambiguous, so it is retried at that
-    // zone's fixed offset.
     r = mktime(tz.fixed_zone(pc.time_zone as i32, "XXX"), year, mon, mday, hour, min, sec, isdst, h);
     if (r.ok) {
       h = local_of(r) - r.t;
@@ -2188,17 +1989,10 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
   return Result { ok: true, sec: start, nsec: norm_ns, hint: h, dbg: pc.dbg };
 }
 
-// The local-seconds count behind an mktime result, which is what the
-// next call's first guess is measured against.
 function local_of(r: Mk): i64 {
   return r.t + r.gmtoff;
 }
 
-// ---- the local zone table ---------------------------------------------------
-// The abbreviations the lexer will read as "local time": the one in
-// force now and, when a probe a quarter, two or three ahead finds the
-// other half of the year, that one too. A zone naming both halves the
-// same way makes the word mean "local, either", which is -1.
 function local_table(z: tz.Zone, now: i64): LocalTable {
   let names: string[] = [];
   let flags: i32[] = [];
@@ -2236,11 +2030,6 @@ function dst_flag(b: boolean): i32 {
   return 0;
 }
 
-// ---- entry ------------------------------------------------------------------
-// `tz_prefix(s)` — a leading `TZ="…"`: the zone it names and the rest
-// of the string, when the quote closes and every backslash escapes a
-// backslash or a quote. Anything else leaves the string as it stands,
-// to fail in the lexer as it does in the original.
 function tz_prefix(s: [u8]): (boolean, string, i32, boolean) {
   if (!(s.len() >= 4 && s[0] as i32 == 84 && s[1] as i32 == 90 && s[2] as i32 == 61 && s[3] as i32 == 34)) {
     return (false, "", 0, true);
@@ -2280,28 +2069,18 @@ function trim_left(s: [u8]): i32 {
   return i;
 }
 
-// `parse(text, now_sec, now_nsec, hint)` — the instant `text` names
-// relative to `now`, in the local zone. `hint` is the offset the
-// previous parse in this process settled on, 0 for the first, and the
-// result carries the next one.
 pub function parse(text: string, now_sec: i64, now_nsec: i64, hint: i64): Result {
   return parse_full(text, tz.local_zone(), "", false, now_sec, now_nsec, hint, false);
 }
 
-// `parse_full(text, z, tzstring, has_tz, now_sec, now_nsec, hint, debug)`
-// — the same with the zone chosen by the caller (`date -u` is
-// TZ=UTC0), the TZ value the trace names, and the trace itself when
-// `debug` is set.
 pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: boolean, now_sec: i64, now_nsec: i64, hint: i64, debug: boolean): Result {
   let raw: ByteResult = parse_full_bytes(text.as_bytes(), z, tzstring, has_tz, now_sec, now_nsec, hint, debug);
   if (raw.tail.len() == 0) {
     return raw.result;
   }
-  // The text API cannot expose a diagnostic tail split inside a scalar.
   return Result { ...raw.result, dbg: raw.result.dbg + utf8.from_bytes_lossy(raw.tail) };
 }
 
-// Parse raw records without manufacturing strings from input fragments.
 pub function parse_full_bytes(text: [u8], z: tz.Zone, tzstring: string, has_tz: boolean, now_sec: i64, now_nsec: i64, hint: i64, debug: boolean): ByteResult {
   let zone: tz.Zone = z;
   let start: i32 = trim_left(text);
@@ -2390,15 +2169,6 @@ pub function parse_full_bytes(text: [u8], z: tz.Zone, tzstring: string, has_tz: 
   return byte_result(Result { ...r, dbg: out });
 }
 
-// ---- posixtime --------------------------------------------------------------
-// `posixtime(s, bits, z, now, hint)` — gnulib's posixtime, the
-// `[[CC]YY]MMDDhhmm[.ss]` of `touch -t` and the operand `date` sets
-// the clock from. `bits` is what the caller allows: 1 a leading year,
-// 2 a trailing year, 4 a century in that year, 8 seconds after a
-// period, 16 refuses a two-digit year that would land in 2000..2068.
-// A missing year is the current one. Seconds may say 60, which is the
-// next minute's first second; anything else mktime moves is refused.
-// Answers (ok, instant, hint).
 pub function posixtime(s: string, bits: i32, z: tz.Zone, now: i64, hint: i64): (boolean, i64, i64) {
   let n: i32 = s.len();
   let len: i32 = n;
@@ -2484,9 +2254,6 @@ pub function posixtime(s: string, bits: i32, z: tz.Zone, now: i64, hint: i64): (
   return (false, 0, h);
 }
 
-// The year of a POSIX stamp from `count` pairs at `at`: none means
-// this year, one is a two-digit year with the POSIX century rule, two
-// is the century and the year.
 function posix_year(pairs: i32[], at: i32, count: i32, bits: i32, z: tz.Zone, now: i64): (boolean, i64) {
   if (count == 0) {
     return (true, z.local_fields(now).year);

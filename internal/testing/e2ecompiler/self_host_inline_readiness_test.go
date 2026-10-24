@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// A large shared callee stays out of line when its result is inspected,
-// rather than replacing a dying box. Its caller must still become ready:
-// waiting for a splice that cannot happen prevents the caller's own box
-// from being eliminated (#12482).
 func TestSelfHostInlineReadinessSharedCall(t *testing.T) {
 	const steps = 30
 	program := `struct Box3 { a: i32, b: i32, c: i32 }

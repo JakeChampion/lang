@@ -9,31 +9,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- The use-after-free quarantine -------------------------------------------
-//
-// Under FERN_RC_FREE_DEBUG — or FERN_SANITIZE, which implies it
-// (ast.ApplySanitize parity) — NOTHING is recycled: every free site writes
-// ast.RcPoison (0x7EEDFACE) over the block's rc word where it has one and
-// declines its freelist push, and the rc helpers abort with the named report the
-// moment a stale reference touches a poisoned block. The poison is a large
-// POSITIVE value precisely so the immortal (`js`) guard cannot swallow it.
-//
-// A quarantined block still counts as a FREE for the census (the hev hook runs
-// at the release), so the leak detector composes with this one instead of
-// reading every correct free as a leak — the clean-run census assertions in
-// self_host_sanitizer_test.go pin that composition.
-
-// uafPoisonDec is ast.RcPoison as the emitted decimal, derived rather than
-// written out: the self-host cannot import the Go constant, so the assertions
-// below — not a literal the emitter can silently agree with — are what hold
-// its word equal to native's (#9883).
 var uafPoisonDec = strconv.Itoa(ast.RcPoison)
 
-// uafSelfHostIncSrc retains a block the runtime has already freed: the first
-// __rc_dec reclaims the rc==1 buffer (this runtime's __rc_dec maps to the
-// freeing __fn___fern_arr_dec) and quarantines it; the __rc_inc then touches
-// the poison — the inc-side check, which the dec-side double-free test in
-// self_host_sanitizer_test.go does not reach.
 const uafSelfHostIncSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
@@ -52,8 +29,6 @@ func TestSelfHostUafIncAfterFreeReportedX86_64(t *testing.T) {
 	}
 }
 
-// The flag stands alone, without the rest of the sanitizer — the
-// FERN_RC_FREE_DEBUG=1 probe-binary path native documents on RcFreeDebug.
 func TestSelfHostUafStandaloneFlagX86_64(t *testing.T) {
 	bin, runner := sanSelfHostBuild(t, "uaf_alone", uafSelfHostIncSrc, []string{"FERN_RC_FREE_DEBUG=1", uncertified})
 	stderr, code := hevRun(t, runner, bin)
@@ -63,15 +38,11 @@ func TestSelfHostUafStandaloneFlagX86_64(t *testing.T) {
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)\n") {
 		t.Errorf("stderr does not carry the diagnostic: %q", stderr)
 	}
-	// Standalone means standalone: no census summary, no over-release
-	// machinery — the flag must not drag the rest of the sanitizer in.
 	if strings.Contains(stderr, "leakcheck:") {
 		t.Errorf("FERN_RC_FREE_DEBUG=1 alone printed a census: %q", stderr)
 	}
 }
 
-// Without any flag the same program runs to completion silently — the
-// detector is opt-in, not a change to what the compiler emits by default.
 func TestSelfHostUafSilentWithoutFlagX86_64(t *testing.T) {
 	bin, runner := sanSelfHostBuild(t, "uaf_off", uafSelfHostIncSrc, []string{uncertified})
 	stderr, code := hevRun(t, runner, bin)
@@ -83,20 +54,12 @@ func TestSelfHostUafSilentWithoutFlagX86_64(t *testing.T) {
 	}
 }
 
-// The asm contract, in both directions. Under the flag: the poison store, the
-// poison compare routed to the named abort, the abort body with the exact
-// message — and NO small-tier freelist push anywhere (every push site uses the
-// `, %r8`-form freelist address; __fern_alloc's pop uses %rdx and survives, so
-// the allocator keeps bumping over empty lists). Without the flag: none of it,
-// the cheap proxy for byte-identical.
 func TestSelfHostUafQuarantineAsmContractX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// String + string[] + array churn, so the str_free / str_arr_free /
-	// arr_dec bodies are all emitted alongside the always-present helpers.
 	src := `import "std/string";
 function mk(a: string): string { return a + "!"; }
 function main(): i32 {
@@ -108,10 +71,10 @@ function main(): i32 {
 
 	on := hevCompile(t, runner, driverBin, src, []string{"FERN_RC_FREE_DEBUG=1"})
 	for _, want := range []string{
-		"movl $" + uafPoisonDec + ",",      // the quarantine store
-		"cmpl $" + uafPoisonDec + ", %ecx", // the rc-helper checks
-		"je __fern_san_abort_uaf",          // ...routed to the named abort
-		"__fern_san_abort_uaf:",            // the abort body
+		"movl $" + uafPoisonDec + ",",
+		"cmpl $" + uafPoisonDec + ", %ecx",
+		"je __fern_san_abort_uaf",
+		"__fern_san_abort_uaf:",
 		"fern-sanitizer: use-after-free (touched a quarantined block)",
 	} {
 		if !strings.Contains(on, want) {

@@ -3,8 +3,6 @@ import "../ssalargearrayvalue" as value;
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("large-array capacity controls failed: " + group);
-    // All nonzero statuses are occupied. The printed module/case identifies
-    // this shared status, including on targets with collapsed exit codes.
     exit(180);
   }
 }
@@ -80,7 +78,6 @@ function constant_predicates(r: value.Interval, n: value.Value): void {
   require(c.less == -1 && c.equal == -1 && c.less_equal == -1, "extreme comparison");
 }
 
-// Scalar geometric-bin oracle, separate from the interval constructor.
 function scalar_class(bytes: i64): i32 {
   if (bytes > 1073741824 as i64) {
     return -2;

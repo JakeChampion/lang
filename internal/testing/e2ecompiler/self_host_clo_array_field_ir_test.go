@@ -5,40 +5,20 @@ import (
 	"testing"
 )
 
-// cloArrayFieldCallCases pin the call of a closure-array element loaded from a
-// struct field — `reg.hs[i](args)` — on the IR path. A field of env BOXES must
-// dispatch as a closure rather than as a raw fn pointer; calling the box as a
-// code address crashes or returns garbage. `clo-rebound-bind` reaches the
-// element through a bind (`let f = r.hs[1]; f()`) rather than an inline call,
-// so that dispatch site is covered too.
-//
-// Exit codes cross-checked against the interpreter.
 var cloArrayFieldCallCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// A local-built closure array stored into the field.
 	{"clo-local-built", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { let n: i32 = 3; let c: (() => i32)[] = [() => n]; let r = R { hs: c }; return r.hs[0](); }", 3},
-	// The local is rebound from a named-function array to a lambda array before
-	// the store; both hold boxes. Read through an element bind rather than an
-	// inline call, so a second dispatch site is exercised.
 	{"clo-rebound-bind", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; a = [() => n, () => n]; let r: R = R { hs: a }; let f = r.hs[1]; return f(); }", 5},
-	// No-capture closure element, direct call.
 	{"nocap", "struct Reg { hs: (() => i32)[] } function main(): i32 { let r = Reg { hs: [() => 40] }; return r.hs[0](); }", 40},
-	// Capturing closures, two elements, both called directly.
 	{"capture-multi", "struct Reg { hs: (() => i32)[] } function main(): i32 { let n: i32 = 2; let r = Reg { hs: [() => n, () => n + 1] }; return r.hs[0]() + r.hs[1](); }", 5},
-	// Closure taking one arg (exercises the arg-push + cleanup math).
 	{"with-arg", "struct Reg { hs: ((i32) => i32)[] } function main(): i32 { let n: i32 = 5; let r = Reg { hs: [(x: i32) => x + n] }; return r.hs[0](10); }", 15},
-	// Two args (pins the (args+1)-slot cleanup).
 	{"two-arg", "struct Reg { hs: ((i32, i32) => i32)[] } function main(): i32 { let r = Reg { hs: [(a: i32, b: i32) => a * b] }; return r.hs[0](6, 7); }", 42},
-	// Regression: a plain (non-struct) local closure array direct call stays
-	// correct — it lowers on the IR path rather than bailing.
 	{"local-array-regress", "function main(): i32 { let n: i32 = 2; let hs: (() => i32)[] = [() => n, () => n + 1]; return hs[0]() + hs[1](); }", 5},
 }
 
-// TestSelfHostCloArrayFieldCallIRX86_64 runs the cases on x86-64 through the
-// production driver (asm_ir_run).
 func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -66,9 +46,6 @@ func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCloArrayFieldCallIRArm64 — CI-gated arm64 counterpart, via the
-// arm64 IR path (asm_ir_run `-target arm64-linux`). Mirrors
-// TestSelfHostTupleFnIRArm64.
 func TestSelfHostCloArrayFieldCallIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

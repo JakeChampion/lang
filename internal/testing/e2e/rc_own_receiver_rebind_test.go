@@ -4,29 +4,6 @@ import (
 	"testing"
 )
 
-// Move-and-rebind through an `own`-RECEIVER method — `s = s.emit(x)` — the
-// method sibling of rc_own_struct_rebind_test.go's plain-call shape. A method
-// call reaches the rc layer as a plain Call on the mangled method name with
-// the receiver in Args[0], so callConsumesIdent must treat the receiver
-// position exactly like a plain `own` argument and suppress the reassign's
-// overwrite-dec (the callee's receiver drop already released that reference).
-//
-// Before the fix callConsumesIdent EXCLUDED method calls, so the dec fired on
-// top of the callee-side drop — net -1 per call:
-//   - a LOCAL receiver's box was freed by the callee (rc==1 unique path) and
-//     the overwrite-dec then wrote through the freed header, corrupting the
-//     freelist next pointer (surfaced as target-dependent rc-underflow counts:
-//     the freed word's low half read as "rc" differs by heap layout);
-//   - a threaded BORROWED-PARAM receiver (consumedParams entry-inc) ended at
-//     rc 0 while the OUTER caller still held it — a use-after-free one frame
-//     up, invisible to value checks until the block was recycled.
-//
-// Three shapes, each ending in `__rc_underflow_count()` (0 == balanced):
-// a local-receiver churn loop, the borrowed-param threading shape
-// (`emit_two(s: Acc, ..)` self-reassigning through the own-receiver method,
-// with the outer loop rebinding through the plain call), and a
-// keep-alive-in-caller variant where the outer frame's binding must survive
-// the inner frame's admitted move (old box read back rc-intact via len).
 const ownReceiverRebindSrc = `struct Acc { out: i32[], n: i32 }
 pub function (own s: Acc) emit(x: i32): Acc {
     let ys = s.out.append(x);

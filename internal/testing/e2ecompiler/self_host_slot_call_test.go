@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// A call through a function value whose body address is read only by the
-// call reads it out of the environment the call passes (ssa.slot_calls):
-// `call *8(%rax)` on x86-64 once the moves have put the environment in %rax,
-// and a load from x0 before the `blr` on arm64. `wide` passes more arguments
-// than the pool holds, so the environment also rides the stack; `add` is a
-// lambda with a capture, so its environment is a box of its own.
 const slotCallProg = `@noinline function apply(f: (i32) => i32, x: i32): i32 { return f(x) + f(x + 1); }
 @noinline function wide(f: (i32, i32, i32, i32, i32, i32, i32, i32, i32) => i32): i32 { return f(1, 2, 3, 4, 5, 6, 7, 8, 9); }
 function inc(x: i32): i32 { return x + 1; }
@@ -64,19 +58,12 @@ func TestSelfHostSlotCall(t *testing.T) {
 			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
 		}
 		_ = run.Run()
-		// args() holds the program alone, so k is 3: 9 + 27 + 45.
 		if got := run.ProcessState.ExitCode(); got != 81 {
 			t.Errorf("%s: exit %d, want 81 (the interpreter's)", tg.target, got)
 		}
 	}
 }
 
-// A call through a function value reads its arguments before it writes its
-// result, so a result returned at once takes the register of the environment
-// argument that dies at the call, the one the result arrives in: no move out
-// and back. `seven` passes as many arguments as arm64's pool holds, so no
-// caller-saved register is left for the result there; it once took a
-// callee-saved one and paid a save and a restore for it.
 const callResultProg = `@noinline function one(f: (i32) => i32): i32 { return f(1); }
 @noinline function seven(f: (i32, i32, i32, i32, i32, i32, i32) => i32): i32 { return f(1, 2, 3, 4, 5, 6, 7); }
 function main(): i32 {
@@ -127,7 +114,6 @@ func TestSelfHostIndirectCallResultInPlace(t *testing.T) {
 			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
 		}
 		_ = run.Run()
-		// args() holds the program alone, so k is 3: 4 + 31.
 		if got := run.ProcessState.ExitCode(); got != 35 {
 			t.Errorf("%s: exit %d, want 35 (the interpreter's)", tg.target, got)
 		}

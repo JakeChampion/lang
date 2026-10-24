@@ -1,38 +1,38 @@
-// std/shapes — every declaration shape a reference page renders.
+// std/shapes — This module demonstrates every declaration that a reference page can show.
 //
-// The intro's second paragraph.
+// The module introduction has a second paragraph.
 
-// A point on the plane.
+// Point identifies a position on a plane.
 pub struct Point {
   x: i32,
   y: i32,
 }
 
-// Which way a turn goes.
+// Turn identifies the direction of a turn.
 pub enum Turn {
   Left,
   Right(i32),
 }
 
-// Something that can be measured.
+// Sized defines a size method.
 pub trait Sized {
   function size(self: Self): i32;
 }
 
-// Something with an area of type T.
+// Area defines an area method with result type T.
 pub trait Area[T]: Sized {
   function area(self: Self): T;
 }
 
-// The largest coordinate.
+// LIMIT is the largest coordinate.
 pub const LIMIT: i32 = 100;
 
-// dist is the Manhattan distance between two points.
+// dist returns the sum of the coordinate differences.
 pub function dist(a: Point, b: Point): i32 {
   return a.x - b.x + a.y - b.y;
 }
 
-// first returns the first element, if there is one.
+// first returns the first element, or None for an empty array.
 pub function first[T](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;

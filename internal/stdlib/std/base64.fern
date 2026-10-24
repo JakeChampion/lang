@@ -1,39 +1,37 @@
-// std/base64 implements standard and URL-safe RFC 4648 encodings.
-// Encode borrows bytes. Decode checks the complete input and returns typed errors.
-// Decode accepts optional padding and requires zero unused trailing bits.
+// This module encodes and decodes Base64 data under RFC 4648.
 
 import "std/codec";
 
 function __b64_alphabet(v: i32): i32 {
-  if (v < 26) {  // A-Z (0..25 → 65..90)
+  if (v < 26) {
     return v + 65;
   }
-  if (v < 52) {  // a-z (26..51 → 97..122)
+  if (v < 52) {
     return v + 71;
   }
-  if (v < 62) {  // 0-9 (52..61 → 48..57)
+  if (v < 62) {
     return v - 4;
   }
-  if (v == 62) {  // '+'
+  if (v == 62) {
     return 43;
   }
-  return 47;  // '/'
+  return 47;
 }
 
 function __b64_decode_char(c: i32, url: boolean): i32 {
-  if (c >= 65 && c < 91) {  // A-Z
+  if (c >= 65 && c < 91) {
     return c - 65;
   }
-  if (c >= 97 && c < 123) {  // a-z
+  if (c >= 97 && c < 123) {
     return c - 71;
   }
-  if (c >= 48 && c < 58) {  // 0-9 (48..57 → 52..61)
+  if (c >= 48 && c < 58) {
     return c + 4;
   }
-  if (c == (if (url) { 45 } else { 43 })) {  // '+'
+  if (c == (if (url) { 45 } else { 43 })) {
     return 62;
   }
-  if (c == (if (url) { 95 } else { 47 })) {  // '/'
+  if (c == (if (url) { 95 } else { 47 })) {
     return 63;
   }
   return 0 - 1;
@@ -67,7 +65,7 @@ pub function encode(bs: [u8]): string {
     b0 = bs[i] as i32;
     buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
     buf = buf.with(j + 1, __b64_alphabet((b0 & 3) << 4) as u8);
-    buf = buf.with(j + 2, 61 as u8);  // '='
+    buf = buf.with(j + 2, 61 as u8);
     buf = buf.with(j + 3, 61 as u8);
   } else if (rem == 2) {
     b0 = bs[i] as i32;
@@ -85,12 +83,11 @@ function __b64_std_to_url(s: string): string {
   let i: i32 = 0;
   while (i < s.len()) {
     let c: i32 = s[i] as i32;
-    if (c == 43) {  // '+' → '-'
+    if (c == 43) {
       out = out.append(45 as u8);
-    } else if (c == 47) {  // '/' → '_'
+    } else if (c == 47) {
       out = out.append(95 as u8);
     } else if (c == 61) {} else {
-      // drop '=' padding
       out = out.append(s[i] as u8);
     }
     i = i + 1;

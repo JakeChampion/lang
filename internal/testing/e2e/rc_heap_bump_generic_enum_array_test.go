@@ -4,17 +4,6 @@ import (
 	"testing"
 )
 
-// Generic-enum-array (`Option[T][]` / `Result[T,E][]`) element reclamation
-// (RC-Perceus) — regression guard. The concrete `E[]` slice left generic
-// instantiations like `Option[i32[]][]` on the flat __fern_drop_arr_ptr,
-// leaking each Some's heap payload (2464 B → 240064 B); arrElemStructDropName
-// now routes a generic enum element through dropFnNameFor (which substitutes
-// the type args, registers the substituted decl, and returns the per-element
-// __drop_enum_<mangled>) into the array deep-drop loop. This was already
-// shipped on main but lacked an explicit test — these pin the bounded
-// high-water + value-correctness + 0-over-release contract (impl-agnostic),
-// including the adversarial shared-payload UAF shape.
-
 func genEnumArrBumpSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -32,9 +21,6 @@ func genEnumArrBumpSrc(n string) string {
 }`
 }
 
-// Shares a payload with a live local `a` (adversarial double-free / UAF
-// shape) and uses it after building the array — 0 iff value-correct AND no
-// over-release.
 const genEnumArrUnderflowSrc = `function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;

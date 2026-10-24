@@ -9,9 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The proxy world has no environment: the config handler, built for
-// wasm32-wasi-http, reads wasi:config/store, which `wasmtime serve` fills
-// from its config-var flags.
 func TestPlatformConfigFromWasiConfig(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

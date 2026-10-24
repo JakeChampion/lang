@@ -7,13 +7,11 @@ import (
 	"time"
 )
 
-// A lone acquire whose weight exceeds the whole budget still proceeds
-// (never deadlocks) — a single heavy build on a tiny host must run.
 func TestBuildMemLimiterLoneOverBudgetProceeds(t *testing.T) {
 	l := newBuildMemLimiter(1000)
 	done := make(chan struct{})
 	go func() {
-		release := l.acquire(9999) // > budget
+		release := l.acquire(9999)
 		release()
 		close(done)
 	}()
@@ -24,8 +22,6 @@ func TestBuildMemLimiterLoneOverBudgetProceeds(t *testing.T) {
 	}
 }
 
-// Two acquisitions that together exceed the budget do not run
-// concurrently: the second blocks until the first releases.
 func TestBuildMemLimiterSerialisesOverBudgetPair(t *testing.T) {
 	l := newBuildMemLimiter(10000)
 	var concurrent int32
@@ -37,7 +33,7 @@ func TestBuildMemLimiterSerialisesOverBudgetPair(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			release := l.acquire(6000) // 6000+6000 > 10000 → must serialise
+			release := l.acquire(6000)
 			cur := atomic.AddInt32(&concurrent, 1)
 			for {
 				m := atomic.LoadInt32(&maxConcurrent)
@@ -57,8 +53,6 @@ func TestBuildMemLimiterSerialisesOverBudgetPair(t *testing.T) {
 	}
 }
 
-// Two acquisitions that both fit run concurrently — the limiter only
-// blocks when the budget would be exceeded.
 func TestBuildMemLimiterAllowsFittingPair(t *testing.T) {
 	l := newBuildMemLimiter(10000)
 	var maxConcurrent int32
@@ -69,7 +63,7 @@ func TestBuildMemLimiterAllowsFittingPair(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			release := l.acquire(4000) // 4000+4000 <= 10000 → both fit
+			release := l.acquire(4000)
 			cur := atomic.AddInt32(&concurrent, 1)
 			for {
 				m := atomic.LoadInt32(&maxConcurrent)
@@ -89,13 +83,11 @@ func TestBuildMemLimiterAllowsFittingPair(t *testing.T) {
 	}
 }
 
-// Release is idempotent — calling it twice must not double-credit the
-// budget (which would let the limiter over-admit).
 func TestBuildMemLimiterReleaseIdempotent(t *testing.T) {
 	l := newBuildMemLimiter(1000)
 	release := l.acquire(600)
 	release()
-	release() // second call is a no-op
+	release()
 	l.mu.Lock()
 	used := l.used
 	l.mu.Unlock()
@@ -104,7 +96,6 @@ func TestBuildMemLimiterReleaseIdempotent(t *testing.T) {
 	}
 }
 
-// The budget derivation prefers the env override, else a positive value.
 func TestBuildMemBudgetEnvOverride(t *testing.T) {
 	t.Setenv("FERN_BUILD_MEM_BUDGET_MB", "4242")
 	if got := buildMemBudgetMB(); got != 4242 {
@@ -116,9 +107,6 @@ func TestBuildMemBudgetEnvOverride(t *testing.T) {
 	}
 }
 
-// gccBigLinkWeightMB scales with the asm size, never returns a trivial
-// reservation, and covers GNU as's measured peak on the compiler's own
-// listings (392 MB on 100 MB of x86-64, 590 MB on 102 MB of arm64).
 func TestGccBigLinkWeightScales(t *testing.T) {
 	small := gccBigLinkWeightMB(1 << 20)
 	x86 := gccBigLinkWeightMB(100 << 20)

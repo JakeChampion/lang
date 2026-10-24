@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// A match payload stored into a tuple, struct or array literal (#10677): the
-// literal's slot retains the binding, so the arm's release of the payload
-// (pair-form) or of the box (heap-box) is safe, and before the excuse both
-// leaked one per call. `line` is std/http's request-line shape, a tuple
-// carrying the target out of the arm. Over 40 calls the three lengths sum
-// to 300: "bN" and "pN" are 2 bytes for ten of them and 3 for thirty, and
-// the array holds two cells.
 const matchPayloadInLiteralSrc = `import "std/i32";
 struct Row { at: i32, s: string }
 function pair(n: i32): Option[string] {

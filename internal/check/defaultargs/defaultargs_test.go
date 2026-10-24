@@ -17,7 +17,6 @@ func fill(t *testing.T, src string) (*ast.Program, []Error) {
 	return prog, Fill(prog)
 }
 
-// callArgs returns the argument list of the first call to name.
 func callArgs(prog *ast.Program, name string) []ast.Expr {
 	var found []ast.Expr
 	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
@@ -31,11 +30,6 @@ func callArgs(prog *ast.Program, name string) []ast.Expr {
 	return found
 }
 
-// A default is copied into the CALL SITE, so a name inside it resolved in
-// the caller's scope instead of the callee's (#8445): `b: i32 = a * 2`
-// read the CALLER's `a`, and `f(1)` returned 201 rather than 3. Nothing
-// downstream could see it — the pass rewrites the AST before type-checking,
-// so the interpreter produced the same wrong answer as every backend.
 func TestDefaultMustBeConstantExpression(t *testing.T) {
 	cases := []struct {
 		name, src, wantName string
@@ -65,13 +59,6 @@ function main(): i32 { return f(); }`,
 function main(): i32 { return f(1); }`,
 			wantName: "a",
 		},
-		// The check hunted for free IDENTIFIERS and descended into Ident /
-		// Unary / Binary / Call only, so a name reached the call site intact
-		// whenever it was wrapped in any other node. All four of these were
-		// accepted, and each read the caller's value at run time: the
-		// field-access one returned 42 from the caller's `config` (#8445,
-		// found in review of #8503). The check is a whitelist now, so the
-		// shape is named rather than the name inside it.
 		{
 			name: "field-access",
 			src: `struct Config { timeout: i32 }
@@ -110,7 +97,6 @@ function main(): i32 { let n: i32 = 41; return f(1); }`,
 function main(): i32 { let n: i32 = 41; return f(1); }`,
 			wantName: "an array literal",
 		},
-		// Nesting one inside arithmetic must not carry it past either.
 		{
 			name: "field-access-under-arithmetic",
 			src: `struct Config { timeout: i32 }
@@ -135,7 +121,6 @@ function main(): i32 { let config: Config = Config { timeout: 41 }; return f(1);
 	}
 }
 
-// The restriction must not cost the shapes defaults are actually written in.
 func TestConstantDefaultsStillFill(t *testing.T) {
 	cases := []struct {
 		name, src string
@@ -192,9 +177,6 @@ function main(): i32 { return f(1); }`,
 	}
 }
 
-// Named-argument errors used to be reported as E060, which the catalogue
-// documents as "invalid `as?` downcast target" — so `fern -explain` answered
-// with an unrelated page. They have their own code now.
 func TestNamedArgumentErrorsUseTheirOwnCode(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{
@@ -226,7 +208,6 @@ function main(): i32 { return listen(port = 80, 5); }`,
 	}
 }
 
-// Named arguments that are valid must still reorder into positional order.
 func TestNamedArgumentsReorder(t *testing.T) {
 	src := `function f(a: i32, b: i32, c: i32 = 3): i32 { return a + b + c; }
 function main(): i32 { return f(b = 2, a = 1); }`
@@ -249,8 +230,6 @@ function main(): i32 { return f(b = 2, a = 1); }`
 	}
 }
 
-// callArgCounts returns the argument count of every call to name, in
-// source order.
 func callArgCounts(prog *ast.Program, name string) []int {
 	var out []int
 	for _, f := range prog.Funcs {
@@ -266,9 +245,6 @@ func callArgCounts(prog *ast.Program, name string) []int {
 	return out
 }
 
-// A call to a local binding is not a call to the top-level function it
-// shadows, so it gets none of that function's defaults (#11850). Each case
-// is the counts of every call to `f`, in source order.
 func TestShadowedCalleeGetsNoDefaults(t *testing.T) {
 	const top = "function f(a: i32, b: i32 = 5): i32 { return a + b; }\n"
 	cases := []struct {
@@ -303,8 +279,6 @@ func TestShadowedCalleeGetsNoDefaults(t *testing.T) {
 	}
 }
 
-// Named arguments on a local binding name no top-level function's
-// parameters, whatever the binding is called.
 func TestNamedArgumentOnShadowedCallee(t *testing.T) {
 	src := `function f(a: i32, b: i32 = 5): i32 { return a + b; }
 function main(): i32 { let f = (n: i32) => n; return f(n = 1); }`

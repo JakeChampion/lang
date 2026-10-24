@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Transitive reclamation Stage C — non-uniform enum with a
-// struct payload, churned. The eligible enum drop's tag-dispatch
-// (variant-plan) arm knows the exact payload type, so the Leaf
-// arm recurses through __drop_struct_Item (freeing the Item box
-// + its array) instead of flat-dec'ing the payload. Reachable
-// now that composite-literal RHS (Item{...} fed to the Leaf
-// constructor) is free-eligible. sum_{i=0..99}(i+1) = 5050.
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 struct Item { tags: i32[] }
 enum Node { Leaf(Item), Branch(i32) }

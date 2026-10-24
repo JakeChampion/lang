@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// The cold-call classification and the allocation it allows: a call that only
-// some loop iterations make, a push, an inline rc primitive, the interior
-// fixed-register table, and a hot phi that crosses only cold calls keeping a
-// caller register (docs/SELFHOST-SSA-BACKEND.md, "Cold calls").
 func TestSelfHostSSAColdCalls(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

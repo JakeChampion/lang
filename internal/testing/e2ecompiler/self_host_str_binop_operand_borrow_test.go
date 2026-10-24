@@ -9,28 +9,11 @@ import (
 	"testing"
 )
 
-// strBinopOperandBorrowCases pin that a BARE IDENT at a string binary operator's
-// operand is a borrow, and that the positions which really do retain are not.
-//
-// Concat copies both operands' bytes into a new box and the comparisons read
-// them; neither retains, any more than an index base (`name[i]`) or a method
-// receiver (`name.m()`) does. So `return s + ""` — the most ordinary
-// fresh-string body there is — leaves the parameter borrowable, and the caller
-// releases the temp it passed in.
-//
-// The flat cases return 98 when the argument temp is stranded: 400 rounds of a
-// 170-byte producer is 68 KB against a 32 KB ceiling. The refusal cases are
-// value-exact under same-size-class allocation pressure and verify the result
-// only through borrow positions, so a wrongly released box is recycled with
-// different bytes rather than merely freed and left readable.
 var strBinopOperandBorrowCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The shape that led here. `cat`'s parameter is read by a concat and nothing
-	// else, so the caller releases the temp it passed once the call returns.
-	// Stranded, that temp is 46 B/round.
 	{"str-concat-operand-param-borrowable-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function cat(s: string): string { return s + ""; }
 function round(pre: string): i32 { return cat(w(pre)).len(); }
@@ -46,8 +29,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// The comparisons read their operands' bytes for the same reason concat copies
-	// them, so they are borrow positions too.
 	{"str-compare-operand-param-borrowable-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function cmpsz(s: string): i32 { if (s > "m") { return 3; } return 5; }
 function round(pre: string): i32 { return cmpsz(w(pre)); }
@@ -63,8 +44,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// The control: a scalar-returning callee whose parameter never reaches a return
-	// was already borrowable, so this was flat before and must stay flat.
 	{"str-scalar-callee-temp-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function sz(s: string): i32 { return s.len(); }
 function round(pre: string): i32 { return sz(w(pre)); }
@@ -80,9 +59,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// NEGATIVE: `return s` hands the parameter's own box back, so releasing the
-	// argument at the call site frees what the caller now holds. Exits 97 under a
-	// compiler that makes every bare ident a borrow.
 	{"str-identity-return-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 @noinline function keep(s: string): string { return s; }
 function round(pre: string): i32 {
@@ -96,9 +72,6 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE: the parameter is moved into a struct field that outlives the call.
-	// A struct-literal field value is not a borrow position and must not become one.
-	// Also exits 97 when admitted.
 	{"str-struct-stored-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
@@ -114,9 +87,6 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE: concat-read on one path, returned bare on the other. One escaping
-	// path is enough to refuse the parameter — the call site has no way to tell
-	// which path ran. Also exits 97 when admitted.
 	{"str-mixed-path-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function mixed(s: string, k: i32): string { if (k > 0) { return s + ""; } return s; }
 function round(pre: string): i32 {
@@ -132,8 +102,6 @@ function round(pre: string): i32 {
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
-// TestSelfHostStrBinopOperandBorrowIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostStrBinopOperandBorrowIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -161,8 +129,6 @@ func TestSelfHostStrBinopOperandBorrowIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrBinopOperandBorrowIRArm64 is the arm64 leg; the borrowability
-// verdict is in the shared lowering and the release is a per-backend transcription.
 func TestSelfHostStrBinopOperandBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -186,8 +152,6 @@ func TestSelfHostStrBinopOperandBorrowIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrBinopOperandBorrowWasmIR is the wasm leg, where the release maps
-// to $__fern_arr_dec on the rc-headered block.
 func TestSelfHostStrBinopOperandBorrowWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping binop-operand borrow wasm IR e2e")

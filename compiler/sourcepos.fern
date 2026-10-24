@@ -1,4 +1,3 @@
-// Source positions are side facts, independent of executable value identities.
 pub struct SourcePos { line: i32, col: string }
 
 pub struct SourceInfo { values: SourcePos[], terms: SourcePos[], entry: SourcePos }

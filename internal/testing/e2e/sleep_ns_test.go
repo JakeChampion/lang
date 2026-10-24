@@ -1,28 +1,9 @@
-// `sleep_ns` (#8528) end to end on every backend, alongside the `sleep_ms` it
-// refines.
-//
-// What no unit test can assert: each backend builds the wait by hand and each
-// one rounds somewhere different — x86-64 and arm64-linux divide a timespec by
-// 1e9, arm64-darwin rounds up into `select`'s microsecond timeval because
-// there is no nanosleep syscall there, and both WASI previews take the
-// nanoseconds verbatim. A helper that reused `sleep_ms`'s 1e3 divisor, or
-// stored the remainder in the wrong timespec word, still sleeps; it just
-// sleeps for the wrong length. So the probe measures.
-//
-// Every bound is ONE-SIDED. nanosleep may overshoot by any amount the
-// scheduler chooses, so "not shorter than asked" is the only property the helper
-// owns; an upper bound would be a test of the machine's load.
 package e2e
 
 import (
 	"testing"
 )
 
-// sleepNsSource returns a non-zero code per failing step.
-//
-// The 200 µs step is the one that justifies the primitive: `sleep_ms` cannot
-// express it at all, and a backend that divided by 1e3 instead of 1e9 would
-// pause for 200 SECONDS rather than fail, which is why the suite would notice.
 const sleepNsSource = `function main(): i32 {
     // Sub-millisecond, the interval sleep_ms has to round up to a full tick.
     let t0: i64 = monotonic_ns();
@@ -69,9 +50,6 @@ func TestInterpSleepNs(t *testing.T) {
 	}
 }
 
-// wasm is the one target that honours the full resolution without rounding:
-// preview-1's poll_oneoff timeout and preview-2's subscribe-duration are both
-// already nanoseconds. They are separate bodies, so each preview gets a run.
 func TestWASMPreview1SleepNs(t *testing.T) {
 	if got := runWasm(t, sleepNsSource); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see sleepNsSource)", got)

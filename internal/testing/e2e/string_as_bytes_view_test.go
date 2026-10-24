@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// asBytesViewProgram pins `[u8]` as a non-owning byte view over a string
-// (#5632, decision D8) on every backend.
-//
-// `as_bytes()` returns a slice header aliasing the string's payload,
-// where `bytes()` allocates and copies. The distinction is the whole
-// point: every byte-level consumer in the tree paid for a full copy just
-// to read bytes it never mutated.
-//
-// Exits 0 on success, a distinct code per failed step.
 const asBytesViewProgram = `
 import "std/utf8" as utf8;
 
@@ -85,16 +76,6 @@ func TestAsBytesViewArm64(t *testing.T) {
 	}
 }
 
-// bytesWriterViewProgram covers the consumer migrated off the copying
-// `bytes()` in this change: BytesWriter.write_string only ever READS the
-// bytes it appends, so the copy was pure waste.
-//
-// No wasm leg, and that is a PRE-EXISTING gap rather than a consequence
-// of the migration: this program traps at runtime under wasm on the
-// unmodified stdlib too (verified by re-running it with `bytes()`
-// restored). The trap is in std/io_buffered on wasm generally, not in
-// `as_bytes` — the view itself passes on all four backends above. Add
-// the leg here once that gap is fixed.
 const bytesWriterViewProgram = `
 import "std/io_buffered" as iob;
 
@@ -136,20 +117,6 @@ func TestBytesWriterViewArm64(t *testing.T) {
 	}
 }
 
-// asBytesInlineViewLifetimeProgram pins the lifetime rule for a view cut
-// from an INLINE-packed string, where `as_bytes` first promotes the bytes
-// into a heap copy the header points at (#8406). A slice header is an rc1
-// block the IR releases — at scope exit, on reassignment, after a sub-slice
-// is cut from a temp — and a child view must survive every one of those
-// parent releases, because it views the promoted bytes and never the
-// header. Each shape here frees a parent header while a child view is
-// still read; a header that owned the copy would make each read a
-// use-after-free.
-//
-// The rc corpus runs the heap-string twin under the leak gate
-// (slice_sub_view_outlives_parent_header); this program stays out of that
-// gate because the promoted copy itself has no owner and is only ever
-// released by process exit.
 const asBytesInlineViewLifetimeProgram = `
 function tail(s: string): [u8] {
     let a: [u8] = s.as_bytes();

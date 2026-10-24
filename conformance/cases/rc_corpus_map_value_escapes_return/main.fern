@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Escaping get-result: a borrowed-map helper returns one of
-// its values past the map's frame. inc-on-get keeps the value
-// alive (rc survives the owner map's drop in main); the caller
-// local owns the surviving reference.
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function lookup(m: Map[i32, i32[]], k: i32): i32[] {

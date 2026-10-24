@@ -1,13 +1,6 @@
 import "std/test";
 import "std/array";
 
-// tests/stdlib/array_cumprod_diff_test.fern — pure-Fern coverage of
-// std/array's `cumproduct` (running product) and `adjacent_diff` (successive
-// differences, one shorter than the input; the discrete derivative and
-// left-inverse of cumsum) at an f64 element. Both are bounded generics, so this
-// exercises their f64 instantiation. The Go-side TestArrayCumprodDiff pins the
-// same behaviour.
-
 function near(a: f64, b: f64): boolean {
   let d: f64 = a - b;
   if (d < 0.0) {
@@ -17,7 +10,6 @@ function near(a: f64, b: f64): boolean {
 }
 
 function test_cumprod(): test.TestOutcome {
-  // 1, 1*2, 1*2*3, 1*2*3*4 = 1, 2, 6, 24
   let cp: f64[] = [1.0, 2.0, 3.0, 4.0].cumproduct();
   if (!near(cp[0], 1.0)) {
     return test.fail("first");
@@ -44,7 +36,6 @@ function test_diff_negatives(): test.TestOutcome {
 }
 
 function test_diff_inverts_cumsum(): test.TestOutcome {
-  // diff(cumsum(xs)) recovers xs (minus its first element).
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
   let d2: f64[] = xs.cumsum().adjacent_diff();
   if (!near(d2[0], 2.0)) {

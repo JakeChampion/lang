@@ -10,16 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host interpreter (`fern -interp`, compiler/interp.fern) erases
-// generics and binds a type parameter from what a call can see. std/simd's
-// `Dual[T]` and `DoubleDouble[T]` reach the shapes that used to leave one
-// unbound: an operator on a struct value (its impl's method), a parametric
-// impl's associated function called on an applied type, a generic struct
-// value whose type arguments a method reads back, a written type argument
-// naming the caller's own parameter, and a call only its result types
-// (`seed(2.0)`) pinned by its binding's annotation or by the parameter it
-// fills. The Go interpreter runs the same programs through the test-runner
-// gates; these hold the self-host one to the same answers.
 func runSelfHostInterp(t *testing.T, name, src string) string {
 	t.Helper()
 	cli := e2eharness.SelfHostCLI(t)
@@ -81,9 +71,6 @@ func TestSelfHostInterpStructOps(t *testing.T) {
 	}
 }
 
-// Associated constants read through a bound with an explicit instantiation
-// (`chunk[V2](8)`), as `Self` and on a primitive (the e2e package's
-// assocConstSrc, which the Go interpreter, x86-64 and wasm also run).
 const selfHostAssocConstSrc = `import "std/i32";
 trait Lanes {
     const LANES: i32;

@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// closureCases exercise capturing closures (the `function(…)` lambda
-// form), closures returned across a `(T) => R` return type, and a 0-arg
-// function passed by name as a value (`() => R` param — distinguished
-// from a const-call at the call site). All boxed `[fn_addr, caps…]` and
-// invoked through the box-in-register convention. Cross-checked vs the
-// Go backend.
 var closureCases = []struct {
 	name string
 	src  string
@@ -26,8 +20,6 @@ var closureCases = []struct {
 	{"predicate", "function count_if(arr: i32[], pred: (i32) => boolean): i32 { let c: i32 = 0; for x in arr { if (pred(x)) { c = c + 1; } } return c; } function is_big(n: i32): boolean { return n > 10; } function main(): i32 { let a: i32[] = [5, 20, 8, 30, 15]; return count_if(a, is_big) * 14; }", 42},
 }
 
-// TestSelfHostClosuresX86_64 — capturing closures + function values with
-// the self-hosted x86-64 compiler.
 func TestSelfHostClosuresX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -61,7 +53,6 @@ func TestSelfHostClosuresX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostClosuresArm64 — CI-gated arm64 counterpart.
 func TestSelfHostClosuresArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range closureCases {

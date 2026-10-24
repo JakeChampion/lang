@@ -6,9 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Copying a float into/out of an Option performs no arithmetic: even NaN
-// payloads must retain their exact bits. This is stricter than an arithmetic
-// NaN oracle and catches a zero seed leaking through the absent phi arm.
 const scalarOptionFloatSrc = `import "std/array";
 @noinline function first(xs: f64[]): i64 {
   let out = xs.map((x: f64): f64 => x).reduce((a: f64, b: f64): f64 => a);

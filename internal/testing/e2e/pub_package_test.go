@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// pub(package): a package-scoped helper is usable from a sibling module
-// in the same package (directory), end-to-end. helper(41) = 42. See
-// docs/PUB-PACKAGE.md.
 var pubPackageProject = map[string]string{
 	"helpers.fern": `pub(package) function helper(n: i32): i32 { return n + 1; }`,
 	"main.fern": `import "./helpers";

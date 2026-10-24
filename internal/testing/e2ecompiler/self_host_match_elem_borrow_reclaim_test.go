@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// matchElemBorrowReclaimCases pin a tuple one of whose elements is read as a
-// MATCH SCRUTINEE.
-//
-// A scrutinee that is exactly `name.<i>` reads the element's tag and copies its
-// payload into the arm binding, storing the box nowhere, so it is a borrow: the
-// WHOLE tuple — buffer, element boxes and the tuple box — is still reclaimed,
-// as when the element is read any other way.
-//
-// A binding taken from the payload stays valid: the reclaim frees the tuple's
-// own children and its box, never a union element's PAYLOAD, so
-// `pointer-payload-*` below hold even when an arm binds an `i32[]` and carries
-// it out of the loop.
-//
-// Byte cases return measured bytes per round.
 var matchElemBorrowReclaimCases = []struct {
 	name string
 	src  string
@@ -48,8 +34,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The array sibling shows the cost is the WHOLE tuple, not the union box:
-	// this shape is flat without the match and 128 B/round with it.
 	{"match-on-union-elem-beside-array", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -71,8 +55,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// POINTER-PAYLOAD safety: the arm binds an i32[] out of the union. The
-	// reclaim now runs on this tuple, so the binding must still be readable.
 	{"pointer-payload-bound-safe", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -92,8 +74,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 2},
-	// The sharper version: the arm CARRIES the pointer payload out to a local
-	// read after the loop, so it outlives every reclaim point.
 	{"pointer-payload-carried-out-safe", `function churn(n: i32): i32 {
     let keep: i32[] = [0, 0];
     let acc: i32 = 0;
@@ -113,9 +93,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 90},
-	// EXTRACTION negative: `keep = t.2` lifts the element out whole before any
-	// match, which is the shape the escape walk is really for. It must stay
-	// refused — the borrow only covers a scrutinee that is exactly `name.<i>`.
 	{"extracted-elem-still-refused", `function churn(n: i32): i32 {
     let keep: Option[i32] = None;
     let acc: i32 = 0;

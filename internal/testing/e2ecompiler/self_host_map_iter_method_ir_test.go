@@ -4,14 +4,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostMapIterMethodIR pins the Map.iter() builtin cluster
-// (iter/has_next/key/value/advance) on the self-host x86-64 path. The four
-// MapIter methods are compiler builtins with no function body; a program that
-// walks a map through them must compile and answer.
 func TestSelfHostMapIterMethodIR(t *testing.T) {
 	cli := newStrictCLI(t)
 
-	// Sum the values via the iterator: 7 + 8 = 15.
 	src := `import "core/map";
 function f(): i32 {
     let m: Map[string, i32] = map_new(0);

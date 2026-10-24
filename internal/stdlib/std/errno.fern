@@ -1,29 +1,4 @@
-// std/errno — the errno an IoError stands for, and names for every errno the
-// runtime reports.
-//
-// `IoError.Other(path, message, errno)` carries the errno in LINUX numbering
-// on every target: a Darwin or WASI runtime translates its host's number, so
-// `errno.of(e) == errno.ENOTDIR` holds wherever the program runs. An errno past
-// the runtime's strerror table carries 0, which no constant here equals.
-//
-//     import "std/errno";
-//
-//     match (remove_dir(path)) {
-//       Err(e) => {
-//         if (errno.of(e) == errno.ENOTEMPTY) { … }
-//       },
-//       Ok(_) => {}
-//     }
-//
-// `net.NetError` follows the same rule, so `e.errno() == errno.ECONNRESET`
-// holds on every target too.
-//
-// The constants and from_host's tables are internal/tables/strerror's rows,
-// which its selfhost_parity_test pins them to; regenerate with
-// `go run ./internal/tables/strerror/gen_selfhost_lists`. Linux has no number
-// of its own for ENOATTR or EOPNOTSUPP: each is the errno glibc defines it as
-// (ENODATA, ENOTSUP), and a Darwin host's own ENOATTR or EOPNOTSUPP arrives
-// carrying that number.
+// This module provides error numbers for runtime I/O failures.
 
 pub const EPERM: i32 = 1;
 
@@ -165,10 +140,6 @@ pub const ENOTRECOVERABLE: i32 = 131;
 
 pub const EOPNOTSUPP: i32 = 95;
 
-// `of(e)` — the errno `e` stands for, in Linux numbering. A named variant is
-// the errno every runtime classifies into it; `Unsupported` is an operation
-// the target does not offer, refused before any host is asked. A host's own
-// ENOTSUP arrives as `Other` carrying it.
 pub function of(e: IoError): i32 {
   match (e) {
     NotFound(_) => {
@@ -195,11 +166,6 @@ pub function of(e: IoError): i32 {
   }
 }
 
-// `from_host(n)` — the Linux number for errno `n` as the compile target
-// numbers it, which is what a builtin returns (negated or not). On Linux and
-// Android that is `n` itself, with i32::MIN saturating to i32::MAX; elsewhere
-// an errno past the runtime's strerror table answers 0, as `IoError.Other`
-// carries it.
 pub function from_host(n: i32): i32 {
   let e: i32 = n;
   if (e == 0 - 2147483647 - 1) {
@@ -231,8 +197,6 @@ function __from_table(host: i32[], e: i32): i32 {
   return 0;
 }
 
-// The strerror table's rows as Darwin and WASI preview 1 number them, and the
-// Linux number each carries; regenerate with the constants above.
 function __darwin_errnos(): i32[] {
   return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 35, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 11, 63, 77, 78, 66, 62, 96, 93, 84, 92, 38, 40, 41, 42, 43, 45, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 60, 61, 65, 37, 36, 70, 69, 89, 105, 104, 102];
 }

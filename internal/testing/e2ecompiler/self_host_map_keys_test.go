@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// mapKeysValuesCases cover `m.keys()` / `m.values()` — the map box
-// already holds the parallel keys[]/values[] arrays at offset 0/8, so
-// these return them directly. The result is an array of the key/value
-// type (array_i32 for i32 keys/values, array_string for strings), so
-// it iterates and `.len()` chains off it. Exit codes cross-checked vs
-// the Go backend.
 var mapKeysValuesCases = []struct {
 	name string
 	src  string
@@ -22,8 +16,6 @@ var mapKeysValuesCases = []struct {
 	{"keys-len-string", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"ab\", 1); m = m.insert(\"c\", 2); return m.keys().len() + 40; }", 42},
 }
 
-// TestSelfHostMapKeysX86_64 — m.keys()/m.values() with the self-hosted
-// x86-64 compiler.
 func TestSelfHostMapKeysX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -50,7 +42,6 @@ func TestSelfHostMapKeysX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapKeysArm64 — CI-gated arm64 counterpart.
 func TestSelfHostMapKeysArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mapKeysValuesCases {

@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-// Track leaf multiplicities instead of constructing or rewriting expressions.
 func perceusFoldOracle(depth int, initial int64) (constant, variables int64) {
 	leaves := map[int64]int64{initial: 1}
 	for i := 0; i < depth; i++ {
@@ -75,7 +74,6 @@ function generated(depth: i32, initial: i64, constant: i64, variables: i64): boo
 }
 function main(): i32 {
 `)
-	// Pin constructor shape and branch ordering as well as the arithmetic result.
 	cases := []struct{ input, expected string }{
 		{"Var(7i64)", "Var(7i64)"},
 		{"Val(-5i64)", "Val(-5i64)"},

@@ -2,8 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// base64IRCases compile the std/base64 API through the self-hosted compiler.
-// The interpreter supplies the expected result for each target.
 var base64IRCases = []struct {
 	name string
 	main string
@@ -16,14 +14,11 @@ var base64IRCases = []struct {
 	{"roundtrip-len", `let Ok(bytes) = base64.decode(base64.encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])) else { return 127; }; return bytes.len();`},
 }
 
-// base64Source imports the module with its checked decode result.
 func base64Source(t *testing.T, mainBody string) []byte {
 	t.Helper()
 	return []byte("import \"std/base64\";\nfunction main(): i32 { " + mainBody + " }\n")
 }
 
-// TestSelfHostBase64IR runs each case through the self-host CLI on x86-64 and
-// wasm, oracle-checked against the interpreter.
 func TestSelfHostBase64IR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

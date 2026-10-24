@@ -7,73 +7,50 @@ import (
 	"testing"
 )
 
-// annotateSliceCases slice an array whose SOURCE is not a named slot — an
-// if-expression, a struct field reached through a call result — so whether it
-// is an array at all, and how wide its elements are, can only come from the
-// source's checked type.
-// `slice_of_call_field_i64` pins the width: read at a 4-byte stride it returns
-// the wrong number rather than failing.
-//
-// Cases route through the IR emitter and ASSERT "ir" via -decide, so a change
-// that pushes them off the IR path fails loudly. Oracle: the interp.
 var annotateSliceCases = []struct {
 	name string
 	src  string
 }{
-	// Gap 1: the source is an if-expression (a 0-arg IIFE after desugar).
 	{"slice_of_if_expr_f64", `function main(): i32 {
     let c: boolean = true;
     let xs: [f64] = (if (c) { [1.5, 2.5, 4.5] } else { [3.5, 4.5, 5.5] })[0:2];
     return (xs[1] * 10.0) as i32;
-}`}, // 25
-	// Gap 2: the source is a struct field reached through a call result.
+}`},
 	{"slice_of_call_field_f64", `struct Box { data: f64[] }
 function mk(): Box { return Box { data: [1.5, 2.5, 4.5] }; }
 function main(): i32 {
     let xs: [f64] = mk().data[0:2];
     return (xs[1] * 10.0) as i32;
-}`}, // 25
-	// Gap 3: the i64 sibling — exercises BOTH halves, since the element width
-	// must also come from the tag. A 4-byte stride here returns a wrong value.
+}`},
 	{"slice_of_call_field_i64", `struct Box { data: i64[] }
 function mk(): Box { return Box { data: [7000000000, 9000000000, 1] }; }
 function main(): i32 {
     let xs: [i64] = mk().data[0:2];
     return (xs[1] / 1000000000) as i32;
-}`}, // 9
-	// Negative guard: the same if-expression shape over an i32[] must stay
-	// 4-byte. A leaf that widened on any non-empty tag would break this.
+}`},
 	{"slice_of_if_expr_i32_narrow", `function main(): i32 {
     let c: boolean = true;
     let xs: [i32] = (if (c) { [10, 20, 30] } else { [40, 50, 60] })[0:2];
     return xs[1] + 22;
-}`}, // 42
-	// Negative guard: a string[] element is pointer-shaped, not 8-byte-numeric.
+}`},
 	{"slice_of_call_field_string", `struct Box { data: string[] }
 function mk(): Box { return Box { data: ["ab", "cd", "ef"] }; }
 function main(): i32 {
     let xs: [string] = mk().data[0:2];
     return xs[1].len() + 40;
-}`}, // 42
-	// Structural path, unchanged: a slice of a named f64[] local. The walk
-	// resolves this from the slot, so the tag must never be consulted.
+}`},
 	{"slice_of_local_f64", `function main(): i32 {
     let a: f64[] = [1.5, 2.5, 4.5];
     let xs: [f64] = a[0:2];
     return (xs[1] * 10.0) as i32;
-}`}, // 25
-	// Structural path, unchanged: a slice of a nested array element `m[1][0:2]`.
+}`},
 	{"slice_of_nested_index_f64", `function main(): i32 {
     let m: f64[][] = [[1.5, 2.5, 4.5], [9.5, 8.5, 7.5]];
     let xs: [f64] = m[1][0:2];
     return (xs[1] * 10.0) as i32;
-}`}, // 85
+}`},
 }
 
-// TestSelfHostAnnotateSliceIR_X86_64 pins the ExprSlice.ty carrier through the
-// self-host x86-64 IR path. asm_load_run.fern is the driver because it runs
-// checker.annotate_module; a driver that skips annotation leaves every ty empty
-// and cannot regress.
 func TestSelfHostAnnotateSliceIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

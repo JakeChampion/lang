@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// The emitter-shape gates for asm_ir.fern's register path on constants: the
-// immediate operand forms and the constant materialisation forms.
-//
-// Each case asserts two things that have to travel together: the selected
-// form is present in the function that produces it and the form it replaces
-// is absent, AND the program still exits with the value the interpreter gives
-// it. Either alone is easy to satisfy wrongly.
-//
-// The shapes are asserted per FUNCTION BODY rather than over the whole module,
-// because the hand-written runtime carries its own copies of every mnemonic
-// here. The allocator picks the register, so each line is a pattern with the
-// register left open, and a back-reference where two operands must agree.
-
-// x86ShapeHarness builds the asm_ir_run driver once and returns an emit
-// function (source -> asm text) and a run function (asm -> exit code).
 func x86ShapeHarness(t *testing.T) (func(t *testing.T, src string) string, func(t *testing.T, name, asm string) int) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -72,9 +57,6 @@ func x86ShapeHarness(t *testing.T) (func(t *testing.T, src string) string, func(
 	return emit, run
 }
 
-// shapeFnBody returns the emitted body of `__fn_<name>`, up to its `ret`.
-// Keep the last instruction's newline: a leaf without a frame epilogue can
-// end with the very instruction that a line-anchored shape check examines.
 func shapeFnBody(t *testing.T, asm, name string) string {
 	t.Helper()
 	re := regexp.MustCompile(`(?s)\n__fn_` + regexp.QuoteMeta(name) + `:\n(.*?\n)    ret\n`)
@@ -91,16 +73,6 @@ func runX86ShapeCases(t *testing.T, cases []shapeCase) {
 	runShapeCases(t, emit, run, cases)
 }
 
-// TestSelfHostConstOperandReachesImmediateFormX86_64 pins the immediate
-// operand: a binary operation against a literal reads it as an immediate and
-// never materialises it in a register first. The two-operand imulq has no
-// immediate form, so it takes the three-operand one; a shift count folds to
-// the imm8 form, reduced modulo the width.
-//
-// Width is the rule's whole risk, so the refusals are pinned too: a literal
-// past a sign-extended imm32 cannot be an immediate, and must still compute
-// the right answer through a register, materialised in the narrowest form
-// that holds it (2^31 is the boundary: it fits `movl` but not the imm32).
 func TestSelfHostConstOperandReachesImmediateFormX86_64(t *testing.T) {
 	runX86ShapeCases(t, []shapeCase{
 		{
@@ -161,12 +133,6 @@ function main(): i32 { return ((wide(1i64) + narrow_big(1i64)) % 100i64) as i32;
 	})
 }
 
-// TestSelfHostConstZeroExtendedFormX86_64 pins the constant forms: a
-// non-negative literal under 2^32 is `movl $K, %e..` (five bytes,
-// zero-extending), zero is the self-xor, a negative one keeps `movq` (whose
-// imm32 sign-extends), and an i64 literal only pays movabsq's ten bytes when
-// it needs more than 32 bits. Each form is read back through a consumer that
-// would expose the wrong extension.
 func TestSelfHostConstZeroExtendedFormX86_64(t *testing.T) {
 	runX86ShapeCases(t, []shapeCase{
 		{

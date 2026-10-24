@@ -6,12 +6,6 @@ import "std/codec";
 import "std/i64";
 import "core/int";
 
-// tests/stdlib/quic_packet_test.fern — std/quic/packet against RFC 9001
-// Appendix A: the Initial keys of A.1, the client and server Initial packets
-// of A.2 and A.3 sealed byte for byte and opened back, the Retry of A.4,
-// the ChaCha20-Poly1305 short header of A.5, and RFC 9000 Appendix A's
-// packet number examples; then the headers a datagram can hold.
-
 function dcid(): u8[] {
   return __codec_bytes(hex.decode("8394c8f03e515708"));
 }
@@ -43,8 +37,6 @@ function client_packet(): string {
   return "c000000001088394c8f03e5157080000449e7b9aec34d1b1c98dd7689fb8ec11d242b123dc9bd8bab936b47d92ec356c0bab7df5976d27cd449f63300099f3991c260ec4c60d17b31f8429157bb35a1282a643a8d2262cad67500cadb8e7378c8eb7539ec4d4905fed1bee1fc8aafba17c750e2c7ace01e6005f80fcb7df621230c83711b39343fa028cea7f7fb5ff89eac2308249a02252155e2347b63d58c5457afd84d05dfffdb20392844ae812154682e9cf012f9021a6f0be17ddd0c2084dce25ff9b06cde535d0f920a2db1bf362c23e596d11a4f5a6cf3948838a3aec4e15daf8500a6ef69ec4e3feb6b1d98e610ac8b7ec3faf6ad760b7bad1db4ba3485e8a94dc250ae3fdb41ed15fb6a8e5eba0fc3dd60bc8e30c5c4287e53805db059ae0648db2f64264ed5e39be2e20d82df566da8dd5998ccabdae053060ae6c7b4378e846d29f37ed7b4ea9ec5d82e7961b7f25a9323851f681d582363aa5f89937f5a67258bf63ad6f1a0b1d96dbd4faddfcefc5266ba6611722395c906556be52afe3f565636ad1b17d508b73d8743eeb524be22b3dcbc2c7468d54119c7468449a13d8e3b95811a198f3491de3e7fe942b330407abf82a4ed7c1b311663ac69890f4157015853d91e923037c227a33cdd5ec281ca3f79c44546b9d90ca00f064c99e3dd97911d39fe9c5d0b23a229a234cb36186c4819e8b9c5927726632291d6a418211cc2962e20fe47feb3edf330f2c603a9d48c0fcb5699dbfe5896425c5bac4aee82e57a85aaf4e2513e4f05796b07ba2ee47d80506f8d2c25e50fd14de71e6c418559302f939b0e1abd576f279c4b2e0feb85c1f28ff18f58891ffef132eef2fa09346aee33c28eb130ff28f5b766953334113211996d20011a198e3fc433f9f2541010ae17c1bf202580f6047472fb36857fe843b19f5984009ddc324044e847a4f4a0ab34f719595de37252d6235365e9b84392b061085349d73203a4a13e96f5432ec0fd4a1ee65accdd5e3904df54c1da510b0ff20dcc0c77fcb2c0e0eb605cb0504db87632cf3d8b4dae6e705769d1de354270123cb11450efc60ac47683d7b8d0f811365565fd98c4c8eb936bcab8d069fc33bd801b03adea2e1fbc5aa463d08ca19896d2bf59a071b851e6c239052172f296bfb5e72404790a2181014f3b94a4e97d117b438130368cc39dbb2d198065ae3986547926cd2162f40a29f0c3c8745c0f50fba3852e566d44575c29d39a03f0cda721984b6f440591f355e12d439ff150aab7613499dbd49adabc8676eef023b15b65bfc5ca06948109f23f350db82123535eb8a7433bdabcb909271a6ecbcb58b936a88cd4e8f2e6ff5800175f113253d8fa9ca8885c2f552e657dc603f252e1a8e308f76f0be79e2fb8f5d5fbbe2e30ecadd220723c8c0aea8078cdfcb3868263ff8f0940054da48781893a7e49ad5aff4af300cd804a6b6279ab3ff3afb64491c85194aab760d58a606654f9f4400e8b38591356fbf6425aca26dc85244259ff2b19c41b9f96f3ca9ec1dde434da7d2d392b905ddf3d1f9af93d1af5950bd493f5aa731b4056df31bd267b6b90a079831aaf579be0a39013137aac6d404f518cfd46840647e78bfe706ca4cf5e9c5453e9f7cfd2b8b4c8d169a44e55c88d4a9a7f9474241e221af44860018ab0856972e194cd934";
 }
 
-// opened parses the packet at the start of `wire` and opens it under `k`,
-// as text: what the header said and the packet number and payload length.
 function opened(wire: u8[], k: packet.Keys, largest: i64): string {
   match (packet.parse(wire, 0, 8)) {
     Ok(h) => {
@@ -80,8 +72,6 @@ function test_server_initial(): test.TestOutcome {
   return test.assert_eq(hex.encode(sealed) + "\n" + opened(sealed, k, 0 as i64), want + "\ndcid  scid f067a5502a4262b5 end 135 pn 1 payload 99 reserved true");
 }
 
-// A.5: a short header under ChaCha20-Poly1305, whose packet number is
-// recovered from three bytes.
 function test_chacha20_short(): test.TestOutcome {
   let k: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, __codec_bytes(hex.decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b")));
   let sealed: u8[] = packet.seal_short([], 654360564 as i64, 3, false, false, [1 as u8], k);
@@ -118,7 +108,6 @@ function test_retry(): test.TestOutcome {
   return test.assert_eq(got, "ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba true false | token 04a265ba2eff4d829058fb3f0f2496ba f067a5502a4262b5");
 }
 
-// RFC 9000 A.2 and A.3.
 function test_packet_numbers(): test.TestOutcome {
   let got: string = int.int_to_string(packet.pn_len(11291906 as i64, 11266227 as i64)) + " " + int.int_to_string(packet.pn_len(11331838 as i64, 11266227 as i64)) + " " + int.int_to_string(packet.pn_len(0 as i64, 0 - 1 as i64)) + " " + packet.decode_pn(2821665002 as i64, 39730 as i64, 16).to_string() + " " + packet.decode_pn(0 - 1 as i64, 0 as i64, 8).to_string() + " " + packet.decode_pn(255 as i64, 1 as i64, 8).to_string();
   return test.assert_eq(got, "2 3 1 2821692210 0 257");
@@ -154,7 +143,6 @@ function test_version_negotiation(): test.TestOutcome {
   return test.assert_eq(got, "c000000000020506040102030400000001 offers 1 to 0506");
 }
 
-// Two packets in one datagram: each header's `end` is where the next starts.
 function test_coalesced(): test.TestOutcome {
   let ki: packet.Keys = packet.initial_keys(dcid(), false);
   let kh: packet.Keys = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
@@ -188,8 +176,6 @@ function test_coalesced(): test.TestOutcome {
   return test.assert_eq(got + " of " + int.int_to_string(datagram.len()), int.int_to_string(a.len()) + " handshake pn 7 010100 end " + int.int_to_string(datagram.len()) + " of " + int.int_to_string(datagram.len()));
 }
 
-// A key update derives new AEAD keys; the old ones no longer open the new
-// packets, and header protection is unchanged.
 function test_key_update(): test.TestOutcome {
   let k0: packet.Keys = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
   let k1: packet.Keys = k0.updated();
@@ -255,7 +241,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

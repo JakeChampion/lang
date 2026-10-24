@@ -19,32 +19,11 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- Seccomp sandbox, runtime half (#6071) ------------------------
-//
-// internal/testing/e2ecompiler/self_host_sandbox_test.go decodes the emitted BPF
-// and pins its shape. The tests here cover what inspecting the emitted form
-// cannot, each answering a different question a filter can fail:
-//
-//   - does it LOAD? (a seccomp(2) that quietly failed would leave every
-//     structural assertion passing and the process unprotected)
-//   - does it DENY? (a filter permitting everything loads just fine)
-//   - is it too TIGHT — on four hand-written programs, and then across
-//     the whole fixture corpus? Over-tightness is the real hazard: it is
-//     a crash rather than a warning, and it surfaces on whichever
-//     runtime path nobody exercised.
-
-// buildSandboxed compiles src with the sandbox on or off and returns
-// the binary path. x86-64 Linux hosts only: seccomp is a Linux facility
-// and qemu-user does not emulate it faithfully.
 func buildSandboxed(t *testing.T, src string, sandbox bool) string {
 	t.Helper()
 	return buildSandboxedPatched(t, src, sandbox, nil)
 }
 
-// buildSandboxedPatched is buildSandboxed with a hook to rewrite the
-// emitted assembly before it is assembled. Only TestSeccompFilterDenies
-// uses it, to splice in a syscall no Fern source can express — see there
-// for why that is the only way to test the deny path.
 func buildSandboxedPatched(t *testing.T, src string, sandbox bool, patch func(string) string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -55,12 +34,6 @@ func buildSandboxedPatched(t *testing.T, src string, sandbox bool, patch func(st
 	return buildSandboxedPath(t, srcPath, sandbox, patch)
 }
 
-// buildSandboxedPath is buildSandboxed over a source file already on disk,
-// so a fixture's imports resolve against its own directory rather than a
-// copy in a temp dir. The corpus gate below needs that; the inline-source
-// helpers above are a thin shim over it. The self-host emits the assembly,
-// with FERN_SANDBOX=1 in its environment for the sandboxed build, and gcc
-// links it, so a patch can splice instructions in between.
 func buildSandboxedPath(t *testing.T, srcPath string, sandbox bool, patch func(string) string) string {
 	t.Helper()
 	if runtime.GOARCH != "amd64" || runtime.GOOS != "linux" {
@@ -104,13 +77,6 @@ func buildSandboxedPath(t *testing.T, srcPath string, sandbox bool, patch func(s
 
 var seccompStatusRe = regexp.MustCompile(`(?m)^Seccomp:\s*(\d+)`)
 
-// TestSeccompFilterIsLoadedAtRuntime proves the filter is genuinely
-// installed, by reading /proc/<pid>/status of the running process from
-// outside it. This is the assertion the structural tests cannot make:
-// __fern_seccomp_install deliberately ignores a seccomp(2) failure (so
-// a kernel without CONFIG_SECCOMP_FILTER degrades to running
-// unhardened rather than refusing to boot), which means a filter that
-// never loads looks exactly like one that did from the inside.
 func TestSeccompFilterIsLoadedAtRuntime(t *testing.T) {
 	const sleeper = `function main(): i32 {
     sleep_ms(1500);
@@ -122,7 +88,7 @@ func TestSeccompFilterIsLoadedAtRuntime(t *testing.T) {
 		want    string
 	}{
 		{"sandbox off", false, "0"},
-		{"sandbox on", true, "2"}, // SECCOMP_MODE_FILTER
+		{"sandbox on", true, "2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := buildSandboxed(t, sleeper, tc.sandbox)
@@ -147,19 +113,6 @@ func TestSeccompFilterIsLoadedAtRuntime(t *testing.T) {
 
 var errNoSeccompField = errors.New("no Seccomp field in /proc/<pid>/status")
 
-// pollSeccompStatus samples the Seccomp field of /proc/<pid>/status
-// until it reaches want or the window expires, returning the last value
-// seen.
-//
-// Sampling until it settles, rather than reading once, is the whole
-// contract: exec.Cmd.Start returns as soon as the child is forked —
-// /proc/<pid>/status already exists and already reports Seccomp: 0,
-// microseconds before the child reaches _start and installs the filter.
-// A single early read therefore reports an unsandboxed process for a
-// filter that does install. The window is shorter than the child's
-// sleep, so the process is still alive throughout it, and the
-// unsandboxed case polls it out in full — a returned 0 there means the
-// field never became anything else.
 func pollSeccompStatus(pid int, want string) (string, error) {
 	deadline := time.Now().Add(1200 * time.Millisecond)
 	last := ""
@@ -183,19 +136,12 @@ func pollSeccompStatus(pid int, want string) (string, error) {
 	}
 }
 
-// TestSeccompDoesNotBreakWorkingPrograms is the over-tightness gate,
-// and the reason the sandbox is opt-in rather than on by default. Each
-// program must behave identically sandboxed and not — same stdout,
-// same exit code. A syscall the filter forgot shows up here as a
-// SIGSYS death rather than as a subtle difference.
 func TestSeccompDoesNotBreakWorkingPrograms(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 	}{
 		{"arithmetic only", `function main(): i32 { let a: i32 = 6; return a * 7 - 42; }`},
-		// No heap and nothing emitted after the constant data, so the
-		// install stub follows a .data section.
 		{"constant data, no heap", `enum Light { On, Off, Dim(i32) }
 function level(l: Light): i32 {
     match (l) {
@@ -227,8 +173,6 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
     if (t > 0) { return 0; }
     return 1;
 }`},
-		// The socket helpers are Fern bodies over the raw floor, whose
-		// literal syscall numbers the allowlist has to carry.
 		{"sockets", `function main(): i32 {
     let fd: i32 = tcp_listen(0);
     if (fd < 0) { return 1; }
@@ -237,8 +181,6 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
     if (port <= 0) { return 2; }
     return 0;
 }`},
-		// A caught signal returns through the runtime's rt_sigreturn
-		// restorer, a syscall no Fern call names.
 		{"caught signal", `function main(): i32 {
     if (signal_catch(10) != 0) { return 1; }
     match (set_process_group(0, 0)) {
@@ -260,7 +202,6 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
     }
     return 4;
 }`},
-		// A raise asks the kernel for this process's pid first.
 		{"raised signal", `function main(): i32 {
     if (signal_catch(10) != 0) { return 1; }
     if (signal_raise(10) != 0) { return 2; }
@@ -268,7 +209,6 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
     print("raised");
     return 0;
 }`},
-		// An interrupting catch is installed by the same sigaction.
 		{"interrupting catch", `function main(): i32 {
     if (signal_catch_interrupting(10) != 0) { return 1; }
     if (signal_raise(10) != 0) { return 2; }
@@ -300,10 +240,6 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
 	}
 }
 
-// exitCodeOf extracts a process exit code from exec's error, treating
-// a nil error as 0. A signal death (SIGSYS from a filter violation)
-// surfaces as a negative or 128+n code depending on the platform; any
-// mismatch against the unsandboxed run fails the test either way.
 func exitCodeOf(err error) int {
 	if err == nil {
 		return 0
@@ -314,44 +250,12 @@ func exitCodeOf(err error) int {
 	return -1
 }
 
-// injectExecve splices a raw execve(2) into the top of main, which the
-// filter never permits for a program that does not use `subprocess`.
-//
-// Patching assembly is deliberate and is the only way to reach this.
-// The allowlist is derived from the syscalls the backend actually emits,
-// so by construction no Fern source can make a syscall the filter denies
-// — the feature would be broken if it could. What the filter defends
-// against is control flow redirected somewhere the compiler never
-// emitted, which is precisely what splicing an instruction models.
 func injectExecve(asm string) string {
 	label := symname.Fn("main") + ":\n"
 	return strings.Replace(asm, label,
 		label+"    movq $59, %rax\n    movq $0, %rdi\n    movq $0, %rsi\n    movq $0, %rdx\n    syscall\n", 1)
 }
 
-// TestSeccompFilterDenies is the only test that observes the filter's
-// EFFECT on a real kernel. Every other test in the feature asserts
-// something about its emitted form: the structural tests decode the BPF
-// and pin its shape, FilterIsLoadedAtRuntime reads Seccomp: 2 out of
-// procfs, and DoesNotBreakWorkingPrograms shows nothing legitimate died.
-// None of those runs a denied syscall, so none can tell you the kernel
-// agrees with our reading of the seccomp ABI.
-//
-// That distinction is not theoretical. Mutating the filter's syscall-
-// number load to a wrong offset — which makes the kernel reject the
-// filter outright, leaving the process unhardened, because
-// __fern_seccomp_install deliberately ignores a seccomp(2) failure —
-// leaves DoesNotBreakWorkingPrograms GREEN. "Nothing broke" is not
-// evidence that anything is protected; only a denied syscall is.
-//
-// (The two mutations tried so far are also caught structurally, so this
-// is a second, independent line of defence rather than the sole one.
-// The structural tests guard the bytes; this one guards the behaviour.)
-//
-// The control run is what makes this a proof rather than a coincidence:
-// the same spliced execve, with the sandbox off, exits 0 because
-// execve(NULL, NULL, NULL) merely returns EFAULT. So a SIGSYS death in
-// the sandboxed run can only have come from the filter.
 func TestSeccompFilterDenies(t *testing.T) {
 	const src = `function main(): i32 { return 0; }`
 
@@ -382,26 +286,6 @@ func TestSeccompFilterDenies(t *testing.T) {
 	}
 }
 
-// TestSeccompFixtureCorpus is #6071's over-tightness gate at corpus scale,
-// and the precondition for ever defaulting the sandbox on.
-//
-// TestSeccompDoesNotBreakWorkingPrograms covers four hand-written
-// programs. Four programs cannot establish that a filter derived from
-// one program's emitted syscalls is right for every program, and the
-// failure mode is not subtle: a syscall the filter forgot is a SIGSYS
-// kill, in someone's build, on whichever path nobody exercised. The
-// fixture corpus is the broadest body of real Fern programs there is, so
-// it is the strongest evidence.
-//
-// Each fixture runs twice — sandboxed and not — and must behave
-// identically. Comparing against the unsandboxed run rather than against
-// the fixture's recorded expectation is deliberate: it isolates the
-// filter as the only variable, so a fixture that is already failing for
-// unrelated reasons cannot be mistaken for a sandbox regression.
-//
-// Env-gated because it builds and links ~330 binaries twice. CI runs it
-// on its own lane; locally, reach for it when changing the syscall
-// inventory or the filter.
 func TestSeccompFixtureCorpus(t *testing.T) {
 	if os.Getenv("RUN_SECCOMP_CORPUS") != "1" {
 		t.Skip("set RUN_SECCOMP_CORPUS=1 to run the sandbox over the whole fixture corpus (~330 fixtures, built twice)")
@@ -430,7 +314,7 @@ func TestSeccompFixtureCorpus(t *testing.T) {
 		}
 		f := loadFixture(t, dir)
 		if f.rejectionCase() {
-			continue // never produces a binary
+			continue
 		}
 		ran++
 		t.Run(name, func(t *testing.T) {
@@ -455,9 +339,6 @@ func TestSeccompFixtureCorpus(t *testing.T) {
 	t.Logf("%d runnable fixtures exercised under the seccomp filter", ran)
 }
 
-// runSandboxCandidate runs bin with stdin and returns its stdout and an
-// exit code, rendering a signal death as 128+signo so a SIGSYS kill is
-// comparable against an ordinary exit rather than collapsing to -1.
 func runSandboxCandidate(bin, stdin string) (string, int) {
 	cmd := exec.Command(bin)
 	if stdin != "" {

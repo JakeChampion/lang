@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWatLex exercises the WAT tokenizer (compiler/
-// wat_lex.fern) — slice 2 of the self-hosted binary wasm backend, which
-// assembles the folded-S-expr WAT that the wasm emitter emits rather than
-// re-deriving lowering from the AST.
-//
-// Like leb128.fern, wat_lex.fern is import-free, so the test reads it from
-// disk and concatenates it with a self-test main() that tokenizes a small
-// WAT snippet (with a `(data "…")` string + escape) and asserts the token
-// kinds / texts, then runs the combined program through the self-host wasm
-// pipeline (wasm_run -> WAT -> wasmtime). Exit 0 = all checks pass; a
-// failing check returns its 1-based id.
 func TestSelfHostWatLex(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wat_lex e2e")
@@ -49,9 +38,6 @@ func TestSelfHostWatLex(t *testing.T) {
 	}
 }
 
-// watLexSelfTestMain tokenizes a nested form and a `(data "\0a")` string,
-// asserting paren/atom/string kinds and texts (kind 0=( 1=) 2=atom
-// 3=string). Each `return N` is a distinct failing-check id (0 = pass).
 const watLexSelfTestMain = `
 function main(): i32 {
     let ts: WatTok[] = wat_tokenize("(module (func $f (result i32)))");

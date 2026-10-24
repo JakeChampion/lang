@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// On x86-64 the register path calls __fern_alloc_reuse through its register
-// entry, the token in %rax and the slot count in %rsi, rather than pushing
-// both; the stack entry loads them there and falls into it. The program
-// rebuilds a record from itself in a loop, so each round hands its donor to
-// the reuse.
 const allocReuseEntryProg = `struct Acc { names: string[], tag: string, n: i32 }
 
 function add(own a: Acc, s: string): Acc {

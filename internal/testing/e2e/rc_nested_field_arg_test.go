@@ -2,20 +2,6 @@ package e2e
 
 import "testing"
 
-// A local bound from a call whose argument is a field read TWO levels deep
-// (`filter(fresh(), s.frame.alias)`) reclaims exactly like the one-level read
-// (`filter(fresh(), s.alias)`): both are counted aliases of a container the
-// frame deep-drops, so neither taints the binding. The shape was the AST lowering's
-// `lower_stmt_grow_exempt_inner` after LowerState's per-function facts moved
-// into a nested box (#8179): the callee hands its first parameter back bare and
-// passes the second on to a helper, which is what puts the argument's taint on
-// the result, and the two-level read used to keep the conservative taint the
-// one-level read had already shed — so `gex` was never swept and its buffer
-// leaked once per statement lowered.
-//
-// Both shapes run in one program; the exit code is the per-iteration bump
-// difference between them, so the residual leak the handback itself costs
-// (the same in both) cancels out.
 const nestedFieldArgSrc = `struct Frame { alias: string[], sole: string[] }
 struct Nested { frame: Frame, exempt: string[], n: i32 }
 struct Flat { alias: string[], sole: string[], exempt: string[], n: i32 }
@@ -86,9 +72,6 @@ function main(): i32 {
     return extra;
 }`
 
-// The two-level read must cost no more than the one-level one: a few blocks
-// of slack covers allocator granularity, not a per-iteration leak (which
-// reads 250, the cap, at 1000 iterations).
 func assertNestedFieldArgFlat(t *testing.T, backend string, out string, code int) {
 	t.Helper()
 	if code == 254 {

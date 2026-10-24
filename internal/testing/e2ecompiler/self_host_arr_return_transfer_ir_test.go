@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrReturnTransferIRX86_64 pins the array return-transfer retain
-// (#4357 probe finding): `@noinline function id(a: i32[]): i32[] { return a; }` returned
-// a bare PARAM array with NO retain, while the caller's binding slot is
-// unconditionally exit-swept — so `let t = id(s)` over-released s's buffer
-// (rc 1 → 0 while the owner still held it: a use-after-free surfaced by the
-// underflow detector, values corrupted once the freed block was recycled).
-// The StmtReturn lowering now emits the native-parity return-transfer
-// __fern_rc_inc for a bare param-array return (mirroring the struct-field
-// Perceus dup on the adjacent return paths), so the escaping return is a
-// counted reference the owner's later dec frees exactly once. Fresh returns
-// (literals, built-up locals via move-on-return) are unchanged — no new inc,
-// still reclaimed flat.
 func TestSelfHostArrReturnTransferIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -51,39 +39,24 @@ func TestSelfHostArrReturnTransferIRX86_64(t *testing.T) {
 		}
 	}
 
-	// ALIAS-RETURNING callee: pre-fix this under-flowed (99) — id hands back
-	// s's buffer uncounted, t's sweep freed it, s's owner double-dec'd. With
-	// the return-transfer inc every call is balanced and s stays live across
-	// 4000 calls. Values checked, detector 0.
 	run(t, `@noinline function id(a: i32[]): i32[] { return a; }
 function f(s: i32[]): i32 { let t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { let s: i32[] = [1, 2, 3]; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-alias-balanced", 0)
 
-	// FRESH-RETURNING callee unchanged: the dead intermediate t (the #4357
-	// shape) still reclaims flat — no new inc on literal returns, the second
-	// churn re-serves everything from the freelist (< 256 B slack).
 	run(t, `function mk(k: i32): i32[] { return [k, k + 1, k + 2]; }
 function f(s: i32[]): i32 { let t: i32[] = mk(s[0]); let u: i32 = t[0] + s[1]; return u; }
 function churn(m: i32): i32 { let s: i32[] = [1, 2, 3]; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-fresh-flat", 0)
 
-	// MIXED per-path returns: one path returns the param (inc'd), the other a
-	// fresh literal (moved). Both callers' sweeps balance; flat + detector 0.
 	run(t, `function pick(a: i32[], b: i32[], c: i32): i32[] { if (c > 0) { return a; } return [b[0], 9]; }
 function f(s: i32[]): i32 { let t: i32[] = pick(s, s, 1); let u: i32[] = pick(s, s, 0); return t[0] + u[1] + s[1]; }
 function churn(m: i32): i32 { let s: i32[] = [1, 2, 3]; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-mixed-paths", 0)
 
-	// A MATCH-ARM BINDING of an array payload returned bare: the binding
-	// borrows the enum box's buffer (never swept), so the escaping return
-	// takes the same transfer retain as the borrowed param above. Pre-fix
-	// the caller's binding slot dec'd the box's own buffer to 0 on the first
-	// call and every later read touched freed memory (the persistent
-	// vector's `get_or` leaf descent, #6794).
 	run(t, `enum N { E, L(i32[]), B(N[]) }
 function leaf(root: N): i32[] { let cur: N = root; let d: boolean = true; while (d) { match (cur) { B(kids) => { cur = kids[0]; }, L(xs) => { return xs; }, E => { d = false; } } } let none: i32[] = []; return none; }
 function f(root: N): i32 { let t: i32[] = leaf(root); return t[1]; }
@@ -91,17 +64,6 @@ function churn(m: i32): i32 { let root: N = B([L([1, 2, 3])]); let acc: i32 = 0;
 function main(): i32 { let w: i32 = churn(2000); let x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x || w != (2 * 2000) % 251) { return 97; } return 0; }`,
 		"arr-return-transfer-match-binding", 0)
 
-	// The SAME return, over a box THIS FRAME BUILT — and it must take no
-	// retain (#8070). The row above and this one are the two sides of one
-	// ownership question and are deliberately adjacent: there the trie owns the
-	// buffer and survives the call, so the escaping return owes a counted
-	// reference; here the box is the buffer's only owner and the consuming
-	// match hands its claim to the binding (the moved-payload skip), so the
-	// value leaves at the rc it already has. Retaining anyway leaves a second
-	// claim nothing releases — the caller's dec lands on it instead of on zero
-	// and every round strands a buffer, which is 98 here rather than a
-	// detectable over-release. Widening the predicate to cover both rows breaks
-	// one of them whichever way it is widened.
 	run(t, `enum M { ME, ML(i32[]) }
 function mkm(i: i32): M { return ML([i, i + 1, i + 2]); }
 function take(i: i32): i32[] { let v: M = mkm(i); match (v) { ML(xs) => { return xs; }, ME => { return [0]; } } }
@@ -109,15 +71,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-match-binding-fresh-box", 0)
 
-	// A `string[]` STRUCT FIELD returned by a method (#7232). The buffer-pointer
-	// Perceus dup on the return path was a chain of per-element-type
-	// classifiers (scalar / array-of-struct / array-of-enum) where native's
-	// `needsRcIncOnAlias` is one element-type-agnostic ArrayType test, so
-	// `string[]` fell through the seam: the callee handed back an uncounted
-	// alias of h.xs while the caller's `let parts` slot is unconditionally
-	// exit-swept. The first call took the field's buffer to rc 0 and FREED it
-	// (silently — the detector only sees the second call go below), so this
-	// needs more than one call to witness. Native exits 0 on the same program.
 	run(t, `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -127,8 +80,6 @@ function main(): i32 { let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] 
 		"strarr-field-return-transfer", 0)
 }
 
-// TestSelfHostArrReturnTransferWasmIR: the wasm sibling — same programs
-// through the wasm_ir_run driver under wasmtime.
 func TestSelfHostArrReturnTransferWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping arr return-transfer wasm IR e2e")
@@ -187,7 +138,6 @@ function main(): i32 { let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] 
 	}
 }
 
-// TestSelfHostArrReturnTransferIRArm64: the arm64 sibling under qemu.
 func TestSelfHostArrReturnTransferIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -199,9 +149,6 @@ func TestSelfHostArrReturnTransferIRArm64(t *testing.T) {
 function f(s: i32[]): i32 { let t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { let s: i32[] = [1, 2, 3]; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(1000); let x: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`
-	// The `string[]` struct-field return (#7232) alongside the bare-param one:
-	// both are the same buffer-pointer Perceus dup, reached through different
-	// classifiers.
 	strArrProg := `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }

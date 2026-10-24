@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64IntRuntime byte-checks the integer / load-store / system
-// instruction batch added to arm64_native.fern (the surface the self-host
-// asm_arm64 darwin runtime uses beyond the earlier slices): orr, subs
-// (reg/imm), udiv/sdiv/msub, rev16, ldrb/strb/ldrh/strh/ldrsw, and mrs of
-// the clock system registers. Expected bytes pinned vs llvm-mc; run through
-// the self-host wasm pipeline. Exit 0 = all pass, else the failing check id.
 func TestSelfHostArm64IntRuntime(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 int-runtime e2e")

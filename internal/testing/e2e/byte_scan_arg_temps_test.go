@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestByteScanArgTempsAreReleased compiles ByteScanArgTempsProgram, which
-// hands every byte-scan builtin a fresh temporary, with the native compiler
-// on each native backend, and requires a balanced leak census and the right
-// sum. Before the fix each call stranded its temporary.
 func TestByteScanArgTempsAreReleased(t *testing.T) {
 	fern := buildLangBinForInterp(t)
 	src := filepath.Join(t.TempDir(), "scan.fern")

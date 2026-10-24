@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrCallRetReclaimWasmIR is the wasm port of
-// TestSelfHostArrArrCallRetReclaimIRX86_64 (#4355 slice 10): the "AAC:"
-// registry admission of call-initialised arr-of-arr locals, plus the fn-scope
-// single-sweep pin (the slice-9 double-sweep fix), on the wasm IR path
-// ($__fern_arr_dec_ptr / $__fern_arr_dec_ptr2 routing unchanged from slice 9).
 func TestSelfHostArrArrCallRetReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arrarr-callret wasm IR e2e")

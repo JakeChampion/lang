@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// Struct destructure on the self-host IR path (#5354). The self-host parser
-// gained the same `let/var Point { x, y } = E;` support as the native
-// front-end: parse_struct_destructure encodes it as a StmtVar whose
-// type_name is "@sd:<Struct>:<fields>" and whose name is the comma-joined
-// bindings, and semsource expands it into per-field
-// `let bind = tmp.field;` binds (reusing the field-read typing + RC dup-on-
-// projection). These build the self-host x86-64 IR driver and assert the
-// compiled binary agrees with the interpreter oracle.
 var selfHostStructDestructureCases = []struct {
 	name string
 	src  string
@@ -55,9 +47,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostStructDestructureX86_64 compiles each program through the
-// self-host x86-64 IR path (asm_ir_run) and checks the exit code
-// against the native interpreter oracle.
 func TestSelfHostStructDestructureX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -88,9 +77,6 @@ func TestSelfHostStructDestructureX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructDestructureArm64 — CI-gated arm64 counterpart. The
-// destructure expansion is shared lowering analysis, so both register
-// backends inherit it; the driver is built x86 and emits arm64 asm.
 func TestSelfHostStructDestructureArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

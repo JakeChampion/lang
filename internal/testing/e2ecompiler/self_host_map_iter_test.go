@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// mapIterCases exercise the self-host Map iteration API: m.iter() →
-// MapIter[K,V], then has_next() / key() / value() / advance() over the
-// parallel keys[]/values[] arrays. Exit codes cross-checked vs the Go
-// backend.
 var mapIterCases = []struct {
 	name string
 	src  string
@@ -20,8 +16,6 @@ var mapIterCases = []struct {
 	{"count", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(8); m = m.insert(\"x\", 1); m = m.insert(\"y\", 2); m = m.insert(\"z\", 3); let it: MapIter[string,i32] = m.iter(); let c: i32 = 0; while (it.has_next()) { c = c + 1; it.advance(); } return c; }", 3},
 }
 
-// TestSelfHostMapIterX86_64 compiles Map-iteration programs with the
-// self-hosted x86-64 compiler and checks exit codes.
 func TestSelfHostMapIterX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -48,7 +42,6 @@ func TestSelfHostMapIterX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapIterArm64 — CI-gated arm64 counterpart.
 func TestSelfHostMapIterArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mapIterCases {

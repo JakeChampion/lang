@@ -7,16 +7,8 @@ import (
 	"testing"
 )
 
-// FramingAllocsRounds is how many times the probe parses and serializes.
 const FramingAllocsRounds = 1000
 
-// FramingAllocsSource is #9853's framing-path allocation probe: a hello
-// request with three headers parsed the way std/serve parses one, with the
-// request parsed before it as the parse's `prev`, and a hello
-// reply, built once, serialized the way std/serve serializes one (into
-// one builder the loop keeps, emptied once the reply is read), each
-// counted separately with __heap_alloc_count over FramingAllocsRounds
-// rounds after one warm round. The report goes to stderr.
 func FramingAllocsSource() string {
 	return fmt.Sprintf(`import "std/bench";
 import "std/http";
@@ -77,12 +69,8 @@ function main(): i32 {
 `, FramingAllocsRounds)
 }
 
-// FramingAllocs is what one compiler and target spend per request.
 type FramingAllocs struct{ Parse, Serialize int64 }
 
-// The request is 77 bytes and the reply 43 (the status line, Content-Length
-// and the blank line; a persisting HTTP/1.1 response names no Connection),
-// so every round must have framed both whole.
 const (
 	framingRequestBytes = 77
 	framingReplyBytes   = 43
@@ -90,9 +78,6 @@ const (
 
 var framingAllocsLine = regexp.MustCompile(`parsed=(\d+) wire=(\d+) parse=(\d+) serialize=(\d+)`)
 
-// CheckFramingAllocs reads the probe's output and holds the per-request
-// counts to want. The pin is a ratchet: a count above it is a regression,
-// and a count below it is an improvement whose PR lowers the pin.
 func CheckFramingAllocs(t *testing.T, out string, want FramingAllocs) {
 	t.Helper()
 	m := framingAllocsLine.FindStringSubmatch(out)
@@ -117,9 +102,6 @@ func CheckFramingAllocs(t *testing.T, out string, want FramingAllocs) {
 		got.Parse, got.Serialize, want.Parse, want.Serialize)
 }
 
-// perRound turns a total over FramingAllocsRounds into a per-request count,
-// refusing a total that is not a whole multiple: a steady path allocates the
-// same amount every round.
 func perRound(t *testing.T, what string, total int64) int64 {
 	t.Helper()
 	if total%FramingAllocsRounds != 0 {

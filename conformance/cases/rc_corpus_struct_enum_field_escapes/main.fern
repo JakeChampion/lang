@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Enum-typed field that ESCAPES (Holder returned): the enum box
-// + payload must survive the constructor. Churn forces reuse.
+
+
+
+
+
 import "core/int";
 struct VInt { v: i32[] }
 struct VArr { v: i32[] }

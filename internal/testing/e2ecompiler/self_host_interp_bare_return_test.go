@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// A bare `return;` leaves a void function early under the self-host
-// interpreter, as it does compiled: the parser's `bare-return` placeholder in the
-// value slot is not an expression to evaluate.
 func TestSelfHostInterpBareReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")

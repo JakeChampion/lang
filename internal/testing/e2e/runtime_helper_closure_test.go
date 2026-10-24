@@ -8,28 +8,6 @@ import (
 	"testing"
 )
 
-// Runtime-helper symbol-closure check (issue #2649).
-//
-// The backend runtime helpers (`__fern_alloc`, `__fern_str_eq`,
-// `__fern_str_split`, …) are hand-written assembly whose inter-dependencies
-// are tracked out-of-band: a helper body that `call`s another helper creates a
-// link-time dependency that nothing in the compiler statically checks. Miss one
-// and the result is an *undefined-symbol link failure* — historically a garbage
-// exit code, not a clean error.
-//
-// These tests assert the property the dependency machinery exists to guarantee:
-// the emitted runtime is *symbol-closed* — every `call/bl __fern_*` resolves to
-// a `__fern_*` defined in the same unit. We prove it the ground-truth way, by
-// assembling+linking the emitted asm with `-nostdlib`: an unmet helper
-// dependency surfaces as a linker "undefined reference", failing the test.
-//
-// The compiler tracks them with asmcore's declarative `runtime_need_deps`
-// table and `close_needs` transitive closure.
-
-// allRuntimeNeedRoots mirrors asm_ir.all_runtime_need_roots() — the closed set
-// of runtime-need ROOT names the self-hosted codegen can mark. Keep in sync; a
-// new `.need("x")` root added there should be added here so its helper's
-// dependency closure is link-checked.
 var allRuntimeNeedRoots = []string{
 	"alloc_u8", "args", "arr_own_elems", "arr_push", "arr_push_owned", "arr_slice",
 	"arr_str_join", "eprint", "heap",
@@ -41,9 +19,6 @@ var allRuntimeNeedRoots = []string{
 	"str_grow", "str_own", "str_split", "str_trim",
 }
 
-// assertAsmLinks writes asm to <dir>/<name>.s and links it as a static,
-// freestanding ELF. A missing runtime-helper dependency dangles as an
-// "undefined reference" and fails the link — i.e. the asm is not symbol-closed.
 func assertAsmLinks(t *testing.T, gcc, dir, name, asm string) {
 	t.Helper()
 	asmPath := filepath.Join(dir, name+".s")
@@ -56,12 +31,6 @@ func assertAsmLinks(t *testing.T, gcc, dir, name, asm string) {
 	}
 }
 
-// closureMatrix is a spread of programs that, between them, exercise runtime
-// helper clusters with inter-helper dependencies the compiler must keep closed:
-// string concat (__fern_str_concat → __fern_alloc), string- and i32-keyed
-// maps (core/map's bodies over the raw-memory helpers), and dynamic arrays
-// (push/grow → __fern_alloc). Each program's exit code is its answer,
-// so a link that succeeds against the wrong helper is caught as well.
 var closureMatrix = []struct {
 	name string
 	src  string
@@ -75,9 +44,6 @@ function main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 10); m
 	{"array_grow", `function main(): i32 { let xs: i32[] = []; let i: i32 = 0; while (i < 8) { xs = xs.append(i); i = i + 1; } return xs.len(); }`, 8},
 }
 
-// The whole-program path: the compiler links in-process and refuses an
-// undefined symbol, so a helper dependency it fails to emit is a compile
-// failure here.
 func TestRuntimeHelperClosureX86_64(t *testing.T) {
 	for _, tc := range closureMatrix {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,13 +64,6 @@ func TestRuntimeHelperClosureArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRRuntimeHelperClosure drives the self-hosted IR backend's entry
-// unit with each runtime-need root forced via -ir-extra-need (modelling the
-// cross-module need-aggregation path), then link-checks the emitted runtime.
-// This validates asmcore's runtime_need_deps + close_needs transitive closure
-// per helper: if a root's helper body calls another helper the closure misses,
-// the link dangles. (str_lines → str_split is the edge this most directly
-// guards.)
 func TestSelfHostIRRuntimeHelperClosure(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

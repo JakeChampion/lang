@@ -2,31 +2,15 @@ package checker
 
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
-// A literal local is an unannotated `let` whose initialiser is still an
-// untyped integer — `let x = 5`, and the `let i = LOW` a range loop desugars
-// to. It takes ONE integer type: the first use that fixes a width decides it,
-// and it defaults to i32 when no use does (#10123). Every read of the local
-// that was typed before its width was known is settled to that width once the
-// function body is checked, so the slot, its initialiser and every expression
-// over it agree.
-//
-// An unannotated local of generic struct or enum type is one literal local per type
-// argument only untyped literals bound (#10453): `let q = Same { a: 1, b: 2 }`
-// takes the width of the first use that fixes T — a field read at a typed
-// destination, or the whole local where a Same[i64] is wanted — and arg is
-// that argument's index. arg is -1 for an integer local.
 type litLocal struct {
 	decl  *ast.Var
 	scope *scope
 	arg   int
 	fixed bool
 	width ast.NumberType
-	// onFix re-stamps a closure capture typed while the local was pending.
 	onFix []func(ast.NumberType)
 }
 
-// beginLitLocal registers an unannotated local whose type is still
-// polymorphic after its initialiser was checked.
 func (c *checker) beginLitLocal(decl *ast.Var, s *scope) {
 	ll := &litLocal{decl: decl, scope: s, arg: -1}
 	if c.litLocalOf == nil {
@@ -37,8 +21,6 @@ func (c *checker) beginLitLocal(decl *ast.Var, s *scope) {
 	c.litLocals = append(c.litLocals, ll)
 }
 
-// beginLitCompositeLocal registers an unannotated struct or enum local whose type
-// arguments untyped literals bound, one literal local per such argument.
 func (c *checker) beginLitCompositeLocal(decl *ast.Var, args []ast.Type, s *scope) {
 	var lls []*litLocal
 	for i, a := range args {
@@ -64,8 +46,6 @@ func (c *checker) beginLitCompositeLocal(decl *ast.Var, args []ast.Type, s *scop
 	}
 }
 
-// As for scalar locals, a literal with no i32 reading starts at i64.
-// Constructor provenance supplies the declared parameter-to-payload mapping.
 func (c *checker) defaultWideEnumLiterals(decl *ast.Var, et ast.EnumType, lls []*litLocal) {
 	construction, resolved := c.info.EnumConstructions[decl.Init]
 	call, called := decl.Init.(*ast.Call)
@@ -88,8 +68,6 @@ func (c *checker) defaultWideEnumLiterals(decl *ast.Var, et ast.EnumType, lls []
 	}
 }
 
-// noteLitField records that `fa` read, before its width was fixed, a field of
-// a generic struct local declared at a literal-bound type parameter.
 func (c *checker) noteLitField(fa *ast.FieldAccess, t ast.Type, s *scope) {
 	if c.litCompositeOf == nil {
 		return
@@ -124,10 +102,6 @@ func (c *checker) noteLitField(fa *ast.FieldAccess, t ast.Type, s *scope) {
 	}
 }
 
-// settleLitCompositeLocal fixes a generic struct or enum local's literal-bound type
-// arguments from a destination that names them: `take(q)` for a
-// `take(x: Same[i64])`. An argument already fixed is left to the
-// destination's own check, as a scalar literal local's whole read is.
 func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 	decl := c.litCompositeReads[id]
 	name, args := literalNominalArgs(hint)
@@ -158,9 +132,6 @@ func literalNominalArgs(t ast.Type) (string, []ast.Type) {
 	return "", nil
 }
 
-// A match-bound literal payload belongs to the same inference class as its
-// source enum argument. A use of the projection must also check the original
-// literal's range and settle arithmetic before it is evaluated.
 func (c *checker) bindEnumLiteralPayloads(tag ast.Expr, ed *ast.EnumDecl, variant *ast.EnumVariant, bindings []string, types []ast.Type, armScope *scope, lls []*litLocal) {
 	for p, payload := range variant.Payloads {
 		param, ok := payload.(ast.ParamType)
@@ -193,9 +164,6 @@ func (c *checker) bindEnumLiteralPayloads(tag ast.Expr, ed *ast.EnumDecl, varian
 	}
 }
 
-// A direct constructor match has the same inference lifetime as a stored
-// value. The private declaration records its constraints without adding a
-// source binding or guessing constructor provenance from its name.
 func (c *checker) enumLiteralLocals(tag ast.Expr, et ast.EnumType, s *scope) []*litLocal {
 	if id, ok := tag.(*ast.Ident); ok {
 		return c.litCompositeOf[c.litCompositeReads[id]]
@@ -208,8 +176,6 @@ func (c *checker) enumLiteralLocals(tag ast.Expr, et ast.EnumType, s *scope) []*
 	return c.litCompositeOf[decl]
 }
 
-// litCompositeType is the type a read of a generic struct or enum local has once its
-// literal-bound arguments are fixed, or nil when `id` reads none.
 func (c *checker) litCompositeType(id *ast.Ident) ast.Type {
 	if decl := c.litCompositeReads[id]; decl != nil {
 		return decl.Type
@@ -217,8 +183,6 @@ func (c *checker) litCompositeType(id *ast.Ident) ast.Type {
 	return nil
 }
 
-// noteLitIdent records that `id` read a literal local before its width was
-// fixed, so a later settle of the expression holding it fixes the local.
 func (c *checker) noteLitIdent(id *ast.Ident, t ast.Type, decl *ast.Var) {
 	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil {
 		return
@@ -235,10 +199,6 @@ func (c *checker) noteLitIdent(id *ast.Ident, t ast.Type, decl *ast.Var) {
 	}
 }
 
-// restampLitCaptures gives each closure capture of a literal local the width
-// that local settles to: the capture list is built from the type the name had
-// when the body read it, which may have been before any use fixed it. `s` is
-// the scope the closure was defined in.
 func (c *checker) restampLitCaptures(caps []ast.Param, s *scope) {
 	if c.litLocalOf == nil && c.litCompositeOf == nil {
 		return
@@ -262,8 +222,6 @@ func (c *checker) restampLitCaptures(caps []ast.Param, s *scope) {
 	}
 }
 
-// restampLitCompositeCapture gives a captured generic struct or enum local
-// each literal-bound argument the local settles to.
 func (c *checker) restampLitCompositeCapture(cp *ast.Param, originalArgs []ast.Type, decl *ast.Var) {
 	for k, ll := range c.litCompositeOf[decl] {
 		if ll == nil || k >= len(originalArgs) {
@@ -291,8 +249,6 @@ func (c *checker) restampLitCompositeCapture(cp *ast.Param, originalArgs []ast.T
 	}
 }
 
-// lookupLitDecl resolves name from s, or through the scopes a closure body
-// captures from.
 func (c *checker) lookupLitDecl(name string, s *scope) *ast.Var {
 	decl := s.lookupVarDecl(name)
 	for j := len(c.captureChain) - 1; decl == nil && j >= 0; j-- {
@@ -303,9 +259,6 @@ func (c *checker) lookupLitDecl(name string, s *scope) *ast.Var {
 	return decl
 }
 
-// fixLitLocal gives a literal local its one integer type. A second, different
-// width for the same local is E003: the local has a single slot, so it cannot
-// be read as two types.
 func (c *checker) fixLitLocal(ll *litLocal, w ast.NumberType, pos ast.Position) {
 	w = ast.NumberType{Width: w.Width, Signed: w.Signed}
 	if ll.fixed {
@@ -344,9 +297,6 @@ func (c *checker) fixLitLocal(ll *litLocal, w ast.NumberType, pos ast.Position) 
 	ll.onFix = nil
 }
 
-// fixLitStructArg gives a generic struct local's literal-bound type argument
-// its width: the local's type, the literal's type arguments, and the literals
-// in the fields declared at that parameter.
 func (c *checker) fixLitStructArg(ll *litLocal, w ast.NumberType) {
 	st := ll.decl.Type.(ast.StructType)
 	args := append([]ast.Type(nil), st.Args...)
@@ -368,10 +318,6 @@ func (c *checker) fixLitStructArg(ll *litLocal, w ast.NumberType) {
 	}
 }
 
-// settleLitLocals runs after a function body is checked. It propagates each
-// fixed width through the expressions that tie literal locals together,
-// defaults whatever no use fixed to i32, and settles every read typed while
-// its local was pending.
 func (c *checker) settleLitLocals(body *ast.Block) {
 	if len(c.litLocals) == 0 {
 		return
@@ -399,8 +345,6 @@ func (c *checker) settleLitLocals(body *ast.Block) {
 	c.litCompositeReads = nil
 }
 
-// propagateLitLocals settles, to a member's fixed width, every group of
-// expressions that must share one integer type, until no new local is fixed.
 func (c *checker) propagateLitLocals(body *ast.Block) {
 	for {
 		before := c.fixedLitLocals()
@@ -437,9 +381,6 @@ func (c *checker) propagateLitLocals(body *ast.Block) {
 	}
 }
 
-// linkLitCompositeCopy gives `let r = q`, both generic struct or enum locals whose
-// arguments literals bound, one width per argument: whichever side a use
-// fixed first decides the other, and two different widths are E003.
 func (c *checker) linkLitCompositeCopy(r *ast.Var, q *ast.Var, pos ast.Position) {
 	rs, qs := c.litCompositeOf[r], c.litCompositeOf[q]
 	for i := 0; i < len(rs) && i < len(qs); i++ {
@@ -464,9 +405,6 @@ func (c *checker) fixedLitLocals() int {
 	return n
 }
 
-// settleLitBinary settles an integer operator whose operands were all still
-// untyped when it was checked: an arithmetic tree as a whole, a comparison
-// operand by operand, since its bool result reaches no outer context.
 func (c *checker) settleLitBinary(b *ast.Binary) {
 	if b.IntWidth != 0 || b.IsFloat || b.IsStringConcat || b.IsStringCmp || b.IsStringOrd ||
 		b.EqCall != nil || b.CmpCall != nil || b.ArithCall != nil {
@@ -489,8 +427,6 @@ func (c *checker) settleLitBinary(b *ast.Binary) {
 	}
 }
 
-// settleLitGroup ties a literal local to the expression that must share its
-// type — its initialiser, or the value assigned to it.
 func (c *checker) settleLitGroup(ll *litLocal, e ast.Expr) {
 	w, ok := c.litGroupWidth(ll, e)
 	if !ok {
@@ -502,9 +438,6 @@ func (c *checker) settleLitGroup(ll *litLocal, e ast.Expr) {
 	c.settleInt(e, w)
 }
 
-// litGroupWidth returns the width of the first fixed literal local among
-// `own` and the untyped integer trees `es`, reporting false when every
-// expression is already typed or no local in the group is fixed yet.
 func (c *checker) litGroupWidth(own *litLocal, es ...ast.Expr) (ast.NumberType, bool) {
 	var locals []*litLocal
 	if own != nil {
@@ -527,8 +460,6 @@ func (c *checker) litGroupWidth(own *litLocal, es ...ast.Expr) (ast.NumberType, 
 	return ast.NumberType{}, false
 }
 
-// litTreeLocals collects the literal locals read inside an untyped integer
-// tree — the shape settleInt descends — and reports whether `e` is one.
 func (c *checker) litTreeLocals(e ast.Expr, acc []*litLocal) ([]*litLocal, bool) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
@@ -570,9 +501,6 @@ func (c *checker) litTreeLocals(e ast.Expr, acc []*litLocal) ([]*litLocal, bool)
 	return acc, false
 }
 
-// holdsPendingLitLocal reports whether an untyped integer tree reads a
-// literal local whose width is still open. A cast over one converts the
-// local's value; it does not decide the local's type.
 func (c *checker) holdsPendingLitLocal(e ast.Expr) bool {
 	if c.litIdents == nil {
 		return false
@@ -589,9 +517,6 @@ func (c *checker) holdsPendingLitLocal(e ast.Expr) bool {
 	return false
 }
 
-// settleLitReturns commits an arrow lambda whose inferred result is still an
-// untyped integer because it returns a literal local: the signature is fixed
-// here, so the local takes its width now — the width it already has, or i32.
 func (c *checker) settleLitReturns(fn *ast.FuncDecl) {
 	if nt, ok := fn.ReturnType.(ast.NumberType); !ok || !nt.Polymorphic || c.litIdents == nil {
 		return
@@ -631,8 +556,6 @@ func (c *checker) settleLitReturns(fn *ast.FuncDecl) {
 	}
 }
 
-// settleIndexOperand reads an untyped index or slice bound at i32, the one
-// type a position has, so a literal local used as one is an i32.
 func (c *checker) settleIndexOperand(e ast.Expr, t ast.Type) ast.Type {
 	if nt, ok := t.(ast.NumberType); ok && nt.Polymorphic {
 		c.settleInt(e, ast.NumberType{Width: 32, Signed: true})

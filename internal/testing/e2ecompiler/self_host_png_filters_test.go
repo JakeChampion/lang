@@ -14,8 +14,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Decode every filter/compression pair with Go's independent PNG decoder.
-// Narrow rows exercise the RGB left predictor and the first-row boundaries.
 func TestSelfHostPNGFilters(t *testing.T) {
 	const source = `import "std/png";
 import "std/binary";

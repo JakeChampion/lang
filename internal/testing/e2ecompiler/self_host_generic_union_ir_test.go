@@ -2,17 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A union alias with type parameters, and members written with arguments
-// (#10764). The self-host parser read a member as a bare name, so
-// `type Tree[T] = Leaf[T] | Pair[T] | Lit;` did not parse; it now desugars
-// into the generic enum the Go checker desugars every union into, and the
-// enum monomorphiser clones one `Tree` per instantiation. The program is
-// `TestX86_64GenericUnions` with a second instantiation and a member of a
-// non-generic union written with arguments. `Wrap[boolean]` is held in a
-// local and never built from its generic member (#12298): the clone's variant
-// struct shares the member clone's name, and the struct monomorphiser took it
-// for the record it wraps, so `Slab__boolean` was never cloned and the typed
-// lowering refused the function.
 const genericUnionSrc = `import "std/i32";
 struct Leaf[T] { v: T }
 struct Pair[T] { a: T, b: T }

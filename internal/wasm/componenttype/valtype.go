@@ -2,23 +2,6 @@ package componenttype
 
 import "fmt"
 
-// valtype.go is P1 slice 2 of the bring-your-own-WIT decoder
-// (docs/WIT-BRING-YOUR-OWN.md): the component-model **value-type grammar** —
-// value types (primitive or a reference to a defined type), the defined
-// value types (record / variant / enum / flags / list / option / result /
-// tuple / own / borrow), and function types. Slice 1 framed the payload into
-// sections; slice 3 wraps these decoders into the full type-section entry
-// reader (adding instance / component / resource types + imports / exports /
-// aliases) and the world model.
-//
-// Every type here round-trips: decode then encode reproduces the input
-// bytes, which is what P1's oracle (re-encode fern.bin / http.bin == input)
-// ultimately rests on, and the encoders are reused by P2 to emit type
-// imports from a decoded world.
-
-// Primitive value-type codes (component-model single-byte tags). A value
-// type byte in [primString, primBool] is a primitive; anything else is a
-// (uleb) type index.
 const (
 	primBool   = 0x7f
 	primS8     = 0x7e
@@ -35,7 +18,6 @@ const (
 	primString = 0x73
 )
 
-// Defined value-type tags.
 const (
 	tagBorrow  = 0x68
 	tagOwn     = 0x69
@@ -53,14 +35,6 @@ const (
 
 func isPrimByte(b byte) bool { return b >= primString && b <= primBool }
 
-// Valtype is a component-model value type: either a primitive (Prim holds
-// the single-byte code) or a reference to a defined type by index.
-//
-// A valtype is encoded as a signed LEB128 (`s33`): primitives are small
-// negative values whose single-byte form is exactly the 0x73..0x7f codes,
-// and a type index is the non-negative value. Index ≥ 64 therefore needs a
-// second byte (e.g. 65 → `c1 00`) so the high bit of the payload stays clear
-// — a uleb would mis-encode it.
 type Valtype struct {
 	IsPrim bool
 	Prim   byte
@@ -84,12 +58,11 @@ func decodeValtype(b []byte) (Valtype, int, error) {
 
 func (v Valtype) encode(out []byte) []byte {
 	if v.IsPrim {
-		return append(out, v.Prim) // the canonical single-byte sleb of the negative code
+		return append(out, v.Prim)
 	}
 	return appendSLEB(out, int64(v.Idx))
 }
 
-// readSLEB reads a signed LEB128 from the front of b.
 func readSLEB(b []byte) (int64, int, error) {
 	var result int64
 	var shift uint
@@ -109,7 +82,6 @@ func readSLEB(b []byte) (int64, int, error) {
 	return 0, 0, fmt.Errorf("sleb128 truncated")
 }
 
-// appendSLEB appends the signed LEB128 of v.
 func appendSLEB(out []byte, v int64) []byte {
 	for {
 		b := byte(v & 0x7f)
@@ -121,15 +93,11 @@ func appendSLEB(out []byte, v int64) []byte {
 	}
 }
 
-// NamedValtype is a (name, value-type) pair — a record field, func param, or
-// named func result.
 type NamedValtype struct {
 	Name string
 	Ty   Valtype
 }
 
-// VariantCase is one variant case: a name, an optional payload type, and an
-// optional `refines` index.
 type VariantCase struct {
 	Name       string
 	HasTy      bool
@@ -138,20 +106,18 @@ type VariantCase struct {
 	Refines    uint32
 }
 
-// DefinedType is a component-model defined value type. Tag selects which
-// fields are meaningful.
 type DefinedType struct {
 	Tag      byte
-	Fields   []NamedValtype // record
-	Cases    []VariantCase  // variant
-	Names    []string       // enum, flags
-	Elem     Valtype        // list, option
-	Elems    []Valtype      // tuple
-	HasOk    bool           // result
-	Ok       Valtype        // result
-	HasErr   bool           // result
-	Err      Valtype        // result
-	Resource uint32         // own, borrow
+	Fields   []NamedValtype
+	Cases    []VariantCase
+	Names    []string
+	Elem     Valtype
+	Elems    []Valtype
+	HasOk    bool
+	Ok       Valtype
+	HasErr   bool
+	Err      Valtype
+	Resource uint32
 }
 
 func decodeDefinedType(b []byte) (DefinedType, int, error) {
@@ -339,13 +305,11 @@ func (d DefinedType) encode(out []byte) []byte {
 	return out
 }
 
-// FuncType is a component-model function type: named params and either a
-// single unnamed result or a list of named results.
 type FuncType struct {
 	Params       []NamedValtype
 	NamedResults bool
-	Result       Valtype        // when !NamedResults
-	Results      []NamedValtype // when NamedResults
+	Result       Valtype
+	Results      []NamedValtype
 }
 
 func decodeFuncType(b []byte) (FuncType, int, error) {
@@ -376,7 +340,7 @@ func decodeFuncType(b []byte) (FuncType, int, error) {
 		return f, 0, fmt.Errorf("func type: missing results")
 	}
 	switch b[pos] {
-	case 0x00: // single unnamed result
+	case 0x00:
 		pos++
 		vt, m, err := decodeValtype(b[pos:])
 		if err != nil {
@@ -384,7 +348,7 @@ func decodeFuncType(b []byte) (FuncType, int, error) {
 		}
 		pos += m
 		f.Result = vt
-	case 0x01: // named results
+	case 0x01:
 		pos++
 		f.NamedResults = true
 		rc, m, err := readULEB(b[pos:])
@@ -432,7 +396,6 @@ func (f FuncType) encode(out []byte) []byte {
 	return out
 }
 
-// decodeOptionalValtype reads a 0x00 (none) / 0x01+valtype (some) optional.
 func decodeOptionalValtype(b []byte) (Valtype, bool, int, error) {
 	if len(b) == 0 {
 		return Valtype{}, false, 0, fmt.Errorf("optional valtype: empty")

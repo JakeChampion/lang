@@ -1,4 +1,3 @@
-// Repeated RFC 7748 public-key generation for native compiler A/B measurements.
 import "std/crypto/x25519";
 import "std/hex";
 import "std/codec";
@@ -23,7 +22,6 @@ function main(): i32 {
   return 0;
 }
 
-// Decode a valid fixture. Report a malformed fixture before ending the test.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

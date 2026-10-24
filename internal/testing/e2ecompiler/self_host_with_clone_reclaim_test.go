@@ -6,20 +6,6 @@ import (
 	"testing"
 )
 
-// The aliased/borrowed `a = a.with(i, v)` self-rebind lowers to a CLONE of the
-// receiver plus a store (#3599: an in-place element write would mutate the
-// buffer the other owner still reads). The store gave the superseded buffer no
-// release, so a `.with` in a loop allocated one clone per iteration and freed
-// none — 200 unpaired blocks here, and 240k blocks / 467 MB on `od -t fL` over
-// 48 arbitrary bytes, whose 80-bit decimal expansion runs this shape through
-// core/bigint's `__bi_mul_small` and `BigInt.to_string`.
-//
-// Both shapes the compiler-sized case exercises are here: a local bound from a
-// struct FIELD read (to_string's `let cur = a.mag`) and one bound from a
-// borrowed array PARAM (__bi_mul_small's `let out = a`). Each source is read
-// back after the loop, so a release that freed the live buffer, or a clone
-// that wrote through to it, is an answer this program reports rather than a
-// leak the census alone would have to catch.
 const withCloneReclaimSrc = `struct Box { mag: u64[] }
 
 @noinline
@@ -64,7 +50,6 @@ function main(): i32 {
     return (sf as i32) - 387;
 }`
 
-// The last four writes leave 97+98+99+100; both sources stay at 4x7.
 const withCloneReclaimExit = 7
 
 func TestSelfHostWithCloneReclaimX86_64(t *testing.T) {
@@ -82,8 +67,6 @@ func TestSelfHostWithCloneReclaimX86_64(t *testing.T) {
 	if exit != withCloneReclaimExit {
 		t.Fatalf("exit = %d, want %d — the release freed a live buffer?\n%s", exit, withCloneReclaimExit, stderr)
 	}
-	// 205 / 5 at live 11200 before the credit: one clone per iteration, none
-	// released.
 	assertBalancedCensus(t, stderr)
 }
 
@@ -125,8 +108,6 @@ func TestSelfHostWithCloneReclaimWasm(t *testing.T) {
 	assertBalancedCensus(t, stderr)
 }
 
-// assertBalancedCensus reads the leakcheck summary off a run's stderr and
-// requires allocs == frees at live 0 with allocation having happened.
 func assertBalancedCensus(t *testing.T, stderr string) {
 	t.Helper()
 	summary := leakSummaryLine(stderr)

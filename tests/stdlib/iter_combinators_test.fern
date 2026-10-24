@@ -1,13 +1,6 @@
 import "std/test";
 import "core/iter" as iter;
 
-// tests/stdlib/iter_combinators_test.fern — pure-Fern coverage of the
-// core/iter combinators NOT already in iter_test (which does sum / count / of /
-// product / nth / last / min / max / contains / count / fold / any / all /
-// map / filter): collect, take, skip, flat_map, find, index_of, position,
-// count_where. The Go-side suite unit-tests these; this is the migration-shaped
-// (pure-Fern, std/test-driven, self-host-gated) companion.
-
 function test_collect(): test.TestOutcome {
   return test.assert_eq_array(iter.range(0, 4).collect(), [0, 1, 2, 3]);
 }

@@ -1,7 +1,7 @@
-// Method-level type parameters: a method introduces its own type
-// param(s) after the name, independent of the receiver's. `map[U]`
-// transforms `Box[T]` into `Box[U]` via a function `(T) => U` — the
-// receiver's T is inferred from the receiver, U from the argument.
+
+
+
+
 struct Box[T] { v: T }
 function (b: Box[T]) map[U](f: (T) => U): Box[U] { return Box { v: f(b.v) }; }
 function (b: Box[T]) get(): T { return b.v; }
@@ -11,9 +11,9 @@ function is_big(x: i32): boolean { return x > 100; }
 
 function main(): i32 {
     let b: Box[i32] = Box { v: 7 };
-    let d: Box[i32] = b.map(dbl);            // Box[i32], v = 14
-    let big: Box[boolean] = b.map(is_big);   // Box[i32] -> Box[boolean], v = false
-    let r: i32 = d.get();                     // 14
-    if (!big.get()) { r = r + 100; }          // 7 not > 100 -> 114
-    return r;                                  // 114
+    let d: Box[i32] = b.map(dbl);
+    let big: Box[boolean] = b.map(is_big);
+    let r: i32 = d.get();
+    if (!big.get()) { r = r + 100; }
+    return r;
 }

@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// concatDoublingSrc doubles a string to 2^30 bytes, then concatenates it with
-// itself: 2^31 bytes, one past the i32 length ceiling. Each doubling is a
-// memcpy, so the run takes seconds.
 const concatDoublingSrc = `function main(): i32 {
     let a: string = "x";
     let i: i32 = 0;
@@ -23,12 +20,6 @@ const concatDoublingSrc = `function main(): i32 {
 
 const allocSizeAbortMsg = "fern: allocation size out of range"
 
-// TestSelfHostConcatPastLengthCeilingAborts is the self-host half of #8457
-// (#8519). A self-append whose block has no room builds a grown box through
-// __fern_str_grow_fresh, whose `la + lb` would wrap negative past 2 GiB; the
-// helper refuses a length past the i32 ceiling, so the program aborts the way
-// the natives do instead of carrying on with a string whose length is
-// -2147483648.
 func TestSelfHostConcatPastLengthCeilingAborts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("allocates 1.5 GiB; not a -short test")
@@ -69,8 +60,6 @@ func TestSelfHostConcatPastLengthCeilingAborts(t *testing.T) {
 		}
 	})
 
-	// A 1 GiB copy is slow under qemu, so the arm64 leg pins the guard in the
-	// emitted helper instead of running it.
 	t.Run("arm64-linux", func(t *testing.T) {
 		asm := filepath.Join(dir, "concat_overflow_arm64.s")
 		if o, err := exec.Command(driverBin, "-target", "arm64-linux", "-emit", "asm", "-o", asm, src, stdlib).CombinedOutput(); err != nil {

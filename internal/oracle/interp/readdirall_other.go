@@ -4,12 +4,6 @@ package interp
 
 import "os"
 
-// readDirAll on a platform whose directory reader `syscall` does not
-// expose in raw form. It does not report `.` and `..` separately, so
-// the honest answer is the list read_dir gives — which is what the
-// WASI preview-2 backend answers with for the same reason. Nor does it
-// hand back an inode, so every `ino` is 0, as on preview 2; the type comes
-// from os.ReadDir.
 func readDirAll(path string) ([]dirent, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -22,7 +16,6 @@ func readDirAll(path string) ([]dirent, error) {
 	return out, nil
 }
 
-// modeKind is the file type of m as stat's mode bits, 0 when m names none.
 func modeKind(m os.FileMode) uint32 {
 	switch {
 	case m&os.ModeDir != 0:

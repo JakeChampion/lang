@@ -1,7 +1,3 @@
-// enum_match — variant dispatch and the payload drop. The exit sweep's enum
-// arm was ~266 ops per local, the biggest inline shape after structs, and
-// nothing in the corpus exercised it: a change to enum drop or to match
-// lowering moved no benchmark at all.
 enum Node { Leaf(i32), Label(string), Pair(i32), Empty }
 
 function weigh(n: Node): i32 {

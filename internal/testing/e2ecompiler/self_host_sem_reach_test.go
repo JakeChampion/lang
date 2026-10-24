@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// semreach drops what only a field no reachable construction sets could
-// reach. In semReachProg `fast` is false wherever an `Opts` is built unless
-// `with_fast` is called, and `Framed` is built only on paths that need
-// `fast` or a `Framed` already: so without the call, `heavy` and the lambda
-// only `scale`'s fast path builds are dropped, and the release of the other
-// `(i32) => i32` matches no box against the dropped lambda's environment.
-// With the call, or with FERN_NO_SEM_REACH=1, both are kept. Every build
-// answers as the interpreter does.
 const semReachProg = `struct Opts { fast: boolean, level: i32 }
 
 function opts(): Opts {
@@ -118,9 +110,6 @@ func TestSelfHostSemReach(t *testing.T) {
 	}
 }
 
-// A closure's environment is built by its construction, not by a record
-// literal, so what a closure captures is any value: `pick`'s lambda, which
-// escapes into `each`, branches on its captured `flag` both ways.
 const semReachCaptureProg = `@noinline function each(xs: i32[], f: (i32) => i32): i32 {
   let t: i32 = 0;
   for x in xs {
@@ -152,10 +141,6 @@ func TestSelfHostSemReachCapture(t *testing.T) {
 	}
 }
 
-// What a closure returns is what its body built, so a field the lambda
-// `mk` never sets keeps `audit` out; and an array of a record nothing
-// builds is empty, so the loop over `jobs` never runs and `run_job` goes.
-// Building a `Job`, or setting `loud` in the lambda, keeps them.
 const semReachTransportProg = `struct Cfg { loud: boolean, n: i32 }
 
 struct Job { id: i32 }
@@ -246,8 +231,6 @@ func TestSelfHostSemReachTransport(t *testing.T) {
 	}
 }
 
-// serveWithoutH2Prog takes TLS and HTTP/3 from the environment, as the
-// nightly's hello does, but not HTTP/2, which the hello also offers.
 const serveWithoutH2Prog = `import "std/http";
 import "std/serve";
 import "std/platform";
@@ -281,10 +264,6 @@ function main(): i32 {
 }
 `
 
-// A server that never calls `with_h2` links no HTTP/2: no reachable
-// construction sets `Config.h2`, and the compiler-generated folds
-// (`__smm_*`, `__arrm_*`) that carry a Config are reached only through the
-// calls the bodies make. With the pass off, the HTTP/2 code is there.
 func TestSelfHostSemReachServeWithoutH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	path := filepath.Join(t.TempDir(), "server.fern")
@@ -302,7 +281,6 @@ func TestSelfHostSemReachServeWithoutH2(t *testing.T) {
 	}
 }
 
-// serveWithoutH3Prog is serveWithoutH2Prog with HTTP/3 never asked for.
 const serveWithoutH3Prog = `import "std/http";
 import "std/serve";
 import "std/platform";
@@ -333,11 +311,6 @@ function main(): i32 {
 }
 `
 
-// A server that never calls `with_h3` links no HTTP/3 and no QUIC: with no
-// reachable construction setting `Config.h3`, the worker opens no QUIC
-// socket, and the loop asks whether a ready descriptor is that socket only
-// once there is one (`__quic_owns`), so the datagram path is never reached.
-// With the pass off, the HTTP/3 code is there.
 func TestSelfHostSemReachServeWithoutH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	path := filepath.Join(t.TempDir(), "server.fern")

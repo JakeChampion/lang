@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// Validate shared poll lowerings across every socket/timer combination.
-// The core supplies memory and realloc for the unused canonical trampolines;
-// the component validator still checks every assembled import instance.
 func TestComposeSocketTimerPollCombinations(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")

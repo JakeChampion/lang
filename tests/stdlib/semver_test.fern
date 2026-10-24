@@ -1,12 +1,6 @@
 import "std/test";
 import "std/semver" as semver;
 
-// tests/stdlib/semver_test.fern — pure-Fern coverage of std/semver:
-// parse + field extraction, canonical to_string, the SemVer §11
-// precedence chain (including the numeric-vs-lexical `beta.2 < beta.11`
-// trap), build-metadata-is-ignored, and the malformed-input rejections.
-
-// compare two version strings by precedence; 99 if either won't parse.
 function cmp(x: string, y: string): i32 {
   match (semver.parse(x)) {
     Ok(a) => {
@@ -60,18 +54,16 @@ function test_to_string(): test.TestOutcome {
 }
 
 function test_core_precedence(): test.TestOutcome {
-  return test.assert_true(cmp("1.9.0", "1.10.0") < 0  // numeric, not lexical
+  return test.assert_true(cmp("1.9.0", "1.10.0") < 0
     && cmp("2.0.0", "1.99.99") > 0
     && cmp("1.2.3", "1.2.3") == 0);
 }
 
 function test_prerelease_lt_release(): test.TestOutcome {
-  // A prerelease ranks below the released version.
   return test.assert_true(cmp("1.0.0-rc.1", "1.0.0") < 0);
 }
 
 function test_precedence_chain(): test.TestOutcome {
-  // The canonical semver.org §11 example, each strictly less than the next.
   if (cmp("1.0.0-alpha", "1.0.0-alpha.1") >= 0) {
     return test.fail("alpha < alpha.1");
   }
@@ -94,7 +86,6 @@ function test_precedence_chain(): test.TestOutcome {
 }
 
 function test_build_ignored(): test.TestOutcome {
-  // Build metadata does not affect precedence.
   return test.assert_true(cmp("1.0.0+a", "1.0.0+b") == 0
     && cmp("1.0.0+x", "1.0.0") == 0);
 }
@@ -123,10 +114,6 @@ function test_rejects_malformed(): test.TestOutcome {
   return test.pass();
 }
 
-// §11 puts no width on a numeric prerelease identifier, so comparing
-// them through a machine integer wraps: `1.0.0-99999999999` used to
-// sort BELOW `1.0.0-1` (#8469). The comparison is on magnitude now —
-// significant digits, then lexical.
 function test_prerelease_wide_numeric(): test.TestOutcome {
   if (cmp("1.0.0-99999999999", "1.0.0-1") <= 0) {
     return test.fail("11-digit id vs 1");
@@ -140,11 +127,9 @@ function test_prerelease_wide_numeric(): test.TestOutcome {
   if (cmp("1.0.0-99999999999", "1.0.0-99999999999") != 0) {
     return test.fail("wide id equals itself");
   }
-  // A wide numeric identifier is still below any alphanumeric one.
   if (cmp("1.0.0-99999999999", "1.0.0-alpha") >= 0) {
     return test.fail("numeric < alphanumeric");
   }
-  // The narrow neighbours these rows generalise still hold.
   return test.assert_true(cmp("1.0.0-9", "1.0.0-10") < 0);
 }
 

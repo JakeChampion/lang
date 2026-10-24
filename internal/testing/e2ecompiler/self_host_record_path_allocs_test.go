@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// The allocation shapes measured on the TLS record path (#12780,
-// #12781), each counted by __heap_alloc_count over 1,000 rounds and reported
-// as the program's exit code: 0 when every count is what the plan owes.
-
-// A slice of a byte array handed to a borrowed [u8] parameter keeps its view
-// descriptor in the frame on the register backends (ssaunits.frame_views),
-// as the whole array handed as a view costs nothing. Wasm has no data
-// pointer to share, so its slice copies the bytes, one block per slice,
-// which the frame releases (#12780).
 const byteViewSliceProgram = `@noinline function viewlen(v: [u8]): i32 { return v.len(); }
 @noinline function mk(n: i32): u8[] {
   let out: u8[] = [];
@@ -37,12 +28,6 @@ function main(): i32 {
 }
 `
 
-// A three-deep record chain held behind an enum payload, read out of an
-// array slot and updated through a callee that rebuilds all three records:
-// the element is taken out of its slot and the payload out of the element,
-// so the callee updates every box in place and the rewrapped variant reuses
-// the box it came out of. The same chain behind a builtin Option pays the
-// fresh Some alone (#12781, first part).
 const enumPayloadTakeProgram = `struct P { bytes: u8[], n: i32 }
 struct C { p: P, k: i32 }
 struct S { c: C, id: i32 }

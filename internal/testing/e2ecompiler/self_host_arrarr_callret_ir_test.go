@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrCallRetReclaimIRX86_64 pins reclaim of an arr-of-arr local
-// initialised from a CALL (`let g: T[][] = mk(..)`, #4355): the caller solely
-// owns the result, so each rebind frees the whole structure, inner strings
-// included, exactly as a literal initialiser would. A callee that embeds its
-// string param in the result must not get that param freed by the caller.
-//
-// Also pins one release per slot at function exit: the fn-scope case exits 99
-// if the structure is released twice and 98 if its inner strings leak.
 func TestSelfHostArrArrCallRetReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -46,9 +38,6 @@ func TestSelfHostArrArrCallRetReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// string[][] CALL-INIT churn — the slice target: mk's every return is a
-	// strings-fresh arrarr literal, so g2 earns the strict credit and the
-	// whole structure is freed per rebind. Flat at detector zero.
 	run(t, `function mk(i: i32): string[][] {
     return [["a" + "b"], ["c" + "d", "e" + "f"]];
 }
@@ -74,8 +63,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-str-flat", 0)
 
-	// i32[][] CALL-INIT churn with expression rows — lax credit suffices
-	// (scalar inners value-copy). Flat.
 	run(t, `function mks(i: i32): i32[][] {
     return [[i, i + 1], [i + 2]];
 }
@@ -101,10 +88,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-scalar-flat", 0)
 
-	// PARAM-EMBEDDING exclusion: mk2 stores its string param as a row element
-	// (`[[s]]`), so its "AAC:" entry carries flag "p" only — the string-kind
-	// consumer slot gets no strict credit, nothing is freed, and the caller's
-	// live s1 survives at detector zero.
 	run(t, `function mk2(s: string): string[][] {
     return [[s], ["c" + "d"]];
 }
@@ -123,10 +106,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-param-embed-safe", 0)
 
-	// LOCAL-RETURN credit: mk3 returns a local built from a fresh literal and
-	// never escaping but by that return, so it registers "AAC:mk3|s" and the call
-	// init earns the strict credit. Flat at detector zero, with the reads
-	// correct: a withdrawn credit leaks (98), an over-wide one over-releases (99).
 	run(t, `function mk3(i: i32): string[][] {
     let t: string[][] = [["a" + "b"], ["c" + "d"]];
     return t;
@@ -153,9 +132,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-local-ret-credit", 0)
 
-	// A returned local GROWN by a self-append before the return: the append
-	// rebind must not cost the call result its freshness, so the caller still
-	// frees the whole structure per rebind.
 	run(t, `function mk4(i: i32): string[][] {
     let t: string[][] = [["a" + "b"]];
     t = t.append(["c" + "d"]);
@@ -183,9 +159,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-local-grown-credit", 0)
 
-	// The same returned-local shape one level down, appended: mk3r registers
-	// "ARC:mk3r|s", so `g = g.append(mk3r(i))` is a sanctioned self-append and
-	// the append-built g frees its rows and their strings.
 	run(t, `function mk3r(i: i32): string[] {
     let t: string[] = ["a" + "b", "c" + "d"];
     return t;
@@ -211,11 +184,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-local-row-append", 0)
 
-	// FN-SCOPE exit sweep, one free per slot (the slice-9 double-sweep fix):
-	// each work() call sweeps its fn-scope literal arrarr on return — the
-	// whole-structure helper must run exactly once (old code: shallow arr_dec
-	// then a second helper call → 2200 underflow ticks → 99, inner strings
-	// leaked → 98).
 	run(t, `function work(n: i32): i32 {
     let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
     return g.len() + g[0][0].len() + n;

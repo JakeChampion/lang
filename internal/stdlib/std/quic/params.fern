@@ -1,13 +1,4 @@
-// std/quic/params — QUIC's transport parameters (RFC 9000 §18): what each
-// endpoint declares about itself in its quic_transport_parameters TLS
-// extension, encoded and decoded with the checks §18.2 sets.
-//
-// `decode(bytes, from_server)` refuses, as a TRANSPORT_PARAMETER_ERROR, a
-// parameter repeated, a value out of its range, and from a client any of
-// the four only a server may send. An unknown parameter, the reserved
-// ones among them (31 * N + 27), is skipped (§18.1). `encode(p, server)`
-// writes every parameter whose value differs from its default, and the
-// connection IDs a side is obliged to send.
+// This module reads and writes QUIC transport parameters.
 
 import "std/quic/frames";
 import "std/array";
@@ -48,9 +39,6 @@ pub const INITIAL_SOURCE_CONNECTION_ID: i64 = 15;
 
 pub const RETRY_SOURCE_CONNECTION_ID: i64 = 16;
 
-// Params — one endpoint's transport parameters. Durations are in
-// milliseconds; a max_idle_timeout of 0 means none. `preferred_address` is
-// kept as its bytes (§18.2), for a client that migrates to read.
 pub struct Params {
   original_destination_connection_id: Option[u8[]],
   max_idle_timeout: i64,
@@ -71,8 +59,6 @@ pub struct Params {
   retry_source_connection_id: Option[u8[]],
 }
 
-// defaults are the values a parameter left out takes (§18.2): no flow-
-// control credit and no streams at all, so a useful endpoint sets them.
 pub function defaults(): Params {
   return Params {
     original_destination_connection_id: None,
@@ -99,8 +85,6 @@ function __bad(reason: string): frames.FrameError {
   return frames.FrameError { code: frames.TRANSPORT_PARAMETER_ERROR, frame_type: 0 as i64, reason: reason };
 }
 
-// decode reads the parameters a peer sent; `from_server` says which side
-// the peer is.
 pub function decode(bytes: [u8], from_server: boolean): Result[Params, frames.FrameError] {
   let p: Params = defaults();
   let seen: i64[] = [];
@@ -132,7 +116,6 @@ function __varint(bytes: [u8], at: i32, what: string): Result[(i64, i32), frames
   return Ok((v, frames.varint_end(bytes, at)));
 }
 
-// __int is a parameter whose value is one integer filling it exactly.
 function __int(v: [u8], id: i64): Result[i64, frames.FrameError] {
   let n: i64 = frames.varint_at(v, 0);
   if (n >= 0 && frames.varint_end(v, 0) == v.len()) {
@@ -148,7 +131,6 @@ function __cid(v: [u8], id: i64): Result[Option[u8[]], frames.FrameError] {
   return Ok(Some(__copy(v)));
 }
 
-// __one sets parameter `id` from its value `v`.
 function __one(p: Params, id: i64, v: [u8], from_server: boolean): Result[Params, frames.FrameError] {
   if (server_only(id) && !from_server) {
     return Err(__bad("a client sent parameter " + id.to_string() + ", which only a server may"));
@@ -166,7 +148,6 @@ function __one(p: Params, id: i64, v: [u8], from_server: boolean): Result[Params
   return __timing(p, id, n);
 }
 
-// server_only reports whether only a server may send parameter `id`.
 pub function server_only(id: i64): boolean {
   return id == ORIGINAL_DESTINATION_CONNECTION_ID || id == STATELESS_RESET_TOKEN || id == PREFERRED_ADDRESS || id == RETRY_SOURCE_CONNECTION_ID;
 }
@@ -186,7 +167,6 @@ function __cid_param(p: Params, id: i64, v: [u8]): Result[Params, frames.FrameEr
   return Ok(Params { ...p, retry_source_connection_id: c });
 }
 
-// __byte_param sets the parameters whose value is bytes of a fixed shape.
 function __byte_param(p: Params, id: i64, v: [u8]): Result[Params, frames.FrameError] {
   if (id == STATELESS_RESET_TOKEN) {
     if (v.len() != 16) {
@@ -206,8 +186,6 @@ function __byte_param(p: Params, id: i64, v: [u8]): Result[Params, frames.FrameE
   return Ok(Params { ...p, disable_active_migration: true });
 }
 
-// __flow sets the flow-control credit and stream limits; a stream limit is
-// at most 2^60 (§18.2).
 function __flow(p: Params, id: i64, n: i64): Result[Params, frames.FrameError] {
   if (id == INITIAL_MAX_DATA) {
     return Ok(Params { ...p, initial_max_data: n });
@@ -230,7 +208,6 @@ function __flow(p: Params, id: i64, n: i64): Result[Params, frames.FrameError] {
   return Ok(Params { ...p, initial_max_streams_uni: n });
 }
 
-// __timing sets the remaining integers, each within its range.
 function __timing(p: Params, id: i64, n: i64): Result[Params, frames.FrameError] {
   if (id == MAX_IDLE_TIMEOUT) {
     return Ok(Params { ...p, max_idle_timeout: n });
@@ -254,9 +231,6 @@ function __ranged(p: Params, ok: boolean, name: string, n: i64): Result[Params, 
   return Ok(p);
 }
 
-// encode writes `p` as `server` or client sends it: integers that differ
-// from their default, the flags set, and the connection IDs present. A
-// client's server-only parameters are left out.
 pub function encode(p: Params, server: boolean): u8[] {
   let d: Params = defaults();
   let out: u8[] = [];

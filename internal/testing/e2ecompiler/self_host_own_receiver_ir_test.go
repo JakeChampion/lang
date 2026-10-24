@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// ownReceiverCases exercise `own`-RECEIVER methods (`function (own s: Acc)
-// emit(…)`) through the self-host compiler. The self-host parser must consume
-// the `own` modifier in the receiver clause rather than read it AS the receiver
-// name, and each program must exit with the reference code.
-//
-// Shapes mirror internal/testing/e2e/rc_own_receiver_rebind_test.go's pins:
-// a local-receiver self-reassign churn, the borrowed-param threading shape,
-// and a receiver literally named `own` (the parse_param-mirrored probe must
-// not swallow it).
 var ownReceiverCases = []struct {
 	name string
 	src  string
@@ -57,8 +48,6 @@ function main(): i32 {
 }`, 7},
 }
 
-// TestSelfHostOwnReceiverIRX86_64 — own-receiver methods through the
-// PRODUCTION x86-64 IR path (asm_ir_run).
 func TestSelfHostOwnReceiverIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

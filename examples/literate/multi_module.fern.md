@@ -21,7 +21,7 @@ from. It depends on a small math module:
 import "./mathx";
 
 function main(): i32 {
-    // 3² + 4² = 25
+
     return mathx.sum_of_squares(3, 4);
 }
 ```

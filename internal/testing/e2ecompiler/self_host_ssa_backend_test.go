@@ -22,26 +22,12 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// The self-host register path (docs/SELFHOST-SSA-BACKEND.md): every function
-// is lifted to SSA form and emitted with registers; it is the only emitter on
-// the native ISAs, so a function it cannot take is a compile error, never a
-// fall-through. These tests build the self-host CLI for this host once,
-// compile each program with it and with the `fern` CLI it was built with, for
-// every target the host can run output for (its own ISA natively, the other
-// under its qemu user emulator when present), run both, and compare stdout
-// and exit status.
-// Each program is a shape the register path once got wrong or emits specially,
-// named in the comment above it.
-
-// ssaBackendProgram is one differential case.
 type ssaBackendProgram struct {
 	name string
 	src  string
 }
 
 var ssaBackendPrograms = []ssaBackendProgram{
-	// A type parameter named in a `defer` action, `T.default()`: the
-	// instantiation substitutes it there as in the body (#10404).
 	{name: "defer_type_param", src: `
 trait Mk { function make(): Self; function get(self: Self): i32; }
 struct W { v: i32 }
@@ -53,10 +39,6 @@ function f[T: Mk](y: T, x: i32): i32 {
 }
 function main(): i32 { return f[W](W { v: 0 }, 1); }
 `},
-	// A `.with` on the array the previous one returned skips its uniqueness
-	// test, and a write to an index just read skips its bounds check (#11322).
-	// Each alias here must still see the array as it was, and a write past the
-	// end must still abort where no read checked it.
 	{name: "with_chain", src: `
 function hist(xs: i32[]): i32[] {
     let counts: i32[] = [0, 0, 0, 0];
@@ -110,11 +92,6 @@ function main(): i32 {
     return r & 127;
 }
 `},
-	// A construction that reuses a dead box of another type through a Perceus
-	// token: ssarc's reuse_construct writes the recipient's own shape word over
-	// the donor's with struct_set_shape, since neither box arrives carrying it.
-	// That op bailed the production lift, and it was 116 of the 117 functions
-	// the self-build declined — every one of them a reuse site like this.
 	{name: "reuse_cross_type_shape", src: `
 struct P { x: i32, y: i32 }
 struct Q { a: i32, b: i32 }
@@ -126,12 +103,6 @@ function f(): i32 {
 }
 function main(): i32 { return f(); }
 `},
-	// heap_bump_bytes is the last op the production lift had no arm for, and
-	// util__arr_push_cliff_report was the one function on the self-build still
-	// declining for it. It reads two runtime globals and guards the
-	// uninitialised cursor, so it is not a single global's word -- it goes
-	// through the flat op, which re-emits the stack machine's own sequence.
-	// The check is ordering only, so both builds print the same thing.
 	{name: "heap_bump_bytes", src: `
 function report(): i32 {
     let before: i64 = __heap_bump_bytes();
@@ -181,12 +152,6 @@ function main(): i32 {
     return k & 255;
 }
 `},
-	// A labelled continue out of an inner loop that never exits: the inner
-	// loop's exit path is unreachable, thread_forwarding drops it, and the
-	// outer header's phis must lose the operand slot for that vanished
-	// predecessor rather than carry a value nothing defines (the allocator
-	// once indexed a block at -1 for it). count_up carries a parameter
-	// through a header phi, the entry operand with no defining instruction.
 	{name: "labelled_continue_defer", src: `
 function count_up(i: i32, n: i32): i32 {
     while (i < n) { i = i + 1; }
@@ -207,11 +172,6 @@ function main(): i32 {
     return seen + count_up(4, 9);
 }
 `},
-	// A loop-invariant parameter carried through the header phi while the
-	// body calls out: the phi's back-edge operand is the phi itself, and the
-	// allocator once let a body temporary take its register, so the next
-	// iteration compared against garbage (borrowed_forward_lifetime returned
-	// 11, the bit sieve counted no primes).
 	{name: "invariant_through_phi", src: `
 @noinline
 function step(x: i32, i: i32): i32 { return x + i; }
@@ -230,9 +190,6 @@ function count_bits(w: i32, n: i32): i32 {
 }
 function main(): i32 { return (forward(3, 10) + count_bits(1431655765, 31) * 10) % 256; }
 `},
-	// The box layouts: records, arrays, tuples, Option boxes, enum variants,
-	// string literals and bytes, each lifted onto the flat backend's layout
-	// (ssa.fern kinds 40 to 48) rather than through a runtime call.
 	{name: "boxes", src: `
 struct P { x: i32, y: i32 }
 enum Shape { Dot(i32), Line(i32, i32), Empty }
@@ -258,9 +215,6 @@ function main(): i32 {
     return total % 256;
 }
 `},
-	// The runtime calls the stack machine makes for string and array ops: the
-	// Fern-compiled helpers on the stack ABI (concat, equality, ordering) and
-	// the register-ABI routines (array push).
 	{name: "runtime_calls", src: `
 function join(a: string, b: string): string { return a + b; }
 function same(a: string, b: string): boolean { return a == b; }
@@ -281,10 +235,6 @@ function main(): i32 {
     return n % 256;
 }
 `},
-	// A loop appending a constant through the owned push: the array and the
-	// value both sit in registers at the runtime call, and on x86-64 the
-	// argument registers are among the allocatable ones, so the call must
-	// read both homes before it writes either.
 	{name: "byte_sieve", src: `
 function sieve(n: i32): boolean[] {
     let s: boolean[] = [];
@@ -308,9 +258,6 @@ function count(s: boolean[]): i32 {
 }
 function main(): i32 { return count(sieve(1000)); }
 `},
-	// std/json's array parser ends its loop body in a return, so the block
-	// holding the return reaches the loop's end live and terminated; the lift
-	// must append it, or the if before it branches to a label nothing defines.
 	{name: "json_array", src: `
 import "core/cmp";
 import "std/json";
@@ -321,11 +268,6 @@ function main(): i32 {
     }
 }
 `},
-	// f64 throughout: negative literals and -0.0, the arithmetic and the
-	// NaN-aware compares, the single-instruction math, every conversion
-	// width and signedness including the saturating ones and the widening
-	// the lowering inserts for an integer literal at an f64 parameter, the
-	// f32 and i64 reinterprets, and the transcendentals the runtime supplies.
 	{name: "floats", src: `
 import "std/f64";
 function area(r: f64): f64 { return 3.141592653589793 * r * r; }
@@ -385,12 +327,6 @@ function main(): i32 {
     return (acc % 251) as i32;
 }
 `},
-	// The float register class: more f64s live across a call than the
-	// callee-saved float registers hold, so some spill; a loop-carried f64 phi
-	// beside an integer one; an f64 phi with a constant operand; an f64 whose
-	// bits an integer op reads, which keeps it in an integer register; ten f64
-	// parameters, two past the register ABI; and the results printed as bit
-	// patterns, so a rounding difference shows.
 	{name: "float_registers", src: `
 import "std/i64";
 import "std/f64";
@@ -461,12 +397,6 @@ function main(): i32 {
     return cmp(1.0, 2.0) + cmp(2.0, 2.0) * 3 + cmp(nan, 2.0) * 5;
 }
 `},
-	// The host floor: env, read_file and stat through their Fern helpers on
-	// the stack ABI, whose bodies use the raw syscalls, the scratch buffer,
-	// the string box stamp and the width loads; monotonic_ns with no
-	// operand; exit as the raw syscall. Whole, so the helper bodies and the
-	// byte kernels they use go through the backend on every target,
-	// including the Darwin rewrite of the syscall number register.
 	{name: "host_calls", src: `
 import "std/i32";
 function probe_env(): i32 {
@@ -495,11 +425,6 @@ function main(): i32 {
     return 7;
 }
 `},
-	// The OS floor the compiler itself never calls: the process and host
-	// queries, umask, and the handle ops (open, fstat, the open flags,
-	// isatty, close). None has a selection of its own in the register path;
-	// each runs through the stack machine's arm for it (flat_op), which is
-	// how every op with a known stack effect reaches this backend.
 	{name: "os_floor", src: `
 import "std/i32";
 function probe_ids(): i32 {
@@ -532,14 +457,6 @@ function main(): i32 {
     return n % 100;
 }
 `},
-	// `dyn Trait` dispatch: the receiver's shape word selects the arm, and
-	// the arguments are read from wherever the allocator put them, a
-	// register or a spill slot, rather than from the locals the stack
-	// machine's arm reads. A struct, an enum (matched per variant) and a
-	// primitive (unboxed at the call) receiver, a two-argument method, and
-	// an argument a call defines at the instruction before the dispatch, so
-	// its home is the return register the chain uses as scratch
-	// (TestSelfHostSSADynDispatchArgumentInScratch pins that it is).
 	{name: "dyn_dispatch", src: `
 import "std/i32";
 trait Shape {
@@ -575,10 +492,6 @@ function main(): i32 {
     return total % 256;
 }
 `},
-	// The map ops and the byte kernels run through the stack machine's own
-	// arms between a push of the operands and a pop of the result, with the
-	// allocator treating each as a call. String and integer keys, insert,
-	// lookup with a default, membership, the key and value snapshots.
 	{name: "maps", src: `
 import "core/map";
 import "std/i32";
@@ -601,12 +514,6 @@ function main(): i32 {
     return total % 200;
 }
 `},
-	// Aggregates the lowering folds whole (a record literal with constant
-	// fields, here the keys of a persistent map) are the address of an
-	// interned box; passed straight to a call, that address sits in a
-	// register home and must survive there. The map's own functions are
-	// pinned with the program: the lookup on a collision node is where a
-	// clobbered key address surfaced.
 	{name: "folded_aggregates", src: `
 import "std/pmap" as pmap;
 import "std/option";
@@ -625,10 +532,6 @@ function main(): i32 {
     return n % 251;
 }
 `},
-	// The string ops the stack machine selects in emit_str_op (search, split,
-	// lines, case, trim, replace, bytes, count), through the stack machine's
-	// own arm with the operand count the IR verifier gives each, and the bit
-	// counts at both widths.
 	{name: "strings", src: `
 import "std/string";
 import "std/i32";
@@ -655,12 +558,6 @@ function main(): i32 {
     return (strs(s) + bits(15790080, 280375465082880)) % 251;
 }
 `},
-	// A string slice whose upper bound is read again in the same block. The
-	// slice kernel loads that bound into the scratch register and then
-	// overwrites it with the length, so a scratch tracker that survives the
-	// kernel makes the second read reuse the difference. With lo of 0 the
-	// wrong value equals the right one, so a case has to slice from further
-	// in to see it.
 	{name: "slice_bound_reuse", src: `
 function tail(s: string, lo: i32, hi: i32): i32 {
     let v: str = slice_unchecked(s, lo, hi);
@@ -672,10 +569,6 @@ function main(): i32 {
     return (tail(s, 3, 9) + tail(s, 0, 4) + tail(s, 5, 12)) % 251;
 }
 `},
-	// An exhaustive match whose every arm returns, standing last in a
-	// generic function (ordmap's fold), lowers to a loop whose body reaches
-	// the loop's end alive: control continues after the loop in the
-	// enclosing scope, and the lift gives it a block to continue in.
 	{name: "loop_fallthrough", src: `
 import "std/ordmap" as ordmap;
 import "core/cmp";
@@ -687,9 +580,6 @@ function main(): i32 {
     return (total + m.len()) % 251;
 }
 `},
-	// Integer functions beside string-heavy ones, calling each other through
-	// the shared stack ABI: the shape a module had when the register path
-	// still left the string helpers to the stack machine.
 	{name: "mixed_module", src: `
 import "std/i32";
 function sum_to(n: i32): i32 { let s: i32 = 0; let i: i32 = 1; while (i <= n) { s = s + i; i = i + 1; } return s; }
@@ -704,13 +594,6 @@ function main(): i32 {
     return 3;
 }
 `},
-	// A constant every use of which is a binary op's operand is an immediate
-	// and never materialised: on either side of the commutative ops and the
-	// compares, on the right of a subtraction, in a branch's fused compare,
-	// negative, at i32 wrap, and for arm64 on either side of its 12-bit
-	// range. A constant a shift reads, or one above imm32, keeps its
-	// register; one a division reads keeps its register on arm64 and feeds
-	// the literal-divisor forms on x86-64.
 	{name: "immediates", src: `
 import "std/i32";
 function mix(x: i32, y: i64, u: u32): i32 {
@@ -747,12 +630,6 @@ function main(): i32 {
     return mix(0, 0i64, 0u32) % 100;
 }
 `},
-	// The loop-carried phi pairs the allocator coalesces, in every shape
-	// where sharing one register would be wrong: the phi's old value read
-	// after its operand is defined, on a latch exit and inside a nested
-	// loop; a swap of two carried values; several back edges into one
-	// header; an exit that reads both; and an update the two-operand forms
-	// cannot compute in place.
 	{name: "carried_pairs", src: `
 import "std/i32";
 function old_after_latch(n: i32): i32 {
@@ -825,10 +702,6 @@ function main(): i32 {
     return two_latches(7) % 100;
 }
 `},
-	// Blocks that hold nothing but a branch: empty arms, a dead arm, a loop
-	// never entered, a body with nothing live. The emitter sends every edge
-	// past them and drops the ones nothing reaches; the phis of the loops
-	// keep their edges.
 	{name: "empty_blocks", src: `
 function empties(n: i32): i32 {
     let k: i32 = 0;
@@ -849,16 +722,11 @@ function main(): i32 { return empties(6) * 3 + empties(1); }
 `},
 }
 
-// ssaBackendTarget is one target this host can run output for: the target
-// name and the runner prefix for a binary built for it ("" when native).
 type ssaBackendTarget struct {
 	target string
 	runner []string
 }
 
-// ssaBackendHost is the self-host CLI built for this host, the `fern` CLI it
-// was built with (the differential's oracle), the targets whose
-// output this host can run, and the stdlib root.
 type ssaBackendHost struct {
 	cli     string
 	native  string
@@ -873,10 +741,6 @@ var (
 	ssaHostErr  string
 )
 
-// hostTargets lists the targets this host can run output for: the native
-// one, plus the other ISA through its qemu user emulator when that is on PATH.
-// The CLI itself is built for the host and never run under an emulator, since
-// it takes host filesystem paths.
 func hostTargets() (cliTarget string, targets []ssaBackendTarget, skip string) {
 	emulated := func(target, qemu string) {
 		if q, err := exec.LookPath(qemu); err == nil {
@@ -902,8 +766,6 @@ func hostTargets() (cliTarget string, targets []ssaBackendTarget, skip string) {
 	return
 }
 
-// selfHostCLIForHost builds compiler/fern.fern once per test binary
-// as a binary this host executes directly.
 func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 	t.Helper()
 	ssaHostOnce.Do(func() {
@@ -930,11 +792,6 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 		}
 		cli := filepath.Join(dir, "fern")
 		if out, err := exec.Command(fern, "-target", cliTarget, "-o", cli, src).CombinedOutput(); err != nil {
-			// Recorded rather than fatal here: sync.Once runs this for the
-			// FIRST test only, so failing inside it left every later test with
-			// a zero-valued host and no skip reason — they indexed an empty
-			// targets slice and panicked, which reads as a test bug rather
-			// than as the build failure it is.
 			ssaHostErr = fmt.Sprintf("building the self-host CLI for %s: %v\n%s", cliTarget, err, out)
 			return
 		}
@@ -949,7 +806,6 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 	return ssaHost
 }
 
-// compileWith runs the CLI on src for the target, with the extra flags.
 func (h ssaBackendHost) compileWith(t *testing.T, tg ssaBackendTarget, src, out string, extra ...string) {
 	t.Helper()
 	args := append([]string{"-target", tg.target}, extra...)
@@ -959,8 +815,6 @@ func (h ssaBackendHost) compileWith(t *testing.T, tg ssaBackendTarget, src, out 
 	}
 }
 
-// compileNative runs the `fern` CLI the self-host was built with on src for
-// the target.
 func (h ssaBackendHost) compileNative(t *testing.T, tg ssaBackendTarget, src, out string) {
 	t.Helper()
 	args := []string{"-target", tg.target, "-o", out, src}
@@ -969,8 +823,6 @@ func (h ssaBackendHost) compileNative(t *testing.T, tg ssaBackendTarget, src, ou
 	}
 }
 
-// runProduced runs a binary the CLI produced and returns its stdout and exit
-// status. A program that does not exit normally within the timeout fails.
 func (h ssaBackendHost) runProduced(t *testing.T, tg ssaBackendTarget, bin string) (string, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -990,7 +842,6 @@ func (h ssaBackendHost) runProduced(t *testing.T, tg ssaBackendTarget, bin strin
 	return stdout.String(), cmd.ProcessState.ExitCode()
 }
 
-// The oracle is the `fern` CLI's build of the same program.
 func TestSelfHostSSABackendAgreesWithNative(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	for _, tg := range h.targets {
@@ -1021,11 +872,6 @@ func TestSelfHostSSABackendAgreesWithNative(t *testing.T) {
 	}
 }
 
-// Each target has one emitter and `-backend` may only name it: `ssa` on the
-// two native ISAs, refused for wasm with the targets it is available for, as
-// native's `-backend ssa` refuses wasm; `flat` on wasm, refused on the native
-// ISAs now that their stack machine is gone; and a name nothing implements is
-// an error rather than a fall-through.
 func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1047,9 +893,6 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	if !strings.Contains(string(out), "unknown -backend: nope") {
 		t.Errorf("unknown backend not reported: %s", out)
 	}
-	// Omitting -backend selects the target's emitter, and naming it must
-	// reproduce that byte for byte. h.targets is native-only, so the loop
-	// covers the register path; wasm is below.
 	for _, tg := range h.targets {
 		base := strings.ReplaceAll(tg.target, "-", "_")
 		h.compileWith(t, tg, src, filepath.Join(dir, base+"_dflt"))
@@ -1065,10 +908,6 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 		if !bytes.Equal(dflt, named) {
 			t.Errorf("%s: -backend ssa differs from the default emitter, which it is", tg.target)
 		}
-		// The stack machine's function emitter is gone from the native ISAs,
-		// so the name is refused rather than mapped onto the register path: a
-		// script asking for the stack machine by name would otherwise compare
-		// the register path with itself.
 		out, err := exec.Command(h.cli, "-target", tg.target, "-backend", "flat", "-o", filepath.Join(dir, base+"_flat"), src, h.stdlib).CombinedOutput()
 		if err == nil {
 			t.Fatalf("%s: -backend flat was accepted", tg.target)
@@ -1077,10 +916,6 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 			t.Errorf("%s: refusal does not name the target: %s", tg.target, out)
 		}
 	}
-	// wasm has no register path, so the stack machine is its emitter and
-	// `flat` names it. Without this the rule is only half-pinned: the refusal
-	// above says `-backend ssa` is unavailable for wasm, not that omitting it
-	// lands on flat.
 	wasmDflt := filepath.Join(dir, "wasm_dflt")
 	wasmFlat := filepath.Join(dir, "wasm_flat")
 	for _, a := range [][]string{{"-o", wasmDflt}, {"-backend", "flat", "-o", wasmFlat}} {
@@ -1102,19 +937,6 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	}
 }
 
-// A second `-o` to the same path replaces the executable rather than
-// rewriting it in place. macOS caches the code-signature verdict of an
-// executable by inode, so an in-place rewrite is killed at exec with "Code
-// Signature Invalid" while a byte-identical copy at a fresh path runs. The
-// portable observation is a handle held open across the second compile: a
-// replaced file leaves it reading the first program, an in-place rewrite
-// shows it the second. Apple Silicon also runs the second program, which is
-// the exec the cache would have killed.
-// The lift gives every merge a phi per local slot and prune_dead removes
-// almost all of them, so the id space of a large function is hundreds of
-// times its live values. The frame is sized by the spilled values, not by
-// the ids: a function with 200 locals and 200 merges reserves well under
-// 16 KB on both ISAs, where a slot per id would be over 300 KB.
 func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1140,9 +962,6 @@ func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
 		frame  *regexp.Regexp
 	}{
 		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,14}?\s+subq \$(\d+), %rsp`)},
-		// Over 4,095 bytes the arm64 prologue builds the immediate in x17; a
-		// movk after the movz would mean a frame over 64 KB. The window covers
-		// the frame record and up to five callee-saved pairs before it.
 		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,16}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
 	}
 	for _, c := range cases {
@@ -1209,11 +1028,6 @@ func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	}
 }
 
-// A path that is not a regular file is written through and kept, the rule
-// native's writeExecutable states: `-o /dev/null` used to delete the null
-// device and leave the program in its place (#10034). A FIFO stands in for
-// the device and must keep its mode; a symlink stays a link and its target
-// becomes the executable.
 func TestSelfHostOutputKeepsANonRegularPath(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1274,7 +1088,6 @@ func TestSelfHostOutputKeepsANonRegularPath(t *testing.T) {
 		t.Fatalf("the link's target exit %d, want 31", exit)
 	}
 
-	// A dangling link creates its target, executable, as native and cp do.
 	created := filepath.Join(dir, "created")
 	dangling := filepath.Join(dir, "dangling")
 	if err := os.Symlink(created, dangling); err != nil {
@@ -1289,20 +1102,6 @@ func TestSelfHostOutputKeepsANonRegularPath(t *testing.T) {
 	}
 }
 
-// TestSelfHostCLIBuildsForEveryNativeTarget builds the self-host compiler for
-// both native targets on whatever host runs it.
-//
-// The build is a cross-compile, so the host does not decide what can be built —
-// but every other gate here takes its target from the host (hostTargets), which
-// means each machine tests one of the two and neither machine tests both. That
-// is how #9525 reached main: the arm64 default flip left four runtime helpers
-// with no emitter, and `fern -target arm64-linux compiler/fern.fern`
-// failed to link on every push while the x86-64 lanes stayed green.
-//
-// The whole compiler is the point: it is the largest program in the tree and
-// the one that reaches the widest set of runtime helpers, so a helper missing
-// from a backend shows up here and almost nowhere else. `-o` is passed so the
-// link runs too; emit alone would miss a symbol the assembler resolves.
 func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 	fern := buildLangBinForInterp(t)
 	src, err := filepath.Abs("../../../compiler/fern.fern")
@@ -1326,10 +1125,6 @@ func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 	}
 }
 
-// A counted loop's two loop-carried values share registers with their
-// updates and the loop is rotated, so the loop is the two adds, the compare
-// and the conditional back edge on both ISAs: no copy in the loop, and no
-// jump but the back edge.
 func TestSelfHostSSALoopIsFourInstructions(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1368,7 +1163,6 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 		if fn == "" {
 			t.Fatalf("%s: no __fn_count in the listing:\n%s", c.target, asm)
 		}
-		// The back edge is the last branch to a label defined above it.
 		head, last := -1, []int(nil)
 		for _, m := range c.back.FindAllStringSubmatchIndex(fn, -1) {
 			if at := strings.Index(fn, "\n"+fn[m[2]:m[3]]+":\n"); at >= 0 && at < m[0] {
@@ -1394,9 +1188,6 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 	}
 }
 
-// An f64 computed and consumed only by float instructions lives in a float
-// register: the loop of a Horner step multiplies and adds there, and never
-// moves the running value out to an integer register and back.
 func TestSelfHostSSAFloatsStayInFloatRegisters(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1438,20 +1229,12 @@ function main(): i32 { return (horner(0.5, 40) * 100.0) as i32; }
 		if n := len(c.arith.FindAllString(fn, -1)); n != 2 {
 			t.Errorf("%s: horner has %d multiplies and adds into a float register, want 2:\n%s", c.target, n, fn)
 		}
-		// Only the return may move the result out of its float register.
 		if n := len(c.out.FindAllString(fn, -1)); n > 1 {
 			t.Errorf("%s: horner moves an f64 between register classes %d times:\n%s", c.target, n, fn)
 		}
 	}
 }
 
-// A result takes the register of an operand that dies at its definition,
-// and a branch whose false target is the next block falls through into it:
-// step's add lands in the product's register on both ISAs (b lives on in
-// both arms, so the subtraction still copies it first on x86-64, where sub
-// has two operands), and first_over's conditional break is one conditional
-// jump out of the loop, so the loop's only unconditional jump is its back
-// edge, where the break's false edge was a jump around a jump.
 func TestSelfHostSSAResultTakesDyingOperandRegister(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1474,9 +1257,9 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 	}
 	cases := []struct {
 		target  string
-		product *regexp.Regexp // the multiply; group 1 is its destination
-		add     string         // the add into that destination, with %s for it
-		jump    *regexp.Regexp // an unconditional jump
+		product *regexp.Regexp
+		add     string
+		jump    *regexp.Regexp
 	}{
 		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+imulq \$3, %r\w+, (%r\w+)$`), `(?m)^\s+addq %%r\w+, %s$`, regexp.MustCompile(`(?m)^\s+jmp `)},
 		{"arm64-linux", regexp.MustCompile(`(?m)^\s+mul (x\d+), x\d+, x\d+$`), `(?m)^\s+add %[1]s, %[1]s, x\d+$`, regexp.MustCompile(`(?m)^\s+b \.`)},
@@ -1511,13 +1294,6 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 	}
 }
 
-// The two rc primitives whose body is a guard chain over the count word are
-// rendered at their call sites, not called: put tests uniqueness twice and
-// retains once, so its listing carries three guard chains and calls neither
-// stub. `__fern_rc_dec` is not one of them — in the self-host it maps to the
-// array release, which frees — so the slice call put also makes stays. put
-// is an updater, which callers would splice, so it is `@noinline` to keep its
-// body listed.
 func TestSelfHostSSARcPrimitivesAreInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1537,10 +1313,10 @@ function main(): i32 {
 	}
 	cases := []struct {
 		target string
-		floor  *regexp.Regexp // the heap-floor test that opens each chain
-		count  *regexp.Regexp // the read of the count word, loaded or compared in place
-		absent []string       // the stub calls the chains replace
-		poison *regexp.Regexp // this backend's spelling of the sanitizer check
+		floor  *regexp.Regexp
+		count  *regexp.Regexp
+		absent []string
+		poison *regexp.Regexp
 	}{
 		{"x86-64-linux",
 			regexp.MustCompile(`(?m)^\s+cmpq \$0x10000, %r\w+$`),
@@ -1580,13 +1356,6 @@ function main(): i32 {
 				t.Errorf("%s: put still calls the stub (%s):\n%s", c.target, call, fn)
 			}
 		}
-		// Each rc stub reads the count through the sanitizer's poison check, so
-		// every inline form must too, or a use after free goes uncaught at the
-		// sites the calls were replaced at. That is one check per chain — both
-		// uniqueness tests and the retain — not merely one somewhere in the
-		// function (#9889). The spelling differs because arm64 needs two halves
-		// to materialise ast.RcPoison and compares registers rather than an
-		// immediate.
 		poison := filepath.Join(dir, "blk-poison-"+c.target+".s")
 		pc := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", poison, src, h.stdlib)
 		pc.Env = append(os.Environ(), "FERN_RC_FREE_DEBUG=1")
@@ -1606,8 +1375,6 @@ function main(): i32 {
 		if c.poison.MatchString(fn) {
 			t.Errorf("%s: put carries the poison check with the flag off:\n%s", c.target, fn)
 		}
-		// The out-of-line stub the inline form replaces carries it too: a
-		// function the lift declines still calls it.
 		stub := functionListing(string(pasm), "__fn___fern_rc_is_unique")
 		if stub == "" {
 			t.Fatalf("%s: no __fn___fern_rc_is_unique in the flag-on listing", c.target)
@@ -1618,13 +1385,6 @@ function main(): i32 {
 	}
 }
 
-// String equality compares the two length words inline and calls the
-// helper's register entry only when they match, so the stack-ABI call and its
-// pushed operands are gone. The helper is a leaf and builds no frame, and on
-// x86-64 the operands reach %rax / %rsi without passing through %rdx / %rcx.
-// The program covers each way the inline answer and the helper's can go:
-// unequal lengths, equal lengths with differing bytes, equal strings on both
-// sides of the 8-byte word loop, and the empty string.
 func TestSelfHostSSAStrEqComparesLengthsInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1647,10 +1407,10 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	shapes := map[string]struct {
-		lengths    *regexp.Regexp // the inline compare of the two length words
-		entry, abi string         // the register-entry call and the stack-ABI call
-		frame      string         // the frame setup the helper must not build
-		route      string         // a copy through a scratch on the way to the entry, or ""
+		lengths    *regexp.Regexp
+		entry, abi string
+		frame      string
+		route      string
 	}{
 		"x86-64-linux": {regexp.MustCompile(`(?m)^\s+cmpq 8\(%r\w+\), %rdx$`),
 			"call __fn___fern_str_eq.r\n", "call __fn___fern_str_eq\n", "pushq %rbp", "movq %rdx, %rax\n    movq %rcx, %rsi\n"},
@@ -1668,7 +1428,6 @@ function main(): i32 {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// same is inlined, so main holds all six comparisons.
 		fn := functionListing(string(asm), "__fn_main")
 		if fn == "" {
 			t.Fatalf("%s: no __fn_main in the listing:\n%s", tg.target, asm)
@@ -1703,10 +1462,6 @@ function main(): i32 {
 	}
 }
 
-// A `.with` chain on an array tests uniqueness and bounds once: the first
-// `.with` in each iteration tests its receiver, the loop's phi, and the second
-// takes the box the first handed back, which nothing else holds; each write
-// goes to an index the element read beside it already checked (#11322).
 func TestSelfHostSSAWithChainSettlesOnce(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1731,9 +1486,6 @@ function main(): i32 {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// The rc-1 compare appears in the uniqueness test and in the copy arm's
-	// release, so one `.with` that tests is two; the bounds aborts are the two
-	// element reads'.
 	shapes := map[string]struct{ unique, oob string }{
 		"x86-64-linux": {"cmpl $1, -8(%r", "jae __fern_oob_abort"},
 		"arm64-linux":  {"cmp w5, #1", "b __fern_oob_abort"},
@@ -1767,20 +1519,10 @@ function main(): i32 {
 	}
 }
 
-// A comparison against a non-empty literal tests the other operand's first
-// byte inline after the lengths, so a chain of same-length literals rejects
-// most arms without calling the helper. The shape assertion pins which
-// operand's byte is read: the byte compare must load the buffer the length
-// compare read FIRST when the literal is on the right, and SECOND when it is
-// on the left, since reading the literal's own byte would compare it with
-// itself and reject nothing. A comparison of two non-literals, and one against
-// the empty literal, has no byte to test.
 func TestSelfHostSSAStrEqTestsLiteralFirstByteInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "streqlit.fern")
-	// code is past the inliner's size threshold, so main calls it and its
-	// listing holds every comparison, the two-non-literals one included.
 	prog := `function code(s: string, t: string): i32 {
     if (s == "add") { return 1; }
     if (s == "and") { return 2; }
@@ -1801,14 +1543,11 @@ function main(): i32 {
 	}
 	shapes := map[string]struct {
 		sites func(fn string) []byteSite
-		entry string // the register-entry call
+		entry string
 	}{
 		"x86-64-linux": {x86ByteSites, "call __fn___fern_str_eq.r\n"},
 		"arm64-linux":  {arm64ByteSites, "bl __fn___fern_str_eq.r\n"},
 	}
-	// The four non-empty literals, sorted as text: 's' once and 'a' twice on
-	// the right, so the byte read is the first length operand's; 'x' on the
-	// left, so it is the second's.
 	const wantSites = "115:first 120:second 97:first 97:first"
 	for _, tg := range h.targets {
 		shape, ok := shapes[tg.target]
@@ -1844,8 +1583,6 @@ function main(): i32 {
 	}
 }
 
-// byteSite is one inline first-byte compare: the literal's byte, and whether
-// the buffer it reads is the length compare's first or second operand.
 type byteSite struct {
 	lit     string
 	operand string
@@ -1863,8 +1600,6 @@ func whichOperand(loaded, first, second string) string {
 	return "neither(" + loaded + ")"
 }
 
-// x86ByteSites reads every `cmpb $c, (%rdx)` in a listing together with the
-// four lines above it: the two length loads and the buffer load.
 func x86ByteSites(fn string) []byteSite {
 	lines := listingLines(fn)
 	var (
@@ -1893,8 +1628,6 @@ func x86ByteSites(fn string) []byteSite {
 	return out
 }
 
-// arm64ByteSites is x86ByteSites for the arm64 shape: `ldrb w6, [x6]` then
-// `cmp w6, #c`, six lines after the two length loads.
 func arm64ByteSites(fn string) []byteSite {
 	lines := listingLines(fn)
 	var (
@@ -1931,18 +1664,8 @@ func listingLines(fn string) []string {
 	return out
 }
 
-// rcPoisonWord is the value a freed block's count is overwritten with, which
-// the sanitizer's check compares against (asm_ir.san_poison_check). It is
-// ast.RcPoison, and uafPoisonDec derives the same value from the same
-// constant.
 var rcPoisonWord = uafPoisonDec
 
-// A constant the binary ops alone read is an immediate operand on both ISAs
-// and is never materialised; one a division reads keeps its register on
-// arm64 and is read by the literal-divisor forms on x86-64. The
-// loop bound is under 4,096 so it is an immediate on arm64 too. A shift by a
-// literal takes the immediate-count form, so neither the count register nor
-// the mask a variable count needs appears.
 func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1962,11 +1685,6 @@ function main(): i32 { return count() as i32; }
 		target       string
 		want, absent []*regexp.Regexp
 	}{
-		// On x86-64 the constant divisor is not materialised either: the
-		// literal-divisor form (ir_div_const) takes the i64 remainder by the
-		// multiply-high reciprocal and multiplies the 97 back as an
-		// immediate, so neither a divide nor the two guards a run-time
-		// divisor needs appear.
 		{"x86-64-linux",
 			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`movabsq \$-6275696437447579415, %rax`), regexp.MustCompile(`imulq \$97, %r`), regexp.MustCompile(`sarq \$3, %r`)},
 			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`), regexp.MustCompile(`mov[ql] \$97, %`), regexp.MustCompile(`idivq`), regexp.MustCompile(`testq %rcx`), regexp.MustCompile(`cmpq \$-1`), regexp.MustCompile(`sarq %cl`), regexp.MustCompile(`andl \$31, %ecx`)}},
@@ -2002,12 +1720,6 @@ function main(): i32 { return count() as i32; }
 	}
 }
 
-// BLAKE2b's mixing step over sixteen live words and sixteen message words
-// keeps more values live than either pool holds, so results spill, and many
-// are read by the very next op. That op reads the value from the scratch it
-// was computed in, not back from the slot it was just stored to: a reload
-// there puts a store-to-load forward on the dependency chain, which cost
-// b2sum a fifth of its time. The run checks the value against Go's.
 func TestSelfHostSSASpilledResultIsReadFromScratch(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -2066,8 +1778,6 @@ func TestSelfHostSSASpilledResultIsReadFromScratch(t *testing.T) {
 		want ^= x
 	}
 
-	// store matches a spill and gives the slot; reload matches the next line
-	// reading that slot back.
 	shapes := map[string]struct {
 		store  *regexp.Regexp
 		reload string
@@ -2107,15 +1817,6 @@ func TestSelfHostSSASpilledResultIsReadFromScratch(t *testing.T) {
 	}
 }
 
-// TestSelfHostSSADynDispatchArgumentInScratch pins the one branch of the
-// register path's dyn dispatch the behavioural gate cannot see firing: an
-// argument whose home is the chain's own scratch register. arg_from_call
-// hands the dispatch a value the call before it defined, so the allocator
-// gives it the return register, and the wrapper moves it out before the chain
-// reads the receiver's shape through that register. The listing shows the
-// move and the pushed copy on x86-64, the move and the reload on arm64. An
-// allocator change that stopped producing the shape would leave the branch
-// untested again, which this test refuses.
 func TestSelfHostSSADynDispatchArgumentInScratch(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	var src string
@@ -2156,16 +1857,12 @@ func TestSelfHostSSADynDispatchArgumentInScratch(t *testing.T) {
 	}
 }
 
-// functionListing is the text of one function in an emitted listing: from
-// its label to the next function label.
 func functionListing(text, label string) string {
 	start := strings.Index(text, label+":\n")
 	if start < 0 {
 		return ""
 	}
 	rest := text[start+len(label)+2:]
-	// The function's register entries, `<label>.k:` and `<label>.r:`, are
-	// inside its listing.
 	from := 0
 	for {
 		end := strings.Index(rest[from:], "\n__fn_")

@@ -1,27 +1,3 @@
-// `chown_at` end to end on every backend that provides it — the four
-// natives. Neither WASI preview records an owner on a filesystem entry, so
-// E066 refuses the builtin there (capability `fsowner`) and the last test in
-// this file is that refusal rather than a wasm probe.
-//
-// What no unit test can assert: each backend builds the fchownat arguments by
-// hand — three hand-written assembly sequences and one Go one — and three of
-// the five are places to get something plausible-but-wrong. The -1 sentinel is
-// a 32-bit 0xffffffff, so a backend that widened it to 64 bits before the call
-// would hand the kernel a value it rejects; the FLAG is inverted relative to
-// the argument (`follow` true means flags 0), so a backend that passed the
-// bool straight through would chown the symlink where it was asked for the
-// target; and the uid and gid are adjacent same-typed operands, so swapping
-// them produces a call that succeeds against the wrong field. Every case here
-// reads the result back through Go's own Lstat rather than through Fern's
-// `stat`.
-//
-// PRIVILEGE. Changing an OWNER needs CAP_CHOWN; changing a GROUP needs only
-// that the caller own the file and belong to the target group. So the harness
-// MEASURES both rather than assuming either: it tries the calls itself in the
-// same directory first, and the probe then asserts either the change or the
-// same refusal. There is no arm that silently skips. This matters because CI
-// and this dev machine disagree — as root every chown succeeds and the EPERM
-// diagnostics would go unproven.
 package e2e
 
 import (
@@ -34,22 +10,14 @@ import (
 	"testing"
 )
 
-// chownIds is what the harness measured about this process: a group it may
-// move a file it owns into, and whether it may change an owner at all.
 type chownIds struct {
 	uid      int
 	gid      int
 	altGid   int
 	mayChown bool
-	// altUid is meaningful only when mayChown; it is the owner the probe
-	// moves a file to.
-	altUid int
+	altUid   int
 }
 
-// measureChownIds establishes, by doing them, which of the two changes this
-// process may make in `dir`. Nothing here is assumed: a harness that took
-// either answer on trust would skip the privileged cases on a runner that
-// could run them, or fail on one that could not.
 func measureChownIds(t *testing.T, dir string) chownIds {
 	t.Helper()
 	probe := filepath.Join(dir, ".chownprobe")
@@ -67,16 +35,10 @@ func measureChownIds(t *testing.T, dir string) chownIds {
 	}
 	ids := chownIds{uid: int(st.Uid), gid: int(st.Gid), altGid: -1, altUid: -1}
 
-	// A group this process may move the file into, which is not the one it
-	// is already in — otherwise a `chown_at` that did nothing would pass.
 	groups, err := os.Getgroups()
 	if err != nil {
 		t.Fatalf("getgroups: %v", err)
 	}
-	// Root may use any group, and on a runner whose only supplementary
-	// group is its primary one there is nothing in `groups` to pick. 0 and
-	// 1 exist on every unix, so they are the fallbacks to TRY — and a
-	// failure below is what decides, not this list.
 	for _, g := range append(groups, 0, 1) {
 		if g == ids.gid {
 			continue
@@ -90,13 +52,10 @@ func measureChownIds(t *testing.T, dir string) chownIds {
 		t.Fatalf("no group this process may move %s into, and it belongs to %v — "+
 			"the probe cannot prove a group change anywhere", probe, groups)
 	}
-	// Put it back, so what the probe observes later is the original.
 	if err := syscall.Chown(probe, -1, ids.gid); err != nil {
 		t.Fatalf("restoring the probe's group: %v", err)
 	}
 
-	// And whether an OWNER may change. 65534 (nobody) is the conventional
-	// unprivileged id and exists on every runner this suite meets.
 	const nobody = 65534
 	target := nobody
 	if ids.uid == nobody {
@@ -114,16 +73,6 @@ func measureChownIds(t *testing.T, dir string) chownIds {
 	return ids
 }
 
-// chownAtSource is the probe. Every failure returns its own exit code, so the
-// number names the step.
-//
-// The tree it builds, all in `dir`:
-//
-//	plain   a regular file, the group-change and no-op subject
-//	tgt     a regular file, the target of both symlinks
-//	lnk     a symlink to tgt, chowned WITHOUT following
-//	flnk    a symlink to tgt, chowned WITH following
-//	owned   a regular file, the owner-change subject
 func chownAtSource(dir string, ids chownIds) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	src := fmt.Sprintf(`function main(): i32 {
@@ -173,7 +122,6 @@ func chownAtSource(dir string, ids chownIds) string {
 	return src
 }
 
-// chownAtSeed builds the tree chownAtSource operates on.
 func chownAtSeed(t *testing.T, dir string) {
 	t.Helper()
 	for _, name := range []string{"plain", "tgt", "owned"} {
@@ -190,9 +138,6 @@ func chownAtSeed(t *testing.T, dir string) {
 	}
 }
 
-// chownAtCheckTree reads the tree back through Go's own Lstat, so a `stat`
-// that agreed with a broken `chown_at` about the wrong ids cannot make the
-// probe self-consistent.
 func chownAtCheckTree(t *testing.T, dir string, ids chownIds) {
 	t.Helper()
 	lstat := func(name string) *syscall.Stat_t {
@@ -214,9 +159,6 @@ func chownAtCheckTree(t *testing.T, dir string, ids chownIds) {
 		t.Errorf("plain uid = %d, want %d — a uid of -1 did not leave the owner alone", uid, ids.uid)
 	}
 
-	// The unfollowed symlink moved and its target did not; the followed one
-	// is the other way round. `tgt` is shared, so it carries the followed
-	// case's change and neither link's.
 	if _, gid := owner("lnk"); gid != ids.altGid {
 		t.Errorf("lnk gid = %d, want %d — follow=false did not change the LINK", gid, ids.altGid)
 	}
@@ -283,12 +225,6 @@ func TestInterpChownAt(t *testing.T) {
 	chownAtCheckTree(t, dir, ids)
 }
 
-// Neither WASI preview records an owner on an entry — preview 1's `filestat`
-// has no uid or gid field and the component model's `descriptor-stat` none
-// either — so there is nothing to set and no owner a success would describe.
-// The answer on that target is a named refusal at check time, not a backend
-// stub: no wasi profile grants `fsowner`, and E066 says so with the builtin's
-// name and the call site's position.
 func TestWASMChownAtRefused(t *testing.T) {
 	dir := t.TempDir()
 	bin := buildFernCLI(t)

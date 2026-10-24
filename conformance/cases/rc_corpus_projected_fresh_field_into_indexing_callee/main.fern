@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7867 slice 4 / #7914 item 1. A fresh struct's array field
-// projected straight into a call argument —
-// `filter_gate(check_module(...).diags)` — leaked the retained
-// projection and everything it held (608 B/call measured),
-// because the callee indexed its parameter and the blanket
-// Index refusal kept the whole argument reclaim closed. The
-// credit admits ds[i].line (a scalar projection) and
-// out.append(ds[i]) (the push emits the element retain), so the
-// caller's stage-(b) drop fires and the tree balances.
+
+
+
+
+
+
+
+
+
+
+
+
 struct Diag { msg: string, line: i32 }
 struct ModuleTypes { diags: Diag[], names: string[], count: i32 }
 

@@ -10,36 +10,9 @@ import (
 	"testing"
 )
 
-// `xs.join(sep)` borrows its RECEIVER: the join reads the elements to size and
-// fill a fresh block and stores nothing, on every backend. The register one is
-// Fern source (`asmcore.rt_src_arr_str_join`), which sums the lengths and
-// memcpy's each piece into one exact-size `__raw_alloc` so the result cannot
-// alias any element, and wasm's `$__fern_str_join` copies bytes into a freshly
-// boxed result. So a string[] local that would otherwise be fully reclaimed
-// keeps its credit, and `let s = xs.join(sep)` is credited as fresh.
-//
-// Measured, 400 rounds of the harness below (receiver escaping -> receiver
-// borrowed -> result credited):
-//
-//	elements   x86-64                  arm64                   wasm
-//	1          102400 -> 51200 -> 0    102400 -> 51200 -> 0    89600 -> 44800 -> 0
-//	4          377600 -> 172800 -> 0   377600 -> 172800 -> 0   345600 -> 166400 -> 0
-//	8          742400 -> 332800 -> 0   742400 -> 332800 -> 0   688000 -> 329600 -> 0
-//
-// The RESULT credit reads the receiver's DECLARED type, from the body's
-// annotated `let`s and from the function's parameters: a user-declared
-// `(h: Holder) join(sep)` returning `h.name` types as a string too, and freeing
-// its result would free a field the receiver still owns (exit 97 on x86-64, a
-// trap on wasm — pinned by the last case below). An UNANNOTATED local receiver
-// has nothing to read and is refused.
-//
-// The receiver borrow needs no such gate: the escape analysis runs over a slot
-// already known to be `string[]`, and a user method cannot be called on one.
-
 const strArrJoinPrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
-// strArrJoinHeap builds a `round` that joins an n-element literal.
 func strArrJoinHeap(n, limit int) string {
 	elems := make([]string, n)
 	for i := range elems {
@@ -78,9 +51,6 @@ var strArrJoinFaultCases = []struct {
 	name string
 	src  string
 }{
-	// The array and every element are read AFTER the join, behind decoys that
-	// would be handed a freed block if the reclaim landed early. A second join
-	// over the same array pins that the first one consumed nothing.
 	{"strarr-join-elements-live", strArrJoinPrelude + `function round(pre: string): i32 {
     let xs: string[] = [w("e0"), w("e1"), w("e2")];
     let s: string = xs.join("|");
@@ -100,9 +70,6 @@ var strArrJoinFaultCases = []struct {
     return 3;
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// The array escapes by return, so the credit is withheld and the caller's
-	// reads have to find the elements — a join in the same frame does not
-	// change that verdict.
 	{"strarr-join-array-escapes", strArrJoinPrelude + `function build(pre: string): string[] {
     let xs: string[] = [w("e0"), w("e1")];
     let s: string = xs.join("|");
@@ -118,8 +85,6 @@ function round(pre: string): i32 {
     return ys.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 2) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// A `string[]` PARAM receiver, typed by its declaration. Correctness only —
-	// the heap side of this shape is `strarr-join-param-receiver` below.
 	{"strarr-join-param-receiver-live", strArrJoinPrelude + `function joined(xs: string[]): i32 {
     let s: string = xs.join("|");
     return s.len() % 251;
@@ -140,10 +105,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
-	// The heap side of the param receiver: 131200 on x86-64 and 128000 on wasm
-	// with the parameter's type unread. Self-contained rather than
-	// generated, because the array has to live in the CALLER for only the result
-	// to be in play.
 	{"strarr-join-param-receiver", strArrJoinPrelude + `function joined(xs: string[]): i32 {
     let s: string = xs.join("|");
     return s.len() % 251;
@@ -160,9 +121,6 @@ function main(): i32 {
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
 }`},
-	// PARAM negative: reading parameters' types must not widen the credit past
-	// the type test. A struct param whose user `join` returns an ALIAS
-	// is refused for the same reason the local-receiver case below is.
 	{"strarr-join-param-user-method-not-credited", strArrJoinPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) join(sep: string): string { return h.name; }
 function joined(h: Holder): i32 { let s: string = h.join("|"); return s.len() % 251; }
@@ -180,11 +138,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
-	// A USER method named `join` whose result aliases a field the receiver still
-	// owns. Nothing may credit it, and this is what proves the receiver-type
-	// test is required: crediting every `.join` result by name instead exits 97
-	// here on x86-64 and traps on wasm, while the heap cases above go to 0
-	// either way.
 	{"strarr-join-user-method-not-credited", strArrJoinPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) join(sep: string): string { return h.name; }
 function churn(pre: string): i32 { let a: string = w(pre + "1"); let b: string = w(pre + "2"); let c: string = w(pre + "3"); return a.len() + b.len() + c.len(); }
@@ -224,7 +177,6 @@ func strArrJoinSources(wasm bool) []struct{ name, src string } {
 	return out
 }
 
-// TestSelfHostStrArrJoinBorrowIRX86_64 is the x86-64 leg.
 func TestSelfHostStrArrJoinBorrowIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -252,7 +204,6 @@ func TestSelfHostStrArrJoinBorrowIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrJoinBorrowIRArm64 is the arm64 leg.
 func TestSelfHostStrArrJoinBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -276,7 +227,6 @@ func TestSelfHostStrArrJoinBorrowIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrJoinBorrowWasmIR is the wasm leg.
 func TestSelfHostStrArrJoinBorrowWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping strarr join borrow wasm IR e2e")

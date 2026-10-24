@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWriteFileX86_64 exercises the self-hosted x86-64
-// emitter's `write_file` runtime builtin (std/test plan: the OS-syscall
-// batch). It can't be cross-checked against a fixed value, so it
-// round-trips: write a file, read it back, and compare — exercising
-// both `__fern_write_file` (new) and `__fern_read_file` end-to-end
-// through the self-host compiler.
 func TestSelfHostWriteFileX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

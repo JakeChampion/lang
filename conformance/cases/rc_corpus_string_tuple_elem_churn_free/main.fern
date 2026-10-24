@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// String TUPLE ELEMENT reclamation (wasm). A (string, i32) tuple's
-// string element is retained on construction (alias-inc), dup'd
-// when destructured (so the binding co-owns), and freed once by the
-// tuple's deep-drop __fern_str_dec after the binding + source also
-// dec. Exercises both projection paths (destructure `let (a,_)` and
-// direct `t.0`). 100x churn; a double-free / UAF / underflow on the
-// element buffer trips the checksum or underflow detector.
-// a.len()=2 + t.0.len()=2 + s.len()=2 = 6; 100*6=600.
+
+
+
+
+
+
+
+
+
+
+
 function mk(seed: i32): i32 {
     let pre: string = "v";
     let s: string = pre + "x";

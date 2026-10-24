@@ -1,21 +1,21 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8104. A read-only accessor that hands back a SUB-OBJECT of its
-// receiver — an element, or the array field itself — used to make
-// the receiver escape, which put it on the owned rung: a caller-side
-// retain and an is_unique-gated deep drop at every call, on a method
-// that reclaims nothing. The projection carries its own unit (the
-// Return lowering incs it), so the receiver borrows now.
-//
-// What the case watches is the drop that credit removes. `b` is the
-// only owner of its cells array; if the returned element were NOT
-// inc'd, borrowing the receiver would leave `everything` and the two
-// Slots pointing into a buffer the round's exit sweep frees, and the
-// next round's writes would land in it. Value-checked at 979 so a
-// stale read fails, __rc_underflow_count() folded in so an
-// over-release does, and leak-gated at 0 on both backends so the
-// removed drop cannot become a leak.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct Slot { n: i32, tag: i32 }
 struct Bag { cells: Slot[], k: i32 }
 

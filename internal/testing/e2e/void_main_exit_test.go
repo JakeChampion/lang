@@ -7,29 +7,12 @@ import (
 	"testing"
 )
 
-// A `main` that returns nothing exits 0.
-//
-// The natives take the exit status from the return register after calling
-// main, and for a void main that register holds whatever its last call
-// left there — so the status was a stable fact about the EMITTED CODE
-// rather than about the program: `print("hi")` alone exited 232, and one
-// `isatty` in front of it exited 248 (#9233). The wasm side had already
-// decided it the other way (`SynthCliRun`: void main → `i32.const 0`),
-// so the three backends disagreed about the same program.
-//
-// What the program DOES matters: the leftover is whatever the last call
-// returned, so a main that happens to end on a zero passes either way.
-// This one ended on 232 on both natives before the fix — a concatenation
-// and a print, the two most ordinary things a void main can do.
 const voidMainExitSource = `function main(): void {
     let s: string = "abc";
     print(s + "d");
 }
 `
 
-// An i32 main still decides its own status, which is the half that was
-// never broken — and the one that proves the zeroing is gated rather
-// than unconditional.
 const i32MainExitSource = `function main(): i32 {
     print("hi");
     return 7;
@@ -62,8 +45,6 @@ func TestArm64VoidMainExitsZero(t *testing.T) {
 	}
 }
 
-// The interpreter has always exited 0 for a void main; the case is here
-// so the three answers are pinned in one place.
 func TestInterpVoidMainExitsZero(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "prog.fern")
 	if err := os.WriteFile(p, []byte(voidMainExitSource), 0o644); err != nil {

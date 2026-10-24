@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostQualifiedVariantIRX86_64 verifies that the QUALIFIED enum-variant
-// surface forms — qualified construction (`Color.Custom(7)`, `Color.Red`) and
-// qualified match patterns (`Color.Custom(v) =>`, `Color.Red =>`) — lower through
-// the self-host IR path and run correctly, alongside the bare spellings
-// (`Custom(7)` / `Custom(v) =>`).
-//
-// use_box builds Box{c: Color.Custom(7), n: 5} and matches on the field with
-// qualified patterns, returning the payload + n = 7 + 5 = 12. The exit code pins
-// construction + pattern + payload binding through the field.
 func TestSelfHostQualifiedVariantIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

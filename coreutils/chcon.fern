@@ -1,55 +1,3 @@
-// chcon.fern — GNU-compatible `chcon`.
-//
-//   chcon [OPTION]... CONTEXT FILE...
-//   chcon [OPTION]... [-u USER] [-r ROLE] [-l RANGE] [-t TYPE] FILE...
-//   chcon [OPTION]... --reference=RFILE FILE...
-//
-// The SELinux security context of a file is its `security.selinux`
-// extended attribute, read with `getxattr` and written with `setxattr`
-// the way libselinux's getfilecon(3) and setfilecon(3) do (see
-// lib/selinux.fern). A change that fails reports the kernel's errno in
-// GNU's frame — `Operation not permitted` for a caller who may not write
-// `security.*` on a kernel with no SELinux, which is what GNU built with
-// libselinux prints there too.
-//
-// ---- the argument shape ------------------------------------------------
-//
-// How many operands are required depends on how the context was named:
-// two (CONTEXT and one FILE) when it is a bare operand, one when
-// `--reference` or any of `-u -r -t -l` named it. The count is checked
-// BEFORE the reference file is read, so `chcon --reference=RFILE` with no
-// FILE is `missing operand` rather than anything about RFILE.
-//
-// `missing operand after %s` names the LAST OPERAND, not the last argv
-// element: glibc permutes the options to the front, so `chcon f
-// --verbose` reports `f`.
-//
-// `conflicting security context specifiers given` — `--reference`
-// together with one of the four component options — is checked AFTER the
-// reference file has been read, so on a machine with no SELinux the read
-// fails first and the message is unreachable. The order is kept as GNU
-// has it rather than tidied, because tidying it would change which
-// diagnostic a machine that HAS SELinux prints.
-//
-// ---- the walk ----------------------------------------------------------
-//
-// Without `-R` a directory operand is changed and not descended into.
-// With `-R` a directory is changed AFTER its children, because GNU does
-// nothing on fts's pre-order visit and acts on the post-order one; a
-// directory whose children cannot be listed is reported and never
-// changed, because fts reports it instead of yielding that second visit.
-//
-// `-H`, `-L` and `-P` are last-one-wins and only `-R` consults them. `-h`
-// / `--dereference` are separately tracked, and the two combinations GNU
-// rejects outright — `-R --dereference` with neither `-H` nor `-L`, and
-// `-R -h` with one of them — exit 1 with no usage line.
-//
-// The name a diagnostic shows is fts's, and fts holds a descriptor on the
-// directory it is inside: `cannot access`, `cannot read directory` and
-// the `-v` line name the whole path, while the change itself names the
-// path RELATIVE to that directory — a bare `g` for `d/sub/g`. Under `-L`
-// fts does not chdir and the two are the same. `shown` below is that
-// name.
 import "std/string";
 import "std/array";
 import "std/errno";
@@ -113,7 +61,6 @@ function opt_physical(): i32 {
   return 14;
 }
 
-// The three traversal modes `-H`, `-L` and `-P` select.
 function walk_physical(): i32 {
   return 0;
 }
@@ -177,8 +124,6 @@ function help_text(): string {
   return out;
 }
 
-// `comps` / `set` are the component options, indexed user 0, role 1, type 2,
-// range 3 as `selinux.merge_context` reads them.
 struct Settings { recursive: boolean, preserve_root: boolean, verbose: boolean, walk: i32, deref: i32, referent: boolean, context: string, component: boolean, comps: string[], set: boolean[] }
 
 struct St { out: gnu.Stdio, status: i32 }
@@ -200,9 +145,6 @@ function component_index(id: i32): i32 {
   return 3;
 }
 
-// The option scan. `-H` / `-L` / `-P` and `-h` / `--dereference` are both
-// last-one-wins, and the two are independent: which one a `-R` run needs
-// is decided after the scan, not during it.
 function scan_options(): (Settings, string[], boolean, string) {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
@@ -262,9 +204,6 @@ function scan_options(): (Settings, string[], boolean, string) {
   return (s, g.operands(), has_reference, reference);
 }
 
-// Which of `-H` / `-L` / `-P` a `-R` run was given, against which of
-// `-h` / `--dereference`, decides whether the symlinks met are followed
-// — and two of the combinations are refused rather than resolved.
 function resolve_traversal(s0: Settings): Settings {
   let s: Settings = s0;
   if (s.recursive) {
@@ -284,9 +223,6 @@ function resolve_traversal(s0: Settings): Settings {
   return Settings { ...s, walk: walk_physical(), referent: s.deref != 0 };
 }
 
-// ---- the root failsafe -----------------------------------------------------
-// Compared by device and inode, so every spelling of `/` is caught — `//`,
-// `/.`, `/tmp/..` — and each one that is not literally `/` says so.
 function is_root_dir(info: FileStat): boolean {
   match (stat("/")) {
     Ok(root) => {
@@ -311,12 +247,6 @@ function is_dir_mode(m: u32): boolean {
   return (m & 61440 as u32) == 16384 as u32;
 }
 
-// ---- one entry -------------------------------------------------------------
-// The component forms read the file's context first and rebuild it; an
-// unchanged result is success without a write. A context named outright is
-// always written. `shown` is the name fts would hand libselinux, which is
-// the path relative to the directory fts is sitting in; `path` is the whole
-// one, which is what this process needs.
 function change_one(st0: St, s: Settings, path: string, shown: string): St {
   let st: St = st0;
   if (s.verbose) {
@@ -330,8 +260,6 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
         cur = c;
       },
       Err(e) => {
-        // ENODATA is a file with no label, which GNU will not complete
-        // from a partial context.
         if (errno.of(e) == errno.ENODATA) {
           return fail(st, "can't apply partial context to unlabeled file " + gnu.quotea(shown));
         }
@@ -363,10 +291,6 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
   }
 }
 
-// ---- the walk --------------------------------------------------------------
-// `top` marks a command-line operand: only there does `-H` follow a
-// symlink. `shown` is what a change names, which is the basename below
-// the top except under `-L`, where fts holds no directory descriptor.
 function process(st0: St, s: Settings, path: string, shown: string, top: boolean): St {
   let st: St = st0;
   let follow: boolean = s.walk == walk_logical() || top && s.walk == walk_comfollow();
@@ -399,8 +323,6 @@ function process(st0: St, s: Settings, path: string, shown: string, top: boolean
           }
         },
         Err(e) => {
-          // A directory fts could not read never yields the second visit
-          // the change hangs off, so it is reported and left alone.
           return fail(st, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
         }
       }
@@ -431,9 +353,6 @@ pub function main(): i32 {
   }
 
   if (has_reference) {
-    // getfilecon(3) of RFILE. GNU exits here on failure, so the
-    // conflicting-specifiers check below is unreachable on a machine with
-    // no SELinux.
     match (selinux.file_context(reference, true)) {
       Ok(c) => {
         s = Settings { ...s, context: c };

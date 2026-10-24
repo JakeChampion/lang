@@ -1,20 +1,7 @@
-// A fresh enum temporary coerced to `dyn Trait` at a call argument
-// (docs/DYN-TRAITS.md §4.4). The argument is stashed so it can be released
-// once the callee has borrowed it, and the stash was typed by the argument's
-// STATIC type, the enum, while the value the coercion lowers to is the dyn
-// representation. The post-call release therefore ran the enum's drop on the
-// natives' `{data, vtable}` cell, which has no rc header: the unique test read
-// the eight bytes before the cell, and the tag read took the data pointer as a
-// variant tag. Whether that crashed depended on what the allocator had put
-// next to the cell — a dyn local declared in the same loop body was enough on
-// both x86-64 and arm64.
 package e2e
 
 import "testing"
 
-// dynArgTempSrc dispatches through a fresh `Shape.Line(i)` temporary each
-// trip, with a counted record behind a dyn local in the same body. Each trip
-// contributes 2 + i.
 func dynArgTempSrc(n string) string {
 	return `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -41,10 +28,6 @@ function main(): i32 {
 }`
 }
 
-// dynArgTempBumpSrc: the temporary's concrete owns a string, and releasing the
-// stash as a dyn has to reach it through the vtable's drop slot, so a churn
-// four times as long adds no heap high-water. Returns a verdict for the reason
-// rc_dyn_coerce_struct_local_test.go gives.
 func dynArgTempBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
@@ -126,12 +109,6 @@ func TestDynCoercedArgTempBounded(t *testing.T) {
 	})
 }
 
-// dynArgNonFreshSrc coerces concretes the call does not own at the argument:
-// a local record, a record from outside the loop, a nullary variant, an
-// integer and a string. The natives' `{data, vtable}` cell is still the
-// call's own. It is released as a dyn, so the concrete is retained for it
-// first and the release balances. Each trip contributes 1 + 2 + 4 + i + 3 +
-// the local's name length again, read after the calls.
 func dynArgNonFreshSrc(n string) string {
 	return `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -163,8 +140,6 @@ function main(): i32 {
 }`
 }
 
-// dynArgNonFreshBumpSrc churns the same non-fresh coercions, so a leaked cell
-// shows as high-water that grows with the churn length.
 func dynArgNonFreshBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {

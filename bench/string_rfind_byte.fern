@@ -1,24 +1,9 @@
 import "std/string";
 
-// string_rfind_byte — the backward counterpart of string_find_byte: a
-// single-byte needle scanned from the END of a long haystack that only answers
-// at the very first byte.
-//
-// This is the shape `__rmemchr` exists for (docs/ATLAS-PLATFORM-PLAN.md §3.3):
-// `last_index_of` routes a one-byte needle to it, and the kernel walks DOWN a
-// vector block at a time, scanning each block's mask for its HIGHEST set bit
-// rather than its lowest. It gates that the same way string_find_byte gates
-// the forward kernel — a return to a byte-at-a-time loop moves this number by
-// most of an order of magnitude, and nothing else in the corpus would notice.
-//
-// The needle is the only '!' and it sits near the START, so every call walks
-// the whole haystack down to it; a hit near the end would measure the call
-// overhead instead. It is at index 3 rather than 0 so the checksum is nonzero
-// — a loop optimised away would otherwise sum to the same 0 as a loop that ran.
 function haystack(): string {
   let s: string = "abcdefghijklmnopqrstuvwxyz012345";
   let k: i32 = 0;
-  while (k < 10) {  // 32 B -> 32 KiB
+  while (k < 10) {
     s = s + s;
     k = k + 1;
   }

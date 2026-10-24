@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWatbinSimdLanes pins the SIMD vocabulary the lane type emits
-// (docs/SIMD-GENERIC-KERNELS.md §6): the f64x2 and f32x4 arithmetic,
-// compares, roundings, lane moves and the v128 bitwise ops. The byte kernels
-// reach only a handful of 0xFD sub-opcodes, and a wrong sub-opcode is usually
-// another VALID instruction, so an encoding table cannot be pinned by
-// validation alone. The module below computes with every op and exits 0 only
-// when each result is the one the spec gives; it runs once from the WAT
-// through wasmtime's own parser and once from the bytes watbin assembled, and
-// the two legs must agree on exit 0.
 func TestSelfHostWatbinSimdLanes(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -52,9 +43,6 @@ func TestSelfHostWatbinSimdLanes(t *testing.T) {
 		t.Errorf("watbin's module exits %d, want 0: check %d failed\n%s", code, code, out)
 	}
 
-	// A lane index at the shape's lane count names no lane. The encoder
-	// refuses it, as it refuses an unknown instruction, rather than masking it
-	// to a lane that validates.
 	if err := os.WriteFile(watPath, []byte(simdLaneOutOfRangeWat), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +55,6 @@ func TestSelfHostWatbinSimdLanes(t *testing.T) {
 	}
 }
 
-// simdLaneOutOfRangeWat reads lane 2 of an f64x2, which has lanes 0 and 1.
 const simdLaneOutOfRangeWat = `(module
   (memory (export "memory") 1)
   (func (export "_start") (result f64)
@@ -77,20 +64,6 @@ const simdLaneOutOfRangeWat = `(module
 )
 `
 
-// simdLanesWat exits with the number of the first failing check, 0 when every
-// op gave the spec's answer. Lanes are read back with extract_lane and
-// compared as scalars, so a wrong sub-opcode shows up as a value, not a trap.
-// The checks run in the order the SIMD table lists the ops: the f64x2
-// arithmetic, min/max, abs/neg/sqrt, the roundings, the six compares and
-// bitselect, the v128 bitwise ops, load and store, then the same for f32x4,
-// then the promote/demote pair; watbin takes no `;;` comments, so the exit
-// code is the only label a check carries. Check 34 is a separate function
-// written in the flat spelling, which watbin encodes on its other path and
-// picks per function from the body's first atom.
-// An f32 lane is read back through f64.promote_f32 and built through
-// f32.demote_f64, the two f32 scalar ops the emitter already uses, so the
-// module needs no f32 constants. The last check repeats two ops in the flat
-// spelling, which watbin encodes on its other path.
 const simdLanesWat = `(module
   (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
   (memory (export "memory") 1)

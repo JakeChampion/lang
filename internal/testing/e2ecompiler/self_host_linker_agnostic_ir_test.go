@@ -7,31 +7,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostLinkerAgnosticIRX86_64 is the regression gate for issue #4081:
-// the self-host x86-64 backend must emit freestanding `-static -nostdlib
-// -no-pie` programs that link CORRECTLY under any linker, not just GNU bfd.
-//
-// Two shapes would make the output bfd-only:
-//
-//  1. A heap reserved as a static `.bss` region and addressed via
-//     64-bit-absolute `movabs` relies on bfd's default .bss ordering. The heap
-//     is an mmap'd arena, so its base comes from the kernel and no
-//     linker-layout assumption survives.
-//
-//  2. `g[0][0].len()` on a nested `string[][]` must read the string's length,
-//     not its data pointer. Summing data pointers makes the result depend on
-//     where the linker places `.rodata`: the issue's repro returned 5 under
-//     bfd (rodata low bytes 0x00+0x02+0x03) but 253 under lld (0xa8+0xaa+0xab).
-//
-// The gate compiles a string-heavy program ONCE with the self-host driver, then
-// links the SAME `.s` with every available linker (bfd always, lld/mold when
-// present) and asserts they all produce the SAME, CORRECT exit code.
 func TestSelfHostLinkerAgnosticIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		// Comparing linkers is about the x86-64 ELF layout; run it natively so
-		// the result reflects the binary, not a qemu transition. (The bug is
-		// host-independent, but a native run keeps the gate simple + fast.)
 		t.Skip("linker-agnostic gate runs only natively (multi-linker link+run)")
 	}
 	dir := writeSelfHostAsmProject(t)
@@ -49,25 +27,17 @@ func TestSelfHostLinkerAgnosticIRX86_64(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// The exact issue #4081 repro: nested string boxes, `.len()` on each
-		// element. 2 + 1 + 2 = 5.
 		{"issue-4081-repro",
 			`function main(): i32 { let g: string[][] = [["ab", "c"], ["de"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len(); }`, 5},
-		// Deeper: every cell of a 2x2-ish ragged string grid, lengths chosen so
-		// the sum (4+3+2+1 = 10) is NOT a coincidence of rodata layout.
 		{"string-grid-len",
 			`function main(): i32 { let g: string[][] = [["abcd", "efg"], ["hi", "j"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len() + g[1][1].len(); }`, 10},
-		// A nested string element bound to a local, then `.len()` off the local —
-		// exercises the `let r = g[i][j]` rebind tracking the string kind.
 		{"nested-rebind-len",
 			`function main(): i32 { let g: string[][] = [["xyz", "w"], ["uv"]]; let r: string = g[0][0]; return r.len(); }`, 3},
 	}
 
-	// Discover the available linkers. bfd is gcc's default (always present);
-	// lld + mold are opportunistic — each present one must agree with bfd.
 	type linker struct {
 		name string
-		flag string // gcc -fuse-ld=… flag, "" for the default (bfd)
+		flag string
 	}
 	linkers := []linker{{"bfd", ""}}
 	if _, err := exec.LookPath("ld.lld"); err == nil {

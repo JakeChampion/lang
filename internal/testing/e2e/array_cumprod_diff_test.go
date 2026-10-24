@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array's `cumproduct` / `adjacent_diff` at an
-// f64 element — two scan-style
-// operations that need sequential context (so map can't express them):
-// cumprod is the running product; diff is the successive differences (one
-// shorter than the input, the discrete derivative and left-inverse of cumsum).
-// Both return an f64[] (scalar payload), so they lower on all four backends.
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
-// leg skips itself when its toolchain is absent.
 const arrayCumprodDiffProg = `
 import "std/array";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

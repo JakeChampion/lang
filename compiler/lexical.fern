@@ -3,16 +3,12 @@ import "./astwalk";
 import "./parser";
 import "./util";
 
-// Binding identity belongs to the declaration, not to a mutable value or a
-// later use's spelling. Symbols bridge the existing string-named syntax.
 pub struct Binding { id: i32, name: string, symbol: string, line: i32, col: i32 }
 
 pub struct ResolvedFunction { func: parser.FuncDecl, bindings: Binding[] }
 
 struct Scope { bindings: Binding[], visible: i32[], reserved: string[] }
 
-// Symbols retain the declaration spelling after the numeric identity. Decode
-// that spelling only for diagnostics; lookup and ownership keep the full key.
 pub function source_name(symbol: string): string {
   if (symbol.len() < 12 || slice_unchecked(symbol, 0, 9) != "$binding$") {
     return symbol;
@@ -77,7 +73,6 @@ function names(s: Scope, packed: string): string {
   return out;
 }
 
-// Preserve newly allocated identities, but restore lexical visibility.
 function leave(inner: Scope, outer: Scope): Scope {
   return Scope { ...inner, visible: outer.visible };
 }

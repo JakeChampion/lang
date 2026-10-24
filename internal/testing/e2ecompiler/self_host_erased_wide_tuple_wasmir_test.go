@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostErasedWideTupleWasm pins the TUPLE half of the erased-wide close
-// (#5464): a bare-tuple-return erased fn — `pair[K,V](k:K,v:V):(K,V)` — passing a
-// 64-bit / f64 value through its erased params on the wasm IR path. The wasm
-// tuple box is a uniform 8-byte-per-element layout, so the widened i64 element is
-// stored 8-byte and read back at the caller's concrete per-element width with no
-// layout change: t.0 (i64) reads i64.load, t.1 (i32) reads i32.load of the low
-// word — both at the same 8-byte-strided offset. Cases assert the module lowers
-// and computes the right value under wasmtime. Values cross-checked against the
-// interpreter.
 func TestSelfHostErasedWideTupleWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide tuple wasm IR e2e")
@@ -32,17 +23,9 @@ func TestSelfHostErasedWideTupleWasm(t *testing.T) {
 		src  string
 		want int
 	}{
-		// i64 first element: t.0 occupies the full-width i64 slot; t.1 (i32) reads the
-		// low word at the same 8-byte stride. 5e9/1e9 + 3 = 5 + 3 = 8.
 		{"i64-elem", pair + ` function main(): i32 { let t = pair(5000000000 as i64, 3); return (t.0 / 1000000000) as i32 + t.1; }`, 8},
-		// f64 first element: reinterpreted into the i64 slot at the call, read back
-		// as f64. 2.5*2.0 + 4 = 5 + 4 = 9.
 		{"f64-elem", pair + ` function main(): i32 { let t = pair(2.5, 4); return (t.0 * 2.0) as i32 + t.1; }`, 9},
-		// A string (pointer) element still round-trips through the widened i64 slot
-		// (wasm32 pointer in the low word). "xy".len() + 3 = 2 + 3 = 5. Guards that
-		// widening the shared fn does not regress a non-wide tuple caller.
 		{"string-elem", pair + ` function main(): i32 { let t = pair("xy", 3); return t.0.len() + t.1; }`, 5},
-		// Destructure `let (a, b) = pair(...)` recovers both widened elements. 6 + 7 = 13.
 		{"destructure", pair + ` function main(): i32 { let (a, b) = pair(6000000000 as i64, 7); return (a / 1000000000) as i32 + b; }`, 13},
 	}
 	for _, tc := range cases {

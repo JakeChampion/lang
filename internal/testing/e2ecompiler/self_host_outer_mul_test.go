@@ -88,8 +88,6 @@ func TestSelfHostOuterMulBits(t *testing.T) {
 	}
 	t.Run("interpreters", func(t *testing.T) {
 		src := filepath.Join(t.TempDir(), "main.fern")
-		// The Fern interpreter has no physical RC counter. The compiled legs
-		// above check that counter as well as the complete exit-time census.
 		oracle := strings.Replace(outerMulSrc, "if (__rc_underflow_count() != 0) { return 4; }", "", 1)
 		if err := os.WriteFile(src, []byte(oracle), 0o644); err != nil {
 			t.Fatal(err)
@@ -107,8 +105,6 @@ func TestSelfHostOuterMulEmissionAndShadow(t *testing.T) {
 	gcc, runner, driver := buildModloadDriverX86(t)
 	asm, _ := compileSourceModload(t, runner, driver, outerMulSrc)
 	body := emittedBody(t, asm, "__fn_kernel")
-	// The single-use inliner can move the wrapper's kernel into its caller.
-	// Inspect the reachable body in either form, retaining every opcode check.
 	if strings.Contains(body, "call __fn_array__outer_mul_f64") {
 		body = emittedBody(t, asm, "__fn_array__outer_mul_f64")
 	}
@@ -153,8 +149,6 @@ func TestSelfHostOuterMulOverflow(t *testing.T) {
 		})
 	}
 	t.Run("interpreters", func(t *testing.T) {
-		// Grow through the intrinsic so the Fern interpreter does not spend
-		// quadratic time interpreting immutable append for a large input.
 		const oracle = `function main(): i32 {
   let small: f64[] = [];
   let i: i32 = 0;

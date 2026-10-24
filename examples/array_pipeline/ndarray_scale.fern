@@ -1,6 +1,3 @@
-// Compile the same source with and without FERN_NO_SCALE_KERNEL=1.
-// Input size and round count are runtime parameters. Both builds must print
-// the same checksum. Counters include the handle's metadata, not just data.
 import "std/ndarray";
 import "std/string";
 
@@ -56,8 +53,6 @@ function main(): i32 {
     let start: i64 = monotonic_ns();
     let out: ndarray.NdArray[f64] = scale(xs);
     elapsed = elapsed + monotonic_ns() - start;
-    // Read every result after the timer, so verification neither dominates
-    // the kernel measurement nor lets the output become dead.
     let got: i64 = checksum(out);
     if (got != expected) {
       return 2;

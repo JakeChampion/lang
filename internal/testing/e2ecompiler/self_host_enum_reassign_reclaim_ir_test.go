@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// Enum self-reassign payload deep-drop (Perceus): in a loop-carried array-payload
-// enum `let b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }` each
-// superseded box is DEEP-DROPPED (payload array + box) at the reassign, so the
-// churn stays flat on every backend. A match that binds the payload must still
-// read it correctly.
-
 const enumReassignChurn = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
     let b: Bag = Keep([0, 0, 0, 0]);
@@ -30,10 +24,6 @@ function churn(n: i32): i32 {
 function main(): i32 { return churn(%d); }
 `
 
-// A 4000-byte payload (1000 i32) per reassign: on the register backends, if the
-// superseded array leaks, ~600k iterations exhaust the 2.5 GiB heap and the program
-// traps (exit 137). With the deep-drop it stays flat and completes. The payloads go
-// through id so they are built on the heap rather than placed as constants.
 const enumReassignFlatHeap = `enum Big { A(i32[]), B(i32[]) }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
@@ -50,10 +40,6 @@ function churn(n: i32): i32 {
 function main(): i32 { return churn(3000000); }
 `
 
-// Corruption probe (x86): a fresh array allocated in the same scope as the reassigns
-// must read back correctly (a mis-freed superseded payload would poison the recycled
-// buffer). acc = 10 * (7+8) = 150. The arrays go through id so they are built on
-// the heap rather than placed as constants.
 const enumReassignCorruptionProbe = `enum Bag { Keep(i32[]), Swap(i32[]) }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
@@ -72,9 +58,6 @@ function churn(n: i32): i32 {
 function main(): i32 { return churn(10); }
 `
 
-// GATED OUT: the payload IS bound (`Keep(a) => ...`), so b is disqualified and keeps
-// the safe box-only shallow free. Must still compute correctly. churn(3): last b is
-// Swap([2,2,2,2,2,2,2,2]) -> a[1] = 2.
 const enumReassignBoundFallback = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
     let b: Bag = Keep([0, 0, 0, 0, 0, 0, 0, 0]);
@@ -124,13 +107,11 @@ func TestSelfHostEnumReassignReclaimX86_64(t *testing.T) {
 	}
 
 	run("wildcard-churn", fmt.Sprintf(enumReassignChurn, 5), 2)
-	run("flat-heap-3M", enumReassignFlatHeap, 7) // exit 137 (OOM) if the payload leaks
+	run("flat-heap-3M", enumReassignFlatHeap, 7)
 	run("corruption-probe", enumReassignCorruptionProbe, 150)
 	run("payload-bound-fallback", enumReassignBoundFallback, 2)
 }
 
-// Wasm: the pattern is already reclaimed on wasm, so the extra deep-drop is a
-// rc-guarded no-op — the wildcard churn must still compute correctly and stay flat.
 func TestSelfHostEnumReassignReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping enum-reassign-reclaim wasm IR e2e")

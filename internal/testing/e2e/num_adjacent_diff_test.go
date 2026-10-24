@@ -1,12 +1,5 @@
 package e2e
 
-// Differential coverage for std/num `adjacent_diff` — the differences between
-// consecutive elements (`out[i] == xs[i+1] - xs[i]`), the inverse of `cumsum`.
-// Checks the deltas (including negatives), the `cumsum`/`adjacent_diff` inverse
-// relationship, the empty / single-element inputs (which yield empty), and an
-// i64 width. Returns 42 iff every check holds across interp / x86-64 / wasm /
-// arm64.
-
 import "testing"
 
 const numAdjacentDiffProg = `

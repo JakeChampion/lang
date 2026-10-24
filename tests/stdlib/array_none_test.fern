@@ -1,14 +1,6 @@
 import "std/test";
 import "std/array";
 
-// tests/stdlib/array_none_test.fern — pure-Fern coverage of std/array's
-// none[T](xs, pred) (free + method forms): true iff pred holds for NO element,
-// the readable complement of any; short-circuits, vacuously true for empty.
-// Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
-// budget; uses assert_true. Closure-based over a generic T[] (same shape as
-// any/all). conformance/cases/array_none_module pins it on every backend, incl. a
-// string-closure case.
-
 function is_neg(x: i32): boolean {
   return x < 0;
 }
@@ -35,7 +27,6 @@ function test_empty_vacuous(): test.TestOutcome {
 }
 
 function test_all_match(): test.TestOutcome {
-  // Every element negative → none(is_neg) is false.
   return test.assert_true(![0 - 1, 0 - 2, 0 - 3].none(is_neg));
 }
 

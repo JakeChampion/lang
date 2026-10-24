@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8003: what a call through a function value returns is the caller's
-// once every address-taken function hands back a box of its own —
-// bound in the arm (the serve loop's `let resp = handler(req, plat)`) or
-// passed straight on.
+
+
+
+
+
+
+
 struct Req { path: string, n: i32 }
 struct Resp { body: string }
 function parse(i: i32): Option[Req] {

@@ -10,16 +10,12 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// An import cycle between a program's own modules is refused with native's
-// E086, at the import that leads back to a module still being loaded (#11152). A diamond
-// reaches one module twice without a cycle and must still build; it imports
-// std/string as well, whose stdlib imports may cycle among themselves.
 func TestSelfHostImportCycleX86_64(t *testing.T) {
 	cases := []struct {
 		name    string
 		files   map[string]string
-		entry   string // relative to the directory; "" means its absolute main.fern
-		wantMsg string // "" means the program is accepted
+		entry   string
+		wantMsg string
 	}{
 		{name: "two-module cycle", files: map[string]string{
 			"a.fern":    "import \"./b\";\npub function fa(): i32 { return 1; }\npub function viab(): i32 { return b.fb(); }\n",
@@ -36,7 +32,6 @@ func TestSelfHostImportCycleX86_64(t *testing.T) {
 			"a.fern":    "import \"./main\";\npub function fa(): i32 { return 1; }\n",
 			"main.fern": "import \"./a\";\nfunction main(): i32 { return a.fa(); }\n",
 		}, wantMsg: "%DIR%/a.fern:1:1: error[E086]: import \"./main\" closes an import cycle"},
-		// A `./` spelling of the entry is the same module as the `./main` import.
 		{name: "entry named with ./", files: map[string]string{
 			"a.fern":    "import \"./main\";\npub function fa(): i32 { return 1; }\n",
 			"main.fern": "import \"./a\";\nfunction main(): i32 { return a.fa(); }\n",

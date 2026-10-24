@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The ARRAY-FIELD twin: `return sd.fields` hands back a buffer the
-// freed container's element also owned. The transfer inc is what
-// keeps it at rc 1 for the caller once the element's deep drop
-// releases its own unit; the element read and length after churn
-// prove the buffer and its string survived.
+
+
+
+
+
+
+
+
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
 function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("ffffffffff")] },

@@ -1,12 +1,12 @@
 // spec: IS-12
-//
-// `<<?` answers None whenever the shift loses information: when the
-// count is negative or at least the width, and when bits are shifted
-// out, which for a signed operand includes the sign bit changing. So
-// `a <<? n` is Some exactly when `a * 2^n` fits the operand type.
-// Each width is taken at both edges of its range: the last shift that
-// fits and the first that does not, including the signed MIN that a
-// negative value reaches without losing anything.
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 import "std/u32";

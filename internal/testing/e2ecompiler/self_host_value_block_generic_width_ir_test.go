@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// valueBlockGenericWidthIRCases pin that a value-position `if`/`match` keeps its
-// width when the arms CALL something and the block sits where no annotation can
-// supply it — #6468's remaining positions.
-//
-// The IIFE's return-type tag is guessed in the parser by `if_expr_rt`, which has
-// no function table, so any call falls to its "i32" default. #6481 closed the
-// `let x: i64 = …` route by reading the binding's annotation. These three
-// positions have no binding to read: a struct-literal field, a call argument, an
-// array element. The width is recovered after parsing instead, where the
-// function table exists.
-//
-// `id[T](x: T): T` is the shape that makes it recoverable: an erased generic
-// that returns its argument, so the result's width is the argument's. Each case
-// asserts the ANSWER, since a lost width shows up as a wrong value, not a crash.
 var valueBlockGenericWidthIRCases = []struct {
 	name string
 	src  string
@@ -42,24 +28,17 @@ function main(): i32 {
     let xs: i64[] = [1i64, (if (true) { id(7000000000i64) } else { id(2i64) }), 3i64];
     return (xs[1] / 1000000000i64) as i32;
 }`, 7},
-	// A suffixed literal PAST i32-max but inside u32-max must stay u32 rather
-	// than being read as 64-bit by magnitude — the trap the literal classifiers
-	// already carry a note about, and one the recovery walks straight into if it
-	// reads value before suffix.
 	{"u32-suffix-past-i32max-control", `function id[T](x: T): T { return x; }
 function main(): i32 {
     let w: u32 = (if (true) { id(2147484197u32) } else { id(1u32) });
     return ((w / 1000000u32) as i32) & 63i32;
 }`, 35},
-	// Control: an arm that names its width with a bare wide literal always
-	// worked, and must keep working.
 	{"wide-literal-arm-control", `function main(): i32 {
     let v: i64 = (if (true) { 5000000000i64 } else { 7i64 });
     return (v / 1000000000i64) as i32;
 }`, 5},
 }
 
-// TestSelfHostValueBlockGenericWidthIRX86_64 drives the production x86-64 IR path.
 func TestSelfHostValueBlockGenericWidthIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -87,9 +66,6 @@ func TestSelfHostValueBlockGenericWidthIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostValueBlockGenericWidthIRArm64 — the arm64 counterpart. The
-// recovery is in the shared parser, so arm64 picks it up unchanged; running it
-// is what proves that rather than assuming it.
 func TestSelfHostValueBlockGenericWidthIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

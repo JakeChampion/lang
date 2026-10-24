@@ -61,7 +61,6 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 				if err := os.WriteFile(wat, output, 0o644); err != nil {
 					t.Fatal(err)
 				}
-				// wasmtime hands the guest no host variable it is not told to.
 				run = exec.Command(wasmtime, "run", "--env", e2eharness.SelfHostVerify, wat)
 			}
 			got, err := run.CombinedOutput()
@@ -72,17 +71,6 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 	}
 }
 
-// lifetimeFixtureNames are the dataflow graphs under testdata/lifetime. Each
-// <name>.fern builds an ssa.SFunc by hand, runs ssalive.compute over it with
-// the per-value dependency lists, and prints the live-in and live-out bit rows
-// (one bit per block per value) after checking the id-based accessors agree
-// with the bit sets; <name>.want is the two rows the Go SSA liveness solver
-// produced for the same graph, recorded when that package was deleted. The
-// graphs: a projection chain through two blocks, a diamond whose phi takes a
-// child from each arm, a loop whose header phi carries a child (stored in
-// reverse order, so dataflow must use CFG edges, not source order), a value
-// rebound before a branch, and a graph wide enough that each live set spans
-// several 64-bit words.
 var lifetimeFixtureNames = []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value", "wide"}
 
 func lifetimeFixture(t *testing.T, name string) (source, want string) {
@@ -97,9 +85,6 @@ func lifetimeFixture(t *testing.T, name string) (source, want string) {
 	return read(".fern"), read(".want")
 }
 
-// keptAgreesSource checks ssalive.compute_kept against compute on a
-// fixture's graph: under each mask a kept value is live exactly where
-// compute says, and a value outside the mask is live nowhere.
 const keptAgreesSource = `
 function kept_agrees(f: ssa.SFunc, deps: i32[][], full: ssalive.Flow): boolean {
     let m: i32 = 2;

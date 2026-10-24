@@ -1,5 +1,5 @@
-// A tuple match with only refutable arms (every arm carries a
-// literal element or a guard) is not exhaustive.
+
+
 function main(): i32 {
     let p = (1, 2);
     match (p) {

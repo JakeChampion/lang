@@ -1,35 +1,15 @@
-// examples/vcl/store.fern — a cache that survives between requests.
-//
-// The server holds the cache in a Cell across requests.
-// Cell permits a scalar or a string. E057 refuses composite values that can
-// form a reference cycle. The cache uses a string that each request decodes.
-//
-// The encoding is length-prefixed rather than delimited, because a cached
-// body is arbitrary bytes: any separator you pick can appear inside one.
-// Every field is `<byte count>\n<bytes>`, so nothing needs escaping and
-// nothing can be confused for a delimiter.
-//
-// The cost is real and worth stating: encode and decode are O(total
-// cached bytes) per request, so this is a demonstration store, not a
-// storage engine. A real one would keep objects in a memory-mapped file
-// and touch only the object being read — which is what Varnish does, and
-// what `Cell`'s scalar-or-string restriction is standing in the way of
-// here.
 import "std/string";
 import "std/i32";
 import "std/i64";
 import "std/f64";
 import "./runtime";
 
-// A decoding cursor: the offset reached, and whether decoding is still
-// succeeding.
 struct Cur { at: i32, ok: boolean }
 
 function field(s: string): string {
   return s.len().to_string() + "\n" + s;
 }
 
-// encode renders the whole cache as one string.
 pub function encode(c: runtime.Cache): string {
   let out: string = c.entries.len().to_string() + "\n";
   let i: i32 = 0;
@@ -52,7 +32,6 @@ pub function encode(c: runtime.Cache): string {
   return out;
 }
 
-// read_int reads a `<digits>\n` header at the cursor.
 struct IntRead { value: i32, cur: Cur }
 
 function read_int(s: string, cur: Cur): IntRead {
@@ -82,7 +61,6 @@ function read_int(s: string, cur: Cur): IntRead {
   }
 }
 
-// read_field reads a `<len>\n<bytes>` field at the cursor.
 struct StrRead { value: string, cur: Cur }
 
 function read_field(s: string, cur: Cur): StrRead {
@@ -119,7 +97,6 @@ function to_f64(s: string): f64 {
   }
 }
 
-// An entry read, plus the cursor after it.
 struct EntryRead { entry: runtime.CacheEntry, cur: Cur }
 
 function read_entry(s: string, cur: Cur): EntryRead {
@@ -154,10 +131,6 @@ function read_entry(s: string, cur: Cur): EntryRead {
   return EntryRead { entry: e, cur: hits.cur };
 }
 
-// decode rebuilds a cache from `encode`'s output. Malformed input yields an
-// EMPTY cache rather than an error: the only producer is `encode`, so a
-// decode failure means the state was corrupted, and a proxy that starts
-// cold is strictly better than one that serves garbage.
 pub function decode(s: string): runtime.Cache {
   if (s.len() == 0) {
     return runtime.cache_new();

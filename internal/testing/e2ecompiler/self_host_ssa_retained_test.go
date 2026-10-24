@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// The retained-body controls and the text machines are two drivers: under
-// the sanitizer each process keeps every block it frees.
 func TestSelfHostRetainedNativeBodies(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, driver := range []string{"ssaretained_run", "ssaretainedmachines_run"} {

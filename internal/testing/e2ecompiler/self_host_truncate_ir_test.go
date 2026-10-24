@@ -9,29 +9,8 @@ import (
 	"testing"
 )
 
-// `truncate` through the SELF-HOST IR path, on all three of its backends.
-//
-// Nothing about this can be proved by compiling. A `truncate` that lowered to
-// nothing, to the wrong syscall number, with its two operands swapped, or with
-// the length narrowed to 32 bits still links and still returns Ok — and the
-// last of those is the one a small probe would miss, because every plausible
-// test length fits in 32 bits. So the probe reads the size BACK through `stat`
-// and crosses 2^32 doing it, and the Go side re-reads the tree through os.Stat
-// so a broken `stat` cannot make the program self-consistent.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and cannot see a
-// stable miscompile of a construct the compiler does not itself use, and
-// nothing in the compiler truncates a file.
-
-// selfHostTruncBig is 2^32 + 1 — past the 32-bit boundary, with a low half of
-// 1 so a narrowed length reads as a plausible size rather than an obvious zero.
 const selfHostTruncBig = 4294967297
 
-// selfHostTruncateSource is the probe, parameterised by the directory its
-// paths resolve against — "" for the wasm leg, which runs under its preopen.
-//
-// Every failure returns its own exit code, so the number names the step.
 func selfHostTruncateSource(prefix string) string {
 	p := func(name string) string {
 		if prefix == "" {
@@ -85,8 +64,6 @@ func selfHostTruncateSource(prefix string) string {
 `, p("t.txt"), p("missing.txt"), p("big.txt"), selfHostTruncBig)
 }
 
-// selfHostTruncateTree asserts what the probe left on disk through Go's own
-// stat rather than the compiler's.
 func selfHostTruncateTree(t *testing.T, dir string) {
 	t.Helper()
 	fi, err := os.Stat(filepath.Join(dir, "t.txt"))
@@ -116,8 +93,6 @@ func selfHostTruncateTree(t *testing.T, dir string) {
 	}
 }
 
-// TestSelfHostTruncateIR is the x86-64 leg: the self-host driver emits the
-// asm, gcc links it, and the program runs against a real temporary directory.
 func TestSelfHostTruncateIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -146,9 +121,6 @@ func TestSelfHostTruncateIR(t *testing.T) {
 	selfHostTruncateTree(t, work)
 }
 
-// TestSelfHostTruncateIRArm64 is the same probe through the arm64 IR backend
-// under qemu: a different syscall number and a second hand-written operand
-// reversal, so neither is taken on trust.
 func TestSelfHostTruncateIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -178,10 +150,6 @@ func TestSelfHostTruncateIRArm64(t *testing.T) {
 	selfHostTruncateTree(t, work)
 }
 
-// TestSelfHostTruncateWasmIR is the wasm leg. Preview 1 has no path-based
-// set-size at all, so the emitted helper opens a descriptor without CREATE or
-// TRUNCATE, sets the size on it and closes it — three WASI calls where the
-// natives have one, and a third place for the length to be narrowed.
 func TestSelfHostTruncateWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host truncate wasm IR e2e")

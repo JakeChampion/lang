@@ -118,7 +118,6 @@ function copies(f: ssa.SFunc): ssa.SFunc {
     let term = b.term;
     for op in b.insts {
       if (op.kind_tag == 11) {
-        // The same copy root cannot mint a second incoming child credit.
         insts = insts.append(ssa.SInst { ...op, args: [if (op.args[0] == 1) { f.nvals } else { 2 }, if (op.args[1] == 1) { f.nvals } else { 2 }] });
       } else {
         insts = insts.append(op);
@@ -189,7 +188,6 @@ function phi_controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   let cyclic_block = ssa.SBlock { id: 2147483647, insts: [], preds: [2147483647], term: ssa.STerm { kind_tag: 2, cond: -1, target: 2147483647, t: -1, f: -1, value: -1 } };
   expect(ssa.SFunc { ...f, blocks: f.blocks.append(cyclic_block) }, [producer], "unsupported caller origin cycle", 54);
   expect(changed(copies(f), 1), [producer], "invalid caller origin credit transfer", 55);
-  // Even an infeasible call must have an independently checked body binding.
   let dead: ssa.SBlock[] = [];
   for b in f.blocks {
     let term = b.term;
@@ -257,7 +255,6 @@ function target_checks(target: string): void {
     }
   }
   require(producers.len() == 1 && callers.len() == 1, 4);
-  // Explicit fixture ABI/layout facts; selected typed binding is separate.
   controls(callers[0], producers[0]);
 }
 

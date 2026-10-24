@@ -1,30 +1,7 @@
 package e2e
 
-// A Map field replaced by a COW mutator while the struct's own box is reused
-// in place.
-//
-// `p = T{ ...p, m: p.m.insert(k, v) }` takes the struct-update reuse path
-// (emitStructUpdateReuse), which writes the new field values into p's own box
-// and deep-drops each REPLACED field's old value first. That drop is sound for
-// a field whose new value carries a count of its own — an array push leaves
-// the grown buffer at rc 2 — and unsound for a Map, because
-// `__map_cow_inplace` mutates in place at rc<=1 and bumps nothing: the "old"
-// value being dropped IS the handle just stored, so the box is left pointing
-// at a freed buffer.
-//
-// The fresh-alloc StructLit lowering has cloned such a field since #2763; the
-// reuse path owed the same copy and did not make it. What it looked like: the
-// map read back EMPTY one statement later, or a segfault once the freed block
-// was recycled, and only when the struct was rebuilt through a local alias of
-// a parameter (`let h = h0`) — the shape that makes the frame the owner and so
-// lets the reuse fire at all. A `-sanitize` build, which never recycles a
-// freed block, printed the right answer throughout.
-
 import "testing"
 
-// Threading a counter map through a function, which is the shape that reaches
-// the reuse: the frame owns `h`, so its box is a reuse donor, and the caller's
-// `k = step(k, …)` rebind is what the freed box is handed back to.
 const mapStructUpdateReuseProg = `
 import "core/map";
 import "std/i32";
@@ -91,10 +68,6 @@ func TestMapStructUpdateReuseArm64(t *testing.T) {
 	}
 }
 
-// The rc probe, for the over-release direction: the value assertions above
-// only fail once the freed block has been recycled into something else, and a
-// `return T{ ...p, m: p.m.insert(…) }` — the return-position spread, the other
-// caller of emitStructUpdateReuse — is here too.
 const mapStructUpdateReuseRcProg = `
 import "core/map";
 import "std/i32";

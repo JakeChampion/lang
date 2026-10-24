@@ -11,17 +11,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmFuncRangeShard proves function-window sharding (#5508): a
-// single module emitted as TWO [lo,hi) windows links into a module that runs
-// identically to the same module emitted whole.
-//
-// Sharding lets a module too large for one process be emitted in windows. The
-// windows here are tiny and artificial; the point is only that the
-// split-then-link path is correct, since scale is just more windows.
-//
-// The plan file drives -link: the orchestrator that decided the split tells the
-// linker exactly which (idx, lo, hi) units to assemble — the wasm analogue of an
-// asm build handing gcc its .s list.
 func TestSelfHostWasmFuncRangeShard(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -37,8 +26,6 @@ func TestSelfHostWasmFuncRangeShard(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
-	// A single-module program with several functions to split across windows,
-	// including cross-window calls and a string literal on each side of the cut.
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")
 	if err := os.Mkdir(cacheDir, 0o755); err != nil {
@@ -51,7 +38,6 @@ function d(): i32 { return a() + second().len(); }
 function first(): string { return "alpha"; }
 function second(): string { return "bravo-x"; }
 function main(): i32 { return d(); }`
-	// c=4, b=8, a=8+5=13, d=13+7=20
 	const want = 20
 	entryPath := filepath.Join(proj, "entry.fern")
 	if err := os.WriteFile(entryPath, []byte(src), 0o644); err != nil {
@@ -98,7 +84,6 @@ function main(): i32 { return d(); }`
 		return -1
 	}
 
-	// How many functions after lift/infer, so the window split is valid.
 	fcOut, _ := drive(t, "-per-module-func-counts")
 	fcLines := strings.Fields(strings.TrimSpace(fcOut))
 	if len(fcLines) != 1 {
@@ -110,7 +95,6 @@ function main(): i32 { return d(); }`
 	}
 	mid := nfuncs / 2
 
-	// Whole-module build (the oracle).
 	whole, _ := drive(t, "-per-module-emit", "0", "-cache-dir", cacheDir)
 	_ = whole
 	wholeWat, _ := drive(t, "-link", "-cache-dir", cacheDir)
@@ -118,8 +102,6 @@ function main(): i32 { return d(); }`
 		t.Fatalf("whole-module build returned %d, want %d — oracle is wrong", got, want)
 	}
 
-	// Sharded build: two windows [0,mid) and [mid,-1), emitted separately, then
-	// linked via an explicit plan.
 	shardCache := filepath.Join(proj, "shardcache")
 	if err := os.Mkdir(shardCache, 0o755); err != nil {
 		t.Fatalf("mkdir shardcache: %v", err)
@@ -143,8 +125,6 @@ function main(): i32 { return d(); }`
 		t.Errorf("two-window sharded build returned %d, want %d — sharding miscompiled", got, want)
 	}
 
-	// The sharded WAT must actually carry a shard-namespaced base, proving the
-	// split happened rather than one window silently covering everything.
 	if !strings.Contains(shardWat, "_s"+strconv.Itoa(mid)) {
 		t.Errorf("sharded WAT has no _s%d namespace; the second window was not emitted as its own unit", mid)
 	}

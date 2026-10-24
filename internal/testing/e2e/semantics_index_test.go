@@ -1,12 +1,3 @@
-// Verifies spec/semantics.md against reality, in both directions.
-//
-// The index claims that each normative rule in the policy docs is
-// pinned by a conformance case. A one-directional check would let a
-// case be repurposed out from under the claim it was written for, or a
-// claim point at a case about something else entirely — which is the
-// failure mode the index exists to prevent, so it is the one worth
-// checking hardest. Each pinning case therefore names its claim back
-// with a `// spec: <ID>` comment, and both sides are matched here.
 package e2e
 
 import (
@@ -22,10 +13,6 @@ import (
 
 const semanticsIndexPath = "../../../spec/semantics.md"
 
-// noPin and freedom are the two ways a claim can name no case. They
-// mean different things — see the index — and the difference has to
-// survive into the parse, or a deliberate decision reads as an
-// oversight.
 const (
 	noPin   = "—"
 	freedom = "n/a — freedom"
@@ -35,7 +22,7 @@ type semanticClaim struct {
 	id   string
 	doc  string
 	rule string
-	pin  string // case name, noPin, or freedom
+	pin  string
 }
 
 var (
@@ -80,9 +67,6 @@ func readSemanticsIndex(t *testing.T) (string, []semanticClaim) {
 	return string(raw), claims
 }
 
-// splitTableRow splits a Markdown table row into its cells. A rule can
-// contain a pipe — the saturating operators are spelled `+\|` — so the
-// escaped form has to survive the split rather than opening a column.
 func splitTableRow(line string) []string {
 	const escaped = "\x00"
 	line = strings.ReplaceAll(line, `\|`, escaped)
@@ -94,9 +78,6 @@ func splitTableRow(line string) []string {
 	return out
 }
 
-// specMarkers reads the `// spec:` claim IDs a case declares. Only the
-// leading comment block counts: a marker has to be part of the case's
-// header, not buried where a reader would miss it.
 func specMarkers(t *testing.T, caseDir string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(caseDir, "main.fern"))
@@ -111,7 +92,7 @@ func specMarkers(t *testing.T, caseDir string) []string {
 			continue
 		}
 		if !strings.HasPrefix(line, "//") && line != "" {
-			break // past the header comment
+			break
 		}
 	}
 	return ids
@@ -121,7 +102,7 @@ func TestSemanticsIndexIsAccurate(t *testing.T) {
 	raw, claims := readSemanticsIndex(t)
 
 	seen := map[string]bool{}
-	pinnedBy := map[string][]string{} // claim ID → case names
+	pinnedBy := map[string][]string{}
 	var pinned, freedoms int
 
 	for _, c := range claims {
@@ -141,7 +122,6 @@ func TestSemanticsIndexIsAccurate(t *testing.T) {
 		case freedom:
 			freedoms++
 		case noPin:
-			// A known gap. Counted, not reported.
 		default:
 			pinned++
 			dir := filepath.Join(conformanceCases, c.pin)
@@ -159,8 +139,6 @@ func TestSemanticsIndexIsAccurate(t *testing.T) {
 		}
 	}
 
-	// The other direction: a marker in the corpus that names no claim is
-	// a case still advertising a rule the index no longer has.
 	entries, err := os.ReadDir(conformanceCases)
 	if err != nil {
 		t.Fatalf("read %s: %v", conformanceCases, err)
@@ -177,9 +155,6 @@ func TestSemanticsIndexIsAccurate(t *testing.T) {
 		}
 	}
 
-	// Every doc spec/README.md calls normative has to be represented, or
-	// a policy doc can be added with no claims extracted from it and the
-	// index will not notice.
 	docs := map[string]bool{}
 	for _, c := range claims {
 		docs[c.doc] = true
@@ -191,7 +166,6 @@ func TestSemanticsIndexIsAccurate(t *testing.T) {
 		}
 	}
 
-	// The counts are prose, so they rot unless something reads them.
 	if m := claimCountRe.FindStringSubmatch(raw); m == nil {
 		t.Errorf("%s no longer states how many claims are pinned", semanticsIndexPath)
 	} else {
@@ -212,8 +186,6 @@ func TestSemanticsIndexIsAccurate(t *testing.T) {
 		len(claims), pinned, freedoms, len(claims)-pinned-freedoms)
 }
 
-// normativeDocsFromReadme reads the doc paths out of spec/README.md's
-// normative-prose table.
 func normativeDocsFromReadme(t *testing.T) []string {
 	t.Helper()
 	raw, err := os.ReadFile("../../../spec/README.md")
@@ -234,9 +206,6 @@ func normativeDocsFromReadme(t *testing.T) []string {
 	return out
 }
 
-// numberWord maps the small English numerals the index prose uses back
-// to integers, so the freedom count can be written as a word and still
-// be checked.
 func numberWord(w string) int {
 	words := []string{"zero", "one", "two", "three", "four", "five",
 		"six", "seven", "eight", "nine", "ten"}
@@ -252,9 +221,6 @@ func numberWord(w string) int {
 	return n
 }
 
-// A claim's rule text is prose, but its ID is not: the two-letter
-// prefix has to match the doc it cites, or the table stops being
-// readable by section.
 func TestSemanticClaimPrefixesMatchTheirDoc(t *testing.T) {
 	_, claims := readSemanticsIndex(t)
 	prefixOf := map[string]string{}

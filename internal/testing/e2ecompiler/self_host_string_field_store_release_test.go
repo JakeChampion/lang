@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A string local stored into a struct literal at its last use, inside a loop,
-// is released every iteration (#10192): the store retains there, because only a
-// top-level move elides the retain, so the local still owes its own release.
-// Beside it: the same store with a later read, a string[] field, and the
-// top-level store a callee makes.
 const stringFieldStoreSrc = `import "std/i32";
 struct Box { s: string }
 struct Bag { s: string[] }
@@ -50,8 +45,6 @@ func writeStringFieldStoreSrc(t *testing.T) string {
 	return path
 }
 
-// Per round: a is 2 or 3 bytes, b twice that, c one element, top like a:
-// 10 x (2 + 4 + 1 + 2) + 90 x (3 + 6 + 1 + 3) = 1260.
 const stringFieldStoreWant = 1260 % 251
 
 func TestSelfHostStringFieldStoreReleaseX86_64(t *testing.T) {

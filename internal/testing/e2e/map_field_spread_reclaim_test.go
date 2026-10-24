@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A spread rebuild that replaces a struct's Map field releases the map it
-// replaces (#10228). The reused box's displaced field went through a flat
-// rc dec, which never frees, so every rebuild stranded a whole table. The
-// `shared` case keeps a second holder of the old box, so the map must survive
-// for it.
 var mapFieldSpreadCases = []struct {
 	name string
 	body string

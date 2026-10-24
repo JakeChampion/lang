@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCountTypeArgs pins the checker's generic-arity counter
-// (compiler/checker.fern's count_type_args — SH-021,
-// docs/SELF-HOST-AUDIT.md T2). It returns how many top-level type args a
-// `Name[A, B, …]` annotation supplies to its head generic, or -1 when the
-// annotation is not a top-level generic instantiation. It now decodes via the
-// structured TypeRef (parser.parse_type_ref, through the checker) instead of a
-// first-`[` + trailing-`]` window with a depth-tracking top-level-comma count.
-//
-// The corpus covers plain generics of 1/2/3 args, nested generics and tuples
-// whose inner commas must not be counted at top level, bare names, tuples, and
-// arrays. On every non-array annotation the count matches the former scan
-// exactly; arrays/tuples resolve to -1 (not a generic head — the former scan
-// returned a garbage count on a trailing `[]`, but that value only ever fed the
-// E019 struct-arity check on a struct's own generic head, never an array, so the
-// arity diagnostics are unchanged, which the three x86 self-compile fixpoints
-// confirm).
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostCountTypeArgs(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

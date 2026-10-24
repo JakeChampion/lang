@@ -1,22 +1,3 @@
-// tests/proposals/tinylang.fern — proposal turn, drawn line 168:
-// "A tree-walking interpreter for a small language with functions and
-// closures."
-//
-// A lambda calculus with integers: literals, variables, addition, `let`,
-// single-argument lambdas and application. Evaluation is a tree walk over
-// a self-referential `Expr` enum, and environments are a persistent
-// linked list so a closure keeps the bindings that were in scope when it
-// was made, not the ones live when it is called.
-//
-// The tests that matter are the ones a naive implementation gets wrong:
-// a closure must capture its defining environment (dynamic scoping fails
-// `test_closures_capture_their_defining_scope`), shadowing must be
-// innermost-wins, and a returned closure must outlive the `let` that
-// built it.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/i32";
 
@@ -24,13 +5,11 @@ enum Expr {
   Num(i32),
   Var(string),
   Add(Expr, Expr),
-  Let(string, Expr, Expr),  // let NAME = e1 in e2
-  Lam(string, Expr),  // \NAME. body
+  Let(string, Expr, Expr),
+  Lam(string, Expr),
   App(Expr, Expr),
 }
 
-// A persistent environment. Cons keeps the tail alive, so a closure that
-// captured an older environment is unaffected by later bindings.
 enum Env {
   Empty,
   Bind(string, Value, Env),
@@ -38,7 +17,7 @@ enum Env {
 
 enum Value {
   VNum(i32),
-  VClos(string, Expr, Env),  // param, body, captured environment
+  VClos(string, Expr, Env),
   VErr(string),
 }
 
@@ -48,7 +27,6 @@ function lookup(env: Env, name: string): Value {
       return VErr("unbound variable \"" + name + "\"");
     },
     Bind(n, v, rest) => {
-      // Innermost binding wins: this frame is checked before its tail.
       if (n == name) {
         return v;
       }
@@ -131,8 +109,6 @@ function eval(e: Expr, env: Env): Value {
       return eval(body, Bind(name, bv, env));
     },
     Lam(param, body) => {
-      // A lambda captures the environment it was DEFINED in. Everything
-      // interesting about this interpreter follows from that line.
       return VClos(param, body, env);
     },
     App(f, arg) => {
@@ -160,13 +136,10 @@ function run(e: Expr): Value {
   return eval(e, Empty);
 }
 
-// ---------------------------------------------------------------- tests
-
 function test_arithmetic_and_let(): test.TestOutcome {
   if (as_num(run(Add(Num(2), Add(Num(3), Num(4))))) != 9) {
     return test.fail("2 + (3 + 4) should be 9");
   }
-  // let x = 5 in x + x
   let e: Expr = Let("x", Num(5), Add(Var("x"), Var("x")));
   if (as_num(run(e)) != 10) {
     return test.fail("let x = 5 in x + x should be 10");
@@ -174,15 +147,12 @@ function test_arithmetic_and_let(): test.TestOutcome {
   return test.pass();
 }
 
-// Innermost binding wins.
 function test_shadowing_is_innermost_wins(): test.TestOutcome {
-  // let x = 1 in (let x = 2 in x)
   let e: Expr = Let("x", Num(1), Let("x", Num(2), Var("x")));
   if (as_num(run(e)) != 2) {
     return test.fail("inner binding should shadow, got "
       + as_num(run(e)).to_string());
   }
-  // let x = 1 in (let y = 2 in x)  — the outer one is still reachable
   let f: Expr = Let("x", Num(1), Let("y", Num(2), Var("x")));
   if (as_num(run(f)) != 1) {
     return test.fail("outer binding lost");
@@ -190,13 +160,6 @@ function test_shadowing_is_innermost_wins(): test.TestOutcome {
   return test.pass();
 }
 
-// THE test. A closure must see the bindings from where it was DEFINED,
-// not from where it is called. Under dynamic scoping this returns 20.
-//
-//   let x = 1 in
-//   let f = (\_ . x) in
-//   let x = 20 in
-//   f 0
 function test_closures_capture_their_defining_scope(): test.TestOutcome {
   let e: Expr = Let(
     "x", Num(1),
@@ -219,10 +182,6 @@ function test_closures_capture_their_defining_scope(): test.TestOutcome {
   return test.pass();
 }
 
-// A closure returned from a `let` must outlive the binding that built it.
-//
-//   let mk = (\a . (\b . a + b)) in
-//   ((mk 3) 4)
 function test_a_returned_closure_outlives_its_scope(): test.TestOutcome {
   let e: Expr = Let(
     "mk", Lam("a", Lam("b", Add(Var("a"), Var("b")))),
@@ -235,10 +194,6 @@ function test_a_returned_closure_outlives_its_scope(): test.TestOutcome {
   return test.pass();
 }
 
-// Two closures from the same lambda must not share a parameter binding.
-//
-//   let mk = (\a . (\b . a + b)) in
-//   (mk 10) 1 + (mk 100) 1
 function test_closures_do_not_share_bindings(): test.TestOutcome {
   let mk: Expr = Lam("a", Lam("b", Add(Var("a"), Var("b"))));
   let e: Expr = Let(
@@ -255,8 +210,6 @@ function test_closures_do_not_share_bindings(): test.TestOutcome {
   return test.pass();
 }
 
-// Errors name the problem and propagate out of nested evaluation rather
-// than being silently absorbed.
 function test_errors_propagate_with_a_reason(): test.TestOutcome {
   let unbound: Value = run(Add(Num(1), Var("nope")));
   if (!is_err(unbound)) {
@@ -275,7 +228,6 @@ function test_errors_propagate_with_a_reason(): test.TestOutcome {
     return test.fail("adding a function was not an error");
   }
 
-  // An error deep inside a let body still reaches the top.
   let deep: Value = run(Let("a", Num(1), Let("b", Num(2), Var("c"))));
   if (!is_err(deep)) {
     return test.fail("deep unbound variable was absorbed");
@@ -283,8 +235,6 @@ function test_errors_propagate_with_a_reason(): test.TestOutcome {
   return test.pass();
 }
 
-// Evaluation is deep: a right-nested chain must not blow up or lose
-// precision, and the environment must stay correct all the way down.
 function test_deep_nesting(): test.TestOutcome {
   let e: Expr = Num(0);
   let i: i32 = 0;
@@ -296,7 +246,6 @@ function test_deep_nesting(): test.TestOutcome {
     return test.fail("200 nested adds should be 200, got "
       + as_num(run(e)).to_string());
   }
-  // 100 nested lets, innermost variable read from the outermost binding.
   let body: Expr = Var("v0");
   let k: i32 = 100;
   while (k > 0) {
@@ -309,8 +258,6 @@ function test_deep_nesting(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ----------------------------------------------------------------- app
 
 function show(label: string, e: Expr): void {
   let v: Value = run(e);

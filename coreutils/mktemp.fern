@@ -1,50 +1,8 @@
-// mktemp.fern — GNU-compatible `mktemp`.
-//
-//   mktemp [OPTION]... [TEMPLATE]
-//
-// Create a temporary file (or, with `-d`, a directory) at a name nothing
-// else holds and print the name. With no TEMPLATE the name is
-// `tmp.XXXXXXXXXX` and `--tmpdir` is implied.
-//
-// The pieces that are easy to get subtly wrong:
-//
-//   - The X-run is decided by the LAST 'X' in the whole template, not by
-//     the longest run and not per path component. The SUFFIX is
-//     everything after that last X (empty when the template has no X),
-//     and the run is the X's immediately before it — so `fooXXXXbarXXX`
-//     keeps its first four X's literal and replaces the last three, and
-//     the number of random characters is the run's length, not six.
-//   - `--suffix` is CONCATENATED onto the template before every later
-//     check, and the diagnostics name the concatenated string.
-//   - `-t` and `-p`/`--tmpdir` resolve the directory with OPPOSITE
-//     precedence: without `-t` the option argument outranks $TMPDIR,
-//     with `-t` $TMPDIR outranks it. An empty string counts as unset on
-//     both paths, and a bare `--tmpdir` RESETS a directory an earlier
-//     `-p` set while leaving "use a directory" switched on.
-//   - The join is gnulib's file_name_concat, not `dir + "/" + tmpl`: a
-//     trailing run of slashes is dropped, but a directory that is
-//     ENTIRELY slashes is kept verbatim with no separator added, and
-//     interior slashes are never touched (`-p a//b//` gives `a//b/NAME`).
-//   - `-u` is not "print a name and create nothing": it lstat()s each
-//     candidate, retries a name that exists, and reports every errno but
-//     ENOENT through the ordinary creation diagnostic.
-//   - Collisions are retried up to max(62^3, TMP_MAX), independent of
-//     the run length. Darwin's TMP_MAX is 308915776; Linux uses 238328
-//     attempts. Exhaustion reports `File exists`.
-//   - `-V` is a live short option for `--version` that `--help` does not
-//     mention; every other letter is `invalid option`.
-//
-// The modes are the primitives' own: `open_exclusive` is 0600 and
-// `create_dir` is asked for 0700, each masked by the umask as POSIX
-// specifies, which is what GNU's open(…,0600) / mkdir(…,0700) do.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 
-// ---- options ---------------------------------------------------------------
-// Declaration order is visible: `mktemp --d` lists '--directory' before
-// '--dry-run', and gnu.fern appends --help / --version after these.
 function opt_directory(): i32 {
   return 1;
 }
@@ -69,10 +27,6 @@ function opt_single(): i32 {
   return 6;
 }
 
-// `-p DIR` / `--tmpdir[=DIR]` is one option with two arities, glibc's
-// two tables: the short spelling requires a value, the long one takes
-// one only when glued. `--tmpdir td1 fooXXX` is therefore two operands
-// and `too many templates`.
 function declare_options(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("d", "directory", opt_directory()));
@@ -113,10 +67,6 @@ function help_text(): string {
   return out;
 }
 
-// `Settings` — everything the option scan decides. `tmpdir` is the
-// directory `-p` / `--tmpdir` named, empty for the no-value form, which
-// is why `use_tmpdir` is carried separately: an empty directory counts
-// as unset while still switching the absolute-template check on.
 struct Settings { make_dir: boolean, dry_run: boolean, quiet: boolean, suffix: string, suffix_set: boolean, tmpdir: string, use_tmpdir: boolean, single: boolean }
 
 function settings_new(): Settings {
@@ -157,7 +107,6 @@ function scan(argv: string[]): (Settings, string[]) {
   return (s, g.operands());
 }
 
-// ---- the template ----------------------------------------------------------
 function slash(): i32 {
   return 47;
 }
@@ -170,10 +119,6 @@ function has_slash(s: string): boolean {
   return __memchr(s, slash(), 0) >= 0;
 }
 
-// Where the derived suffix starts: one past the last 'X'. A template
-// with no X at all has an EMPTY derived suffix rather than being one, so
-// `mktemp a/b` falls through to the X-count fault instead of reporting
-// `a/b` as a suffix containing a separator.
 function suffix_start(s: string): i32 {
   let i: i32 = s.len();
   while (i > 0) {
@@ -185,7 +130,6 @@ function suffix_start(s: string): i32 {
   return s.len();
 }
 
-// The run of X's ending at `end`.
 function x_run(s: string, end: i32): i32 {
   let n: i32 = 0;
   while (n < end && s[end - n - 1] as i32 == upper_x()) {
@@ -194,9 +138,6 @@ function x_run(s: string, end: i32): i32 {
   return n;
 }
 
-// gnulib's file_name_concat: the last component's trailing slashes go,
-// but a directory that is nothing but slashes is kept as it stands and
-// no separator is added. Interior slashes are never touched.
 function join(dir: string, name: string): string {
   let end: i32 = dir.len();
   while (end > 0 && dir[end - 1] as i32 == slash()) {
@@ -208,8 +149,6 @@ function join(dir: string, name: string): string {
   return slice_unchecked(dir, 0, end) + "/" + name;
 }
 
-// The directory an environment variable names, ignoring an empty one:
-// `TMPDIR= mktemp` is `/tmp`, exactly as an unset TMPDIR is.
 function env_dir(name: string): string {
   match (env(name)) {
     Some(v) => {
@@ -220,14 +159,10 @@ function env_dir(name: string): string {
   return "";
 }
 
-// ---- the name --------------------------------------------------------------
 function alphabet(): string {
   return "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 }
 
-// `n` characters drawn uniformly from the 62-character alphabet. A byte
-// at or above 248 (= 4 * 62) is discarded rather than folded, so no
-// letter is likelier than another.
 function random_run(n: i32): string {
   let letters: string = alphabet();
   let out: u8[] = [];
@@ -247,7 +182,6 @@ function random_run(n: i32): string {
   return string_from_bytes_unchecked(out);
 }
 
-// gnulib uses max(62^3, TMP_MAX), regardless of the run's length.
 function attempt_limit(): i32 {
   if (target_os() == "darwin") {
     return 308915776;
@@ -255,20 +189,12 @@ function attempt_limit(): i32 {
   return 238328;
 }
 
-// The mode GNU asks mkdir(2) for: 0700, which the umask then masks.
-// Written as a product because Fern has no octal literal; the file mode
-// is `open_exclusive`'s own 0600.
 function dir_mode(): i32 {
   return 7 * 64;
 }
 
-// `Attempt` — what one candidate came to: `name` and `ok` on success,
-// otherwise `text` is the strerror the diagnostic reports.
 struct Attempt { name: string, ok: boolean, text: string }
 
-// One candidate, by the mode: -u asks lstat and wants ENOENT, -d makes
-// the directory, and the ordinary path creates the file O_EXCL. `retry`
-// says the name was taken and another should be drawn.
 function try_once(s: Settings, name: string): (Attempt, boolean) {
   if (s.dry_run) {
     match (lstat(name)) {
@@ -322,7 +248,6 @@ function try_once(s: Settings, name: string): (Attempt, boolean) {
   }
 }
 
-// Draw names until one lands or the attempts run out.
 function make(s: Settings, head: string, run: i32, tail: string): Attempt {
   let last: Attempt = Attempt { name: "", ok: false, text: "File exists" };
   let tries: i32 = 0;
@@ -337,8 +262,6 @@ function make(s: Settings, head: string, run: i32, tail: string): Attempt {
   return last;
 }
 
-// Remove what was just created. A failure here is ignored: GNU is
-// already on its way out with the write error it is reporting.
 function undo(s: Settings, name: string): void {
   if (s.dry_run) {
     return;
@@ -356,16 +279,8 @@ function undo(s: Settings, name: string): void {
   }
 }
 
-// `Plan` — the path the name is drawn at, split at the random run:
-// `head` + `run` random characters + `tail`. `path` is the same path with
-// the X's intact, which is what a creation failure names.
 struct Plan { head: string, run: i32, tail: string, path: string }
 
-// The template, its suffix and its X run, with every fault reported in
-// GNU's order: --suffix's must-end-in-X, then a separator in the suffix,
-// then the X count. --suffix is glued on before all three, but the X
-// count names the template WITHOUT it — an appended suffix is not part
-// of what the user wrote and GNU cuts it back off for that one line.
 function split_template(s: Settings, template: string): (string, string, i32) {
   let tmpl: string = template;
   let suffix: string = "";
@@ -395,10 +310,6 @@ function split_template(s: Settings, template: string): (string, string, i32) {
   return (tmpl, suffix, run);
 }
 
-// Where the name is drawn: the template checked against the rule -t or
-// --tmpdir imposes on it, then joined to the directory they resolve to.
-// The two resolve it with OPPOSITE precedence, and an empty string counts
-// as no directory on both paths.
 function directory(s: Settings, tmpl: string): string {
   if (s.single) {
     if (has_slash(tmpl)) {
@@ -441,8 +352,6 @@ function plan(s: Settings, template: string): Plan {
   return Plan { head: slice_unchecked(path, 0, start) + "", run: run, tail: slice_unchecked(path, start + run, path.len()) + "", path: path };
 }
 
-// The name on stdout, and the write failure: what was just created is
-// removed again, which is why this is not `gnu.write_out`.
 function emit(s: Settings, name: string): i32 {
   let o: io_buffered.BufWriter = gnu.out_new();
   o = o.write_string(name + "\n");
@@ -465,8 +374,6 @@ function emit(s: Settings, name: string): i32 {
     return 0;
   }
   undo(s, name);
-  // -q covers the diagnostic of a run that CREATED something; with -u
-  // there is nothing to have lost and the write error is reported.
   if (!s.quiet || s.dry_run) {
     gnu.error("write error: " + text);
   }
@@ -484,7 +391,6 @@ pub function main(): i32 {
   if (operands.len() == 1) {
     template = operands[0];
   } else {
-    // No operand implies --tmpdir as well as the default template.
     s = Settings { ...s, use_tmpdir: true };
   }
   let p: Plan = plan(s, template);

@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// strChainReceiverCases pin the release of a FRESH-OR-RECEIVER CHAIN standing in
-// receiver position at a source-declared string method — `base.tail(4).to_owned()`,
-// where the intermediate is a view box over `base`'s bytes that nobody names.
-//
-// `tail` has an identity path (`if (n <= 0) { return s; }`), so on that path the
-// "intermediate" IS the root's own box and freeing it is a double free. Which
-// path ran is a runtime fact, so the release must be skipped whenever the
-// intermediate is the root's box; the identity-path witness below exits 97 if
-// it is not. The outer callee must also borrow its receiver rather than carry it
-// into its own result, which is why the `.ident2()` case below is refused
-// outright.
-//
-// Thresholds are calibrated, not inherited: the leak here is 24 B/round, so the
-// 32768 the sibling suites use over 400 rounds would not catch it. Measured
-// base/after on x86-64: 9600 -> 0 for each flat case, 0 -> 0 for the control.
 const chainRecvPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
@@ -39,9 +24,6 @@ function (s: string) unrel2(): string { if (s.len() > 0) { return "xxxxxxxxxxxxx
 function (s: string) ident2(): string { return s; }
 `
 
-// chainRecvHeap wraps a `round` body in the churn/heap-delta harness. 98 means the
-// chain intermediate was stranded; 4096 sits 2.3x under the measured 9600 leak and
-// far above the 0 a released chain produces.
 func chainRecvHeap(round string) string {
 	return chainRecvPrelude + `function round(pre: string): i32 { let base: string = w(pre); ` + round + ` }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -63,24 +45,10 @@ var strChainReceiverCases = []struct {
 	src  string
 	want int
 }{
-	// The shape the divergence fixture is built on. `base.tail(4)` is a view box
-	// over base's bytes; `.to_owned2()` borrows its receiver, so once the call
-	// returns nothing names the view. 24 B/round before, flat after.
 	{"str-chain-receiver-view-flat", chainRecvHeap(`return base.tail(4).to_owned2().len();`), 0},
-	// The outer callee's RESULT is irrelevant to the site: `unrel2` never mentions
-	// its receiver and the intermediate leaked exactly the same. Whether the callee
-	// borrows its receiver is what decides, not what comes back.
 	{"str-chain-receiver-unrelated-result-flat", chainRecvHeap(`return base.tail(4).unrel2().len();`), 0},
-	// Two proven links past the view root; the chain-root walk has to see through
-	// both to reach `base`.
 	{"str-chain-receiver-double-flat", chainRecvHeap(`return base.tail(4).to_owned2().to_owned2().len();`), 0},
-	// CONTROL: no chain at all, already flat before this change. Pins that seeding
-	// the release off the chain-root walk does not double-release the plain case.
 	{"str-chain-receiver-plain-control", chainRecvHeap(`return base.to_owned2().len();`), 0},
-	// WITNESS for the pointer compare. `tail(0)` takes the identity path, so the
-	// "intermediate" is base's own box. A compiler that releases the chain receiver
-	// unconditionally frees what `base` still holds, and the reads below exit 97.
-	// Verified: 97 on a build with the compare removed, 0 with it.
 	{"str-chain-receiver-identity-path-guarded", chainRecvPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let c: string = base.tail(0).to_owned2();
@@ -94,12 +62,6 @@ var strChainReceiverCases = []struct {
     return base.len() + c.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// The `n >= sLen` path returns a LITERAL "", whose box is in .rodata and whose
-	// pointer differs from the root — so the compare admits it and the release runs
-	// on a static. That is safe because __fern_str_view_free's view case guards on
-	// the box base being inside the arena (base < heap_base or >= heap_end skips),
-	// which is exactly what this case pins. Not a witness for the compare: it passes
-	// with the compare removed too, because the guard doing the work is the other one.
 	{"str-chain-receiver-empty-literal-path", chainRecvPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let c: string = base.tail(9999).to_owned2();
@@ -111,9 +73,6 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
     return base.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 4000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// REFUSED: the outer callee hands its receiver straight back, so the chain is
-	// not released. The result aliases the view over base, which must survive
-	// being read after the call.
 	{"str-chain-receiver-unproven-callee-refused", chainRecvPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let c: string = base.tail(4).ident2();
@@ -127,8 +86,6 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 4000) { let r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
-// TestSelfHostStrChainReceiverIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler.
 func TestSelfHostStrChainReceiverIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -156,8 +113,6 @@ func TestSelfHostStrChainReceiverIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrChainReceiverIRArm64 is the arm64 leg; the admission and the
-// pointer compare are in the shared lowering, the release a per-backend transcription.
 func TestSelfHostStrChainReceiverIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -181,8 +136,6 @@ func TestSelfHostStrChainReceiverIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrChainReceiverWasmIR is the wasm leg, where the release maps to
-// $__fern_arr_dec on the rc-headered block.
 func TestSelfHostStrChainReceiverWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping chain-receiver wasm IR e2e")

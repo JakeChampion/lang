@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// A `dyn Trait` method call dispatches over the impls of the trait, not over
-// every method that shares the name. std/num's `impl Add for i32` gives i32 an
-// `add` of its own, and the user's `impl Adder for i32` is interposed beside
-// it, so a dispatch keyed on the name called num's `self + n` and printed
-// r=42 on the native targets and failed wasm validation (#11122).
-
-// dynImplDispatchPrimSrc is the issue's program.
 const dynImplDispatchPrimSrc = `import "std/i32";
 trait Adder {
     function add(self: Self, n: i32): i32;
@@ -30,8 +23,6 @@ function main(): i32 {
 }
 `
 
-// dynImplDispatchMixedSrc: two implementors, and two types with a same-named
-// `add` and no impl of Adder, one of them returning i64.
 const dynImplDispatchMixedSrc = `import "std/i32";
 import "std/i64";
 trait Adder {
@@ -61,9 +52,6 @@ function main(): i32 {
 }
 `
 
-// dynImplDispatchSuperSrc: `add` and `sub` are reached through Num2's
-// supertraits, whose impls are written for Add2 and Sub2. The dyn names them
-// too: a supertrait method on a bare `dyn Num2` is E021 (#10524).
 const dynImplDispatchSuperSrc = `import "std/i32";
 trait Add2 {
     function add(self: Self, n: i32): i32;

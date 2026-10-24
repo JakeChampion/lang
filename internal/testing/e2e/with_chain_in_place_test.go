@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// A `.with` chain assigned back to its receiver writes one array in place
-// (#9702). Its inner link used to copy, since the receiver looked live to the
-// outer link, so `b = b.with(i, x).with(j, y)` bought a box per evaluation
-// where the same writes as two statements bought none.
-//
-// An outer link that reads the receiver is the exception, for an array and
-// for a map alike: it runs after the inner store, so it must see the old
-// element, and the chain copies. `own b`
-// assigned from a chain is the shape whose old-value release freed the buffer
-// the chain had just written.
-//
-// The counted receiver is written once before its count starts: the self-host
-// emits a constant array literal as a static block, which its first write
-// copies.
 const withChainInPlaceSrc = `import "core/map";
 
 function chain(own b: i32[], x: i32, y: i32): i32[] {
@@ -66,7 +52,6 @@ function main(): i32 {
 }
 `
 
-// 90 names a chain that still copies; 91-94 mean a result is wrong.
 func TestWithChainWritesInPlace(t *testing.T) {
 	check := func(t *testing.T, code int, out string) {
 		t.Helper()

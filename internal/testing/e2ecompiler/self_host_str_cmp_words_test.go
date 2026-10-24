@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// The runtime's string ordering compares eight bytes at a time and finds the
-// first differing byte from the words' xor. The program orders every pair of
-// strings that differ at each position from 0 to 19 — both sides of each word
-// boundary — by one byte up or down, including UTF-8 bytes above 0x7f, plus
-// every prefix of each and the same pairs behind a leading "é". It checks `<`,
-// `<=`, `>`, `>=` and `==` against a byte loop of its own. Exit 0 is
-// agreement; anything else prints the first pair that disagreed.
 const strCmpWordsProg = `import "std/string";
 
 function slow(a: string, b: string): i32 {

@@ -5,7 +5,6 @@ import "std/string";
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("large-push machine controls failed: " + group);
-    // Status space is shared. Module and mutation identify every failure.
     exit(180);
   }
 }
@@ -42,7 +41,6 @@ function arithmetic(s: string): void {
   mutation(s, "andq %rdx, %rax", "andq $-3, %rax", false);
   mutation(s, "subq $72, %rdx", "subq $71, %rdx", false);
   mutation(s, "subq $72, %rdx", "subq $2147483647, %rdx", false);
-  // One byte below the clamp still rounds to the same minimum class.
   mutation(s, "movl $524288, %eax", "movl $524287, %eax", true);
   mutation(s, "movl $524288, %eax", "movl $524289, %eax", false);
 }

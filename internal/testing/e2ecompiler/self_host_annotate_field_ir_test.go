@@ -7,20 +7,10 @@ import (
 	"testing"
 )
 
-// annotateFieldCases cover a field / tuple-element read whose type the lowering
-// needs: checker.annotate_expr stamps each such read with its inferred tag
-// (#5986), and the read's width, signedness, float-ness, struct type and Map
-// K/V all come from that tag.
-//
-// Each program routes a field read into one of those consumers, oracle-checked
-// against the interpreter. The unsigned cases matter beyond the tag lookup:
-// a u64 / u32 field whose type is lost reads signed-negative once its top bit
-// is set, so the shift lowers as shr_s and diverges from the oracle.
 var annotateFieldCases = []struct {
 	name string
 	src  string
 }{
-	// u64 / u32 struct fields feeding an unsigned shift (expr_is_u64/_u32).
 	{"unsigned_fields", `struct Bits { hi: u64, lo: u32 }
 function main(): i32 {
     let b: Bits = Bits { hi: 18446744073709551615, lo: 4000000000 };
@@ -28,7 +18,6 @@ function main(): i32 {
     if ((b.lo >> 1) < 1000000000) { return 2; }
     return 42;
 }`},
-	// an i64 struct field is a 64-bit value (infer_expr_width).
 	{"i64_field_width", `struct Wide { n: i64 }
 function main(): i32 {
     let w: Wide = Wide { n: 5000000000 };
@@ -36,7 +25,6 @@ function main(): i32 {
     if (v == 5000000001) { return 42; }
     return 7;
 }`},
-	// f64 struct fields in float arithmetic (expr_is_f64).
 	{"f64_fields", `struct Pt { x: f64, y: f64 }
 function main(): i32 {
     let p: Pt = Pt { x: 1.5, y: 2.5 };
@@ -44,7 +32,6 @@ function main(): i32 {
     if (s == 3.75) { return 42; }
     return 7;
 }`},
-	// a struct-typed field read types the nested access (expr_struct_type).
 	{"nested_struct_field", `struct Inner { n: i64 }
 struct Outer { inn: Inner }
 function main(): i32 {
@@ -52,7 +39,6 @@ function main(): i32 {
     if (o.inn.n == 5000000000) { return 42; }
     return 7;
 }`},
-	// a Map-typed struct field keeps its K/V types through the field read.
 	{"map_field", `import "core/map";
 
 struct Reg { caps: Map[string, i32] }
@@ -63,8 +49,6 @@ function main(): i32 {
     let r: Reg = Reg { caps: m };
     return r.caps.get_or("a", 0) + 2;
 }`},
-	// a struct TUPLE element, then an unsigned field off it — the element's
-	// struct type must carry through to the field read.
 	{"tuple_elem_struct_field", `struct P { v: u64 }
 function main(): i32 {
     let t: (P, i32) = (P { v: 18446744073709551615 }, 3);
@@ -73,8 +57,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostAnnotateFieldIR_X86_64 pins the checker-stamped field-read type
-// feeding the lowering through the self-host x86-64 IR path (#5986).
 func TestSelfHostAnnotateFieldIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateFieldCases {
@@ -86,8 +68,6 @@ func TestSelfHostAnnotateFieldIR_X86_64(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 
-			// The annotation is consumed on the IR path; assert the module
-			// routes there so the case keeps exercising fa.ty.
 			route, derr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").Output()
 			if derr != nil {
 				t.Fatalf("route decide: %v", derr)

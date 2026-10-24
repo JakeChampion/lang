@@ -1,25 +1,5 @@
 package e2e
 
-// The kind-4 (boxed struct / enum value) overwrite pre-drop, and why it needs
-// the same sole-owner gate the string pre-drops carry.
-//
-// `m.insert(k, v)` over an existing key deep-drops the superseded value inline,
-// BEFORE the set reaches its own `__map_cow_inplace`. A second handle over the
-// same buffer therefore still names that value when it is freed, and #8354
-// leaves the struct value column shared on a COW copy exactly as it leaves the
-// string one.
-//
-// Ungated, `let snap = m; m = m.insert(k, s)` returned the WRONG value on all
-// three backends over 200 rounds while `FERN_LEAKCHECK=1` reported
-// allocs=2400 frees=2400 live_bytes=0. Every free is at rc 1 and the box is
-// recycled under the reader, so the heap balances exactly and no detector
-// fires — the reason this shipped. The answer is the only instrument that
-// sees it, which is what these probes read.
-//
-// The gate trades that for a leak: with it, the same run reports
-// allocs=2400 frees=2000 (2 blocks a round), the #8354 residual on a column a
-// copy still shares. A wrong answer is not a price worth paying for it.
-
 import "testing"
 
 const mapAliasedStructOverwriteSrc = `import "core/map";
@@ -63,27 +43,6 @@ func TestWASMMapAliasedStructOverwrite(t *testing.T) {
 	}
 }
 
-// The struct value column IS claimed on a COW copy, and one inc per entry is
-// the whole claim — the slot is a single pointer to an rc'd box whose
-// generated deep drop frees at its last reference, so no per-field walk is
-// needed in the inc direction. `__map_own_copied_cols`' `retainVals` arm
-// already covers kind 4.
-//
-// This is pinned because the opposite was written down: the comment in
-// `__map_own_copied_cols` claimed the struct column was "left shared ... for
-// want of a way to claim it here", #8420 was filed on that reading, and both
-// were wrong. A byte census is the instrument that settles it, and unlike the
-// aliased-overwrite probes above this shape can assert one — there is no
-// overwrite, so #8421's leak is not in the way.
-//
-// The insert AFTER the alias is what makes the probe able to fail. Aliasing
-// alone does not copy anything: `__map_own_copied_cols` runs from
-// `__map_cow_inplace`, which only fires when a handle at rc>1 is MUTATED. A
-// NEW key is the mutation that reaches it while displacing no value, so the
-// claim is exercised and the census stays assertable.
-//
-// `Deep` carries the shapes a per-field walk would have been needed for: a
-// string, an rc-tracked array, and a nested struct with its own string.
 const mapAliasedStructNoOverwriteSrc = `import "core/map";
 struct Box2 { name: string }
 function mk(): i32 {

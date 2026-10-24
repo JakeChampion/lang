@@ -10,14 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleRoutesAgree: the one-unit-per-process route
-// (`-per-module-emit N [-func-range LO:HI]`) and the batched route
-// (`-per-module-emit-all`) cut their units from the same typed lowering of the
-// whole program, so every unit is byte-identical between them. A one-function
-// window budget shards the library modules, so the windowed cut is compared as
-// well, and the batched units link and run. The entry is never sharded, so the
-// bodies on its tail (`first`'s instances, the drop helpers) and `_start` are
-// emitted once.
 func TestSelfHostPerModuleRoutesAgree(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

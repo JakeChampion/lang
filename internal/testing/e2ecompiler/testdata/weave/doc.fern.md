@@ -40,7 +40,7 @@ let s: string = "hi \"there\"";
 
 ```fern
 <<the main loop>>=
-let n: i32 = 0x1F + 2.5; // a comment & <tag>
+let n: i32 = 0x1F + 2.5; // This comment contains & and <tag>.
 ```
 
 ```fern

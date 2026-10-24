@@ -1,36 +1,3 @@
-// tests/proposals/logparse.fern — proposal turn, drawn line 154:
-// "A log-line parser that extracts fields from a common log format and reports
-// error rates."
-//
-// The Common Log Format:
-//
-//     127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /pb.gif HTTP/1.0" 200 2326
-//
-// Seven fields separated by spaces, except that two of them CONTAIN spaces and
-// are grouped instead — the timestamp by brackets, the request by quotes.
-// That is the whole difficulty: a naive split on whitespace produces nine
-// tokens for this line and silently reads the HTTP version as the status code.
-//
-// So the essential test is a round trip. `format(parse(line))` must return
-// the line back, byte for byte, for every well-formed input — a parser that
-// drops a field, mis-splits a group, or trims something it should have kept
-// fails that, and it fails for every field at once rather than only the one
-// somebody thought to assert on.
-//
-// The second requirement is that a malformed line is REJECTED rather than
-// partially accepted. A log parser that returns a half-filled record for a
-// truncated line reports numbers computed from fields it invented, which is
-// worse than reporting nothing. Every malformation the format admits — an
-// unclosed bracket or quote, a non-numeric status, a missing or extra field —
-// is enumerated and required to yield None.
-//
-// Error rates are integer basis points. A percentage in floating point would
-// be one more place for the backends to disagree, and "3.7%" is not more
-// informative than "370 per ten thousand" when the denominator is in the same
-// report.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
-
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -39,26 +6,12 @@ struct Entry {
   host: string,
   ident: string,
   user: string,
-  stamp: string,  // the bracketed timestamp, without its brackets
-  request: string,  // the quoted request line, without its quotes
+  stamp: string,
+  request: string,
   status: i32,
-  bytes: i32,  // -1 for the `-` that means "not recorded"
+  bytes: i32,
 }
 
-// ------------------------------------------------------------- tokenizing
-
-// One token starting at `at`, honouring the two grouping forms. Returns the
-// token text and the index just past it, or None if a group is unclosed.
-//
-// The grouping is what a whitespace split gets wrong, and it is not
-// decoration: the timestamp contains a space before the zone offset, and the
-// request contains two.
-//
-// `Option[(string, i32)]` is also the shape that found #6409: a pair-form
-// Option whose payload is a TUPLE is not released after the match, so a
-// tokenizer loop leaks one payload per token. Nothing here works around it —
-// this is the right return type for a step function — but a parser run over a
-// real log rather than a fixed corpus would grow.
 function token_at(s: string, at: i32): Option[(string, i32)] {
   let i: i32 = at;
   while (i < s.len() && s[i] as i32 == 32) {
@@ -68,8 +21,8 @@ function token_at(s: string, at: i32): Option[(string, i32)] {
     return None;
   }
   let open: i32 = s[i] as i32;
-  if (open == 91 || open == 34) {  // '[' or '"'
-    let close: i32 = 93;  // ']'
+  if (open == 91 || open == 34) {
+    let close: i32 = 93;
     if (open == 34) {
       close = 34;
     }
@@ -77,7 +30,7 @@ function token_at(s: string, at: i32): Option[(string, i32)] {
     while (j < s.len() && s[j] as i32 != close) {
       j = j + 1;
     }
-    if (j >= s.len()) {  // unclosed group
+    if (j >= s.len()) {
       return None;
     }
     return Some(("" + slice_unchecked(s, i + 1, j), j + 1));
@@ -110,17 +63,12 @@ function to_int(s: string): i32 {
   return v;
 }
 
-// --------------------------------------------------------------- parsing
-
-// A line parses completely or not at all. There is no partial Entry: a record
-// built from four good fields and three guessed ones would be counted in the
-// report as though it were real.
 function parse_line(line: string): Option[Entry] {
   let fields: string[] = [];
   let at: i32 = 0;
   for k in 0..7 {
     match (token_at(line, at)) {
-      None => {  // short line or unclosed group
+      None => {
         return None;
       },
       Some(t) => {
@@ -129,7 +77,6 @@ function parse_line(line: string): Option[Entry] {
       }
     }
   }
-  // Anything after the seventh field is not this format.
   match (token_at(line, at)) {
     Some(extra) => {
       return None;
@@ -153,9 +100,6 @@ function parse_line(line: string): Option[Entry] {
   });
 }
 
-// The inverse, used only by the round-trip test — which is the point: a
-// formatter written to satisfy the parser would prove nothing, so this one
-// writes the format as specified and lets the test find the disagreement.
 function format_line(e: Entry): string {
   let size: string = "-";
   if (e.bytes >= 0) {
@@ -165,13 +109,6 @@ function format_line(e: Entry): string {
     + e.request + "\" " + e.status.to_string() + " " + size;
 }
 
-// ---------------------------------------------------------------- report
-
-// `info` exists because 1xx did not, and every line has to land in exactly
-// one band or the report's own arithmetic stops adding up. The first draft
-// tested `status >= 200` downwards and counted a 100 Continue in the total
-// and in nothing else — caught by the test that sums the bands rather than by
-// any test that looked at a status code.
 struct Report {
   total: i32,
   malformed: i32,
@@ -229,10 +166,6 @@ function tally(lines: string[]): Report {
   return r;
 }
 
-// Errors per ten thousand requests. Integer, because a float percentage would
-// be one more place for four backends to disagree about a number nobody reads
-// past the second digit. Malformed lines count as errors: a line the parser
-// cannot read is a line the server may not have served.
 function error_rate_bp(r: Report): i32 {
   if (r.total == 0) {
     return 0;
@@ -251,8 +184,6 @@ function pct(bp: i32): string {
   return whole.to_string() + "." + pad + frac.to_string() + "%";
 }
 
-// ----------------------------------------------------------------- corpus
-
 function good_lines(): string[] {
   return [
     "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET /apache_pb.gif HTTP/1.0\" 200 2326",
@@ -267,24 +198,17 @@ function good_lines(): string[] {
 
 function bad_lines(): string[] {
   return [
-    "",  // empty
-    "127.0.0.1 - frank",  // short
-    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700 \"GET / HTTP/1.0\" 200 1",  // unclosed bracket
-    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0 200 1",  // unclosed quote
-    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" OK 1",  // status not a number
-    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" 200 1 extra",  // trailing field
-    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" 200 x",  // size not a number
-    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" 200",  // missing size
+    "",
+    "127.0.0.1 - frank",
+    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700 \"GET / HTTP/1.0\" 200 1",
+    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0 200 1",
+    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" OK 1",
+    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" 200 1 extra",
+    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" 200 x",
+    "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET / HTTP/1.0\" 200",
   ];
 }
 
-// ------------------------------------------------------------------ tests
-
-// THE test. Reformatting a parsed line must return the original, byte for
-// byte, for every well-formed input. It checks every field at once — a parser
-// that drops one, mis-splits a group, or trims something it should have kept
-// fails here, where a per-field assertion only catches the field somebody
-// thought to write down.
 function test_parsing_then_formatting_returns_the_line(): test.TestOutcome {
   let ls: string[] = good_lines();
   for i in 0..ls.len() {
@@ -304,10 +228,6 @@ function test_parsing_then_formatting_returns_the_line(): test.TestOutcome {
   return test.pass();
 }
 
-// Grouping is the whole difficulty of this format: a whitespace split gives
-// nine tokens for a line that has seven fields, and reads the HTTP version as
-// the status. This pins the two grouped fields to their exact contents,
-// spaces included.
 function test_grouped_fields_keep_their_spaces(): test.TestOutcome {
   let line: string = good_lines()[0];
   match (parse_line(line)) {
@@ -335,9 +255,6 @@ function test_grouped_fields_keep_their_spaces(): test.TestOutcome {
   return test.pass();
 }
 
-// A malformed line yields None, never a partial record. A parser that filled
-// in what it could would put invented fields into the report, which is worse
-// than reporting nothing.
 function test_a_malformed_line_is_rejected_outright(): test.TestOutcome {
   let ls: string[] = bad_lines();
   for i in 0..ls.len() {
@@ -352,18 +269,6 @@ function test_a_malformed_line_is_rejected_outright(): test.TestOutcome {
   return test.pass();
 }
 
-// A log is most likely to be cut at the end, mid-write, so every prefix of a
-// good line is worth checking. The obvious claim — that no prefix parses — is
-// FALSE, and the first draft asserted it and was rightly refused: truncating
-// the size `2326` to `2` leaves a line that is completely well-formed. Nothing
-// in the format lets a parser tell that apart from a request that really did
-// serve two bytes, which is precisely why log shippers frame lines rather than
-// detect truncation.
-//
-// So the correct invariant is the one a parser can actually keep: a prefix
-// either fails, or parses to a record that reformats to exactly those bytes.
-// It never invents a field to fill a gap. That is checked at every one of the
-// line's byte offsets, and it is the property the report depends on.
 function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
   let ls: string[] = good_lines();
   for i in 0..ls.len() {
@@ -382,8 +287,6 @@ function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
       }
     }
   }
-  // A prefix cut inside either GROUP must fail outright — an unclosed
-  // bracket or quote has no valid reading at all.
   let line: string = good_lines()[0];
   let mid_bracket: string = "" + slice_unchecked(line, 0, 30);
   let mid_quote: string = "" + slice_unchecked(line, 0, 60);
@@ -402,9 +305,6 @@ function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
   return test.pass();
 }
 
-// `-` in the size column means "not recorded", which is distinct from zero.
-// Summing it as zero is right; reporting it as zero is not, so the two must
-// stay distinguishable in the record.
 function test_an_absent_size_is_not_zero(): test.TestOutcome {
   let absent: string = "1.2.3.4 - - [x] \"GET / HTTP/1.1\" 304 -";
   let zero: string = "1.2.3.4 - - [x] \"GET / HTTP/1.1\" 200 0";
@@ -428,7 +328,6 @@ function test_an_absent_size_is_not_zero(): test.TestOutcome {
       }
     }
   }
-  // Neither contributes bytes, but they are different records.
   let r: Report = tally([absent, zero]);
   if (r.bytes != 0) {
     return test.fail("two zero-byte responses summed to "
@@ -437,9 +336,6 @@ function test_an_absent_size_is_not_zero(): test.TestOutcome {
   return test.pass();
 }
 
-// The tally must account for every line exactly once: the class counts plus
-// the malformed count must equal the total, with nothing double-counted and
-// nothing dropped between the bands.
 function test_every_line_is_counted_exactly_once(): test.TestOutcome {
   let ls: string[] = good_lines();
   for i in 0..bad_lines().len() {
@@ -457,7 +353,6 @@ function test_every_line_is_counted_exactly_once(): test.TestOutcome {
       + " but the total is " + r.total.to_string()
       + " — a status fell between the bands");
   }
-  // 1xx would be exactly such a gap, so it is checked directly.
   let info: Report = tally(["1.2.3.4 - - [x] \"GET / HTTP/1.1\" 100 0"]);
   if (info.info + info.ok + info.redirect + info.client_err + info.server_err
     + info.malformed != info.total) {
@@ -469,9 +364,6 @@ function test_every_line_is_counted_exactly_once(): test.TestOutcome {
   return test.pass();
 }
 
-// The rate is errors over total in basis points, checked against a count made
-// without the tally, and bounded at both ends. An empty log is 0, not a
-// division by zero.
 function test_the_error_rate_matches_an_independent_count(): test.TestOutcome {
   let ls: string[] = good_lines();
   for i in 0..bad_lines().len() {
@@ -500,7 +392,6 @@ function test_the_error_rate_matches_an_independent_count(): test.TestOutcome {
   if (error_rate_bp(tally([])) != 0) {
     return test.fail("an empty log has a non-zero error rate");
   }
-  // All good, all bad — the two ends.
   if (error_rate_bp(tally(["1.2.3.4 - - [x] \"GET / HTTP/1.1\" 200 1"])) != 0) {
     return test.fail("a single success reported a non-zero rate");
   }
@@ -510,9 +401,6 @@ function test_the_error_rate_matches_an_independent_count(): test.TestOutcome {
   return test.pass();
 }
 
-// A request containing quotes' near neighbours — brackets, more spaces, a
-// query string — must survive. This is where a parser that scans for the
-// LAST quote, or that splits on brackets anywhere, comes apart.
 function test_awkward_requests_survive(): test.TestOutcome {
   let awkward: string[] = [
     "1.2.3.4 - - [x] \"GET /a[b]c HTTP/1.1\" 200 1",
@@ -543,8 +431,6 @@ function test_awkward_requests_survive(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------- app
 
 function main(): i32 {
   eprint("logparse — common log format, with grouping honoured");

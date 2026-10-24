@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostHTTPCorpus is the self-host twin of internal/testing/e2e's
-// TestHTTPCorpus: the parser corpus program, compiled by the self-host
-// compiler for x86-64, prints the pinned verdict for every request.
 func TestSelfHostHTTPCorpus(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")

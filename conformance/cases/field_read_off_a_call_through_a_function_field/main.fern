@@ -1,5 +1,5 @@
-// A field read straight off the result of a call through a function-typed
-// struct field: the result takes the field's declared return type.
+
+
 struct Txn { id: i32 }
 struct Out { v: i32 }
 struct Stage { name: string, run: (string, Txn) => Out }

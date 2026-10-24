@@ -11,12 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// runSelfHostSumTypeExportCase drives the self-host P6 sum-type result export
-// flow (the Go side is runSumTypeExportCase): the self-hosted compiler emits an
-// exporter core whose wrapper repacks the Fern enum box ([tag@0][payload@4])
-// into the canonical (disc:u8@0, payload@4) return area; the Go composer lifts
-// it; a Fern consumer `@import`s it and matches every arm, linked + run under
-// wasmtime.
 func runSelfHostSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern, userFern, want string) {
 	t.Helper()
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -135,8 +129,6 @@ func runSelfHostSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern,
 	}
 }
 
-// TestSelfHostExportOptionResultRunsViaConsumer is the self-host parity gate for
-// the Option result export (the remapped discriminant).
 func TestSelfHostExportOptionResultRunsViaConsumer(t *testing.T) {
 	const exp = `@export("local:test/maybe@0.1.0", "half")
 function half(n: i32): Option[i32] {
@@ -161,8 +153,6 @@ function main(): i32 {
 		"maybe", "local:test/maybe@0.1.0", "maybe.wit", exp, user, "opt-ok")
 }
 
-// TestSelfHostExportResultResultRunsViaConsumer is the self-host parity gate for
-// the Result result export (no discriminant remap).
 func TestSelfHostExportResultResultRunsViaConsumer(t *testing.T) {
 	const exp = `@export("local:test/checked@0.1.0", "checked-div")
 function checked_div(a: i32, b: i32): Result[i32, i32] {

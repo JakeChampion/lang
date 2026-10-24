@@ -3,7 +3,6 @@ import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
 import "std/string";
 
-// Native status bytes are shared; the printed module and case identify failure.
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("string-release instruction controls failed: " + group);
@@ -127,7 +126,6 @@ function boundaries(): void {
   require(cycle.error == "" && cycle.ops[2].target == 1 && cycle.unguarded_entry == 3, "cycles are data");
   let empty = isa.string_program(prefix() + "__fn___fern_str_free.u:\n__next:\nret\n");
   require(empty.error == "" && empty.ops.len() == 2, "empty entry is data");
-  // These syntax samples deliberately lack global and dependency definitions.
   require(sample("call __fern_capw").kind == 25 && sample("call __fern_large_push").kind == 25, "calls are data");
 }
 

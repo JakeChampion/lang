@@ -1,6 +1,6 @@
-// More lane values live at once than there are vector registers, across
-// calls, beside f64 values: each spills to a 16-byte slot of its own and
-// comes back whole.
+
+
+
 import "std/f64";
 
 function bump(x: f64): f64 {

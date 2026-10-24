@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A tuple local holding a capturing closure. The exit sweep's inline
-// tuple drop released the element with a flat dec, which strands the
-// closure pair and its environment; the generated __drop_tuple_
-// releases it through __drop_closure_value.
+
+
+
+
+
+
+
 function main(): i32 {
     let bias: i32 = 2;
     let ctx: ((string) => i32, i32) = ((s: string) => s.len() + bias, 0);

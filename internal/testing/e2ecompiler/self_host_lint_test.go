@@ -12,9 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// lintRun writes files into a fresh directory, runs the self-host CLI's
-// `-lint` over the paths in args (relative to it, flags passed through) and
-// returns stdout, stderr and the exit status.
 func lintRun(t *testing.T, files map[string]string, args ...string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -37,8 +34,6 @@ func lintRun(t *testing.T, files map[string]string, args ...string) (string, str
 
 var lintScoreRe = regexp.MustCompile("function `([^`]+)` has a cyclomatic complexity of (\\d+)")
 
-// lintScores is every reported function's score under max=1, which reports
-// every function scoring 2 or more; an unreported function scored 1.
 func lintScores(t *testing.T, src string) map[string]int {
 	t.Helper()
 	out, errOut, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=1", "t.fern")
@@ -60,8 +55,6 @@ func scoreOrOne(scores map[string]int, name string) int {
 	return 1
 }
 
-// The complexity model: one for the entry path, one per fork, and what does
-// not fork.
 func TestSelfHostLintScoreModel(t *testing.T) {
 	cases := []struct {
 		name string
@@ -96,8 +89,6 @@ func TestSelfHostLintScoreModel(t *testing.T) {
 	}
 }
 
-// Match arms: each that can fail to match, plus each guard; a nested pattern
-// counts as the arm written, not the matches it lowers to.
 func TestSelfHostLintScoreMatchArms(t *testing.T) {
 	const enum = "enum E { A(i32), B(i32) }\n"
 	cases := []struct {
@@ -121,8 +112,6 @@ func TestSelfHostLintScoreMatchArms(t *testing.T) {
 	}
 }
 
-// for-in, `?`, a lambda's body folding into its function, and a method named
-// by its receiver.
 func TestSelfHostLintScoreForEachTryLambdaReceiver(t *testing.T) {
 	scores := lintScores(t, `
 struct Counter { n: i32 }
@@ -169,8 +158,6 @@ func lintFindings(t *testing.T, src string) string {
 	return out
 }
 
-// `// fern-lint: allow` covers the next construct, past doc comments and
-// blank lines, or its own line when code precedes it; allow-file the file.
 func TestSelfHostLintSuppressionForms(t *testing.T) {
 	cases := []struct {
 		name string
@@ -195,7 +182,6 @@ func TestSelfHostLintSuppressionForms(t *testing.T) {
 	}
 }
 
-// A malformed directive is a lint-directive finding, and silences nothing.
 func TestSelfHostLintBadDirectives(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"unknown rule", "// fern-lint: allow cyclomatic-complexety\n" + lintNoisyFn, "names no such lint rule"},
@@ -216,8 +202,6 @@ func TestSelfHostLintBadDirectives(t *testing.T) {
 	}
 }
 
-// The rendered finding, its advice, the separation between findings, the
-// summary, and the exit status a deny severity gives.
 func TestSelfHostLintRenderingAndExit(t *testing.T) {
 	src := lintNoisyFn + strings.Replace(lintNoisyFn, "noisy", "noisier", 1)
 	out, _, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=2", "t.fern")
@@ -244,8 +228,6 @@ func TestSelfHostLintRenderingAndExit(t *testing.T) {
 	}
 }
 
-// The governing fern.toml's [lint] tables configure the run, -lint-set wins
-// over them, and a bad setting is a usage error naming where it was spelled.
 func TestSelfHostLintConfiguration(t *testing.T) {
 	files := map[string]string{
 		"fern.toml":  "[package]\nname = \"p\"\n\n[lint]\ncyclomatic-complexity = \"deny\"\n\n[lint.options]\ncyclomatic-complexity.max = 2\n",
@@ -285,9 +267,6 @@ func TestSelfHostLintConfiguration(t *testing.T) {
 	}
 }
 
-// A file the linter cannot read as a module fails the run like a denied rule,
-// whether it does not parse or, as a literate document, does not tangle: the
-// error is printed and the exit status is 1, not the 0 of a clean lint.
 func TestSelfHostLintUnreadableModule(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, src, want string
@@ -304,7 +283,6 @@ func TestSelfHostLintUnreadableModule(t *testing.T) {
 	}
 }
 
-// `-lint-rules` lists every rule with its default severity and options.
 func TestSelfHostLintRules(t *testing.T) {
 	out, err := exec.Command(e2eharness.SelfHostCLI(t), "-lint-rules").Output()
 	want := "cyclomatic-complexity  [warn]\n" +
@@ -318,9 +296,6 @@ func TestSelfHostLintRules(t *testing.T) {
 	}
 }
 
-// Splitting a function over the limit into smaller ones over it raises the
-// number of findings and lowers the summed distance over the limit — the
-// reason the ratchet sums distance instead of counting functions.
 func TestSelfHostLintSplittingImprovesExcess(t *testing.T) {
 	fn := func(name string, forks int) string {
 		var b strings.Builder
@@ -349,9 +324,6 @@ func TestSelfHostLintSplittingImprovesExcess(t *testing.T) {
 	}
 }
 
-// lintForkFn is a function of `forks` consecutive `if`s on lines 2 through
-// forks+1 and a return on the line after, so its complexity is forks+1 and
-// a -cover run instruments forks+1 of its lines.
 func lintForkFn(name string, forks int) string {
 	var b strings.Builder
 	b.WriteString("function " + name + "(n: i32): i32 {\n")
@@ -361,8 +333,6 @@ func lintForkFn(name string, forks int) string {
 	return b.String() + "  return 0;\n}\n"
 }
 
-// coverRows is a -cover stream for `file`: one row per line in `hits`, keyed
-// by line number.
 func coverRows(file string, hits map[int]int) string {
 	var b strings.Builder
 	for line, n := range hits {
@@ -371,13 +341,7 @@ func coverRows(file string, hits map[int]int) string {
 	return b.String()
 }
 
-// The change-risk score: complexity^2 * (1 - coverage)^3 + complexity,
-// rounded, over the rows between a function's first line and the last line
-// its body reaches. A function the run holds no row for is not scored.
 func TestSelfHostLintChangeRisk(t *testing.T) {
-	// Four copies of the same 3-fork function at lines 1, 6, 11 and 16, with
-	// 0, 1, 2 and 3 of their 3 instrumented lines hit, then an 11-fork one at
-	// line 21 with nothing hit, then one with no rows at all.
 	src := lintForkFn("none", 2) + lintForkFn("third", 2) + lintForkFn("most", 2) + lintForkFn("all", 2) +
 		lintForkFn("big", 10) + lintForkFn("unmeasured", 2)
 	hits := map[int]int{2: 0, 3: 0, 4: 0, 7: 1, 8: 0, 9: 0, 12: 1, 13: 1, 14: 0, 17: 1, 18: 1, 19: 1}
@@ -399,8 +363,6 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 	if code != 0 || out != want || errOut != "" {
 		t.Errorf("default limit: exit %d, stderr %q\n--- got ---\n%s--- want ---\n%s", code, errOut, out, want)
 	}
-	// 3^2 * 1 + 3 = 12; 9 * (2/3)^3 = 2.67 -> 3, plus 3 = 6; 9 * (1/3)^3 =
-	// 0.33 -> 0, plus 3 = 3; and 3 for the fully covered one.
 	out, _, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
 	riskRe := regexp.MustCompile("function `([^`]+)` has a change risk of (\\d+): complexity 3 with ([0-9.]+%) of its 3 lines covered")
 	got := map[string]string{}
@@ -419,7 +381,6 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 	if strings.Contains(out, "`unmeasured`") {
 		t.Errorf("a function with no rows was scored:\n%s", out)
 	}
-	// deny fails the run; a suppression on the function or the file silences it.
 	out, _, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "change-risk=deny", "t.fern")
 	if code != 1 || !strings.Contains(out, "error[change-risk]: function `big`") {
 		t.Errorf("deny: exit %d\n%s", code, out)
@@ -431,7 +392,6 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 		}
 		quiet := map[string]string{"t.fern": directive + src, "cov.txt": coverRows("t.fern", shifted)}
 		if directive == "// fern-lint: allow change-risk\n" {
-			// The directive covers only `none`; `big` still fires.
 			out, _, _ = lintRun(t, quiet, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
 			if strings.Contains(out, "`none`") || !strings.Contains(out, "`big`") {
 				t.Errorf("allow on the first function:\n%s", out)
@@ -445,8 +405,6 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 	}
 }
 
-// A run names a file as the compile was told it and the lint as it was
-// walked; one spelled with more or fewer leading directories still matches.
 func TestSelfHostLintChangeRiskPaths(t *testing.T) {
 	hits := map[int]int{2: 0, 3: 0, 4: 0}
 	big := lintForkFn("noisy", 2)
@@ -467,9 +425,6 @@ func TestSelfHostLintChangeRiskPaths(t *testing.T) {
 	}
 }
 
-// The rule refuses to pass vacuously: configuring it without a run, a run
-// that cannot be read or holds no rows, and a run naming none of the linted
-// files are all usage errors.
 func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
 	noisy := map[string]string{"t.fern": lintNoisyFn}
 	for _, tc := range []struct {
@@ -493,8 +448,6 @@ func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
 			}
 		})
 	}
-	// A rule set to allow scores nothing, so it needs no run, whatever else
-	// names it, and a run naming none of the linted files is not refused.
 	other := map[string]string{"t.fern": lintNoisyFn, "cov.txt": "fern-cover: other.fern:2 1\n"}
 	for _, tc := range []struct {
 		files map[string]string

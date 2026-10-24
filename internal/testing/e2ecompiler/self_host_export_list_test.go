@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExportListResultRunsViaConsumer is the self-host parity gate for
-// the P6 numeric-array (`list<T>`) result export (the Go side is
-// TestExportListResultRunsViaConsumer). The self-hosted compiler
-// (compiler/wasm_ir.fern) emits a wrapper that copies the Fern array's
-// elements (block base `[len@0]`, elements @+8) into a fresh 8-aligned buffer
-// and writes the canonical (ptr,len) return area; the Go composer lifts it with
-// the memory lift (emitting the `list<s32>` component type); and a Fern consumer
-// that @imports `iota() -> list<s32>` reads the array back — linked with
-// `wasm-tools compose` and run under wasmtime. docs/WIT-BRING-YOUR-OWN.md.
 func TestSelfHostExportListResultRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -38,7 +29,6 @@ func TestSelfHostExportListResultRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// self-host emits the exporter core (command with main + list @export).
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
@@ -61,7 +51,6 @@ function main(): i32 { return 0; }`
 		t.Fatalf("read exporter core: %v", err)
 	}
 
-	// exporter world: exports nums, imports wasi:cli/stdout (run-io core).
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -98,7 +87,6 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// Self-host-built consumer that imports iota() -> list<s32> and checks it.
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)

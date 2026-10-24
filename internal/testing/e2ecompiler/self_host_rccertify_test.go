@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// rccertifyCasesSource is a driver over compiler/rccertify.fern: each case
-// is a hand-built function in the lifted SSA the certifier reads, with its
-// own ownership contract, and the driver prints what the certifier finds.
-// The cases are the certifier's contract in miniature: a balanced body
-// certifies, and each way of being unbalanced is a finding naming the value.
 func rccertifyCasesSource() string {
 	return `import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util";
 
@@ -455,11 +450,6 @@ function main(): i32 {
 `
 }
 
-// TestSelfHostRcCertifyCases pins the certifier (compiler/rccertify.fern,
-// #11908) on hand-built functions: the balanced shapes it must accept and
-// the unbalanced ones it must name, each with the value and the kind of
-// finding. The whole-corpus gates (the fixture legs under FERN_IR_VERIFY)
-// only say the certifier found nothing; this says it finds what is there.
 func TestSelfHostRcCertifyCases(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -468,15 +458,10 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 	}
 	driver := buildSelfHostBin(t, gcc, dir, "rccertify_cases.fern", "rccertify-driver")
 	cases := []struct {
-		name string
-		// The findings expected, each as "<kind> of v<n>"; empty certifies.
-		want []string
-		// The values left unproved: a count the paths disagree on is not a
-		// finding (the lowering pairs one arm's retain with a later arm's
-		// consume) but it is not certified either, and the census says so.
+		name     string
+		want     []string
 		unproved int
-		// The reason the body was not certified at all, "" when it was.
-		skipped string
+		skipped  string
 	}{
 		{"balanced", nil, 0, ""},
 		{"leak", []string{"leaked at return of v0"}, 0, ""},
@@ -508,30 +493,16 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"token-retain-under-test-consumed-after-join", []string{"spent without a unit of v4"}, 0, ""},
 		{"token-retain-under-test-released-under-test", nil, 0, ""},
 		{"derived-token-test-skips-the-shell", nil, 0, ""},
-		// The two joins the other arm's token reaches are tested by nothing,
-		// so they stay unproved.
 		{"reuse-through-a-carried-token-writes-the-slot", nil, 2, ""},
 		{"token-reuse-writes-the-slot-read", nil, 0, ""},
 		{"token-reuse-puts-back-and-stores-elsewhere", nil, 0, ""},
 		{"token-reuse-puts-back-and-stores-elsewhere-unretained", []string{"spent without a unit of v4"}, 0, ""},
-		// The reuse's phi meets the other arm, which no tested token
-		// decides.
 		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 1, ""},
-		// The loop's phi meets the parameter and the reused box, which no
-		// test decides.
 		{"reuse-of-a-loop-box-through-its-token", nil, 1, ""},
-		// The word is made before the token's block, so the walk under the
-		// token's value inherits its tag.
 		{"pair-word-settled-past-its-token-test", nil, 0, ""},
-		// The copy's reads are of the box this time round; the construction
-		// next time round stores into another box.
 		{"loop-box-copied-under-its-null-token", nil, 0, ""},
-		// The token phi's input is a copy of the box made before the test.
 		{"token-box-copied-before-its-test", nil, 0, ""},
-		// The null comes first in the phi; the join past the match, which no
-		// token decides, stays unproved.
 		{"reuse-past-a-join-null-first", nil, 1, ""},
-		// The phi's null edge is settled against the outside arm's null.
 		{"null-tested-against-an-outside-null", nil, 1, ""},
 		{"leak-in-a-loop-body", []string{"leaked where it dies of v1"}, 0, ""},
 	}

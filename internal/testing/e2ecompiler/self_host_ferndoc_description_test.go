@@ -11,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// docSummaryReference is the summary rule ferndoc.module_summary implements:
-// in particular it uppercases one byte, even one that starts a UTF-8 rune.
 func docSummaryReference(intro string) string {
 	para, _, _ := strings.Cut(intro, "\n\n")
 	s := strings.Join(strings.Fields(para), " ")
@@ -49,8 +47,6 @@ func TestSelfHostFerndocDescription(t *testing.T) {
 	var src strings.Builder
 	src.WriteString("import \"./docsummary\";\n")
 	for i, input := range cases {
-		// Separate functions keep the ARM literal pools bounded without dropping
-		// any byte assertions, including invalid UTF-8 produced by capitalization.
 		fmt.Fprintf(&src, "@noinline\nfunction case_%d(): i32 {\n", i)
 		fmt.Fprintf(&src, "let input: string = string_from_bytes_unchecked(%s);\n", etlByteLiteral([]byte(input)))
 		fmt.Fprintf(&src, "let summary: string = string_from_bytes_unchecked(%s);\n", etlByteLiteral([]byte(docSummaryReference(input))))
@@ -79,8 +75,6 @@ func TestSelfHostFerndocDescription(t *testing.T) {
 	}
 }
 
-// The generated table must track the pinned Go reference across all scalars,
-// including unassigned code points; a few documentation fixtures cannot prove it.
 func TestFerndocPrintableTableMatchesReference(t *testing.T) {
 	data, err := os.ReadFile(e2eharness.RepoPath("compiler", "docprintable.fern"))
 	if err != nil {

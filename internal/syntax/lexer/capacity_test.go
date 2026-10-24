@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// The reserve is a starting point rather than a per-file bound. Guard that the
-// corpus as a whole still sits on the far side of the actual production divisor.
 func TestTokenSliceIsSizedForTheCorpusDensity(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "*.fern"))
 	inDrivers, _ := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "drivers", "*.fern"))
@@ -23,7 +21,7 @@ func TestTokenSliceIsSizedForTheCorpusDensity(t *testing.T) {
 		}
 		toks, _, err := Tokenize(string(src))
 		if err != nil {
-			continue // a source the lexer rejects is not this test's business
+			continue
 		}
 		bytes += len(src)
 		tokens += len(toks)
@@ -38,8 +36,6 @@ func TestTokenSliceIsSizedForTheCorpusDensity(t *testing.T) {
 	}
 }
 
-// Keep corpus loading outside the timer so allocation changes in Tokenize
-// can be measured against the same source snapshot.
 func BenchmarkTokenizeSelfHostCorpus(b *testing.B) {
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "*.fern"))
 	if err != nil {
@@ -58,7 +54,7 @@ func BenchmarkTokenizeSelfHostCorpus(b *testing.B) {
 			b.Fatal(err)
 		}
 		if _, _, err := Tokenize(string(src)); err != nil {
-			continue // Match the density guard's accepted source population.
+			continue
 		}
 		sources = append(sources, string(src))
 		bytes += int64(len(src))

@@ -1,25 +1,3 @@
-// users.fern — GNU-compatible `users`.
-//
-//   users [OPTION]... [FILE]
-//
-// The login names in the accounting database, sorted, separated by
-// single spaces, on one line. A name appears once per session, so two
-// logins by the same user print it twice; `users` counts terminals, not
-// people.
-//
-// FILE is the database to read and defaults to /var/run/utmp; the usual
-// other one is /var/log/wtmp, which is the same record format and holds
-// the history rather than the present. There is no option of its own —
-// only the two standard ones — and a second operand is `extra operand`.
-//
-// An empty database prints NOTHING, not an empty line: the newline is a
-// terminator for the list rather than a line of its own. A database
-// that cannot be read at all is empty too, with no diagnostic and exit
-// 0 — `users /nonexistent` and `users /etc` are both silent successes,
-// which is the whole of this utility's error handling.
-//
-// The sort is strcmp over the raw bytes, so it is ASCII order in the C
-// locale and digits sort before capitals before lowercase.
 import "std/string";
 import "std/array";
 import "core/cmp";

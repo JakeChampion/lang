@@ -5,32 +5,6 @@ import (
 	"testing"
 )
 
-// A VARIANT CONSTRUCTOR at a call-argument position (`sink(E.A(mk(...)))`)
-// allocates a fresh rc=1 box exactly as a struct or tuple literal does, but
-// `freshOwnedRcTempType` classified only the literal node kinds — a variant
-// construction is spelled as a Call, and that switch excludes Calls because a
-// method call can alias its receiver. So the box AND everything under it was
-// stranded on every call, while the same value bound to a `let` first, and the
-// struct and tuple literals in the identical position, were all reclaimed
-// (#7867 slice 3, half two).
-//
-// Measured on the reported shape: 200 allocs / 0 frees / 8000 live bytes over
-// 100 rounds, 400 / 0 / 16000 over 200 — two blocks per round (the box and its
-// string payload), linear and unbounded.
-//
-// Each case is loop-resident so a leak scales with the round count, and is
-// measured at three counts: a per-round leak is what one count cannot tell
-// apart from a fixed startup cost. The exit code folds in
-// `__rc_underflow_count()` because the census is structurally blind to an
-// OVER-release — allocs == frees at live_bytes 0 is also what a double free
-// into the freelist looks like, and over-release is the real hazard of
-// admitting a new shape to a deep drop.
-//
-// `@noinline` is on both the callee and the payload producer throughout: an
-// inlined probe has no argument temp to reclaim and reads clean whether or not the bug is present (docs/TEST-GATES.md).
-// The payload is built by concatenation from a shared left operand so it clears
-// the 7-byte inline-string threshold and cannot grow in place.
-
 const variantReclaimPrelude = `enum E { A(string), B }
 @noinline
 function sink(e: E): i32 {
@@ -43,8 +17,6 @@ function sink(e: E): i32 {
 function mkpayload(base: string): string { return base + "-payloadpayload"; }
 `
 
-// variantCtorArgSrc: the reported shape — a fresh variant construction handed
-// straight to a borrowing callee.
 func variantCtorArgSrc(rounds int) string {
 	return variantReclaimPrelude + `
 function round(i: i32): i32 {
@@ -54,10 +26,6 @@ function round(i: i32): i32 {
 ` + variantChurnMain(rounds, rounds*34)
 }
 
-// variantCtorArgLivePayloadSrc: the payload is a local that is READ AFTER the
-// call, so no move applies and the construction's alias inc is what keeps it
-// alive. If the new reclaim released the payload the callee borrowed, this
-// reads freed memory — caught by the value check and the underflow counter.
 func variantCtorArgLivePayloadSrc(rounds int) string {
 	return variantReclaimPrelude + `
 function round(i: i32): i32 {
@@ -69,10 +37,6 @@ function round(i: i32): i32 {
 ` + variantChurnMain(rounds, rounds*34)
 }
 
-// variantCtorReturnedSrc: the callee HANDS THE ARGUMENT BACK (`keepf(e) -> e`).
-// The return-transfer inc puts the box at rc >= 2, so the caller's
-// is_unique-gated drop must decrement rather than free — the shape that decides
-// whether admitting variant constructions is sound at all.
 func variantCtorReturnedSrc(rounds int) string {
 	return variantReclaimPrelude + `
 @noinline
@@ -88,17 +52,6 @@ function round(i: i32): i32 {
 ` + variantChurnMain(rounds, rounds*34)
 }
 
-// variantPayloadlessArgSrc: a payloadless variant lowers to a SHARED STATIC
-// sentinel rather than a fresh box (emitEnumNew), so there is nothing to
-// reclaim and nothing may be dec'd as though there were — a sentinel released
-// as if it were fresh corrupts a value every later construction shares.
-//
-// The sentinel call is paired with a payload-carrying one in the same round
-// because a payloadless variant allocates nothing at all, and leakCounts
-// rejects a probe whose census is empty (it cannot distinguish "nothing
-// leaked" from "nothing ran"). The pairing gives the census something to
-// measure and keeps the underflow counter — the assertion that actually
-// carries here — meaningful.
 func variantPayloadlessArgSrc(rounds int) string {
 	return variantReclaimPrelude + `
 function round(i: i32): i32 {
@@ -108,9 +61,6 @@ function round(i: i32): i32 {
 ` + variantChurnMain(rounds, rounds*34)
 }
 
-// variantCtorNestedSrc: the construction is one argument among several and its
-// payload is itself a fresh call result, so the stash has to keep the operand
-// order intact as well as reclaim.
 func variantCtorNestedSrc(rounds int) string {
 	return variantReclaimPrelude + `
 @noinline
@@ -127,8 +77,6 @@ function round(i: i32): i32 {
 ` + variantChurnMain(rounds, rounds*34)
 }
 
-// variantChurnMain drives `round` and returns 0 only when the accumulated value
-// matches and no rc over-release was counted.
 func variantChurnMain(rounds, want int) string {
 	return `function main(): i32 {
     let acc: i32 = 0;

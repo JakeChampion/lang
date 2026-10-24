@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The safety boundary of the closure-call arg reclaim (#6460). Each
-// closure here HANDS BACK its argument — as the result, inside a
-// struct, inside an array — so the caller's fresh temp is still live
-// after the call and must NOT be released. The gate is the result
-// TYPE: only a concrete scalar admits the reclaim, and every callee
-// below returns something pointer-shaped, so all of them decline.
-//
-// The reads after each call are the point: a premature release would
-// hand the buffer to the freelist, the next construction would recycle
-// it, and the sum would come out wrong even where the underflow
-// counter reported nothing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 struct Hold { xs: i32[] }

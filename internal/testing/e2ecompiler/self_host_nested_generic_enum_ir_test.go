@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// nestedGenericEnumIRCase is a self-host generic-enum program whose type
-// argument is ITSELF a generic enum (`Opt[Opt[i32]]`) — a COMPOSITE
-// instantiation key. For a SINGLE-type-param enum, monomorphize_enums
-// (parser.fern) accepts a (recursively) mangled generic-enum clone as the one
-// arg, so `Opt[Opt[i32]]` clones to `Opt__Opt__i32` with field type
-// `Opt__i32`, the inner `Opt[i32]` is enqueued + cloned too, a nested `match`
-// recovers the bound payload's instantiation, and a nested unit-variant
-// payload (`Sm(Nn)`) is pinned from the outer annotation. Each exit code is
-// pinned against the interpreter oracle and kept <= 120.
 type nestedGenericEnumIRCase struct {
 	name     string
 	src      string
@@ -23,7 +14,6 @@ type nestedGenericEnumIRCase struct {
 }
 
 var nestedGenericEnumIRCases = []nestedGenericEnumIRCase{
-	// the core shape: construct `Sm(Sm(3))` and extract through two matches.
 	{"two_level_i32", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let o: Opt[Opt[i32]] = Sm(Sm(3));
@@ -32,15 +22,11 @@ function main(): i32 {
         Nn => { return 0; }
     }
 }`, 3},
-	// the OUTER value is the unit variant `Nn` (pinned from the annotation).
 	{"outer_unit", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let o: Opt[Opt[i32]] = Nn;
     match (o) { Sm(n) => { return 1; }, Nn => { return 9; } }
 }`, 9},
-	// the INNER payload is the unit variant `Nn` (`Sm(Nn)`): the inner `Nn` has
-	// nothing to infer from, so its instantiation is propagated from the outer
-	// `Opt[Opt[i32]]` annotation into the construction argument.
 	{"inner_unit", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let o: Opt[Opt[i32]] = Sm(Nn);
@@ -49,7 +35,6 @@ function main(): i32 {
         Nn => { return 0; }
     }
 }`, 7},
-	// three levels of nesting (`Opt[Opt[Opt[i32]]]`).
 	{"three_level", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let o: Opt[Opt[Opt[i32]]] = Sm(Sm(Sm(5)));
@@ -58,14 +43,12 @@ function main(): i32 {
         Nn => { return 0; }
     }
 }`, 5},
-	// two DIFFERENT generic enums nested (`Outer[Inner[i32]]`).
 	{"two_kinds", `enum Inner[T] { I(T) }
 enum Outer[U] { O(U) }
 function main(): i32 {
     let o: Outer[Inner[i32]] = O(I(5));
     match (o) { O(x) => { match (x) { I(n) => { return n + 1; } } } }
 }`, 6},
-	// a nested enum and a plain instantiation of the same enum coexisting.
 	{"coexist_with_flat", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let a: Opt[Opt[i32]] = Sm(Sm(3));
@@ -75,7 +58,6 @@ function main(): i32 {
     match (b) { Sm(k) => { x = x + k; }, Nn => { } }
     return x;
 }`, 7},
-	// nested string payload, with method dispatch on the innermost binding.
 	{"nested_string_method", `enum Box[T] { V(T) }
 function main(): i32 {
     let o: Box[Box[string]] = V(V("hello"));
@@ -83,8 +65,6 @@ function main(): i32 {
 }`, 5},
 }
 
-// TestSelfHostNestedGenericEnumIRX86_64 runs each nested generic-enum program
-// through the self-host asm_run driver (Fern → x86-64 asm → binary → exit code).
 func TestSelfHostNestedGenericEnumIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -118,9 +98,6 @@ func TestSelfHostNestedGenericEnumIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedGenericEnumWasmIR is the wasm sibling: monomorphize_enums is
-// a target-independent parser pass, so the wasm IR backend gets nested generic
-// enums for free. Each case asserts the same oracle exit code.
 func TestSelfHostNestedGenericEnumWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range nestedGenericEnumIRCases {

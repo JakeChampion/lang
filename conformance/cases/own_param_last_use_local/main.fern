@@ -1,8 +1,8 @@
-// A local handed to an `own` parameter where it dies is a move, not a borrow:
-// nothing reads the binding again (#9541). Each function below builds a value
-// into a local and hands it over at a different kind of last use; `main` runs
-// them all three times over, so a reference released twice reaches the
-// freelist and is caught by __rc_underflow_count().
+
+
+
+
+
 struct W { d: i32[], n: i32 }
 struct Pair { a: W, b: W }
 enum E { A, B }
@@ -19,38 +19,38 @@ enum E { A, B }
 @noinline function both(own a: W, own b: W): i32 { return a.n + b.n; }
 @noinline function pr(own xs: i32[]): (i32[], i32) { return (xs, 1); }
 
-// Returned straight out of the function, whatever built the local.
+
 @noinline function ret_lit(n: i32): i32 { let a: i32[] = [n]; return keep(a, 1); }
-// The textually last read of a call-initialised local.
+
 @noinline function mid_call(n: i32): i32 { let a: i32[] = mk(n); let r: i32 = keep(a, 1); return r; }
-// Rebound by the call that takes it, inside a loop and one call deep.
+
 @noinline function loop_reassign(n: i32): i32 { let a: i32[] = mk(n); let t: i32 = 0; while (t < 3) { a = grow(a, t); t = t + 1; } return a.len(); }
 @noinline function loop_nested(n: i32): i32 { let a: i32[] = mk(n); let t: i32 = 0; while (t < 3) { a = grow(grow(a, t), 1); t = t + 1; } return a.len(); }
-// Rebound by the next statement.
+
 @noinline function two_stmt(n: i32): i32 { let a: i32[] = mk(n); let b: i32[] = grow(a, 2); a = b; return a.len(); }
 @noinline function two_stmt_loop(n: i32): i32 { let a: i32[] = mk(n); let t: i32 = 0; while (t < 2) { let b: i32[] = grow(a, 2); a = b; t = t + 1; } return a.len(); }
-// The last read on the path that returns; the other path reads it later.
+
 @noinline function path_last(n: i32): i32 { let w: W = mkw(n); if (n > 1) { let r: i32 = eat(w); return r; } return w.n; }
-// Unpacked from a call-initialised local, and renamed.
+
 @noinline function unpack(n: i32): i32 { let p: Pair = mkp(n); let x: W = p.a; let r: i32 = eat(x); return r; }
 @noinline function rename_call(n: i32): i32 { let w0: W = mkw(n); let w: W = w0; let r: i32 = eat(w); return r; }
-// A rename of a BORROWED parameter holds no reference of its own, so the one
-// the callee consumes has to be bought for it; the caller reads its value after.
+
+
 @noinline function rename_param(w0: W): i32 { let w: W = w0; let r: i32 = eat(w); return r; }
-// Threaded through method calls.
+
 @noinline function method_init(n: i32): i32 { let w0: W = mkw(n); let w: W = w0.bump(1); let r: i32 = eat(w); return r; }
 @noinline function method_chain(n: i32): i32 { let w: W = mkw(n); let v: W = w.bump(1); let u: W = v.bump(2); return eat(u); }
 @noinline function self_reassign(n: i32): i32 { let w: W = mkw(n); w = regrow(w, 2); return w.n; }
-// Inside an if / match expression and a match arm.
+
 @noinline function if_expr(n: i32): i32 { let a: i32[] = mk(n); let r: i32 = if (n > 1) { keep(a, 1) } else { 0 }; return r; }
 @noinline function match_arm(e: E): i32 { let w: W = mkw(3); match (e) { A => { return eat(w); }, B => { return 0; } } }
 @noinline function match_expr(e: E): i32 { let w: W = mkw(4); let r: i32 = match (e) { A => eat(w), B => 0 }; return r; }
-// An inner binding of the same name, two locals at once, and a borrow first.
+
 @noinline function shadow_inner(n: i32): i32 { let w: W = mkw(n); if (n > 1) { let w: W = mkw(2); return eat(w); } return w.n; }
 @noinline function two_args(n: i32): i32 { let x: W = mkw(n); let y: W = mkw(2); return both(x, y); }
 @noinline function after_peek(n: i32): i32 { let x: W = mkw(n); let k: i32 = peek(x); return eat(x) + k; }
 @noinline function tuple_rebind(n: i32): i32 { let a: i32[] = mk(n); let (b, k) = pr(a); a = b; return a.len() + k; }
-// Bound by a destructure of a fresh tuple or struct, and threaded back (#11120).
+
 @noinline function pw(own w: W): (W, i32) { return (regrow(w, 1), 1); }
 @noinline function destructured(n: i32): i32 { let (x, k) = pw(mkw(n)); let r: i32 = eat(x); return r + k; }
 @noinline function struct_destructured(n: i32): i32 { let Pair { a, b } = mkp(n); return eat(a) + b.n; }

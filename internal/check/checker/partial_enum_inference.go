@@ -7,8 +7,6 @@ func unboundEnumArg(t ast.Type) bool {
 	return ok
 }
 
-// mergeEnumInference combines information from two values of the same enum.
-// An absent argument supplies no constraint; known arguments must still agree.
 func mergeEnumInference(a, b ast.EnumType) (ast.EnumType, bool) {
 	if a.Name != b.Name {
 		return ast.EnumType{}, false

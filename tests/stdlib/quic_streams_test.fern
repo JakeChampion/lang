@@ -7,20 +7,10 @@ import "std/option";
 import "std/i64";
 import "core/int";
 
-// tests/stdlib/quic_streams_test.fern — std/quic/streams driven frame by
-// frame: reassembly that holds no byte twice, the peer opening streams up
-// to the limit advertised, each half's direction, flow control per stream
-// and for the connection, final sizes, windows opened again as data is
-// read, the limit raised as the peer's streams close, retransmission, and
-// RESET_STREAM and STOP_SENDING both ways.
-
 function limits(bidi: i64, uni: i64, stream_window: i64, conn_window: i64): params.Params {
   return params.Params { ...params.defaults(), initial_max_streams_bidi: bidi, initial_max_streams_uni: uni, initial_max_stream_data_bidi_local: stream_window, initial_max_stream_data_bidi_remote: stream_window, initial_max_stream_data_uni: stream_window, initial_max_data: conn_window };
 }
 
-// server is a server's table: the peer may open `bidi` streams of 100
-// bytes each and 150 in all; the peer lets this side open 2 of each kind
-// and send 50 bytes on each stream, 80 in all.
 function server(bidi: i64): streams.Streams {
   return streams.table(true, limits(bidi, 1 as i64, 100 as i64, 150 as i64)).with_peer(limits(2 as i64, 2 as i64, 50 as i64, 80 as i64));
 }
@@ -39,8 +29,6 @@ function data(id: i64, offset: i64, n: i32, fin: boolean): frames.Frame {
   return frames.StreamFrame(frames.StreamData { stream: id, offset: offset, data: bytes(n, offset as i32), fin: fin });
 }
 
-// fed takes frames in order, answering the table, or the code and frame
-// type of the first refused.
 function fed(s: streams.Streams, fs: frames.Frame[]): Result[streams.Streams, string] {
   let cur: streams.Streams = s;
   for f in fs {
@@ -52,8 +40,6 @@ function fed(s: streams.Streams, fs: frames.Frame[]): Result[streams.Streams, st
   return Ok(cur);
 }
 
-// The table's operations answer the table with the outcome in its fields;
-// these read them back as results, which the cases below match on.
 function open_on(s: streams.Streams, uni: boolean): Result[(streams.Streams, i64), string] {
   let t: streams.Streams = s.open(uni);
   if (t.refused != "") {
@@ -123,7 +109,6 @@ function events(s: streams.Streams): string {
   return out;
 }
 
-// sent reads back the frames `fill` wrote, as text.
 function sent(out: u8[]): string {
   if (out.len() == 0) {
     return "";
@@ -181,8 +166,6 @@ function frame_text(f: frames.Frame): string {
   }
 }
 
-// A segment past a gap is held once however often it is resent, overlaps
-// are trimmed, and filling the gap delivers everything in order.
 function test_reassembly(): test.TestOutcome {
   let r: streams.Reassembly = streams.reassembly().add(10 as i64, bytes(10, 10)).add(10 as i64, bytes(10, 10)).add(15 as i64, bytes(10, 15));
   let held: string = r.held_bytes.to_string();
@@ -197,8 +180,6 @@ function test_reassembly(): test.TestOutcome {
   return test.assert_eq(held + " " + int.int_to_string(out.len()) + " " + ordered.to_string() + " " + r2.held_bytes.to_string() + " " + r2.delivered().to_string(), "15 25 true 0 25");
 }
 
-// Data on the peer's bidirectional stream 8 opens 0, 4 and 8 (§3.2); with
-// two allowed, stream 8 is past the limit.
 function test_peer_opens(): test.TestOutcome {
   let three: string = "-";
   match (fed(server(3 as i64), [data(8 as i64, 0 as i64, 5, false)])) {
@@ -213,9 +194,6 @@ function test_peer_opens(): test.TestOutcome {
   return test.assert_eq(three + " | " + two, "open 0,open 4,open 8,read 8, | 4/8");
 }
 
-// Each frame needs the half it acts on: no data on this side's
-// unidirectional stream, no MAX_STREAM_DATA or STOP_SENDING for the
-// peer's, nothing for a stream this side has not opened (§19.4–§19.10).
 function test_directions(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   let mine: i64 = 3;
@@ -235,8 +213,6 @@ function test_directions(): test.TestOutcome {
   return test.assert_eq(mine.to_string() + " " + on_mine + " " + max_on_theirs + " " + stop_on_theirs + " " + unopened, "3 5/8 5/17 5/5 5/17");
 }
 
-// Data past a stream's window or the connection's is FLOW_CONTROL_ERROR
-// (§4.1); a final size may not move, and nothing may pass it (§4.5).
 function test_limits(): test.TestOutcome {
   let s: streams.Streams = server(3 as i64);
   let stream_window: string = outcome(fed(s, [data(0 as i64, 90 as i64, 11, false)]));
@@ -248,9 +224,6 @@ function test_limits(): test.TestOutcome {
   return test.assert_eq(stream_window + " " + conn_window + " " + moved + " " + past + " " + below + " " + same, "3/8 3/8 6/8 6/8 6/8 ok");
 }
 
-// Sending stops at the peer's stream window (50) and connection window
-// (80), each owed a blocked signal once; MAX_STREAM_DATA and MAX_DATA let
-// the rest go, the FIN with the last of it.
 function test_send_windows(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   let a: i64 = 0;
@@ -307,8 +280,6 @@ function test_send_windows(): test.TestOutcome {
   return test.assert_eq(sent(out1) + "| " + sent(out2) + "| " + sent(out3), "STREAM 1@0+50 STREAM 5@0+30 STREAM_DATA_BLOCKED 1 50 DATA_BLOCKED 80 | | STREAM 1@50+10 fin STREAM 5@30+10 ");
 }
 
-// Reading half a window opens it again (§4.2): 60 of the stream's 100 is
-// past half, 60 of the connection's 150 is not.
 function test_window_updates(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   match (fed(s, [data(0 as i64, 0 as i64, 60, false)])) {
@@ -333,8 +304,6 @@ function test_window_updates(): test.TestOutcome {
   }
 }
 
-// A stream of the peer's both read to its end and finished from this
-// side is forgotten, and the peer may open one more (§4.6).
 function test_stream_credit(): test.TestOutcome {
   let s: streams.Streams = server(1 as i64);
   match (fed(s, [data(0 as i64, 0 as i64, 3, true)])) {
@@ -374,7 +343,6 @@ function test_stream_credit(): test.TestOutcome {
   }
 }
 
-// A lost range is sent again; acknowledged data leaves the buffer.
 function test_loss(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   match (open_on(s, false)) {
@@ -414,9 +382,6 @@ function test_loss(): test.TestOutcome {
   return test.assert_eq(held + " " + sent(again) + "| " + s3.buffered(1 as i64).to_string(), "30 STREAM 1@0+22 | 0");
 }
 
-// STOP_SENDING resets this side's half with the peer's code, final size
-// what was sent; RESET_STREAM ends the peer's, its unread bytes counted
-// as read for the connection's window.
 function test_resets(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   match (fed(s, [data(0 as i64, 0 as i64, 10, false)])) {
@@ -461,9 +426,6 @@ function test_resets(): test.TestOutcome {
   }
 }
 
-// Bytes already read must not be credited again when a stopped stream is
-// reset. Discard both ready and out-of-order bytes without changing an old
-// alias of the table, and count bytes arriving after STOP_SENDING only once.
 function test_stop_after_read(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   match (fed(s, [data(0 as i64, 0 as i64, 60, false)])) {
@@ -523,8 +485,6 @@ function test_stop_after_read(): test.TestOutcome {
   }
 }
 
-// A refused open cannot return a changed table. The application explicitly
-// requests STREAMS_BLOCKED, once for each direction, then receives more credit.
 function test_blocked_open(): test.TestOutcome {
   let s: streams.Streams = streams.table(true, limits(2 as i64, 1 as i64, 100 as i64, 150 as i64)).with_peer(limits(0 as i64, 0 as i64, 50 as i64, 80 as i64));
   match (open_on(s, false)) {
@@ -570,9 +530,6 @@ function test_blocked_open(): test.TestOutcome {
   return test.assert_eq(sent(first) + "| " + sent(quiet) + "| " + sent(second), "STREAMS_BLOCKED true 0 STREAMS_BLOCKED false 0 | | STREAMS_BLOCKED true 1 ");
 }
 
-// A request's FIN can be retransmitted in a new packet while its response
-// is still in flight. Once read, it must not wake the application again:
-// HTTP/3 may already have retired its message parser for that stream.
 function test_consumed_fin_replay(): test.TestOutcome {
   let Ok(s) = fed(server(1 as i64), [data(0 as i64, 0 as i64, 3, true)]) else {
     return test.fail("initial FIN");
@@ -593,8 +550,6 @@ function test_consumed_fin_replay(): test.TestOutcome {
   return test.assert_eq("[" + events(replayed) + "] " + int.int_to_string(read.1.len()) + " " + read.2.to_string() + " " + int.int_to_string(again.1.len()) + " " + again.2.to_string() + " " + old.recv_taken.to_string() + " " + replayed.recv_taken.to_string() + " " + old.list[0].recv.data.taken.to_string() + " " + moved + " " + past, "[] 3 true 0 true 3 3 3 6/8 6/8");
 }
 
-// A FIN arriving after the application took the preceding bytes must
-// still notify it once, even though the FIN carries no new body bytes.
 function test_late_fin_once(): test.TestOutcome {
   let Ok(s) = fed(server(1 as i64), [data(0 as i64, 0 as i64, 3, false)]) else {
     return test.fail("initial bytes");

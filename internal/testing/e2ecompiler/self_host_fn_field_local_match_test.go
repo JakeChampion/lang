@@ -6,17 +6,6 @@ import (
 	"testing"
 )
 
-// A `match` over a call through a fn-typed local bound from a struct field
-// (`let next = producer.next; match (next(i))`) lowers on the IR path.
-//
-// The scrutinee's Option payload is named from the fn value's recorded return.
-// That sidecar was seeded from a lambda, a named function or a `__mkclo$`
-// initialiser only, so a field-read initialiser left the local without one and
-// the match bailed the whole function — while the direct `match
-// (producer.next(i))` form, which reads the field's declared return, lowered.
-// std/http's `__chunks_joined` and std/serve's `__tail_piece` are both this
-// shape. The program counts the bytes of the chunks a ChunkProducer answers:
-// "ab" then "cde" then None, so it exits 5.
 func TestSelfHostMatchOnCallThroughFnFieldLocal(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	src := `function total(producer: ChunkProducer): i32 {

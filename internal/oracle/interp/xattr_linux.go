@@ -7,11 +7,8 @@ import (
 	"unsafe"
 )
 
-// xattrSizeMax is XATTR_SIZE_MAX, the largest value Linux stores, so one
-// buffer of it always holds the whole answer.
 const xattrSizeMax = 65536
 
-// getxattrBytes is getxattr(2), or lgetxattr(2) when follow is false.
 func getxattrBytes(path, name string, follow bool) ([]byte, error) {
 	p, err := syscall.BytePtrFromString(path)
 	if err != nil {
@@ -34,8 +31,6 @@ func getxattrBytes(path, name string, follow bool) ([]byte, error) {
 	return buf[:r], nil
 }
 
-// setxattrBytes is setxattr(2), or lsetxattr(2) when follow is false, with
-// no flags: the attribute is created or replaced.
 func setxattrBytes(path, name string, value []byte, follow bool) error {
 	p, err := syscall.BytePtrFromString(path)
 	if err != nil {

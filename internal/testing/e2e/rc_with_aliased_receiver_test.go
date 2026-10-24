@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-// #8530 lowered `a.with(i, v)`'s mutate-or-copy decision into the IR, so the
-// uniquely-owned accumulator writes in place with no call. An in-place store
-// where the buffer is NOT uniquely owned is a silent wrong answer, which is
-// far worse than the slowness the change is about — so the aliased case is
-// pinned here, on every backend, in each of the shapes that reach a different
-// arm of the lowering.
-//
-// The `mk` calls between the write and the read exist for the same reason
-// they do in the view-local tests: they recycle any block the write freed
-// through the freelist, so a wrong answer lands on reused memory rather than
-// on stale-but-intact bytes.
-
-// A second live LOCAL name. The receiver's textually-last use is the `.with`,
-// which is exactly where a static last-use test says the reference may be
-// taken over — the runtime count is what says otherwise.
 const withAliasedLocalSrc = `function mk(n: i32): i32[] {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -46,9 +31,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A BORROWED parameter: the caller still owns the buffer, so the callee's
-// write must copy even though the param's own last use is the `.with` and it
-// is reassigned to itself.
 const withBorrowedParamSrc = `function mk(n: i32): i32[] {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -78,8 +60,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A string-element array takes the element-retaining CoW helper rather than
-// the scalar one, so it is a separate arm of the same decision.
 const withAliasedStringElemSrc = `function mk(): string[] {
     let a: string[] = [];
     a = a.append("v0");
@@ -110,9 +90,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A struct field the update replaces: `p = P { ...p, xs: p.xs.with(…) }`
-// through the constructor-reuse path, with a second name on the struct so
-// both the box reuse and the buffer write have to decline.
 const withAliasedFieldSrc = `struct P { xs: i32[], n: i32 }
 function mk(n: i32): i32[] {
     let a: i32[] = [];

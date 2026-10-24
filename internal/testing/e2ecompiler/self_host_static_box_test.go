@@ -2,24 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A record or variant whose every field is a constant is one static box
-// (#8920). A string literal is a static box, so a field or element holding
-// one is a constant too. Each probe runs 100 rounds and prints its result times 1000
-// plus the heap allocations the rounds made. origin, the TInt and TVoid
-// members, the Shade payload, named's string field and names' string elements
-// allocate nothing. The small scalar return ABI also removes fresh and the
-// unsigned scalar result boxes. Rebuild's first record holds a loop counter
-// and still allocates once a round; rebuild hands that record to
-// px, since one only read would never be built. rebuild's second record is
-// constant, so the first one's box is
-// released where it dies rather than held for a construction that no longer
-// takes it. An empty array literal is one static box too: leaf's record
-// allocates and its args do not, and later's push onto those args makes the
-// allocation the literal no longer does. later's update counts its base, so
-// it writes into leaf's fresh box rather than taking another. An unsigned
-// scalar return preserves both u_small's 12 and u_big's 3000000000, past
-// 2^31, without allocating a result box. The value still uses its unsigned
-// field width.
 const staticBoxProgram = `struct P { x: i32, y: i32, on: boolean }
 struct TInt { width: i32, signed: boolean }
 struct TVoid {}
@@ -214,9 +196,6 @@ function main(): i32 {
 `
 
 func TestSelfHostStaticBoxes(t *testing.T) {
-	// Before static boxes the first three lines ended 100, 200 and 100, and
-	// leaf_rounds ended 200. cast_rounds' literals are written with casts
-	// of literals, `1 as u8`, and are placed like bare literals.
 	want := "500000\n3300000\n2000000\n10100000\n4950000\n5450100\n4950100\n800200\n301200000\n3000\n800100\n10400100\n300000\n200000\n700000\n1400000\n0\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
@@ -227,18 +206,6 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
 
-// A literal whose storage the body hands to the raw floor is built fresh
-// rather than placed: the floor writes through a data pointer with no count,
-// so a shared box would carry the write into every evaluation of an equal
-// literal. `bytes_rounds` overwrites a `u8[]` literal's length through its data
-// pointer each round and reads it before and after. `poke_len` does the same
-// to an `i32[]` literal with `__store_i32`, and `fresh_len`, which never
-// touches the floor, must still read its own equal literals' lengths.
-// `shorten_lit` and `raw_ptr_len` reach the floor on an equal literal through
-// `__arr_set_len` and `__raw_arr_ptr`; if either were placed, `fresh_len` would
-// read something other than 33. `shorten` calls `__arr_set_len` on a heap
-// buffer, which lends it, so its body is produced. Wasm is left out: it has no
-// emit arm for the raw byte store.
 const byteLiteralProgram = `@noinline function shorten(n: i32): i32 {
     let b: u8[] = __alloc_u8(4);
     __arr_set_len(b, n);

@@ -1,6 +1,6 @@
-// The library collections give `for` an Iterator through `iter()`, so
-// `for (k, v) in m` walks an OrdMap or a PMap as it walks a builtin Map,
-// and `for x in v` walks a PVec and each set, in each one's documented order.
+
+
+
 import "std/ordmap";
 import "std/ordset";
 import "std/pmap";

@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Cell[i32] churn: a fresh cell per iteration, freed at loop-body
-// scope exit so the next alloc reuses the block. A cell is a
-// one-element ARRAY box (16-byte header), so its reclaim must go
-// through __fern_arr_dec (base = data-16), NOT the struct box_free
-// (base = data-8) — the latter mis-frees the header and corrupts the
-// freelist over the churn, drifting `acc`. sum of (i+1), i in 0..199
-// = sum 1..200 = 20100.
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 function main(): i32 {
     let acc: i32 = 0;

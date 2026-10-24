@@ -1,18 +1,9 @@
-// Independent physical-credit pilot. No unit plan is accepted as input.
-// Flat-box programs with agreeing joins and stable loop accounts are admitted. Other
-// effects are explicit refusals, never successful coverage. Not a compile gate.
 import "./ssa";
 import "./ssadeps";
 import "./util";
 
-// Parameter modes: 0 scalar, 1 borrowed flat counted value, 2 owned flat
-// counted value. Flat means no owned payloads or user finalizer. These are
-// declared ABI/layout facts, not modes copied from a lowering plan. There is
-// no production adapter yet; composite layouts must not use this boundary.
 pub struct Boundary { params: i32[], owned_result: boolean }
 
-// 0 certified within the admitted fragment; 1 credit violation;
-// 2 unsupported effect; 3 malformed physical graph or boundary.
 pub struct Verdict { status: i32, function_name: string, point: i32, message: string }
 
 function verdict(f: ssa.SFunc, status: i32, point: i32, message: string): Verdict {
@@ -66,15 +57,12 @@ function boundary_error(f: ssa.SFunc, boundary: Boundary, ninst: i32): Verdict {
       refs = refs + 1;
     }
   }
-  // Multiple reference parameters may alias, including an owned and a
-  // borrowed parameter. Do not assume distinct roots without an alias proof.
   if (refs > 1) {
     return verdict(f, 2, -1, "parameter alias relationships not admitted");
   }
   return verdict(f, 0, -1, "");
 }
 
-// A borrowed anchor permits reads but never supplies a release credit.
 function transfer(f: ssa.SFunc, boundary: Boundary, ops: ssa.SInst[], state: Accounts): Progress {
   let roots: i32[] = state.roots;
   let credits: i32[] = state.credits;
@@ -194,8 +182,6 @@ function finish(f: ssa.SFunc, boundary: Boundary, result: i32, state: Accounts, 
   return verdict(f, 0, point, "certified physical credits");
 }
 
-// Positions, not external block IDs, size every array. This pilot's lookup
-// is linear; no arbitrary sparse ID can request an enormous allocation.
 function block_at(f: ssa.SFunc, id: i32): i32 {
   let i: i32 = 0;
   while (i < f.blocks.len()) {
@@ -272,8 +258,6 @@ function structure(f: ssa.SFunc): Verdict {
   return verdict(f, 0, -1, "");
 }
 
-// All phi sources are read from the unmodified predecessor state. A phi
-// renames an identity; it does not manufacture or consume an ownership unit.
 function edge(f: ssa.SFunc, b: ssa.SBlock, pred: i32, state: Accounts): Progress {
   let at: i32 = util.index_of_i32(b.preds, pred);
   let roots: i32[] = state.roots;
@@ -309,8 +293,6 @@ function join(f: ssa.SFunc, b: ssa.SBlock, a: Accounts, other: Accounts): Progre
   return Progress { accounts: Accounts { ...a, roots: roots }, result: verdict(f, 0, b.id, "") };
 }
 
-// Normalize IDs before using the existing dominator analysis, whose lookup
-// arrays otherwise scale with the largest external ID rather than the graph.
 function dense(f: ssa.SFunc): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
   let i: i32 = 0;
@@ -332,8 +314,6 @@ function dense(f: ssa.SFunc): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks, entry: block_at(f, f.entry) };
 }
 
-// Mark the natural loops from their dominator backedges. An irreducible
-// cycle left after removing these edges will fail worklist coverage below.
 function loop_members(f: ssa.SFunc, dom: ssadeps.Dom): i32[] {
   let members: i32[] = filled(f.blocks.len(), 0);
   let from: i32 = 0;
@@ -364,10 +344,6 @@ function loop_members(f: ssa.SFunc, dom: ssadeps.Dom): i32[] {
   return members;
 }
 
-// The outside predecessors establish a header invariant. Every backedge
-// must preserve it. Names unavailable on the first iteration are forgotten:
-// only a phi can expose an iteration-local definition to the next iteration.
-// Scalar values are deliberately abstracted, so every branch is still checked.
 function invariant(f: ssa.SFunc, header: i32, initial: Accounts, back: Accounts): Verdict {
   let i: i32 = 0;
   while (i < f.nvals) {

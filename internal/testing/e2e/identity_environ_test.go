@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// identitySource asks for all four ids and both lists, and returns a code
-// naming the first thing that disagreed with what the Go side sees.
-//
-// Every value here is machine-dependent, so the expectations are baked in
-// from the test process rather than pinned: the compiled program is a child
-// of this one and inherits its credentials and its environment.
 func identitySource(uid, gid, euid, egid int, groups []int, envCount int, probe string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `function main(): i32 {
@@ -23,8 +17,6 @@ func identitySource(uid, gid, euid, egid int, groups []int, envCount int, probe 
     let gs: i64[] = getgroups();
     if (gs.len() != %d) { return 5; }
 `, uid, gid, euid, egid, len(groups))
-	// The order is the kernel's and both sides read the same kernel, so
-	// this is an element-for-element check rather than a set comparison.
 	for i, g := range groups {
 		fmt.Fprintf(&b, "    if (gs[%d] != %d) { return %d; }\n", i, g, 10+i)
 	}
@@ -57,9 +49,6 @@ func identitySource(uid, gid, euid, egid int, groups []int, envCount int, probe 
 	return b.String()
 }
 
-// identityProbe seeds one environment entry this process did not already
-// have, so the child's list can be checked for a value rather than only a
-// count, and reports what the child should see.
 func identityProbe(t *testing.T) (groups []int, envCount int, probe string) {
 	t.Helper()
 	t.Setenv("FERN_ENVIRON_PROBE", "identity-slice")
@@ -96,14 +85,6 @@ func TestInterpIdentityAndEnviron(t *testing.T) {
 	}
 }
 
-// wasm has no users — `internal/pkg/platforms` refuses getuid / getgid /
-// getgroups there with E066 — but it does have an environment, so
-// `environ()` is a real question on both previews: preview 1's
-// environ_sizes_get / environ_get pair and preview 2's get-environment are
-// separate bodies, so each gets a run.
-//
-// `seen`: an entry is missing or duplicated. `len`: the list is not the whole
-// environment.
 const wasmEnvironSrc = `function main(): i32 {
     let e: string[] = environ();
     let seen: i32 = 0;

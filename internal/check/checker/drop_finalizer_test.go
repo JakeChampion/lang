@@ -7,18 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// E073 — a `core/mem.Drop` impl's `drop` is a FINALIZER, called by the
-// generated drop glue when the value's refcount reaches zero. An explicit
-// `v.drop()` runs the body a second time on a value the runtime is still going
-// to finalize, so it is rejected at check time.
-//
-// The impl is written against a locally declared `trait Drop` rather than an
-// imported `core/mem.Drop` so the test needs no module loader. That is the same
-// trait as far as every consumer is concerned: info.Impls keys are
-// module-mangled, so ir.userDropFnName, treeshake.DropImplMethods and this rule
-// all match on the SIMPLE name and all three treat a bare `Drop` as the
-// finalizer trait. (The imported spelling is covered end-to-end by
-// `fern -check` over a program importing core/mem.)
 func TestExplicitDropCallRejected(t *testing.T) {
 	const dropImpl = `trait Drop { function drop(self: Self): void; }
 struct R { n: i32 }
@@ -62,10 +50,6 @@ impl Drop for R { function drop(self: Self): void { } }
 	}
 }
 
-// A `drop` method on a type with NO Drop impl is an ordinary method: nothing
-// generates glue for it, so nothing calls it twice and the rule must not fire.
-// Neither must an unrelated method on a type that DOES implement Drop — the
-// gate is the method name plus the impl, not the impl alone.
 func TestOrdinaryDropMethodAccepted(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"drop method, no Drop impl",

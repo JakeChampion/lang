@@ -6,17 +6,6 @@ import (
 	"testing"
 )
 
-// arrayCallbackVerbsProgram exercises the generic callback / comparator array
-// verbs added to std/array (#2689): zip / flat_map / reduce / sort_by over an
-// arbitrary T[], in both the free-function and receiver-method forms.
-//
-// Unlike the structural verbs (reverse/take/drop/concat), these take a callback
-// or comparator, so — like the existing map/filter/fold combinators — they use
-// the indirect-call path and are gated through the interpreter (oracle) + the
-// Wasm backend. This case uses scalar callbacks. The conformance case
-// string_callbacks_in_collection_combinators covers string callbacks in both
-// interpreters and on the three compiled targets. main returns 0 when every
-// check holds.
 const arrayCallbackVerbsProgram = `
 import "std/array";
 import "core/cmp";

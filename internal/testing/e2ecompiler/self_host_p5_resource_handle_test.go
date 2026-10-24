@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// pollableFixture is the scaffolding every P5 resource-handle gate in this file
-// shares: the poll + monotonic-clock WIT world the emitted core is composed
-// against, and the self-hosted wasm emitter that produces it.
 type pollableFixture struct {
 	dir       string
 	wasmtime  string
@@ -24,8 +21,6 @@ type pollableFixture struct {
 	world     *componenttype.World
 }
 
-// newPollableFixture skips unless the whole toolchain (wasmtime, wasm-tools,
-// an x86-64 runner for the self-host driver) is present.
 func newPollableFixture(t *testing.T) *pollableFixture {
 	t.Helper()
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -40,8 +35,6 @@ func newPollableFixture(t *testing.T) *pollableFixture {
 	dir := t.TempDir()
 	f := &pollableFixture{dir: dir, wasmtime: wasmtime, wasmtools: wasmtools, gcc: gcc, runner: runner}
 
-	// Full standard WIT for poll + monotonic-clock (the vendored deps are
-	// stripped to fern's subset).
 	witDir := filepath.Join(dir, "wit")
 	if err := os.MkdirAll(witDir, 0o755); err != nil {
 		t.Fatalf("mkdir wit: %v", err)
@@ -83,7 +76,6 @@ func (f *pollableFixture) run(t *testing.T, name string, args ...string) {
 	}
 }
 
-// emit runs prog through the self-hosted wasm emitter and returns the core WAT.
 func (f *pollableFixture) emit(t *testing.T, prog string) []byte {
 	t.Helper()
 	wat := runCapture(t, f.gcc, f.runner, f.driverBin, []byte(prog))
@@ -93,8 +85,6 @@ func (f *pollableFixture) emit(t *testing.T, prog string) []byte {
 	return wat
 }
 
-// composeRun composes the emitted core against the world, validates the
-// component, runs it under real WASI and returns its stdout.
 func (f *pollableFixture) composeRun(t *testing.T, name string, wat []byte) []byte {
 	t.Helper()
 	watPath := filepath.Join(f.dir, name+".wat")
@@ -125,10 +115,6 @@ func (f *pollableFixture) composeRun(t *testing.T, name string, wat []byte) []by
 	return out
 }
 
-// pollWant is the marker a ready pollable prints in every program below. Each
-// one blocks on the pollable first: under wasmtime 46 a 0ns subscribe-duration
-// timer that has not been blocked on reports NOT ready, so `ready` alone prints
-// poll-bad.
 const pollWant = "poll-ok"
 
 func wantStdout(t *testing.T, out []byte) {
@@ -138,13 +124,6 @@ func wantStdout(t *testing.T, out []byte) {
 	}
 }
 
-// TestSelfHostExternResourceHandle is the self-host P5 baseline gate
-// (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm backend drives a WIT
-// resource across the `@import` boundary with no resource-specific codegen —
-// a handle is an opaque i32, so `subscribe-duration -> own<pollable>` and
-// `[method]pollable.ready -> bool` are ordinary scalar imports the self-host
-// emitter already lowers. Mirror of the Go TestExternResourceHandle: a 0ns
-// monotonic timer's pollable is immediately ready, run against real WASI.
 func TestSelfHostExternResourceHandle(t *testing.T) {
 	f := newPollableFixture(t)
 	prog := `@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
@@ -169,14 +148,6 @@ function main(): i32 {
 	wantStdout(t, f.composeRun(t, "resource", watBytes))
 }
 
-// TestSelfHostExternResourceHandleTypes is the self-host P5 *language-layer*
-// gate (docs/WIT-BRING-YOUR-OWN.md): the same 0ns-timer program as
-// TestSelfHostExternResourceHandle, written with the P5 handle vocabulary — a
-// `resource Pollable;` declaration and `own Pollable` / `borrow Pollable`
-// types. The self-host parser erases the handle types to i32 (own/borrow → i32
-// in parse_type_name) and consumes the resource declaration, so the emitted
-// core is the same scalar-handle shape the raw-i32 baseline produces, and the
-// composed component runs identically under real WASI.
 func TestSelfHostExternResourceHandleTypes(t *testing.T) {
 	f := newPollableFixture(t)
 	prog := `@import("wasi:io/poll@0.2.0", "pollable")
@@ -204,11 +175,6 @@ function main(): i32 {
 	wantStdout(t, f.composeRun(t, "resource_typed", watBytes))
 }
 
-// TestSelfHostExternResourceHandleDrop is the self-host parity gate for P5
-// slice 2 (docs/WIT-BRING-YOUR-OWN.md): the self-host backend emits a
-// `[resource-drop]pollable` core import, and the (Go) world-driven composer
-// surfaces the resource + wires the canon resource.drop. Mirror of the Go
-// TestExternResourceHandleDrop — the pollable is dropped, run under real WASI.
 func TestSelfHostExternResourceHandleDrop(t *testing.T) {
 	f := newPollableFixture(t)
 	prog := `@import("wasi:io/poll@0.2.0", "pollable")
@@ -240,16 +206,8 @@ function main(): i32 {
 	wantStdout(t, f.composeRun(t, "resource_drop", watBytes))
 }
 
-// TestSelfHostExternResourceHandleAutoDrop is the self-host parity gate for P5
-// slice 3 (docs/WIT-BRING-YOUR-OWN.md): AUTOMATIC drop. The program declares NO
-// drop function — the self-host compiler (parser.fern lower_defers_prepass_module)
-// inserts `defer <drop>(p);` for the owned `own Pollable` local, lower_defers
-// expands it on the return path, and the synthesized `[resource-drop]pollable`
-// import is emitted in the core. The Go world-driven composer (slice 2) then
-// wires the canon resource.drop, releasing the pollable under real WASI.
 func TestSelfHostExternResourceHandleAutoDrop(t *testing.T) {
 	f := newPollableFixture(t)
-	// No drop function — the self-host must auto-insert it.
 	prog := `@import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
 
@@ -275,11 +233,6 @@ function main(): i32 {
 	wantStdout(t, f.composeRun(t, "resource_autodrop", watBytes))
 }
 
-// TestSelfHostExternResourceHandleAutoDropNestedBlock pins the auto-drop for a
-// handle declared inside a nested block. The insertion walks every block, not
-// just the function's top level (#5337) — before that it matched top-level
-// declarations only and this program leaked the pollable with no drop import
-// emitted at all.
 func TestSelfHostExternResourceHandleAutoDropNestedBlock(t *testing.T) {
 	f := newPollableFixture(t)
 	prog := `@import("wasi:io/poll@0.2.0", "pollable")
@@ -311,12 +264,6 @@ function main(): i32 {
 	wantStdout(t, f.composeRun(t, "resource_autodrop_nested", watBytes))
 }
 
-// TestSelfHostExternResourceHandleMovedNoAutoDrop pins the move side of the
-// same analysis: a handle aliased into another local and then handed to an
-// `own` parameter is MOVED, so the consumer drops it and the compiler must not
-// (#5337). The alias used to read as "not moved", which put a synthesized drop
-// on a handle the program already dropped — a double drop, which the composed
-// component turns into a wasmtime trap on the second release.
 func TestSelfHostExternResourceHandleMovedNoAutoDrop(t *testing.T) {
 	f := newPollableFixture(t)
 	prog := `@import("wasi:io/poll@0.2.0", "pollable")

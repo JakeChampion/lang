@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// A value that spans division must not acquire its fixed register by evicting
-// a cheaper interval, even when every other register is occupied.
 func TestSelfHostSSAABIEviction(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

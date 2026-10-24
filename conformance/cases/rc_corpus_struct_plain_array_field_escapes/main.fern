@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Plain-array field that ESCAPES (Buf returned): the buffer must
-// survive the constructor. Churn forces same-size reuse.
+
+
+
+
+
 import "core/int";
 import "std/string";
 struct Buf { data: i32[], n: i32 }

@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// foldFile writes `content` under `dir` as `name` and returns its path.
 func foldFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -21,14 +20,6 @@ func init() {
 	registerCorpus("fold", foldCases)
 }
 
-// foldCases is fold(1)'s corpus.
-//
-// Column counting is where -b differs from the default: a tab jumps to
-// the next multiple of eight, a backspace goes back one and a carriage
-// return returns to zero, and the character that overflows a line is
-// re-measured against the fresh one — so a tab can appear alone on a
-// line of its own. `-s` looks back for the last blank and falls through
-// to the hard break when there is none.
 func foldCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	alpha := foldFile(t, dir, "alpha", "abcdefghij\n")
@@ -40,7 +31,6 @@ func foldCases(t *testing.T) []invocation {
 	blank := foldFile(t, dir, "blank", "\n\n")
 	nul := foldFile(t, dir, "nul", "a\x00b\n")
 	raw := rawByteFile(t, dir, "abcdef\n")
-	// 100 columns, so the default width of 80 wraps it once.
 	wide := foldFile(t, dir, "wide", strings.Repeat("x", 100)+"\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
@@ -50,7 +40,6 @@ func foldCases(t *testing.T) []invocation {
 	big := foldFile(t, dir, "big", strings.Repeat("0123456789abcdef\n", 20000))
 
 	return []invocation{
-		// Widths.
 		{name: "default width", args: []string{wide}},
 		{name: "width five", args: []string{"-w5", alpha}},
 		{name: "width one", args: []string{"-w1", alpha}},
@@ -62,7 +51,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "leading zero in the width", args: []string{"-w", "05", alpha}},
 		{name: "last width wins", args: []string{"-w9", "-w3", alpha}},
 
-		// The obsolete -NUM form.
 		{name: "obsolete width", args: []string{"-5", alpha}},
 		{name: "obsolete width two digits", args: []string{"-12", wide}},
 		{name: "obsolete after an operand", args: []string{alpha, "-5"}},
@@ -74,7 +62,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "digit inside a cluster", args: []string{"-b5", alpha}},
 		{name: "digit before a flag", args: []string{"-5b", alpha}},
 
-		// Width faults: one line, no `Try …` line.
 		{name: "zero width", args: []string{"-w0", alpha}},
 		{name: "negative width", args: []string{"-w", "-1", alpha}},
 		{name: "not a number", args: []string{"-wx", alpha}},
@@ -87,7 +74,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "one past the largest width", args: []string{"-w", "18446744073709551607", alpha}},
 		{name: "far too large", args: []string{"-w", "99999999999999999999", alpha}},
 
-		// Columns versus bytes.
 		{name: "tabs count to the next stop", args: []string{"-w9", tabs}},
 		{name: "tabs that do not fit", args: []string{"-w5", mixed}},
 		{name: "bytes count tabs as one", args: []string{"-b", "-w3", tabs}},
@@ -100,10 +86,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "a tab alone on a line", args: []string{"-w5"}, stdin: "a\tb\n"},
 		{name: "NUL is no columns at all", args: []string{"-w1", nul}},
 
-		// -c (9.8): characters rather than columns. In the C locale
-		// that differs from the default only in that every byte counts
-		// as one, NUL included, and only in that a backspace goes back
-		// over one rather than over the last character's width.
 		{name: "characters count tabs to the next stop", args: []string{"-c", "-w9", tabs}},
 		{name: "long characters option", args: []string{"--characters", "-w3", tabs}},
 		{name: "characters count NUL as one", args: []string{"-c", "-w1", nul}},
@@ -113,7 +95,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "bytes then characters, the last wins", args: []string{"-b", "-c", "-w3", tabs}},
 		{name: "characters with spaces", args: []string{"-c", "-s", "-w7", words}},
 
-		// -s.
 		{name: "break at spaces", args: []string{"-s", "-w7", words}},
 		{name: "break at spaces width one", args: []string{"-s", "-w1", words}},
 		{name: "break with no space to break at", args: []string{"-s", "-w3", alpha}},
@@ -124,15 +105,12 @@ func foldCases(t *testing.T) []invocation {
 		{name: "trailing spaces", args: []string{"-s", "-w2"}, stdin: "  ab\n"},
 		{name: "clustered flags", args: []string{"-sbw5", alpha}},
 
-		// Line shapes.
 		{name: "no final newline", args: []string{"-w2", nonl}},
 		{name: "empty file", args: []string{"-w2", empty}},
 		{name: "blank lines", args: []string{"-w2", blank}},
 		{name: "line exactly the width", args: []string{"-w10", alpha}},
 		{name: "line one past the width", args: []string{"-w9", alpha}},
 
-		// Operands. Files are NOT joined: a tail with no newline keeps
-		// its own line and the next file starts at column zero.
 		{name: "no operand reads stdin", args: []string{"-w3"}, stdin: "abcdefgh\n"},
 		{name: "lone dash", args: []string{"-w3", "-"}, stdin: "abcdefgh\n"},
 		{name: "two files", args: []string{"-w2", nonl, alpha}},
@@ -146,7 +124,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "directory", args: []string{d}},
 		{name: "directory then a file", args: []string{"-w3", d, alpha}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-c", alpha}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "width needs a value", args: []string{"-w"}},
@@ -161,7 +138,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "posix operand then option", args: []string{alpha, "-w3"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-w3", alpha}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{"-w3", alpha}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"-w3", alpha}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{"-w3", big}, stdout: stdoutClosed},
@@ -169,7 +145,6 @@ func foldCases(t *testing.T) []invocation {
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 
-		// Bulk and block boundaries.
 		{name: "large file", args: []string{"-w7", big}},
 		{name: "line longer than one read block", args: []string{"-w13"}, stdin: strings.Repeat("z", 70000) + "\n"},
 		{name: "line longer than one read block with -s", args: []string{"-s", "-w13"}, stdin: strings.Repeat("zz ", 30000) + "\n"},

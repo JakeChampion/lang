@@ -4,16 +4,6 @@ import (
 	"testing"
 )
 
-// Regression: an ITERATIVELY-built list (`acc = Cons(v, acc)` in a loop) that is
-// later passed to a CONSUMING (`own`) match used to over-release N-1 times. The
-// loop's self-referential reassignment MOVES the old `acc` into the new node's
-// tail (a pointer store, no retaining inc) but then ALSO dropped it on the
-// overwrite, pushing every tail node to rc 0. The exit-free deep-drop tolerated
-// rc 0, but the consuming match's is_unique-gated free missed it and dec'd to
-// -1. Fixed by suppressing the overwrite drop when the local is moved into the
-// RHS construction. These pin value-correctness + zero over-release on every
-// backend, and a bounded high-water (no leak from over-suppressing the drop).
-
 const iterBuildConsumeSrc = `enum List { Cons(i32, List), Nil }
 function eat(own xs: List): i32 {
     match (xs) { Cons(h, t) => { return h + eat(t); }, Nil => { return 0; } }
@@ -51,8 +41,6 @@ func TestWASMIterBuildConsume(t *testing.T) {
 	if got := runWasm(t, iterBuildConsumeSrc); got != 0 {
 		t.Errorf("iter-build consumed: got %d, want 0", got)
 	}
-	// No leak from over-suppressing the drop: building + consuming an iter-built
-	// list in a loop holds a flat high-water (each node reclaimed once).
 	bump := func(n string) string {
 		return `enum List { Cons(i32, List), Nil }
 function eat(own xs: List): i32 { match (xs) { Cons(h, t) => { return h + eat(t); }, Nil => { return 0; } } }

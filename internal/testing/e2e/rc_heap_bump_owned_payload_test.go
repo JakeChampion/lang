@@ -5,28 +5,6 @@ import (
 	"testing"
 )
 
-// A match over `read_chunk` / `io.read_line` / `read_file` / `read_file_bytes`
-// binds a payload the runtime built fresh for the caller inside an immortal
-// Option / Result box. Nothing released it: the box needed no release, the
-// binding was a borrow, and the exit sweep skipped it — so every chunk of a
-// streaming loop and every line of a line-reading loop leaked (#8396). The
-// bindings are counted owners now (consumingBindings), dropped at the bind
-// site on the next iteration and by the exit sweep otherwise, with a `_`
-// dropped on the spot.
-//
-// The runtime's own half (#8399): read_chunk stranded a short read's buffer
-// below its size class on x86-64 and wasm (the string frees at length + 1 /
-// length, the block was bumped at n), and leaked the buffer on EOF on every
-// backend. Reading a 1 KB file with a 4 KB request exercises both — a short
-// read, then None.
-//
-// The observable is that fresh memory does not SCALE with the payload size:
-// the same rounds over a 1024-byte file must cost no more fresh bytes than
-// over a 16-byte one, up to a factor that tolerates the per-call immortal
-// boxes (a constant, independent of the payload). A warm-up round at each
-// size keeps the first allocation of each class out of the comparison. Each
-// program is self-checking and exits 0 when the shape holds: 98 = scales,
-// 99 = over-release, 90s = the fixture files could not be written.
 const ownedPayloadFamilySrc = `import "std/i32";
 import "std/i64";
 import "std/io";
@@ -128,10 +106,6 @@ function main(): i32 {
     return 0;
 }`
 
-// The binding escapes into a container that outlives the loop — an append
-// retains, so the container's reference must survive the per-iteration
-// release. Reads the kept strings back after the loop: a use-after-free
-// here is a wrong answer or a crash, never a byte count.
 const ownedPayloadEscapeSrc = `import "std/i32";
 import "std/string";
 function put(path: string, content: string): i32 {

@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// The wasm half of TestSelfHostSharedVariantPayloadIRX86_64, and it fails
-// differently: wasm has true 32/64-bit stack types, so storing an f64 payload
-// through the i32.store the WRONG decl selected does not miscompile — the
-// module does not validate at all ("type mismatch: expected i32, found f64").
-// The register backends store every field as 8 bytes and so never saw it.
-//
-// The construction side is what wasm rejects: op_struct_make named its shape
-// and the backend re-derived each field's store width from that name, which two
-// enums declaring one variant name share. The op now carries the resolved decl
-// index (ir.Op.decl) and the backend reads widths off it.
-//
-// Kept separate from the x86 file rather than folded in as a third target: the
-// failure mode, the driver (wasm_ir_run) and the runner all differ, and this one
-// skips without wasmtime.
 func TestSelfHostSharedVariantPayloadWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host shared-variant-payload wasm IR e2e")

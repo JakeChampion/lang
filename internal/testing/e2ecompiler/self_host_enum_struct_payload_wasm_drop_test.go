@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumStructPayloadDropWasm is the wasm mirror of the enum-payload
-// struct deep-drop (the x86 sibling is TestSelfHostEnumStructPayloadDropIRX86_64):
-// the typed lowering's $__sem_drop_Box releases its payload through
-// $__sem_drop_Inner. Reclaim is proven by a memory-cap differential: a long
-// consume-by-match churn over a fresh `Full(Inner{items:[..]})` stays bounded under a
-// tight max-memory-size cap with trap-on-grow-failure (the payload buffer + boxes are
-// reclaimed onto the freelist and reused); a regression to the leak exceeds the cap
-// and traps. The WAT assertion pins that $__sem_drop_Inner is emitted. The variant
-// is built and consumed behind @noinline calls, so the optimiser cannot fold the
-// construction away and leave nothing to reclaim.
 func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-struct-payload e2e")
@@ -27,7 +17,7 @@ func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	const cap = "16777216" // 16 MiB
+	const cap = "16777216"
 	prog := `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }

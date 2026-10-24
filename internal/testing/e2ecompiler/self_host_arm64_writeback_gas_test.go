@@ -7,23 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64GasWriteback pins #6083: a `!` pre-index writeback on a
-// mnemonic the assembler has no writeback encoder for must be REFUSED, not
-// silently stripped.
-//
-// `__fern_eprint_str` claimed its newline scratch with
-// `strb w1, [sp, #-16]!` and released it with `add sp, sp, #16`. The assembler
-// implements pre-index writeback for ldr/str/ldp/stp — the operand stack's whole
-// idiom — but not for the byte / half-word forms, and arm64_gas_mem drops the
-// `!` because it sits outside the brackets. So sp was never decremented and the
-// paired release RAISED it by 16: every eprint returned on a frame 16 bytes
-// off. eprint's own bytes were correct, so the corruption surfaced only at
-// the next call, which is why `audit_io_builtins` printed "Hi!" and "to-stderr"
-// and then died somewhere else entirely.
-//
-// The emitter now uses __fern_putchar's explicit `sub sp` shape, so nothing
-// emits this form any more; this test guards the assembler side, which is what
-// keeps the next such helper from failing the same silent way.
 func TestSelfHostArm64GasWriteback(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 gas writeback e2e")

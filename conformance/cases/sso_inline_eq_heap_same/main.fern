@@ -1,6 +1,6 @@
 function main(): i32 {
-    let a: str = slice_unchecked("abcdefghij", 0, 3); // inline "abc"
-    let b: string = "abc";              // heap "abc"
+    let a: str = slice_unchecked("abcdefghij", 0, 3);
+    let b: string = "abc";
     if (a == b) { return 1; }
     return 0;
 }

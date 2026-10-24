@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// WriteTZifUTF8Fixture exercises the binary-to-text boundary independently of
-// the host's zoneinfo installation. Both transition-table formats are covered.
 func WriteTZifUTF8Fixture(t testing.TB) string {
 	t.Helper()
 	type fixture struct {

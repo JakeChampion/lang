@@ -8,46 +8,14 @@ import (
 	"testing"
 )
 
-// cksum(1) — eleven algorithms behind one `-a`, and the corpus is its
-// own rather than `sumCases`, because cksum is not the program the
-// seven `*sum` utilities are:
-//
-//   - its default output is TAGGED and `--untagged` is the reversed
-//     form, which is the opposite way round from the seven;
-//   - `crc`, `sysv` and `bsd` print a checksum and a count, cannot be
-//     checked, and DO NOT ESCAPE the file name;
-//   - a digest may be written and read in base64 as well as hex;
-//   - in check mode without `-a`, each line's TAG chooses the algorithm
-//     to verify it with, and a line without one is improperly formatted;
-//   - the check-line grammar is looser here in three measured ways: the
-//     minimum line is three bytes rather than the digest plus two, every
-//     algorithm takes the `-NNN` length and the tab-before-paren that
-//     only BLAKE2b takes in b2sum, and `MD5-64 (f)` verifies the first
-//     eight bytes of an MD5.
-//
-// `--debug` is the one output not compared here. It names which CRC
-// implementation GNU chose for `crc` and for `crc32b` — `using pclmul hardware support` on a CPU
-// that has the instruction — which is a runtime dispatch a static Fern
-// binary does not have and cannot honestly claim; docs/COREUTILS.md
-// records it beside `--help` and `--version`. Everything else about the
-// option IS compared: that it is accepted, that it refuses a value,
-// that it appears in the ambiguity list, and that it prints nothing for
-// an algorithm that is not the CRC.
-
-// ckAlgos are `-a`'s names in declaration order, which is the order the
-// `Valid arguments are:` list prints them in.
 func ckAlgos() []string {
 	return []string{"bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "sm3"}
 }
 
-// ckDigests are the eight that are digests: the ones `-c`, `--tag`,
-// `--base64` and the name escaping apply to.
 func ckDigests() []string {
 	return []string{"md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "sm3"}
 }
 
-// ckTags are the words those eight write in a BSD tag and in
-// `improperly formatted %s checksum line`.
 func ckTags() map[string]string {
 	return map[string]string{
 		"md5": "MD5", "sha1": "SHA1", "sha224": "SHA224", "sha256": "SHA256",
@@ -55,25 +23,20 @@ func ckTags() map[string]string {
 	}
 }
 
-// ckTree is the files cksum's corpus is asked about.
 type ckTree struct {
 	dir                                                 string
 	a, empty, big, backslash, newline, carriage, spaced string
 	raw, missing, subdir                                string
-	// blocks are the sizes at which sysv's 512-byte and bsd's 1 KiB
-	// block counts round up.
-	b512, b513, b1024, b1025 string
+	b512, b513, b1024, b1025                            string
 }
 
 func newCkTree(t *testing.T) ckTree {
 	t.Helper()
 	dir := t.TempDir()
 	tr := ckTree{
-		dir:   dir,
-		a:     sumFile(t, dir, "a", "hello\n"),
-		empty: sumFile(t, dir, "e0", ""),
-		// Past one read block and not a multiple of any block size, so
-		// the tail padding of every digest is exercised.
+		dir:       dir,
+		a:         sumFile(t, dir, "a", "hello\n"),
+		empty:     sumFile(t, dir, "e0", ""),
 		big:       sumFile(t, dir, "big", strings.Repeat("0123456789abcdef", 12345)+"tail"),
 		backslash: sumFile(t, dir, `back\slash`, "x\n"),
 		newline:   sumFile(t, dir, "new\nline", "x\n"),
@@ -93,7 +56,6 @@ func newCkTree(t *testing.T) ckTree {
 	return tr
 }
 
-// ckLines writes one-off checksum files; each call names a fresh path.
 func ckLines(t *testing.T, dir, prefix string) func(string) string {
 	t.Helper()
 	n := 0
@@ -111,8 +73,6 @@ func init() {
 	registerCorpus("cksum", cksumCases)
 }
 
-// sumRawName writes the not-valid-UTF-8 fixture where the filesystem holds it,
-// and returns the path either way; the cases naming it carry rawByteName.
 func sumRawName(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, rawByteNameFixture)
@@ -135,7 +95,6 @@ func cksumCases(t *testing.T) []invocation {
 	return cases
 }
 
-// Every algorithm over every input shape and every output form.
 func ckAlgorithmCases(t *testing.T, tr ckTree) []invocation {
 	t.Helper()
 	var cases []invocation
@@ -143,7 +102,6 @@ func ckAlgorithmCases(t *testing.T, tr ckTree) []invocation {
 		cases = append(cases, invocation{name: name, args: args})
 	}
 
-	// The default algorithm, which is the POSIX CRC and not crc32b.
 	add("default one file", tr.a)
 	add("default empty file", tr.empty)
 	add("default a file spanning read blocks", tr.big)
@@ -190,12 +148,8 @@ func ckAlgorithmCases(t *testing.T, tr ckTree) []invocation {
 		add(a+" raw two files", "-a", a, "--raw", tr.a, tr.empty)
 		add(a+" raw missing", "-a", a, "--raw", tr.missing)
 		if a != "crc" && a != "crc32b" {
-			// The two CRCs are the algorithms GNU has more than one
-			// implementation of, so they are the ones `--debug` names;
-			// see the note at the top of this file.
 			add(a+" debug", "-a", a, "--debug", tr.a)
 		}
-		// Names: escaped for the eight digests, verbatim for the three.
 		add(a+" backslash name", "-a", a, tr.backslash)
 		add(a+" newline name", "-a", a, tr.newline)
 		add(a+" carriage return name", "-a", a, tr.carriage)
@@ -219,7 +173,6 @@ func ckAlgorithmCases(t *testing.T, tr ckTree) []invocation {
 		)
 	}
 
-	// The block counts sysv and bsd print round up at different sizes.
 	for _, a := range []string{"sysv", "bsd", "crc"} {
 		add(a+" 512 bytes", "-a", a, tr.b512)
 		add(a+" 513 bytes", "-a", a, tr.b513)
@@ -230,8 +183,6 @@ func ckAlgorithmCases(t *testing.T, tr ckTree) []invocation {
 	return cases
 }
 
-// The option surface: `-a`'s argument matching, getopt, and every
-// refusal in the order the reference tests them.
 func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 	t.Helper()
 	var cases []invocation
@@ -239,7 +190,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 		cases = append(cases, invocation{name: name, args: args})
 	}
 
-	// -a takes an exact name: no abbreviations, no case folding.
 	for _, v := range []string{"", "m", "md", "MD5", "crc32b", "CRC", "s", "sh", "sha2", "sha25", "b", "bl", "blake", "sm", "c", "nonsense", "crc "} {
 		add("algorithm "+strconv.Quote(v), "-a", v, tr.a)
 	}
@@ -253,7 +203,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 	add("algorithm prefix needs an argument", "--a")
 	add("algorithm after an operand", tr.a, "-a", "md5")
 
-	// getopt: the messages, and the ambiguity list in declaration order.
 	add("invalid short option", "-x", tr.a)
 	add("invalid short option in a cluster", "-bx", tr.a)
 	add("unrecognized long option", "--foo", tr.a)
@@ -271,8 +220,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 	add("unique prefix base64", "--ba", tr.a)
 	add("unique prefix binary", "--bi", tr.a)
 	add("ambiguous b", "--b", tr.a)
-	// `--d` resolves to the one long option starting with it; the
-	// algorithm is not the CRC so its output is compared too.
 	add("unique prefix debug", "--d", "-a", "md5", tr.a)
 	add("unique prefix ignore-missing", "--i", tr.a)
 	add("unique prefix quiet", "--q", tr.a)
@@ -289,8 +236,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 		invocation{name: "posix option before the operand", args: []string{"--untagged", tr.a}, env: []string{"POSIXLY_CORRECT=1"}},
 	)
 
-	// Bare -t / -b, which are not in the help text and are options all
-	// the same, and the refusal -t alone reaches.
 	add("text alone", "-t", tr.a)
 	add("long text alone", "--text", tr.a)
 	add("binary alone", "-b", tr.a)
@@ -300,9 +245,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 	add("untagged after text", "-t", "--untagged", tr.a)
 	add("tag after untagged after text", "-t", "--untagged", "--tag", tr.a)
 
-	// The refusals, in the order the reference tests them: --raw with
-	// --base64 before --text, --text before --zero, --zero before the
-	// binary/text one, and the five check-only options last.
 	add("base64 and raw", "--base64", "--raw", "-a", "md5", tr.a)
 	add("raw and base64", "--raw", "--base64", "-a", "md5", tr.a)
 	add("base64 and raw with text", "--raw", "--base64", "-t", tr.a)
@@ -321,8 +263,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 	add("raw with a check-only option and two files", "--raw", "--quiet", tr.a, tr.empty)
 	add("raw with text and two files", "--raw", "-t", tr.a, tr.empty)
 
-	// The five that are meaningful only when verifying, and the
-	// three-valued setting behind --status / --warn / --quiet.
 	add("ignore-missing without check", "--ignore-missing", tr.a)
 	add("quiet without check", "--quiet", tr.a)
 	add("status without check", "--status", tr.a)
@@ -338,7 +278,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 	add("zero then ignore-missing", "-z", "--ignore-missing", tr.a)
 	add("strict then quiet", "--strict", "--quiet", tr.a)
 
-	// --check with an algorithm that has no checksum line.
 	add("check crc", "-c", "-a", "crc", tr.a)
 	add("check sysv", "-c", "-a", "sysv", tr.a)
 	add("check bsd", "-c", "-a", "bsd", tr.a)
@@ -349,8 +288,6 @@ func ckOptionCases(t *testing.T, tr ckTree) []invocation {
 	return cases
 }
 
-// -l: the value rules at option time, and the maximum, which waits
-// until `-a` is known.
 func ckLengthCases(t *testing.T, tr ckTree) []invocation {
 	t.Helper()
 	var cases []invocation
@@ -378,7 +315,6 @@ func ckLengthCases(t *testing.T, tr ckTree) []invocation {
 	add("length before the algorithm", "-l", "256", "-a", "blake2b", tr.a)
 	add("length after the algorithm", "-a", "blake2b", "-l", "256", tr.a)
 
-	// Only blake2b takes a length, and the message has no `Try …` line.
 	add("length on the crc", "-l", "256", tr.a)
 	add("length on md5", "-l", "256", "-a", "md5", tr.a)
 	add("length on sysv", "-l", "256", "-a", "sysv", tr.a)
@@ -388,8 +324,6 @@ func ckLengthCases(t *testing.T, tr ckTree) []invocation {
 	add("length before the check refusal", "-l", "256", "-c", "-a", "crc", tr.a)
 	add("length before the mutual exclusion", "--raw", "--base64", "-l", "256", "-a", "md5", tr.a)
 
-	// The value rules run where the option is parsed, so they win over
-	// every refusal above.
 	add("length not a multiple of eight", "-l", "4", "-a", "blake2b", tr.a)
 	add("length not a multiple of eight on md5", "-l", "7", "-a", "md5", tr.a)
 	add("length not a multiple of eight on the crc", "-l", "7", tr.a)
@@ -419,9 +353,6 @@ func ckLengthCases(t *testing.T, tr ckTree) []invocation {
 	return cases
 }
 
-// sha2 and sha3, the two names that stand for a family: neither runs
-// without `-l`, the length picks the member, and sha2's tag is that
-// member's own name while sha3's carries the length.
 func ckShaFamilyCases(t *testing.T, tr ckTree) []invocation {
 	t.Helper()
 	var cases []invocation
@@ -465,8 +396,6 @@ func ckShaFamilyCases(t *testing.T, tr ckTree) []invocation {
 			add(a+" "+bits+" check at another length", "-c", "-a", a, "-l", "512", tagged)
 		}
 
-		// The length rules: the four members and nothing else, tested
-		// where `-l` is parsed rather than where the digest is chosen.
 		for _, bits := range []string{"0", "8", "128", "200", "223", "225", "255", "1024", "-8", "", "abc", "0x100", "0256", "+256", "99999999999999999999"} {
 			add(a+" length "+strconv.Quote(bits), "-a", a, "-l", bits, tr.a)
 		}
@@ -476,10 +405,6 @@ func ckShaFamilyCases(t *testing.T, tr ckTree) []invocation {
 		add("md5 then "+a, "-a", "md5", "-a", a, "-l", "224", tr.a)
 	}
 
-	// The tag grammar the two family names bring: `SHA3` spells its
-	// length or takes the default, `SHA2` stands aside for whichever
-	// member a line names, and having stood aside once it stays that
-	// member for every line after — including the ones it cannot read.
 	name := filepath.Join(tr.dir, "a")
 	s3 := func(bits string) string {
 		out := refOutput(t, "cksum", "-a", "sha3", "-l", bits, "--untagged", tr.a)
@@ -516,7 +441,6 @@ func ckShaFamilyCases(t *testing.T, tr ckTree) []invocation {
 	g("sha2 untagged base64", strings.Fields(refOutput(t, "cksum", "-a", "sha2", "-l", "384", "--untagged", "--base64", tr.a))[0]+"  "+name+"\n", "-a", "sha2")
 	g("bare crc32b tag", "CRC32B ("+name+") = 909783072\n")
 
-	// crc32b is a plain checksum: no tag, no base64, no length.
 	add("crc32b length", "-a", "crc32b", "-l", "8", tr.a)
 	add("crc32b length 0", "-a", "crc32b", "-l", "0", tr.a)
 	add("crc32b check", "-a", "crc32b", "-c", tr.a)
@@ -524,8 +448,6 @@ func ckShaFamilyCases(t *testing.T, tr ckTree) []invocation {
 	return cases
 }
 
-// Check mode with `-a`: the reports, the summaries and their statuses,
-// over each of the eight digests and both output forms.
 func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 	t.Helper()
 	line := ckLines(t, tr.dir, "c")
@@ -541,8 +463,6 @@ func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 		b64Untagged := line(refOutput(t, "cksum", "--base64", "--untagged", "-a", a, tr.a))
 		esc := line(refOutput(t, "cksum", "-a", a, tr.backslash, tr.newline, tr.carriage))
 		escUntagged := line(refOutput(t, "cksum", "--untagged", "-a", a, tr.backslash, tr.newline))
-		// Invalid checksum-file names are D10 boundary errors, covered for
-		// every algorithm in TestDigestCheckBytes without raw path fixtures.
 
 		add(a+" check tagged", "-c", "-a", a, tagged)
 		add(a+" check untagged", "-c", "-a", a, untagged)
@@ -560,7 +480,6 @@ func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 		add(a+" check status", "-c", "--status", "-a", a, tagged)
 	}
 
-	// One algorithm carries the shapes that do not vary with the digest.
 	good := refOutput(t, "cksum", "-a", "md5", tr.a)
 	goodUntagged := refOutput(t, "cksum", "--untagged", "-a", "md5", tr.a)
 	zeros := strings.Repeat("0", 32)
@@ -648,17 +567,12 @@ func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 	add("check ignore-missing status", "-c", "--ignore-missing", "--status", miss)
 	add("check every check-only option at once", "-c", "--ignore-missing", "--quiet", "--status", "-w", "--strict", ok)
 
-	// --raw and --base64 are ignored when verifying, but --raw's
-	// operand count is not.
 	add("check with raw", "--raw", "-c", ok)
 	add("check with base64", "--base64", "-c", ok)
 	add("check with raw and one file", "--raw", "-c", "-a", "md5", ok)
 	return cases
 }
 
-// Check mode WITHOUT `-a`: the tag chooses the algorithm, an untagged
-// line has none, and the last tag recognised is what the next
-// improperly-formatted line is reported as.
 func ckDetectCases(t *testing.T, tr ckTree) []invocation {
 	t.Helper()
 	line := ckLines(t, tr.dir, "d")
@@ -679,8 +593,6 @@ func ckDetectCases(t *testing.T, tr ckTree) []invocation {
 	add("detect every algorithm under md5 with warn", "-c", "-w", "-a", "md5", mixedFile)
 	add("detect every algorithm under blake2b with warn", "-c", "-w", "-a", "blake2b", mixedFile)
 
-	// An untagged line has no algorithm to be read with, before or
-	// after a tagged one.
 	untagged := refOutput(t, "cksum", "--untagged", "-a", "md5", tr.a)
 	tagged := refOutput(t, "cksum", "-a", "md5", tr.a)
 	b2Untagged := refOutput(t, "cksum", "--untagged", "-a", "blake2b", tr.a)
@@ -692,8 +604,6 @@ func ckDetectCases(t *testing.T, tr ckTree) []invocation {
 	add("detect blake2b tagged then untagged", "-c", "-w", line(b2Tagged+b2Untagged))
 	add("detect untagged with an algorithm", "-c", "-w", "-a", "md5", line(untagged+tagged))
 
-	// The name in the diagnostic is the last tag RECOGNISED, which a
-	// line may recognise and then fail to parse.
 	for _, a := range ckDigests() {
 		tag := tags[a]
 		add("detect "+a+" tag with a bad digest", "-c", "-w", line(tag+" ("+tr.a+") = nope\ngarbage\n"))
@@ -701,7 +611,6 @@ func ckDetectCases(t *testing.T, tr ckTree) []invocation {
 		add("detect "+a+" tag lowercased", "-c", "-w", line(strings.ToLower(tag)+" ("+tr.a+") = nope\n"))
 		add("detect "+a+" tag uppercased", "-c", "-w", line(strings.ToUpper(tag)+" ("+tr.a+") = nope\n"))
 	}
-	// Tags that are not check algorithms leave the name where it was.
 	add("detect a CRC tag", "-c", "-w", line("CRC ("+tr.a+") = 1234\n"))
 	add("detect a SYSV tag", "-c", "-w", line("SYSV ("+tr.a+") = 1234\n"))
 	add("detect a BSD tag", "-c", "-w", line("BSD ("+tr.a+") = 1234\n"))
@@ -712,10 +621,6 @@ func ckDetectCases(t *testing.T, tr ckTree) []invocation {
 	add("detect ok then garbage strict", "-c", "--strict", line(tagged+"garbage\n"))
 	add("detect blank lines then garbage", "-c", "-w", line("\n\n  \n"+tagged))
 
-	// A tag whose name matches and whose next byte does not: the
-	// algorithm is chosen off the name alone, so this is an improperly
-	// formatted MD5 line and not a CRC one — but a backslash after the
-	// name matches no algorithm at all.
 	add("detect a tag with three spaces", "-c", "-w", line("MD5   ("+tr.a+") = nope\n"))
 	add("detect a tag with a tab", "-c", "-w", line("MD5\t("+tr.a+") = nope\n"))
 	add("detect a tag with a tab then a space", "-c", "-w", line("MD5\t ("+tr.a+") = nope\n"))
@@ -725,8 +630,6 @@ func ckDetectCases(t *testing.T, tr ckTree) []invocation {
 	return cases
 }
 
-// The check-line grammar: the two shapes, the separator and length
-// rules, base64, and the `-NNN` length every algorithm takes here.
 func ckGrammarCases(t *testing.T, tr ckTree) []invocation {
 	t.Helper()
 	line := ckLines(t, tr.dir, "g")
@@ -734,15 +637,12 @@ func ckGrammarCases(t *testing.T, tr ckTree) []invocation {
 	add := func(name string, args ...string) {
 		cases = append(cases, invocation{name: name, args: args})
 	}
-	// The true digests of `a`, so a grammar case can MATCH rather than
-	// only be a well-formed miss.
 	md5 := strings.Fields(refOutput(t, "cksum", "--untagged", "-a", "md5", tr.a))[0]
 	b2 := strings.Fields(refOutput(t, "cksum", "--untagged", "-a", "blake2b", tr.a))[0]
 	md5b64 := strings.Fields(refOutput(t, "cksum", "--base64", "--untagged", "-a", "md5", tr.a))[0]
 	zeros := strings.Repeat("0", 32)
 	name := tr.a
 
-	// The untagged shape, which needs `-a` to be read at all.
 	u := func(n, content string) {
 		add("grammar "+n, "-c", "-w", "-a", "md5", line(content))
 	}
@@ -797,9 +697,6 @@ func ckGrammarCases(t *testing.T, tr ckTree) []invocation {
 	u("NUL where the name would be", zeros+"  \x00\n")
 	u("NUL past a marker", zeros+"  \x00x\n")
 
-	// A blake2b untagged line takes its length from the hex run, and a
-	// run whose length is also a base64 length is read as base64 — so
-	// four and eight hex digits are improperly formatted here.
 	b := func(n, content string) {
 		add("grammar blake2b "+n, "-c", "-w", "-a", "blake2b", line(content))
 	}
@@ -816,7 +713,6 @@ func ckGrammarCases(t *testing.T, tr ckTree) []invocation {
 	b("hex run followed by junk", "aax  "+name+"\n")
 	b("base64 digest is not a hex run", strings.Fields(refOutput(t, "cksum", "--base64", "--untagged", "-a", "blake2b", tr.a))[0]+"  "+name+"\n")
 
-	// The tagged shape, which needs no `-a`.
 	g := func(n, content string) {
 		add("grammar tagged "+n, "-c", "-w", line(content))
 	}
@@ -843,8 +739,6 @@ func ckGrammarCases(t *testing.T, tr ckTree) []invocation {
 	g("base64 digest one pad long", "MD5 ("+name+") = "+md5b64+"=\n")
 	g("base64 digest with an invalid byte", "MD5 ("+name+") = !"+md5b64[1:]+"\n")
 
-	// `-NNN` is not b2sum's alone here: every algorithm takes one, and
-	// a shorter one names a PREFIX of the digest.
 	g("md5 length 128", "MD5-128 ("+name+") = "+md5+"\n")
 	g("md5 length 128 no space", "MD5-128("+name+") = "+md5+"\n")
 	g("md5 length 64 with a full digest", "MD5-64 ("+name+") = "+md5+"\n")
@@ -862,9 +756,6 @@ func ckGrammarCases(t *testing.T, tr ckTree) []invocation {
 	g("length with leading zeros", "MD5-08 ("+name+") = "+md5[:2]+"\n")
 	g("length with a plus", "MD5-+8 ("+name+") = "+md5[:2]+"\n")
 
-	// BLAKE2b's own lengths, which the tag declares and `-l` does not
-	// override. Eight, sixteen and thirty-two bits are the three whose
-	// base64 form the reference could not read back before 9.5.
 	for _, bits := range []int{8, 16, 24, 32, 40, 48, 56, 64, 128, 256, 512} {
 		s := strconv.Itoa(bits)
 		hexD := strings.Fields(refOutput(t, "cksum", "--untagged", "-a", "blake2b", "-l", s, tr.a))[0]
@@ -893,7 +784,6 @@ func TestCksumHelpVersion(t *testing.T) {
 	requireHelp(t, "cksum", []string{"--he"}, 0)
 	requireVersion(t, "cksum", []string{"--version"}, 0)
 	requireVersion(t, "cksum", []string{"--vers"}, 0)
-	// getopt permutes, so an operand does not end the option scan.
 	requireHelp(t, "cksum", []string{"x", "--help"}, 0)
 	requireVersion(t, "cksum", []string{"x", "--version"}, 0)
 }

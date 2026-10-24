@@ -8,33 +8,6 @@ import (
 	"testing"
 )
 
-// --- The bare-ident tuple element's retain, string half (#7226) --------------
-//
-// A string local placed in a tuple as a bare ident, `(i, s)`, is retained by the
-// tuple construction, so the tuple's element release and the local's own sweep
-// each owe one release. Missing either strands a box per round, unbounded:
-//
-//	(i32, string) from a bare ident   allocs=600 frees=200   live 6400 at 200 rounds
-//	                                                              12800 at 400
-//
-// Exactly 2.0x per doubling. Measure it with `w("ab")` and never `"ab" + "c"`:
-// the latter constant-folds to an immortal literal (rc = -1) and the probe
-// measures nothing.
-//
-// The element release is __fern_str_free. __fern_rc_dec is the WRONG helper
-// here and would be heap corruption rather than a leak. A string box is
-// {rc@base, data@base+8, len@base+16} with the value at base+8, so rc sits at
-// value-8 for both layouts — which is why one __fern_rc_inc retains either —
-// but rc_dec frees at value-16, eight bytes below the block.
-//
-// Every want below was confirmed against `bin/fern -interp`, never read off the
-// self-host run under test.
-//
-// The x86-64 leg is the one that carries the leak signal. The wasm and arm64
-// legs assert exit codes, which a leak does not move — they are there to catch
-// a release that frees a LIVE box on those backends, which does change the
-// answer.
-
 const tupStrElemW = "function w(a: string): string { return a + \"!\"; }\n"
 
 const tupStrElemMain = "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0; " +
@@ -50,7 +23,6 @@ type tupStrElemCase struct {
 func tupStrElemCases() []tupStrElemCase {
 	return []tupStrElemCase{
 		{
-			// The main shape.
 			name: "str_elem",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -60,9 +32,6 @@ func tupStrElemCases() []tupStrElemCase {
 			want: 21,
 		},
 		{
-			// The source local is READ after the tuple is built. The release is at
-			// scope exit, after every use, and it gives back the TUPLE's reference
-			// — the local still holds its own, so the read must see live bytes.
 			name: "str_read_after",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -72,7 +41,6 @@ func tupStrElemCases() []tupStrElemCase {
 			want: 72,
 		},
 		{
-			// Two string positions in one tuple — the release walks a list.
 			name: "two_str_elems",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let a: string = w("ab");
@@ -83,10 +51,6 @@ func tupStrElemCases() []tupStrElemCase {
 			want: 72,
 		},
 		{
-			// A string element and an ARRAY element in one tuple. The kinds string
-			// carries both, and each position picks its own helper — the case a
-			// single release helper for the whole walk gets wrong in the direction
-			// that corrupts the heap rather than leaking.
 			name: "mixed_str_and_array",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -97,12 +61,6 @@ func tupStrElemCases() []tupStrElemCase {
 			want: 74,
 		},
 		{
-			// A LITERAL-init string local rather than a fresh producer's result.
-			//
-			// This one balances even without the element release, so it pins
-			// nothing about the leak. It earns its place in the other direction:
-			// a __fern_str_free that mishandled the box behind a literal init
-			// would show up here as a double free rather than as a leak.
 			name: "litstr_elem",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = "abcd";
@@ -112,10 +70,6 @@ func tupStrElemCases() []tupStrElemCase {
 			want: 38,
 		},
 		{
-			// The tuple's last mention is not the final statement, so the precise
-			// drop-on-last-use claims the box instead of the exit sweep. It replays
-			// the same kinds list, so the string half reaches it for free — but only
-			// because the list is what both consult.
 			name: "last_use_before_return",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -126,9 +80,6 @@ func tupStrElemCases() []tupStrElemCase {
 			want: 21,
 		},
 		{
-			// The tuple is a cross-tuple reuse DONOR, so its box is recycled and the
-			// release runs inside the uniqueness arm (#7275). The fifth site on the
-			// enumeration reached by a string element.
 			name: "cross_reuse_donor",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -143,13 +94,6 @@ func tupStrElemCases() []tupStrElemCase {
 	}
 }
 
-// TestSelfHostTupleStrElemRetainX86_64 — the string element's retain is given
-// back AND the source local earns its own sweep, so allocs and frees balance.
-//
-// Both halves show up in this one number. Without the credit the local's box is
-// never swept (frees short); with the credit but no release the tuple's reference
-// keeps it alive (frees short by the same amount); with a release but no credit
-// the arithmetic balances on the tuple and strands the local.
 func TestSelfHostTupleStrElemRetainX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -191,17 +135,6 @@ func TestSelfHostTupleStrElemRetainX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleStrElemHazardsX86_64 — shapes the credit must REFUSE, plus the
-// one whose point is surviving at all.
-//
-// The census must balance, but a wrongly-GRANTED credit here is a
-// freed-then-read string, which only the answer and the underflow counter show.
-//
-// The underflow check is the essential part. Without it every case below
-// passes against a compiler that over-releases: a doubly-released block goes back
-// to the freelist and the arithmetic still comes out right.
-//
-// Both wants came from bin/fern -interp and the native x86-64 backend agreeing.
 func TestSelfHostTupleStrElemHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -214,10 +147,6 @@ func TestSelfHostTupleStrElemHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The element is EXTRACTED to a new local: a bare pointer
-			// extraction, not a scalar read, so neither the tuple's element
-			// release nor the local's sweep may be granted on its own — both are
-			// denied together, which is what keeps them consistent.
 			name: "str_elem_extracted_local",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -228,8 +157,6 @@ func TestSelfHostTupleStrElemHazardsX86_64(t *testing.T) {
 			want: 21,
 		},
 		{
-			// The same extraction leaving the frame, where a wrongly-granted credit
-			// frees a box the caller is about to read.
 			name: "str_elem_extracted_escaping",
 			src: tupStrElemW + `function grab(i: i32): string {
     let s: string = w("ab");
@@ -240,9 +167,6 @@ function round(i: i32): i32 { let g: string = grab(i); return g.len() + i; }` + 
 			want: 21,
 		},
 		{
-			// The name appears at a bare-ident element AND somewhere else in the
-			// same tuple. This must stay refused, so the second use is never
-			// hidden.
 			name: "ident_used_twice_in_tuple",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -252,10 +176,6 @@ function round(i: i32): i32 { let g: string = grab(i); return g.len() + i; }` + 
 			want: 72,
 		},
 		{
-			// The tuple is built on one branch only, so the slot still holds its
-			// entry zero at the sweep. __fern_str_free null-guards the element; the
-			// op_tuple_get that reaches it does not. A missing guard is a segfault,
-			// so this case is about surviving at all.
 			name: "untaken_branch_null",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -281,9 +201,6 @@ function round(i: i32): i32 { let g: string = grab(i); return g.len() + i; }` + 
 	}
 }
 
-// TestSelfHostTupleStrElemRetainWasmIR — the wasm sibling. Exit codes only:
-// FERN_LEAKCHECK is x86-64-only, and the answer is what proves the release did
-// not free a live box.
 func TestSelfHostTupleStrElemRetainWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple string-element retain wasm IR e2e")
@@ -322,7 +239,6 @@ func TestSelfHostTupleStrElemRetainWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleStrElemRetainIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleStrElemRetainIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

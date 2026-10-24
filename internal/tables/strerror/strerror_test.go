@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// hostErrnos is the host libc's name → number map, one file per OS, so
-// the numbers in Table are checked against the kernel's own constants
-// on whichever OS the suite runs.
-
 func TestNumbersMatchHost(t *testing.T) {
 	seen := map[string]bool{}
 	for _, e := range Table {
@@ -33,9 +29,6 @@ func TestNumbersMatchHost(t *testing.T) {
 	}
 }
 
-// lowerFirst is Go's spelling of an errno string: the host libc's
-// message with only its first letter lowered, so internal capitals
-// ("Input/output error", "RPC struct is bad") survive.
 func lowerFirst(s string) string {
 	if s == "" {
 		return s
@@ -43,10 +36,6 @@ func lowerFirst(s string) string {
 	return strings.ToLower(s[:1]) + s[1:]
 }
 
-// Go's errno strings are the host libc's own text, so the wording can
-// be checked against the host and not just the numbers — on Darwin as
-// well as on Linux, which is what makes darwinText's list of overrides
-// a measurement rather than a recollection.
 func TestTextMatchesHostLibc(t *testing.T) {
 	if runtime.GOOS != Linux && runtime.GOOS != Darwin {
 		t.Skipf("no host errno strings to compare against on %s", runtime.GOOS)
@@ -71,8 +60,6 @@ func TestTextMatchesHostLibc(t *testing.T) {
 	}
 }
 
-// An override that no longer differs from Text is a row to delete, not
-// one to keep: it would read as a platform difference that is not there.
 func TestDarwinOverridesAreEntriesThatDiffer(t *testing.T) {
 	byName := map[string]Entry{}
 	for _, e := range Table {
@@ -93,8 +80,6 @@ func TestDarwinOverridesAreEntriesThatDiffer(t *testing.T) {
 	}
 }
 
-// Dense and Text agree with the per-target wording, so a backend that
-// emits the table gets the same string the interpreter reports.
 func TestDenseCarriesTheDarwinWording(t *testing.T) {
 	linux, darwin := Dense(Linux), Dense(Darwin)
 	if got, want := linux[Number(Linux, "EXDEV")], "Invalid cross-device link"; got != want {
@@ -127,23 +112,21 @@ func TestNumbersUniquePerOS(t *testing.T) {
 	}
 }
 
-// Carried translates every OS's errno to Linux's number, so a program
-// compares against one constant on every target.
 func TestCarriedIsLinuxNumbering(t *testing.T) {
 	cases := []struct {
 		os    string
 		errno int
 		want  int
 	}{
-		{Linux, 20, 20},   // ENOTDIR
-		{Darwin, 66, 39},  // ENOTEMPTY
-		{Darwin, 78, 38},  // ENOSYS
-		{Wasi, 54, 20},    // ENOTDIR
-		{Wasi, 28, 22},    // EINVAL
-		{Darwin, 93, 61},  // ENOATTR is glibc's ENODATA
-		{Darwin, 102, 95}, // EOPNOTSUPP is glibc's ENOTSUP
-		{Linux, 999, 0},   // past the table
-		{Linux, 0, 0},     // no entry has Linux number 0 to match
+		{Linux, 20, 20},
+		{Darwin, 66, 39},
+		{Darwin, 78, 38},
+		{Wasi, 54, 20},
+		{Wasi, 28, 22},
+		{Darwin, 93, 61},
+		{Darwin, 102, 95},
+		{Linux, 999, 0},
+		{Linux, 0, 0},
 	}
 	for _, c := range cases {
 		if got := Carried(c.os, c.errno); got != c.want {
@@ -192,8 +175,6 @@ func TestTextAndDense(t *testing.T) {
 }
 
 func TestWasiErrorCodes(t *testing.T) {
-	// The component package carries the enum as the WIT declares it; a
-	// change there is a change to this list, in the same order.
 	if len(WasiErrorCodes) != len(component.WasiFilesystemErrorCodeNames) {
 		t.Fatalf("WasiErrorCodes has %d entries, component.WasiFilesystemErrorCodeNames has %d",
 			len(WasiErrorCodes), len(component.WasiFilesystemErrorCodeNames))
@@ -206,8 +187,6 @@ func TestWasiErrorCodes(t *testing.T) {
 			t.Errorf("error-code %d (%s) names %s, which has no WASI number in Table", i, ec.Code, ec.Errno)
 		}
 	}
-	// The four the translation always carried, at the discriminants the
-	// runtime has matched since preview 2 landed.
 	for _, tc := range []struct{ code, errno int }{{0, 2}, {7, 20}, {11, 27}, {27, 58}, {14, 31}, {24, 54}, {20, 44}} {
 		if got := WasiErrnoOfCode(tc.code); got != tc.errno {
 			t.Errorf("WasiErrnoOfCode(%d) = %d, want %d", tc.code, got, tc.errno)

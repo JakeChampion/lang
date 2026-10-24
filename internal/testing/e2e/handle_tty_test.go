@@ -1,18 +1,3 @@
-// The four terminal questions asked of a HANDLE rather than a descriptor
-// number: `r.window_size()`, `r.set_window_size(rows, cols)`,
-// `r.termios_get()` and `r.termios_set(when, words)` (#9363).
-//
-// The probe reaches the terminal BY PATH — `open_reader_with(name, 2)`, the
-// O_RDONLY | O_NONBLOCK open `stty -F` makes — and fds 0, 1 and 2 are left
-// pipes. That is the whole point of the methods: without them a program can
-// ask these questions of the three standard descriptors and of nothing it
-// opened itself, which is what `stty -F DEVICE` is.
-//
-// Each case is one the free form already proves on an fd, so what these pin
-// is the dispatch: that the method reaches the same runtime with the
-// receiver's fd and its own arguments in the right places. A stub that read
-// the fd from the wrong offset, or one that dropped an argument, fails on the
-// first case that reads a value back.
 package e2e
 
 import (
@@ -67,10 +52,6 @@ const handleTtySource = `function main(): i32 {
 }
 `
 
-// handleTtyRun allocates a pseudo-terminal, plants 24x80 with a pixel pair on
-// it, hands the child its PATH as an argument, and checks what the run left
-// behind. The child's own fds 0-2 stay pipes, so the only way it reaches a
-// terminal is the name.
 func handleTtyRun(t *testing.T, args ...string) {
 	t.Helper()
 	master, slave, err := tty.OpenPTY()
@@ -83,8 +64,6 @@ func handleTtyRun(t *testing.T, args ...string) {
 		slave.Close()
 		t.Fatalf("plant the size: %v", err)
 	}
-	// The child opens the pty by name, so this process needs no descriptor
-	// on it beyond the master that keeps the pair alive.
 	slave.Close()
 	out, err := exec.Command(args[0], append(args[1:], name)...).CombinedOutput()
 	code := 0
@@ -148,12 +127,6 @@ func TestInterpHandleTty(t *testing.T) {
 	handleTtyRun(t, fern, "-interp", src)
 }
 
-// The wasm worlds accept the PROGRAM — `internal/pkg/platforms` cannot see a
-// handle method, because the call reaches it already rewritten to
-// `__method_Reader_termios_get(r)` and the scan inspects plain identifiers —
-// and each method then answers `Unsupported` at the call, which is where the
-// IoError it carries can say so. That is `syncfs`'s arrangement rather than
-// `window_size`'s, and this pins the half that is checkable here: no E066.
 func TestWASMHandleTtyIsNotRefusedAtCheckTime(t *testing.T) {
 	prog, err := parser.Parse(handleTtySource)
 	if err != nil {
@@ -167,9 +140,6 @@ func TestWASMHandleTtyIsNotRefusedAtCheckTime(t *testing.T) {
 		"termios_get": true, "termios_set": true,
 	}
 	for _, target := range []string{"wasm32-wasi", "wasm32-wasi-http"} {
-		// The probe reaches `args` and `open_reader_with` too, and the
-		// http world grants neither — those refusals are that world's and
-		// not this question's, so only the four names are checked.
 		for _, v := range platforms.Enforce(prog, target) {
 			if methods[v.Builtin] {
 				t.Errorf("%s refused %s on %q at check time; a handle method carries "+

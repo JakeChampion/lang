@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// asmcore's runtime bodies are keyed by target name: x86-64-linux,
-// arm64-linux and arm64-darwin each have a syscall table and an open-flag
-// table, and a key outside the three stops the compile rather than taking
-// arm64 Linux's numbers.
 func TestSelfHostRuntimeKeys(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

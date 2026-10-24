@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternArrayParamCustomProvider is the self-host port of the
-// numeric-array `@import` parameter (docs/WIT-BRING-YOUR-OWN.md): the
-// self-hosted wasm backend lowers an `i32[]` extern parameter to the canonical
-// `list<s32>`. A self-host array value is the block base (len@0, elements@+8),
-// but the self-host heap isn't aligned, so the wrapper copies the elements into
-// a freshly 8-aligned buffer before passing (buf, len) — the canonical
-// list<s32> data pointer must be 4-byte aligned. Tested via the custom-provider
-// harness: a `sum-i32: func(data: list<s32>) -> s32` provider sums [10,20,30] =
-// 60. Mirror of the Go TestExternListI32ParamCustomProvider.
 func TestSelfHostExternArrayParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -38,7 +29,6 @@ func TestSelfHostExternArrayParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-i32. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -72,7 +62,6 @@ func TestSelfHostExternArrayParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom sink iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -101,7 +90,6 @@ func TestSelfHostExternArrayParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the array-param program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

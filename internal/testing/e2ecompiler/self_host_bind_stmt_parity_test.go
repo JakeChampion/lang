@@ -11,51 +11,14 @@ import (
 	"testing"
 )
 
-// checker.fern's bind_stmt is check_stmt's SCOPE half without the inference
-// (#8181). Twelve diagnostic walkers thread a Scope through a body and throw
-// the inferred type away, so running the whole type checker to obtain that
-// Scope had the program type-checked thirteen times over — 14.41% of a
-// `checker.fern` compile went into scope-only re-walks.
-//
-// What that trades away is a single implementation. If the two steppers ever
-// disagree about what a statement binds, the type-check pass resolves a name
-// the twelve diagnostic passes cannot see (or the reverse), and the symptom is
-// a spurious or missing diagnostic somewhere else entirely — nowhere near the
-// statement that caused it.
-//
-// So this runs both over the same statements and compares the bindings they
-// leave, on a corpus that covers every ast.Stmt form and every shape of `let`
-// the checker binds differently. bind_stmt_parity_run.fern does the walk: for
-// each statement of each function body (recursing into nested blocks as the
-// walkers do) and of the top level, in the scope check_module would walk it
-// in, it reports every name or type the two disagree on.
-//
-// Its companion is TestCheckStmtAndBindStmtBindTheSameStatementForms
-// (internal/testing/sourcelint), which reads the two functions' arms out of the source.
-// The division is deliberate and neither half covers the other: this gate
-// catches a wrong binding RULE (an annotation bound to the inferred type
-// rather than the declared one, say), but only for forms the corpus contains;
-// the lint catches a whole binding FORM appearing in one stepper and not the
-// other, which by definition no fixed corpus can contain in advance.
-//
-// It drives the driver under the native interpreter, so it needs no cross
-// toolchain and runs on every host.
 type bindStmtParityCase struct {
-	name string
-	src  string
-	// minCompared is a floor on the statements the driver reports comparing.
-	// Without it a row that stopped parsing — or a walk that stopped
-	// descending — would agree vacuously and pass.
+	name        string
+	src         string
 	minCompared int
 }
 
 var bindStmtParityCases = []bindStmtParityCase{
 	{
-		// Every shape of `let` the annotated path can take, including the two
-		// check_stmt reports a type error for and still binds the ANNOTATION
-		// under (unknown annotation, init/annotation mismatch): the error goes
-		// in the `ty` all twelve callers discard, so bind_stmt must not
-		// disagree about the scope there.
 		name: "let forms",
 		src: `struct P { x: i32, y: string }
 struct G { v: i32 }
@@ -83,10 +46,6 @@ function main(): i32 {
 		minCompared: 18,
 	},
 	{
-		// The destructuring path: bind_destructure_names is the whole binding,
-		// and it takes the statement and the scope with no inferred type at
-		// all. Tuple, struct, single-field struct (no comma, so the marker is
-		// what says it is a destructure) and the `@` whole-value binding.
 		name: "destructuring",
 		src: `struct P { x: i32, y: i32 }
 struct One { only: i32 }
@@ -103,8 +62,6 @@ function main(): i32 {
 		minCompared: 8,
 	},
 	{
-		// The nested bodies the walkers recurse into, plus the forms that bind
-		// nothing and must still hand the scope back untouched.
 		name: "nested bodies",
 		src: `function side(n: i32): i32 { return n; }
 function main(): i32 {
@@ -120,9 +77,6 @@ function main(): i32 {
 		minCompared: 21,
 	},
 	{
-		// The recursive-local self-binding: `let f = (…) => { … }` must
-		// have `f` in scope while its own initialiser is inferred, or the
-		// self-call inside it resolves to nothing.
 		name: "lambdas and recursive locals",
 		src: `function main(): i32 {
   function rec(n: i32): i32 { if (n <= 0) { return 0; } return rec(n - 1); }
@@ -144,8 +98,6 @@ function main(): i32 { return top + topInferred + ta + tb; }`,
 		minCompared: 4,
 	},
 	{
-		// A statement the parser could not read becomes StmtUnknown, which
-		// binds nothing — and the statements after it still have to be walked.
 		name: "unparseable statement",
 		src: `function main(): i32 {
   let arr: i32[] = [1];
@@ -174,10 +126,6 @@ function main(): i32 {
 	},
 }
 
-// stmtUnionRE reads the `pub type Stmt = A | B | …;` declaration out of
-// ast.fern. The corpus is held to covering every member: a new statement form
-// that no row exercises would be compared by neither stepper, which is exactly
-// the blind spot this gate exists to close.
 var stmtUnionRE = regexp.MustCompile(`(?s)pub type Stmt =(.*?);`)
 
 func astStmtForms(t *testing.T) []string {
@@ -205,8 +153,6 @@ func astStmtForms(t *testing.T) []string {
 		}
 		out = append(out, name)
 	}
-	// A mis-read that yielded one or two names would let the coverage check
-	// below pass on a corpus covering almost nothing.
 	if len(out) < 8 {
 		t.Fatalf("ast.fern's Stmt union read as only %d forms (%s); the coverage check below would be vacuous", len(out), strings.Join(out, ", "))
 	}

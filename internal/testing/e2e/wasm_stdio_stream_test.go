@@ -9,19 +9,6 @@ import (
 	"testing"
 )
 
-// Closing a stdio handle, and stream operations that fail (#11123).
-//
-// Closing stdout, stderr or stdin closes the stream for the whole process,
-// as close(2) on fd 0/1/2 does: a later Writer or Reader on it, including
-// one a fresh stdout() / stdin() returns, answers EBADF, and print, write,
-// eprint and putchar reach nothing. On a preview-2 component
-// stdout() and stderr() share one cached stream, so closing one dropped
-// the handle every later use passed back to the host, which trapped.
-//
-// Each program reports on the stream it did not close: "done" when every
-// answer was right, "fail N" naming the first that was not. Anything
-// written after the close carries "LEAK" and must not appear.
-
 const stdoutCloseSource = `function main(): i32 {
     let w = stdout();
     match (w.close()) { Err(_) => { eprint("fail 1"); return 1; }, Ok(_) => {} }
@@ -48,7 +35,6 @@ const stderrCloseSource = `function main(): i32 {
 }
 `
 
-// stdin carries a line, so a read that reached it would answer Ok.
 const stdinCloseSource = `import "std/io";
 
 function main(): i32 {
@@ -63,8 +49,6 @@ function main(): i32 {
 }
 `
 
-// stdioLeg runs src on one target with "hello\n" on stdin and answers both
-// streams and the exit status.
 type stdioLeg func(t *testing.T, src string) (stdout, stderr string, code int)
 
 func stdioRunCmd(t *testing.T, cmd *exec.Cmd) (string, string, int) {
@@ -92,8 +76,6 @@ var stdioLegs = map[string]stdioLeg{
 		bin, runner := compileX86_64Bin(t, src)
 		return stdioRunCmd(t, runX86_64Bin(runner, bin))
 	},
-	// `--invoke` has wasmtime print main's result itself, after the
-	// guest has run, so that line is the host's and not the program's.
 	"wasm preview 1": func(t *testing.T, src string) (string, string, int) {
 		mod := buildWasmCore(t, src)
 		return stdioRunCmd(t, exec.Command("wasmtime", "run", "--invoke", "main", mod))
@@ -106,8 +88,6 @@ var stdioLegs = map[string]stdioLeg{
 	},
 }
 
-// checkStdioClose runs src on `leg` and requires "done" on the stream named
-// by `report`, and neither a failure nor anything written after the close.
 func checkStdioClose(t *testing.T, leg, src, report string) {
 	t.Helper()
 	stdout, stderr, code := stdioLegs[leg](t, src)
@@ -138,20 +118,8 @@ func TestWASMPreview1StdinClose(t *testing.T) {
 	checkStdioClose(t, "wasm preview 1", stdinCloseSource, "stdout")
 }
 
-// A failed preview-2 stream operation hands back an io/error resource the
-// guest owns. A body that did not drop it leaked one host resource per
-// failure, so these programs fail 200 times over fresh handles and the
-// preview-2 leg runs them with the host's resource table capped at
-// failureResourceCap: a leak exhausts it ("resource table has no free
-// keys") where a body that drops the error needs a handful.
-//
-// The failures are deterministic. Reading /proc/self/mem at offset 0 is
-// EIO, the address being unmapped; writing /dev/full is ENOSPC. The other
-// legs run the same programs in the same directory to pin the answers.
 const failureResourceCap = 20
 
-// Writer.write and write_some are separate loops, so each body's own drop
-// is what keeps its loop within the cap.
 const failedWriteSource = `function main(): i32 {
     let i: i32 = 0;
     while (i < 200) {
@@ -179,7 +147,6 @@ const failedWriteSource = `function main(): i32 {
 }
 `
 
-// io.read_line answers a failed read as an error, not as the end of input.
 const failedReadLineSource = `import "std/io";
 
 function main(): i32 {
@@ -198,8 +165,6 @@ function main(): i32 {
 }
 `
 
-// read_file answers a failed read as an error, not as the end of a short
-// file, on every target.
 const failedReadFileSource = `function main(): i32 {
     let i: i32 = 0;
     while (i < 200) {
@@ -211,9 +176,6 @@ const failedReadFileSource = `function main(): i32 {
 }
 `
 
-// write_file and write_file_bytes answer a failed write as Other with the
-// errno the target reports: ENOSPC from a kernel or preview 1, EIO from
-// preview 2, whose stream error names none.
 const failedWriteFileSource = `function failed(e: IoError): boolean {
     match (e) { Other(_, m, _) => { return m == "No space left on device" || m == "Input/output error"; }, _ => { return false; } }
 }
@@ -271,10 +233,6 @@ func TestWASMPreview1FailedReadFile(t *testing.T) {
 	runParityPreview1(t, failedReadFileSource, procSelf(t))
 }
 
-// print, write and putchar have no answer to give, so only the leak is
-// observable, and only on preview 2. stdout is /dev/full, so every write
-// fails; the program returns through the exit status. eprint shares
-// print's body.
 func TestWASMFailedPrint(t *testing.T) {
 	requireLinux(t)
 	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)

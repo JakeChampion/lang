@@ -9,60 +9,17 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// Use records one capability a package can reach, with an example
-// call chain from one of the package's own functions down to the
-// tagged builtin (function names as they appear in the combined
-// program, i.e. modload-mangled; the last element is the builtin).
 type Use struct {
 	Capability string
 	Chain      []string
 }
 
-// Row is one package's report line: its stable identity, optional display
-// name and capability uses, sorted by capability.
 type Row struct {
-	Package string // Stable identity; callers may use a resolved directory.
-	Name    string // Optional display name.
+	Package string
+	Name    string
 	Uses    []Use
 }
 
-// Analyze computes per-package capability usage for a loaded +
-// checked program by call-graph reachability: each package's roots
-// are ALL the functions it declares (declared reachability — an
-// uncalled-but-declared function still counts; Phase 1 reports what
-// the package's code could do, not what this program's live paths
-// do), and the walk follows transitive callees wherever they live —
-// through the stdlib and through deeper packages — mirroring the
-// brief's enforcement rule.
-//
-// pkgOf maps a FuncDecl.BodyModule to the owning package's stable
-// identity; returning "" marks the module as fold-through (the stdlib):
-// its functions are traversal nodes, never roots, so `std/fetch`'s
-// tcp_connect_with shows up on the row of whichever package calls into
-// std/fetch.
-//
-// Attribution choices (see docs/PACKAGE-CAPABILITIES-BRIEF.md):
-//
-//   - Closures count at their definition package: a lambda's body is
-//     walked as part of the enclosing FuncDecl, so a callback package
-//     A hands to package B is A's usage even though B invokes it.
-//   - Builtins count only in call position (builtins are free
-//     functions; they cannot be taken as values), so a local variable
-//     shadowing a builtin name never misreports a capability.
-//   - A bare identifier naming a top-level function counts as an edge
-//     (function values passed to higher-order code), matching the
-//     tree-shaker's over-approximation.
-//   - A `dyn Trait` method call edges to every method with that
-//     simple name — the static walk cannot narrow the runtime
-//     dispatch, so the report over-approximates rather than misses.
-//   - A trait's default body counts at the package that DECLARED the
-//     trait, not the one that wrote the `impl` inheriting it: the
-//     effectful code is the trait author's. Adopting a trait would
-//     otherwise pass its capabilities onto the adopter (#8450).
-//
-// The result is deterministic: rows sort by package name, uses by
-// capability, and each chain is the first one a FIFO walk over the
-// program's (deterministic) declaration order discovers.
 func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
 	g := effects.Build(prog, func(name string) bool {
 		if _, tagged := BuiltinCaps[name]; tagged {
@@ -92,16 +49,6 @@ func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
 	return rows
 }
 
-// walk BFSes from the package's declared functions and returns the
-// capabilities reached, each with the first chain discovered.
-//
-// Indirect calls are deliberately NOT followed here: this report
-// attributes a closure's capabilities to the package that DEFINED it
-// (a lambda body is walked as part of its enclosing function), which
-// is the object-capability reading — passing a closure IS passing a
-// capability. The per-function rows in internal/check/effects make the
-// opposite choice, because a function that invokes a value does
-// perform whatever that value does; see docs/EFFECT-ROWS-BRIEF.md.
 func walk(roots []string, g *effects.Graph) []Use {
 	parent := map[string]string{}
 	visited := map[string]bool{}
@@ -118,9 +65,6 @@ func walk(roots []string, g *effects.Graph) []Use {
 		fn := queue[0]
 		queue = queue[1:]
 		for _, b := range g.Builtins[fn] {
-			// The shared graph records every builtin call, tagged or
-			// not, so one walk can serve several vocabularies. Only
-			// the tagged ones carry a capability here.
 			c, tagged := BuiltinCaps[b]
 			if !tagged {
 				continue
@@ -151,12 +95,6 @@ func walk(roots []string, g *effects.Graph) []Use {
 	return uses
 }
 
-// Format renders the report: one line per package —
-//
-//	app  fs,net  (example: main → lib__save → write_file)
-//
-// with the example chain belonging to the row's first (alphabetical)
-// capability, and `-` for a package that reaches none.
 func (r Row) DisplayName() string {
 	if r.Name != "" {
 		return r.Name

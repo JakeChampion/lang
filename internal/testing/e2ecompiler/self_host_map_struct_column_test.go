@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// --- Map STRUCT value columns with rc fields (#7910 (b)) ---------------------
-//
-// A `Map[K, S]` whose value struct carries a string or array field. Freeing the
-// column must release each value box AND that box's own fields, and an
-// insert-built map's grow must free the buffers it supersedes.
-//
-// The x86-64 and arm64 legs are the leak-matrix map_struct_* rows
-// (self_host_leak_matrix_test.go); this file is the wasm leg, so it asserts the
-// census balances and the exit code matches the interpreter's.
-
 const mapStructColumnInsertMatchSrc = `import "core/map";
 struct S { name: string, k: i32 }
 function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }

@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// utf8FromBytesProgram pins `std/utf8.from_bytes` — the validating
-// bytes-to-string constructor from #5634, decision D9, slice 2 — and its
-// total sibling `from_bytes_lossy`.
-//
-// The split it belongs to: `string_from_bytes_unchecked` is the builtin
-// the caller vouches for, `utf8.from_bytes` is the one that checks. The
-// contract here is that it accepts exactly what `is_valid_utf8` accepts
-// and returns the original bytes untouched when it does — no lossy
-// U+FFFD substitution, which is what separates it from `codepoints`.
-//
-// Exits 0 on success, a distinct code per failed step.
 const utf8FromBytesProgram = `
 import "std/utf8" as utf8;
 

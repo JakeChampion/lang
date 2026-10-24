@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// A write that fails is an error on wasm too. The preview 1
-// `$__fern_write_file` dropped fd_write's errno and wrote once, so a full
-// device answered Ok and a short write left a short file. Preopening /dev
-// hands the guest /dev/full, whose every write fails with ENOSPC; native and
-// the interpreter answer "err" to this program run from /dev.
 const selfHostWriteFileFullWasmSource = `function main(): i32 {
     match (write_file("full", "hello")) {
         Ok(_) => { print("ok"); return 1; },

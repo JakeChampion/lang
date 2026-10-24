@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Public reading-order copies form an independent address oracle. Effects
-// pin row/column/contraction order and the mul-then-add sequence at every step.
 const ndarrayInnerSrc = `import "std/ndarray";
 import "std/i64";
 function check(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64]): boolean {

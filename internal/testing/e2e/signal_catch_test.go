@@ -1,16 +1,3 @@
-// `signal_catch` / `signal_taken` (#9243) end to end: a program catches
-// SIGUSR1, sends it to itself, and polls for it.
-//
-// The program first moves into a process group of its own, so `signal_send(0,
-// …)` reaches it and nothing else — the getpid-free way to signal yourself,
-// and the reason no test process or emulator around it sees the signal. Every
-// leg runs it as a separate process for the same reason: the interpreter leg
-// is `fern -interp`, not the interpreter inside the test binary.
-//
-// The poll is a bounded loop rather than one call because the interpreter's
-// delivery goes through the Go runtime's signal goroutine and can land a poll
-// later; a compiled program has the flag before kill(2) returns. Either way
-// the contract is the same — the signal is taken at a poll, once.
 package e2e
 
 import (
@@ -25,7 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Each failing step returns its own code; a clean run prints `caught`.
 const signalCatchSource = `function wait_taken(sig: i32): boolean {
     let n: i32 = 0;
     while (n < 5000) {
@@ -77,8 +63,6 @@ function main(): i32 {
 }
 `
 
-// signalCatchCensus runs a leak-census build and checks the run: exit 0, the
-// program's own line on stdout, and a census that balances.
 func signalCatchCensus(t *testing.T, stdout, stderr string, code int) {
 	t.Helper()
 	if code != 0 {
@@ -98,15 +82,11 @@ func TestX86_64SignalCatch(t *testing.T) {
 	signalCatchCensus(t, stdout, stderr, code)
 }
 
-// Under qemu-user the host signal reaches the emulator, which queues it for
-// the guest and delivers it through the guest's own sigaction — the handler,
-// the SA_RESTORER routine and all — before the next guest instruction.
 func TestArm64SignalCatch(t *testing.T) {
 	stdout, stderr, code := runLeakCheckArm64(t, signalCatchSource)
 	signalCatchCensus(t, stdout, stderr, code)
 }
 
-// The oracle: the same program through `fern -interp`, in its own process.
 func TestInterpSignalCatch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX signal")
@@ -117,9 +97,6 @@ func TestInterpSignalCatch(t *testing.T) {
 	}
 }
 
-// The Mach-O build carries its own trampoline, which only an Apple Silicon
-// host can run; anywhere else the build itself — the trampoline and the swap
-// through the self-host assembler — is what is checked.
 func TestArm64DarwinSignalCatch(t *testing.T) {
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Darwin, signalCatchSource, nil)
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -131,10 +108,6 @@ func TestArm64DarwinSignalCatch(t *testing.T) {
 	}
 }
 
-// wasm: nothing in either WASI world can deliver a signal, so the catch
-// answers 0 and installs nothing, and no poll ever takes one. The program
-// still has to build and run: the two ops lower, consume their argument and
-// leave the operand stack balanced, which the arithmetic after them checks.
 func TestWASMSignalCatchTakesNothing(t *testing.T) {
 	src := `function main(): i32 {
     let n: i32 = 40;
@@ -148,9 +121,6 @@ func TestWASMSignalCatchTakesNothing(t *testing.T) {
 	}
 }
 
-// The CLI world grants the pair; the proxy world, which has no process
-// identity, refuses it at check time on `signal` — from the capability scan,
-// not as an unknown callee out of an emitter.
 func TestWASMSignalCatchCapability(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 { signal_catch(10); if (signal_taken(10)) { return 1; } return 0; }`)
 	if err != nil {

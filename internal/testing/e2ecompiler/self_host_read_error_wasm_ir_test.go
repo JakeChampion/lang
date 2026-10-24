@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostReadErrorWasmIR runs the wasm stdin reader with a directory as
-// stdin, so every fd_read fails (EISDIR) and must read as an error, never as
-// bytes or the end of input. The helper takes the byte count fd_read writes to
-// scratch address 8; on an error nothing is written there, and a count left by
-// an earlier call (the `write` each program starts with) must not be taken for
-// bytes read.
 func TestSelfHostReadErrorWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm read-error e2e")

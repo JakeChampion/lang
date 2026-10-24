@@ -9,27 +9,11 @@ import (
 	"testing"
 )
 
-// strFreshAllocBuiltinCases pin that a fresh-ALLOCATING string builtin's result is
-// itself a fresh temp, and that the builtins which do not allocate are not.
-//
-// A fresh temp is a box nobody else names, which a concat operand, map insert,
-// call argument or `.len()` receiver may release once it is done with it. So
-// `w(pre).to_ascii_upper().len()` must release the transform's own result as
-// well as the receiver beneath it.
-//
-// The runtime bodies decide which builtins qualify — __fern_str_to_upper,
-// _to_lower and _repeat all allocate unconditionally and return the new box,
-// with repeat forcing a 1-byte cap so even an empty result allocates.
-//
-// The flat cases return 98 when the transform's result is stranded.
 var strFreshAllocBuiltinCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// `w(pre).to_ascii_upper()` is itself a fresh box: __fern_str_to_upper is
-	// `__raw_alloc(n)` … `__raw_string(p, n)` with no identity path at all.
-	// Stranded, it costs 46 B/round.
 	{"str-fresh-builtin-len-receiver-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return w(pre).to_ascii_upper().len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -44,8 +28,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// repeat forces a 1-byte cap when the total is zero, so even an empty result is a
-	// fresh box. Its output is 2x the source, hence the wider ceiling.
 	{"str-fresh-builtin-repeat-receiver-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return w(pre).repeat(2).len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -60,7 +42,6 @@ function main(): i32 {
     if (b2 - b1 >= 65536) { return 98; }
     return 0;
 }`, 0},
-	// The same fresh builtin result as a concat operand must stay flat too.
 	{"str-fresh-builtin-concat-operand-unchanged", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return (w(pre).to_ascii_upper() + "!").len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -75,9 +56,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// A fresh builtin result handed to a RETAINING callee: the struct field outlives
-	// the call, so nothing may release it. Value-exact under same-size-class
-	// pressure, so a wrongly freed buffer is recycled with different bytes.
 	{"str-fresh-builtin-stored-still-live", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
@@ -92,9 +70,6 @@ function round(pre: string): i32 {
     return h.v.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// `.trim()`'s receiver is a live local, so releasing the trim result must
-	// leave `b` intact: it is read back by value under same-size-class
-	// pressure after the trim.
 	{"str-trim-view-not-fresh-alloc", strProbeHelpers + `function w(pre: string): string { return "  " + pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789  "; }
 function round(pre: string): i32 {
     let b: string = w(pre);
@@ -110,8 +85,6 @@ function round(pre: string): i32 {
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
-// TestSelfHostStrFreshAllocBuiltinIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostStrFreshAllocBuiltinIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -139,8 +112,6 @@ func TestSelfHostStrFreshAllocBuiltinIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrFreshAllocBuiltinIRArm64 is the arm64 leg; the admission is shared
-// lowering analysis and the release is a per-backend transcription.
 func TestSelfHostStrFreshAllocBuiltinIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -164,8 +135,6 @@ func TestSelfHostStrFreshAllocBuiltinIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrFreshAllocBuiltinWasmIR is the wasm leg, where the release maps
-// to $__fern_arr_dec on the rc-headered block.
 func TestSelfHostStrFreshAllocBuiltinWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping fresh-alloc builtin wasm IR e2e")

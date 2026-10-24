@@ -10,26 +10,11 @@ import (
 	"testing"
 )
 
-// strArrFieldBufferReleaseCases pin the release of a struct's `string[]` field
-// BUFFER on every backend, whether or not its elements are freed with it (found
-// while measuring the conformance case alloc_flat_fresh_array_arg).
-//
-// A field whose elements are read through the struct, so an element alias may
-// survive, still has its buffer released; only the element walk is withheld. A
-// field stored as an uncounted alias (a field read, an `.append` on one) must
-// keep its buffer, which another owner still holds.
-//
-// The probes use SSO-short elements on purpose: the buffer is then the only heap
-// object per round, and each case returns the MEASURED bytes per round as its
-// exit code, so a regression reports its own size instead of a bare "not zero".
 var strArrFieldBufferReleaseCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// SCOPE EXIT. `f` dies at the end of `round`, so Node's drop releases the
-	// deps buffer. `f.deps[0].len()` reads an element through the struct; the
-	// buffer still has to go back every round.
 	{"strarr-field-drop-buffer-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function mk(): string[] { let o: string[] = []; o = o.append("aa"); o = o.append("bb"); o = o.append("cc"); return o; }
 function node(name: string, deps: string[], mtime: i32): Node { return Node { name: name, deps: deps, mtime: mtime }; }
@@ -44,9 +29,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 2000;
 }`, 0},
-	// LOOP REBIND. The same field, released when `let r: Row = Row { … }` is
-	// re-declared each iteration: the superseded box's buffer must go back,
-	// not only the last one at scope exit.
 	{"strarr-field-rebind-buffer-flat", `struct Row { tag: string, cells: string[] }
 function mk(): string[] { let o: string[] = []; o = o.append("aa"); o = o.append("bb"); o = o.append("cc"); return o; }
 function churn(n: i32): i32 {
@@ -68,11 +50,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 2000;
 }`, 0},
-	// The ADMITTED path must not be displaced by the shallow arm: no element
-	// read, so "strfldok:arr:Node" holds and __fern_str_arr_free deep-frees the
-	// elements AND the buffer. Wide elements, bounded high-water — a shallow arm
-	// that shadowed the deep one would strand three element boxes per round and
-	// exceed the 4 KB budget over the second 2000-iteration churn.
 	{"strarr-field-admitted-deep-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
@@ -89,23 +66,12 @@ function main(): i32 {
     if (w0 != x) { return 97; }
     return 0;
 }`, 0},
-	// The shallow arm must stay SHALLOW on a non-admitted field: the elements
-	// are read through the struct and through the live local, so freeing them
-	// would corrupt both. Wide elements, values exact, over-release detector at
-	// zero.
 	{"strarr-field-nonadmitted-elements-safe", `struct Doc { title: string, lines: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
 function doc(title: string, lines: string[]): Doc { return Doc { title: title, lines: lines }; }
 function round(pre: string): i32 { let d: Doc = doc(w(pre), mk(pre)); let junk: string[] = mk(pre); if (junk.len() < 0) { return 0; } return d.lines.len() + d.lines[0].len() + d.lines[2].len() + d.title.len(); }
 function main(): i32 { let pre: string = "ab"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 132) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// A functional-update BASE copy hands the new box every array field
-	// pointer with no retain, so `b` and the `sg` built from it hold one
-	// `ys` buffer between them at rc 1. `sg` is dropped at inner's exit; the
-	// deep arm would free the buffer and its element boxes while `b` still
-	// reads them, so every backend must leave `ys` alone (#8119). The junk
-	// allocations recycle the freed blocks so a wrong answer, not luck, is
-	// what an over-release reports.
 	{"strarr-field-base-copy-co-owner", `struct Reg { rows: string[] }
 struct Sigs { a: Reg, xs: string[], ys: string[] }
 function reg_of(rows: string[]): Reg { return Reg { rows: rows }; }
@@ -131,16 +97,6 @@ function main(): i32 {
     if (r != 25) { return 97; }
     return 0;
 }`, 0},
-	// A struct field naming a still-live CALLER array (#8210). `names` is built
-	// from element strings the `items` structs own, so nothing in the buffer is
-	// the registry's to free; `reg_of` then stores that same buffer in a field,
-	// and both names die at probe's exit — the local first, which leaves the
-	// field holding the last reference. An ungated deep arm walks it there and
-	// frees every element while `items` still reads them, and the size-class
-	// freelist hands the blocks straight back: the corrupted read is what the
-	// wasm-hosted compiler emitted as a function name of two binary bytes, the
-	// bytes of a recycled array header. Distinct per-item labels built at run
-	// time, so nothing folds to an immortal literal and the churn recycles.
 	{"strarr-field-caller-array-co-owner", `struct Item { name: string }
 struct Reg { rows: string[], head: i32[] }
 function digit(d: i32): string {
@@ -178,12 +134,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The same co-owner with its element read spelled as a `.len()` borrow, which
-	// the read scan does not mark (#10405). Nothing then kept the deep walk off
-	// `Reg.rows`: `names` holds boxes `items` owns, so a bare-ident store of it
-	// must withhold the walk wherever the array's elements are not provably its
-	// own. The three rows reach the field directly, through the storing
-	// parameter's call site, and through a second parameter forwarding it.
 	{"strarr-field-caller-array-co-owner-len", `struct Item { name: string }
 struct Reg { rows: string[], head: i32[] }
 function digit(d: i32): string {
@@ -297,7 +247,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The control: the same shape with every element fresh keeps the walk.
 	{"strarr-field-owned-param-store", `struct Item { name: string }
 struct Reg { rows: string[], head: i32[] }
 function digit(d: i32): string {
@@ -337,8 +286,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostStrArrFieldBufferReleaseIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler, with the leak census on.
 func TestSelfHostStrArrFieldBufferReleaseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	t.Setenv("FERN_LEAKCHECK", "1")
@@ -365,10 +312,6 @@ func TestSelfHostStrArrFieldBufferReleaseIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldBufferReleaseIRArm64 is the arm64 leg. Both helper
-// bodies are hand-transcribed per backend rather than shared, which is why this
-// divergence existed at all — the register backends agreed with each other and
-// not with wasm.
 func TestSelfHostStrArrFieldBufferReleaseIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -392,10 +335,6 @@ func TestSelfHostStrArrFieldBufferReleaseIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldBufferReleaseWasmIR is the wasm leg. It read 0 on the
-// first four cases before the register backends were changed; the base-copy
-// case is the one it failed on its own (#8119), with the register backends
-// already green, until its struct-drop walk moved onto the shared classifier.
 func TestSelfHostStrArrFieldBufferReleaseWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping string[]-field buffer-release wasm IR e2e")
@@ -434,11 +373,6 @@ func TestSelfHostStrArrFieldBufferReleaseWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldBorrowedElemsSanitizeX86_64 runs the borrowed-element
-// rows (#10405) under FERN_SANITIZE. It may not release an
-// element box `items` still holds. The sanitizer's leak line is not asserted:
-// `Item.name` escaping into `names` withholds that type's field reclaim, which
-// is the admission's sound leak.
 func TestSelfHostStrArrFieldBorrowedElemsSanitizeX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	rows := []string{"strarr-field-caller-array-co-owner-len", "strarr-field-borrowed-local-store", "strarr-field-borrowed-forwarded-param", "strarr-field-owned-param-store"}

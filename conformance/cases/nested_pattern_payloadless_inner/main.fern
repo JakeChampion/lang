@@ -1,11 +1,11 @@
-// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
-// re-matches the payload, so every backend sees only flat arms.
-//
-// A payload-less inner variant is spelled with the empty parens —
-// `Wrap(Err2)` is a BINDER (E015 in the checker), so only this form
-// tests the payload's tag. Folds all three outcomes so one exit code
-// pins that non-Err2 payloads reach the outer wildcard.
-// exit: 1 + 90 + 100
+
+
+
+
+
+
+
+
 enum Res { Ok2(i32), Err2 }
 enum Nest { Wrap(Res), Bare }
 function g(w: Nest): i32 {

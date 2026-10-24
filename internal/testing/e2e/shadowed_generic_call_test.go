@@ -8,26 +8,6 @@ import (
 	"testing"
 )
 
-// A value binding SHADOWS a module-level function of the same name. That
-// held for a plain module function but NOT for a generic one (#6302): the
-// checker keys `Info.GenericFuncs` by bare name, so `function apply(v: i32,
-// id: (i32) => i32)` calling `id(v)` resolved to a module-level `id[T]`.
-// The visible symptom was E040 naming a type parameter the call site never
-// mentions; behind it, destination refinement stamped TypeArgs onto the
-// call, monomorph rewrote the callee to `id__i32`, and every backend then
-// emitted a DIRECT call to the identity generic instead of an indirect call
-// through the closure — so once the diagnostic was silenced the program
-// still returned the wrong value. Both halves are covered here: the program
-// has to check AND produce 39.
-//
-// The three shadowing shapes exercise the two arms of the resolution order
-// the fix mirrors (scope, then captureChain):
-//   - `apply`'s fn-typed PARAMETER (the issue's repro) — 7 |> inc = 8
-//   - main's local `let id` — 10 |> twice = 20
-//   - `via_capture` reading that local as a CAPTURE — 4 |> twice = 8
-//
-// `plain` keeps calling the real generic in the same module, so the fix
-// cannot be "stop treating `id` as generic everywhere" — 3 |> id = 3.
 const shadowedGenericProg = `function id[T](x: T): T { return x; }
 function inc(x: i32): i32 { return x + 1; }
 function twice(x: i32): i32 { return x * 2; }
@@ -40,18 +20,6 @@ function main(): i32 {
 }
 `
 
-// The same shadowing rule for a `use` clause's source call (#6302).
-// inferUseParam read `Info.FuncSigs` before the scope, so `use x <-
-// withRes();` under a shadowing `withRes` bound `x` from the unrelated
-// MODULE `withRes` — `i32` rather than the `string` the binding's own
-// callback takes — while the call still dispatched to the binding.
-//
-// The shadow is a `let` rather than a fn-typed parameter because a
-// parameter would have to be written `((string) => i32) => i32`, and the
-// self-host parser does not accept a parenthesised fn type nested in a
-// parameter position (a separate, pre-existing gap). The `let` form
-// needs no such annotation and both frontends parse it, so the two
-// legs below run the same source.
 const shadowedUseProg = `function withRes(cb: (i32) => i32): i32 { return cb(4); }
 function taker(f: (string) => i32): i32 { return f("hi"); }
 function g(): i32 {
@@ -63,7 +31,6 @@ function g(): i32 {
 function main(): i32 { return g(); }
 `
 
-// The self-host legs run both programs through one driver build.
 var shadowedCases = []struct {
 	name string
 	src  string
@@ -73,10 +40,6 @@ var shadowedCases = []struct {
 	{"shadowed_use", shadowedUseProg, 21},
 }
 
-// TestNativeShadowedGenericCall pins the shadowing on the native backends
-// (interp / x86-64 / wasm). Before #6302 every leg here failed at the
-// checker; with the diagnostic alone fixed they would have returned 21
-// (`id` resolving to the identity generic at all three shadowed sites).
 func TestNativeShadowedGenericCall(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "main.fern")
@@ -94,9 +57,6 @@ func TestNativeShadowedGenericCall(t *testing.T) {
 	}
 }
 
-// TestNativeShadowedUseClauseCallee is the `use`-clause half on the
-// native backends. Before the fix this failed at the checker, with an
-// E038 comparing the module callee's signature against the binding's.
 func TestNativeShadowedUseClauseCallee(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "main.fern")
@@ -114,13 +74,6 @@ func TestNativeShadowedUseClauseCallee(t *testing.T) {
 	}
 }
 
-// TestSelfHostShadowedGenericCallIRX86_64 runs the same program through the
-// self-hosted x86-64 compiler. Its frontend resolves the shadowing on its
-// own — this leg is the cross-check that the two frontends now AGREE, since
-// the native one was the divergent side. Compiling at all is the IR-path
-// assertion: the AST emitters are deleted, so every backend routes
-// IR-or-error and a module outside the subset is a diagnostic, not a
-// fall-through.
 func TestSelfHostShadowedGenericCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -154,8 +107,6 @@ func TestSelfHostShadowedGenericCallIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostShadowedGenericCallIRWasm is the wasm IR leg of the same
-// cross-check.
 func TestSelfHostShadowedGenericCallIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host shadowed-generic wasm IR e2e")

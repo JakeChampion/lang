@@ -8,21 +8,13 @@ import (
 	"unsafe"
 )
 
-// XNU's `struct termios`: four unsigned-long flag words, NCCS = 20 control
-// characters, four bytes of padding, then the input and output speeds as
-// unsigned longs. Seventy-two bytes, which is the size TIOCGETA encodes.
-// There is no line-discipline byte, and the speeds are baud values rather
-// than bits in c_cflag.
 const (
 	termiosNCCS  = 20
 	termiosBytes = 72
-	// The four flags, the control characters, then ispeed and ospeed.
 	termiosWords = 4 + termiosNCCS + 2
 	speedOffset  = 56
 )
 
-// Termios is the Darwin half of the function documented in termios_linux.go:
-// iflag, oflag, cflag, lflag, each control character, ispeed, ospeed.
 func Termios(fd int) ([]int64, error) {
 	if fd < 0 {
 		return nil, syscall.EBADF
@@ -45,8 +37,6 @@ func Termios(fd int) ([]int64, error) {
 	return out, nil
 }
 
-// SetTermios writes the words Termios reports back to fd through TIOCSETA,
-// TIOCSETAW or TIOCSETAF as `when` selects.
 func SetTermios(fd, when int, words []int64) error {
 	if fd < 0 {
 		return syscall.EBADF
@@ -71,12 +61,8 @@ func SetTermios(fd, when int, words []int64) error {
 	return nil
 }
 
-// tiocExt is TIOCEXT, _IOW('t', 96, int).
 const tiocExt = 0x80047460
 
-// SetExtproc sets or clears EXTPROC on the terminal fd is open on. XNU
-// treats that bit as read only through TIOCSETA, so this ioctl is the one
-// way to change it.
 func SetExtproc(fd int, on bool) error {
 	if fd < 0 {
 		return syscall.EBADF

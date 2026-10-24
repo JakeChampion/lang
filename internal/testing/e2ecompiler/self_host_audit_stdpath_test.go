@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// auditStdPathCases compile the real std/path (import-free) prepended to a
-// main, through the self-hosted compiler, asserting the exit code.
-// Self-host arm of the §D std/path audit (docs/FEATURE-AUDIT.md).
 var auditStdPathCases = []struct {
 	name string
 	main string
@@ -29,8 +26,6 @@ func stdPathSource(t *testing.T, mainBody string) []byte {
 	return append(src, []byte("\n"+mainBody+"\n")...)
 }
 
-// TestSelfHostAuditStdPathX86_64 compiles std/path + a main through the
-// self-hosted x86-64 driver and asserts the exit code.
 func TestSelfHostAuditStdPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

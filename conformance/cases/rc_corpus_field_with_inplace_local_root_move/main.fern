@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The move-out itself: the root is a struct the frame BUILDS, the CoW
-// stores into its buffer at rc 1, and the result outlives the box. The
-// field is nulled behind the store, so the box's exit drop finds
-// nothing to free — without the move the box and the returned array
-// both name one buffer at rc 1 and the drop frees it under the
-// caller. A pointer-element field runs beside the scalar one, since
-// that is the arm whose overwritten element the store releases.
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

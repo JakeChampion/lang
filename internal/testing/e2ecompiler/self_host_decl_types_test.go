@@ -12,8 +12,6 @@ import (
 func TestSelfHostDeclTypesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cases := []struct{ name, expr, want string }{
-		// The noncallable declaration adapter erases view spellings, while
-		// callable sidecars below retain their full signature.
 		{"partial enum capture", `decltypes.param_from_type("capture", partial())`, "Result[string, $unbound]||"},
 		{"nested partial enum capture", `decltypes.param_from_type("capture", typeinfo.TypeArray { elem: partial(), view: false })`, "Result[string, $unbound][]||"},
 		{"partial callable capture", `tp([partial()], partial())`, "fn|Result[str, $unbound]|Result[str, $unbound]"},

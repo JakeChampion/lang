@@ -10,35 +10,6 @@ import (
 	"testing"
 )
 
-// The playground driver resolves `std/…` out of its own embedded stdlib, with
-// no filesystem underneath (#6643).
-//
-// That is the last thing standing between the self-host compiler and the
-// browser playground. `fern.fern` is a CLI — argv paths in, an executable out —
-// and `wasm_ir_run.fern` has the right shape but resolves nothing. Native
-// serves the stdlib from `go:embed`; the self-host CLI reads it from a root
-// named on the command line, which a wasm-hosted compiler does not have.
-// `playground_run.fern` carries it as `-embed` assets and hands them to the
-// module loader as a sealed overlay.
-//
-// # Why these tests need no wasmtime
-//
-// The driver is run with its working directory set to an EMPTY temp dir. Its
-// entry comes from stdin, so the entry directory is "": a disk resolution of
-// `std/i64` would read `std/i64.fern` relative to the process's cwd, and there
-// is nothing there. So a program that compiles proves the source came from the
-// overlay and from nowhere else — the whole claim, in seconds, on every runner.
-//
-// The decoy case then proves the other half. A `std/i64.fern` on disk returning
-// a wrong answer is not merely LOSING to the overlay, it is never read: sealed
-// means a miss is a miss, so nothing below resolve_module can reach the host.
-// Without that, a stdin-fed program's unresolved import falls through to a
-// cwd-relative read and then to try_manifest, which opens `fern.toml` and can
-// reach the user's package cache.
-
-// playgroundProgram imports std/i64 and calls a function only that module
-// defines, so the answer depends on the module's CONTENTS and not just on its
-// presence. gcd(48, 36) is 12.
 const playgroundProgram = `import "std/i64";
 function main(): i32 {
     let a: i64 = 48;
@@ -47,15 +18,6 @@ function main(): i32 {
 }
 `
 
-// buildPlaygroundDriver builds playground_run.fern for x86-64 with the stdlib
-// embedded, and returns the binary's path.
-//
-// Built by shelling out to the native CLI rather than through
-// buildSelfHostBin's cache: that path emits with `constfold.Fold(prog, nil)`
-// (`internal/testing/e2eharness/self_host_buildcache.go`), so it has no way to pass an
-// asset bundle, and a driver whose whole point is the bundle cannot come out of
-// it. Teaching the cache about `-embed` means keying it on the bundle's
-// contents too, which is its own change.
 func buildPlaygroundDriver(t *testing.T) string {
 	t.Helper()
 	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
@@ -65,17 +27,11 @@ func buildPlaygroundDriver(t *testing.T) string {
 	return buildPlaygroundDriverWith(t, stdlib)
 }
 
-// buildPlaygroundDriverWith is buildPlaygroundDriver carrying `stdlib` as its
-// embedded bundle.
 func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 	t.Helper()
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "playground_run.fern")
 	bin := filepath.Join(dir, "playground_run")
-	// No stdlib root argument: the native CLI serves `std/…` from go:embed, so
-	// the driver's own `import "std/io"` resolves without one. The -embed
-	// bundle is what the driver will carry at RUNTIME, which is a different
-	// question from what resolves its own imports here.
 	cmd := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux",
 		"-embed", stdlib, "-o", bin, filepath.Join(dir, "playground_run.fern"))
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -84,9 +40,6 @@ func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 	return bin
 }
 
-// runPlayground pipes `src` into the driver with the working directory set to
-// `cwd`, and returns stdout, stderr and the exit code. `args` are the driver's
-// own argv, which is how its mode is selected.
 func runPlayground(t *testing.T, bin, cwd, src string, args ...string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
@@ -121,15 +74,10 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("lsp-answers-from-the-stdlib", func(t *testing.T) { playgroundLSPStdlibAnswers(t, bin) })
 }
 
-// playgroundLSPURI is the document the page opens.
 const playgroundLSPURI = "file:///playground.fern"
 
-// playgroundLSPSource has a type error on line 4 and calls a std/i32 method,
-// so a hover or completion on `f.` is answered from the embedded stdlib.
 const playgroundLSPSource = "import \"std/i32\";\nfunction main(): i32 {\n    let f: i32 = 5;\n    print(f.to_string());\n    let y: i32 = \"s\";\n    return f;\n}\n"
 
-// playgroundLSPSession is one session as the page replays it: open the
-// document, ask `asks`, shut down.
 func playgroundLSPSession(t *testing.T, asks ...lspMsg) string {
 	t.Helper()
 	var in []byte
@@ -143,8 +91,6 @@ func lspAt(id int, method string, line, char int) lspMsg {
 	return lspMsg{"id": id, "method": method, "params": lspMsg{"textDocument": lspMsg{"uri": playgroundLSPURI}, "position": lspMsg{"line": line, "character": char}}}
 }
 
-// -lsp is `fern -lsp`'s server reading its stdlib from the embedded bundle:
-// the page's Problems panel is what it publishes.
 func playgroundLSPDiagnostics(t *testing.T, bin string) {
 	stdout, stderr, code := runPlayground(t, bin, t.TempDir(), playgroundLSPSession(t), "-lsp")
 	if code != 0 {
@@ -158,9 +104,6 @@ func playgroundLSPDiagnostics(t *testing.T, bin string) {
 	}
 }
 
-// Hover, completion and definition on a stdlib method: the answers need
-// std/i32's declarations, which only the embedded bundle holds, and the
-// definition names its file under the bundle's root.
 func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 	stdout, stderr, code := runPlayground(t, bin, t.TempDir(), playgroundLSPSession(t,
 		lspAt(2, "textDocument/hover", 3, 13), lspAt(3, "textDocument/completion", 3, 12),
@@ -201,12 +144,6 @@ func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 	}
 }
 
-// A byte is an int at runtime: `s[i]` and `b as u8` both evaluate to a VInt,
-// so std/i32's `(b: u8)` methods have to be reachable from it. They were not
-// — the evaluator dispatched on the value's name, "i32", and never matched a
-// u8 receiver — so the page's own `result` and `interp` examples, both built
-// on `is_ascii_digit`, ran to a VErr under the self-host evaluator where
-// native prints their answer. 7 is what native `fern -interp` returns.
 func playgroundInterpByteMethods(t *testing.T, bin string) {
 	const src = `import "std/i32";
 function main(): i32 {
@@ -225,8 +162,6 @@ function main(): i32 {
 	}
 }
 
-// `-interp` evaluates instead of emitting: the playground's output pane wants a
-// program's OUTPUT, and a wasm module does not hand the page one.
 func playgroundInterpRuns(t *testing.T, bin string) {
 	out, stderr, code := runPlayground(t, bin, t.TempDir(),
 		"function main(): i32 {\n  print(\"hi\");\n  return 7;\n}\n", "-interp")
@@ -238,14 +173,6 @@ func playgroundInterpRuns(t *testing.T, bin string) {
 	}
 }
 
-// The reason interpret belongs in THIS driver and not interp_run.fern.
-//
-// Turning a number into a string needs `std/i32`, so the moment a program
-// prints anything but a literal it depends on the module loader. interp_run has
-// none: it warns "no module loader; UNRESOLVED imports" and exits 254 on this
-// exact program. Here the same sealed overlay that serves the compile path
-// serves the evaluator, so it resolves — with the cwd empty, as everywhere else
-// in this file, so the modules cannot have come from disk.
 func playgroundInterpStdlib(t *testing.T, bin string) {
 	const src = `import "std/i32";
 function main(): i32 {
@@ -264,9 +191,6 @@ function main(): i32 {
 	}
 }
 
-// The exit code is the program's own, mapped the way interp_run maps it: an i32
-// result is the code, a boolean is 1/0. 254 is the "not a value main can
-// return" sentinel, so a real answer can never be mistaken for a failure.
 func playgroundInterpExit(t *testing.T, bin string) {
 	for _, tc := range []struct {
 		name string
@@ -286,15 +210,6 @@ func playgroundInterpExit(t *testing.T, bin string) {
 	}
 }
 
-// `-check` reports diagnostics and emits nothing. A playground wants the errors
-// as the user types, long before anything is worth compiling.
-//
-// The valid program is the same one the compile path uses, imports and all:
-// the verdict has to survive a program that reaches the stdlib, because the
-// checker port is partial (#9053) and ModuleTypes.all_well_typed goes false for
-// a program it merely cannot model. Checking on that flag would fail this case
-// with nothing printed, so the driver's verdict is the diagnostics — and this
-// is the test that pins it.
 func playgroundCheckAccepts(t *testing.T, bin string) {
 	out, stderr, code := runPlayground(t, bin, t.TempDir(), playgroundProgram, "-check")
 	if code != 0 {
@@ -308,9 +223,6 @@ func playgroundCheckAccepts(t *testing.T, bin string) {
 	}
 }
 
-// The page's Run calls -interp alone, so a type error has to stop it there:
-// evaluated unchecked, `"x" + s[0:1]` (a string plus an Option[str]) ran
-// until the evaluator gave up with "+ rhs not string".
 func playgroundInterpChecksFirst(t *testing.T, bin string) {
 	out, stderr, code := runPlayground(t, bin, t.TempDir(),
 		"function main(): i32 {\n  let s: string = \"ab\";\n  print(\"x\" + s[0:1]);\n  return 0;\n}\n", "-interp")
@@ -325,8 +237,6 @@ func playgroundInterpChecksFirst(t *testing.T, bin string) {
 	}
 }
 
-// A struct from an imported module is named as the program spells it, never
-// by its mangled `iter__ArrayIter` (#11842).
 func playgroundCheckDemangles(t *testing.T, bin string) {
 	_, stderr, code := runPlayground(t, bin, t.TempDir(),
 		"import \"core/iter\" as it;\nfunction main(): i32 { let total: i32 = it.of([1, 2, 3]).sum(); return total; }\n", "-check")
@@ -338,9 +248,6 @@ func playgroundCheckDemangles(t *testing.T, bin string) {
 	}
 }
 
-// A derived Default delegates a struct field to the field type's own
-// default(); a field type without one is E021 at the derive, naming the
-// field, not an unpositioned E001 from the synthesised call (#11853).
 func playgroundCheckDeriveDefault(t *testing.T, bin string) {
 	_, stderr, code := runPlayground(t, bin, t.TempDir(),
 		"import \"core/cmp\";\nstruct Inner { v: i32 }\n@derive(cmp.Default)\nstruct Outer { i: Inner, n: i32 }\nfunction main(): i32 { return 0; }\n", "-check")
@@ -361,8 +268,6 @@ func playgroundCheckRejects(t *testing.T, bin string) {
 	if out != "" {
 		t.Errorf("-check wrote %d bytes to stdout on a failing program:\n%s", len(out), out)
 	}
-	// The position and the code, not just the name: a diagnostic an editor
-	// cannot place is one it cannot show against a line.
 	for _, want := range []string{"1:31", "E001", "nosuchthing"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("the diagnostic does not carry %q:\n%s", want, stderr)
@@ -371,8 +276,6 @@ func playgroundCheckRejects(t *testing.T, bin string) {
 }
 
 func playgroundResolves(t *testing.T, bin string) {
-	// An empty directory: no std/ tree, no fern.toml, nothing to resolve
-	// against. Every import has to come from the embedded bundle.
 	empty := t.TempDir()
 	wat, stderr, code := runPlayground(t, bin, empty, playgroundProgram, "-emit", "asm")
 	if code != 0 {
@@ -384,9 +287,6 @@ func playgroundResolves(t *testing.T, bin string) {
 	assertWatRuns(t, wat, 12)
 }
 
-// The decoy is the sealed half. A `std/i64.fern` on disk whose gcd returns 999
-// is what a disk read WOULD find; the answer stays 12, so the disk was never
-// consulted — not preferred-against, not read.
 func playgroundIgnoresDecoy(t *testing.T, bin string) {
 	decoy := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(decoy, "std"), 0o755); err != nil {
@@ -403,9 +303,6 @@ func playgroundIgnoresDecoy(t *testing.T, bin string) {
 	assertWatRuns(t, wat, 12)
 }
 
-// An import the overlay does not carry is REPORTED, not skipped: otherwise the
-// program compiles and then fails at a call nothing defines, with nothing
-// pointing at the import the user actually got wrong.
 func playgroundReportsMissing(t *testing.T, bin string) {
 	_, stderr, code := runPlayground(t, bin, t.TempDir(),
 		"import \"std/nosuchmodule\";\nfunction main(): i32 { return 0; }\n")
@@ -417,14 +314,6 @@ func playgroundReportsMissing(t *testing.T, bin string) {
 	}
 }
 
-// The wasm leg: the compiler running AS wasm, with no preopens at all, so
-// every read_file below the loader is dead by construction rather than by
-// argument. Its output must be byte-identical to the natively-hosted driver's
-// — a wasm-hosted compiler is only interesting if it agrees with the native
-// one, which is the same standard TestSelfHostWasmHostedCompilerMatchesNative-
-// OnNestedArith holds.
-//
-// Skipped under -short: the wasm build of this driver is the expensive one.
 func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the playground driver to wasm; skipped under -short")
@@ -452,10 +341,6 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 		t.Fatalf("building the playground driver for wasm failed: %v\n%s", err, out)
 	}
 
-	// `--invoke main`, not a bare `wasmtime run`: a wasmbin core module carries
-	// no `_start`, so a plain run exits 0 having called nothing — which reads
-	// as an empty answer rather than as an error. No `--dir`, so the guest has
-	// no preopens and path_open cannot succeed.
 	run := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-emit", "asm")
 	run.Dir = t.TempDir()
 	run.Stdin = strings.NewReader(playgroundProgram)
@@ -464,15 +349,12 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	if err := run.Run(); err != nil {
 		t.Fatalf("wasm-hosted driver failed: %v", err)
 	}
-	// `--invoke` prints main's return value on stdout after whatever the
-	// program wrote, so the trailing line is wasmtime's, not the compiler's.
 	wat := strings.TrimSuffix(out.String(), "0\n")
 	if !strings.HasPrefix(wat, "(module") {
 		t.Fatalf("wasm-hosted driver emitted no module:\n%q", out.String())
 	}
 	assertWatRuns(t, wat, 12)
 
-	// Agreement with the native build, byte for byte.
 	native := buildPlaygroundDriver(t)
 	nativeWat, _, code := runPlayground(t, native, t.TempDir(), playgroundProgram, "-emit", "asm")
 	if code != 0 {
@@ -482,11 +364,6 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 		t.Errorf("wasm-hosted and natively-hosted output differ: %d vs %d bytes", len(wat), len(nativeWat))
 	}
 
-	// `-check` through argv, hosted in wasm. This is the mode that could not
-	// ship until #7969: `args()` handed Fern an array with no rc header, so
-	// every driver that read argv printed an internal error on a run that was
-	// otherwise correct. Reading argv here is the point of the case — a mode
-	// selected any other way would not exercise it.
 	chk := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-check")
 	chk.Dir = t.TempDir()
 	chk.Stdin = strings.NewReader("function main(): i32 { return nosuchthing; }\n")
@@ -496,22 +373,16 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	if err := chk.Run(); err != nil {
 		t.Fatalf("wasm-hosted -check failed: %v\n%s", err, chkErr.String())
 	}
-	// main's return value, printed by --invoke: 1, the failing verdict.
 	if got := strings.TrimSpace(chkOut.String()); got != "1" {
 		t.Errorf("wasm-hosted -check returned %q, want \"1\" on a program with an undefined name", got)
 	}
 	if !strings.Contains(chkErr.String(), "E001") {
 		t.Errorf("wasm-hosted -check did not name the error:\n%s", chkErr.String())
 	}
-	// wasmtime's own --invoke notice is the only thing that belongs on stderr
-	// besides the diagnostic; an rc complaint is the #7969 regression.
 	if strings.Contains(chkErr.String(), "over-release") {
 		t.Errorf("wasm-hosted -check reported an rc over-release (#7969):\n%s", chkErr.String())
 	}
 
-	// `-lsp` hosted in wasm, as the page runs it: no preopens, so every
-	// manifest probe the server makes fails, and the session must still be
-	// answered exactly as the native build answers it.
 	in := playgroundLSPSession(t, lspAt(2, "textDocument/hover", 3, 13))
 	srv := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-lsp")
 	srv.Dir = t.TempDir()
@@ -527,8 +398,6 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 		t.Errorf("wasm-hosted -lsp answered\n%s\nnatively-hosted\n%s", got, nativeSession)
 	}
 
-	// `-interp` hosted in wasm models wasm32's 32-bit usize, the width the
-	// same program compiled for the page's target has.
 	usizeSrc, usizeWant := usizeCase(t, "usize_wraps_at_32_bits")
 	usizeProg, err := os.ReadFile(usizeSrc)
 	if err != nil {
@@ -548,10 +417,6 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	}
 }
 
-// assertWatRuns parses the emitted WAT and runs it, asserting the exit code.
-// The exit code is the assertion rather than the WAT's length because an
-// overlay handing back empty sources would still emit a module — one that
-// either fails to parse or answers wrongly.
 func assertWatRuns(t *testing.T, wat string, want int) {
 	t.Helper()
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
@@ -576,8 +441,6 @@ func assertWatRuns(t *testing.T, wat string, want int) {
 	}
 }
 
-// A diagnostic raised in an embedded stdlib module names it, as the CLI's does
-// (#9523): the bundle here holds one module with a type error.
 func TestSelfHostPlaygroundDiagnosticNamesItsFile(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

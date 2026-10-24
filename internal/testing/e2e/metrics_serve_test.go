@@ -1,11 +1,3 @@
-// `serve.Config { metrics, metrics_port }` through std/serve: the loop
-// counts the request-duration histogram and the connections it accepts,
-// the program's own registry rides beside them, and `/metrics`, `/healthz`
-// and `/readyz` are answered on the metrics port. Single-process under the
-// interpreter (where `supervise` has no fork and the loop answers the
-// scrapes itself); under the x86-64 backend two forked workers ship their
-// snapshots to the supervisor once a second and the supervisor answers the
-// scrape with their sum, so no request ever reaches a worker for it.
 package e2e
 
 import (
@@ -100,9 +92,6 @@ func TestMetricsSupervisedServeX86_64(t *testing.T) {
 	}
 }
 
-// checkMetricsServe sends requests to the server and reads them back off
-// the metrics port: the handler's own counter, the duration histogram by
-// method and status, the connections accepted, and the probe paths.
 func checkMetricsServe(t *testing.T, addr, metricsAddr string, workers int) {
 	t.Helper()
 	e2eharness.WaitServerReady(t, addr, 10*time.Second)
@@ -130,8 +119,6 @@ func checkMetricsServe(t *testing.T, addr, metricsAddr string, workers int) {
 		}
 	}
 	total := gets + posts + misses
-	// A worker ships its snapshot once a second; the supervisor's sum
-	// catches up within a few of them.
 	var text string
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -183,8 +170,6 @@ func checkMetricsServe(t *testing.T, addr, metricsAddr string, workers int) {
 	}
 }
 
-// scrape reads path off the metrics port with Go's client, checking the
-// status and, when given, the content type, and answers the body.
 func scrape(t *testing.T, metricsAddr, path string, status int, contentType string) string {
 	t.Helper()
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -205,8 +190,6 @@ func scrape(t *testing.T, metricsAddr, path string, status int, contentType stri
 
 var sampleLine = regexp.MustCompile(`(?m)^(\S+) (-?\d+)$`)
 
-// sampleValue is the integer sample `key` has in the exposition, -1 when
-// it has none.
 func sampleValue(text, key string) int {
 	for _, m := range sampleLine.FindAllStringSubmatch(text, -1) {
 		if m[1] == key {

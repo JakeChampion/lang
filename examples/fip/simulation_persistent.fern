@@ -49,7 +49,6 @@ pub function input_ai(own w: World): World {
       tx = dest.x;
       ty = dest.y;
     }
-    // The persistent collection retains its old element during replacement.
     row = simulation_entity.input_ai(row, i, w.tick, target, tx, ty);
     w = World { ...w, entities: w.entities.with(i, row) };
     i = i + 1;
@@ -61,7 +60,6 @@ pub function move(own w: World): World {
   let i: i32 = 0;
   while (i < w.count) {
     let row: simulation_entity.Entity = get(w, i);
-    // The persistent collection retains its old element during replacement.
     row = simulation_entity.move(row);
     w = World { ...w, entities: w.entities.with(i, row) };
     i = i + 1;
@@ -126,7 +124,6 @@ pub function update(own w: World): World {
   let i: i32 = 0;
   while (i < w.count) {
     let row: simulation_entity.Entity = get(w, i);
-    // The persistent collection retains its old element during replacement.
     row = simulation_entity.update(row, w.neighbors[i]);
     w = World { ...w, entities: w.entities.with(i, row) };
     i = i + 1;

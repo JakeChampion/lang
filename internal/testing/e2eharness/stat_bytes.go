@@ -87,9 +87,6 @@ func RunStatByteCases(t *testing.T, bin string, runner []string, census func(*te
 			}
 		})
 	}
-	// Device nodes exercise Darwin's mount-point fallback when pathconf
-	// rejects the operand. Keep success, failure and continuation under the
-	// same ownership checks as byte formatting.
 	if err := os.Symlink("/dev/null", filepath.Join(dir, "device-link")); err != nil {
 		t.Fatal(err)
 	}

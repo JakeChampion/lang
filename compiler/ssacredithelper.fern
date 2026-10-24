@@ -1,16 +1,8 @@
-// Independent body proofs for flat-child containment. The caller
-// supplies an audited layout, not a planner verdict. No production adapter yet.
 import "./ssa";
 import "./util";
 
-// Exactly one reference slot, whose child has no owned payload or finalizer.
-// Other slots are scalar; neither type has a user-defined finalizer. These are
-// trusted boundary facts, not inferred here or from a successful plan verdict.
 pub struct FlatChild { offset: i32 }
 
-// Every reference slot exactly once. Children may alias, but each slot owns
-// its own credit. All children are flat and neither they nor the parent have
-// finalizers. These facts must come from an independently audited layout.
 pub struct FlatChildren { offsets: i32[] }
 
 pub struct Proof { ok: boolean, function_name: string, message: string }
@@ -32,8 +24,6 @@ function parameter(op: ssa.SInst): boolean {
 }
 
 function shape(f: ssa.SFunc): boolean {
-  // Runtime symbols can be intrinsic calls or target-specific aliases rather
-  // than calls to this supplied body. They cannot serve as user helper proofs.
   if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != 1 || f.takes_env || f.nvals < 1) {
     return false;
   }
@@ -69,9 +59,6 @@ function single_pred(b: ssa.SBlock, id: i32): boolean {
   return b.preds.len() == 1 && b.preds[0] == id;
 }
 
-// A proof of children-only dropping. In particular, this body does not consume
-// the parent credit, and its summary requires an independently proved unique
-// parent. Null cleared slots are valid inputs to the runtime flat release.
 pub function drop_body(f: ssa.SFunc, layout: FlatChild): Proof {
   return drop_body_many(f, FlatChildren { offsets: [layout.offset] });
 }
@@ -91,8 +78,6 @@ pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
     return refused(f, "unsupported drop graph");
   }
   let b = f.blocks[0];
-  // register_form removes the unused local-initialization zero. In either
-  // form, every remaining effect must be one complete child release pair.
   let first: i32 = 1;
   if (b.insts.len() % 2 != 0) {
     first = 2;
@@ -125,8 +110,6 @@ pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
   return Proof { ok: true, function_name: f.name, message: "proved flat-child drop body" };
 }
 
-// Prove the named callee's body before using it. Merely naming a helper
-// __sem_release_* or __sem_drop_* is not evidence of its ownership effects.
 pub function release_body(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChild): Proof {
   return release_body_many(f, drop, FlatChildren { offsets: [layout.offset] });
 }
@@ -169,8 +152,6 @@ function release_edges(f: ssa.SFunc, drop: ssa.SFunc, entry: ssa.SBlock, p: ssa.
   let target = no.term.target;
   let shared = no.id;
   if (direct) {
-    // The empty shared branch was bypassed; its edge must enter the same
-    // final release as the unique branch, with entry as its predecessor.
     target = no.id;
     shared = entry.id;
   }

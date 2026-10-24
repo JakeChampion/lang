@@ -4,24 +4,6 @@ import (
 	"testing"
 )
 
-// Dead NAMED intermediate consumed by a borrowing call (#4357). In
-// `let t = f(x); let u = g(t); return u;` the intermediate t dies after g
-// borrows it, but rhsTainted used to propagate the receiver/arg taint of f's
-// inputs into t, leaving it permanently free-INeligible — the missing drop
-// that dominates the self-compile RSS (docs/SELFHOST-BSTATE-RECLAIM-PLAN.md
-// "The real leak": ~915 MB over 20M iterations on the BState probe). The fix
-// consults findReturnsNoParamEscape in rhsTainted's Call case: a callee whose
-// every return is built from scalars and fresh constructions (transitively —
-// the same oracle the nested-call temp reclaim already trusts) hands back a
-// fresh owned value regardless of input taint, so t stays freeEligible and
-// gets its precise/exit drop.
-//
-// The reclaim is proven by an in-program bounded high-water check (a second
-// churn of equal size must not move __heap_bump_bytes(); exit 98 on growth,
-// 99 on over-release, 97 on a corrupted value); soundness by an
-// alias-returning callee (id(s) returns its param — NOT in the oracle, so the
-// intermediate stays tainted and nothing frees the caller's live struct).
-
 const intermediateLocalFlat = `struct St { xs: i32[], n: i32 }
 function build(k: i32): St { return St { xs: [k, k + 1, k + 2], n: k }; }
 function bump(s: St): St { return St { xs: [s.n + 1, 2, 3], n: s.n + 1 }; }

@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// --- `.to_string()` on a callee LOCAL, not a param (#7193 follow-up) ---------
-//
-// A helper returning `n.to_string()` hands its caller a fresh string, and so
-// does one that computes into a LOCAL first; the caller's binding must release
-// the result either way:
-//
-//	fmt(n) { return n.to_string(); }
-//	fmt(n) { let v: i32 = n*2; return v.to_string(); }
-//
-// The same `.to_string()` written INLINE at the call site is the control.
-//
-// The result is fresh only when the receiver is a scalar, and every
-// declaration of the name counts: a nested block may shadow it with a
-// pointer-shaped local — `shadowed_by_nonscalar` is that case, and it must stay
-// refused.
-
 func toStringLocalSrc(helper string, rounds int) string {
 	return fmt.Sprintf(`import "std/i32";
 %s
@@ -34,10 +18,6 @@ function main(): i32 { return churn(%d) + __rc_underflow_count() * 100; }
 `, helper, rounds)
 }
 
-// toStringLocalFlatCases must reach the same constant residue the working
-// PARAM-receiver spelling has (32 bytes, whatever the round count) rather than
-// growing 32 B a round. Both `want`s of every case were adjudicated against BOTH
-// oracles (`bin/fern -interp` and the native x86-64 backend).
 var toStringLocalFlatCases = []struct {
 	name    string
 	helper  string
@@ -45,7 +25,6 @@ var toStringLocalFlatCases = []struct {
 	want200 int
 }{
 	{
-		// The shape: compute into a local, then format it.
 		name: "local_recv",
 		helper: `function fmt(n: i32): string {
     let v: i32 = n * 2;
@@ -55,7 +34,6 @@ var toStringLocalFlatCases = []struct {
 		want200: 90,
 	},
 	{
-		// The result bound to a local on the way out: still fresh, one level in.
 		name: "local_recv_via_binding",
 		helper: `function fmt(n: i32): string {
     let v: i32 = n * 2;
@@ -66,7 +44,6 @@ var toStringLocalFlatCases = []struct {
 		want200: 90,
 	},
 	{
-		// i64, not just i32 — any scalar receiver qualifies.
 		name: "i64_local_recv",
 		helper: `function fmt(n: i32): string {
     let v: i64 = (n as i64) * 2;
@@ -76,8 +53,6 @@ var toStringLocalFlatCases = []struct {
 		want200: 90,
 	},
 	{
-		// Declared inside a nested block, and a second declaration at top level.
-		// Both are scalar, so both admit; the scan has to find the nested one.
 		name: "nested_block_decls",
 		helper: `function fmt(n: i32): string {
     if (n % 2 == 0) { let v: i32 = n * 2; return v.to_string(); }
@@ -89,19 +64,12 @@ var toStringLocalFlatCases = []struct {
 	},
 }
 
-// toStringLocalHazardCases are shapes where the proof does not hold. Each asserts
-// the ANSWER: crediting one of these would hand a caller's binding ownership of
-// a box it does not own, and the `__rc_underflow_count() * 100` term in `main`
-// is what separates that from a leak.
 var toStringLocalHazardCases = []struct {
 	name string
 	src  string
 	want int
 }{
 	{
-		// A nested block SHADOWS the name with a string local. The scan has no
-		// scopes, so it cannot tell which `v` the return means — every
-		// declaration must be scalar or the name refuses.
 		name: "shadowed_by_nonscalar",
 		src: toStringLocalSrc(`function fmt(n: i32): string {
     let v: i32 = n * 2;
@@ -111,9 +79,6 @@ var toStringLocalHazardCases = []struct {
 		want: 90,
 	},
 	{
-		// UN-annotated. The type is what carries the proof here; guessing from
-		// the initialiser would need the lowering state this scan does not have,
-		// and refusing costs a leak where guessing could cost an over-release.
 		name: "unannotated_local",
 		src: toStringLocalSrc(`function fmt(n: i32): string {
     let v = n * 2;
@@ -122,9 +87,6 @@ var toStringLocalHazardCases = []struct {
 		want: 90,
 	},
 	{
-		// A STRUCT receiver whose `to_string` is a source-declared method, not
-		// the builtin decimal-text producer. Not a scalar receiver, but flat all
-		// the same; the case pins that it stays so.
 		name: "struct_recv_method",
 		src: toStringLocalSrc(`struct P { a: i32 }
 function (p: P) to_string(): string { return "p"; }
@@ -136,13 +98,6 @@ function fmt(n: i32): string {
 	},
 }
 
-// TestSelfHostToStringLocalRecvReclaimX86_64 — the residue must be the same at
-// 100 and 200 rounds, which is what says the helper's result is released rather
-// than accumulating. An absolute zero is not the assertion: the working
-// PARAM-receiver spelling carries the same 32-byte constant, so a ceiling would
-// be a budget for the rest of the Perceus port rather than a gate on this shape.
-//
-// Non-vacuity: every case fails this against the parent commit, at 32 B/round.
 func TestSelfHostToStringLocalRecvReclaimX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalFlatCases {
@@ -181,9 +136,6 @@ func TestSelfHostToStringLocalRecvReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostToStringLocalRecvHazardsX86_64 pins the refusals. A wrong answer
-// or a crash means a caller's binding took ownership of a box it does not own.
-// Each `want` is the interpreter's answer.
 func TestSelfHostToStringLocalRecvHazardsX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalHazardCases {
@@ -222,8 +174,6 @@ func toStringLocalAllCases() []struct {
 	return out
 }
 
-// TestSelfHostToStringLocalRecvArm64 checks the answer on the self-host arm64
-// backend.
 func TestSelfHostToStringLocalRecvArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -236,8 +186,6 @@ func TestSelfHostToStringLocalRecvArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostToStringLocalRecvWasm is the wasm leg. Every `want` is under
-// WASI's 126 ceiling, so an over-release (+100) is still expressible.
 func TestSelfHostToStringLocalRecvWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalAllCases() {

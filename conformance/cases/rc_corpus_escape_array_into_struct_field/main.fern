@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Escape into a struct field: an owned array stored in a
-// returned struct escapes the helper; freeing it at exit
-// would strand the field. Churn forces reuse of a freed block.
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 struct Box { items: i32[] }

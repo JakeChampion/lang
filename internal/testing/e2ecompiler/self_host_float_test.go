@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFloatX86_64 exercises f64 support in the self-hosted
-// x86-64 emitter: float literals (GAS `.double` in .rodata), arithmetic
-// (addsd/subsd/mulsd/divsd via xmm regs), comparisons (ucomisd), unary
-// negation (sign-bit flip), and int↔float casts (cvtsi2sd / cvttsd2si).
-// Each program returns an observable i32 (a comparison bool or a
-// float→i32 cast); values were cross-checked against the Go backend.
 func TestSelfHostFloatX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -62,10 +56,6 @@ func TestSelfHostFloatX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFloatArm64 is the ARM64 counterpart (CI-gated, qemu):
-// the self-hosted aarch64 emitter's f64 support — float literals
-// (.double), fadd/fsub/fmul/fdiv, fcmp + cset, fneg, and scvtf/fcvtzs
-// casts. Same cases as the x86 test, run under qemu-aarch64.
 func TestSelfHostFloatArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

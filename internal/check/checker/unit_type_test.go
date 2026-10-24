@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The unit value `()` is what makes `Result[void, E]` constructible, and
-// with it the whole errors-as-values pattern works for operations that have
-// nothing to hand back: `?` propagates, `Ok(())` is the success case, and
-// the caller matches the same two arms as any other Result.
 func TestUnitValueChecks(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"void type argument, unit payload",
@@ -45,11 +41,6 @@ func TestUnitValueChecks(t *testing.T) {
 	}
 }
 
-// E072 — a void-returning CALL is not a value. This is the hole the unit
-// literal closes: `Ok(f())` for a void `f` used to type-check and then
-// diverge by backend (the interpreter and native invented a zero for the
-// payload slot; wasm emitted a store with nothing on the stack and failed
-// module verification at load).
 func TestVoidCallIsNotAValue(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"void call as Ok payload",

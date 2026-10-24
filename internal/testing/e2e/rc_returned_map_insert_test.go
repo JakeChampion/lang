@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// A `return m.insert(..)` whose cow ran in place hands the caller m's own
-// handle. The caller binds a call result as counted, so with no retain at
-// the return two bindings drop one buffer: the callee's borrowed param and
-// the caller's `a` (#8276, SIGSEGV on arm64 and a trap on wasm through the
-// string-key column walk), or the callee's owned local and the caller's
-// binding. The return now retains the handle when it is unchanged.
-
-// The issue's program: a callee returning its borrowed Map param's insert.
-// The insert copies, so the caller's `a` keeps its one entry (#9834).
 const returnedBorrowedMapInsertSrc = `import "core/map";
 function add(m: Map[string, i32]): Map[string, i32] {
     let s: string = "z";
@@ -33,8 +24,6 @@ function main(): i32 {
     return t - 20;
 }`
 
-// The same return over a local the callee owns: the exit sweep releases the
-// local, so the retain is what the caller's binding lives on.
 const returnedOwnedMapInsertSrc = `import "core/map";
 function mkm(): Map[string, i32] {
     let s: string = "z";
@@ -53,8 +42,6 @@ function main(): i32 {
     return t - 10;
 }`
 
-// One return retains through the insert, the other is the bare param
-// (move-on-return); both hand back a counted handle.
 const returnedMapInsertBranchSrc = `import "core/map";
 function add(m: Map[string, i32]): Map[string, i32] {
     let s: string = "z";
@@ -119,7 +106,6 @@ func TestArm64ReturnedMapInsertHandsBackACount(t *testing.T) {
 	}
 }
 
-// The wasm census component prints main's result instead of exiting with it.
 func TestWASMReturnedMapInsertHandsBackACount(t *testing.T) {
 	for _, tc := range returnedMapInsertCases {
 		stdout, stderr, exit := runLeakCheckWasm(t, tc.src, false)

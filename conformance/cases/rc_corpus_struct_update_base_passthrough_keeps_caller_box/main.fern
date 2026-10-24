@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The interlock for the case above: the base is the CALLER's live
-// struct, handed straight back by a passthrough. `returnsOwnBox`
-// credits the bare returned parameter because it is owned-by-default
-// — the caller retained it on the way in — so the base is released
-// here, and `base` must survive it. Every round reads through both
-// the copy and `base`, and the post-loop read pins the string
-// contents rather than just the shape.
+
+
+
+
+
+
+
+
+
+
 struct Reg2 { names: string[], tag: string, n: i32 }
 
 @noinline

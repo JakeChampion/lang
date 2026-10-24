@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// `fern -tangle -o DIR` on a multi-file document writes one file per
-// `file=` module under DIR (creating subdirs), and the ejected tree
-// compiles + runs on its own.
 func TestLiterateTangleToDir(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -32,7 +29,6 @@ func TestLiterateTangleToDir(t *testing.T) {
 			t.Errorf("expected %s on disk: %v", name, err)
 		}
 	}
-	// The ejected modules import each other normally and run to 6² = 36.
 	runCmd := exec.Command(bin, "-interp", filepath.Join(outDir, "main.fern"))
 	_ = runCmd.Run()
 	if code := runCmd.ProcessState.ExitCode(); code != 36 {
@@ -40,8 +36,6 @@ func TestLiterateTangleToDir(t *testing.T) {
 	}
 }
 
-// `fern -tangle -o FILE` on a single-`<<*>>` document writes the tangled
-// source to that file (no banners).
 func TestLiterateTangleToFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -69,8 +63,6 @@ func TestLiterateTangleToFile(t *testing.T) {
 	}
 }
 
-// `fern -weave -html` emits a self-contained HTML page (to stdout, or
-// to -o FILE) with clickable chunk cross-references.
 func TestLiterateWeaveHTML(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -92,7 +84,6 @@ func TestLiterateWeaveHTML(t *testing.T) {
 		}
 	}
 
-	// -o writes the same HTML to a file.
 	outFile := filepath.Join(dir, "app.html")
 	if err := exec.Command(bin, "-weave", "-html", "-o", outFile, src).Run(); err != nil {
 		t.Fatalf("weave -html -o: %v", err)
@@ -106,7 +97,6 @@ func TestLiterateWeaveHTML(t *testing.T) {
 	}
 }
 
-// `fern -weave -o FILE` writes the woven Markdown to disk.
 func TestLiterateWeaveToFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -123,7 +113,6 @@ func TestLiterateWeaveToFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read woven file: %v", err)
 	}
-	// The file-root label shows the woven document reached disk.
 	if !strings.Contains(string(got), "main.fern") {
 		t.Errorf("woven file missing file-root label:\n%s", got)
 	}

@@ -14,10 +14,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// prepared mirrors cmd/fern's pre-enforcement pipeline: load (stdlib
-// imports resolved), check, monomorphise, then tree-shake — so Enforce
-// sees exactly the call graph a backend would compile. httpDropMain
-// mirrors the wasi-http-only drop of the synthesised serve main.
 func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
@@ -52,9 +48,6 @@ func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	return prog
 }
 
-// `subprocess` is granted by the hosted native targets, whose backends lower
-// `__fern_subprocess`, and refused where there is no process model: both wasm
-// worlds and the freestanding pair.
 func TestEnforceSubprocessByTarget(t *testing.T) {
 	src := `function main(): i32 {
     let r = subprocess("/bin/echo", ["hi"], "");
@@ -85,12 +78,6 @@ func TestEnforceSubprocessByTarget(t *testing.T) {
 	}
 }
 
-// `proc` (proc_fork / proc_exec / proc_waitpid — docs/CRASH-ONLY-SERVE.md
-// D2') is
-// granted by the four native targets only: wasm worlds have no
-// processes, so both wasm targets reject at check time. The interp is
-// deliberately ungated (Enforce only runs for compiled targets): its
-// proc_fork returns -38/ENOSYS so callers degrade at runtime instead.
 func TestEnforceProcByTarget(t *testing.T) {
 	src := `function main(): i32 {
     let pid: i32 = proc_fork();
@@ -130,11 +117,6 @@ func TestEnforceProcByTarget(t *testing.T) {
 	}
 }
 
-// `host` — the machine's own name. Every hosted target grants it,
-// wasi-cli included: a component has no node name and `hostname()`
-// answering "" there is a fact, not a stand-in, which is what separates
-// it from `userid`'s refused 0. wasi-http grants no process identity at
-// all, so it refuses, the same way it refuses `args` and `env`.
 func TestEnforceHostByTarget(t *testing.T) {
 	src := `function main(): i32 {
     let h: string = hostname();
@@ -151,8 +133,6 @@ func TestEnforceHostByTarget(t *testing.T) {
 	}
 }
 
-// The same fs-touching program is fine on targets granting `fs` and a
-// violation under wasi-http.
 func TestEnforceFsByTarget(t *testing.T) {
 	src := `function main(): i32 {
     let r = read_file("/etc/config");
@@ -169,11 +149,6 @@ func TestEnforceFsByTarget(t *testing.T) {
 	}
 }
 
-// Importing a module whose OTHER functions use gated builtins is fine:
-// tree-shaking drops the unreached wrappers before Enforce runs. The
-// canonical case is a wasi-http handler importing std/serve (whose
-// serve.run → tcp_listen chain is only reachable through the DROPPED
-// synthesised main).
 func TestEnforceUnusedImportsDontTrip(t *testing.T) {
 	src := `import "std/http";
 import "std/serve";
@@ -188,8 +163,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// A gated builtin reached TRANSITIVELY (entry → helper → builtin) is
-// still caught, and the violation names the containing function.
 func TestEnforceTransitiveReach(t *testing.T) {
 	src := `function helper(): string {
     let r = read_file("/etc/x");
@@ -208,16 +181,6 @@ function main(): i32 {
 	}
 }
 
-// A target with no descriptor skips enforcement entirely — the fallback
-// that lets a name Enforce has never heard of pass through rather than
-// erroring.
-//
-// This used to be demonstrated with "wasm-ssa", which was a real
-// -target value at the time. That was the bug, not the illustration:
-// the SSA backends had no descriptor, so choosing one silently opted a
-// build out of the capability gate. They are `-backend ssa` on an
-// ordinary target now (#6536), so the only names left without a
-// descriptor are genuine typos.
 func TestEnforceUnknownTargetSkips(t *testing.T) {
 	src := `function main(): i32 {
     let r = subprocess("/bin/echo", [], "");
@@ -228,14 +191,6 @@ func TestEnforceUnknownTargetSkips(t *testing.T) {
 	}
 }
 
-// The one-level arena checkpoint (__heap_mark / __heap_release_to) is
-// native-only: both natives rewind __fern_heap_ptr and snapshot the freelist
-// heads into a .bss shadow, which wasm's linear-memory allocator has no room
-// for below its head table. wasm must therefore reject the pair HERE, at check
-// time — before the gate existed, a wasm build died inside the backend with
-// `unknown callee "__fern_heap_mark"`, an internal message carrying an IR op
-// index and no source position. `__heap_bump_bytes` stays ungated: reading the
-// cursor works on every target, only rewinding it is native.
 func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	src := `function main(): i32 {
     let m: i64 = __heap_mark();
@@ -252,7 +207,6 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	for _, target := range []string{"wasm32-wasi", "wasm32-wasi-http"} {
 		t.Run(target+"/rejected", func(t *testing.T) {
 			vs := platforms.Enforce(prepared(t, src, false), target)
-			// Both calls are gated; __heap_bump_bytes is not.
 			if len(vs) != 2 {
 				t.Fatalf("violations = %d, want 2 (mark + release_to): %+v", len(vs), vs)
 			}
@@ -263,7 +217,6 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 				if v.Builtin != "__heap_mark" && v.Builtin != "__heap_release_to" {
 					t.Errorf("unexpected gated builtin %q", v.Builtin)
 				}
-				// The message must point at the targets that DO provide it.
 				if msg := v.Message("<stdin>"); !strings.Contains(msg, "x86-64-linux") {
 					t.Errorf("message should list the providing targets: %s", msg)
 				}
@@ -272,21 +225,6 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	}
 }
 
-// `pollfd`, `fsmode`, `cabi` and `userid` are the four properties wasm lacks
-// that are not about processes or the arena: a file descriptor to poll, a
-// permission bit to read or set, a C calling convention to call through, and a
-// user the process can be. Each of the first three was reachable on
-// wasm32-wasi until it failed in the backend — `unknown callee
-// "write_file_exec"` mid-build for a program that type-checked (#7947) —
-// because each was gated on a capability the wasi profiles do grant.
-//
-// `access` and the id builtins are on this list for a sharper reason than
-// "the backend has no lowering": neither WASI preview has a permission model
-// or a user, and there is no accurate constant to answer with. Answering 0 for
-// `geteuid` claims to be root, and FileStat's uid / gid are also zero there,
-// so `test -O` would report that every file is owned by the caller. An empty
-// `getgroups` is the same fiction one level down: it reads as "in no groups"
-// rather than "cannot say".
 func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
 	cases := []struct {
 		builtin    string
@@ -340,10 +278,6 @@ func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
 	}
 }
 
-// `log` and `now` are universal today — every descriptor grants both —
-// so gating them must not reject anything. The point of the gate is the
-// freestanding target that will not grant them (#6506), not a change to
-// what the six hosted targets accept.
 func TestEnforceLogAndClockUniversal(t *testing.T) {
 	srcs := map[string]string{
 		"print":  `function main(): i32 { print("hi"); return 0; }`,
@@ -353,8 +287,6 @@ func TestEnforceLogAndClockUniversal(t *testing.T) {
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
-			// freestanding grants none of these on purpose; it has its
-			// own test below.
 			if platforms.ForTarget(target).NoBackend {
 				continue
 			}
@@ -367,10 +299,6 @@ func TestEnforceLogAndClockUniversal(t *testing.T) {
 	}
 }
 
-// The stdout STREAM is not universal: wasi-http is the proxy world,
-// which has no wasi:cli/stdout to hand out. `print` still works there
-// (it gates on `log`), which is the whole reason the two capabilities
-// are distinct.
 func TestEnforceStdoutStreamByTarget(t *testing.T) {
 	srcs := map[string]string{
 		"write":   `function main(): i32 { write("hi"); return 0; }`,
@@ -394,10 +322,6 @@ func TestEnforceStdoutStreamByTarget(t *testing.T) {
 	}
 }
 
-// A flat-loaded stdlib program keeps each module's free functions under
-// their bare names, so std/net's `write` sits beside the builtin of that
-// name and `net.write(...)` is a call to `write`. The declared function is
-// the callee, not the builtin: the call reaches no capability.
 func TestReachDeclaredFunctionShadowsBuiltin(t *testing.T) {
 	prog, err := parser.Parse(`function write(data: u8[]): i32 { return data.len(); }
 function main(): i32 { let b: u8[] = []; return write(b); }`)
@@ -412,15 +336,6 @@ function main(): i32 { let b: u8[] = []; return write(b); }`)
 	}
 }
 
-// The completeness contract at the TARGET level (#6508), mirroring the
-// one internal/pkg/caps holds at the package level. Every user-callable
-// builtin the checker pre-declares is either gated on a capability or
-// explicitly core — a new one that is neither fails here rather than
-// silently landing on the hosted side of the freestanding boundary.
-//
-// The checker registry is the right universe because Enforce only runs
-// for COMPILED targets; the interpreter is not a target and has no
-// descriptor.
 func TestClassificationCoversCheckerRegistry(t *testing.T) {
 	prog, err := parser.Parse("function main(): void {}")
 	if err != nil {
@@ -445,14 +360,6 @@ func TestClassificationCoversCheckerRegistry(t *testing.T) {
 	}
 }
 
-// The invocation environment is a process's, and the proxy world has no
-// process: it imports neither `wasi:cli/environment` (envp) nor the argv
-// half, so a component reaching for either fails to instantiate under
-// `wasmtime serve` — "component imports instance `wasi:cli/environment`,
-// but a matching implementation was not found in the linker". Gating both
-// turns that into E066 at check time. They stay separate capabilities
-// because they answer different questions of a host that has one and not
-// the other; this is the same shape as the stdout finding in #6507.
 func TestEnforceArgsAndEnvNotOnProxyWorld(t *testing.T) {
 	srcs := map[string]string{
 		"args": `function main(): i32 { let a: string[] = args(); return 0; }`,
@@ -475,18 +382,12 @@ func TestEnforceArgsAndEnvNotOnProxyWorld(t *testing.T) {
 	}
 }
 
-// `random` is granted by every hosted descriptor, so wiring it into the
-// gate table rejects nothing today — it exists for the target that will
-// not grant it. (`env` used to be listed here too; the proxy world does
-// not import it — see TestEnforceArgsAndEnvNotOnProxyWorld.)
 func TestEnforceRandomUniversal(t *testing.T) {
 	srcs := map[string]string{
 		"random": `function main(): i32 { return random_i32(); }`,
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
-			// freestanding grants none of these on purpose; it has its
-			// own test below.
 			if platforms.ForTarget(target).NoBackend {
 				continue
 			}
@@ -499,10 +400,6 @@ func TestEnforceRandomUniversal(t *testing.T) {
 	}
 }
 
-// The freestanding target is where the tables actually reject
-// (#6509). `log` / `now` / `random` are granted by all six hosted
-// descriptors, so gating them rejects nothing there; here every one of
-// them rejects.
 func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 	srcs := map[string]string{
 		"print":  `function main(): i32 { print("hi"); return 0; }`,
@@ -522,10 +419,6 @@ func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 	}
 }
 
-// The complement: a program that only computes and allocates is clean
-// on freestanding. This is the property that makes the target useful
-// rather than merely restrictive — coreBuiltins has to actually be
-// reachable.
 func TestEnforceFreestandingAllowsCore(t *testing.T) {
 	src := `function main(): i32 {
     let b: i64 = f64_bits(1.5);
@@ -536,9 +429,6 @@ func TestEnforceFreestandingAllowsCore(t *testing.T) {
 	}
 }
 
-// A descriptor with no backend is declared, listed and checkable — the
-// #6509 ordering, where the constraint becomes real before there is
-// codegen to constrain.
 func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
 	free := []string{"arm64-freestanding", "x86-64-freestanding"}
 	for _, name := range free {
@@ -558,10 +448,6 @@ func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
 			}
 		})
 	}
-	// The freestanding pairs are the ONLY non-emitting targets, and they
-	// are listed, so `fern -targets` shows them. Deriving both from the
-	// environment rather than a name list means a third freestanding ISA
-	// needs no change here.
 	listed := map[string]bool{}
 	for _, n := range platforms.Targets() {
 		listed[n] = true
@@ -578,9 +464,6 @@ func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
 	}
 }
 
-// The native runtime's raw-memory floor is the hosted natives' alone: wasm
-// lowers none of it. The Go checker does not register these names, so this
-// pins the table the self-host's E066 reads through the parity test.
 func TestRawMemoryFloorNativeOnly(t *testing.T) {
 	floor := []string{"__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ",
 		"__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"}
@@ -600,8 +483,6 @@ func TestRawMemoryFloorNativeOnly(t *testing.T) {
 	}
 }
 
-// E066 for timer_fd points at the pollable that reaches the same wakeup, on
-// a target that provides it, and on no other.
 func TestViolationNamesTheEquivalent(t *testing.T) {
 	for target, want := range map[string]bool{"wasm32-wasi": true, "wasm32-wasi-http": true, "arm64-freestanding": false} {
 		msg := platforms.Violation{Builtin: "timer_fd", Capability: "pollfd", Target: target}.Message("")
@@ -611,10 +492,6 @@ func TestViolationNamesTheEquivalent(t *testing.T) {
 	}
 }
 
-// Table consistency: every capability named in the gate table is provided
-// by at least one target. Guards against typos like gating on "filesystem"
-// while descriptors say "fs", and is what lets Violation.Message assume a
-// non-empty provider list.
 func TestGatedCapabilitiesResolvable(t *testing.T) {
 	for builtin, c := range platforms.GatedBuiltins() {
 		if got := platforms.TargetsProviding(c); len(got) == 0 {
@@ -623,13 +500,6 @@ func TestGatedCapabilitiesResolvable(t *testing.T) {
 	}
 }
 
-// Enforce reports the capabilities of the ARTIFACT, so a call in code the
-// artifact does not contain is not a violation. That contract rests on
-// tree-shake handing over only reachable functions: rooting every `dyn`
-// coercion the checker recorded — sites in dead functions included — kept
-// the impl method behind an unreachable coercion alive, and a target
-// without its capability then rejected a program that can never make the
-// call (#4114).
 func TestEnforceIgnoresCallsBehindAnUnreachableCoercion(t *testing.T) {
 	src := `trait Greet { function hello(self: Self): i32; }
 struct Loud { n: i32 }
@@ -651,8 +521,6 @@ function main(): i32 { return 7; }`
 		t.Errorf("want no violation for an unreachable coercion, got %d: %v", len(vs), vs)
 	}
 
-	// The same program with the coercion reached: `print` IS in the
-	// artifact now, and a target without `log` must still say so.
 	live := strings.Replace(src, "function main(): i32 { return 7; }",
 		"function main(): i32 { return dead_coercion(); }", 1)
 	vs := platforms.Enforce(prepared(t, live, false), "arm64-freestanding")

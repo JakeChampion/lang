@@ -9,19 +9,6 @@ import (
 	"testing"
 )
 
-// Regression guard for the wasm-IR helper-gating dedup bug: str_split_helper
-// (emitted for .split() / .lines()) itself begins with arr_push_helper(), so
-// it already defines $__fern_arr_push. The standalone arr_push gate in
-// wasm_ir_run.fern used to fire independently, so a module using BOTH a
-// split/lines op AND an .append (op_arr_push / op_arr_push_owned / read_dir)
-// defined $__fern_arr_push twice — wasmtime rejected the module with
-// "duplicate func identifier" before it could run. The gate now skips the
-// standalone emit when a split/lines op already pulls the helper in.
-//
-// These programs use .split()/.lines(), which the self-host lowering recognizes
-// directly (no stdlib) but the native checker does not resolve without a
-// std/string import — so they're pinned to a hard-coded expected exit rather
-// than an interp oracle. Each is a self-contained i32 return < 126.
 type splitAppendDedupCase struct {
 	name string
 	src  string
@@ -29,7 +16,6 @@ type splitAppendDedupCase struct {
 }
 
 var splitAppendDedupCases = []splitAppendDedupCase{
-	// split + self-reassign append (op_arr_push_owned) — the original repro.
 	{"split-owned-append", `function main(): i32 {
     let s: string = "a,b,c";
     let parts: string[] = s.split(",");
@@ -38,7 +24,6 @@ var splitAppendDedupCases = []splitAppendDedupCase{
     xs = xs.append(2);
     return parts.len() * 10 + xs.len();
 }`, 32},
-	// split + plain (non-reassign) append (op_arr_push).
 	{"split-plain-append", `function main(): i32 {
     let s: string = "a,b,c,d";
     let parts: string[] = s.split(",");
@@ -46,7 +31,6 @@ var splitAppendDedupCases = []splitAppendDedupCase{
     let ys: i32[] = xs.append(7);
     return parts.len() * 10 + ys.len();
 }`, 41},
-	// lines + append — str_lines pulls str_split_helper in via the same gate.
 	{"lines-append", `function main(): i32 {
     let s: string = "x\ny\nz";
     let ls: string[] = s.lines();
@@ -79,8 +63,6 @@ func TestSelfHostSplitAppendDedupIRWasm(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.name, err)
 			}
-			// A redundant check: the module must define $__fern_arr_push exactly
-			// once (the bug emitted it twice).
 			if n := strings.Count(string(wat), "(func $__fern_arr_push "); n != 1 {
 				t.Errorf("%s: $__fern_arr_push defined %d times, want 1", tc.name, n)
 			}

@@ -7,23 +7,11 @@ import (
 	"testing"
 )
 
-// arrtupReclaimCases pin the #4365 `(<tuple-with-array>)[]` array-of-tuples reclaim:
-// a `let xs: (i32, i32[])[] = [(i, [i, i+1]), ...]` local — an array whose ELEMENTS
-// are tuples each carrying a fresh inner array — releases all three levels (the
-// per-element inner array buffers, the element tuple boxes, and the outer buffer)
-// at the loop rebind and at scope exit, so the heap stays bounded per iteration.
-//
-// SOUNDNESS: a scalar field read (xs[i].0), an indexed array-field read
-// (xs[i].1[j]) and xs[i].1.len() are borrows and the reclaim proceeds; a BARE
-// array-field extraction (store / return / pass / alias / slice xs[i].1) OR a
-// bound element (let t = xs[i] / for t in xs) escapes, and the local must then
-// be left leak-safe rather than over-released.
 var arrtupReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: rebuilt per iteration, scalar read only.
 	{"arrtup-churn", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -37,8 +25,6 @@ var arrtupReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Full borrow set: scalar field (xs[i].0), indexed array-field (xs[i].1[j]) and
-	// xs[i].1.len() are all admitted — still reclaims (bounded).
 	{"arrtup-borrow-full", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -56,8 +42,6 @@ var arrtupReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-STORE negative: `keep = xs[0].1` extracts the array out of an
-	// element — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"arrtup-escape-store-safe", `function main(): i32 {
     let keep: i32[] = [0, 0];
     let i: i32 = 0;
@@ -71,8 +55,6 @@ var arrtupReclaimCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-CALL negative: `take(xs[0].1)` passes the array field to a call
-	// (a retain) — un-credited, leak-safe, detector zero.
 	{"arrtup-escape-call-safe", `function take(xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -86,8 +68,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// ESCAPE-VIA-FN negative: the array-of-tuples is returned — ownership moves out,
-	// nothing freed, value exact (a[0].0 + a[0].1[0] + a[1].1[1] = 5 + 5 + 8 = 18).
 	{"arrtup-escape-fn-safe", `function mk(n: i32): (i32, i32[])[] {
     let xs: (i32, i32[])[] = [(n, [n, n + 1]), (n + 1, [n + 2, n + 3])];
     return xs;
@@ -100,8 +80,6 @@ function main(): i32 {
 }`, 18},
 }
 
-// TestSelfHostArrTupReclaimIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostArrTupReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

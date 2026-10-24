@@ -1,35 +1,8 @@
-// dircolors.fern — GNU-compatible `dircolors`.
-//
-//   dircolors                  the built-in database, as shell commands
-//   dircolors FILE             that file instead (`-` is standard input)
-//   -b, --sh, --bourne-shell   Bourne syntax
-//   -c, --csh, --c-shell       C shell syntax
-//   -p, --print-database       the built-in database, verbatim
-//       --print-ls-colors      one escaped line per entry
-//
-// One TEXT serves both jobs. `-p` prints the database below unchanged,
-// and the default LS_COLORS is what the ordinary file parser makes of
-// that same text — which is why the commented-out `#NORMAL 00` lines
-// never become entries and why `-p` output carries TERM lines.
-//
-// The parse is filtered by $TERM and $COLORTERM, so the no-operand
-// output is environment-dependent while `-p` is not. The filter is a
-// four-state machine rather than a flag: a TERM line that does NOT match
-// only closes the section when an ordinary line has been consumed since
-// the one that opened it, so `TERM linux / TERM vt52 / DIR 3` sets di=3
-// and `TERM linux / DIR 2 / TERM vt52 / DIR 3` does not. The same four
-// states decide whether an unknown keyword is a fatal diagnostic or is
-// passed over in silence: outside any section it is ignored.
-//
-// The pattern is fnmatch(3) with flags 0, which `std/glob` is not —
-// there `*` stops at `/`, `**` means something, and a backslash escapes
-// nothing — so the matcher is `lib/fnmatch.fern`, which `ls -I` shares.
 import "std/string";
 import "./lib/colordb";
 import "./lib/fnmatch";
 import "./lib/gnu";
 
-// ---- the keyword table -----------------------------------------------------
 function eq_fold(a: u8[], lo: i32, hi: i32, b: string): boolean {
   if (hi - lo != b.len()) {
     return false;
@@ -52,13 +25,6 @@ function eq_fold(a: u8[], lo: i32, hi: i32, b: string): boolean {
   return true;
 }
 
-// `lookup(raw, lo, hi)` returns (kind, code): 0 unknown, 1 an entry
-// under `code`, 2 recognised and contributing nothing.
-//
-// 37 names for 24 two-letter codes, plus the three the slackware
-// dircolors honoured that GNU accepts and does nothing with. The match
-// folds case; the EXTENSION keywords do not reach here, which is why
-// `.GZ` keeps its case and `dIr` does not.
 function lookup(kw: u8[], lo: i32, hi: i32): (i32, string) {
   if (eq_fold(kw, lo, hi, "NORMAL") || eq_fold(kw, lo, hi, "NORM")) {
     return (1, "no");
@@ -138,30 +104,12 @@ function lookup(kw: u8[], lo: i32, hi: i32): (i32, string) {
   return (0, "");
 }
 
-// ---- the line grammar ------------------------------------------------------
-//
-// Skip leading whitespace; an empty line or one starting `#` is passed
-// over. The keyword runs to the next whitespace — `#` is not a
-// terminator there, which is how the database's `*# 00;90` line works.
-// Whitespace is skipped; end of line or a `#` there is the missing
-// second token. The argument is then the REST of the line up to a `#`,
-// with trailing whitespace trimmed, so `DIR 01;34 extra` is the one
-// value `01;34 extra`.
-//
-// A NUL byte ends the line for parsing but not for counting: the line
-// it sits on is still one line.
 function is_space(c: i32): boolean {
   return c == 32 || c == 9 || c == 11 || c == 12 || c == 13;
 }
 
-// ---- the parse -------------------------------------------------------------
-//
-// The body is escaped straight out of the input buffer into one builder
-// as the lines are read, so the config is never cut into a string per
-// entry; a parse that fails hands back no body at all.
 struct Parse { body: u8[], ok: boolean }
 
-// The four states of the TERM / COLORTERM filter.
 function st_global(): i32 {
   return 0;
 }
@@ -178,11 +126,6 @@ function st_termyes(): i32 {
   return 3;
 }
 
-// `entry_push(h, text, item_lo, item_hi, star, code, arg_lo, arg_hi, ls)`
-// — one entry of the body: the item is `text[item_lo, item_hi)` with a
-// `*` in front when `star`, or the two-letter `code` when that is not
-// empty. `ls` picks the `--print-ls-colors` line over the LS_COLORS
-// piece.
 function entry_push(h: usize, text: u8[], item_lo: i32, item_hi: i32, star: boolean, code: string, arg_lo: i32, arg_hi: i32, ls: boolean): void {
   if (ls) {
     buf_push(h, "\x1b[");
@@ -204,8 +147,6 @@ function entry_push(h: usize, text: u8[], item_lo: i32, item_hi: i32, star: bool
   if (code.len() > 0) {
     buf_push(h, code);
   } else {
-    // A leading `*` is written through by the escaper and leaves its
-    // toggle where it started, so it goes in ahead of the keyword as is.
     if (star) {
       buf_push_byte(h, 42);
     }
@@ -216,7 +157,6 @@ function entry_push(h: usize, text: u8[], item_lo: i32, item_hi: i32, star: bool
   buf_push_byte(h, 58);
 }
 
-// GNU prints an unknown keyword verbatim, even when it is not UTF-8.
 function unknown_keyword(name: string, lineno: i32, text: u8[], lo: i32, hi: i32): void {
   let h: usize = buf_new(0);
   buf_push(h, gnu.prog() + ": " + name + ":" + lineno.to_string() + ": unrecognized keyword ");
@@ -233,9 +173,6 @@ function parse(text: u8[], name: string, term: string, colorterm: string, ls: bo
   let state: i32 = st_global();
   let pos: i32 = 0;
   let lineno: i32 = 0;
-  // The next NUL at or after the cursor, refreshed only once the cursor
-  // has passed it: searching each line separately would rescan the rest
-  // of the buffer per line.
   let nul: i32 = __memchr_bytes(text, 0, 0);
   while (pos < text.len()) {
     let nl: i32 = __memchr_bytes(text, 10, pos);
@@ -251,8 +188,6 @@ function parse(text: u8[], name: string, term: string, colorterm: string, ls: bo
     if (nul >= 0 && nul < end) {
       cut = nul;
     }
-    // Keep line and token bounds as scalars rather than allocating one
-    // record and one keyword slice per line. NUL has already cut the line.
     let i: i32 = pos;
     while (i < cut && is_space(text[i] as i32)) {
       i = i + 1;
@@ -317,8 +252,6 @@ function parse(text: u8[], name: string, term: string, colorterm: string, ls: bo
             if (hit.0 == 1) {
               entry_push(h, text, ks, ke, false, hit.1, as0, ae, ls);
             } else if (hit.0 == 0 && state == st_termyes()) {
-              // Outside a matching section an unknown keyword is passed
-              // over in silence; inside one it is fatal.
               unknown_keyword(name, lineno, text, ks, ke);
               ok = false;
             }
@@ -339,14 +272,6 @@ function parse(text: u8[], name: string, term: string, colorterm: string, ls: bo
   return Parse { body: body, ok: ok };
 }
 
-// ---- the shell escaper -----------------------------------------------------
-//
-// Not a plain escape but a toggle, and the state starts over at each
-// item and each argument. A `\` or a `^` is written through and FLIPS
-// the flag; a `:` or an `=` takes a leading backslash only while the
-// flag is set; a `'` becomes `'\''`; every other byte sets the flag.
-// So `a\:b` comes back unchanged, `a^^:b` gains a backslash and
-// `a^:b` does not.
 function escape_push(h: usize, s: u8[], lo: i32, hi: i32): void {
   let need: boolean = true;
   let i: i32 = lo;
@@ -382,12 +307,8 @@ function escape_push(h: usize, s: u8[], lo: i32, hi: i32): void {
   }
 }
 
-// ---- input -----------------------------------------------------------------
 struct Input { bytes: u8[], ok: boolean }
 
-// `name` is already rendered the way the diagnostics want it. A read
-// failure and a close failure are reported separately, which is how
-// `dircolors - <&-` says both.
 function read_stream(r: Reader, name: string): Input {
   let h: usize = buf_new(0);
   let ok: boolean = true;
@@ -420,9 +341,6 @@ function read_input(path: string): Input {
   if (path == "-") {
     return read_stream(stdin(), name);
   }
-  // An open failure and a read failure are worded differently — a
-  // directory opens and then fails to read — so the open is made here
-  // rather than inferred from a whole-file read.
   match (open_reader(path)) {
     Ok(r) => {
       return read_stream(r, name);
@@ -435,7 +353,6 @@ function read_input(path: string): Input {
   return Input { bytes: [], ok: false };
 }
 
-// ---- options ---------------------------------------------------------------
 function opt_bourne(): i32 {
   return 1;
 }
@@ -471,8 +388,6 @@ function help_text(): string {
   return out;
 }
 
-// $SHELL names csh when its last path component is exactly `csh` or
-// `tcsh`. A trailing slash is not stripped, so `/bin/csh/` is not one.
 function shell_is_csh(shell: string): boolean {
   let base: string = shell;
   if let Some(cut) = shell.last_index_of("/") {
@@ -481,8 +396,6 @@ function shell_is_csh(shell: string): boolean {
   return base == "csh" || base == "tcsh";
 }
 
-// An EMPTY value counts as absent, which is what makes `TERM=` and an
-// unset TERM both the literal string `none`.
 function env_or(name: string, fallback: string): string {
   match (env(name)) {
     Some(v) => {
@@ -497,8 +410,6 @@ function env_or(name: string, fallback: string): string {
 }
 
 pub function main(): i32 {
-  // Declaration order is glibc's ambiguity list: `--=x` names every
-  // candidate but `--sh`, which shares `--bourne-shell`'s id.
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "bourne-shell", opt_bourne()));
   opts = opts.append(gnu.flag("", "sh", opt_bourne()));
@@ -507,7 +418,6 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("p", "print-database", opt_print_db()));
   opts = opts.append(gnu.flag("", "print-ls-colors", opt_print_ls()));
   let g: gnu.Getopt = gnu.getopt_new(args(), opts, "dircolors", help_text(), 1);
-  // 0 unknown, 1 Bourne, 2 csh; the last of -b / -c decides.
   let syntax: i32 = 0;
   let print_db: boolean = false;
   let print_ls: boolean = false;
@@ -532,9 +442,6 @@ pub function main(): i32 {
     }
   }
 
-  // The order the faults are reached in: the shell-syntax exclusion,
-  // then the two print options against each other, then the operand
-  // count, then the shell guess, then the file.
   if ((print_db || print_ls) && syntax != 0) {
     gnu.die_usage("the options to output non shell syntax,\nand to select a shell syntax are mutually exclusive", 1);
   }
@@ -542,7 +449,6 @@ pub function main(): i32 {
     gnu.die_usage("options --print-database and --print-ls-colors are mutually exclusive", 1);
   }
   let operands: string[] = g.operands();
-  // `-p` takes no operand at all, so the FIRST one is the extra one.
   let limit: i32 = 1;
   if (print_db) {
     limit = 0;
@@ -556,9 +462,6 @@ pub function main(): i32 {
   }
 
   if (print_db) {
-    // puts() per line, which is TWO pieces — the line, then its newline
-    // — and where those fall in the stdio buffer is what decides
-    // whether a failed write is reported with its errno or bare.
     let od: gnu.Stdio = gnu.stdio_new();
     let db: string = colordb.text();
     let at: i32 = 0;
@@ -605,19 +508,11 @@ pub function main(): i32 {
     text = colordb.text().bytes();
   }
 
-  // An unset or empty TERM is the literal string `none`; an unset
-  // COLORTERM is the empty string, which `?*` never matches.
   let p: Parse = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""), print_ls);
   if (!p.ok) {
     return 1;
   }
 
-  // The whole body is assembled and written as ONE piece, with the
-  // shell syntax around it as one more on each side, because that is
-  // the call sequence at the other end of the buffer: a failure on the
-  // body leaves the suffix pending at close and is reported with its
-  // errno, where `--print-ls-colors` writes one piece and nothing is
-  // pending, so the same failure is a bare `write error`.
   let o: gnu.Stdio = gnu.stdio_new();
   if (print_ls) {
     o = o.fwrite_bytes(p.body);

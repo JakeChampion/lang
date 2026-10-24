@@ -1,19 +1,6 @@
 import "std/test";
 import "std/array";
 
-// tests/stdlib/array_binary_search_test.fern — pure-Fern coverage of
-// std/array's binary_search[T: cmp.Ord] (free + method forms): O(log n) search
-// of an ascending-sorted array, returning Some(index) or None. Covers found
-// (first / middle / last), absent (in-range / below / above), empty, single,
-// and STRING elements (lexicographic order). Kept as its own suite so the
-// self-host merged bundle stays under the asm_ir IR budget; uses assert_true +
-// match (no scalar assert_eq[i32]).
-//
-// The return is Option[i32] (scalar payload) regardless of the element type, so
-// unlike the T[]/Option[T]-returning generics the string case lowers on the
-// self-host IR path too — this suite is self-host-gated in full. The Go-side
-// TestArrayBinarySearch pins native compilation on all four backends.
-
 function idx(o: Option[i32]): i32 {
   match (o) {
     Some(v) => {
@@ -80,7 +67,6 @@ function test_single(): test.TestOutcome {
 }
 
 function test_strings(): test.TestOutcome {
-  // Lexicographically sorted; cmp.Ord uses the string ordering.
   let ss: string[] = ["apple", "banana", "cherry", "date"];
   if (idx(ss.binary_search("cherry")) != 2) {
     return test.fail("cherry at 2");

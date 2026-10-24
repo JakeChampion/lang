@@ -1,30 +1,4 @@
-// std/platform — the capabilities a handler is handed.
-//
-// Every handler takes a platform as its last parameter
-// (`handle(req: HttpRequest, plat: platform.Platform)`,
-// docs/PLATFORM-RESEARCH.md Rec §1): the host effects it is allowed to reach
-// — a log sink, a clock, the invocation environment, configuration, entropy,
-// outbound HTTP, the file system — as methods on the value it was handed rather than as
-// ambient free functions. A function that is handed a platform and reaches
-// around it, directly or through a helper, is refused at check time (E080).
-//
-// `Platform` is a trait. A parameter typed by it makes the handler generic
-// over it, so each implementation is compiled in statically: `Host`, which
-// std/serve's accept loops and the wasi-http entry hand a handler,
-// std/mock_platform's `MockPlatform`, which records what a test's handler
-// tried to do, and std/sim_platform's `SimPlatform`, which runs it over
-// the simulation's clock, randomness and scripted network. Each keeps its
-// own state as ordinary fields.
-//
-// The free functions stay: a CLI tool with no handler in sight calls
-// `eprint` / `now_unix_ms` directly and always will.
-//
-// Each method needs the target capability named in its comment
-// (`internal/pkg/platforms`): a target whose profile lacks it fails the build
-// with E066 rather than at run time. What a handler can call is therefore a
-// property of where it is going — the `wasi-http` proxy world grants log /
-// now / random / fetch / config and nothing else, so `.env` is a build error
-// there and deploy-time configuration arrives through `.config`.
+// This module defines platform capabilities for handlers.
 
 import "std/fetch";
 import "std/http/cookie";
@@ -34,168 +8,69 @@ import "std/net";
 import "std/http/trace";
 
 pub trait Platform {
-  // `.log(msg)` — write one diagnostic line to the platform's log sink.
-  // Needs the `log` capability. Newline-terminated; goes to stderr on every
-  // target that has one (a proxy-world component has no stdout, so this is
-  // the only output a handler gets).
   function log(self: Self, msg: string): void;
 
-  // `.now_ms()` — wall-clock milliseconds since the Unix epoch. Needs the
-  // `now` capability. Subject to clock adjustment: stamp a response with it,
-  // don't time anything with it — that's `.elapsed_ns()`.
   function now_ms(self: Self): i64;
 
-  // `.elapsed_ns()` — monotonically non-decreasing nanoseconds from an
-  // unspecified origin. Needs the `now` capability. The difference between
-  // two readings is an elapsed time regardless of what the wall clock did in
-  // between, which is what a handler's latency budget wants.
   function elapsed_ns(self: Self): i64;
 
-  // `.env(name)` — one variable from the invocation environment. Needs the
-  // `env` capability, which only a target with a process has. `Some("")` for
-  // a variable set to the empty string, `None` for one that is not set.
   function env(self: Self, name: string): Option[string];
 
-  // `.config(name)` — one deploy-time configuration value. Needs the
-  // `config` capability, which every target grants: the invocation
-  // environment where the target has one, and wasi:config/store on the proxy
-  // world (`wasmtime serve -S config -S config-var=NAME=VALUE`). `None` for a
-  // name the deployment does not set, and for a store that answers with an
-  // error.
   function config(self: Self, name: string): Option[string];
 
-  // `.secret(name)` — one deploy-time secret, read as `.config` reads, from
-  // the same source. A mock records the name it was asked for and never the
-  // value.
   function secret(self: Self, name: string): Option[string];
 
-  // `.random_i32()` — one uniformly random i32 from the platform CSPRNG.
-  // Needs the `random` capability.
   function random_i32(self: Self): i32;
 
-  // `.sleep(d)` — nothing for `d`. Needs the `now` capability. Under
-  // std/serve's loop the handler parks and the worker serves its other
-  // connections meanwhile; in a plain program it naps. What a producer
-  // that waits for its next chunk (std/http/sse) or a retry that backs
-  // off reaches for, so a simulated platform spends the time on its own
-  // clock instead.
   function sleep(self: Self, d: Duration): void;
 
-  // `.http(req)` — `req` sent and its response read. Needs the `fetch`
-  // capability. The host sends it with `fetch.send_public_on` over its own
-  // pool: a handler can fetch only through the platform it was handed,
-  // and only to a global address (`Blocked` otherwise), and a connection
-  // the peer kept open carries the platform's next request to the same
-  // place.
   function http(self: Self, req: fetch.Request): Result[HttpResponse, fetch.FetchError];
 
-  // `.stat(path)` — what the file system holds at `path`: whether it is a
-  // file or a directory, its size and its modification time. Needs the
-  // `fs` capability, which the wasi-http proxy world does not grant. A
-  // handler answers with a file's bytes without reading them, as a
-  // `BodyFile` or `BodyFileRanges` the serve loop sends.
   function stat(self: Self, path: string): Result[FileStat, IoError];
 
-  // `.peer()` — the address the request's connection came from: the
-  // socket's peer, or the client a PROXY protocol header named for it.
-  // None where the host does not say (the wasi-http proxy world). Behind
-  // a proxy this is the proxy; std/http/forwarded finds the client past
-  // the proxies a deployment trusts.
   function peer(self: Self): Option[net.SocketAddr];
 
-  // `.deadline()` — the `.elapsed_ns()` reading the request must be
-  // answered by, None for no bound. std/serve sets it from
-  // `Config.handler_deadline` and answers 503 in place of a response that
-  // comes later. A handler hands an upstream what is left of it.
   function deadline(self: Self): Option[i64];
 
-  // `.cancelled()` — whether nothing the handler does any more reaches the
-  // client: the client went away, or the deadline passed. Every wait answers
-  // at once from then on (`plat.http` with `Cancelled`), so work between
-  // waits asks here to stop early.
   function cancelled(self: Self): boolean;
 
-  // `.trace()` — the span this request runs in (std/http/trace), when the
-  // platform carries one: std/serve opens one per request when
-  // `Config.trace` asks, continuing the caller's trace from its
-  // `traceparent`. `.http` sends a child of it, so the trace follows the
-  // request upstream.
   function trace(self: Self): Option[trace.Context];
 }
 
-// `Host` — the platform that performs its effects on the machine it runs
-// on: what std/serve's accept loops hand a handler, built once per worker
-// loop over that worker's reactor, and what the wasi-http entry hands one,
-// with no reactor (0). `pool` is the connections its `http` keeps for the
-// next request to the same place (`fetch.Idle`), shared by every copy of
-// the platform and kept for as long as it lives: a worker loop's, in
-// std/serve. `jar` is the cookies its `http` carries and stores, as a
-// browser's would, once `with_jar` gave it one; None sends and keeps none.
-// `allow` is the hosts its `http` may reach, once `with_allow` named them;
-// None reaches any global address. `peer` is the connection's peer, which
-// std/serve sets per connection, and `deadline` and `trace` the request's,
-// which it sets per request.
 pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[i64], trace: Option[trace.Context] }
 
-// `host()` — a host platform with no reactor and an empty pool, for code
-// that has to build one: a test driving a handler directly, or a caller of
-// `serve.run` handing its own handler what the accept loop would.
-//
-//     let resp: HttpResponse = handle(req, platform.host());
 pub function host(): Host {
   return host_on(0);
 }
 
-// `host_on(reactor)` — the host platform of the worker whose reactor is
-// `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
   return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None, deadline: None, trace: None };
 }
 
-// `(h).with_pool(pool)` — the host whose `http` keeps its connections in
-// `pool`: std/serve hands its loop one that shares HTTP/2 connections
-// among the handlers it runs (`fetch.idle_shared`).
 pub function (h: Host) with_pool(pool: fetch.Idle): Host {
   return Host { ...h, pool: pool };
 }
 
-// `(h).with_peer(addr)` — the host answering `peer()` with `addr`: what
-// std/serve hands the handlers of one connection.
 pub function (h: Host) with_peer(addr: Option[net.SocketAddr]): Host {
   return Host { ...h, peer: addr };
 }
 
-// `(h).with_jar(jar)` — the host with `jar` (std/http/cookie): every
-// `http` request carries the cookies the jar holds for its URL and stores
-// what the response sets. `serve.Config { cookie_jar: true }` gives each
-// worker's host one.
 pub function (h: Host) with_jar(jar: cookie.Jar): Host {
   return Host { ...h, jar: Some(jar) };
 }
 
-// `(h).with_allow(a)` — the host whose `http` reaches only what `a`
-// (`fetch.allow`) names, every redirect hop included, refusing the rest as
-// `fetch.Blocked` before resolving or sending anything.
-// `serve.Config { http_allow }` gives each worker's host one.
 pub function (h: Host) with_allow(a: fetch.Allow): Host {
   return Host { ...h, allow: Some(a) };
 }
 
-// `(h).with_deadline(at)` — the host whose request is due by `at`, a
-// `monotonic_ns()` reading: what std/serve hands a handler when
-// `Config.handler_deadline` bounds it.
 pub function (h: Host) with_deadline(at: i64): Host {
   return Host { ...h, deadline: Some(at) };
 }
 
-// `(h).with_trace(span)` — the host whose request runs in `span`: what
-// std/serve hands a handler when `Config.trace` asks.
 pub function (h: Host) with_trace(span: trace.Context): Host {
   return Host { ...h, trace: Some(span) };
 }
 
-// `traced(req, span, random)` — `req` sent as a child of `span`, a fresh
-// span id drawn from `random`, unless the caller set its own `traceparent`.
 pub function traced(req: fetch.Request, span: Option[trace.Context], random: () => i32): fetch.Request {
   match (span) {
     Some(c) => {
@@ -211,8 +86,6 @@ pub function traced(req: fetch.Request, span: Option[trace.Context], random: () 
   return req;
 }
 
-// `passed(deadline, now)` — whether `now` has reached `deadline`; never for
-// None.
 pub function passed(deadline: Option[i64], now: i64): boolean {
   match (deadline) {
     Some(at) => {

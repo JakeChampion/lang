@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// avgI32OverflowProgram exercises the std/array `i32[].avg()` reduction
-// (issue #2687). The three elements sum to 2.4e9, which overflows i32
-// (> 2^31-1): the old `Some(sum() / n)` carried the running sum in i32, so it
-// wrapped to a NEGATIVE value BEFORE the divide and `avg()` returned a wrong
-// (negative) mean even though the true truncated mean (800000000) fits in i32.
-// avg() now accumulates in i64, so the mean is exact. main returns 0 iff the
-// mean is correct, so exit 0 means the pre-division overflow is fixed on every
-// backend.
 const avgI32OverflowProgram = `
 import "std/array";
 function main(): i32 {

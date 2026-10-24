@@ -1,32 +1,4 @@
-// std/metrics — counters, gauges and fixed-bucket histograms, their
-// Prometheus text exposition, the merge of several processes' expositions
-// into one, and an exporter that answers scrapes on a port of its own.
-//
-//     import "std/metrics";
-//
-//     let jobs: metrics.Counter = metrics.counter("jobs_total", "Jobs taken.");
-//     let took: metrics.Histogram = metrics.histogram("job_seconds", "How long a job ran.", metrics.duration_buckets());
-//     let reg: metrics.Registry = metrics.registry().with_counter(jobs).with_histogram(took);
-//     ...
-//     jobs.inc();
-//     took.observe(0.012);
-//     print(reg.render());
-//
-// A metric is a value whose number lives in a `Cell`, so every copy of it
-// counts into the same cell: a handler's closure holds the counter, the
-// registry holds it too, and `render` reads what the handler counted.
-// `serve.Config { metrics, metrics_port }` carries a program's registry
-// into std/serve: each worker renders its own (`ServerMetrics`, the
-// request-duration histogram and connection counts the loop itself
-// records, go beside it) once a second and ships the text to the
-// supervisor over a pipe, and the supervisor sums them (`merge`) and
-// answers `/metrics` on the metrics port, so a scrape never touches a
-// worker. The exposition is Prometheus's text format 0.0.4, which every
-// scraper reads.
-//
-// Prometheus names: a counter ends in `_total`, a histogram in its unit
-// (`_seconds`), and a label is `name="value"` (`label`), with the OTel
-// semantic conventions' names spelled with underscores.
+// This module collects and exports counters, gauges, and histograms in Prometheus text format.
 
 import "std/async";
 import "std/http";
@@ -36,26 +8,16 @@ import "std/net";
 import "std/f64";
 import "std/string";
 
-// `Counter` — a number that only grows. `labels` is the label set, as
-// `label` writes one, or "" for none.
 pub struct Counter { name: string, help: string, labels: string, value: Cell[i64] }
 
-// `Gauge` — a number that goes both ways.
 pub struct Gauge { name: string, help: string, labels: string, value: Cell[i64] }
 
-// `Histogram` — observations counted into fixed buckets: `counts[i]` is
-// how many were at most `bounds[i]`, and one more bucket past the last
-// bound takes the rest (`+Inf`). `sum` and `count` are over every
-// observation.
 pub struct Histogram { name: string, help: string, labels: string, bounds: f64[], counts: Cell[i64][], sum: Cell[f64], count: Cell[i64] }
 
-// `counter(name, help)` — a counter at 0.
 pub function counter(name: string, help: string): Counter {
   return Counter { name: name, help: help, labels: "", value: cell_new(0 as i64) };
 }
 
-// `(c).with_labels(labels)` — a fresh counter of the same name under
-// `labels` (`label` / `labels`), counting on its own.
 pub function (c: Counter) with_labels(labels: string): Counter {
   return Counter { name: c.name, help: c.help, labels: labels, value: cell_new(0 as i64) };
 }
@@ -72,7 +34,6 @@ pub function (c: Counter) get(): i64 {
   return c.value.get();
 }
 
-// `gauge(name, help)` — a gauge at 0.
 pub function gauge(name: string, help: string): Gauge {
   return Gauge { name: name, help: help, labels: "", value: cell_new(0 as i64) };
 }
@@ -97,8 +58,6 @@ pub function (g: Gauge) get(): i64 {
   return g.value.get();
 }
 
-// `histogram(name, help, bounds)` — a histogram over `bounds`, which must
-// ascend; `duration_buckets()` for a latency in seconds.
 pub function histogram(name: string, help: string, bounds: f64[]): Histogram {
   let counts: Cell[i64][] = [];
   let i: i32 = 0;
@@ -113,13 +72,10 @@ pub function (h: Histogram) with_labels(labels: string): Histogram {
   return Histogram { ...histogram(h.name, h.help, h.bounds), labels: labels };
 }
 
-// `duration_buckets()` — OpenTelemetry's buckets for
-// `http.server.request.duration`, in seconds.
 pub function duration_buckets(): f64[] {
   return [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0];
 }
 
-// `(h).observe(x)` — one observation.
 pub function (h: Histogram) observe(x: f64): void {
   let i: i32 = 0;
   while (i < h.bounds.len() && x > h.bounds[i]) {
@@ -139,13 +95,10 @@ pub function (h: Histogram) sum(): f64 {
   return h.sum.get();
 }
 
-// `label(name, value)` — one label, `name="value"`, the value escaped as
-// the exposition format wants (`\\`, `\"` and `\n`).
 pub function label(name: string, value: string): string {
   return name + "=\"" + __escape(value, true) + "\"";
 }
 
-// `labels(parts)` — several labels joined, `a="1",b="2"`.
 pub function labels(parts: string[]): string {
   let out: string = "";
   let i: i32 = 0;
@@ -159,8 +112,6 @@ pub function labels(parts: string[]): string {
   return out;
 }
 
-// __escape(s, quotes) — backslash and newline escaped, and the double
-// quote too in a label value (a help text keeps its quotes).
 function __escape(s: string, quotes: boolean): string {
   let out: string = "";
   let i: i32 = 0;
@@ -180,7 +131,6 @@ function __escape(s: string, quotes: boolean): string {
   return out;
 }
 
-// `Registry` — the metrics a program exposes, in registration order.
 pub struct Registry { counters: Counter[], gauges: Gauge[], histograms: Histogram[] }
 
 pub function registry(): Registry {
@@ -199,8 +149,6 @@ pub function (r: Registry) with_histogram(h: Histogram): Registry {
   return Registry { ...r, histograms: r.histograms.append(h) };
 }
 
-// `(r).render()` — the registry in the text exposition format: `# HELP`
-// and `# TYPE` once per metric name, then its samples.
 pub function (r: Registry) render(): string {
   let out: string = "";
   let seen: string[] = [];
@@ -228,8 +176,6 @@ pub function (r: Registry) render(): string {
   return out;
 }
 
-// __head(name, help, kind, seen) — the HELP and TYPE lines, unless the
-// name has had them.
 function __head(name: string, help: string, kind: string, seen: string[]): string {
   let i: i32 = 0;
   while (i < seen.len()) {
@@ -241,7 +187,6 @@ function __head(name: string, help: string, kind: string, seen: string[]): strin
   return "# HELP " + name + " " + __escape(help, false) + "\n# TYPE " + name + " " + kind + "\n";
 }
 
-// __sample(name, labels, value) — one sample line.
 function __sample(name: string, labels: string, value: string): string {
   if (labels.len() == 0) {
     return name + " " + value + "\n";
@@ -249,8 +194,6 @@ function __sample(name: string, labels: string, value: string): string {
   return name + "{" + labels + "} " + value + "\n";
 }
 
-// `(h).render_samples()` — the histogram's cumulative `_bucket` lines
-// (`+Inf` last), its `_sum` and its `_count`.
 pub function (h: Histogram) render_samples(): string {
   let out: string = "";
   let running: i64 = 0 as i64;
@@ -267,8 +210,6 @@ pub function (h: Histogram) render_samples(): string {
   return out + __sample(h.name + "_sum", h.labels, h.sum.get().to_string()) + __sample(h.name + "_count", h.labels, h.count.get().to_string());
 }
 
-// __comma(labels) — how many leading bytes `labels([labels, more])` wastes
-// on an empty `labels`: the comma it would start with.
 function __comma(labels: string): i32 {
   if (labels.len() == 0) {
     return 1;
@@ -276,19 +217,12 @@ function __comma(labels: string): i32 {
   return 0;
 }
 
-// `ServerMetrics` — what std/serve's loop records on its own: the request
-// duration histogram under the OpenTelemetry conventions, by method and
-// status, and the connections accepted and open. `request` finds or adds
-// the histogram for a method and status; a copy of the value shares every
-// cell, so the loop keeps the one `request` returns.
 pub struct ServerMetrics { methods: string[], statuses: i32[], durations: Histogram[], accepted: Counter, open: Gauge }
 
 pub function server_metrics(): ServerMetrics {
   return ServerMetrics { methods: [], statuses: [], durations: [], accepted: counter("http_server_connections_accepted_total", "Connections accepted."), open: gauge("http_server_open_connections", "Connections open.") };
 }
 
-// `(m).request(method, status, ns)` — a request of `method` answered
-// `status` after `ns` nanoseconds, observed in seconds.
 pub function (m: ServerMetrics) request(method: string, status: i32, ns: i64): ServerMetrics {
   let k: i32 = 0;
   while (k < m.methods.len()) {
@@ -310,7 +244,6 @@ function __seconds(ns: i64): f64 {
   return ns as f64 / 1000000000.0;
 }
 
-// `(m).render()` — the server metrics in the exposition format.
 pub function (m: ServerMetrics) render(): string {
   let r: Registry = registry().with_counter(m.accepted).with_gauge(m.open);
   let k: i32 = 0;
@@ -321,12 +254,8 @@ pub function (m: ServerMetrics) render(): string {
   return r.render();
 }
 
-// `EOF` — the line a snapshot ends with, so a reader of a stream of them
-// knows where one stops; OpenMetrics' closing line.
 pub const EOF: string = "# EOF\n";
 
-// `frames(buf)` — the complete snapshots in `buf`, each less its EOF line,
-// and what follows the last of them.
 pub function frames(buf: string): (string[], string) {
   let out: string[] = [];
   let rest: string = buf;
@@ -340,14 +269,8 @@ pub function frames(buf: string): (string[], string) {
   return (out, rest);
 }
 
-// `Merged` — several expositions summed: each metric name's HELP and
-// TYPE as first seen, each sample key (`name{labels}`) with its values
-// added, integers as integers and anything else as a float.
 struct __Merged { names: string[], heads: string[], keys: string[], ints: i64[], floats: f64[], is_float: boolean[] }
 
-// `merge(parts)` — one exposition summing `parts`: the metric names in
-// the order first seen, each with the HELP and TYPE it first came with,
-// then its samples in the order first seen.
 pub function merge(parts: string[]): string {
   let m: __Merged = __Merged { names: [], heads: [], keys: [], ints: [], floats: [], is_float: [] };
   let i: i32 = 0;
@@ -379,8 +302,6 @@ function __merge_line(m: __Merged, line: string): __Merged {
   return __merge_sample(m, line.take(sp), line.drop(sp + 1));
 }
 
-// __merge_head(m, line) — a `# HELP name …` or `# TYPE name …` line kept
-// for its metric name, the first of each kind winning.
 function __merge_head(m: __Merged, line: string): __Merged {
   let words: string[] = line.split(" ");
   if (words.len() < 3 || words[1] != "HELP" && words[1] != "TYPE") {
@@ -464,8 +385,6 @@ function __index_of_str(xs: string[], x: string): i32 {
   return -1;
 }
 
-// __merged_text(m) — the merged exposition: each name's heads, then the
-// samples that belong to it; samples of no declared name last.
 function __merged_text(m: __Merged): string {
   let out: string = "";
   let placed: boolean[] = [];
@@ -504,8 +423,6 @@ function __merged_sample(m: __Merged, k: i32): string {
   return m.keys[k] + " " + m.ints[k].to_string() + "\n";
 }
 
-// __family_of(key) — the metric name a sample key belongs to: the name
-// before its labels, less a histogram's `_bucket`, `_sum` or `_count`.
 function __family_of(key: string): string {
   let name: string = key;
   if let Some(brace) = key.index_of("{") {
@@ -523,17 +440,8 @@ function __family_of(key: string): string {
   return name;
 }
 
-// `Exporter` — a listener answering scrapes: each connection's request is
-// read as it arrives, its target's path handed to the caller's `answer`,
-// the response written and the connection closed, so a scraper needs
-// nothing of the serve loop. The listener and the connections are
-// non-blocking and watched on the caller's reactor; `owns` says whether a
-// readiness event is the exporter's, and `wake` acts on it.
 pub struct Exporter { listener: i32, scrapes: i32[], heads: string[] }
 
-// `listen(drv, port)` — an exporter on `port`, on every interface of both
-// families where the host has IPv6, watched on `drv`; or the error the bind
-// or the watch failed with.
 pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.NetError] {
   let fd: i32 = __listen_any(port);
   if (fd < 0) {
@@ -558,7 +466,6 @@ function __listen_any(port: i32): i32 {
   return tcp_listen_with(v4, port, 16, false);
 }
 
-// `(e).port()` — the port the exporter listens on.
 pub function (e: Exporter) port(): i32 {
   return tcp_local_port(e.listener);
 }
@@ -578,13 +485,6 @@ function __index_of_i32(xs: i32[], x: i32): i32 {
   return -1;
 }
 
-// `(e).wake(drv, fd, answer)` — the readiness event on `fd` acted on: a
-// connection accepted (one per event, so a listener whose host ignores
-// the non-blocking flag never blocks in a second accept; the readiness is
-// level-triggered and reports the rest), or a connection's bytes read and,
-// once its request head is whole (or past 8 KiB, or the peer is done),
-// answered with `answer(path)` and closed; one whose read fails is closed
-// unanswered.
 pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (string) => HttpResponse): Exporter {
   if (fd == e.listener) {
     return e.accept(drv);
@@ -630,8 +530,6 @@ function (e: Exporter) accept[D: async.Driver](drv: D): Exporter {
   return Exporter { ...e, scrapes: e.scrapes.append(fd), heads: e.heads.append("") };
 }
 
-// __answer(fd, head, answer) — the response to the request head, or 400
-// for what is not one, written whole and marked `Connection: close`.
 function __answer(fd: i32, head: string, answer: (string) => HttpResponse): void {
   let resp: HttpResponse = http.text(400, "");
   match (__path_of(head)) {
@@ -643,8 +541,6 @@ function __answer(fd: i32, head: string, answer: (string) => HttpResponse): void
   let sent: Result[i32, net.NetError] = net.write(fd, http.http_serialize_response_conn(resp, false).bytes());
 }
 
-// __path_of(head) — the path of the request line's target, less its
-// query; None for a line that is not `METHOD target HTTP/…`.
 function __path_of(head: string): Option[string] {
   let Some(eol) = head.index_of("\r\n") else {
     return None;
@@ -659,7 +555,6 @@ function __path_of(head: string): Option[string] {
   return Some(words[1]);
 }
 
-// `(e).close(drv)` — the listener and every connection closed.
 pub function (e: Exporter) close[D: async.Driver](drv: D): void {
   let i: i32 = 0;
   while (i < e.scrapes.len()) {
@@ -695,16 +590,10 @@ function __without_str(xs: string[], at: i32): string[] {
   return out;
 }
 
-// `exposition(body)` — the `/metrics` response: the text under the
-// content type scrapers expect, never cached.
 pub function exposition(body: string): HttpResponse {
   return http.text(200, body).with_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8").with_header("Cache-Control", "no-store");
 }
 
-// `scrape(path, body, ready)` — the exporter's answer for the three paths
-// an operator's probes ask: `/metrics` is `body()`, `/healthz` is 200
-// while the process answers at all, `/readyz` is 200 while `ready` and
-// 503 once it is not (a shutdown has begun); anything else is 404.
 pub function scrape(path: string, body: () => string, ready: boolean): HttpResponse {
   if (path == "/metrics") {
     return exposition(body());

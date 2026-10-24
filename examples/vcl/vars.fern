@@ -1,51 +1,25 @@
-// examples/vcl/vars.fern — VCL's variable namespace and its scoping.
-//
-// VCL variables are not free-floating: each is legal to READ in some
-// subroutines and to WRITE in a smaller set, and getting that wrong is
-// the most common real VCL bug. `req` is not available while fetching
-// from a backend — that is what `bereq` is for — and reaching for
-// `beresp` outside a backend-response subroutine is the same mistake
-// from the other side.
-//
-// So the table below is the point of this module, and `read` / `write`
-// consult it before touching the transaction at all. It encodes the
-// well-known distinctions (req vs bereq, beresp only in the backend
-// response subroutines, resp only in deliver and synth, obj only on a
-// hit) rather than Varnish's complete per-variable matrix; what is here
-// is enforced, and an unknown name is rejected rather than silently read
-// as empty.
-//
-// A `call`ed subroutine runs in its CALLER's context, so every check
-// takes the enclosing `vcl_*` method rather than the name of whatever
-// custom subroutine happens to be executing.
 import "std/string";
 import "std/i64";
 import "std/f64";
 import "./value";
 import "./runtime";
 
-// The client-side subroutines, where `req` lives.
 pub function client_subs(): string[] {
   return ["vcl_recv", "vcl_pipe", "vcl_pass", "vcl_hash", "vcl_purge", "vcl_miss", "vcl_hit", "vcl_deliver", "vcl_synth"];
 }
 
-// The backend-side subroutines, where `bereq` lives.
 pub function backend_subs(): string[] {
   return ["vcl_backend_fetch", "vcl_backend_response", "vcl_backend_error"];
 }
 
-// Where a fetched response is still in hand and `beresp` is writable.
 function beresp_subs(): string[] {
   return ["vcl_backend_response", "vcl_backend_error"];
 }
 
-// Where the request line may still be rewritten.
 function req_write_subs(): string[] {
   return ["vcl_recv", "vcl_pipe", "vcl_pass", "vcl_miss", "vcl_hit"];
 }
 
-// `bereq` is also reachable from vcl_pipe, which hands the connection
-// straight to the backend.
 function bereq_subs(): string[] {
   return ["vcl_backend_fetch", "vcl_backend_response", "vcl_backend_error", "vcl_pipe"];
 }
@@ -60,8 +34,6 @@ function none_of(): string[] {
   return e;
 }
 
-// One entry in the namespace. `is_prefix` marks a header set: the name
-// `req.http.` matches `req.http.Host` and every other suffix.
 pub struct VarSpec { name: string, is_prefix: boolean, read_in: string[], write_in: string[] }
 
 function scalar(name: string, r: string[], w: string[]): VarSpec {
@@ -72,9 +44,6 @@ function headers(name: string, r: string[], w: string[]): VarSpec {
   return VarSpec { name: name, is_prefix: true, read_in: r, write_in: w };
 }
 
-// The namespace. Read-only entries carry an empty write set, which is
-// what makes `set obj.hits = 1;` an error naming the variable rather
-// than a silent no-op.
 pub function var_table(): VarSpec[] {
   return [scalar("req.method", client_subs(), req_write_subs()), scalar("req.url", client_subs(), req_write_subs()), scalar("req.proto", client_subs(), none_of()), scalar("req.backend_hint", client_subs(), ["vcl_recv", "vcl_pass", "vcl_miss", "vcl_hit"]), headers("req.http.", client_subs(), client_subs()), scalar("bereq.method", bereq_subs(), bereq_subs()), scalar("bereq.url", bereq_subs(), bereq_subs()), scalar("bereq.proto", bereq_subs(), bereq_subs()), headers("bereq.http.", bereq_subs(), bereq_subs()), scalar("beresp.status", beresp_subs(), beresp_subs()), scalar("beresp.reason", beresp_subs(), beresp_subs()), scalar("beresp.proto", beresp_subs(), beresp_subs()), scalar("beresp.ttl", beresp_subs(), beresp_subs()), scalar("beresp.grace", beresp_subs(), beresp_subs()), scalar("beresp.keep", beresp_subs(), beresp_subs()), scalar("beresp.uncacheable", beresp_subs(), beresp_subs()), headers("beresp.http.", beresp_subs(), beresp_subs()), scalar("resp.status", deliver_subs(), deliver_subs()), scalar("resp.reason", deliver_subs(), deliver_subs()), scalar("resp.proto", deliver_subs(), deliver_subs()), headers("resp.http.", deliver_subs(), deliver_subs()), scalar("obj.status", ["vcl_hit"], none_of()), scalar("obj.reason", ["vcl_hit"], none_of()), scalar("obj.ttl", ["vcl_hit"], none_of()), scalar("obj.hits", ["vcl_hit", "vcl_deliver"], none_of()), headers("obj.http.", ["vcl_hit"], none_of()), scalar("client.ip", client_subs(), none_of()), scalar("server.ip", client_subs(), none_of())];
 }
@@ -90,7 +59,6 @@ function in_list(s: string, items: string[]): boolean {
   return false;
 }
 
-// find_spec resolves a written name to its table entry.
 pub function find_spec(name: string): Option[VarSpec] {
   let t: VarSpec[] = var_table();
   let i: i32 = 0;
@@ -108,13 +76,10 @@ pub function find_spec(name: string): Option[VarSpec] {
   return None;
 }
 
-// suffix_of returns the header name from a full variable name.
 function suffix_of(name: string, prefix: string): string {
   return slice_unchecked(name, prefix.len(), name.len()).to_owned();
 }
 
-// is_var reports whether a name denotes a variable at all, which is how
-// the evaluator tells `req.url` from a bare backend or ACL name.
 pub function is_var(name: string): boolean {
   match (find_spec(name)) {
     Some(s) => {
@@ -126,7 +91,6 @@ pub function is_var(name: string): boolean {
   }
 }
 
-// ---------------------------------------------------------------- reading
 function read_req(t: runtime.Txn, name: string): value.Value {
   if (name == "req.method") {
     return VString(t.req.method);
@@ -210,8 +174,6 @@ function read_obj(t: runtime.Txn, name: string): value.Value {
   return t.obj.headers.get(suffix_of(name, "obj.http."));
 }
 
-// read fetches a variable, refusing one that the current subroutine may
-// not see.
 pub function read(t: runtime.Txn, sub: string, name: string): Result[value.Value, string] {
   match (find_spec(name)) {
     None => {
@@ -248,7 +210,6 @@ function read_dispatch(t: runtime.Txn, name: string): value.Value {
   return VString(t.server_ip);
 }
 
-// ---------------------------------------------------------------- writing
 function write_req(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
   if (name == "req.method") {
     return runtime.Txn { ...t, req: runtime.Msg { ...t.req, method: value.to_str(v) } };
@@ -277,8 +238,6 @@ function write_bereq(t: runtime.Txn, name: string, v: value.Value): runtime.Txn 
   return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: h } };
 }
 
-// as_int coerces an assigned value for an INT-typed variable. Public
-// because compiled code performs the same coercion inline.
 pub function as_int(v: value.Value): i64 {
   match (v) {
     VInt(n) => {
@@ -306,8 +265,6 @@ pub function as_int(v: value.Value): i64 {
   }
 }
 
-// as_secs coerces an assigned value for a DURATION-typed variable. Public
-// for the same reason as as_int.
 pub function as_secs(v: value.Value): f64 {
   match (v) {
     VDuration(d) => {
@@ -365,8 +322,6 @@ function write_resp(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
   return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: h } };
 }
 
-// assign stores a variable, refusing one the current subroutine may not
-// modify — including one that is read-only everywhere, like `obj.hits`.
 pub function assign(t: runtime.Txn, sub: string, name: string, v: value.Value): Result[runtime.Txn, string] {
   match (find_spec(name)) {
     None => {
@@ -397,8 +352,6 @@ function write_dispatch(t: runtime.Txn, name: string, v: value.Value): runtime.T
   return write_resp(t, name, v);
 }
 
-// unset removes a header. VCL only allows it on header sets — `unset
-// req.url` is meaningless — so a scalar is rejected by name.
 pub function unset(t: runtime.Txn, sub: string, name: string): Result[runtime.Txn, string] {
   match (find_spec(name)) {
     None => {

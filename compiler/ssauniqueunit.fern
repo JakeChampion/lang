@@ -1,7 +1,3 @@
-// Independent final-text binding for a uniqueness leaf library collection.
-// This scope excludes exports, inter-function calls, runtime code and nonempty
-// pools. It inherits check_body's explicit pointer/header and stack ABI.
-// No retained body text, site spans or allocation are used as proof inputs.
 import "./ssa";
 import "./ssauniquecaller" as caller;
 import "./ssacredithelper" as helper;
@@ -17,9 +13,6 @@ function refuse(name: string): helper.Proof {
   return helper.Proof { ok: false, function_name: name, message: "unproved uniqueness final unit" };
 }
 
-// These sections contain only a self-address anchor and empty table bounds.
-// Accepting a precise grammar prevents a data directive from changing the
-// section or assembler interpretation of the executable body.
 function empty_pools(): string {
   return ".section .data\n.align 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.align 8\n.Lfern_sbox_begin:\n.section .data\n.Lfern_sbox_end:\n.align 8\n.Lfern_cagg_begin:\n.section .data\n.Lfern_cagg_end:\n.align 8\n.Lfern_cfn_begin:\n.section .data\n.Lfern_cfn_end:\n.align 8\n.Lfern_cref_begin:\n.Lfern_cref_end:\n.text\n";
 }
@@ -45,7 +38,6 @@ function text_unit(output: string, architecture: string): Unit {
   for raw in output.split("\n") {
     let line = util.trim(raw);
     if (line != "") {
-      // Body and pool labels share one assembler namespace.
       if (line.ends_with(":")) {
         labels = labels.append(line);
       }
@@ -77,14 +69,10 @@ function text_unit(output: string, architecture: string): Unit {
   return Unit { lines: body, ok: true };
 }
 
-// Resolve by the supplied final graph's exact symbol, never by retained body
-// text or collection position. Every supplied function must occur once.
 pub function check_collection(output: string, architecture: string, functions: ssa.SFunc[]): helper.Proof {
   return collection(output, architecture, functions, []);
 }
 
-// Selected parameter ABI and final SSA come from the supplied rows. Actual
-// instructions come only from output, under the same complete unit grammar.
 pub function check_selected_collection(output: string, architecture: string, rows: ssaprepare.Emitted[]): helper.Proof {
   if (rows.len() == 0) {
     return refuse("");
@@ -106,9 +94,6 @@ pub function check_selected_collection(output: string, architecture: string, row
 
 function body_proof(body: string[], architecture: string, f: ssa.SFunc, rows: ssaprepare.Emitted[], position: i32): helper.Proof {
   if (rows.len() > 0) {
-    // The complete sanitized row namespace was checked before collection.
-    // Its exact-function index retains original row positions. Singleton
-    // binding still checks this row's exact label, ABI and final graph.
     return caller.check_selected_lines(body, [rows[position]], f.name, architecture);
   }
   return caller.check_lines(body, architecture, f);

@@ -1,4 +1,4 @@
-// Struct literal naming a field the struct doesn't declare.
+
 struct Point { x: i32, y: i32 }
 
 function main(): i32 {

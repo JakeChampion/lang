@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// semsink: a child read above the block where its parent dies is re-read
-// there, so the plan takes it out of the box instead of borrowing it. `bump`
-// descends the left spine of a tree: the payloads are read before the colour
-// test and the leaf test, and the arm that rebuilds the node lies below both,
-// where the node dies. Borrowed, the child handed to the next level carried a
-// second count, so every level found its node shared and copied the path;
-// taken, a unique tree is updated in place at every depth.
-//
-// `shared` keeps the previous tree alive across each update, so every update
-// must copy the path and leave the old tree's values intact.
 func projectionRereadSrc(rounds int, shared bool) string {
 	keep := "let old: i32 = leftmost(t);"
 	check := "old != i"
@@ -101,7 +91,6 @@ func checkProjectionReread(t *testing.T, target string, run censusRun) {
 	if lo, hi := census(100, false), census(400, false); lo != hi {
 		t.Errorf("%s unique: %d allocations at 100 rounds and %d at 400, want the same: a level found its node shared", target, lo, hi)
 	}
-	// A kept tree is copied along the whole 20-node path on every update.
 	if lo, hi := census(100, true), census(400, true); hi-lo != 300*20 {
 		t.Errorf("%s shared: %d allocations at 100 rounds and %d at 400, want %d more: a retained tree must be copied", target, lo, hi, 300*20)
 	}

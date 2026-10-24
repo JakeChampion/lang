@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// A FRESH call-result temp handed to a BORROWED parameter that the callee
-// stores into a variant-constructor payload was never released. emitEnumNew
-// inc's the payload, so the temp sat at rc 2, and the caller emitted no
-// post-call release because paramCountedRetain had no rule crediting a
-// variant-constructor store. `wrap(ins(l, k), k, r)` stranded the `ins(l, k)`
-// node on every ordered-map insert whose node holds a string key; a heap
-// string temp and an array temp into a payload leaked the same way.
-//
-// The credit now mirrors emitEnumNew's inc gate exactly, and a variant
-// construction counts as a fresh box in findReturnsFreshBox, so the local an
-// insert binds to the recursive result stays reclaimable.
-//
-// Each case is loop-resident and measured at three counts, and the exit code
-// folds in `__rc_underflow_count()` because a census is blind to an
-// over-release — the real hazard of a new credit. `@noinline` keeps the
-// argument temp in existence (docs/TEST-GATES.md).
 const variantPayloadPrelude = `import "std/i32";
 enum T { Leaf, Node(T, string, T) }
 enum A { ALeaf, ANode(A, i32[], A) }
@@ -53,27 +37,19 @@ function depth(t: T): i32 {
 }
 `
 
-// The reported shape: an enum temp into a payload of a string-keyed node.
 const variantPayloadEnumTempBody = variantPayloadPrelude + `
 function round(i: i32): i32 { return keylen(wrap(mk(i), "k", Leaf)); }
 `
 
-// A heap string temp (past the 7-byte inline threshold) into the payload.
-// The key is 10 bytes plus the digits of i; digits(i) makes the round's
-// value 1 regardless.
 const variantPayloadStrTempBody = variantPayloadPrelude + `
 function digits(i: i32): i32 { if (i >= 100) { return 3; } if (i >= 10) { return 2; } return 1; }
 function round(i: i32): i32 { return keylen(wrap(Leaf, "key-value-" + i.to_string(), Leaf)) - 9 - digits(i); }
 `
 
-// An array temp into the payload.
 const variantPayloadArrTempBody = variantPayloadPrelude + `
 function round(i: i32): i32 { return arrlen(wrapa(ALeaf, mkarr(i), ALeaf)) - 2; }
 `
 
-// The payload source is a local READ AFTER the call, so no move applies and
-// the construction's inc is what keeps it alive: an over-release here reads
-// freed memory, caught by the value check and the underflow counter.
 const variantPayloadLiveBody = variantPayloadPrelude + `
 function round(i: i32): i32 {
     let l: T = mk(i);
@@ -82,9 +58,6 @@ function round(i: i32): i32 {
 }
 `
 
-// The ordered-map insert chain: a recursive insert binds its result to a local
-// and hands it to a node-building helper — the `let nl = node_insert(l, k, v);
-// return node_balance(nl, ..)` shape. Four inserts build a left spine of depth 4.
 const variantPayloadInsertBody = variantPayloadPrelude + `
 function round(i: i32): i32 {
     let t: T = Leaf;

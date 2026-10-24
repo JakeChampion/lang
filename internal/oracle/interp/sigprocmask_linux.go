@@ -7,10 +7,6 @@ import (
 	"unsafe"
 )
 
-// sigprocmaskSwap is rt_sigprocmask(2): it applies `how` — already in
-// Linux's numbering, which IS Fern's — to the mask and answers the one it
-// replaced. The sigset is the 8-byte word the i64 mask convention writes,
-// and sigsetsize 8 is what the kernel demands for that layout.
 func sigprocmaskSwap(how uintptr, mask int64) (int64, syscall.Errno) {
 	var newset, oldset [8]byte
 	*(*int64)(unsafe.Pointer(&newset[0])) = mask

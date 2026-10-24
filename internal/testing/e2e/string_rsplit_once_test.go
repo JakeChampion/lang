@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.rsplit_once — split at the LAST
-// occurrence of the separator (the mirror of split_once, which splits at the
-// first). Exercises multi-occurrence (last wins), no-match, empty-sep,
-// separator at the very start / very end, and a multi-char separator. Returns
-// 42 iff every check holds across interp / x86-64 / wasm / arm64. The result is
-// Option[(string, string)] (string payloads, not i64), so the wasmbin enum-i64
-// gap doesn't apply — split_once uses the same shape.
 const stringRsplitOnceProg = `
 import "std/string";
 function chk(o: Option[(string, string)], h: string, t: string): boolean {

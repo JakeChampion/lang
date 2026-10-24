@@ -1,8 +1,8 @@
-// Element-polymorphic methods: an owned-array (`T[]`) or slice (`[T]`)
-// receiver binds the element type variable, inferred from the receiver
-// at the call site — so one method body works for `i32[]`, `string[]`,
-// etc. Combined with generic-enum methods this makes Option-style
-// combinators and closure-taking collection methods writable.
+
+
+
+
+
 function (xs: T[]) first(): T { return xs[0]; }
 function (xs: [T]) head(): T { return xs[0]; }
 function (xs: T[]) count_where(pred: (T) => boolean): i32 {
@@ -21,9 +21,9 @@ function main(): i32 {
     let sl: [i32] = a[0:3];
     let some: Opt[i32] = Has(9);
     let none: Opt[i32] = Nil;
-    return a.first()                  // 3
-         + sl.head()                  // 3
-         + a.count_where(is_pos)      // 3,5 -> 2
-         + some.unwrap_or(0)          // 9
-         + none.unwrap_or(7);         // 7  -> 24
+    return a.first()
+         + sl.head()
+         + a.count_where(is_pos)
+         + some.unwrap_or(0)
+         + none.unwrap_or(7);
 }

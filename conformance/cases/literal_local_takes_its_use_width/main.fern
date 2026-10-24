@@ -1,6 +1,6 @@
-// An unannotated local seeded by an untyped integer takes the one integer type
-// its uses settle (#10123). The range loop variable here is a u64 because it is
-// a u64 shift count, so the shift reaches bit 63 instead of wrapping at 32.
+
+
+
 function main(): i32 {
     let t: i64 = 0 as i64;
     for i in 0..64 {
@@ -9,20 +9,20 @@ function main(): i32 {
     }
     if (t != -1i64) { return 1; }
 
-    // Read at i64 once, so it is an i64 everywhere: the add does not wrap.
+
     let x = 2147483647;
     x = x + 1;
     let wide: i64 = x;
     if (wide != 2147483648i64) { return 2; }
 
-    // A local seeded from another literal local shares its type.
+
     let k = 7;
     let m = k + 1;
     let shifted: u64 = (1 as u64) << m;
     if (shifted != 256u64) { return 3; }
     if (k != 7) { return 4; }
 
-    // No use fixes a width: i32, and the arithmetic wraps at 32 bits.
+
     let n = 2147483647;
     n = n + 1;
     if (n >= 0) { return 5; }

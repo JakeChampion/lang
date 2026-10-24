@@ -1,40 +1,11 @@
-// std/http — HTTP/1.1 request parsing, response building, and
-// serialization. Helpers that compose on top of the runtime's
-// raw `tcp_*` socket primitives so user code (and the
-// auto-synthesised handler `main()`) can do
-// request → response work without rolling its own parser.
-//
-// No prelude: callers now `import "std/http";` explicitly
-// (docs/PRELUDE-TO-MODULES.md, Phase 5).
-//
-// Scope: HTTP/1.1 and HTTP/1.0, request bodies delimited by
-// Content-Length or by chunked transfer coding (trailers into
-// `request.trailers`); a request line of at most 8 KiB, a header block of at most
-// 32 KiB and 100 fields, a body of at most 1 MiB with at most 32 KiB of
-// chunk framing, and no lenient mode: a malformed request is refused
-// (RFC 9112 §2.2, §3.2, §5, §6.1, §6.3, §7.1), never repaired, with the
-// status the serve loop answers it with.
-// Persistent connections are the serve loop's: `http_parse_request_framed`
-// says how many bytes a request occupied and whether the connection
-// outlives it, and `http_serialize_response_conn` writes the `Connection`
-// the loop decided. Responses are Content-Length-delimited. No TLS.
+// This module parses HTTP/1.1 requests and constructs responses.
 
 import "core/int";
 import "core/map";
-// std/http's bodies dispatch (string) methods all over the
-// request parser and response builder — `.index_of()`,
-// `.split()`, `.trim()`, `.to_lower()`, etc. Declare std/string
-// so those receiver methods register under no-prelude.
 import "std/string";
-// std/headers backs the HttpRequest.headers field — header_map_new
-// for the parse-request entry placeholder, append for populating
-// from the parsed header block.
 import "std/headers";
 import "std/io_buffered" as io_buffered;
 import "std/json";
-// std/stream backs the HttpRequest.body field — stream_from_string
-// to wrap a parsed body, and the cursor readers the whole-body
-// shims below run over it.
 import "std/stream";
 import "std/error";
 import "std/platform";
@@ -42,10 +13,6 @@ import "std/url";
 import "std/utf8" as utf8;
 import "core/cmp";
 
-// `http_status_text(code)` — the IANA reason phrase for every status
-// code RFC 9110 defines, plus the registered ones the standard library
-// sends (418, 422, 428, 429, 431, 511). Returns "" for an unknown code;
-// a caller falls back to a generic phrase rather than emitting nothing.
 pub function http_status_text(code: i32): string {
   let codes: i32[] = [
     100, 101, 200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 304, 305, 307, 308,
@@ -67,23 +34,10 @@ pub function http_status_text(code: i32): string {
   return "";
 }
 
-// `is_valid_http_status(code)` — true if code is in the RFC
-// 9110 range of [100, 599]. The full HTTP status range is
-// 100..999 by the BNF but only the first three centuries
-// have semantic meaning; servers shouldn't emit codes
-// outside [100, 599].
 pub function is_valid_http_status(code: i32): boolean {
   return code >= 100 && code <= 599;
 }
 
-// Status-class predicates — the RFC 9110 §15 response classes, for
-// branching on a response code without hard-coding range bounds at
-// every call site (`if (http_is_success(resp.status)) { … }`). Each
-// tests the code's leading digit / century:
-//   1xx informational, 2xx success, 3xx redirect,
-//   4xx client error, 5xx server error.
-// A code outside [100, 599] belongs to no class, so every predicate is
-// false for it.
 pub function http_is_informational(code: i32): boolean {
   return code >= 100 && code <= 199;
 }
@@ -104,17 +58,10 @@ pub function http_is_server_error(code: i32): boolean {
   return code >= 500 && code <= 599;
 }
 
-// `http_is_error(code)` — client OR server error (4xx / 5xx), the
-// common "did the request fail?" check.
 pub function http_is_error(code: i32): boolean {
   return code >= 400 && code <= 599;
 }
 
-// `ok(body)` — 200 OK with the given body.
-// `text(status, body)` — explicit status code.
-// `not_found()` — common 404 builder.
-// Saves the `HttpResponse { status: 200, body: ..., background: None }` boiler-
-// plate at every handler call site.
 pub function ok(body: string): HttpResponse {
   return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
@@ -127,123 +74,57 @@ pub function not_found(): HttpResponse {
   return HttpResponse { status: 404, body: BodyText("Not Found"), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `bad_request(body)` — 400 with the given
-// body. Common shape for validation-failure responses.
 pub function bad_request(body: string): HttpResponse {
   return HttpResponse { status: 400, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `internal_error(body)` — 500. The default
-// body shape for unhandled / unexpected exceptions in a
-// handler.
 pub function internal_error(body: string): HttpResponse {
   return HttpResponse { status: 500, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `redirect(location)` — 302 Found with the
-// redirect target both in the body (for clients that ignore
-// headers) and as a real `Location:` header.
 pub function redirect(location: string): HttpResponse {
   let h: HeaderMap = headers.header_map_new();
   h = h.set("Location", location);
   return HttpResponse { status: 302, body: BodyText(location), headers: h, trailers: headers.header_map_new(), background: None };
 }
 
-// `no_content()` — 204 No Content, empty
-// body. The standard "I handled it, nothing to say"
-// response for DELETE / PUT / etc.
 pub function no_content(): HttpResponse {
   return HttpResponse { status: 204, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `created(body)` — 201 Created with the given body: what a POST that
-// made something answers, the new resource's address in the body or
-// set on `Location` by the caller.
 pub function created(body: string): HttpResponse {
   return HttpResponse { status: 201, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// ============================================================
-// Typed-body builders (#4385 — "response builders never set
-// Content-Type"). The plain builders above (`ok`, `text`, …)
-// leave the media type unset, so a browser sniffs the body and
-// a JSON API response can render as text. These set the right
-// `Content-Type` up front, saving the `.with_header("Content-
-// Type", …)` at every handler call site. Body types that carry
-// text use an explicit `charset=utf-8` (Fern strings are UTF-8).
-// ============================================================
-
-// Build a 200 response with `Content-Type: ct` set.
 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse {
   let h: HeaderMap = headers.header_map_new();
   h = h.set("Content-Type", ct);
   return HttpResponse { status: status, body: BodyText(body), headers: h, trailers: headers.header_map_new(), background: None };
 }
 
-// `json(body)` — 200 with `Content-Type:
-// application/json`. `body` is the already-serialized JSON
-// text (e.g. from `json.encode(...)`); this only sets the
-// media type, it does not itself serialize.
 pub function json(body: string): HttpResponse {
   return __http_response_typed(200, body, "application/json");
 }
 
-// `json_status(status, body)` — like
-// `json` but with an explicit status code, for
-// `201 Created` / `422 Unprocessable Entity` / … JSON replies.
 pub function json_status(status: i32, body: string): HttpResponse {
   return __http_response_typed(status, body, "application/json");
 }
 
-// `json_of(v)` — 200 with `v` serialised through its `json.Json` impl, so a
-// `@derive(json.Json)` struct answers as `http.json_of(user)`; an array of
-// them goes through `json(users.to_json())`.
 pub function json_of[T: json.Json](v: T): HttpResponse {
   return __http_response_typed(200, v.to_json(), "application/json");
 }
 
-// `json_of_status(status, v)` — `json_of` with an explicit status code.
 pub function json_of_status[T: json.Json](status: i32, v: T): HttpResponse {
   return __http_response_typed(status, v.to_json(), "application/json");
 }
 
-// `html(body)` — 200 with `Content-Type:
-// text/html; charset=utf-8`.
 pub function html(body: string): HttpResponse {
   return __http_response_typed(200, body, "text/html; charset=utf-8");
 }
 
-// `plain(body)` — 200 with `Content-Type:
-// text/plain; charset=utf-8`. The typed sibling of
-// `ok`, for when the client should be told the
-// body is plain text rather than left to sniff it.
 pub function plain(body: string): HttpResponse {
   return __http_response_typed(200, body, "text/plain; charset=utf-8");
 }
-
-// ============================================================
-// Errors a handler answers with (#9854).
-//
-// `ToResponse` is the error side of a handler written as a
-// `Result[HttpResponse, E]`: `respond(result)` answers `Ok(r)` with `r`
-// and `Err(e)` with `e.to_response()`, so a handler's helpers fail with
-// `?` and one `respond` at the end turns the failure into the reply. A
-// `handle` declared with that return type needs no `respond` of its
-// own: the compiler and the interpreter rename it
-// `__fern_handle_result` and synthesise the plain `handle` calling
-// `respond` (or `respond_with` for the state-threading pair) over it.
-// `problem(status, title, detail)` is the RFC 9457 problem-details
-// answer (`application/problem+json`, a title of "" reading as the
-// status text, a detail of "" left out), `HttpError` the error value
-// carrying one, and `fail(status, detail)` builds it titled with the
-// status text. std/json's `JsonError` answers 400 with where the text
-// broke, and a `string` error answers 500 with the status text alone —
-// the message is dropped, so log it before the `?` when it matters, or
-// fail with an `HttpError` to put it on the wire. std/fetch's `FetchError`
-// answers 504 for a timeout, 500 for an `InvalidRequest` and 502 for the
-// rest, without its message. A handler whose errors are `dyn error.Error`
-// is answered by `respond_error`, which logs each message through the
-// platform.
 
 pub trait ToResponse {
   function to_response(self: Self): HttpResponse;
@@ -261,16 +142,10 @@ pub function respond[E: ToResponse](result: Result[HttpResponse, E]): HttpRespon
   return problem(500, "", "");
 }
 
-// `respond_with(pair)` — `respond` for a state-threading handler: the
-// state passes through beside the answer.
 pub function respond_with[S, E: ToResponse](pair: (S, Result[HttpResponse, E])): (S, HttpResponse) {
   return (pair.0, respond(pair.1));
 }
 
-// `respond_error(result, plat)` — `respond` for a handler whose errors are
-// `dyn error.Error`: the error's message goes to `plat.log` and the answer
-// is a bare 500 problem, since the message may say more than a client
-// should see. A `handle` declared with that error type is adapted with it.
 pub function respond_error(result: Result[HttpResponse, dyn error.Error], plat: platform.Platform): HttpResponse {
   match (result) {
     Ok(r) => {
@@ -284,8 +159,6 @@ pub function respond_error(result: Result[HttpResponse, dyn error.Error], plat: 
   return problem(500, "", "");
 }
 
-// `respond_error_with(pair, plat)` — `respond_error` for a state-threading
-// handler.
 pub function respond_error_with[S](pair: (S, Result[HttpResponse, dyn error.Error]), plat: platform.Platform): (S, HttpResponse) {
   return (pair.0, respond_error(pair.1, plat));
 }
@@ -344,28 +217,6 @@ impl ToResponse for string {
     return problem(500, "", "");
   }
 }
-
-// ============================================================
-// A typed JSON body (#9854).
-//
-// `body_json[T](req)` decodes a request's body as a `T` that implements
-// `json.FromJson` (`@derive(json.FromJson)` on a struct), and tells the
-// four failures apart so each answers with its own status: a media type
-// that is not JSON (`UnsupportedMediaType`, 415), a body that is not
-// text (`NotUtf8`, 400 — the error `body_string` carries too), a body
-// that is not JSON (`MalformedJson`, 400, with where the text broke), and
-// JSON of the wrong shape (`WrongShape`, 422, naming the field).
-// `BodyError` is `ToResponse`, so a handler declared as
-// `Result[HttpResponse, BodyError]` fails with `?`:
-//
-//     function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, http.BodyError] {
-//         let item: Item = http.body_json[Item](req)?;
-//         return Ok(http.json(item.to_json()));
-//     }
-//
-// The media type is the `Content-Type` header's type without its
-// parameters, `application/json` or any `+json` suffix, compared without
-// regard to case; a request without the header is refused too.
 
 pub enum BodyError {
   UnsupportedMediaType(string),
@@ -433,10 +284,6 @@ impl ToResponse for BodyError {
   }
 }
 
-// `__ended_early_status(fault)` — the status a body that ended early is
-// refused with: the stream's fault when it is one (413 past the cap, 408
-// stalled, 400 malformed or cut short), else 500, for a body abandoned
-// with the task that read it.
 function __ended_early_status(fault: i32): i32 {
   if (fault >= 400 && fault < 600) {
     return fault;
@@ -490,8 +337,6 @@ pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]
   return Err(UnsupportedMediaType(""));
 }
 
-// __media_type_is_json: the type before any `;` parameter, trimmed, is
-// `application/json` or ends in `+json`, in any case.
 function __media_type_is_json(ct: string): boolean {
   let mt: string = ct;
   if let Some(semi) = ct.index_of(";") {
@@ -504,23 +349,15 @@ function __media_type_is_json(ct: string): boolean {
   return mt.ends_with_ci("+json");
 }
 
-// `http_path_segments(path)` — split an HTTP path into
-// non-empty components. Drops the leading "/" and any
-// double slashes; query string (`?...`) is also stripped.
-// Useful for simple routing — `/api/users/42` → `["api",
-// "users", "42"]`.
-// Each segment is materialised with `+ ""`: a bare slice views `path`, which
-// the returned array outlives.
 pub function http_path_segments(path: string): string[] {
   let n: i32 = path.len();
-  // Strip query string.
   if let Some(q) = path.index_of("?") {
     n = q;
   }
   let out: string[] = [];
   let i: i32 = 0;
   while (i < n) {
-    while (i < n && path[i] == 47) {  // skip /
+    while (i < n && path[i] == 47) {
       i = i + 1;
     }
     if (i >= n) {
@@ -535,11 +372,6 @@ pub function http_path_segments(path: string): string[] {
   return out;
 }
 
-// `http_url_path_only(path)` — strip the query string
-// (everything from the first `?` onward). Returns path
-// unchanged when there's no query. Companion to
-// http_path_segments when callers want the bare path
-// without splitting.
 pub function http_url_path_only(path: string): string {
   let Some(q) = path.index_of("?") else {
     return path;
@@ -547,12 +379,6 @@ pub function http_url_path_only(path: string): string {
   return slice_unchecked(path, 0, q) + "";
 }
 
-// `http_user_agent_is_bot(ua)` — heuristic bot detection
-// via the User-Agent string. Checks for common bot tokens
-// ("bot", "crawler", "spider", "slurp") case-insensitively.
-// False negatives are common (sophisticated bots forge UAs);
-// false positives possible (a browser called "BotSimulator").
-// Use as a hint, not a security control.
 pub function http_user_agent_is_bot(ua: string): boolean {
   if (ua.contains_ci("bot")) {
     return true;
@@ -569,13 +395,6 @@ pub function http_user_agent_is_bot(ua: string): boolean {
   return false;
 }
 
-// `http_header_value(block, key)` — the value of the first header named
-// `key` (case-insensitively) in a raw CRLF-separated header block, with
-// the whitespace around it trimmed, or `None` when no line names it.
-// The block is read by the request parser's rules, so one it would
-// refuse (a line without a colon, a name that is not a token, obs-fold,
-// more than 100 fields) is `None` for every key. Multi-valued headers
-// want `http_parse_request` and `get_all`.
 pub function http_header_value(block: string, key: string): Option[string] {
   let bs: u8[] = block.bytes();
   match (__parse_header_bytes(bs, 0, bs.len(), http_limits().header_fields, headers.header_map_new())) {
@@ -589,8 +408,6 @@ pub function http_header_value(block: string, key: string): Option[string] {
   return None;
 }
 
-// __find_crlf is the index of the first CRLF at or after `from` and before
-// `end`, or -1; __find_byte the same for one byte.
 function __find_crlf(buf: u8[], from: i32, end: i32): i32 {
   let i: i32 = __memchr_bytes(buf, 13, from);
   while (i >= 0 && i + 1 < end) {
@@ -610,10 +427,6 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
   return -1;
 }
 
-// `__line_end(buf, from, end)` — where the line running from `from` ends:
-// the first CR at or after `from`, which starts a CRLF before `end`, or
-// `end` when there is no CR; -1 for a CR that is bare, which no field
-// value may hold.
 function __line_end(buf: u8[], from: i32, end: i32): i32 {
   let cr: i32 = __memchr_bytes(buf, 13, from);
   if (cr < 0 || cr >= end) {
@@ -625,16 +438,10 @@ function __line_end(buf: u8[], from: i32, end: i32): i32 {
   return cr;
 }
 
-// __bytes_string copies buf[from, end) into a fresh string, as
-// __bytes_range does into a fresh array. The parser's outputs are owned
-// copies of what the handler keeps, so the wire buffer can be reused once the
-// parse is done.
 function __bytes_string(buf: u8[], from: i32, end: i32): string {
   return string_from_bytes_range_unchecked(buf, from, end);
 }
 
-// `__shared_string(buf, from, end, prev)` — buf[from, end) as a string,
-// `prev` itself when it holds those bytes.
 function __shared_string(buf: u8[], from: i32, end: i32, prev: string): string {
   if (prev.len() == end - from && __bytes_are(buf, from, prev)) {
     return prev;
@@ -642,36 +449,16 @@ function __shared_string(buf: u8[], from: i32, end: i32, prev: string): string {
   return __bytes_string(buf, from, end);
 }
 
-// HttpLimits — the parser's caps (RFC 9112 §2.3 leaves them to the
-// server): the bytes of the request line, of the header block (request
-// line included) and the number of its fields, and the bytes of the
-// body; the framing of a chunked body (chunk-size lines, the CRLFs, the
-// trailer section) gets another `header_bytes`, and its trailers the
-// same field count. A request past any of them is malformed, refused
-// before a handler sees any of it.
 pub struct HttpLimits { request_line: i32, header_bytes: i32, header_fields: i32, body: i32 }
 
-// `http_limits()` — the caps `http_parse_request_framed` and a serve loop
-// use unless told otherwise: an 8 KiB request line, a 32 KiB header block
-// of at most 100 fields, and a 1 MiB body.
 pub function http_limits(): HttpLimits {
   return HttpLimits { request_line: 8192, header_bytes: 32768, header_fields: 100, body: 1048576 };
 }
 
-// `http_request_bytes_cap(limits)` — the most bytes one request occupies
-// on the wire: a header block at its cap, the CRLF CRLF that ends it, a
-// body at its cap and its chunk framing at its cap. A connection
-// buffering more than this without a complete request in it holds
-// nothing the parser would frame.
 pub function http_request_bytes_cap(limits: HttpLimits): i32 {
   return limits.header_bytes + 4 + limits.body + limits.header_bytes;
 }
 
-// NOT_TCHAR marks, by byte value, every byte that is not a tchar, the bytes
-// of a token (RFC 9110 §5.6.2): a letter, a digit, or one of
-// `!#$%&'*+-.^_`|~`. FIELD_CTL marks every control a field value may not
-// hold, all but HTAB below SP and DEL. CR_LF marks the two bytes that end
-// a line. A byte past a set's end is not in it.
 const NOT_TCHAR: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -691,8 +478,6 @@ const NOT_TCHAR: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
 ];
 
-// NOT_TCHAR with the capitals: the bytes a field name may not carry where
-// names are lower case, as HTTP/2 and HTTP/3 carry them.
 const NOT_LOWER_TCHAR: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -727,26 +512,16 @@ const CR_LF: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8,
 ];
 
-// HTTP_SLASH is the `HTTP/` an HTTP-version starts with (RFC 9112 §2.3).
 const HTTP_SLASH: u8[] = [72u8, 84u8, 84u8, 80u8, 47u8];
 
-// `__is_token(buf, from, end)` — whether buf[from, end) is a non-empty
-// token.
 function __is_token(buf: u8[], from: i32, end: i32): boolean {
   return end > from && __token_end(buf, from, end) == end;
 }
 
-// `__token_is(s, want)` — whether `s`, less the SP and HTAB around it,
-// is the token `want` under ASCII case folding (RFC 9110 §5.6.2): each byte
-// equal to `want`'s once an ASCII capital is lowered, which makes it a tchar
-// because `want` is a token. Byte-wise on purpose: a Unicode fold would let U+212A KELVIN
-// SIGN match `k`, and a byte-oriented intermediary would frame the
-// message differently.
 function __token_is(s: string, want: string): boolean {
   return __token_at(s, 0, s.len(), want);
 }
 
-// `__token_at(s, from, end, want)` — `__token_is` over s[from, end).
 function __token_at(s: string, from: i32, end: i32, want: string): boolean {
   while (from < end && __is_ows(s[from])) {
     from = from + 1;
@@ -767,12 +542,10 @@ function __token_at(s: string, from: i32, end: i32, want: string): boolean {
   return true;
 }
 
-// `__is_ows(b)` — SP or HTAB, the optional whitespace of RFC 9112 §5.5.
 function __is_ows(b: u8): boolean {
   return b == 32 as u8 || b == 9 as u8;
 }
 
-// `__ascii_lower(b)` — the byte with an ASCII capital lowered.
 function __ascii_lower(b: u8): i32 {
   let v: i32 = b as i32;
   if (v >= 65 && v <= 90) {
@@ -781,13 +554,6 @@ function __ascii_lower(b: u8): i32 {
   return v;
 }
 
-// `__field_value(buf, from, end)` — a field value's bytes less the
-// optional whitespace around them (RFC 9112 §5.5, SP and HTAB only), or
-// `None` when a byte is a control other than HTAB (RFC 9110 §5.5 lets a
-// recipient refuse one; a lenient reading would let a VT or FF ride in a
-// token that a byte-oriented intermediary reads differently). A value
-// holding the bytes of `prev`'s value `at` (-1 for none), which passed these
-// checks, is that value.
 function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32): Option[string] {
   while (from < end && __is_ows(buf[from])) {
     from = from + 1;
@@ -808,22 +574,8 @@ function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32)
   return Some(v);
 }
 
-// `__parse_header_bytes(buf, from, end)` — the CRLF-separated header
-// lines in buf[from, end) as a HeaderMap, or the status that refuses
-// them (RFC 9112 §5, with no lenient mode): 400 for a line with no colon
-// or a name that is not a token (so empty, holding whitespace before the
-// colon — a `Content-Length : 5` dropped instead would strand its body
-// for the next pipelined parse — or starting with the SP or HTAB of
-// obs-fold, §5.2) or a value holding a control byte other than HTAB
-// or bytes that are not well-formed UTF-8 (RFC 9110 §5.5 leaves
-// obs-text opaque; a `string` is text, so the octets have to spell
-// some), 431 for more fields than the cap. Names keep the client's
-// spelling; a value loses the SP and HTAB around it
-// (`__field_value`). A block repeating `prev`'s fields is `prev`, and
-// every name or value equal to `prev`'s at its place is `prev`'s string.
 function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev: HeaderMap): Result[HeaderMap, i32] {
   let h: HeaderMap = headers.header_map_new();
-  // While every field so far repeats prev's, none is appended to h.
   let same: boolean = true;
   let count: i32 = 0;
   let at: i32 = from;
@@ -876,12 +628,6 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
   return Ok(h);
 }
 
-// `__field_line(buf, at, end)` — the field line at `at` split: `(col, e)`
-// with its colon and where its CRLF starts (`end` for a last line without
-// one), or `(-1, _)` refusing it: the name is the token run at `at`, and
-// the byte after it must be the colon, so an empty name, a non-token byte
-// or whitespace before the colon all refuse; so does a bare CR in the
-// value, which no field may hold.
 function __field_line(buf: u8[], at: i32, end: i32): (i32, i32) {
   let col: i32 = __token_end(buf, at, end);
   if (col == at || col >= end || buf[col] != 58 as u8) {
@@ -894,7 +640,6 @@ function __field_line(buf: u8[], at: i32, end: i32): (i32, i32) {
   return (col, e);
 }
 
-// `__leading_fields(h, n)` — the map of h's first n fields.
 function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
   let out: HeaderMap = headers.header_map_new();
   let i: i32 = 0;
@@ -905,12 +650,6 @@ function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
   return out;
 }
 
-// `__crlf_terminated(buf, from, end)` — whether every LF in buf[from, end)
-// is preceded by CR and every CR whose next byte has arrived is followed
-// by LF. A bare CR or LF in a request line or header block is malformed
-// (RFC 9112 §2.2), not a line terminator and not a byte of a value, and
-// it is known as soon as it is read: a partial block is scanned too, so
-// only a CR at the very end of the buffer is still undecided.
 function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
   let i: i32 = from;
   while (true) {
@@ -930,16 +669,6 @@ function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
   return true;
 }
 
-// `__head_shape(buf, from, limits)` — the head at `from` walked once,
-// line by line: `(first_crlf, headers_end, bare)`. `first_crlf` is where
-// the first line's CRLF starts, -1 while the buffer holds less than a
-// line, or -2 once it holds more than `limits.request_line` without one;
-// `headers_end` is the same for the CRLF CRLF that ends the header
-// block, under `limits.header_bytes`; `bare` is whether a bare CR or LF
-// lies in what is buffered of the block (RFC 9112 §2.2: malformed, and
-// known as soon as it is read; only a CR at the very end of the buffer
-// is still undecided). The walk ends at the block's end, or where the
-// block may no longer run.
 function __head_shape(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, boolean) {
   let n: i32 = buf.len();
   let line_limit: i32 = from + limits.request_line + 2;
@@ -951,8 +680,6 @@ function __head_shape(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, bool
   let first_crlf: i32 = -1;
   let headers_end: i32 = -1;
   let bare: boolean = false;
-  // `line` starts the current line, `after_crlf` says the previous one
-  // ended in CRLF: an empty line behind a CRLF is the block's end.
   let line: i32 = from;
   let after_crlf: boolean = false;
   let i: i32 = from;
@@ -988,10 +715,6 @@ function __head_shape(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, bool
   return (first_crlf, headers_end, bare);
 }
 
-// `__line_break(buf, p, end)` — what the CR or LF a scan found at `p`
-// is: 0 for the CR of a CRLF, 1 for a bare LF or a CR followed by
-// another byte, 2 to stop the walk (`p` is at or past `end`, or a CR at
-// the buffer's very end, whose next byte decides it).
 function __line_break(buf: u8[], p: i32, end: i32): i32 {
   if (p >= end) {
     return 2;
@@ -1005,8 +728,6 @@ function __line_break(buf: u8[], p: i32, end: i32): i32 {
   return 0;
 }
 
-// `__within(at, last, limit)` — `at` when a terminator's last byte `last`
-// lies under `limit`, else -2: the buffer holds the whole cap without it.
 function __within(at: i32, last: i32, limit: i32): i32 {
   if (last >= limit) {
     return -2;
@@ -1014,10 +735,6 @@ function __within(at: i32, last: i32, limit: i32): i32 {
   return at;
 }
 
-// `__line_end_past(buf, i, end, line_limit)` — `first_crlf` for a walk
-// that ended at `end` without a CRLF: -2 once the buffer holds the whole
-// request-line cap without one, else the CRLF between `end` and the cap
-// when the cap outruns the header cap, else -1.
 function __line_end_past(buf: u8[], i: i32, end: i32, line_limit: i32): i32 {
   let n: i32 = buf.len();
   if (line_limit > end && end < n) {
@@ -1036,11 +753,6 @@ function __line_end_past(buf: u8[], i: i32, end: i32, line_limit: i32): i32 {
   return -1;
 }
 
-// `http_header_block_complete(buf, from, limits)` — whether the request
-// at `from` has its whole header block buffered: the CRLF CRLF that ends
-// it lies within the header cap. What follows is the body, and a serve loop times
-// the body by how fast it arrives rather than by the deadline the header
-// block had.
 pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean {
   from = __past_empty_line(buf, from);
   let end: i32 = buf.len();
@@ -1050,8 +762,6 @@ pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits
   return __find_crlf_crlf(buf, from, end) >= 0;
 }
 
-// `__find_crlf_crlf(buf, from, end)` — where the first CRLF CRLF whose
-// four bytes lie in buf[from, end) starts, or -1.
 function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
   let i: i32 = __memchr_bytes(buf, 13, from);
   while (i >= 0 && i + 3 < end) {
@@ -1063,16 +773,6 @@ function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
   return -1;
 }
 
-// `__http_content_length(h)` — the body length the parsed headers
-// declare: `Some(0)` with no `Content-Length`, `None` to refuse the
-// request (RFC 9112 §6.3): a duplicate `Content-Length` (identical
-// values are refused too, rather than collapsed), or a value that is not
-// all digits or overflows i32. The overflow is checked before each
-// multiply: the body cap cannot catch a length that has already wrapped
-// to a small nonnegative value.
-// `__field_at(h, key, from)` — the index of the first field named `key` at
-// or after `from`, or -1, comparing names ASCII-case-insensitively, so
-// the framing rules read the map without building anything.
 function __field_at(h: HeaderMap, key: string, from: i32): i32 {
   let i: i32 = from;
   while (i < h.names.len()) {
@@ -1084,12 +784,6 @@ function __field_at(h: HeaderMap, key: string, from: i32): i32 {
   return -1;
 }
 
-// `__fields_of(h)` — where the fields the framing and connection rules
-// read sit in `h`, found in one pass over its names: the index of the
-// first `Content-Length`, `Transfer-Encoding`, `Host`, `Expect` and
-// `Connection`, -1 for none, and -2 for a repeated `Content-Length`,
-// `Transfer-Encoding` or `Host`, whose rules refuse the repeat wherever
-// it sits.
 function __fields_of(h: HeaderMap): (i32, i32, i32, i32, i32) {
   let cl: i32 = -1;
   let te: i32 = -1;
@@ -1119,8 +813,6 @@ function __fields_of(h: HeaderMap): (i32, i32, i32, i32, i32) {
   return (cl, te, host, expect, conn);
 }
 
-// `__once(at, i)` — `i` for a field seen for the first time, -2 once it
-// repeats.
 function __once(at: i32, i: i32): i32 {
   if (at == -1) {
     return i;
@@ -1128,10 +820,6 @@ function __once(at: i32, i: i32): i32 {
   return -2;
 }
 
-// `__field_kind(name)` — which of the fields the rules read `name` is,
-// under ASCII case folding: 1 `Content-Length`, 2 `Transfer-Encoding`,
-// 3 `Host`, 4 `Expect`, 5 `Connection`, 0 any other. The length picks
-// the one candidate, so a name costs at most one comparison.
 function __field_kind(name: string): i32 {
   let n: i32 = name.len();
   if (n == 4) {
@@ -1159,8 +847,6 @@ function __kind_if(name: string, want: string, kind: i32): i32 {
   return 0;
 }
 
-// `__http_content_length(h, at)` — with `at` the `Content-Length` of
-// `__fields_of`.
 function __http_content_length(h: HeaderMap, at: i32): Option[i32] {
   if (at == -1) {
     return Some(0);
@@ -1189,22 +875,8 @@ function __http_content_length(h: HeaderMap, at: i32): Option[i32] {
   return Some(acc);
 }
 
-// __BodyFraming — how a request's body is delimited (RFC 9112 §6.3): by
-// `Content-Length` (`Length(0)` with neither header), or by chunked
-// transfer coding.
 enum __BodyFraming { Length(i32), Chunked }
 
-// `__http_body_framing(h, cl, te)` — the body's framing from the parsed
-// headers, `cl` and `te` the `Content-Length` and `Transfer-Encoding` of
-// `__fields_of`, or the status that refuses the request (RFC 9112 §6.1,
-// §6.3): 400 for
-// `Transfer-Encoding` beside `Content-Length` (the request-smuggling
-// shape), for a coding list whose last coding is not `chunked` (its
-// length cannot be determined), for `chunked` applied twice, or for a
-// `Content-Length` the parser cannot read; 501 for a coding applied
-// under the final `chunked`, which this parser cannot decode. A lenient
-// reading of any of them would be a framing disagreement with the next
-// parser on the path.
 function __http_body_framing(h: HeaderMap, cl: i32, te: i32): Result[__BodyFraming, i32] {
   if (te == -1) {
     match (__http_content_length(h, cl)) {
@@ -1237,11 +909,6 @@ function __http_body_framing(h: HeaderMap, cl: i32, te: i32): Result[__BodyFrami
   return Ok(Chunked);
 }
 
-// `__host_ok(h, at, version)` — the `Host` rule (RFC 9112 §3.2), `at`
-// the `Host` of `__fields_of`: an HTTP/1.1 request carries exactly one,
-// any request at most one, and its value is a host with an optional
-// port, so it holds nothing but visible ASCII (an empty value is the
-// request-target's authority, and allowed).
 function __host_ok(h: HeaderMap, at: i32, version: string): boolean {
   if (at == -1) {
     return version != "HTTP/1.1";
@@ -1274,27 +941,6 @@ function __hex_digit(b: u8): i32 {
   return -1;
 }
 
-// A chunked body (RFC 9112 §7.1) is walked before it is copied: the walk
-// checks the framing and records where each chunk's data lies, so the
-// copy is one allocation of the decoded length rather than one per
-// chunk. The framing — chunk-size lines, extensions, the CRLFs and the
-// trailer section — shares a budget of `limits.header_bytes` bytes,
-// so what a connection holds for a chunked request is bounded like the
-// rest of it, and the decoded body is held to `limits.body`. Every
-// violation is refused as soon as it is known: a chunk that could not
-// fit under the cap before its data arrives, a byte where a chunk's
-// CRLF must be before the CRLF is complete, a line past the budget
-// before its end.
-//
-// The walk and its helpers answer like the parse, with a status where
-// the parse says `Malformed`: 1 incomplete, 2 complete, and 400 or more
-// refused with that status (400 malformed framing, 413 a body past its
-// cap, 431 framing or trailers past their budget).
-//
-// `__chunked_walk(buf, from)` — `(2, end, spans, trailers)` once the body
-// is complete, with `end` the offset past the trailer section's
-// terminator, `spans` the (start, len) pairs of the chunk data and
-// `trailers` the trailer section's fields.
 function __chunked_walk(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i32[], HeaderMap) {
   let n: i32 = buf.len();
   let at: i32 = from;
@@ -1330,8 +976,6 @@ function __chunked_walk(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i3
   return (400, 0, spans, none);
 }
 
-// `__crlf_at(buf, at)` — whether buf[at, at + 2) is CRLF: 2 when it is,
-// 0 when a byte that has arrived says it is not, 1 while neither has.
 function __crlf_at(buf: u8[], at: i32): i32 {
   let n: i32 = buf.len();
   if (at < n && buf[at] != 13 as u8) {
@@ -1346,13 +990,6 @@ function __crlf_at(buf: u8[], at: i32): i32 {
   return 2;
 }
 
-// `__chunk_size_line(buf, at, budget, room)` — the chunk-size line at
-// `at`: `(2, crlf, size)` once it has arrived whole, `(1, _, _)` while it
-// has not; refused with 400 for no hex digit, anything but a chunk
-// extension after the size (§7.1.1; an extension is skipped unread) or a
-// bare CR or LF, 413 for a chunk larger than `room` (what the body cap
-// has left, so the chunk could never fit), 431 for a line longer than
-// the framing budget.
 function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i32, i32) {
   let n: i32 = buf.len();
   let limit: i32 = at + budget;
@@ -1383,9 +1020,6 @@ function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i3
   return (2, crlf, size.1);
 }
 
-// `__chunk_size(buf, at, end, room)` — the hex chunk size at `at`:
-// `(0, size, next)` with `next` the offset past its digits, `(400, _, _)`
-// with no digit, `(413, _, _)` for a size past `room`.
 function __chunk_size(buf: u8[], at: i32, end: i32, room: i32): (i32, i32, i32) {
   let size: i32 = 0;
   let i: i32 = at;
@@ -1403,13 +1037,6 @@ function __chunk_size(buf: u8[], at: i32, end: i32, room: i32): (i32, i32, i32) 
   return (0, size, i);
 }
 
-// `__chunk_exts_ok(buf, from, end)` — whether buf[from, end), what
-// follows a chunk's size, is chunk extensions (RFC 9112 §7.1.1): each a
-// `;`, a name token, and at most one `=` with a token or a quoted string
-// for its value, with whitespace allowed only before a `;` and around an
-// `=`, so none may trail the size or the last extension. Nothing reads an
-// extension, so a well-formed one is skipped; an ill-formed one is refused
-// rather than guessed at.
 function __chunk_exts_ok(buf: u8[], from: i32, end: i32): boolean {
   let i: i32 = from;
   while (i < end) {
@@ -1434,7 +1061,6 @@ function __chunk_exts_ok(buf: u8[], from: i32, end: i32): boolean {
   return true;
 }
 
-// `__bws_end(buf, from, end)` — the offset past the SP and HTAB at `from`.
 function __bws_end(buf: u8[], from: i32, end: i32): i32 {
   let i: i32 = from;
   while (i < end && __is_ows(buf[i])) {
@@ -1443,7 +1069,6 @@ function __bws_end(buf: u8[], from: i32, end: i32): i32 {
   return i;
 }
 
-// `__token_end(buf, from, end)` — the offset past the tchars at `from`.
 function __token_end(buf: u8[], from: i32, end: i32): i32 {
   let i: i32 = __scan_set_bytes(buf, from, NOT_TCHAR);
   if (i > end) {
@@ -1452,10 +1077,6 @@ function __token_end(buf: u8[], from: i32, end: i32): i32 {
   return i;
 }
 
-// `__chunk_ext_val_end(buf, from, end)` — the offset past a chunk
-// extension's value at `from`, a token or a quoted string (RFC 9110
-// §5.6.4: qdtext or a `\`-escaped byte, between two `"`), or -1 when
-// neither is there whole.
 function __chunk_ext_val_end(buf: u8[], from: i32, end: i32): i32 {
   if (from >= end) {
     return -1;
@@ -1484,21 +1105,10 @@ function __chunk_ext_val_end(buf: u8[], from: i32, end: i32): i32 {
   return -1;
 }
 
-// `__is_quoted_byte(b)` — a byte a quoted string may hold, as itself or
-// after a `\`: HTAB, SP, a visible byte or obs-text.
 function __is_quoted_byte(b: u8): boolean {
   return b == 9 as u8 || b >= 32 as u8 && b != 127 as u8;
 }
 
-// `__chunked_trailers(buf, at, budget, spans, fields)` — the trailer section that
-// follows the last chunk's CRLF, at `at`, through the CRLF that ends it:
-// `(2, end, spans, trailers)` with `end` past that CRLF, `(1, _, _, _)`
-// while it has not arrived; refused with `__parse_header_bytes`'s status
-// when a line breaks the header rules (the count cap included), 400 for
-// a bare CR or LF, 431 when the section outgrows the framing budget. The
-// fields are the request's `trailers`, kept apart from its headers:
-// nothing here knows a trailer's semantics, so none may merge (RFC 9110
-// §6.5.1).
 function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], fields: i32): (i32, i32, i32[], HeaderMap) {
   let n: i32 = buf.len();
   let trailers: HeaderMap = headers.header_map_new();
@@ -1506,8 +1116,6 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], field
   if (limit > n) {
     limit = n;
   }
-  // The last chunk's own CRLF, at `at - 2`, starts the CRLF CRLF when
-  // there are no trailers.
   let sep: i32 = __find_crlf_crlf(buf, at - 2, limit);
   let scanned: i32 = limit;
   if (sep >= 0) {
@@ -1535,8 +1143,6 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], field
   return (2, sep + 4, spans, trailers);
 }
 
-// `__chunked_body(buf, spans)` — the chunk data the walk recorded, as
-// one array.
 function __chunked_body(buf: u8[], spans: i32[]): u8[] {
   let total: i32 = 0;
   let k: i32 = 1;
@@ -1555,15 +1161,6 @@ function __chunked_body(buf: u8[], spans: i32[]): u8[] {
   return out;
 }
 
-// `__framed_body(buf, at, framing, version)` — the body that starts at
-// `at` under its framing: `(2, body, end, trailers)` with `end` past it,
-// `(1, _, _, _)` while it has not arrived; refused with 413 for a
-// declared length past the body cap (known before the body arrives),
-// with `__chunked_walk`'s status for a chunked body that breaks its
-// rules, and with 400 for chunked coding on a request that is not
-// HTTP/1.1 (§6.1 gives the coding to HTTP/1.1; an older peer cannot have
-// sent it, and reading its body as empty would be a framing
-// disagreement). Only a chunked body has trailers.
 function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
   let none: HeaderMap = headers.header_map_new();
@@ -1591,37 +1188,15 @@ function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: stri
   return (400, empty, 0, none);
 }
 
-// ---- A chunked body decoded as it arrives ------------------------------
-//
-// `ChunkDecoder` — the chunked walk above, fed the body's bytes as they
-// arrive and answering each chunk's data as soon as it is read, so a body
-// that is streamed to a handler (docs/NET-P3-SUSPENSION-PLAN.md §3.9) is
-// never held whole. Its rules are `__chunked_walk`'s, through the same
-// helpers: the framing budget, the body cap, the extensions, the trailer
-// section and every refusal, so feeding a body in any split answers what
-// the walk answers for the whole. `state` is what the next byte belongs
-// to: 0 a chunk-size line, 1 chunk data with `left` bytes to come, 2 the
-// CRLF after a chunk's data, 3 the trailer section, 4 done; `held` is the
-// framing not yet complete, kept until it is.
 pub struct ChunkDecoder { state: i32, held: u8[], left: i32, budget: i32, room: i32, fields: i32, trailers: HeaderMap }
 
-// `ChunkStep` — what a feed answers: `ChunkData(next, data)`, the data
-// decoded from this feed (none when the feed held framing alone) and the
-// decoder to feed next; `ChunkEnd(data, trailers, rest)` once the body is
-// complete, with the trailer section's fields and the bytes past its end,
-// the next request's; `ChunkRefused(status)` with the walk's status (400
-// malformed framing, 413 a body past its cap, 431 framing or trailers
-// past their budget).
 pub enum ChunkStep { ChunkData(ChunkDecoder, u8[]), ChunkEnd(u8[], HeaderMap, u8[]), ChunkRefused(i32) }
 
-// `chunk_decoder(limits)` — a decoder at the start of a chunked body under
-// `limits`.
 pub function chunk_decoder(limits: HttpLimits): ChunkDecoder {
   let none: u8[] = [];
   return ChunkDecoder { state: 0, held: none, left: 0, budget: limits.header_bytes, room: limits.body, fields: limits.header_fields, trailers: headers.header_map_new() };
 }
 
-// `(d: ChunkDecoder).feed(bytes)` — the body's next bytes decoded.
 pub function (d: ChunkDecoder) feed(bytes: u8[]): ChunkStep {
   let buf: u8[] = bytes;
   if (d.held.len() > 0) {
@@ -1649,10 +1224,6 @@ pub function (d: ChunkDecoder) feed(bytes: u8[]): ChunkStep {
   return ChunkRefused(400);
 }
 
-// `__chunk_step(d, buf, at, out)` — one state's share of `buf` from `at`:
-// `(0, next, at, out)` to go on from `at` in the next state, `(1, ...)`
-// when more bytes are needed first, `(2, ...)` with `at` past the body's
-// end, or the refusing status.
 function __chunk_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
   if (d.state == 1) {
     return __chunk_data_step(d, buf, at, out);
@@ -1676,7 +1247,6 @@ function __chunk_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, Chu
   return (2, d, at, out);
 }
 
-// The chunk's data, as much of it as `buf` holds, passed on.
 function __chunk_data_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
   let take: i32 = d.left;
   if (take > buf.len() - at) {
@@ -1690,10 +1260,6 @@ function __chunk_data_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32
   return (0, ChunkDecoder { ...next, state: 2 }, at + take, passed);
 }
 
-// The chunk-size line at `at`, as the walk reads it: the budget charged
-// for the line and the chunk's CRLF, the body cap for its size; the last
-// chunk's line hands over to the trailer section, from its own CRLF, as
-// the walk does.
 function __chunk_size_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
   let line: (i32, i32, i32) = __chunk_size_line(buf, at, d.budget, d.room);
   if (line.0 != 2) {
@@ -1711,7 +1277,6 @@ function __chunk_size_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32
   return (0, ChunkDecoder { ...d, state: 1, left: size, budget: budget, room: d.room - size }, data, out);
 }
 
-// The trailer section, `buf[at]` the last chunk's own CRLF.
 function __chunk_trailers_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
   let none: i32[] = [];
   let t: (i32, i32, i32[], HeaderMap) = __chunked_trailers(buf, at + 2, d.budget + 2, none, d.fields);
@@ -1721,22 +1286,6 @@ function __chunk_trailers_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): 
   return (2, ChunkDecoder { ...d, state: 4, trailers: t.3 }, t.1, out);
 }
 
-// `http_parse_request_bytes(buf)` parses a full HTTP/1.1 request
-// out of the bytes the caller has read from the wire, as they
-// came: no text bridge. The caller accumulates bytes via
-// `tcp_recv_into` until the buffer holds at least the header
-// block (terminated by `\r\n\r\n`) plus Content-Length bytes
-// of body — the parser returns None on a partial buffer rather
-// than blocking, so callers driving the read loop keep reading
-// until the parse succeeds (or a hard cap fires).
-//
-// A malformed request and a partial one both surface as None here;
-// `http_parse_request_framed` tells them apart for a loop that must
-// close on the first and keep reading on the second.
-//
-// What the request keeps are owned copies — the method, the
-// path, each header's name and value, the body — so the wire
-// buffer is the connection's to reuse once this returns.
 pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
   match (http_parse_request_framed(buf)) {
     Framed(f) => {
@@ -1755,33 +1304,10 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
   return None;
 }
 
-// HttpFramed — a parsed request with its framing: `len` is the bytes it
-// occupies at the head of the buffer, so a serve loop can drop them and
-// look for the next pipelined request, and `keep_alive` is whether the
-// connection persists after its response (RFC 9112 §9.3: HTTP/1.1 unless
-// the request says `Connection: close`; HTTP/1.0 only when it says
-// `Connection: keep-alive`).
 pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean, version: string }
 
-// HttpFraming — what a buffer holds at an offset: a complete request with
-// its framing; less than one (the loop keeps reading); less than one
-// whose header block has arrived and says `Expect: 100-continue`, so the
-// loop sends `100 Continue` once and then keeps reading (RFC 9110
-// §10.1.1; a request whose body has already arrived is `Framed` and
-// gets no interim response); or a malformed one, carrying the status
-// the loop answers it with before closing the connection: 400 for a
-// request the grammar refuses (RFC 9112 §2.2, §3, §5, §6.3, §7.1) or
-// that breaks the `Host` rule (§3.2), 413 for a body past its cap, 414
-// for a request line past its cap, 417 for an expectation other than
-// `100-continue`, 431 for a header block past its byte or field cap or
-// chunk framing past its budget, 501 for a transfer coding this parser
-// cannot decode. There is no lenient mode, and a request past a cap is
-// malformed as soon as the cap is passed, before its end has arrived.
 pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) }
 
-// `__expectation(h, at)` — what the `Expect` field asks (RFC 9110
-// §10.1.1), `at` the first `Expect` of `__fields_of`: 0 with none, 1 for
-// `100-continue`, 417 for anything else, which this server cannot meet.
 function __expectation(h: HeaderMap, at: i32): i32 {
   if (at < 0) {
     return 0;
@@ -1795,10 +1321,6 @@ function __expectation(h: HeaderMap, at: i32): i32 {
   return 1;
 }
 
-// `__header_rules(h, host, expectation, version)` — the status that
-// refuses a parsed header block on its own terms, or 0: 400 for the
-// `Host` rule (`host` its `Host` of `__fields_of`), 417 for an
-// expectation the server cannot meet.
 function __header_rules(h: HeaderMap, host: i32, expectation: i32, version: string): i32 {
   if (!__host_ok(h, host, version)) {
     return 400;
@@ -1809,11 +1331,6 @@ function __header_rules(h: HeaderMap, host: i32, expectation: i32, version: stri
   return 0;
 }
 
-// `__unframed(kind, head)` — the answer for a body that has not framed:
-// `Malformed` with `kind` when it is a status, `Continue` when an
-// HTTP/1.1 request expects `100 Continue` before sending its body,
-// `Incomplete` otherwise. An HTTP/1.0 request's `100-continue` is
-// ignored (RFC 9110 §10.1.1): its client cannot read the interim answer.
 function __unframed(kind: i32, head: __Head): HttpFraming {
   if (kind >= 400) {
     return HttpFraming.Malformed(kind);
@@ -1824,9 +1341,6 @@ function __unframed(kind: i32, head: __Head): HttpFraming {
   return Incomplete;
 }
 
-// `__repeats(prev, head, body, trailers)` — whether the request parsed is
-// `prev` again: the same method, path and fields, and neither carries a
-// body or trailers.
 function __repeats(prev: HttpRequest, head: __Head, body: u8[], trailers: HeaderMap): boolean {
   if (body.len() != 0 || trailers.names.len() != 0 || prev.trailers.names.len() != 0 || !__empty_body(prev.body)) {
     return false;
@@ -1834,8 +1348,6 @@ function __repeats(prev: HttpRequest, head: __Head, body: u8[], trailers: Header
   return head.method == prev.method && head.path == prev.path && __same_fields(head.headers, prev.headers);
 }
 
-// `__empty_body(s)` — whether `s` is what `stream_from_bytes` makes of no
-// bytes.
 function __empty_body(s: Stream): boolean {
   match (s.source) {
     Some(_) => {
@@ -1848,8 +1360,6 @@ function __empty_body(s: Stream): boolean {
   return false;
 }
 
-// `__same_fields(a, b)` — whether two maps hold the same fields in the
-// same order.
 function __same_fields(a: HeaderMap, b: HeaderMap): boolean {
   if (a.names.len() != b.names.len()) {
     return false;
@@ -1864,13 +1374,6 @@ function __same_fields(a: HeaderMap, b: HeaderMap): boolean {
   return true;
 }
 
-// `__request_line(buf, from, end, prev_path)` — the request line
-// buf[from, end) read: `(0, sp1, sp2, path)` with the offsets of its two
-// spaces and the path `http_request_target` gives (`prev_path` when it is
-// the same text), or `(status, _, _, _)` refusing it:
-// 400 for a method that is not a token, a missing space, an empty
-// target or a version that is not an HTTP-version, 505 for another
-// major version, and the target's own refusals.
 function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32, i32, i32, string) {
   let sp1: i32 = __token_end(buf, from, end);
   if (sp1 == from || sp1 >= end || buf[sp1] != 32 as u8) {
@@ -1895,9 +1398,6 @@ function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32
   return (400, -1, -1, "");
 }
 
-// `http_parse_request_framed(buf)` — `http_parse_request_bytes` with the
-// framing a persistent connection needs, and the three-way answer, under
-// `http_limits()`.
 pub function http_parse_request_framed(buf: u8[]): HttpFraming {
   let limits: HttpLimits = http_limits();
   match (__request_head(buf, 0, limits, http_framed_none().request)) {
@@ -1915,15 +1415,10 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
   return Incomplete;
 }
 
-// `http_framed_none()` — the `prev` of a parse with no request before it:
-// it shares nothing with any request.
 pub function http_framed_none(): HttpFramed {
   return HttpFramed { request: HttpRequest { method: "", path: "", body: Stream { data: [], pos: 0, source: None }, headers: headers.header_map_new(), trailers: headers.header_map_new() }, len: 0, keep_alive: false, version: "" };
 }
 
-// `http_framed_kept(f)` — what a serve loop keeps of the request it took,
-// as the `prev` of its next parse: `f`, less its body and trailers when it
-// had either, so the loop holds no body between requests.
 pub function http_framed_kept(f: HttpFramed): HttpFramed {
   if (__empty_body(f.request.body) && f.request.trailers.names.len() == 0) {
     return f;
@@ -1932,15 +1427,6 @@ pub function http_framed_kept(f: HttpFramed): HttpFramed {
   return HttpFramed { ...f, request: HttpRequest { ...f.request, body: stream.stream_from_bytes(empty), trailers: headers.header_map_new() } };
 }
 
-// `http_parse_request_framed_from(buf, from, limits, prev)` — the same
-// parse over buf[from, len) under `limits`: the request behind the ones a
-// serve loop has already answered, without copying the rest of the buffer
-// forward. `len` counts from `from`. `prev` is a request parsed before
-// it, a serve loop's last: a string the parse would copy that holds the
-// same text as `prev`'s at the same place is `prev`'s, and a request
-// repeating `prev` with no body is `prev`, so clients repeating their
-// requests cost no allocation. Values are immutable, so what is shared with `prev` is
-// shared whoever else holds it.
 pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpFramed): HttpFraming {
   match (__request_head(buf, from, limits, prev.request)) {
     Ok(head) => {
@@ -1961,16 +1447,11 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
   return Incomplete;
 }
 
-// `__framed_new(head, body, trailers, len)` — the framed request a head and
-// its body make. A parse that never answers its `prev` builds only this, so a
-// caller it is spliced into keeps the request in registers.
 function __framed_new(head: __Head, body: u8[], trailers: HeaderMap, len: i32): HttpFramed {
   let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(body), headers: head.headers, trailers: trailers };
   return HttpFramed { request: req, len: len, keep_alive: head.keep_alive, version: head.version };
 }
 
-// `__head_refused(status)` — the framing of a head `__request_head` refused:
-// `Incomplete` while less than it has arrived, else malformed.
 function __head_refused(status: i32): HttpFraming {
   if (status == 1) {
     return Incomplete;
@@ -1978,25 +1459,10 @@ function __head_refused(status: i32): HttpFraming {
   return HttpFraming.Malformed(status);
 }
 
-// `HttpHead` — a request whose header block has arrived, its body not
-// read: the request with an empty body, the bytes its request line and
-// header block occupy from where the parse started, its persistence and
-// version, its body's declared length (-1 for a chunked body), and
-// whether it expects `100 Continue` before sending the body. What a
-// serve loop streaming request bodies starts a handler on
-// (docs/NET-P3-SUSPENSION-PLAN.md §3.9).
 pub struct HttpHead { request: HttpRequest, len: i32, keep_alive: boolean, version: string, length: i32, expects_continue: boolean }
 
-// `HttpHeading` — what a buffer holds at an offset, read to the end of
-// the header block: a head; less than one; or a malformed one, carrying
-// the status that refuses it as `HttpFraming.Malformed` does, 413 for a
-// declared length past the body cap included, since that is known before
-// the body arrives.
 pub enum HttpHeading { Headed(HttpHead), HeadIncomplete, HeadMalformed(i32) }
 
-// `http_parse_request_head_from(buf, from, limits, prev)` — the request
-// head at `from`, under `limits`, sharing `prev`'s strings as
-// `http_parse_request_framed_from` does.
 pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): HttpHeading {
   match (__request_head(buf, from, limits, prev)) {
     Ok(head) => {
@@ -2022,17 +1488,8 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
   return HeadIncomplete;
 }
 
-// `__Head` — a request head as parsed, before either public shape is
-// built from it: the method and path, the headers, the version, the
-// bytes the head occupies from where the parse started, its persistence,
-// its body framing and what its `Expect` asks (`__expectation`).
 struct __Head { method: string, path: string, headers: HeaderMap, version: string, len: i32, keep_alive: boolean, framing: __BodyFraming, expectation: i32 }
 
-// `__request_head(buf, from, limits, prev)` — the request line and header
-// block at `from`, read and checked (the request line's rules, the header
-// rules, the body framing's): `Err(1)` while less than the block has
-// arrived, `Err(status)` refusing it. A method, path, name or value with
-// the text of `prev`'s is `prev`'s string.
 function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Result[__Head, i32] {
   let start: i32 = from;
   from = __past_empty_line(buf, from);
@@ -2046,9 +1503,6 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
   if (bounded != 0) {
     return Err(bounded);
   }
-  // The request line (RFC 9112 §3): a method token, a space, a
-  // request-target, a space, an HTTP-version. It is refused as soon as
-  // its CRLF has arrived, before the rest of the block.
   let line: (i32, i32, i32, string) = (0, -1, -1, "");
   if (first_crlf >= 0) {
     line = __request_line(buf, from, first_crlf, prev.path);
@@ -2063,15 +1517,6 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
     return Err(1);
   }
   let headers_len: i32 = headers_end + 4 - from;
-  // Parse the header block into a HeaderMap *first*, then derive
-  // Content-Length from it. `first_crlf + 2` skips the CRLF that
-  // terminates the request line; `headers_end` is the start of the
-  // `\r\n\r\n` separator, so the block excludes the empty line.
-  //
-  // The two coincide exactly when the request carried no headers at
-  // all (`GET / HTTP/1.0\r\n\r\n`): the request line's own CRLF is
-  // the first two bytes of the separator. Clamping is what keeps the
-  // block from running backwards there.
   let hdr_start: i32 = first_crlf + 2;
   if (hdr_start > headers_end) {
     hdr_start = headers_end;
@@ -2104,12 +1549,6 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
   return Ok(__Head { method: __shared_string(buf, from, sp1, prev.method), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers, fields.4), framing: framing, expectation: expectation });
 }
 
-// `__head_bounded(first_crlf, headers_end, bare)` — 0 when the request
-// line and header block a `__head_shape` walked are within their limits
-// so far; else the status refusing them: 414 for a request line past its
-// cap, 431 for a header block past its, 400 for a bare CR or LF in what
-// is buffered of the block (the bytes before it are answered requests,
-// the bytes after it a body, which may hold anything).
 function __head_bounded(first_crlf: i32, headers_end: i32, bare: boolean): i32 {
   if (first_crlf == -2) {
     return 414;
@@ -2123,7 +1562,6 @@ function __head_bounded(first_crlf: i32, headers_end: i32, bare: boolean): i32 {
   return 0;
 }
 
-// `__declared(f)` — a body framing as its declared length, -1 for chunked.
 function __declared(f: __BodyFraming): i32 {
   match (f) {
     Length(n) => {
@@ -2136,21 +1574,6 @@ function __declared(f: __BodyFraming): i32 {
   return 0 - 1;
 }
 
-// `http_request_target(method, target)` — the request-target (RFC 9112
-// §3.2) as the path a handler sees, or the status refusing it. An
-// origin-form target (`/a/b?q`) and an absolute-form one
-// (`http://host/a/b?q`, which a server accepts from any client, §3.2.2)
-// give the path decoded once and with its dot segments removed
-// (RFC 3986 §5.2.4), then the query as it came; the asterisk-form `*` is
-// only for OPTIONS (§3.2.4). Refused with 400: a target that is none of
-// the three, an authority-form target (nothing here tunnels), an empty
-// authority, a byte outside `pchar` and `/` in the path or `pchar`, `/`
-// and `?` in the query, a `%` not followed by two hex digits, a decoded
-// NUL, a decoded slash (`%2F` would make a segment the sender hid from
-// the path's grammar), and a path that climbs above the root (`/../x`:
-// a client resolves that before sending, so a server only sees it from
-// something else). The query is not decoded: its encoding depends on
-// what reads it (`form_decode` folds `+`, `url_decode` does not).
 pub function http_request_target(method: string, target: string): Result[string, i32] {
   let buf: u8[] = target.bytes();
   let end: i32 = target.len();
@@ -2174,11 +1597,6 @@ pub function http_request_target(method: string, target: string): Result[string,
   return __decoded_path(buf, path_from, path_end, end);
 }
 
-// `__target_path(buf, from, end, options, prev)` — `http_request_target`
-// over the target buf[from, end), with `options` saying whether the method
-// is OPTIONS. A path with no escape and no dot segment is already its own
-// decoding, so such a target is copied out whole, or is `prev` when it
-// holds the same bytes.
 function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: string): Result[string, i32] {
   let path_from: i32 = __target_start(buf, from, end, options);
   if (path_from == BAD_TARGET) {
@@ -2197,18 +1615,10 @@ function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: s
   return __decoded_path(buf, path_from, path_end, end);
 }
 
-// What `__target_start` answers for the target `*`, and for a target of
-// no shape it knows. Plain integers rather than a Result: these run on
-// every request, and a Result here cost the HTTP/1.1 hello path 1.8% of
-// its instructions.
 const ASTERISK_FORM: i32 = 0 - 1;
 
 const BAD_TARGET: i32 = 0 - 2;
 
-// `__target_start(buf, from, end, options)` — where the path of the target
-// buf[from, end) starts: `ASTERISK_FORM` for `*`, which only OPTIONS may
-// send, past the scheme and authority of an absolute-form target, or
-// `BAD_TARGET` for a target of neither shape.
 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
   if (end == from + 1 && buf[from] == 42 as u8) {
     if (options) {
@@ -2226,9 +1636,6 @@ function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
   return path_from;
 }
 
-// `__path_end(buf, from, end)` — where the path starting at `from` ends:
-// at its `?`, with the query after it checked, or at `end`; -1 when the
-// query is ill-formed.
 function __path_end(buf: u8[], from: i32, end: i32): i32 {
   let q: i32 = __find_char(buf, from, end, 63 as u8);
   if (q < 0) {
@@ -2240,10 +1647,6 @@ function __path_end(buf: u8[], from: i32, end: i32): i32 {
   return q;
 }
 
-// `__absolute_form_path(target, from, end)` — where the path of an
-// absolute-form target target[from, end) starts: past `http://` or
-// `https://` in any case and a non-empty authority, at the `/` or `?`
-// that ends it, or `end` when it has no path. -1 for any other shape.
 function __absolute_form_path(target: [u8], from: i32, end: i32): i32 {
   let at: i32 = -1;
   if (__prefix_ci(target, from, end, "http://")) {
@@ -2268,8 +1671,6 @@ function __absolute_form_path(target: [u8], from: i32, end: i32): i32 {
   return authority_end;
 }
 
-// `__prefix_ci(s, from, end, want)` — whether s[from, end) starts with
-// `want` under an ASCII fold; `want` is written in lower case.
 function __prefix_ci(s: [u8], from: i32, end: i32, want: string): boolean {
   if (end - from < want.len()) {
     return false;
@@ -2284,8 +1685,6 @@ function __prefix_ci(s: [u8], from: i32, end: i32, want: string): boolean {
   return true;
 }
 
-// `__find_char(s, from, end, c)` — the first index of byte `c` in
-// s[from, end), or -1.
 function __find_char(s: [u8], from: i32, end: i32, c: u8): i32 {
   let i: i32 = from;
   while (i < end) {
@@ -2297,9 +1696,6 @@ function __find_char(s: [u8], from: i32, end: i32, c: u8): i32 {
   return -1;
 }
 
-// `__is_pchar(b)` — a byte a path segment may carry as itself (RFC 3986
-// §3.3): unreserved, a sub-delim, `:` or `@`; `%` is admitted here and
-// judged with its two digits where it is read.
 function __is_pchar(b: u8): boolean {
   let v: i32 = b as i32;
   return __is_unreserved(v) || __is_sub_delim(v) || v == 58 || v == 64 || v == 37;
@@ -2322,8 +1718,6 @@ function __is_sub_delim(b: i32): boolean {
   return false;
 }
 
-// `__query_ok(s, from, end)` — whether s[from, end) is a query (RFC 3986
-// §3.4): `pchar`, `/` and `?`, every `%` followed by two hex digits.
 function __query_ok(s: [u8], from: i32, end: i32): boolean {
   let i: i32 = from;
   while (i < end) {
@@ -2343,8 +1737,6 @@ function __query_ok(s: [u8], from: i32, end: i32): boolean {
   return true;
 }
 
-// `__pct_byte(s, at, end)` — the byte a `%XX` at `at` encodes, or -1 when
-// the two hex digits are not there.
 function __pct_byte(s: [u8], at: i32, end: i32): i32 {
   if (at + 2 >= end) {
     return -1;
@@ -2357,9 +1749,6 @@ function __pct_byte(s: [u8], at: i32, end: i32): i32 {
   return hi * 16 + lo;
 }
 
-// `__plain_path(buf, from, end)` — whether the path buf[from, end) is
-// `pchar` and `/` with no `%` and no `.` or `..` segment, so that decoding
-// it and removing its dot segments would change nothing.
 function __plain_path(buf: u8[], from: i32, end: i32): boolean {
   let seg: i32 = from + 1;
   let i: i32 = from;
@@ -2378,8 +1767,6 @@ function __plain_path(buf: u8[], from: i32, end: i32): boolean {
   return __dot_segment(buf, seg, end) == 0;
 }
 
-// `__dot_segment(s, from, end)` — 1 when s[from, end) is `.`, 2 when it
-// is `..`, else 0.
 function __dot_segment(s: u8[], from: i32, end: i32): i32 {
   let n: i32 = end - from;
   if (n < 1 || n > 2 || s[from] != 46 as u8 || s[end - 1] != 46 as u8) {
@@ -2388,21 +1775,10 @@ function __dot_segment(s: u8[], from: i32, end: i32): i32 {
   return n;
 }
 
-// `__decoded_path(buf, from, path_end, end)` — the target buf[from, end)
-// with its path, buf[from, path_end), decoded once and its dot segments
-// removed (RFC 3986 §5.2.4), and the query after it as it came; or the
-// status refusing it: a byte the grammar does not admit, an escape of `/`
-// or NUL, dot segments climbing above the root, or escapes that decode to
-// ill-formed UTF-8. A `.` segment is dropped, a `..` segment takes the
-// one before it with it, and either at the end keeps the trailing slash.
-// Empty segments (`a//b`) are kept: they are the sender's to mean
-// something by.
 function __decoded_path(buf: u8[], from: i32, path_end: i32, end: i32): Result[string, i32] {
   let out: u8[] = [];
   let w: i32 = 0;
   let trailing: boolean = false;
-  // Only an escape can put a non-ASCII byte here (`__is_pchar` refuses a
-  // raw one), and a sequence of them has to spell UTF-8 (RFC 3987 §3.1).
   let escaped_high: boolean = false;
   let at: i32 = from + 1;
   while (at <= path_end) {
@@ -2434,9 +1810,6 @@ function __decoded_path(buf: u8[], from: i32, path_end: i32, end: i32): Result[s
   return __finished_path(out, w, trailing, escaped_high, buf, path_end, end);
 }
 
-// `__path_byte(buf, at, end)` — the byte the path carries at `at`, an
-// escape decoded, or -1 for one it may not: a byte outside `pchar`, or
-// an escape that is cut short or decodes to `/` or NUL.
 function __path_byte(buf: u8[], at: i32, end: i32): i32 {
   let b: i32 = buf[at] as i32;
   if (b == 37) {
@@ -2452,8 +1825,6 @@ function __path_byte(buf: u8[], at: i32, end: i32): i32 {
   return b;
 }
 
-// `__path_byte_len(b)` — how many bytes of the path the byte `b` starts:
-// 3 for an escape, else 1.
 function __path_byte_len(b: u8): i32 {
   if (b == 37 as u8) {
     return 3;
@@ -2461,11 +1832,6 @@ function __path_byte_len(b: u8): i32 {
   return 1;
 }
 
-// `__dropped_to(out, seg, dots, escaped_high)` — the write position once
-// the dot segment whose slash is at `seg` is dropped: there for `.`, and
-// back at the slash of the segment before it for `..`, which is checked
-// for UTF-8 as a kept one would be. -1 when a `..` climbs above the root
-// or takes ill-formed UTF-8 with it.
 function __dropped_to(out: u8[], seg: i32, dots: i32, escaped_high: boolean): i32 {
   if (dots == 1) {
     return seg;
@@ -2483,10 +1849,6 @@ function __dropped_to(out: u8[], seg: i32, dots: i32, escaped_high: boolean): i3
   return prev;
 }
 
-// `__finished_path(out, w, trailing, escaped_high, buf, from, end)` — the
-// path out[0, w), with the root for an empty one and a slash after a
-// trailing dot segment, then the query buf[from, end) as it came; refused
-// when its escapes spell ill-formed UTF-8.
 function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boolean, buf: u8[], from: i32, end: i32): Result[string, i32] {
   if (w == 0 || trailing) {
     out = __put_byte(out, w, 47 as u8);
@@ -2505,9 +1867,6 @@ function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boo
   return Ok(path);
 }
 
-// `__put_byte(out, at, b)` — `out` with `b` at index `at`, which is at
-// most its length: a `..` moves the write position back without
-// shrinking the array, so later bytes overwrite what it dropped.
 function __put_byte(out: u8[], at: i32, b: u8): u8[] {
   if (at < out.len()) {
     return out.with(at, b);
@@ -2515,10 +1874,6 @@ function __put_byte(out: u8[], at: i32, b: u8): u8[] {
   return out.append(b);
 }
 
-// `__past_empty_line(buf, from)` — `from` past one CRLF at it: a server
-// ignores at least one empty line before a request-line (RFC 9112 §2.2),
-// since a client may send one after a body. A second is the request
-// line's to refuse.
 function __past_empty_line(buf: u8[], from: i32): i32 {
   if (from + 1 < buf.len() && buf[from] == 13 as u8 && buf[from + 1] == 10 as u8) {
     return from + 2;
@@ -2526,11 +1881,6 @@ function __past_empty_line(buf: u8[], from: i32): i32 {
   return from;
 }
 
-// `__version_status(buf, from, end)` — 0 when buf[from, end) is an
-// HTTP-version (RFC 9112 §2.3: `HTTP/`, a digit, `.`, a digit, in that
-// case), 400 when it is not, 505 for a major version other than 1: this
-// parser speaks HTTP/1, and cannot promise to read the framing of another
-// major version (RFC 9110 §15.6.6).
 function __version_status(buf: u8[], from: i32, end: i32): i32 {
   if (end - from != 8 || __mismatch_bytes(buf, from, HTTP_SLASH, 0, 5) != 5) {
     return 400;
@@ -2544,9 +1894,6 @@ function __version_status(buf: u8[], from: i32, end: i32): i32 {
   return 0;
 }
 
-// `__version_of(buf, from)` — the version the rules read, for a version
-// `__version_status` passed: `HTTP/1.0` for itself, and every other minor
-// as `HTTP/1.1`, the highest this parser knows (§2.3).
 function __version_of(buf: u8[], from: i32): string {
   if (buf[from + 7] == 48 as u8) {
     return "HTTP/1.0";
@@ -2558,18 +1905,10 @@ function __is_digit(b: u8): boolean {
   return b >= 48 as u8 && b <= 57 as u8;
 }
 
-// `__bytes_are(buf, from, want)` — whether the bytes at `from` start with
-// `want`.
 function __bytes_are(buf: u8[], from: i32, want: string): boolean {
   return __mismatch_bytes_str(buf, from, want, 0, want.len()) == want.len();
 }
 
-// __persists(version, h) — whether the connection outlives this
-// request: a `Connection` header carrying `close` ends an HTTP/1.1
-// connection where one carrying `keep-alive` extends an HTTP/1.0 one.
-// The header is a comma-separated token list, and only a whole token
-// counts: `x-close` neither closes nor keeps. `version` is one of the two
-// `__version_of` gives, `at` the first `Connection` of `__fields_of`.
 function __persists(version: string, h: HeaderMap, at: i32): boolean {
   let close: boolean = false;
   let keep: boolean = false;
@@ -2591,22 +1930,10 @@ function __persists(version: string, h: HeaderMap, at: i32): boolean {
   return true;
 }
 
-// `http_parse_request(buf)` — the same parse over a request held as
-// text: a test's literal, a block already in a string. It costs one
-// copy of the bytes; a serve loop holds its buffer as `u8[]` and calls
-// `http_parse_request_bytes`.
 pub function http_parse_request(buf: string): Option[HttpRequest] {
   return http_parse_request_bytes(buf.bytes());
 }
 
-// Reason phrase for the status line. Delegates to the public
-// `http_status_text` table (the single source of truth) rather
-// than keeping a second, narrower copy that drifted out of sync:
-// the old duplicate only knew 13 codes, so a 307 / 429 / 502
-// response serialized with the bogus phrase "Status" even though
-// `http_status_text` spelled it correctly. Unknown codes still
-// fall back to a generic phrase — the kernel doesn't care and
-// clients display the numeric code regardless.
 function __http_reason(code: i32): string {
   let text: string = http_status_text(code);
   if (text.len() == 0) {
@@ -2615,33 +1942,14 @@ function __http_reason(code: i32): string {
   return text;
 }
 
-// `http_serialize_response(resp)` builds the wire-format
-// response from an HttpResponse, advertising `Connection: close`
-// so the client's `read()` returns the EOF that tells it the
-// response is complete after the caller's `net.write` finishes the
-// write. No chunked TE. This text form decodes byte bodies with replacement;
-// use http_serialize_response_bytes to preserve a binary body.
 pub function http_serialize_response(resp: HttpResponse): string {
   return http_serialize_response_conn(resp, false);
 }
 
-// `http_serialize_response_conn(resp, keep_alive)` — the response as
-// a serve loop sends it to an HTTP/1.1 GET: `Connection: close` when
-// this response ends the connection, no `Connection` field when it
-// persists, which HTTP/1.1 implies (RFC 9112 §9.3).
 pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolean): string {
   return http_serialize_response_to("GET", "HTTP/1.1", resp, keep_alive);
 }
 
-// `http_serialize_response_to(method, version, resp, keep_alive)` — the
-// response as a serve loop sends it to a request made with `method` in
-// `version` (RFC 9112 §6.3): a response to HEAD carries the
-// `Content-Length` its body would have and none of the body, and a 1xx,
-// 204 or 304 response carries neither, whatever the handler put in the
-// body. Every other response carries `Content-Length` and the body. The
-// `Connection` field says `close` when `keep_alive` is false, `keep-alive`
-// to an HTTP/1.0 request the connection outlives, and is left out of a
-// persisting HTTP/1.1 response, where persistence is the default.
 pub function http_serialize_response_to(method: string, version: string, resp: HttpResponse, keep_alive: boolean): string {
   let bodiless: boolean = http_bodiless(resp.status);
   let framing: string = "";
@@ -2660,9 +1968,6 @@ pub function http_serialize_response_to(method: string, version: string, resp: H
   return head + body;
 }
 
-// Byte-domain counterparts of the text serializers above. The body is read
-// once, including a chunk producer, and Content-Length counts those bytes.
-// A file body must first be materialized, as for the text form.
 pub function http_serialize_response_bytes(resp: HttpResponse): u8[] {
   return http_serialize_response_conn_bytes(resp, false);
 }
@@ -2690,13 +1995,6 @@ pub function http_serialize_response_to_bytes(method: string, version: string, r
   return __take_wire(b);
 }
 
-// `http_serialize_response_into(b, method, version, resp, keep_alive,
-// fields)` — `http_serialize_response_to_bytes`'s bytes pushed into the
-// builder `b` behind whatever it holds, with `fields` (field lines, each
-// ending in CRLF) after the handler's: a server keeps one builder, empties
-// it with `buf_clear` once the reply has gone, and sends from it with
-// `tcp_send_buf`, so a reply costs no allocation once the builder has
-// grown to hold one.
 pub function http_serialize_response_into(b: usize, method: string, version: string, resp: HttpResponse, keep_alive: boolean, fields: string): void {
   if (http_bodiless(resp.status)) {
     http_serialize_response_head_into(b, version, resp, keep_alive, fields);
@@ -2723,14 +2021,10 @@ pub function http_serialize_response_into(b: usize, method: string, version: str
   buf_push_bytes_range(b, body, 0, body.len());
 }
 
-// `http_bodiless(status)` — whether a response with `status` carries no
-// body whatever the request: 1xx, 204 and 304 (RFC 9112 §6.3).
 pub function http_bodiless(status: i32): boolean {
   return status < 200 || status == 204 || status == 304;
 }
 
-// `http_serialize_fields(fields)` — the map as field lines, `name: value`
-// and CRLF each, in the map's order: a trailer section's body.
 pub function http_serialize_fields(fields: HeaderMap): string {
   let out: string = "";
   let i: i32 = 0;
@@ -2741,18 +2035,6 @@ pub function http_serialize_fields(fields: HeaderMap): string {
   return out;
 }
 
-// `http_serialize_response_head_into(b, version, resp, keep_alive,
-// fields)` — the status line and header block of `resp`, ending in the
-// blank line, pushed into the builder `b`: the handler's headers but
-// `Content-Length`, `Transfer-Encoding` and `Connection`, which the
-// caller's `fields` (its own field lines, the framing line among them, or
-// none for a close-delimited or bodiless response), the request's
-// `version` and `keep_alive` decide; a 101's `Connection` names the
-// upgrade, whatever `keep_alive` says. The serve loop writes a streamed
-// body behind this head.
-// `http_serialize_response_head_sized_into(b, version, resp, keep_alive,
-// fields, len)` — the head `http_serialize_response_into` writes for a
-// body of `len` bytes, without the body, which the caller writes after it.
 pub function http_serialize_response_head_sized_into(b: usize, version: string, resp: HttpResponse, keep_alive: boolean, fields: string, len: i32): void {
   __push_head(b, resp);
   buf_push(b, fields);
@@ -2766,9 +2048,6 @@ pub function http_serialize_response_head_into(b: usize, version: string, resp: 
   __push_conn(b, version, resp, keep_alive);
 }
 
-// `__push_head(b, resp)` — the status line and the handler's fields into
-// the builder `b`, all but `Content-Length`, `Connection` and
-// `Transfer-Encoding`, which the framing writes.
 function __push_head(b: usize, resp: HttpResponse): void {
   buf_push(b, "HTTP/1.1 ");
   io_buffered.buf_push_i64(b, resp.status as i64);
@@ -2794,9 +2073,6 @@ function __push_length(b: usize, len: i32): void {
   buf_push(b, "\r\n");
 }
 
-// `__push_conn(b, version, resp, keep_alive)` — the `Connection` field for
-// a response: a 101 names the upgrade whatever `keep_alive` says, every
-// other status takes `version` and `keep_alive`.
 function __push_conn(b: usize, version: string, resp: HttpResponse, keep_alive: boolean): void {
   if (resp.status == 101) {
     buf_push(b, "Connection: Upgrade\r\n\r\n");
@@ -2805,11 +2081,6 @@ function __push_conn(b: usize, version: string, resp: HttpResponse, keep_alive: 
   __push_close(b, version, keep_alive);
 }
 
-// `__push_close(b, version, keep_alive)` — the `Connection` field where it
-// carries meaning, and the blank line that ends the head: `close` when
-// this response ends the connection, `keep-alive` when an HTTP/1.0 request
-// asked for a connection that persists, and no field on a persisting
-// HTTP/1.1 response, whose client assumes persistence (RFC 9112 §9.3).
 function __push_close(b: usize, version: string, keep_alive: boolean): void {
   if (!keep_alive) {
     buf_push(b, "Connection: close\r\n\r\n");
@@ -2822,9 +2093,6 @@ function __push_close(b: usize, version: string, keep_alive: boolean): void {
   buf_push(b, "\r\n");
 }
 
-// `__http10(version)` — whether a request's version, as `__version_of`
-// spells it, is HTTP/1.0: told apart from HTTP/1.1 by the minor digit, the
-// byte `__version_of` read, rather than a comparison of the whole text.
 function __http10(version: string): boolean {
   return version.len() == 8 && version[7] == b'0';
 }
@@ -2835,67 +2103,31 @@ function __take_wire(b: usize): u8[] {
   return wire;
 }
 
-// ============================================================
-// HttpRequest.body whole-body readers.
-//
-// The field is a `Stream` (docs/PLATFORM-RESEARCH.md Rec §4):
-// a handler that wants the body incrementally takes
-// `req.body_stream()` and drives std/stream's cursor methods
-// (`read_n`, `read_line`, `read_all`), rebinding the returned
-// Stream each step. The three readers here are the
-// whole-body shortcuts for handlers that do not care —
-// each reads the backing buffer directly rather than the
-// cursor, so they answer the same thing however far a
-// separate `body_stream()` walk has advanced.
-// ============================================================
-
-// `request(method, path)` — a request to hand a handler in a test: the
-// method and path as given, no headers and no body, built up with
-// `with_header`, `with_body` and `with_json`. It reads the way a served
-// request does (`body_string`, `body_json`, `headers.get`), so a handler
-// under test sees what it would in a serve loop.
-//
-//     let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"n\": 1}"), m);
-//     return test.assert_status(resp, 201);
 pub function request(method: string, path: string): HttpRequest {
   let empty: u8[] = [];
   return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(empty), headers: headers.header_map_new(), trailers: headers.header_map_new() };
 }
 
-// `(r: HttpRequest).with_header(name, value)` — the request with `name`
-// set to `value` (replacing an earlier value of the same name).
 pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequest {
   return HttpRequest { ...r, headers: r.headers.set(name, value) };
 }
 
-// `(r: HttpRequest).with_body(body)` — the request with `body` as its
-// body and the `Content-Length` a client would send for it.
 pub function (r: HttpRequest) with_body(body: string): HttpRequest {
   return HttpRequest { ...r, body: stream.stream_from_bytes(body.bytes()), headers: r.headers.set("Content-Length", int.int_to_string(body.len())) };
 }
 
-// `(r: HttpRequest).with_json(body)` — `with_body` with the
-// `Content-Type` of JSON.
 pub function (r: HttpRequest) with_json(body: string): HttpRequest {
   return r.with_body(body).with_header("Content-Type", "application/json");
 }
 
-// `(r: HttpRequest).query(name)` — the first value the request's query
-// string gives `name`, decoded as a form field is (`+` a space, `%XX` a
-// byte), or None when the query does not name it; a bare `?flag` gives
-// Some(""). The path a handler is handed keeps its query as the client
-// sent it, so `%26` here is a literal `&` in the value, not a separator.
 pub function (r: HttpRequest) query(name: string): Option[string] {
   return url.query_get(__query_of(r.path), name);
 }
 
-// `(r: HttpRequest).query_all(name)` — every value the query string gives
-// `name`, decoded, in order: `?tag=a&tag=b` gives ["a", "b"].
 pub function (r: HttpRequest) query_all(name: string): string[] {
   return url.query_get_all(__query_of(r.path), name);
 }
 
-// `__query_of(path)` — the request-target's query, without its `?`.
 function __query_of(path: string): string {
   let Some(q) = path.index_of("?") else {
     return "";
@@ -2903,22 +2135,10 @@ function __query_of(path: string): string {
   return slice_unchecked(path, q + 1, path.len()) + "";
 }
 
-// `(r: HttpRequest).body_stream()` — the body as a Stream,
-// positioned at the start. The entry point for incremental
-// reads: `let (line, s) = req.body_stream().read_line();`.
 pub function (r: HttpRequest) body_stream(): Stream {
   return r.body;
 }
 
-// `(r: HttpRequest).body_string()` — the whole body as text, cursor
-// position ignored, or `Err(NotUtf8)` when its bytes are not
-// well-formed UTF-8, or `Err(EndedEarly(fault))` when a body that
-// arrives as it is read (std/serve's streamed request body) ended early.
-// The body is the sender's bytes, so this is the boundary D9
-// (docs/STRINGS-SOTA.md) checks at; the error is `ToResponse` (400, or
-// the fault's status), so a handler declared `Result[HttpResponse,
-// BodyError]` takes the text with `?`, and `body_bytes` is the body as
-// it came.
 pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
   let (bytes, rest) = __whole_body(r.body);
   if (rest.fault() != 0) {
@@ -2935,26 +2155,16 @@ pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
   return Err(NotUtf8);
 }
 
-// `__whole_body(s)` — the body from its start, the cursor ignored, and
-// everything a source has still to give.
 function __whole_body(s: Stream): (u8[], Stream) {
   let from_start: Stream = Stream { ...s, pos: 0 };
   return from_start.read_all();
 }
 
-// `(r: HttpRequest).body_bytes()` — the whole body as a u8 array, cursor
-// position ignored; what arrived of a streamed body that ended early,
-// which `body_string` reports.
 pub function (r: HttpRequest) body_bytes(): u8[] {
   let (bytes, rest) = __whole_body(r.body);
   return bytes;
 }
 
-// `(r: HttpRequest).body_len()` — body length in bytes. The whole
-// buffer, not `remaining()`: a handler asking a request how big its body
-// is wants the Content-Length answer, not what a partial read has left.
-// For a streamed body it is the declared `Content-Length`, -1 when the
-// body is chunked and its length unknown.
 pub function (r: HttpRequest) body_len(): i32 {
   match (r.body.source) {
     Some(src) => {
@@ -2986,16 +2196,6 @@ function __declared_length(h: HeaderMap): i32 {
   return 0 - 1;
 }
 
-// `(r: HttpResponse).body_string()` — the body as text, whichever
-// `Body` holds it: the text itself, the bytes or the Stream's remainder,
-// or every chunk the producer answers, joined. The byte-domain bodies
-// are the program's own bytes and this reader has no error channel, so
-// an ill-formed sequence reads as U+FFFD; `body_bytes` is the body as
-// it is.
-// A `BodyFile` or a `BodyFileRanges` answers "" here: the file is streamed by the serve loop
-// as the response is written, never read by code a handler reaches,
-// since a handler's host effects go through its platform (E080).
-// The response-side twin of the HttpRequest readers above.
 pub function (r: HttpResponse) body_string(): string {
   match (r.body) {
     BodyText(s) => {
@@ -3022,15 +2222,10 @@ pub function (r: HttpResponse) body_string(): string {
   return "";
 }
 
-// `(r: HttpResponse).body_bytes()` — the body as bytes, read as
-// `body_string` reads it.
 pub function (r: HttpResponse) body_bytes(): u8[] {
   return r.body.bytes();
 }
 
-// `(b: Body).bytes()` — the bytes a `Body` holds, read as `body_bytes`
-// reads them: a file body answers none, since the file is streamed by
-// the serve loop and never read by code a handler reaches.
 pub function (b: Body) bytes(): u8[] {
   match (b) {
     BodyText(s) => {
@@ -3059,8 +2254,6 @@ pub function (b: Body) bytes(): u8[] {
   return empty;
 }
 
-// `__chunks_joined(producer)` — every chunk the producer answers, from
-// index 0 until it answers None, as one byte string.
 function __chunks_joined(producer: ChunkProducer): u8[] {
   let next: (i32) => Option[u8[]] = producer.next;
   let out: u8[] = [];
@@ -3079,10 +2272,6 @@ function __chunks_joined(producer: ChunkProducer): u8[] {
   return out;
 }
 
-// `(r: HttpResponse).body_len()` — the body's length in bytes: the
-// text's or the bytes' length, the Stream's remainder, the chunks'
-// total, the length of a file's ranges and the bytes between them, 0 for
-// a whole file the loop has not opened yet.
 pub function (r: HttpResponse) body_len(): i32 {
   match (r.body) {
     BodyText(s) => {
@@ -3107,14 +2296,6 @@ pub function (r: HttpResponse) body_len(): i32 {
   return 0;
 }
 
-// `http_materialize(r)` — the response with a `BodyFile` or a
-// `BodyFileRanges` read into a `BodyBytes`, or a 404 when the file cannot be
-// read or no longer holds the ranges; any other body
-// as it was. For a test that wants the bytes a served file body would
-// carry: the serve loop itself streams the file from a `Reader` as the
-// socket takes it, after the handler has answered, on the loop's own
-// thread of control and outside the reach of E080's rule that a
-// handler's host effects go through its bag.
 pub function http_materialize(r: HttpResponse): HttpResponse {
   match (r.body) {
     BodyFile(path) => {
@@ -3160,9 +2341,6 @@ function __file_ranges_read(path: string, ranges: i64[], seams: u8[][]): Option[
   return None;
 }
 
-// `file_ranges_ok(ranges, seams)` — whether a `BodyFileRanges` is well
-// formed: start and length pairs, none negative, and one seam more than
-// there are ranges.
 pub function file_ranges_ok(ranges: i64[], seams: u8[][]): boolean {
   if (ranges.len() % 2 != 0 || seams.len() != ranges.len() / 2 + 1) {
     return false;
@@ -3175,8 +2353,6 @@ pub function file_ranges_ok(ranges: i64[], seams: u8[][]): boolean {
   return true;
 }
 
-// `file_ranges_len(ranges, seams)` — the bytes a `BodyFileRanges` carries:
-// its ranges' lengths and its seams.
 pub function file_ranges_len(ranges: i64[], seams: u8[][]): i64 {
   let n: i64 = 0 as i64;
   let i: i32 = 1;
@@ -3190,9 +2366,6 @@ pub function file_ranges_len(ranges: i64[], seams: u8[][]): i64 {
   return n;
 }
 
-// `file_ranges_bytes(ranges, seams, read)` — the bytes a `BodyFileRanges`
-// carries, each range as `read(start, len)` gives it, between its seams;
-// None for a body that is not well formed or a range `read` cannot give.
 pub function file_ranges_bytes(ranges: i64[], seams: u8[][], read: (i64, i64) => Option[u8[]]): Option[u8[]] {
   if (!file_ranges_ok(ranges, seams)) {
     return None;
@@ -3241,49 +2414,23 @@ function __read_span(r: Reader, offset: i64, len: i64): Option[u8[]] {
   return Some(out);
 }
 
-// `bytes(status, bs)` — a response whose body is
-// given as bytes rather than a string, so a handler holding
-// `u8[]` (an image, a decoded frame, bytes read off a request
-// Stream) does not have to spell the conversion itself.
 pub function bytes(status: i32, bs: u8[]): HttpResponse {
   return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `stream(status, s)` — a response whose body is what
-// is left of a Stream: bytes already in memory, drained to the wire
-// from its cursor.
 pub function stream(status: i32, s: Stream): HttpResponse {
   return HttpResponse { status: status, body: BodyStream(s), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `file(path)` — a 200 whose body is the file at `path`,
-// streamed by the serve loop as the socket takes it, so a handler
-// answers a file without holding it or reaching the filesystem; a file
-// the loop cannot open is answered 404 in its place. The
-// `Content-Type` is the caller's to set.
 pub function file(path: string): HttpResponse {
   return HttpResponse { status: 200, body: BodyFile(path), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `chunks(status, next)` — a response whose body is what
-// `next` answers for the indexes 0, 1, 2, … until it answers None, each
-// chunk produced as the socket takes the one before it. The serve loop
-// writes it under chunked transfer coding to an HTTP/1.1 client and
-// close-delimited to an HTTP/1.0 one, so the length need not be known
-// up front; a `Content-Length` the handler set is dropped. The
-// `Content-Type` is the caller's to set.
 pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
   let none: u8[] = [];
   return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: __no_trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// `chunks_with_trailers(status, next, trailers)` — `chunks`, with the
-// trailers `trailers` answers sent after the body, beside any the
-// response carries: what a body whose end decides its trailers needs, a
-// gRPC call whose status depends on the messages it streamed. `trailers`
-// is asked once, when `next` has answered None; under HTTP/1.1 they go in
-// the chunked body's trailer section, under HTTP/2 in the stream's last
-// HEADERS. An HTTP/1.0 client, whose body is close-delimited, gets none.
 pub function chunks_with_trailers(status: i32, next: (i32) => Option[u8[]], trailers: () => HeaderMap): HttpResponse {
   let none: u8[] = [];
   return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
@@ -3293,12 +2440,6 @@ function __no_trailers(): HeaderMap {
   return headers.header_map_new();
 }
 
-// `chunks_idle(status, next, idle, filler)` — `chunks`, with `filler`
-// written as a chunk of its own whenever `next` has been waiting `idle`
-// for its next chunk since the last byte went out: what keeps a quiet
-// stream (std/http/sse) open through an idle timeout in a proxy or the
-// client. The serve loop asks `next` as a task, so its wait parks the
-// connection, and writes the filler while it is parked.
 pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: Duration, filler: u8[]): HttpResponse {
   let ms: i64 = idle.as_millis();
   if (ms > 2147483647 as i64) {
@@ -3307,39 +2448,14 @@ pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: Duratio
   return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: ms as i32, filler: filler, trailers: __no_trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// ============================================================
-// Header convenience methods — the ergonomic immutable-update
-// shape for handler code. Under immutable data structures
-// `r.headers.set(k, v)` returns a new HeaderMap but can't
-// write it back into `r`, so handlers would otherwise need the
-// verbose `r = HttpResponse { ...r, headers: r.headers.set(k,
-// v) };`. These wrap that into a single rebind — the Rust
-// `http` builder idiom: `r = r.with_header("X-Trace", "1");`.
-// ============================================================
-
-// `(r: HttpResponse).with_header(name, value)` — replace any
-// existing entries for `name` (set semantics) and return the
-// updated response. Rebind: `r = r.with_header(k, v);`.
 pub function (r: HttpResponse) with_header(name: string, value: string): HttpResponse {
   return HttpResponse { ...r, headers: r.headers.set(name, value) };
 }
 
-// `(r: HttpResponse).with_trailer(name, value)` — set (replace) a trailer
-// field, sent after a chunked body's last chunk and announced in the
-// head's `Trailer` field (RFC 9110 §6.5). Only a body the serve loop
-// sends chunked, `chunks(status, next)`, carries them: a body with a
-// length, an HTTP/1.0 client's close-delimited stream and the wasi-http
-// wrapper's outgoing body go without.
 pub function (r: HttpResponse) with_trailer(name: string, value: string): HttpResponse {
   return HttpResponse { ...r, trailers: r.trailers.set(name, value) };
 }
 
-// `(r: HttpResponse).with_background(work)` — the response with `work` to
-// run once it is sent, after any work it already carried: a log line
-// shipped or a cache filled without holding the response, what Workers'
-// `waitUntil` is for. std/serve starts it as a task once the response is
-// written and cancels it at `Config.background_deadline`; the wasi-http
-// entry runs it once the outgoing body is finished.
 pub function (r: HttpResponse) with_background(work: () => void): HttpResponse {
   match (r.background) {
     Some(first) => {
@@ -3355,56 +2471,22 @@ pub function (r: HttpResponse) with_background(work: () => void): HttpResponse {
   return r;
 }
 
-// `(r: HttpResponse).with_appended_header(name, value)` — add
-// an entry without replacing existing same-name entries
-// (append semantics — duplicate-safe, e.g. Set-Cookie).
 pub function (r: HttpResponse) with_appended_header(name: string, value: string): HttpResponse {
   return HttpResponse { ...r, headers: r.headers.append(name, value) };
 }
 
-// `(r: HttpResponse).with_content_type(ct)` — set (replace) the
-// `Content-Type` header. Convenience over `with_header` for the
-// most common single header a handler overrides; pairs with the
-// plain builders (`ok`, `text`, …) when you want to keep their
-// status/body but add a media type:
-//   r = ok(csv).with_content_type("text/csv");
 pub function (r: HttpResponse) with_content_type(ct: string): HttpResponse {
   return HttpResponse { ...r, headers: r.headers.set("Content-Type", ct) };
 }
 
-// ---------------------------------------------------------------------------
-// Response framing — the client side of the wire. `std/fetch` reads a
-// response with these; the request parser above is their twin.
-
-// `HttpResponseFramed` — a parsed response: the response, how many bytes
-// it occupied from where the parse began (so an interim 1xx response can
-// be stepped over to the one behind it), its version, and whether the
-// connection outlives it under the rule `__persists` applies to requests.
 pub struct HttpResponseFramed { response: HttpResponse, len: i32, version: string, keep_alive: boolean }
 
-// `HttpResponseFraming` — `Complete(framed)` once the whole response is
-// in the buffer, `Unfinished` while it is not, `Rejected(code)` for one
-// this parser will not read: 400 for a malformed status line, header
-// block or body framing, 413 for a body past `limits.body`, 431 for a
-// header block or chunk framing past its budget, 501 for a transfer
-// coding under `chunked`, and 505 for a major version other than 1.
 pub enum HttpResponseFraming { Complete(HttpResponseFramed), Unfinished, Rejected(i32) }
 
-// `http_parse_response_framed(buf, method, eof, limits)` — the response
-// at the head of `buf` to a request sent with `method`, under `limits`
-// (`request_line` caps the status line). `eof` says the peer has closed:
-// a response with neither `Content-Length` nor `Transfer-Encoding` is
-// delimited by the close (RFC 9112 §6.3 item 8), so it is `Unfinished`
-// until then and the rest of the buffer once it has. A response to HEAD,
-// and a 1xx, 204 or 304, has no body whatever its headers say (§6.3
-// items 1 and 2). The trailers of a chunked body are the response's
-// `trailers`.
 pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
   return http_parse_response_framed_from(buf, 0, method, eof, limits);
 }
 
-// `http_parse_response_framed_from(buf, from, method, eof, limits)` —
-// the same parse over buf[from, len); `len` counts from `from`.
 pub function http_parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
   let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
   let first_crlf: i32 = shape.0;
@@ -3419,10 +2501,6 @@ pub function http_parse_response_framed_from(buf: u8[], from: i32, method: strin
   return __response_body(buf, from, first_crlf, headers_end, __status_code(buf, from), method, eof, limits);
 }
 
-// `__response_head_refused(buf, from, first_crlf, headers_end, bare)` —
-// the code refusing the status line and header block as far as they
-// have arrived, or 0: the status line is refused as soon as its CRLF is
-// in, the block's line endings as they come.
 function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, bare: boolean): i32 {
   if (first_crlf == -2) {
     return 400;
@@ -3439,10 +2517,6 @@ function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_
   return 0;
 }
 
-// `__status_line_refused(buf, from, end)` — 0 when buf[from, end) is a
-// status line (RFC 9112 §4: an HTTP-version, a space, three digits, then
-// the end or a space and a reason phrase), 400 when it is not, 505 for
-// a major version other than 1.
 function __status_line_refused(buf: u8[], from: i32, end: i32): i32 {
   if (end - from < 8) {
     return 400;
@@ -3467,8 +2541,6 @@ function __three_digits(buf: u8[], at: i32): boolean {
   return __is_digit(buf[at]) && __is_digit(buf[at + 1]) && __is_digit(buf[at + 2]);
 }
 
-// `__reason_ok(buf, from, end)` — whether a reason phrase holds no control
-// byte other than HTAB.
 function __reason_ok(buf: u8[], from: i32, end: i32): boolean {
   let i: i32 = from;
   while (i < end) {
@@ -3480,14 +2552,10 @@ function __reason_ok(buf: u8[], from: i32, end: i32): boolean {
   return true;
 }
 
-// `__status_code(buf, from)` — the three digits of a status line
-// `__status_line_refused` passed.
 function __status_code(buf: u8[], from: i32): i32 {
   return (buf[from + 9] as i32 - 48) * 100 + (buf[from + 10] as i32 - 48) * 10 + (buf[from + 11] as i32 - 48);
 }
 
-// `__response_body(...)` — the rest of the parse once the header block
-// has arrived: the headers, then the body under the response's framing.
 function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, status: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
   let hdr_start: i32 = first_crlf + 2;
   if (hdr_start > headers_end) {
@@ -3516,11 +2584,6 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
   return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h, fields.4) });
 }
 
-// `__response_payload(buf, at, h, fields, status, method, eof, version)`
-// — the response's body from `at`, `fields` the `__fields_of` its
-// headers, as `__framed_body` answers: none for a bodiless response, the
-// rest of the buffer at the close for one its headers do not delimit,
-// and the declared framing otherwise.
 function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32, i32, i32, i32), status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
   let none: HeaderMap = headers.header_map_new();
@@ -3547,10 +2610,6 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32,
   return (400, empty, 0, none);
 }
 
-// `http_hop_by_hop(name)` — whether a field is hop-by-hop (RFC 9110 §7.6.1
-// and the fields the `Connection` of either peer controls): a client
-// strips these from what it sends and from what it hands back, since the
-// connection they describe is its own, not the caller's.
 pub function http_hop_by_hop(name: string): boolean {
   let n: i32 = name.len();
   if (n == 10) {
@@ -3568,9 +2627,6 @@ pub function http_hop_by_hop(name: string): boolean {
   return n == 2 && name.eq_ignore_ascii_case("te");
 }
 
-// `http_end_to_end(h)` — `h` without its hop-by-hop fields and without
-// the fields its `Connection` names (§7.6.1: those are hop-by-hop too);
-// `h` itself when it holds none.
 pub function http_end_to_end(h: HeaderMap): HeaderMap {
   let i: i32 = 0;
   while (i < h.names.len() && !http_hop_by_hop(h.names[i])) {
@@ -3590,9 +2646,6 @@ pub function http_end_to_end(h: HeaderMap): HeaderMap {
   return out;
 }
 
-// `http_connection_names(h, name)` — whether a `Connection` field of `h`
-// lists `name` (§7.6.1), the list's members compared as tokens: ASCII
-// case-folded, the whitespace around each ignored.
 pub function http_connection_names(h: HeaderMap, name: string): boolean {
   let at: i32 = __field_at(h, "connection", 0);
   while (at >= 0) {
@@ -3604,9 +2657,6 @@ pub function http_connection_names(h: HeaderMap, name: string): boolean {
   return false;
 }
 
-// `__lists_token(value, want)` — whether the comma-separated list `value`
-// has a member that is the token `want`, compared as `__token_is` does,
-// each member read in place.
 function __lists_token(value: string, want: string): boolean {
   let from: i32 = 0;
   let n: i32 = value.len();
@@ -3623,44 +2673,22 @@ function __lists_token(value: string, want: string): boolean {
   return false;
 }
 
-// `(r: HttpResponse).body_text()` — the body as text when it is valid
-// UTF-8, `None` when it is not: the read for a body that came off the
-// wire, which may hold anything, where `body_string` is for one a
-// handler built.
 pub function (r: HttpResponse) body_text(): Option[string] {
   return utf8.from_bytes(r.body_bytes());
 }
 
-// ---------------------------------------------------------------------------
-// Request writing — what a client may put on the wire. The parser above
-// refuses these bytes coming in; a client refuses them going out, so a
-// caller's URL or field cannot split the request it is written into.
-
-// `http_method_ok(method)` — whether `method` is a token (RFC 9110 §9.1).
 pub function http_method_ok(method: string): boolean {
   return __str_is_token(method);
 }
 
-// `__str_is_token(s)` — whether all of `s` is a non-empty token, read in
-// place.
 function __str_is_token(s: string): boolean {
   return s.len() > 0 && __scan_set(s, 0, NOT_TCHAR) == s.len();
 }
 
-// `http_method_idempotent(method)` — whether a request with `method` may
-// be sent again when the first attempt failed before any response byte
-// arrived (RFC 9110 §9.2.2): GET, HEAD, PUT, DELETE, OPTIONS and TRACE.
 pub function http_method_idempotent(method: string): boolean {
   return method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || method == "OPTIONS" || method == "TRACE";
 }
 
-// `http_target_ok(target)` — whether `target` can stand as an origin-form
-// request-target (RFC 9112 §3.2.1): `/`, then `pchar` and `/`, then
-// optionally `?` and a query of `pchar`, `/` and `?`, every `%` followed by
-// two hex digits. A space, a control byte and a byte past ASCII all fail.
-// `%2F` passes: a client sends the target as its caller encoded it, and
-// what a decoded segment may hold is the server's rule (`__decoded_path`
-// refuses it), so the set written is wider than the set read.
 pub function http_target_ok(target: string): boolean {
   if (target.len() == 0 || target[0] != 47 as u8) {
     return false;
@@ -3673,20 +2701,14 @@ pub function http_target_ok(target: string): boolean {
   return __query_ok(bs, 0, q) && __query_ok(bs, q + 1, bs.len());
 }
 
-// `http_field_name_ok(name)` — whether `name` is a field name, a token
-// (RFC 9110 §5.1).
 pub function http_field_name_ok(name: string): boolean {
   return __str_is_token(name);
 }
 
-// `http_field_name_lower_ok(name)` — whether `name` is a field name as
-// HTTP/2 and HTTP/3 carry one: a token with no capital (RFC 9113 §8.2.1).
 pub function http_field_name_lower_ok(name: string): boolean {
   return name.len() > 0 && __scan_set(name, 0, NOT_LOWER_TCHAR) == name.len();
 }
 
-// `http_fields_ok(fields)` — whether every field of the map can be written
-// as a field line: a token name and a value `http_field_value_ok` admits.
 pub function http_fields_ok(fields: HeaderMap): boolean {
   let i: i32 = 0;
   while (i < fields.names.len()) {
@@ -3698,9 +2720,6 @@ pub function http_fields_ok(fields: HeaderMap): boolean {
   return true;
 }
 
-// `http_field_value_ok(value)` — whether `value` can be written as one
-// line: no control byte but HTAB and no DEL (RFC 9110 §5.5), the rule
-// `__field_value` reads a value by.
 pub function http_field_value_ok(value: string): boolean {
   return __scan_set(value, 0, FIELD_CTL) == value.len();
 }

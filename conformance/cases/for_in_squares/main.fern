@@ -1,4 +1,4 @@
-// `for x in array` iteration; 2*2 + 3*3 + 4*4 = 29.
+
 function main(): i32 {
     let a = [2, 3, 4];
     let s = 0;

@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// Every job that runs tests through gotestsum or cmd/ci-test-workers ends its
-// test steps with scripts/ci-annotate-failures on the event streams they
-// wrote, so a failed test's name and output reach the Checks tab and the
-// REST API, where the job log does not. One step per job, after the last
-// test step: a step per test step would annotate the same stream twice.
 func TestTestRunningJobsAnnotateTheirFailures(t *testing.T) {
 	header := regexp.MustCompile(`(?m)^  ([A-Za-z0-9_-]+):\s*$`)
 	workerOutput := regexp.MustCompile(`-output "\$RUNNER_TEMP/([^"]+)"`)
@@ -56,8 +51,6 @@ func TestTestRunningJobsAnnotateTheirFailures(t *testing.T) {
 					t.Errorf("%s: job %q runs ci-test-workers into %s but its annotation step does not read %s", file, id, o[1], want)
 				}
 			}
-			// The step must come after every test step, or a failure in a
-			// later one is never annotated.
 			at := strings.Index(job, steps[0][0])
 			rest := job[at+len(steps[0][0]):]
 			if strings.Contains(rest, "gotestsum --format") || workerOutput.MatchString(rest) {

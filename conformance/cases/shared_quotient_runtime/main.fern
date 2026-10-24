@@ -1,17 +1,17 @@
-// A division and a remainder of one dividend by one RUNTIME divisor share a
-// single division: whichever dominates computes the quotient, and the
-// remainder is the dividend less the quotient times the divisor. This pins
-// that rewrite against the language's own results, every pair of operands
-// at every width, with the divisor read out of an array so nothing folds.
-//
-// The operands include the two cases the language defines rather than
-// traps on, a zero divisor (`x / 0` is 0, `x % 0` is x) and MIN / -1 (MIN,
-// remainder 0), and the pairs sit in each arrangement the rewrite takes:
-// one block, a remainder above a division it dominates, a division above a
-// remainder it dominates, and a remainder in each arm with the division
-// after the join.
-//
-// The hash is multiplicative so two errors of opposite sign cannot cancel.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function mix(h: i64, v: i64): i64 {
   return h * 1000003i64 + v;
 }

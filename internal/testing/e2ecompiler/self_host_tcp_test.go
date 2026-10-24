@@ -9,11 +9,6 @@ import (
 	"time"
 )
 
-// tcpServerProgram is a one-shot HTTP server built from the self-hosted
-// ARM64 emitter's TCP primitives: tcp_listen / tcp_accept / tcp_recv_into /
-// tcp_send_bytes / tcp_close. It listens on PORT, accepts one connection, reads
-// the request, sends a fixed HTTP/1.1 response, and exits 42 on the full
-// success path (distinct small codes localise a failed step).
 const tcpServerProgram = `function main(): i32 {
     let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
@@ -28,9 +23,6 @@ const tcpServerProgram = `function main(): i32 {
     return 42;
 }`
 
-// freeTCPPort asks the OS for an unused TCP port, then releases it. The
-// compiled server re-binds it moments later — a benign TOCTOU window that
-// is fine for a single-machine test.
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -41,18 +33,11 @@ func freeTCPPort(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// TestSelfHostTcpServerArm64 exercises the self-hosted ARM64 emitter's TCP
-// socket primitives end-to-end: it compiles a one-shot HTTP server with
-// the self-host arm64 emitter, runs it under qemu-aarch64 (which passes
-// the socket syscalls through to the host), connects a Go client, and
-// asserts the request/response round-trips and the server exits 42.
-// CI-gated; skips cleanly without the aarch64 cross toolchain + qemu.
 func TestSelfHostTcpServerArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
-	// Build the self-host arm64 emitter driver as an x86-64 host binary.
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	port := freeTCPPort(t)
@@ -67,17 +52,12 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
-	// Hard watchdog: force-kill the (qemu) server after 30s no matter
-	// what, so cmd.Wait() can never block the test indefinitely. Every
-	// exit path below ends at cmd.Wait(), which the kill guarantees
-	// returns. forceKilled distinguishes "served and exited" from "hung".
 	var forceKilled bool
 	wd := time.AfterFunc(30*time.Second, func() {
 		forceKilled = true
 		_ = cmd.Process.Kill()
 	})
 
-	// Dial with retry — the server (under qemu) needs a moment to bind.
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	var conn net.Conn
 	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
@@ -109,7 +89,6 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 		t.Errorf("could not connect to self-host tcp server on %s", addr)
 	}
 
-	// The server returns after one connection; the watchdog bounds this.
 	waitErr := cmd.Wait()
 	wd.Stop()
 	if forceKilled {

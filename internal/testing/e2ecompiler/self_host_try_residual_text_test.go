@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// E042 for a `?` whose error type does not convert names the missing impl,
-// with an imported type spelled as the reader writes it rather than as the
-// module loader mangles it (#12668). The hint-text differential's driver
-// loads no imports, so these rows run both CLIs over the real closure.
 func TestSelfHostTryResidualNamesImportedTypes(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	cases := []struct {
@@ -39,8 +35,6 @@ function main(): i32 { return 0; }
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")
-			// Stdlib errors implement error.Error. Use an imported type with
-			// no impl to keep the missing-impl diagnostic under test.
 			support := `pub struct NotError { code: i32 }
 pub function fail(): Result[i32, NotError] { return Err(NotError { code: 1 }); }
 `

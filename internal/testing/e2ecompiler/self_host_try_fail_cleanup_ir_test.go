@@ -4,22 +4,11 @@ import (
 	"testing"
 )
 
-// tryFailCleanupIRCases pin the RC release on the `?` (try) FAILURE path
-// (#4334): every owned array / string / struct / map / tuple local live at a
-// `?` is released when the `?` short-circuits, as it is on a normal return.
-//
-// The heap probe ISOLATES the owned-local reclaim from the Option boxes. It
-// runs two 20000-iteration loops over functions that differ ONLY by an owned
-// local (array / string) declared live across a FAILING `?`, and compares the
-// bump high-water growth: if the owned local is reclaimed the delta is ~0, and
-// if it leaks the owned loop grows by 20000 * ~20 B ≈ 400000. Exit 7 is
-// reclaimed, 1 leaked.
 var tryFailCleanupIRCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// Owned i32[] live across a failing `?` — reclaimed => extra growth ~0.
 	{"try-fail-array-reclaimed",
 		`function fails(): Option[i32] { return None; }
 function step_bare(): Option[i32] { let x: i32 = fails()?; return Some(x); }
@@ -35,8 +24,6 @@ function main(): i32 {
     if ((__heap_bump_bytes() as i32) - b1 - base < 100000) { return 7; }
     return 1;
 }`, 7},
-	// Owned heap string live across a failing `?` — exercises __fern_str_free in
-	// the sweep.
 	{"try-fail-string-reclaimed",
 		`function fails(): Option[i32] { return None; }
 function step_bare(): Option[i32] { let x: i32 = fails()?; return Some(x); }
@@ -52,19 +39,12 @@ function main(): i32 {
     if ((__heap_bump_bytes() as i32) - b1 - base < 100000) { return 7; }
     return 1;
 }`, 7},
-	// The SUCCESS path is unchanged by the failure-path edit: the `?` still
-	// yields the payload and the value is correct (the sweep is emitted only in
-	// the failure block, under the return value already on the operand stack).
 	{"try-success-value",
 		`function ok(): Option[i32] { return Some(41); }
 function step(): Option[i32] { let owned: i32[] = [1]; let x: i32 = ok()?; return Some(x + owned[0]); }
 function main(): i32 { match (step()) { Some(v) => { return v - 35; }, None => { return 1; } } }`, 7},
 }
 
-// TestSelfHostTryFailCleanupIR runs each case through the self-host CLI on
-// x86-64 and wasm against each row's expected exit code; the rows read the
-// bump allocator, which the interpreter has no model of. Wasm's sweep uses
-// __fern_rc_dec / __fern_str_free the same way.
 func TestSelfHostTryFailCleanupIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tryFailCleanupIRCases {

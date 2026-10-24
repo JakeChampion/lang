@@ -1,12 +1,7 @@
-// Conditional Linux x86-64 first allocation, under an explicit successful mmap
-// premise. Output has no OS identity: this is not a production target binding,
-// global allocator invariant, linked-permission proof or default certificate.
 import "./ssacapacityisa" as isa;
 import "./ssaallocatorinitisa" as init;
 import "./ssadecrementtext" as text;
 
-// Private paired halves: numeric, original register, stack, mapping offset,
-// small-list base, return (6), original stack (7), syscall clobber (11).
 struct Half { kind: i32, identity: i64, high: boolean }
 
 struct Word { low: Half, high: Half }
@@ -99,7 +94,6 @@ function cell_extent(kind: i32, at: i64, bytes: i32, request: i32): i32 {
   if (kind == 2 && at >= -80 && at + bytes <= 16) {
     return ((at + 80) / 4) as i32;
   }
-  // No mapping read/write is needed or granted by this instruction proof.
   if (kind == 4 && at >= request as i64 && at + bytes <= request as i64 + 8) {
     return 24 + ((at - request as i64) / 4) as i32;
   }
@@ -156,7 +150,6 @@ function stack(s: State, op: isa.Op, request: i32): State {
     if (at < 0) {
       return State { ...s, ok: false };
     }
-    // Read the source before changing SP, including a source based on SP.
     let w = if (op.kind == 32) { load(s, at, 64) } else { s.regs[op.source] };
     let next = token(2, sp.low.identity - 8);
     return write(store(s, cell(next, 0, 64, request), 64, w), 4, next);
@@ -172,7 +165,6 @@ function pop(s: State, op: isa.Op, request: i32): State {
   }
   let w = load(s, at, 64);
   let advanced = write(s, 4, token(2, sp.low.identity + 8));
-  // Intel POP memory computes the destination using the incremented SP.
   return if (op.kind == 33) { store(advanced, address(advanced, op, request), 64, w) } else { write(advanced, op.destination, w) };
 }
 
@@ -260,7 +252,6 @@ function pointer_comparison(s: State, a: Word, b: Word, width: i32): State {
   if (width != 64 || !pointer(a) || a.low.kind != 3) {
     return unknown(s);
   }
-  // Successful mmap premise: 0<B<=B+extent<2^63, no wrap.
   if (equal(b, number(0))) {
     return State { ...unknown(s), zero: 0, carry: 0, sign: 0, overflow: 0 };
   }
@@ -296,7 +287,6 @@ function global_step(s: State, op: isa.Op, request: i32): State {
 
 function global_store(s: State, at: i32, width: i32, w: Word, request: i32): State {
   let offset = if (at == 30) { 17179869184 as i64 } else { if (at == 26 && s.writes[at] == 1) { request as i64 } else { 0 as i64 } };
-  // Each half must carry the derived current mapping, not just a write count.
   let expected = token(3, offset);
   if (s.mappings != 1 || !same(w.low, expected.low) || width == 64 && !same(w.high, expected.high)) {
     return State { ...s, ok: false };
@@ -310,7 +300,6 @@ function test(s: State, op: isa.Op): State {
     let result = flags(s, w.low.identity, 0, op.width);
     return State { ...result, carry: 0, overflow: 0 };
   }
-  // A full mapped pointer is positive under the explicit OS premise.
   return State { ...unknown(s), zero: if (pointer(w) && w.low.kind == 3) { 0 } else { -1 }, sign: if (pointer(w) && w.low.kind == 3) { 0 } else { -1 }, carry: 0, overflow: 0 };
 }
 
@@ -390,9 +379,6 @@ function syscall(s: State): State {
   if (s.mappings != 0 || !mapping_arguments(s) || !pointer(sp) || sp.low.kind != 2 || sp.low.identity > 0) {
     return State { ...s, ok: false };
   }
-  // Explicit OS axiom, not established by parsing syscall: successful Linux
-  // mmap grants fresh B of extent16GiB, positive canonical and disjoint, with
-  // no wrap. RCX/R11 may change arbitrarily; other GPRs and memory survive.
   let after = write(write(write(unknown(s), 0, token(3, 0)), 1, token(11, 1)), 11, token(11, 11));
   return State { ...after, mappings: 1 };
 }
@@ -404,7 +390,6 @@ function initialization(s: State, op: isa.Op): State {
   if (op.kind == 38) {
     return write(flags(s, 0, 0, 32), op.destination, number(0));
   }
-  // Deliberately bounded admission, with no signed-minimum conversion.
   if (op.kind == 36 && op.symbol == "17179869184") {
     return write(s, op.destination, number(17179869184));
   }
@@ -594,14 +579,6 @@ function next_pc(s: State, op: isa.Op, pc: i32): i32 {
   return if (taken == 1) { op.target } else { pc + 1 };
 }
 
-// Explicit conditional domain: DI40/48, zero selected slot and all three
-// heap globals, canonical aligned disjoint linked globals/slot/stackS-80..S+15.
-// Lower stack and globals are writable. Linux syscall ABI and successful fresh
-// writable16GiB mmap (positive B, B+extent<2^63) are UNPROVED OS premises.
-// Derives AX=B, DI=B+request, base=B/end=B+extent/ptr=B+request, exact global
-// writes, unchanged slot/other GPRs/return/argument and RETSP+8. Scratch is
-// unconstrained at return. Failure/terminal/general allocation remains refused.
-// Output lacks OS metadata; callers cannot use this as a target certificate.
 pub function check(output: string): boolean {
   let p = init.program(output);
   return p.error == "" && text.allocator_storage(output) && path(p, 40) && path(p, 48);

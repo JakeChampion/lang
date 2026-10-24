@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i32.to_string_radix(base) — render an i32 in an
-// arbitrary base (2..36, digits 0-9a-z, signed), the general form behind
-// to_binary/to_oct/to_hex and the write-side inverse of
-// string.parse_int_radix. Encodes results as string comparisons plus a
-// parse_int_radix round-trip. Returns 42 iff every check holds across interp /
-// x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const i32ToStringRadixProg = `
 import "std/i32";
 import "std/string";

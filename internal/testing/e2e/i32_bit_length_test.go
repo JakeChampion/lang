@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i32.bit_length — the number of bits needed to
-// represent the MAGNITUDE |n| (highest set bit + 1): 0 -> 0, 1 -> 1, 5 (101) ->
-// 3, 255 -> 8, 256 -> 9. Negative n uses its magnitude, and i32::MIN's magnitude
-// 2^31 needs 32 bits (the widen-to-i64 edge). Returns 42 iff every check holds
-// across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const i32BitLengthProg = `
 import "std/i32";
 function main(): i32 {

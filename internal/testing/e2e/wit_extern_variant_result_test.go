@@ -12,19 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantResultCustomProvider is the P4c general-`variant` *result*
-// gate (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns a WIT `variant`
-// with a uniform scalar payload (every case payloaded, same type), lifted into a
-// Fern user enum. The canonical variant flattens to (disc, payload) > 1 core
-// value, so it returns indirectly (disc:u8 @0, payload @off) — exactly the
-// option/result result shape — and reuses buildExternEnumResultWrapper (which
-// materializes a Fern enum box `[rc][tag@0][payload@off]`) with no discriminant
-// remap (the user-enum variant index is the WIT case order;
-// `externVariantResultLayout`).
-//
-// The provider exports `classify: func(n: s32) -> grade` over
-// `variant grade { low(s32), mid(s32), high(s32) }`: n<10→low(n), n<100→mid(n),
-// else high(n). The Fern side matches and recovers (tag, payload).
 func TestExternVariantResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -51,8 +38,6 @@ func TestExternVariantResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly: an 8-byte area (disc:u8 @0,
-	// payload:s32 @4) via cabi_realloc, returning its pointer. low=0/mid=1/high=2.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

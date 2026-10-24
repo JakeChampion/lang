@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// ssabounds.nonneg_quotients turns a signed `x / 2^k` into `x >> k` and
-// `x % 2^k` into `x & (2^k - 1)` where `x` is at least zero. Each case answers
-// what the interpreter answers on every backend; the negative ones reach a
-// division whose dividend is below zero, where the rewrite would be wrong.
 var nonnegQuotientCases = []struct{ name, src string }{
 	{"ctz_lanes", `@noinline function lanes(x: u64): i32 { return __ctz64(x) / 8 * 10 + __ctz64(x) % 8; }
 function main(): i32 { return lanes(1u64 << 21) + lanes(0u64); }`},
@@ -40,10 +36,6 @@ function main(): i32 { return nib(100u8); }`},
 function main(): i32 { return q(0 - 13) as i32; }`},
 }
 
-// nonnegQuotientTwins pairs a division by 8 whose dividend is proven at least
-// zero with one whose dividend may be negative: only the second keeps the
-// sign fixup (a shift by 31, or 63 for an i64, and the bias added before the
-// shift).
 var nonnegQuotientTwins = []struct{ name, proven, unproven string }{
 	{"guarded",
 		`@noinline function q(k: i32): i32 { if (k >= 0) { return k / 8; } return 0; } function main(): i32 { return q(80); }`,

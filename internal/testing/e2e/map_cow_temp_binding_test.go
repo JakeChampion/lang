@@ -1,33 +1,7 @@
 package e2e
 
-// A Map COW mutator's result bound to a TEMPORARY (#6227).
-//
-// `__map_cow_inplace` returns the receiver's own handle when the map is
-// uniquely held, so before the COW-seam retain landed the mutator's result
-// and the receiver's binding shared ONE refcount. Releasing both then
-// over-released, and what that looked like depended on the spelling:
-//
-//	let m2 = m.insert(k, v); m = m2;   -> entries silently VANISHED (a 3-insert
-//	                                      loop produced a map of length 1)
-//	var (m2, ok) = m.without(k); m = m2; -> rc underflow, then SIGSEGV once the
-//	                                        freed handle was recycled
-//	let m2 = m.cleared(); m = m2;      -> rc underflow
-//
-// The direct form `m = m.insert(k, v)` was correct throughout, because the
-// assignment's COW-aware dec-on-overwrite cancelled the shared count — and
-// that is the form every other map test in the suite uses, which is why this
-// went unnoticed. `without` surfaced it first only because its
-// `(Map[K, V], boolean)` return CANNOT be spelled directly: the temporary is
-// forced, so the delete path had no safe idiom to hide behind.
-//
-// So these programs deliberately route EVERY mutator through a temporary.
-// The direct form is covered elsewhere (map_verbs, map_hash_seed); repeating
-// it here would re-test the one shape that never broke.
-
 import "testing"
 
-// Every mutator through a temporary, on a map that grows. Exit 42 on success
-// so the interpreter — which was right about all of this — runs it too.
 const mapCowTempBindingProg = `
 import "core/map";
 import "std/i32";
@@ -130,12 +104,6 @@ func TestMapCowTempBindingArm64(t *testing.T) {
 	}
 }
 
-// The rc probe. `__rc_underflow_count()` is a compiled-backend probe — the
-// interpreter does not implement it — so this leg is compiled-only. It is the
-// direct measurement: every shape above ran clean on len/get assertions long
-// before the handle was actually freed, so a suite that only checks values
-// would go green again the moment the SEGV moved out of reach rather than
-// when the over-release stopped.
 const mapCowTempBindingRcProg = `
 import "core/map";
 import "std/i32";
@@ -180,18 +148,6 @@ func TestMapCowTempBindingNoUnderflowArm64(t *testing.T) {
 	}
 }
 
-// Memory: the temporary-bound loop must stay FLAT. The retain makes the
-// result an owned reference, and an owned reference that nothing releases is
-// a leak rather than a crash — so this is the half of the fix that value
-// assertions cannot see. `m = m2` overwrites a Map local, and the flat
-// __fern_rc_dec that used to serve that overwrite freed neither the buf nor
-// the value column, so once correct refcounts made the COW actually copy,
-// every iteration orphaned a whole table (measured: 1328 B per iteration,
-// unbounded).
-//
-// __heap_bump_bytes() is the bump allocator's high-water mark — what the
-// freelist could NOT recycle — so it is host-independent, unlike RSS (see
-// docs/LOCAL-DEV-LOOP.md on the THP 12x spread).
 const mapCowTempBindingHeapProg = `
 import "core/map";
 import "std/i32";
@@ -237,34 +193,6 @@ func TestMapCowTempBindingHeapFlatWasm(t *testing.T) {
 	}
 }
 
-// Memory: a string-keyed INSERT loop that mostly OVERWRITES must stay flat on
-// every target (#6243).
-//
-// `set` is the one Map method that keeps the boxed key cell the lowering
-// allocates on the two-word string ABI (wasm32, and arm64 under
-// TwoWordOverride) — but only when it inserts. On an overwrite
-// __map_set_keyed_impl keeps the equal key already in the column and returns,
-// so the cell and the one string reference it carries were discarded, not
-// freed: 16 B per overwrite for an immortal literal key, 32 B when the key is
-// a fresh heap string. Unbounded in a loop, and invisible on x86-64, which
-// does not box string keys at all.
-//
-// Three key shapes, because they leaked by different amounts and through
-// different boxing decisions:
-//
-//	built string key   — cell + string buffer (32 B/iter on arm64 and wasm)
-//	literal string key — the cell alone (16 B/iter), which pins the leak to
-//	                     the BOXING rather than to the string
-//	i64 key            — boxed on wasm32 only (mapKeyKindTag 2, wide scalar on
-//	                     a narrow-pointer target): 16 B/iter there, and the
-//	                     same defect with no string involved
-//
-// 16x the iterations rather than 4x: at 32 B an iteration the pre-fix arm64
-// mark grew 4576 -> 52576 across this spread, so nothing subtle is being
-// asked of the comparison.
-//
-// __heap_bump_bytes() is the bump allocator's high-water mark — what the
-// freelist could NOT recycle — so it is host-independent, unlike RSS.
 const mapStringKeyInsertHeapProg = `
 import "core/map";
 import "std/i32";
@@ -337,11 +265,6 @@ func TestMapStringKeyInsertHeapFlatX86_64(t *testing.T) {
 	}
 }
 
-// The discarded key cell must be released EXACTLY once. Freeing it is only
-// safe because the boxed key on the set path always carries one owned string
-// reference — a fresh key moves its rc in, an aliased one is retained by the
-// set's key retain — so an aliased key overwritten in a loop must survive
-// every one of those releases and still read back.
 const mapStringKeyOverwriteAliasProg = `
 import "core/map";
 import "std/i32";
@@ -406,31 +329,6 @@ func TestMapStringKeyOverwriteAliasX86_64(t *testing.T) {
 	}
 }
 
-// Memory: a string-keyed LOOKUP loop must stay flat on every target.
-//
-// On the two-word string ABI — wasm32, and arm64 under TwoWordOverride — a
-// string map key does not fit the runtime's pointer-wide key slot, so the
-// lowering boxes it into a cell and passes the cell pointer through. `set`
-// keeps that cell; every read method (get / has / get_or / delete) does not,
-// and freeLookupBoxCell exists to reclaim it. It was gated on `ptrW != 4`,
-// on the belief that boxing was wasm-only — but boxing keys off the two-word
-// ABI, which arm64 also runs under. So on arm64 every string-keyed lookup
-// allocated a 16-byte cell and freed nothing, plus another 16 when the key was
-// a fresh temporary whose buffer also went unreleased: 32 B per iteration of a
-// loop like this one, unbounded, and invisible on x86-64, which does not box
-// (#6243).
-//
-// Both key shapes are exercised because they leaked independently: a literal
-// key leaked only the cell, a built one leaked the cell AND the string.
-// Measured on arm64-darwin before the fix — 16 B/iter and 32 B/iter
-// respectively, exactly linear over n = 100 / 200 / 400 / 800; after it, 1360
-// and 1424 bytes flat at every n.
-//
-// The x86-64 leg does not box string keys (isStringForBoxing is false without
-// the two-word ABI), so it pins the flat baseline this must not disturb.
-//
-// __heap_bump_bytes() is the bump allocator's high-water mark — what the
-// freelist could NOT recycle — so it is host-independent, unlike RSS.
 const mapStringKeyLookupHeapProg = `
 import "core/map";
 import "std/i32";

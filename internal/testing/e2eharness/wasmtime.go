@@ -7,9 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// Wasmtime returns wasmtime's path, skipping the test when it is not on PATH.
-// FERN_REQUIRE_WASMTIME=1 turns the skip into a failure, for a lane that
-// installs wasmtime — the mirror of FERN_REQUIRE_X86_64_TOOLING.
 func Wasmtime(t testing.TB) string {
 	t.Helper()
 	p, err := exec.LookPath("wasmtime")

@@ -1,20 +1,3 @@
-// basename.fern — GNU-compatible `basename`.
-//
-//   NAME [SUFFIX]        one name, and a suffix to strip from it
-//   -a, --multiple       every operand is a NAME
-//   -s, --suffix=SUFFIX  strip SUFFIX from each NAME; implies -a
-//   -z, --zero           end each name with NUL rather than newline
-//
-// basename(1) scans its options IN ORDER (the `+` optstring), so an
-// option after the first operand is an operand: `basename a -a`
-// prints `a`, and `basename a b -z` is `extra operand '-z'`. Without
-// -a there are exactly one or two operands, the second being the
-// suffix; a third is the extra one.
-//
-// A name is its last component once trailing slashes are dropped; a
-// name that is nothing but slashes is `/`, and the empty name stays
-// empty. The suffix comes off only when it is a PROPER suffix, so a
-// name equal to its suffix is printed whole: `basename -s b b` is `b`.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -35,7 +18,6 @@ function help_text(): string {
   return out;
 }
 
-// The last component of `s` with trailing slashes dropped.
 function base_name(s: string): string {
   let end: i32 = s.len();
   while (end > 0 && s[end - 1] as i32 == 47) {

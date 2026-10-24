@@ -14,13 +14,6 @@ func init() {
 	registerCorpus("du", duCases)
 }
 
-// duWrite creates a file of `n` bytes and flushes it to the filesystem.
-//
-// The flush is not decoration. du reports `st_blocks`, and ext4's delayed
-// allocation leaves a freshly written file at zero blocks until writeback:
-// GNU and Fern run seconds apart over one tree, so a file that crossed
-// writeback between them would report two different sizes and fail a case
-// that has nothing to do with either implementation.
 func duWrite(t *testing.T, path string, n int) {
 	t.Helper()
 	f, err := os.Create(path)
@@ -40,9 +33,6 @@ func duWrite(t *testing.T, path string, n int) {
 	}
 }
 
-// duSparse creates a file whose SIZE is n and whose allocation is nothing,
-// for the `--apparent-size` / `-h` scaling table: the numbers there are the
-// byte count, so they are the same on every filesystem.
 func duSparse(t *testing.T, path string, n int64) {
 	t.Helper()
 	f, err := os.Create(path)
@@ -81,11 +71,6 @@ func duRaw(t *testing.T, path string, data string) {
 	}
 }
 
-// duStamp pins a path's mtime AND its atime. Both, because `--time=atime`
-// is in the corpus and a directory du walks would otherwise have its atime
-// moved by the first side's own readdir: the two stamps here are in 2030, so
-// relatime — which updates only when atime is older than mtime or older than
-// a day — never fires.
 func duStamp(t *testing.T, path string, when time.Time) {
 	t.Helper()
 	if err := os.Chtimes(path, when, when); err != nil {
@@ -93,18 +78,11 @@ func duStamp(t *testing.T, path string, when time.Time) {
 	}
 }
 
-// duTree builds the one tree every case reads, in the harness's own temp
-// directory, and hands back its path. Both implementations are pointed at
-// the SAME tree rather than one each: du reports allocation, and two trees
-// built identically can still differ in what the filesystem gave them.
 func duTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	j := func(parts ...string) string { return filepath.Join(append([]string{dir}, parts...)...) }
 
-	// `a` — the general tree: a subdirectory, an empty file, a one-byte
-	// file, a file past one block, and a symlink to the subdirectory that
-	// -L expands and -P does not.
 	duMkdir(t, j("a"))
 	duMkdir(t, j("a", "sub"))
 	duWrite(t, j("a", "sub", "g"), 0)
@@ -112,7 +90,6 @@ func duTree(t *testing.T) string {
 	duWrite(t, j("a", "f2"), 5000)
 	duLink(t, "sub", j("a", "dirlink"))
 
-	// `b` — two names for one inode, which du counts once and `-l` twice.
 	duMkdir(t, j("b"))
 	duWrite(t, j("b", "file"), 3)
 	if err := os.Link(j("b", "file"), j("b", "hardlink")); err != nil {
@@ -121,8 +98,6 @@ func duTree(t *testing.T) string {
 
 	duMkdir(t, j("empty"))
 
-	// `d` — pinned timestamps for --time. The stamps are in 2030 so that
-	// walking the tree cannot move an atime (see duStamp).
 	newer := time.Date(2030, 5, 6, 7, 8, 9, 0, time.UTC)
 	older := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
 	duMkdir(t, j("d"))
@@ -134,17 +109,12 @@ func duTree(t *testing.T) string {
 	duStamp(t, j("d", "sub"), newer)
 	duStamp(t, j("d"), newer)
 
-	// The symlink family: to a directory, to a file, to nothing, and the
-	// two loops -L has to survive.
 	duLink(t, "a", j("slink"))
 	duLink(t, "a/f1", j("flink"))
 	duLink(t, "nowhere", j("dangling"))
 	duMkdir(t, j("cyc"))
 	duLink(t, ".", j("cyc", "self"))
 	duLink(t, "../cyc", j("cyc", "up2"))
-	// The other shape of the same loop: the link is a level down and
-	// points at its grandparent, so the cycle is found on the way back up
-	// rather than immediately.
 	duMkdir(t, j("loop2"))
 	duMkdir(t, j("loop2", "inner"))
 	duLink(t, "../../loop2", j("loop2", "inner", "back"))
@@ -154,18 +124,12 @@ func duTree(t *testing.T) string {
 	duLink(t, "loopb", j("sl", "loopa"))
 	duLink(t, "loopa", j("sl", "loopb"))
 
-	// The human-readable scaling table, as sparse files: `-h` and `--si`
-	// read the byte count under --apparent-size, so these numbers are the
-	// same wherever the suite runs. The set is the rounding boundaries —
-	// just under and just over each scale, and the value that rounds up
-	// into the next one (1048575 is `1.0M`, not `1024K`).
 	duMkdir(t, j("hr"))
 	for _, n := range []int64{0, 1, 999, 1000, 1023, 1024, 1025, 1536, 1587, 9999,
 		10240, 10241, 102400, 1023999, 1048575, 1048576, 1073741824, 1128481882} {
 		duSparse(t, j("hr", "f_"+strconv.FormatInt(n, 10)), n)
 	}
 
-	// A tree deeper than any --max-depth in the corpus.
 	deep := j("deep")
 	duMkdir(t, deep)
 	for _, part := range []string{"l1", "l2", "l3"} {
@@ -174,10 +138,6 @@ func duTree(t *testing.T) string {
 		duWrite(t, filepath.Join(deep, "f"), 1)
 	}
 
-	// A chain whose full path is past PATH_MAX, Linux's 4096 and Darwin's
-	// 1024: du names each entry inside the directory it walks, as GNU's fts
-	// does, so the depth is no limit. The shell steps into each directory it
-	// makes, so no path to the leaf is ever formed here either.
 	mk := exec.Command("/bin/sh", "-c", `set -e
 mkdir longpath && cd longpath
 i=0
@@ -189,22 +149,15 @@ printf leaf > leaf
 		t.Fatalf("building longpath: %v\n%s", err, out)
 	}
 
-	// Names a diagnostic has to quote: a space, an apostrophe, a tab, and
-	// bytes that are not UTF-8 at all.
 	duMkdir(t, j("weird dir"))
 	duWrite(t, j("weird dir", "x"), 1)
-	// Only where the filesystem holds the names; the case naming them carries
-	// rawByteName and skips there.
 	if rawByteNamesHeld(t) {
 		duMkdir(t, j("dir\xffx"))
 		duWrite(t, j("dir\xffx", "inner\xfe"), 1)
 	}
 
-	// A FIFO, which du counts and does not open.
 	seedFifo(t, j("fifo"))
 
-	// --files0-from lists: two names, no trailing NUL, empty, an empty
-	// NAME mid-list, a `-` name, a missing name, and a trailing slash.
 	duRaw(t, j("f0"), "a\x00b\x00")
 	duRaw(t, j("f0b"), "a\x00b")
 	duRaw(t, j("fempty"), "")
@@ -213,9 +166,6 @@ printf leaf > leaf
 	duRaw(t, j("fmiss"), "nosuch\x00a\x00")
 	duRaw(t, j("fsl"), "a/\x00empty\x00")
 
-	// -X pattern files, including the three the format decides: a
-	// carriage return is stripped, an embedded NUL truncates, and a final
-	// line without a newline still counts.
 	duRaw(t, j("y1"), "f1\n")
 	duRaw(t, j("y2"), "f2\n")
 	duRaw(t, j("y3"), "sub\ng\n")
@@ -228,27 +178,6 @@ printf leaf > leaf
 	return dir
 }
 
-// duCases is du(1)'s corpus.
-//
-// Two things shape it. The first is that du reports ALLOCATION — `st_blocks
-// * 512` — which is the filesystem's answer and not the file's, so both
-// sides are pointed at ONE tree built by duTree rather than a copy each, and
-// the cases that pin exact arithmetic (`-h`, `--si`, `-B`'s ceiling
-// division) go through `--apparent-size`, where the number is the byte count
-// and the same everywhere. The second is that the walk's ORDER is raw
-// readdir order with directories expanded in place and reported post-order,
-// so the tree's shape is itself under test: `a` holds a subdirectory, a
-// symlink to it, and files either side.
-//
-// The option surface is large and almost every pair of options composes, so
-// the corpus is mostly combinations: the unit family is last-wins across six
-// spellings, `-b` splits in half under a later `-B`, `--inodes` silently
-// overrides the numeric block size and keeps the human one, and the four
-// symlink modes are one three-valued setting. The error paths get the same
-// treatment — the SIZE diagnostics quote differently from every other one,
-// the two suffix alphabets are not the same set, and the validation ORDER is
-// observable (a -B fault beats the -a/-s conflict, which beats the -s/-d
-// one, which beats the `extra operand`).
 func duCases(t *testing.T) []invocation {
 	dir := duTree(t)
 	var cases []invocation
@@ -259,7 +188,6 @@ func duCases(t *testing.T) []invocation {
 		cases = append(cases, invocation{name: name, args: args, dir: dir, env: envs})
 	}
 
-	// --- the walk -----------------------------------------------------
 	add("plain", "a")
 	add("all", "-a", "a")
 	add("summarize", "-s", "a")
@@ -297,7 +225,6 @@ func duCases(t *testing.T) []invocation {
 	add("missing-operand-keeps-going", "-s", "nosuchfile", "a")
 	add("missing-operand-total", "-c", "nosuchfile")
 
-	// --- apparent size ------------------------------------------------
 	add("bytes-all", "-b", "-a", "a")
 	add("bytes-empty-dir", "-b", "empty")
 	add("apparent-summarize", "--apparent-size", "-s", "a")
@@ -306,7 +233,6 @@ func duCases(t *testing.T) []invocation {
 	add("apparent-block-1", "--apparent-size", "--block-size=1", "-s", "a")
 	add("bytes-deref-all", "-b", "-a", "-L", "a")
 
-	// --- the unit family ----------------------------------------------
 	add("block-K", "-s", "-BK", "a")
 	add("block-1K", "-s", "-B1K", "a")
 	add("block-KiB", "-s", "-BKiB", "a")
@@ -342,14 +268,11 @@ func duCases(t *testing.T) []invocation {
 	add("m-summarize", "-m", "-s", "a")
 	add("human-total", "-h", "-c", "-s", "a", "b")
 	add("si-total", "--si", "-c", "-s", "a", "b")
-	// The scaling table: one line per rounding boundary, read off the
-	// apparent size so the numbers do not depend on the filesystem.
 	add("human-table", "-h", "--apparent-size", "-a", "hr")
 	add("si-table", "--si", "--apparent-size", "-a", "hr")
 	add("bytes-table", "-b", "-a", "hr")
 	add("block-table", "-B", "K", "--apparent-size", "-a", "hr")
 
-	// --- inodes -------------------------------------------------------
 	add("inodes-all", "--inodes", "-a", "a")
 	add("inodes-summarize", "--inodes", "-s", "d")
 	add("inodes-human", "--inodes", "-h", "-s", "d")
@@ -366,7 +289,6 @@ func duCases(t *testing.T) []invocation {
 	add("inodes-total", "--inodes", "-c", "-s", "a", "b")
 	add("inodes-exclude", "--inodes", "--exclude=f1", "-a", "a")
 
-	// --- hard links and the seen set ----------------------------------
 	add("hardlink-once", "-a", "b")
 	add("hardlink-counted", "-a", "-l", "b")
 	add("repeat-operand", "-s", "a", "a")
@@ -376,7 +298,6 @@ func duCases(t *testing.T) []invocation {
 	add("hardlink-across-operands", "-s", "a/f1", "b/hardlink")
 	add("hardlink-across-operands-reversed", "-s", "b/hardlink", "a/f1")
 
-	// --- symlinks -----------------------------------------------------
 	add("symlink-operand", "-s", "slink")
 	add("symlink-trailing-slash", "-s", "slink/")
 	add("symlink-two-slashes", "-s", "slink//")
@@ -400,8 +321,6 @@ func duCases(t *testing.T) []invocation {
 	add("deref-loop-stopped", "-L", "cyc")
 	add("deref-loop-all", "-L", "-a", "cyc")
 	add("deref-loop-summarize", "-L", "-s", "cyc")
-	// -l turns the seen set off, so the cycle has to be stopped by the
-	// path instead — the ancestor check fts does with FTS_DC, silently.
 	add("count-links-loop", "-L", "-l", "cyc")
 	add("count-links-loop-all", "-L", "-l", "-a", "cyc")
 	add("count-links-loop-depth", "-L", "-l", "-a", "-d2", "cyc")
@@ -423,7 +342,6 @@ func duCases(t *testing.T) []invocation {
 	add("dirlink-plain", "-s", "a/dirlink")
 	add("dirlink-slash", "-s", "a/dirlink/")
 
-	// --- trailing slashes ---------------------------------------------
 	add("operand-slash", "-s", "a/")
 	add("operand-two-slashes", "-s", "a//")
 	add("operand-two-slashes-all", "-a", "a//")
@@ -432,7 +350,6 @@ func duCases(t *testing.T) []invocation {
 	add("subdir-slash", "-a", "a/sub/")
 	add("file-operand-slash", "-a", "a/f1/")
 
-	// --- depth --------------------------------------------------------
 	add("depth-0", "-d", "0", "a")
 	add("depth-1-all", "-a", "-d1", "a")
 	add("depth-negative", "-d", "-1", "a")
@@ -451,7 +368,6 @@ func duCases(t *testing.T) []invocation {
 	add("summarize-depth-2", "-s", "-d", "2", "a")
 	add("summarize-depth-negative", "-s", "-d", "-1", "a")
 
-	// --- threshold ----------------------------------------------------
 	add("threshold-8", "-t", "8", "a")
 	add("threshold-8K", "-t", "8K", "a")
 	add("threshold-negative", "-t", "-8K", "-a", "a")
@@ -492,7 +408,6 @@ func duCases(t *testing.T) []invocation {
 	add("threshold-backslash-arg", "-s", "-t", "x\\y", "a")
 	add("block-quoted-arg", "-s", "-B", "a'b", "a")
 
-	// --- the SIZE error paths -----------------------------------------
 	add("block-invalid", "--block-size", "a", "a")
 	add("block-long-suffix", "--block-size=1b", "a")
 	add("block-zero", "-s", "-B0", "a")
@@ -515,7 +430,6 @@ func duCases(t *testing.T) []invocation {
 	add("block-1E", "-s", "-B1E", "a")
 	add("block-1P", "-s", "-B1P", "a")
 
-	// --- exclusion ----------------------------------------------------
 	add("exclude-file", "--exclude=f2", "-a", "a")
 	add("exclude-total", "-c", "--exclude=f2", "a")
 	add("exclude-dir", "--exclude=sub", "-a", "a")
@@ -558,7 +472,6 @@ func duCases(t *testing.T) []invocation {
 		dir: dir, stdin: "f1\n",
 	})
 
-	// --- --files0-from -------------------------------------------------
 	add("files0", "--files0-from=f0")
 	add("files0-separate-arg", "--files0-from", "f0")
 	add("files0-no-trailing-nul", "--files0-from=f0b")
@@ -587,13 +500,11 @@ func duCases(t *testing.T) []invocation {
 		name: "files0-stdin-zero-length", args: []string{"--files0-from=-"},
 		dir: dir, stdin: "a\x00\x00b\x00",
 	})
-	// -X reads stdin first, so the name list gets nothing.
 	cases = append(cases, invocation{
 		name: "exclude-from-and-files0-both-stdin",
 		args: []string{"-X", "-", "--files0-from=-"}, dir: dir, stdin: "f1\n",
 	})
 
-	// --- --time ---------------------------------------------------------
 	add("time", "--time", "-s", "d")
 	add("time-all", "--time", "-a", "d")
 	add("time-separate-dirs", "--time", "-S", "d")
@@ -618,15 +529,6 @@ func duCases(t *testing.T) []invocation {
 	add("time-newline-value", "--time=x\ny", "-s", "d")
 	add("time-optional-arg-not-consumed", "--time", "atime", "-s")
 
-	// --- --time in a zone that is not UTC ---------------------------------
-	//
-	// The harness pins TZ=UTC (baseEnv), so every case above is exact
-	// whatever this utility does with a zone — which is how `du --time`
-	// shipped rendering UTC where GNU calls localtime_r (#9076). These
-	// cases pass TZ per-case so the difference is visible: a fixed-offset
-	// POSIX rule, a negative one, one with a DST rule that the pinned 2030
-	// stamps fall either side of, a named zone that resolves under TZDIR,
-	// and the spellings tzset(3) accepts for "no zone at all".
 	env("tz-fixed-east", []string{"TZ=XXX-5"}, "--time", "-s", "d")
 	env("tz-fixed-west", []string{"TZ=YYY8"}, "--time", "-s", "d")
 	env("tz-half-hour", []string{"TZ=ZZZ-5:30"}, "--time", "-s", "d")
@@ -638,16 +540,12 @@ func duCases(t *testing.T) []invocation {
 	env("tz-named-utc", []string{"TZ=UTC0"}, "--time", "-s", "d")
 	env("tz-empty", []string{"TZ="}, "--time", "-s", "d")
 	env("tz-bogus", []string{"TZ=Not/AZone"}, "--time", "-s", "d")
-	// The two conversions that read the zone off the same lookup the
-	// broken-down fields came from, rather than off a second one.
 	env("tz-zone-name", []string{"TZ=EST5EDT,M3.2.0/2,M11.1.0/2"},
 		"--time-style=+%Z|%z|%:z", "--time", "-s", "d")
 	env("tz-full-iso", []string{"TZ=EST5EDT,M3.2.0/2,M11.1.0/2"},
 		"--time-style=full-iso", "--time", "-s", "d")
-	// %s is the epoch second, which a zone must NOT move.
 	env("tz-epoch-unmoved", []string{"TZ=XXX-5"}, "--time-style=+%s", "--time", "-s", "d")
 
-	// --- --time-style ---------------------------------------------------
 	add("style-full-iso", "--time-style=full-iso", "--time", "-s", "d")
 	add("style-iso", "--time-style=iso", "--time", "-s", "d")
 	add("style-long-iso", "--time-style=long-iso", "--time", "-s", "d")
@@ -679,26 +577,15 @@ func duCases(t *testing.T) []invocation {
 		add("raw time format "+quote([]byte(format)), "--time", "--time-style=+"+format, "-s", "d")
 	}
 
-	// --- -0 --------------------------------------------------------------
 	add("null-total", "-0", "-c", "-s", "a", "b")
 	add("null-error", "-0", "-s", "nosuchfile", "a")
 	add("null-long", "--null", "-c", "-s", "a", "b")
 
-	// --- -x ----------------------------------------------------------------
 	add("one-file-system-no-crossing", "-x", "-s", "a")
 	add("one-file-system-all", "-x", "-a", "a")
 	add("one-file-system-long", "--one-file-system", "-s", "a")
-	// /sys/fs is sysfs with a tmpfs mounted at cgroup, so -x is what
-	// decides whether that line appears — the only crossing a test can
-	// reach without mounting something. Every entry it walks is zero
-	// blocks and none of them come and go, which is what makes it stable;
-	// on a host without /sys both sides report the same failure. The same
-	// walk WITHOUT -x is deliberately absent: it descends into the cgroup
-	// tree, where a directory appearing or vanishing between the two runs
-	// is a diagnostic one side has and the other does not.
 	add("one-file-system-crossing", "-x", "-d1", "/sys/fs")
 
-	// --- the long option table -------------------------------------------
 	add("ambiguous-t", "--t", "a")
 	add("ambiguous-ti", "--ti", "a")
 	add("ambiguous-ti-value", "--ti=atime", "a")
@@ -738,7 +625,6 @@ func duCases(t *testing.T) []invocation {
 	add("dashdash-twice", "-s", "--", "--", "a")
 	add("dashdash-option", "--", "-s")
 
-	// --- validation order -------------------------------------------------
 	add("all-and-summarize", "-a", "-s", "a")
 	add("summarize-depth-then-all", "-s", "-d1", "-a", "a")
 	add("conflict-beats-operand", "-a", "-s", "nosuch")
@@ -758,7 +644,6 @@ func duCases(t *testing.T) []invocation {
 	add("inodes-warning-then-style", "--inodes", "-b", "--time", "--time-style=bogus", "-s", "a")
 	add("exclude-does-not-conflict", "--exclude=nope", "-a", "-s", "a")
 
-	// --- the environment ---------------------------------------------------
 	env("env-block-size", []string{"BLOCK_SIZE=K"}, "-s", "a")
 	env("env-du-block-size", []string{"DU_BLOCK_SIZE=1M"}, "-s", "a")
 	env("env-blocksize", []string{"BLOCKSIZE=2048"}, "-s", "a")
@@ -792,7 +677,6 @@ func duCases(t *testing.T) []invocation {
 	env("env-time-style-loses-to-option", []string{"TIME_STYLE=iso"}, "--time", "--time-style=long-iso", "-s", "d")
 	env("env-quoting-style-ignored", []string{"QUOTING_STYLE=c"}, "nosuch")
 
-	// --- write failures ----------------------------------------------------
 	cases = append(cases, invocation{
 		name: "write-error-full", args: []string{"-s", "a"}, dir: dir, stdout: stdoutFull,
 	})

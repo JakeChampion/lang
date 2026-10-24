@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// WasiPollStorageProbe keeps the caller's array alive across repeated polls.
-// The host fixture supplies borrowed pollable handles and ready-index lists.
 func WasiPollStorageProbe(expr string) string {
 	return `function main(): i32 {
     let ps: i32[] = [41, 42];
@@ -32,7 +30,6 @@ func WasiPollStorageProbe(expr string) string {
 }`
 }
 
-// WasiPollCensusProbe uses a real ready timer, with every resource released.
 func WasiPollCensusProbe(expr string) string {
 	return `function main(): i32 {
     let i: i32 = 0;
@@ -49,9 +46,6 @@ func WasiPollCensusProbe(expr string) string {
 }`
 }
 
-// WasiPollDeadlineCases exercise actual timers, including an empty finite wait.
-// Monotonic measurements reject premature returns; the runner's process bound
-// catches waiting for the pending sixty-second timer instead of the deadline.
 func WasiPollDeadlineCases() []struct{ Name, Source string } {
 	var cases []struct{ Name, Source string }
 	for _, tc := range []struct {
@@ -92,9 +86,6 @@ func WasiPollDeadlineCases() []struct{ Name, Source string } {
 	return cases
 }
 
-// CheckWasiPollStorage substitutes only host imports. Guest polling, canonical
-// allocation, and reclamation remain production code. It checks returned list
-// ordering, empty results, and ownership of the optional finite-wait timer.
 func CheckWasiPollStorage(t *testing.T, modulePath string, timeoutMS int) {
 	t.Helper()
 	finite := timeoutMS >= 0

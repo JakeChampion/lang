@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64EnvpSaveIR pins the envp-save in the arm64 IR-path _start.
-// env() (and subprocess) read __fern_envp, a .bss slot the _start prologue
-// seeds from the SysV entry stack (envp = sp + 16 + argc*8). Left null, the
-// envp walk in __fern_env (`ldr x1, [x19]` on a null base) SIGSEGVs, so every
-// env()-calling program crashes.
-//
-// This compiles a small env() program to aarch64 on the x86 host and asserts
-// the _start prologue seeds __fern_envp. Pure emission check — no qemu, runs
-// on every x86 CI lane.
 func TestSelfHostArm64EnvpSaveIR(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	if len(x86runner) != 0 {
@@ -43,21 +34,16 @@ func TestSelfHostArm64EnvpSaveIR(t *testing.T) {
 		t.Fatalf("self-host arm64 emit failed: %v", err)
 	}
 	asm := string(out)
-	// The Fern-compiled symbol specifically (#2649): a bare "__fern_env:" match
-	// is also a substring of "__fn___fern_env:", so it would keep passing
-	// whichever of the two the emitter produced.
 	if !strings.Contains(asm, "__fn___fern_env:") {
 		t.Fatal("__fn___fern_env helper not emitted — env() did not lower as expected")
 	}
 
-	// The _start prologue must seed __fern_envp (else env()'s walk derefs null).
 	start := arm64StartBody(t, asm)
 	if !strings.Contains(start, "__fern_envp") {
 		t.Errorf("_start does not save envp (the IR-path env() SIGSEGV); _start:\n%s", start)
 	}
 }
 
-// arm64StartBody returns the _start prologue up to the `bl __fn_main` dispatch.
 func arm64StartBody(t *testing.T, asm string) string {
 	t.Helper()
 	lines := strings.Split(asm, "\n")

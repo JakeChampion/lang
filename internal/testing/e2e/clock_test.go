@@ -1,16 +1,3 @@
-// `clock_resolution` / `clock_set` (#9166) end to end on every backend.
-//
-// The resolution probe prints the number and the test compares it with what
-// the host's own clock_getres says, rather than with a constant: a constant
-// would pass a helper that ignored the kernel and returned 1.
-//
-// The set probe never runs with the privilege to move the clock. Each run
-// goes through e2eharness.WithoutClockPrivilege, so as root in a container
-// the first call is the same EPERM an ordinary user gets and the machine's
-// clock is never touched. The value it asks for is the current time anyway.
-// The two out-of-range nanosecond counts are EINVAL at any privilege, and
-// they also catch the two operands arriving swapped: the current seconds are
-// far past 999999999, so a swapped first call answers EINVAL, not EPERM.
 package e2e
 
 import (
@@ -61,14 +48,11 @@ function main(): i32 {
 
 const clockSetWant = "Operation not permitted\nInvalid argument\nInvalid argument\n"
 
-// clockResolutionWant is what the probe should print on this host.
 func clockResolutionWant(t *testing.T) string {
 	t.Helper()
 	return strconv.FormatInt(e2eharness.HostClockResolution(t), 10) + "\n"
 }
 
-// runClockProbe runs cmd without the privilege to set the clock and returns
-// its stdout, failing on anything but a clean exit 0.
 func runClockProbe(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
 	e2eharness.WithoutClockPrivilege(t, cmd)
@@ -97,8 +81,6 @@ func TestX86_64ClockSet(t *testing.T) {
 	}
 }
 
-// Under qemu-user both syscalls reach the host kernel, so the host's answers
-// are the guest's.
 func TestArm64ClockResolution(t *testing.T) {
 	bin, qemu := compileArm64Bin(t, clockResolutionSource)
 	if got, want := runClockProbe(t, runArm64Bin(qemu, bin)), clockResolutionWant(t); got != want {
@@ -113,8 +95,6 @@ func TestArm64ClockSet(t *testing.T) {
 	}
 }
 
-// The interpreter makes the same calls from `fern`'s own process, so it runs
-// as a child here to be denied the privilege like the compiled probes.
 func interpClockProbe(t *testing.T, src string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "prog.fern")
@@ -136,9 +116,6 @@ func TestInterpClockSet(t *testing.T) {
 	}
 }
 
-// The wasm legs answer through wasmtime, whose realtime clock is the host's:
-// clock_res_get on the preview1 core, wall-clock `resolution` in the
-// component the default wasm32-wasi build produces.
 func TestWASMClockResolution(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -163,11 +140,6 @@ func TestWASMClockResolution(t *testing.T) {
 	}
 }
 
-// A wasm host has a wall clock and no call that sets it, which is the target
-// having the thing and not the operation: clock_set answers Unsupported at the
-// call on the preview1 core and in the component alike, so a program that
-// only sometimes sets the clock — `date` — still builds there. A freestanding
-// target has no clock at all and refuses it on `now` at check time.
 func TestWASMClockSet(t *testing.T) {
 	prog, err := parser.Parse(clockSetSource)
 	if err != nil {
@@ -210,9 +182,6 @@ func TestWASMClockSet(t *testing.T) {
 	}
 }
 
-// TestArm64DarwinClock builds both probes for arm64-darwin on any host, where
-// the bodies are settimeofday and the gettimeofday tick, and runs them on
-// Apple Silicon.
 func TestArm64DarwinClock(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

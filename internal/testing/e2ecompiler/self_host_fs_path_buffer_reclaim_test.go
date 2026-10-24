@@ -8,25 +8,6 @@ import (
 	"testing"
 )
 
-// Self-host RC: an fs runtime leaf hands back every raw block it allocates for
-// one call — the NUL-terminated path buffer above all, on the SUCCESS path as
-// well as the error one (#8813).
-//
-// Each leaf in asmcore's fs bundle copies its `path` argument into a
-// __raw_alloc(plen + 1) block so openat / fstatat / unlinkat get a C string. The
-// error path boxed that block into the IoError it returns, so it had an owner;
-// the success path named it nowhere and the block was simply lost — one per
-// call, `24 + plen + 1` bytes rounded to a freelist class, so the leak grew with
-// the PATH. That is what these legs read: the same program at two path lengths
-// must cost the same live bytes, which a per-call constant satisfies and a
-// per-call path copy cannot. Round-count independence is checked on every leg
-// that reaches zero — 20 rounds and 200 must cost the same — so a fix that
-// merely shrank the stranded block would still fail.
-
-// fsPathPad is the run of `./` components that stretches a path without changing
-// what it resolves to: 24 of them add 48 characters, the gap between the 9- and
-// 57-character paths #8813 measured. One file under two spellings is what keeps
-// the two measurements otherwise identical.
 const fsPathPad = 24
 
 func fsShortPath(dir, base string) string { return filepath.Join(dir, base) }
@@ -35,8 +16,6 @@ func fsLongPath(dir, base string) string {
 	return dir + "/" + strings.Repeat("./", fsPathPad) + base
 }
 
-// fsBase is a fixed name under the work tree, for a leg whose block sizes do not
-// depend on how long the path is.
 func fsBase(name string) func(work string) string {
 	return func(string) string { return name }
 }
@@ -81,26 +60,16 @@ func fsAccessSrc(rounds int, p string) string {
 		`        match (access("%s", 0)) { Ok(_) => {}, Err(e) => { return 8; } }`, p))
 }
 
-// fsWriteRemoveSrc covers remove_file, whose path buffer outlived its unlinkat.
 func fsWriteRemoveSrc(rounds int, p string) string {
 	return fsLoop(rounds, fmt.Sprintf(`        match (write_file("%[1]s", "payload")) { Ok(_) => {}, Err(e) => { return 8; } }
         match (remove_file("%[1]s")) { Ok(_) => {}, Err(e) => { return 9; } }`, p))
 }
 
-// fsDirTreeSrc covers create_dir_all and remove_dir_all — the two leaves whose
-// path buffer is read AFTER the first syscall (create_dir_all rewrites it
-// component by component, remove_dir_all still needs it for the final rmdir),
-// so neither could be handed back where the others are. remove_dir_all also
-// allocates a 64 KiB dirent buffer per getdents round and an 8-byte cursor, both
-// of which it used to abandon, and one block per child it recurses into —
-// see fsDirTreeBase for the length that block is measured at.
 func fsDirTreeSrc(rounds int, p string) string {
 	return fsLoop(rounds, fmt.Sprintf(`        match (create_dir_all("%[1]s/x/y")) { Ok(_) => {}, Err(e) => { return 8; } }
         match (remove_dir_all("%[1]s/x")) { Ok(_) => {}, Err(e) => { return 9; } }`, p))
 }
 
-// fsStatSrc and fsReadDirSrc return an Ok payload beside the path buffer:
-// stat's FileStat struct and read_dir's string[] of names. Both are reclaimed.
 func fsStatSrc(rounds int, p string) string {
 	return fsLoop(rounds, fmt.Sprintf(
 		`        match (stat("%s")) { Ok(st) => { acc = acc + 1; }, Err(e) => { return 8; } }`, p))
@@ -111,22 +80,7 @@ func fsReadDirSrc(rounds int, p string) string {
 		`        match (read_dir("%s")) { Ok(ns) => { acc = acc + ns.len(); }, Err(e) => { return 8; } }`, p))
 }
 
-// fsWork lays out the tree the probes run against: one readable file, a scratch
-// name the write/remove leg owns, a directory holding exactly one entry (so both
-// spellings of the read_dir leg see the same number of names), and a file whose
-// bytes are not UTF-8.
-// fsDirTreeBase names the tree the dir_tree leg owns, padded so the child path
-// remove_dir_all builds — `plen + 1 + namelen` bytes for "<tree>/x" plus "y" —
-// is a MULTIPLE OF 8. That is the length at which a block allocated one byte
-// longer than the string boxed over it lands in a freelist class its extent
-// does not cover: __fern_str_free's fused arm sizes from the LENGTH, so the
-// mismatch is a silent 8 bytes a round at these lengths and nothing at others.
-// The long spelling adds 48 characters, a multiple of 8, so one padding serves
-// both. This is the trap #8402 recorded, and the reason the child path carries
-// no NUL of its own: the recursive call takes a Fern string and terminates its
-// own copy.
 func fsDirTreeBase(work string) string {
-	// cl = len(work) + len("/") + len(base) + len("/x") + 1 + len("y")
 	pad := (8 - (len(work)+len("/")+len("tree")+len("/x")+1+len("y"))%8) % 8
 	return "tree" + strings.Repeat("z", pad)
 }
@@ -206,11 +160,6 @@ func TestSelfHostFsPathBufferReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFsErrorPathBufferReclaimX86_64 — the failing calls. read_file
-// allocates its content buffer from the file's size and must not abandon it when
-// the read or the UTF-8 check fails, which on a directory is a 4 KiB block a
-// call. Every block a failing call allocates, the IoError and its path string
-// included, is reclaimed.
 func TestSelfHostFsErrorPathBufferReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -237,8 +186,6 @@ func TestSelfHostFsErrorPathBufferReclaimX86_64(t *testing.T) {
 	}{
 		{name: "open_missing", base: "nope", src: fail(`open_reader("%s")`)},
 		{name: "read_file_missing", base: "nope", src: fail(`read_file("%s")`)},
-		// A directory opens and stats, so the failure lands after the content
-		// buffer is allocated — the block this leg exists for.
 		{name: "read_file_eisdir", base: "d", src: fail(`read_file("%s")`)},
 		{name: "read_file_bad_utf8", base: "bad", src: fail(`read_file("%s")`)},
 		{name: "stat_missing", base: "nope", src: fail(`stat("%s")`)},
@@ -258,8 +205,6 @@ func TestSelfHostFsErrorPathBufferReclaimX86_64(t *testing.T) {
 	}
 }
 
-// fsMeasure compiles one program through the self-host driver under
-// FERN_LEAKCHECK and returns its allocs / frees / live_bytes.
 func fsMeasure(t *testing.T, gcc string, runner []string, dir, driverBin, name string) func(label, src string) (int64, int64, int64) {
 	return func(label, src string) (int64, int64, int64) {
 		t.Helper()

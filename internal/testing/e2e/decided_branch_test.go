@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// Branches the path to them already decided (compiler/semthread.fern): the
-// done flag a nested pattern's arms test, a variant an earlier arm tested,
-// a variant the others ruled out, a test under `!`, an arm that joins
-// its siblings' values in a phi, and a projection two tests guard on
-// different ways into its block once a decided branch skips the join
-// between them (#12376). Every shape runs over each variant, inside a loop
-// and out of one, and main's result names the shape that came back wrong.
 const decidedBranchSrc = `enum Color { Red, Black }
 enum Shade { Light, Mid, Dark }
 
@@ -237,9 +230,6 @@ func TestInterpDecidedBranchValues(t *testing.T) {
 	}
 }
 
-// checkDecidedBranch runs the program on one target: main's result is the
-// exit code natively and stdout's one line on wasm, and the census is
-// balanced.
 func checkDecidedBranch(t *testing.T, run censusRun) {
 	t.Helper()
 	stdout, stderr, exit := run(t, decidedBranchSrc)

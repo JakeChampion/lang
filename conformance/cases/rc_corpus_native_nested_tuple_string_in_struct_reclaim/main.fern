@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Nested-tuple reclamation: a tuple held inside a STRUCT FIELD
-// used to leak its string element — the struct's drop dec'd the
-// tuple ptr flat (freeing the tuple box but never traversing the
-// elements). dropFnNameFor now routes the field through a
-// generated __drop_tuple_<mangled> helper which dec's the
-// string element + frees the tuple box at the struct's last
-// reference. Same routing fires for an enum-payload tuple, a
-// closure-capture tuple, or a tuple element that's itself a
-// tuple — the worklist is shape-driven, not container-driven.
-// Per iter: s.len()=26 + n=7 = 33; 500x → 16500.
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 struct Box { items: (string, i32) }

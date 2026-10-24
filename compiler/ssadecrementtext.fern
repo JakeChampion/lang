@@ -1,17 +1,11 @@
-// Select decrement entries and dependencies from ONE normal x86 output. This is
-// namespace and section validation only, not an instruction/effect proof.
 import "./ssaproofnames" as names;
 import "./util";
 import "std/string";
 
-// register_entry and unguarded_entry are the positions of the `.r` and `.u`
-// entries in lines, or -1 where the selection has none.
 pub struct Body { lines: string[], register_entry: i32, unguarded_entry: i32, error: string }
 
-// Declaration bytes only, not linked contents, permissions or shape identity.
 pub struct Literal { bytes: u8[], error: string }
 
-// Section identities: text=1, data=2, BSS=3, read-only data=4.
 struct Scan { lines: string[], sections: i32[], error: string }
 
 function failure(message: string): Body {
@@ -91,8 +85,6 @@ function metadata(line: string, op: string, arg: string, section: i32): boolean 
   if (one_of(line, [".cfi_startproc", ".cfi_endproc", ".cfi_remember_state", ".cfi_restore_state"])) {
     return true;
   }
-  // These directives change unwind metadata only. Unwinding is outside
-  // this boundary; no CFI directive is allowed inside the selected body.
   return arg != "" && one_of(op, [".cfi_def_cfa_offset", ".cfi_def_cfa_register", ".cfi_def_cfa", ".cfi_offset"]);
 }
 
@@ -128,9 +120,6 @@ function literal_data(line: string, section: i32): boolean {
   return quoted_data(util.trim(slice_unchecked(line, op.len(), line.len()) + ""));
 }
 
-// Closed policy, including directives outside the selected body. Section
-// stacks, aliases, macros, includes, conditional assembly and dialect changes
-// must not alter the interpretation of a later definition or instruction.
 function directive(line: string, section: i32): i32 {
   if (one_of(line, [".text", ".section .text"])) {
     return 1;
@@ -159,8 +148,6 @@ function directive(line: string, section: i32): i32 {
 }
 
 function ambiguous_syntax(tail: string): boolean {
-  // Quoted/multiline symbols and escaped newlines require their own lexer.
-  // Refusing them also prevents data strings from swallowing later labels.
   for forbidden in [":", ";", "=", "/*", "*/", "\\", "\"", "'"] {
     if (util.contains(tail, forbidden)) {
       return true;
@@ -174,8 +161,6 @@ function raw_line(raw: string): boolean {
   while (at < raw.len()) {
     let c = raw[at];
     if (c < 32 && c != b'\t') {
-      // Accept CRLF only. An interior or leading CR must not be trimmed
-      // into a different assembler statement or definition.
       if (c != b'\r' || at != raw.len() - 1) {
         return false;
       }
@@ -188,9 +173,6 @@ function raw_line(raw: string): boolean {
   return true;
 }
 
-// Retained native functions may refer to the ordinary static shape pool.
-// These tokens identify declarations only: they grant no writable extent,
-// relocation, linked-address or shape-content permission.
 function native_data(line: string, section: i32): boolean {
   if (section < 2 || word(line) != ".quad") {
     return false;
@@ -225,7 +207,6 @@ function scan_mode(text: string, native: boolean): Scan {
     if (line != "" && !util.str_has_prefix(line, "#")) {
       let name = definition(line);
       let tail = if (name == "") { line } else { util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "") };
-      // No secondary definitions or statement separators hidden on a line.
       if (!literal_data(tail, section) && ambiguous_syntax(tail)) {
         return Scan { lines: [], sections: [], error: "unsupported decrement assembly syntax" };
       }
@@ -269,8 +250,6 @@ function body(s: Scan, ix: names.Names, start: i32, register: i32, unguarded: i3
   while (at < s.lines.len()) {
     let line = s.lines[at];
     let name = definition(line);
-    // A section transition ends the contiguous executable body. It cannot
-    // move .r into data or splice later text into this body.
     if (ends_body(line, name, entry)) {
       break;
     }
@@ -306,7 +285,6 @@ function definition_index(lines: string[]): names.Names {
 }
 
 function positive_space(arg: string): boolean {
-  // A bounded decimal count avoids assembler integer overflow/truncation.
   let count = util.trim(arg.split(",")[0]);
   if (!decimal(count) || count.len() > 9) {
     return false;
@@ -334,8 +312,6 @@ function writable_declarations(s: Scan): boolean {
     if (s.sections[at] == 2 || s.sections[at] == 3) {
       let name = definition(line);
       if (name != "") {
-        // Every writable label must consume storage immediately. Refuse
-        // bare/zero-size labels even in another fragment of the section.
         let tail = util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "");
         if (!allocation(tail)) {
           return false;
@@ -349,14 +325,6 @@ function writable_declarations(s: Scan): boolean {
   return true;
 }
 
-// A declaration proof only: not an instruction, relocation, linked-address,
-// caller-disjointness or ownership certificate. Always rescan supplied text.
-// Scope excludes writable bare labels, including the compiler's static
-// aggregate blocks and box-field labels, even with allocation on the next
-// line. Supporting those modules requires a separate declaration/alias proof;
-// this predicate is not yet suitable for general production admission.
-// The shared scanner also refuses signed data literals such as the immortal
-// aggregate RC header `.quad -1`; a bare-label extension alone is insufficient.
 pub function counter_storage(text: string): boolean {
   let s = scan(text);
   if (s.error != "" || !writable_declarations(s)) {
@@ -372,7 +340,6 @@ pub function counter_storage(text: string): boolean {
 function storage_alignment(s: Scan, at: i32, name: string): boolean {
   let section = s.sections[at];
   let before = at - 1;
-  // Only the target's non-allocating visibility declaration can intervene.
   while (before >= 0 && s.sections[before] == section && s.lines[before] == ".globl " + name) {
     before = before - 1;
   }
@@ -437,13 +404,6 @@ function unique_writable(s: Scan, ix: names.Names): boolean {
   return true;
 }
 
-// Declaration facts only, in the scanner's normal ELF/AT&T section dialect.
-// Establishes aligned writable extents for two heap-bound words, all65536 small
-// slots and the45 large slots used by the currently proved release domain.
-// Does not prove the complete allocator's larger reserved table, successful
-// assembly/linking, linked addresses/disjointness, initialized ordered bounds,
-// metadata validity, freelist integrity or any instruction/ownership effect.
-// Retains counter_storage's bare writable label and signed literal limitations.
 pub function release_storage(text: string): boolean {
   let s = scan(text);
   if (s.error != "" || !writable_declarations(s)) {
@@ -454,8 +414,6 @@ pub function release_storage(text: string): boolean {
 }
 
 function native_allocation(line: string): boolean {
-  // The emitted immortal descriptor uses a signed header and a relocation.
-  // Each of these declarations consumes one word, without proving its value.
   if (line == ".quad -1") {
     return true;
   }
@@ -467,8 +425,6 @@ function native_writable_label(s: Scan, at: i32, name: string): boolean {
   if (tail != "") {
     return native_allocation(tail);
   }
-  // A bare descriptor label must immediately precede consuming data in the
-  // same section. Another label, alignment or section would allow aliases.
   return at + 1 < s.lines.len() && s.sections[at + 1] == s.sections[at] && native_allocation(s.lines[at + 1]);
 }
 
@@ -490,11 +446,6 @@ function native_writable(s: Scan): boolean {
   return true;
 }
 
-// Same-output declaration facts for the restricted small allocator boundary.
-// Native shape names and consuming writable descriptors may coexist with them.
-// No allocator code, linked permissions/disjointness, live heap ordering,
-// free-list integrity, fresh allocation or successful return is certified.
-// Larger allocator tables and initialization remain separate obligations.
 pub function allocator_storage(text: string): boolean {
   let s = scan_mode(text, true);
   if (s.error != "" || !native_writable(s)) {
@@ -504,8 +455,6 @@ pub function allocator_storage(text: string): boolean {
   return ix.duplicate < 0 && storage_at(s, ix, "__fern_heap_ptr", 8) && storage_at(s, ix, "__fern_heap_base", 8) && storage_at(s, ix, "__fern_heap_end", 8) && storage_at(s, ix, "__fern_freelist", 65536 * 8);
 }
 
-// Returned lines remain unproved. A semantic checker must call this itself,
-// decode these exact lines, and derive all machine states internally.
 pub function select(text: string, entry: string): Body {
   if (entry != "__fn___fern_arr_dec" && entry != "__fn___fern_str_free") {
     return failure("unsupported decrement helper");
@@ -527,8 +476,6 @@ pub function select(text: string, entry: string): Body {
   return body(s, ix, start, register, unguarded, entry);
 }
 
-// Single-entry dependencies share the complete-output namespace policy.
-// Their lines are unproved; register_entry is always -1.
 pub function dependency(text: string, entry: string): Body {
   if (entry != "__fern_capw" && entry != "__fern_large_push") {
     return failure("unsupported decrement dependency");
@@ -542,26 +489,17 @@ pub function dependency(text: string, entry: string): Body {
   if (start < 0 || !exact_entry(s, start, entry)) {
     return failure("missing or ambiguous executable decrement dependency");
   }
-  // No second nonlocal entry is part of a dependency body.
   return body(s, ix, start, -1, -1, "");
 }
 
-// Fixed normal array-box boundary. Native static pools are declaration data;
-// this does not grant allocator linkage, effects or permissions. Keep the
-// older decrement dependency selector's syntax and entry set unchanged.
 pub function array_box(text: string): Body {
   return native_dependency(text, "__fern_arr_box");
 }
 
-// Contiguous allocator entry-fragment data, ending at a section transition.
-// Later terminal blocks are outside it. This grants no global invariant,
-// linked storage, operating-system contract or allocation effect.
 pub function allocator(text: string): Body {
   return native_dependency(text, "__fern_alloc");
 }
 
-// Array release in complete native output with static constructor pools.
-// This is declaration/entry data only; the older select API stays isolated.
 pub function native_array_release(text: string): Body {
   let s = scan_mode(text, true);
   if (s.error != "") {
@@ -644,11 +582,6 @@ function retained_lines(s: Scan, start: i32, entry: string): Body {
   return Body { lines: code, register_entry: reg, unguarded_entry: -1, error: "" };
 }
 
-// Extract an ordinary x86 text-mode retained function from the complete unit.
-// Unlike the decrement APIs, this declaration-only path admits signed/symbolic
-// quad data and bare static-pool labels. It never invokes writable_declarations
-// or establishes storage, runtime, instruction, unwind or ownership effects.
-// CFI bounds are checked in addition to the complete unique symbol namespace.
 pub function native_body(text: string, entry: string): Body {
   if (!util.str_has_prefix(entry, "__fn_") || entry.len() <= 5 || !symbol(entry)) {
     return failure("unsupported retained function name");
@@ -746,10 +679,6 @@ function literal_at(s: Scan, start: i32, entry: string): Literal {
   return ascii_bytes(util.trim(slice_unchecked(tail, op.len(), tail.len()) + ""));
 }
 
-// Resolve ONE symbol in the same closed complete-output namespace. Both inline
-// and bare labels may precede a single contiguous .ascii declaration in rodata.
-// No assembler, linker, relocation, interning or runtime identity is proved.
-// Weak module shapes and other escape dialects remain outside this grammar.
 pub function readonly_ascii(text: string, entry: string): Literal {
   if (!symbol(entry)) {
     return no_literal("unsupported literal symbol");

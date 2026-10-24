@@ -1,6 +1,6 @@
 import "std/csv";
 
-// csv.parse_line splits one CSV record into fields.
+
 function main(): i32 {
   let Ok(fields) = csv.parse_line("a,b,c,d,e") else {
     return 98;

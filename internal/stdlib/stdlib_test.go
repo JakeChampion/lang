@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// Resolve hands back the embedded source for known stdlib modules.
-// The Phase-1 test fixtures (_test_empty under both prefixes) are
-// the canonical "does the embedded FS wiring work" probe.
 func TestResolveStd(t *testing.T) {
 	src, ok := Resolve("std/_test_empty")
 	if !ok {
@@ -28,9 +25,6 @@ func TestResolveCore(t *testing.T) {
 	}
 }
 
-// Auto-append `.fern` extension: callers pass either `std/foo` or
-// `std/foo.fern` and both resolve to the same module. Mirrors the
-// extension-tolerance of the disk resolver in modload.
 func TestResolveAutoAppendsExtension(t *testing.T) {
 	src1, ok1 := Resolve("std/_test_empty")
 	src2, ok2 := Resolve("std/_test_empty.fern")
@@ -42,8 +36,6 @@ func TestResolveAutoAppendsExtension(t *testing.T) {
 	}
 }
 
-// A path outside the namespaced prefixes returns `(_, false)` —
-// `Resolve` doesn't speculatively read from disk or anywhere else.
 func TestResolveRejectsNonNamespacedPath(t *testing.T) {
 	if _, ok := Resolve("./util"); ok {
 		t.Error("relative paths should not resolve through stdlib")
@@ -53,10 +45,6 @@ func TestResolveRejectsNonNamespacedPath(t *testing.T) {
 	}
 }
 
-// A namespaced path that doesn't exist in the embedded tree
-// returns `(_, false)` — callers (modload) can translate that
-// into a clear "unknown stdlib module" diagnostic instead of
-// falling back to filesystem resolution.
 func TestResolveUnknownModule(t *testing.T) {
 	if _, ok := Resolve("std/does_not_exist"); ok {
 		t.Error("expected nonexistent stdlib module to miss")
@@ -76,7 +64,7 @@ func TestIsStdlibPath(t *testing.T) {
 		{"std/foo.fern", true},
 		{"./foo", false},
 		{"/abs", false},
-		{"stdlib/foo", false}, // not the namespace prefix
+		{"stdlib/foo", false},
 		{"", false},
 	}
 	for _, tt := range tests {

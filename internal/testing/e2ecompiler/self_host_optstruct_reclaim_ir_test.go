@@ -7,26 +7,11 @@ import (
 	"testing"
 )
 
-// optStructReclaimCases pin the #4365 `Option[<struct-with-array-field>]` reclaim: a
-// `let o: Option[P] = Some(P { xs: [i, i+1] })` (P has an rc-array field) consumed by a
-// borrow-only match must free its payload array buffer, the struct box and the option
-// box per iteration, at the loop rebind and at scope exit.
-//
-// SOUNDNESS: a scalar field read (p.n), an indexed array-field read (p.xs[i]) and
-// p.xs.len() in the Some arm are borrows (reclaim proceeds); a BARE array-field
-// extraction (store / return / pass / alias / slice p.xs) escapes and the local is left
-// leak-safe (never over-released).
-//
-// The payload struct's reclaimable field may be an rc-array / nested-struct / enum
-// field, or a bare `string` one (#6360). Exact alloc/free balance for the string half — which a bump-growth
-// bound cannot separate from "freed the boxes, stranded the string" — is pinned by
-// TestSelfHostOptStructStringFieldX86_64.
 var optStructReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: rebuilt per iteration, scalar/array read only.
 	{"optstruct-churn", `struct P { xs: i32[] }
 function main(): i32 {
     let acc: i32 = 0;
@@ -41,8 +26,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Full borrow set: scalar field (p.n), indexed array-field (p.xs[i]) and p.xs.len()
-	// are all admitted — still reclaims (bounded).
 	{"optstruct-borrow-full", `struct P { n: i32, xs: i32[] }
 function main(): i32 {
     let acc: i32 = 0;
@@ -57,8 +40,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-STORE negative: `Some(p) => keep = p.xs` extracts the array out of the
-	// arm — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"optstruct-escape-store-safe", `struct P { xs: i32[] }
 function main(): i32 {
     let keep: i32[] = [0, 0];
@@ -73,8 +54,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-CALL negative: `take(p.xs)` passes the array field to a call (a retain)
-	// — un-credited, leak-safe, detector zero.
 	{"optstruct-escape-call-safe", `struct P { xs: i32[] }
 function take(xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
@@ -89,10 +68,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// STRING-FIELD payload (#6360): the payload's only rc field is a bare `string`,
-	// which must be reclaimed like an rc-ARRAY field — the string AND both boxes
-	// freed, as they are for the same struct bound as a bare local (#4357). A bare
-	// `p.name` extraction escapes, while `p.name.len()` is a borrow.
 	{"optstruct-string-field-churn", `struct P { name: string, n: i32 }
 function main(): i32 {
     let pre: string = "n";
@@ -108,11 +83,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ALIASED string field: the payload's `name` is a bare ident naming a local the
-	// program keeps reading after the match, with a same-shaped churn in between so a
-	// wrongly-freed box would be recycled before the read. The construction-side retain
-	// and the field's release balance, so `shared` still reads "abcd"
-	// (sum 0x61+0x62+0x63+0x64 = 394).
 	{"optstruct-string-field-alias-safe", `struct P { name: string, n: i32 }
 function main(): i32 {
     let shared: string = "ab" + "cd";
@@ -130,9 +100,6 @@ function main(): i32 {
     if (sum != 394) { return 96; }
     return 0;
 }`, 0},
-	// SCALAR-ONLY payload: nothing to deep-drop, so the reclaim is the two box decs
-	// alone. Excluded while this was "the deep-drop class", and nothing else claimed a
-	// block-scoped one — 35200 bytes over 100 rounds with frees=0.
 	{"optstruct-scalar-only-payload", `struct P { a: i32, b: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -147,8 +114,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-STORE negative, string flavour: `held = p.name` extracts the
-	// string out of the arm — un-credited, leak-safe, detector zero.
 	{"optstruct-string-escape-store-safe", `struct P { name: string, n: i32 }
 function main(): i32 {
     let held: string = "";
@@ -162,8 +127,6 @@ function main(): i32 {
     if (held.len() != 2) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE-VIA-FN negative: the option is passed to a function whose match returns the
-	// payload array — ownership moves out, nothing freed, value exact (6 + 7 = 13).
 	{"optstruct-escape-fn-safe", `struct P { xs: i32[] }
 function pick(o: Option[P]): i32[] {
     match (o) { Some(p) => { return p.xs; }, None => {} }
@@ -175,13 +138,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
-	// STRING[] payload (#6495) — the per-ELEMENT release, here on all three
-	// backends. `is_leaksafe_array_field` refuses string[] (a flat dec strands the
-	// element boxes) and nothing else claimed the shape, so the payload, its
-	// elements and both boxes leaked per iteration. The bump bound is what a
-	// backend without FERN_LEAKCHECK can assert; the exact alloc/free balance —
-	// which is what separates freeing the buffer from freeing the elements — is
-	// pinned on x86-64 by TestSelfHostOptStrArrPayloadX86_64.
 	{"optstrarr-churn", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -195,8 +151,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The Result spelling, and an element READ through the payload so the borrow
-	// is exercised rather than only the length.
 	{"optstrarr-result-read", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -210,8 +164,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ALIASED-payload negative: the array is a live local read after the match, so
-	// the credit must be declined. Leak-safe, never over-released, value exact.
 	{"optstrarr-alias-safe", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -228,8 +180,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostOptStructReclaimIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostOptStructReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

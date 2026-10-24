@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// A struct pattern at a payload slot reprints as written. The trailing `..`
-// binds nothing — a named-field pattern binds only the fields it lists — so
-// it survives only by being carried to the printer, and a nested slot is the
-// one place ac47b5c's arm-position fix could not reach.
 func TestFormatKeepsRestInsideAPayloadSlot(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{`S(Pt { x, .. })`, "S(Pt { x, .. })"},
@@ -30,8 +26,6 @@ function f(h: H): i32 {
 	}
 }
 
-// A named field carrying a SUB-PATTERN spells it after the colon, the same
-// place a rename's local goes. Printing only the field name dropped it.
 func TestFormatKeepsSubPatternOnANamedField(t *testing.T) {
 	src := `enum In { Ok2(i32), Er2(i32) }
 struct Box { v: In, tag: i32 }

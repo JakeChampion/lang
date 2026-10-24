@@ -6,9 +6,6 @@ import (
 	"strings"
 )
 
-// OptDecision is one line FERN_OPT_TRACE prints: an optimising pass's
-// decision to rewrite one function, and the hash FERN_OPT_BISECT compares
-// (compiler/optbisect.fern).
 type OptDecision struct {
 	Hash       uint64
 	Pass, Name string
@@ -16,8 +13,6 @@ type OptDecision struct {
 
 func (d OptDecision) String() string { return d.Pass + " " + d.Name }
 
-// ParseOptTrace returns the distinct decisions a traced compile's output
-// lists, in hash order.
 func ParseOptTrace(out string) []OptDecision {
 	seen := map[uint64]bool{}
 	var ds []OptDecision
@@ -37,16 +32,10 @@ func ParseOptTrace(out string) []OptDecision {
 	return ds
 }
 
-// OptBisectEnv is env with every decision hashing below bound declined.
 func OptBisectEnv(env []string, bound uint64) []string {
 	return append(append([]string{}, env...), "FERN_OPT_BISECT="+strconv.FormatUint(bound, 10))
 }
 
-// BisectOptDecisions finds the decision a failure follows: the first of ds,
-// in hash order, whose declining with every decision before it makes agrees
-// hold. agrees(bound) builds and checks the program with the decisions
-// hashing below bound declined. ok is false when declining all of them leaves
-// the failure, so no decision explains it.
 func BisectOptDecisions(ds []OptDecision, agrees func(bound uint64) bool) (culprit OptDecision, ok bool) {
 	if len(ds) == 0 || !agrees(ds[len(ds)-1].Hash+1) {
 		return OptDecision{}, false

@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// Statement-temporary reclamation, stage (a), on the self-host IR path: a
-// discarded bare-ExprStmt whose value is a FRESH scalar-element array literal
-// (`[i, i + 1, i + 2];`) is DEC'd at the statement boundary (the rc-guarded
-// __fern_rc_dec) instead of leaking its buffer every iteration (#4365). The
-// e2e twin is internal/testing/e2e/rc_heap_bump_stmt_temp_test.go.
-//
-// Two assertions, both through the self-host x86-64 IR driver (asm_run):
-//   - FIXPOINT: the discarded-temp loop's bump-growth is BOUNDED — equal at
-//     N=50 and N=5000 (a leak scales with N: 96 -> 128 -> …).
-//   - OVER-RELEASE: the discarded temp must reclaim its OWN box without touching
-//     the live `xs` built from the same loop-variable operands — a wrong "owned"
-//     verdict that freed a shared buffer would corrupt the sum (999) or trip the
-//     __rc_underflow_count detector (> 0).
-
 func stmtTempArrBumpSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -30,10 +16,6 @@ func stmtTempArrBumpSrc(n string) string {
 }`
 }
 
-// A discarded owned array temp reclaims its box while the live `xs` (built from
-// the same operands) is untouched: sum over i=0..199 of (i)+(i+1)+(i+2) =
-// 3*(199*200/2) + 3*200 = 60300. __rc_underflow_count() (the self-host detector) then
-// reports 0 only if nothing was over-released.
 const stmtTempReclaimDetectorSrc = `function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
@@ -46,10 +28,6 @@ const stmtTempReclaimDetectorSrc = `function main(): i32 {
     if (acc != 60300) { return 999; }
     return __rc_underflow_count();
 }`
-
-// The other stage-(a) discarded-temp shapes, each a fresh rc=1 sole-owner box
-// released at the statement boundary: a scalar tuple / scalar struct literal
-// (shallow __fern_rc_dec) and a string concat (rc-aware __fern_str_free).
 
 func stmtTempTupleBumpSrc(n string) string {
 	return `function main(): i32 {
@@ -81,10 +59,6 @@ func stmtTempStrConcatBumpSrc(n string) string {
 }`
 }
 
-// A discarded fresh rc-FIELD struct literal (`H { id, xs: [..] };`) leaks BOTH
-// its box AND its field buffers if merely dropped, so the statement releases the
-// field buffers and then the box. A double free of a field buffer trips the
-// __rc_underflow_count detector below.
 func stmtTempRcFieldStructBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function main(): i32 {
@@ -95,9 +69,6 @@ function main(): i32 {
 }`
 }
 
-// A discarded call to a STRICT fresh-struct-returning function hands back a rc=1
-// box that leaks if merely dropped, so the statement must release it. `mk`
-// returns a fresh no-base `P { … }`.
 func stmtTempFreshCallBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32, a:i32, b:i32, c:i32 }
 @noinline function mk(a: i32): P { return P { x: a, y: a + 1, a:0, b:0, c:0 }; }
@@ -109,11 +80,6 @@ function main(): i32 {
 }`
 }
 
-// A discarded ARRAY-returning call (`mk(i) -> i32[]`, every return a direct
-// scalar-element array literal, #4365): the returned rc=1 buffer is released at
-// the statement boundary; its scalar elements live in the buffer, so one dec
-// frees all of it. The e2e twin is
-// internal/testing/e2e/rc_heap_bump_discarded_call_test.go.
 func stmtTempFreshCallArrBumpSrc(n string) string {
 	return `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
 function main(): i32 {
@@ -124,13 +90,6 @@ function main(): i32 {
 }`
 }
 
-// A FRESH string-concat RECEIVER (`(s1 + s2).len()`) — the value-consuming-op
-// sibling of the discarded-statement concat (#4365; the e2e twin is
-// internal/testing/e2e/rc_heap_bump_len_receiver_test.go). The temp box is
-// released once its length is read. No warmup: the fixpoint harness requires
-// a NON-ZERO bounded high-water (a zero reads as "nothing measured"), and the
-// cold first iteration allocates exactly one concat box before the freelist
-// recycles it — the same small constant at every N.
 func stmtTempLenReceiverBumpSrc(n string) string {
 	return `function main(): i32 {
     let s1: string = "ab";
@@ -144,9 +103,6 @@ func stmtTempLenReceiverBumpSrc(n string) string {
 }`
 }
 
-// A discarded STRICT fresh-struct-returning call whose return type carries an
-// rc-ARRAY field (`mk(i) -> H { id, xs: [..] };`) sole-owns every field buffer,
-// so the statement releases xs as well as the box instead of leaking xs.
 func stmtTempFreshCallRcFieldBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
@@ -158,15 +114,6 @@ function main(): i32 {
 }`
 }
 
-// A discarded fresh string[] literal (`[p + "a", p + "b"];`) leaks BOTH its
-// buffer AND every element box if merely dropped (unbounded in a hot loop). The
-// reclaim deep-frees it with __fern_str_arr_free — the element-walking release
-// the exit sweep gives a reclaimable string[] LOCAL (#4355): each element is a
-// proven-fresh concat, so the buffer sole-owns it at rc=1, the rc==1-gated walk
-// frees every element box, then returns the buffer to its freelist. Elements are
-// DISTINCT concats (`p+"a"`, `p+"b"`) — not the same expression twice, which the
-// native emitter shares into one box (an aliased element the deep free would
-// leak, not a fresh sole-owned one).
 func stmtTempFreshStrArrBumpSrc(n string) string {
 	return `function main(): i32 {
     let p: string = "x";
@@ -177,10 +124,6 @@ func stmtTempFreshStrArrBumpSrc(n string) string {
 }`
 }
 
-// Detectors: the discarded temp reclaims its OWN box while a live value built
-// from the same operands stays intact — a wrong "owned" verdict that freed a
-// shared box would corrupt the sum (999) or trip __rc_underflow_count (> 0). Sums:
-// tuple/struct t=(i,i+2): 2i+2 over 0..199 = 40200; string s=a+b: 200 * 10.
 const stmtTempTupleDetectorSrc = `function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
@@ -219,11 +162,6 @@ const stmtTempStrConcatDetectorSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// The discarded rc-field struct `H { id, xs: [..] };` reclaims its box AND xs
-// buffer while the live `h = H { id: i, xs: [..] }` (same operands, its own box)
-// stays intact: acc += h.id + h.xs[0] + h.xs[1] + h.xs[2] = i + i + (i+1) + (i+2)
-// = 4i+3 over 0..199 = 4*19900 + 600 = 80200. The double-free bug this guards
-// (the box-return-register clobber) trips __rc_underflow_count (> 0), not the sum.
 const stmtTempRcFieldStructDetectorSrc = `struct H { id: i32, xs: i32[] }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
@@ -237,9 +175,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// The discarded call `mk(i);` reclaims its fresh box while the live `p = mk(i+1)`
-// (an independent fresh box) stays intact: p = P{i+1, i+2}, acc += (i+1)+(i+2) =
-// 2i+3 over 0..199 = 40400. A wrong reclaim of a shared box would corrupt it.
 const stmtTempFreshCallDetectorSrc = `struct P { x: i32, y: i32 }
 function mk(a: i32): P { return P { x: a, y: a + 1 }; }
 function main(): i32 {
@@ -254,14 +189,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// The discarded rc-field-returning call `mk(i);` deep-drops its box AND xs while
-// the live `p = mk(i+1)` (its own fresh box + buffers) stays intact: p from
-// mk(i+1) has id=i+1, xs=[i+1,i+2,i+3]; acc += (i+1)+(i+1)+(i+2)+(i+3) = 4i+7
-// over 0..199 = 4*19900 + 1400 = 81000. The box-return-register clobber this
-// guards would double-free xs and trip __rc_underflow_count (> 0), not the sum.
-// The len-receiver release frees only the fresh CONCAT temp: the operands
-// s1/s2 stay readable after (their own boxes untouched), the length value is
-// exact, and the detector stays zero.
 const stmtTempLenReceiverDetectorSrc = `function main(): i32 {
     let s1: string = "ab" + "c";
     let s2: string = "de";
@@ -275,10 +202,6 @@ const stmtTempLenReceiverDetectorSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// The discarded array-returning call `mk(i);` frees only its OWN buffer while
-// the live `v = mk(i + 1)` stays intact: v = [i+1, i+2, i+3], acc += 3i + 6
-// over 0..199 = 3*19900 + 1200 = 60900. A wrong dec of the live buffer would
-// corrupt the sum (999) or trip __rc_underflow_count (> 0).
 const stmtTempFreshCallArrDetectorSrc = `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
@@ -306,11 +229,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// The discarded fresh string[] `[p+"a", p+"b"];` deep-frees its buffer AND element
-// boxes while the live `xs = [p+"c", p+"d"]` (independent fresh boxes) stays
-// intact: xs[0]="xc", xs[1]="xd", each len 2, so acc += 4 over 0..199 = 800. A
-// wrong reclaim that decdouble-freed a live element box would trip __rc_underflow_count
-// (> 0); an over-eager release of the live xs would corrupt the sum (999).
 const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
     let p: string = "x";
     let i: i32 = 0; let acc: i32 = 0;
@@ -324,12 +242,6 @@ const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A discarded string[] literal whose elements are BORROWED (`[s, s];` — a bare
-// owned local, not a fresh producer) must NOT be admitted to the deep free: the
-// element boxes alias `s`, which the exit sweep also frees, so a deep free here
-// would double-free. The detector proves the exclusion holds: `s.len()`==5 over
-// 200 = 1000, and __rc_underflow_count stays 0 (no over-release). A regression that
-// admitted borrowed elements would trip __rc_underflow_count (> 0).
 const stmtTempBorrowedStrArrDetectorSrc = `function main(): i32 {
     let s: string = "hello";
     let i: i32 = 0; let acc: i32 = 0;
@@ -342,8 +254,6 @@ const stmtTempBorrowedStrArrDetectorSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// TestSelfHostStmtTempReclaimIRX86_64 builds the self-host x86-64 IR driver once
-// and drives the two programs through it.
 func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -374,10 +284,8 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 	}
 
 	fixpointShapes := []struct {
-		name string
-		src  func(n string) string
-		// unbuilt: a scalar tuple or struct literal nothing reads is not
-		// built at all (semdead), so the high-water is 0 rather than bounded.
+		name    string
+		src     func(n string) string
 		unbuilt bool
 	}{
 		{"scalar-array", stmtTempArrBumpSrc, false},

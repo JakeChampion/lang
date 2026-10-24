@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-// Producer-consumer fusion of std/array pipelines (#9731), from the outside.
-//
-// A structural test can prove the chain became one loop. It cannot prove it
-// became the RIGHT loop: a fused pipeline that drops the last element, or
-// seeds `reduce` with `h(x, x)` on a singleton, passes every structural check
-// and returns the wrong number here. So this asserts the answers, and
-// asserts them on each backend rather than one — the fused loop is emitted
-// from a single op stream, but the backends disagree about how strictly that
-// stream is typed, and wasm rejected an i64 element in an i32 slot that arm64
-// had been running happily.
-//
-// Each case computes the same thing twice: once through the combinators, once
-// through a hand-written loop written not to be fusible. Comparing the two
-// inside the program is what makes this a differential test rather than a set
-// of golden numbers that a wrong-but-consistent fusion could be adjusted to.
 const arrayFusionSrc = `import "std/array";
 
 function build(n: i32): i64[] {
@@ -226,11 +211,6 @@ function main(): i32 {
 }
 `
 
-// The allocation gate is a separate program because the interpreter does not
-// model the heap: __heap_alloc_count() never moves there, so an assertion that
-// fused chains stop allocating would pass on the interpreter for the wrong
-// reason and could never fail. The correctness program above runs everywhere;
-// this one runs where the counter is real.
 const arrayFusionAllocSrc = `import "std/array";
 
 function build(n: i32): i64[] {
@@ -270,8 +250,6 @@ function main(): i32 {
 }
 `
 
-// The exit code names the case: 1x = which pipeline disagreed with its loop,
-// the trailing digit = which input size.
 func TestArm64ArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, arrayFusionSrc); code != 0 {
 		t.Errorf("array fusion on arm64: got %d, want 0", code)
@@ -296,9 +274,6 @@ func TestInterpArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 	}
 }
 
-// 96 means the pipeline was optimized away entirely and the count meant
-// nothing; 97 means the intermediates are still being allocated; 98/99 mean
-// the counter itself stopped working.
 func TestArm64ArrayFusionStopsAllocatingIntermediates(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, arrayFusionAllocSrc); code != 0 {
 		t.Errorf("array fusion allocations on arm64: got %d, want 0", code)
@@ -317,14 +292,6 @@ func TestWASMArrayFusionStopsAllocatingIntermediates(t *testing.T) {
 	}
 }
 
-// Folding a zero-capture closure's env fetch (#9731's residual) changes what
-// every closure call site passes as its environment. The failure it risks is
-// not a compile error: a capturing closure handed a null env reads its
-// captured values as garbage and returns a wrong number.
-//
-// So this computes the same answers three ways — through closures that capture
-// nothing, through closures that capture one value and two, and through plain
-// loops — and compares them inside the program.
 const closureEnvSrc = `
 function scale(): i64 { return 3 as i64; }
 

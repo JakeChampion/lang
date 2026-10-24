@@ -1,34 +1,3 @@
-// Diagnostic: how much of a real module the checked-source producer admits.
-// Loads the module tree the way the production compiler does, then for every
-// function runs semsource.build -> ssaunits.plan -> ssarc.lower and counts the
-// stage each one reaches. A generic declaration is a template with one body
-// per instantiation its callers bind, so it reaches the stage every one of its
-// instances reaches. Refusal reasons are tallied by LEAF: a refusal that is
-// only "call target was refused" is charged to the reason at the end of the
-// chain, because that is the construct worth building next.
-//
-// A template NOTHING instantiates is counted apart, as `bodyless`, and left
-// out of `measured`. It has no body: it is not evidence that this boundary
-// cannot lower it, the production pipeline shakes it out before lowering, and
-// which templates an entry leaves uninstantiated says more about that entry's
-// imports than about the language. Counting it as a refusal buried 66,429 of
-// them in the corpus histogram, 44% of every refusal there. A function the
-// inliner spliced into every caller is counted apart too, as `spliced`: its
-// body is lowered in its callers.
-//
-//   $ fern -embed internal/stdlib -o census semsource_census_run.fern
-//   $ census <entry.fern>
-//
-// The stdlib arrives as the `-embed` bundle, turned into the loader's overlay.
-// Without it `import "std/test"` resolves against the ENTRY's directory, finds
-// nothing, and is dropped in silence: the census then measures the entry's own
-// declarations alone and charges every call into the missing module to
-// whatever leaf its unresolved result lands on. An import that still does not
-// resolve is named and exits non-zero, because a census that quietly measures
-// a third of a program is worse than no census.
-//
-// FERN_CENSUS_LIST=<leaf> also names every declaration refused at that leaf,
-// which is what a probe reads before building against a histogram row.
 import "std/io";
 import "../util";
 import "../lexer";
@@ -59,7 +28,6 @@ function hist_bump(h: Hist, k: string): Hist {
 
 function hist_print(label: string, h: Hist): void {
   print(label);
-  // selection sort by count, descending
   let order: i32[] = [];
   let used: boolean[] = [];
   let i: i32 = 0;
@@ -88,7 +56,6 @@ function hist_print(label: string, h: Hist): void {
   }
 }
 
-// The leaf reason: strip every cascade prefix.
 function leaf(why: string): string {
   let tag: string = "call target was refused: ";
   let out: string = why;
@@ -102,7 +69,6 @@ function leaf(why: string): string {
   return out;
 }
 
-// The stage one body reaches, and the reason it stopped there.
 struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: string }
 
 function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
@@ -118,7 +84,6 @@ function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
   return Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
 }
 
-// A template's stage is the first its instances stop at.
 function template_stage(key: string, instances: semsource.Produced[], stages: Stage[]): Stage {
   let out: Stage = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
   let i: i32 = 0;
@@ -136,7 +101,6 @@ function template_stage(key: string, instances: semsource.Produced[], stages: St
   return out;
 }
 
-// Every declaration's stage, and the leaf it stopped at.
 function listed_leaf(): string {
   match (env("FERN_CENSUS_LIST")) {
     Some(v) => {
@@ -149,20 +113,6 @@ function listed_leaf(): string {
   return "";
 }
 
-// The build whose stages this report describes. Production widens the declared
-// parameter modes (semsource.with_inferred_modes) and lowers under those, so a
-// census read off the declared ones describes a convention no build runs —
-// ssaunits.plan and ssarc.lower both read modes, and a body only the widened
-// modes refuse would not appear at all.
-//
-// The refusal half is unaffected either way: semsource appends a mode and
-// hands it back while it builds a body, never branching on it, so `ok` / `why`
-// are the same whichever answer the inference reaches.
-//
-// semlower keeps the widening only when the module still lowers WHOLE under
-// it, and this report does not re-derive that: it describes the widened
-// pipeline, and its own `lowered` against `produced` is the condition, so a
-// body that refuses under the widening is shown rather than hidden.
 function measured_build(merged: parser.Module): semsource.Built {
   let built: semsource.Built = semsource.build_module(merged);
   let widened: semsource.Built = semsource.with_inferred_modes(built);
@@ -242,13 +192,8 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
   hist_print("-- rc refusals --", rc_why);
 }
 
-// STDLIB_EXT is the suffix an embedded module name carries and an import path
-// does not.
 const STDLIB_EXT: string = ".fern";
 
-// The `-embed` bundle as the loader's overlay, keyed by import path. Not
-// sealed: an entry's own relative imports (`./util`) miss the overlay and fall
-// through to disk, which is where they live.
 function embedded_stdlib(): modloader.Overlay {
   let paths: string[] = [];
   let srcs: string[] = [];
@@ -274,8 +219,6 @@ function main(): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
       let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      // An unresolved import is the failure mode that once produced a whole
-      // phantom refusal class, so the census refuses to count past one.
       let g: modloader.Graph = modloader.load_graph(embedded_stdlib(), entry_path, entry, "");
       entry = g.entry;
       let loaded: flatten.LoadedModule[] = g.loaded;
@@ -285,20 +228,8 @@ function main(): i32 {
       }
       let merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
       merged = modloader.merge_builtins(dir, merged);
-      // The driver folds the target's name to its two literals before
-      // anything lowers, so the boundary never sees the call; the
-      // census counts against the default target.
       let desc: platforms.Descriptor = platforms.for_target("arm64-linux");
       merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
-      // The pipeline the CLI's typed route runs before it lowers:
-      // `lift_lambdas_typed(parser.module_with_builtins_typed(merged))`. This used to hand-roll a prefix of it —
-      // the three method-generic registrations and the enum injection —
-      // and skip the rest, so it measured a module the compiler never
-      // lowers and charged the difference to the boundary. It cost a
-      // wrongly-filed issue: a self-recursive nested `function` refused
-      // here and produces whole in production, because
-      // `hoist_local_funcs_module` is one of the passes that was missing
-      // (#9773, #9778).
       merged = parser.module_with_builtins_typed(merged);
       merged = lift.lift_lambdas_typed(merged);
       let tab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(merged.structs));

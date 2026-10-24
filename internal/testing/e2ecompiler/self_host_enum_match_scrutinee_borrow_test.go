@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// --- A bare-ident match SCRUTINEE is a borrow --------------------------------
-//
-// Matching an rc-enum local does not hand it out, so a local matched twice,
-// matched inside an `if`, or matched inside a loop is still released at scope
-// exit: those rows balance at 200 allocs / 200 frees over 100 rounds.
-//
-// The arms' payload bindings are the part that can hand the value out, and that
-// is sound: the binding's own assignment retains, so both owners are counted.
-// Two rows below establish that, one on the counts and one on the VALUE with
-// allocation churn after the match, because counts and the underflow guard
-// cannot see a use-after-READ.
-//
-// Exit 99 is reserved for __rc_underflow_count().
-
 type enumScrutineeCase struct {
 	name   string
 	src    string
@@ -44,7 +30,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	return []enumScrutineeCase{
 		{
-			// Two top-level matches on the same local. Base: 200 allocs / 0 frees.
 			name: "matched_twice",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -58,8 +43,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 12, allocs: 200, frees: 200,
 		},
 		{
-			// Matched inside a conditional — not a TOP-LEVEL match, so the same
-			// branch decides. Base: 200 / 0.
 			name: "matched_in_if",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -71,8 +54,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 3, allocs: 200, frees: 200,
 		},
 		{
-			// Matched inside a loop, so the same box is read on every iteration.
-			// Base: 200 / 0.
 			name: "matched_in_while",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -85,9 +66,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 12, allocs: 200, frees: 200,
 		},
 		{
-			// A non-sole match whose arm binds the payload OUT: `keep = xs`
-			// retains the payload, so there are two counted owners and the
-			// sweep leaves `keep` holding one.
 			name: "non_sole_match_binds_payload_out",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -99,16 +77,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 78, allocs: 200, frees: 200,
 		},
 		{
-			// The same hazard read as a VALUE after the match. Counts and the
-			// underflow guard cannot see a use-after-READ; the value can. Native
-			// returns 53; so do all three backends here. The arrays after the
-			// match are constant and not heap-allocated on the typed lowering.
-			// The payload reaches its variant through `id`, which hides the constant from the static-box plan,
-			// so the variant is still allocated.
-			//
-			// The modulus is 97 rather than something larger because WASI rejects
-			// an exit status outside [0, 126) and the wasm leg reads the value
-			// through the exit code.
 			name: "payload_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -132,9 +100,6 @@ function main(): i32 {
 			want: 53, allocs: 20, frees: 20,
 		},
 		{
-			// The SOLE top-level match binding its payload out: `keep = xs`
-			// takes a counted claim of its own, so every box and payload is
-			// reclaimed.
 			name: "sole_match_binds_payload_out_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -146,9 +111,6 @@ function main(): i32 {
 			want: 5, allocs: 200, frees: 200,
 		},
 		{
-			// The single top-level match on an INLINE ctor bind, which takes the
-			// match-consumed branch instead and was already flat. Kept as the
-			// control for that branch, since this slice must not disturb it.
 			name: "inline_ctor_sole_match_unchanged",
 			src: decls + `function round(i: i32): i32 {
     let v: E = E.A([i, i + 1]);
@@ -162,7 +124,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostEnumMatchScrutineeBorrowX86_64 is the leak-accounting leg.
 func TestSelfHostEnumMatchScrutineeBorrowX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -197,8 +158,6 @@ func TestSelfHostEnumMatchScrutineeBorrowX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumMatchScrutineeBorrowWasmIR — exit codes only, so what this leg
-// catches is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostEnumMatchScrutineeBorrowWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping enum match-scrutinee borrow wasm IR e2e")
@@ -237,7 +196,6 @@ func TestSelfHostEnumMatchScrutineeBorrowWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumMatchScrutineeBorrowIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostEnumMatchScrutineeBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

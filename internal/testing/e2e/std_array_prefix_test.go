@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// TestStdArrayPrefix pins the Eq-driven `starts_with` / `ends_with`
-// array prefix/suffix checks as they ship in std/array — qualified
-// through `import "std/array"`. Bound `[T: cmp.Eq]`, they compare
-// elements with `==` (scalar for i32, str_eq for string), so they work
-// on interp + x86-64 + wasm. The self-host IR path is pinned in
-// self_host_prefix_ir_test.go.
 func TestStdArrayPrefix(t *testing.T) {
 	cases := []struct {
 		name string

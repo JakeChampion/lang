@@ -1,14 +1,14 @@
-// `.to_owned()` materialises an owned `string` from a borrowed `str` view,
-// and the result is a value an `own` parameter may consume. That pairing is
-// what the checker tells the reader to write when a view reaches an owning
-// sink, so it has to hold at every sink and at run time — not only pass the
-// type check.
-//
-// The interesting half is the `own` parameter. A consuming callee frees its
-// argument, so if `.to_owned()` handed over a view of the caller's string
-// rather than a fresh copy, the caller's next read would be a use-after-free.
-// The loop reads the source string AFTER consuming a copy of it, every
-// iteration, so a lent view would surface rather than sit latent.
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/string";
 import "std/i32";
@@ -24,11 +24,11 @@ function main(): i32 {
     for i in 0..8 {
         let src: string = "  item-" + i.to_string() + "  ";
 
-        // Consumed by an `own` parameter, then the source is read again.
+
         total = total + consume(src.trim().to_owned());
         total = total + src.len();
 
-        // The other owning sinks: let init, struct field, return, array.
+
         let v: string = src.trim().to_owned();
         let b: Box = Box { name: src.trim().to_owned() };
         let arr: string[] = [trimmed(src)];
@@ -38,8 +38,8 @@ function main(): i32 {
     }
     print(total.to_string());
 
-    // A copy is independent of its source: rebinding the source must not
-    // disturb it.
+
+
     let a: string = "  keep me  ";
     let copy: string = a.trim().to_owned();
     a = "  something else  ";

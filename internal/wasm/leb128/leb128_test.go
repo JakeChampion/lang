@@ -7,15 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/leb128"
 )
 
-// Spec vectors come from
-// https://webassembly.github.io/spec/core/binary/values.html plus
-// the canonical 624485 example from
-// https://en.wikipedia.org/wiki/LEB128.
-//
-// The same input set is mirrored on the Lang side by the
-// cross-validation test in internal/testing/e2e (TestWASMLebCrossValidates) —
-// if either implementation drifts off-spec, the e2e test fires.
-
 func TestUlebU32SpecVectors(t *testing.T) {
 	cases := []struct {
 		v    uint32
@@ -27,7 +18,7 @@ func TestUlebU32SpecVectors(t *testing.T) {
 		{128, []byte{0x80, 0x01}},
 		{255, []byte{0xff, 0x01}},
 		{16384, []byte{0x80, 0x80, 0x01}},
-		{624485, []byte{0xe5, 0x8e, 0x26}}, // canonical spec example
+		{624485, []byte{0xe5, 0x8e, 0x26}},
 		{0xffffffff, []byte{0xff, 0xff, 0xff, 0xff, 0x0f}},
 	}
 	for _, c := range cases {
@@ -96,10 +87,6 @@ func TestSlebI64SpecVectors(t *testing.T) {
 		{-1, []byte{0x7f}},
 		{64, []byte{0xc0, 0x00}},
 		{-64, []byte{0x40}},
-		// The algorithm both sides use produces a 10-byte encoding
-		// for max-i64 — a valid (if not minimal-canonical) sleb128
-		// form. wasm decoders accept up to 10 bytes for i64, so
-		// it round-trips correctly.
 		{9223372036854775807, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
 		{-9223372036854775808, []byte{0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f}},
 	}
@@ -111,9 +98,6 @@ func TestSlebI64SpecVectors(t *testing.T) {
 	}
 }
 
-// TestAppendBehaviour verifies the Lang-style "extend existing
-// buffer" calling convention — what callers rely on when
-// chaining encoders.
 func TestAppendBehaviour(t *testing.T) {
 	buf := []byte{0xaa, 0xbb}
 	buf = leb128.UlebU32(buf, 128)

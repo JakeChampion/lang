@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-// #9879: a struct returned by a call lost a field when a view of it was built
-// inline as an argument to a call on the same value.
-//
-// The caller evaluates the enclosing call's first operand, then the inner
-// call. The last-occurrence death verdict read the text and marked the inner
-// occurrence the last use, so the receiver was passed as consumed — which
-// licenses the callee to take a uniquely-held field buffer and blank the slot
-// it came from. The enclosing call then read a null field: SIGSEGV on the
-// four native backends, an out-of-bounds trap at wasm address 0xfffffffc on
-// wasm (a length header read at ptr-4), and a correct answer on the
-// interpreter, which does not lower any of this.
-//
-// Every ingredient matters, and each is one line here: the value comes from a
-// call rather than a literal, the view shares one field and rebuilds the
-// other, the inner call is inline, and the outer function reads BOTH handles.
 const structFieldStealBody = `
 import "std/i32";
 

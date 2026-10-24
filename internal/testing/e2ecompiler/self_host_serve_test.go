@@ -13,10 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twins of internal/testing/e2e's graceful-shutdown and worker
-// tests (#9854): the same servers, compiled by the self-host compiler for
-// x86-64, driven by the same client scenarios.
-
 func selfHostServer(t *testing.T, src string) (bin string, runner []string) {
 	t.Helper()
 	gcc, runner, driverBin := buildModloadDriverX86(t)
@@ -199,8 +195,6 @@ func TestSelfHostServeConfig(t *testing.T) {
 	e2eharness.CheckReusePortReachesListener(t, port)
 }
 
-// The default accept queue holds a burst of connections the loop has not
-// reached yet, rather than dropping their SYNs into a retransmit (#12505).
 func TestSelfHostServeDefaultBacklogHoldsBurst(t *testing.T) {
 	port := e2eharness.ReservedPort(t)
 	bin, runner := selfHostServer(t, e2eharness.DefaultBacklogServerSource(port))
@@ -209,8 +203,6 @@ func TestSelfHostServeDefaultBacklogHoldsBurst(t *testing.T) {
 	e2eharness.CheckDefaultBacklogHoldsBurst(t, cmd, port)
 }
 
-// A loop pass, an accept and a close cost the same with thousands of idle
-// connections open as with none (#12505).
 func TestSelfHostServePerConnectionCostFlat(t *testing.T) {
 	e2eharness.RaiseConnCostLimit(t)
 	bin, runner := selfHostServer(t, e2eharness.PerConnectionCostServerSource())
@@ -226,9 +218,6 @@ func TestSelfHostServeMaxConnectionsFloor(t *testing.T) {
 	e2eharness.CheckMaxConnectionsFloor(t, addr)
 }
 
-// The self-host compiler synthesises the serve `main` of a handler
-// program as the native checker does: with `init`'s state threaded, and
-// for a bare `handle`.
 func TestSelfHostServeInitProvidedState(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.InitStateServerSource())
 	cmd := binCmd(runner, bin)
@@ -278,10 +267,6 @@ func TestSelfHostServeStatefulResultHandler(t *testing.T) {
 	e2eharness.CheckStatefulResultHandler(t, addr)
 }
 
-// A target without processes gets the single-process serve loop from the
-// synthesised main, as native's TestHandlerKindsMatchWhatTheCompilerAccepts
-// pins: the wasm32-wasi build of a handle-only program reaches
-// `serve.run` and never the supervisor.
 func TestSelfHostWasiCliHandlerProgramBuilds(t *testing.T) {
 	cli, stdlib := witSelfHostCLI(t)
 	dir := t.TempDir()
@@ -370,8 +355,6 @@ func TestSelfHostServeAcceptDistribution(t *testing.T) {
 	e2eharness.CheckAcceptDistribution(t, addr, 4, held)
 }
 
-// selfHostRaiseNofile lifts the soft RLIMIT_NOFILE towards `want`, as far
-// as the hard limit allows, and answers the soft limit in force.
 func selfHostRaiseNofile(t *testing.T, want uint64) int {
 	t.Helper()
 	var lim syscall.Rlimit

@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// On x86-64 a function with no frame slots builds no %rbp frame: it pushes only
-// the callee-saved registers it uses and pops them before each return. mix
-// loops, early returns before its loop, and wide keeps enough values live to
-// need callee-saved registers. outer calls, so it also keeps %rsp aligned for
-// its calls. Debug information preserves those same frame choices.
 const leafFrameProg = `@noinline function mix(s: string, n: i32): i32 {
     if (n <= 1) { return 0; }
     let a: i32 = 208357;
@@ -64,7 +59,6 @@ func leafWide(a, b, c, d int64) int64 {
 	return e + f + g + h + p + a*d + b*c
 }
 
-// leafFunction is the listing of fn's register entry through its .cfi_endproc.
 func leafFunction(t *testing.T, asm, fn string) string {
 	t.Helper()
 	at := strings.Index(asm, "__fn_"+fn+".r:\n")

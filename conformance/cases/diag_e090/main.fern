@@ -1,6 +1,6 @@
-// E090: an argument has the kind of its parameter. A const parameter takes
-// an integer and a type parameter takes a type, so a type in the place of N
-// and an integer in the place of T are refused.
+
+
+
 function count[const N: i32, T](x: T): i32 {
   return N;
 }

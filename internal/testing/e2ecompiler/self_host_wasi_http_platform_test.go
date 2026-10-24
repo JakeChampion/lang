@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// The capabilities the wasi:http/proxy world grants a handler's bag, on the
-// self-host: `plat.log` reaches wasmtime's stderr through wasi:cli/stderr,
-// and the wall clock, the monotonic clock and entropy answer through
-// wasi:clocks and wasi:random. The body names whichever one did not answer.
-// `plat.env` is not granted, so a handler reading it is refused at check time
-// (E066, naming the builtin) rather than composed into a component that fails
-// to link.
 func TestSelfHostWasiHttpPlatformCapabilities(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

@@ -9,34 +9,10 @@ import (
 	"testing"
 )
 
-// A tuple element that is a DIRECT `Some(<struct>)` construction — the shape
-// `coreutils/lib/gnu.fern`'s getopt cursor returns from `next` /
-// `short_option` / `long_option`:
-//
-//	function (g: Getopt) next(): (Option[OptMatch], Getopt)
-//
-// Every coreutils utility that declares an option needs it (#8407).
-//
-// The runtime shape is the one an Option[S] LOCAL as an element, or a CALL
-// returning Option[S] as an element, already builds: the payload box is one
-// pointer in the slot at offset 8, which is what the match lowering's
-// struct-payload branch reads. So `(Some(S { … }), g)` must lower like
-// `(pick(5), g)`. The controls are those two spellings, and all three must
-// agree with the interp oracle.
-//
-// The enum cases are the same shape one payload kind over, from wc's
-//
-//	function count_stream(r: Reader, show: Show): (Counts, Option[IoError])
-//
-// which is how every streaming utility returns an IO error (#8737). A nominal
-// enum payload is the same one-pointer-at-offset-8 slot, so `(c, Some(e))` must
-// lower like a BARE enum element and `let o: Option[E] = Some(e)`. Those two
-// spellings are the controls.
 var tupleOptStructElemCases = []struct {
 	name string
 	src  string
 }{
-	// The cursor shape itself: an Option[struct] beside a struct, both read.
 	{"some_struct_literal", `struct S { id: i32, v: string }
 struct G { i: i32, name: string }
 function step(g: G, k: i32): (Option[S], G) {
@@ -52,7 +28,6 @@ function main(): i32 {
     match (r2.0) { Some(s2) => { a = a + 100; }, None => { a = a + r2.1.i; } }
     return a;
 }`},
-	// The payload is a struct LOCAL rather than a literal.
 	{"some_struct_ident_payload", `struct S { id: i32, v: string }
 struct G { i: i32, name: string }
 function f(g: G): (Option[S], G) {
@@ -65,8 +40,6 @@ function main(): i32 {
     match (r.0) { Some(s) => { a = a + s.id; }, None => { a = a + 100; } }
     return a;
 }`},
-	// Option[struct] beside a SCALAR, so the widened tag is not carried by a
-	// neighbouring struct element.
 	{"some_struct_scalar_pair", `struct S { id: i32, v: string }
 function f(): (Option[S], i32) { return (Some(S { id: 5, v: "hit" }), 4); }
 function main(): i32 {
@@ -75,7 +48,6 @@ function main(): i32 {
     match (r.0) { Some(s) => { a = a + s.id + s.v.len(); }, None => { a = a + 100; } }
     return a;
 }`},
-	// Controls — the two spellings that already lowered.
 	{"fn_call_option_struct_control", `struct S { id: i32, v: string }
 struct G { i: i32, name: string }
 function pick(k: i32): Option[S] {
@@ -120,10 +92,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostTupleOptStructElemIRX86_64 — the x86-64 IR path. Every case runs
-// under FERN_STRICT_IR=1, so a per-function bail refuses the build rather than
-// being absorbed: that is the regression signal here, since a bail and a
-// correct answer are not distinguishable from the exit code alone.
 func TestSelfHostTupleOptStructElemIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -150,7 +118,6 @@ func TestSelfHostTupleOptStructElemIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleOptStructElemIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleOptStructElemIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -173,9 +140,6 @@ func TestSelfHostTupleOptStructElemIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleOptStructElemWasmIR — the wasm leg, where the element's kind
-// tag also picks the store WIDTH, so a tag the backend does not recognise is
-// not merely a bail but a differently-shaped slot.
 func TestSelfHostTupleOptStructElemWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple Option[struct] element wasm IR e2e")
@@ -216,13 +180,6 @@ func TestSelfHostTupleOptStructElemWasmIR(t *testing.T) {
 	}
 }
 
-// A METHOD returning Option[S] at a tuple element has no registry key to name
-// its payload, so its tag comes from the checker's stamped result type — the
-// second gate that carried the same scalar-only payload restriction, and the
-// spelling `Getopt.next`'s callers use. It runs on the module-LOADING compiler
-// rather than the stdin drivers above, because only that path carries the
-// stamp; under the driver the element is unclassifiable for want of a type,
-// which is a different gap from this one.
 const tupleOptStructStampedSrc = `struct S { id: i32, v: string }
 struct G { i: i32, name: string }
 struct Tab { n: i32 }
@@ -271,23 +228,6 @@ func TestSelfHostTupleOptStructElemStampedX86_64(t *testing.T) {
 	}
 }
 
-// An Option[ENUM] element is the same gap one payload kind over, and it is the
-// shape every streaming utility returns an IO error through:
-//
-//	function count_stream(r: Reader, show: Show): (Counts, Option[IoError])
-//
-// so the whole of coreutils group B was blocked behind it (#8737). A nominal
-// enum payload is the same one-pointer-at-offset-8 slot the struct payload is,
-// and the match lowering already read it — only the CONSTRUCTION tag was
-// missing, so `(c, Some(e))` refused the module while a bare enum element and
-// `let o: Option[E] = Some(e)` both lowered.
-//
-// It is pinned on the module-LOADING compiler rather than the stdin drivers
-// above, and that distinction is the whole test: under the driver the payload
-// has no stamped type and falls to an i32 default instead of naming the enum,
-// so these cases pass even without the construction tag. Only the loading path
-// resolves `e` to its enum type and reaches the admission. A driver-path case
-// would look like coverage and assert nothing.
 const tupleOptEnumStampedSrc = `enum E { A, B(i32) }
 struct C { n: i32 }
 function step(c: C, k: i32): (C, Option[E]) {

@@ -1,9 +1,3 @@
-// A block that reads the same slot of the same value twice reads it once: a
-// value is immutable, so the second read is the first. One read gives the
-// slot one holder, so the plan can hold or take it where the box it came from
-// is consumed, rather than borrow one copy past the consumer while the other
-// is what the consumer was handed. semsink's re-reads at a block's head are
-// what most often repeat a read the block makes further down.
 import "./ssa";
 import "./ssasem";
 import "./semtypes";
@@ -11,8 +5,6 @@ import "./typeinfo";
 
 pub struct Merged { f: ssasem.Func, merged: i32 }
 
-// Each value's stand-in, itself unless a read it repeats replaces it, and
-// how many reads were replaced.
 struct Same { of: i32[], merged: i32 }
 
 pub function merge(f: ssasem.Func): Merged {
@@ -30,7 +22,6 @@ pub function merge(f: ssasem.Func): Merged {
   return Merged { f: replaced(f, same.of), merged: same.merged };
 }
 
-// `f` without the reads `same` replaces, every use naming its stand-in.
 pub function replaced(f: ssasem.Func, same: i32[]): ssasem.Func {
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
@@ -49,8 +40,6 @@ function identity(n: i32): i32[] {
   return out;
 }
 
-// `same` with each read of `b` that repeats an earlier one in the block
-// standing for it.
 function merge_block(b: ssa.SBlock, values: typeinfo.Type[], own same: Same): Same {
   let seen: ssa.SInst[] = [];
   for ins in b.insts {
@@ -67,7 +56,6 @@ function merge_block(b: ssa.SBlock, values: typeinfo.Type[], own same: Same): Sa
   return same;
 }
 
-// The block without its repeated reads, every operand naming its stand-in.
 function rewritten(b: ssa.SBlock, same: i32[]): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
@@ -78,7 +66,6 @@ function rewritten(b: ssa.SBlock, same: i32[]): ssa.SBlock {
   return ssa.SBlock { ...b, insts: insts, term: renamed_term(b.term, same) };
 }
 
-// A record update names its donor in `imm`, which is a use like an operand.
 function renamed_inst(ins: ssa.SInst, same: i32[]): ssa.SInst {
   let base: i32 = ssasem.update_base(ins);
   if (base >= 0) {
@@ -87,8 +74,6 @@ function renamed_inst(ins: ssa.SInst, same: i32[]): ssa.SInst {
   return ssa.SInst { ...ins, args: renamed(ins.args, same) };
 }
 
-// Whether `a` and `b` read the same slot of the same value, their operands
-// named through `same`.
 pub function same_slot(a: ssa.SInst, b: ssa.SInst, same: i32[], values: typeinfo.Type[]): boolean {
   return read(a.kind_tag) && a.kind_tag == b.kind_tag && a.imm == b.imm && a.str == b.str
     && same_args(renamed(a.args, same), renamed(b.args, same)) && semtypes.equal(values[a.result], values[b.result]);
@@ -98,7 +83,6 @@ function read(kind: i32): boolean {
   return kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.variant_get() || kind == ssasem.array_get();
 }
 
-// The block's earlier read of the slot `ins` reads, -1 for none.
 function earlier(seen: ssa.SInst[], ins: ssa.SInst, args: i32[], values: typeinfo.Type[]): i32 {
   for s in seen {
     if (s.kind_tag == ins.kind_tag && s.imm == ins.imm && s.str == ins.str && same_args(s.args, args) && semtypes.equal(values[s.result], values[ins.result])) {
@@ -145,7 +129,6 @@ pub function stand_in(same: i32[], v: i32): i32 {
   return v;
 }
 
-// A terminator names its condition and its returned value.
 function renamed_term(t: ssa.STerm, same: i32[]): ssa.STerm {
   if (t.kind_tag == 3) {
     return ssa.STerm { ...t, cond: stand_in(same, t.cond) };

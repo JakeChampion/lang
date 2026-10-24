@@ -15,10 +15,6 @@ import (
 	"testing"
 )
 
-// std/zstd's encoder on the native backends, its frames read by Go's own
-// zstd decoder: numbered lines, noise (raw blocks), a run of one byte
-// (run-length blocks), and lines either side of 128 KiB of one byte, the
-// second block matching into the first.
 func TestZstdEncodeAgainstGo(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -139,9 +135,6 @@ func checkZstdFrames(t *testing.T, out string) {
 	}
 }
 
-// zstdDecodeGo decodes a zstd frame with the decoder Go's standard library
-// carries for compressed ELF sections: the frame becomes the one section
-// of a minimal ELF file, which debug/elf inflates on reading.
 func zstdDecodeGo(frame []byte, size int) ([]byte, error) {
 	var section bytes.Buffer
 	binary.Write(&section, binary.LittleEndian, elf.Chdr64{Type: uint32(elf.COMPRESS_ZSTD), Size: uint64(size), Addralign: 1})

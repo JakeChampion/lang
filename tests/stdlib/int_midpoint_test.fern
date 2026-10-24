@@ -2,14 +2,6 @@ import "std/test";
 import "std/i32" as i32m;
 import "std/i64" as i64m;
 
-// tests/stdlib/int_midpoint_test.fern — pure-Fern coverage of std/i32.midpoint
-// and std/i64.midpoint: the overflow-safe average (a & b) + ((a ^ b) >> 1),
-// rounded toward negative infinity. The naive (a+b)/2 overflows for large
-// same-sign operands (the classic binary-search bug); this form never does, so
-// the near-MAX cases are the crux. Scalar bit-ops, so this runs on all four
-// native backends and both self-host gates. The Go-side TestIntMidpoint pins
-// the native backends; this is the migration-shaped companion.
-
 function test_i32_basic(): test.TestOutcome {
   if (4.midpoint(6) != 5) {
     return test.fail("4,6");
@@ -28,7 +20,6 @@ function test_i32_negatives(): test.TestOutcome {
 }
 
 function test_i32_no_overflow(): test.TestOutcome {
-  // (a+b)/2 would overflow i32 here; midpoint does not.
   if (2147483647.midpoint(2147483645) != 2147483646) {
     return test.fail("near MAX");
   }

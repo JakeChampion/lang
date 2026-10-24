@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// teeSeed writes the files a case starts from into its working
-// directory. Every operand here is relative, so the tree the two sides
-// leave behind is comparable.
 func teeSeed(t *testing.T, dir string) {
 	t.Helper()
 	for name, content := range map[string]string{
@@ -21,9 +18,6 @@ func teeSeed(t *testing.T, dir string) {
 			t.Fatal(err)
 		}
 	}
-	// Written only where the filesystem holds it. This seed serves every tee
-	// case and only one names this file, so a t.Fatal here takes down the
-	// other thirty for a name they never asked for.
 	seedRawByteName(t, dir, "")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -33,34 +27,12 @@ func teeSeed(t *testing.T, dir string) {
 	}
 }
 
-// teePipeStdin is long enough that the child is still writing when the
-// harness closes the read end, so the broken-pipe cases reach a write
-// that fails rather than finishing first. A pipe holds 64 KiB.
-var teePipeStdin = strings.Repeat("0123456789abcdef", 16384) // 256 KiB
+var teePipeStdin = strings.Repeat("0123456789abcdef", 16384)
 
 func init() {
 	registerCorpus("tee", teeCases)
 }
 
-// teeCases is tee(1)'s corpus.
-//
-// Three things need pinning beyond the copy. The FILEs are opened
-// before the first read, so which of them exist after a failure is
-// part of the answer and the cases carry a working directory whose
-// tree is compared. The `--output-error` family is a 2x2 of "does a
-// failure get a diagnostic" and "does it end the program", with a
-// broken pipe the one error the `nopipe` half passes over, and its
-// fifth state is the absence of the option — SIGPIPE left at its
-// default, so tee dies of it. And `-i` is a signal disposition whose
-// only observable is what happens when the signal arrives, which is
-// the `sigint` cases: with `-i` the SIGINT is ignored and the closing
-// read end kills with SIGPIPE instead, which is the same run proving
-// that -i did not touch SIGPIPE.
-//
-// Every EPIPE case with a file operand is in a mode that KEEPS GOING,
-// where the file ends up with all of stdin whatever the block size. In
-// a mode that stops, how much reached the file is a race, so those
-// cases write to stdout alone.
 func teeCases(t *testing.T) []invocation {
 	big := strings.Repeat("line\n", 40000)
 	allBytes := make([]byte, 256)
@@ -68,13 +40,9 @@ func teeCases(t *testing.T) []invocation {
 		allBytes[i] = byte(i)
 	}
 	raw := strings.Repeat(string(allBytes), 1025) + "\xff\xc0\x80\xed\xa0\x80\xf4\x90\x80\x80"
-	// A directory to hand a case as its stdin. The per-case working
-	// directory is made inside the run, after stdinPath is opened, so
-	// this one is separate and absolute.
 	aDir := t.TempDir()
 
 	return []invocation{
-		// The copy.
 		{name: "no operands", stdin: "hello\nworld\n"},
 		{name: "one file", args: []string{"a"}, stdin: "hello\nworld\n", seedTree: teeSeed},
 		{name: "two files", args: []string{"a", "b"}, stdin: "hello\nworld\n", seedTree: teeSeed},
@@ -92,7 +60,6 @@ func teeCases(t *testing.T) []invocation {
 		{name: "dash is a file called dash", args: []string{"-"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "truncates an existing file", args: []string{"exists"}, stdin: "x\n", seedTree: teeSeed},
 
-		// -a.
 		{name: "append", args: []string{"-a", "exists"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "append long", args: []string{"--append", "exists"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "append prefix", args: []string{"--ap", "exists"}, stdin: "x\n", seedTree: teeSeed},
@@ -101,8 +68,6 @@ func teeCases(t *testing.T) []invocation {
 		{name: "append the same file twice", args: []string{"-a", "exists", "exists"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "append a directory", args: []string{"-a", "d"}, stdin: "x\n", seedTree: teeSeed},
 
-		// Operands that will not open. The later ones are still opened
-		// and the copy still runs; the exit status is 1.
 		{name: "directory", args: []string{"d"}, stdin: "hello\n", seedTree: teeSeed},
 		{name: "directory then a file", args: []string{"d", "a"}, stdin: "hello\n", seedTree: teeSeed},
 		{name: "file then a directory", args: []string{"a", "d"}, stdin: "hello\n", seedTree: teeSeed},
@@ -118,21 +83,15 @@ func teeCases(t *testing.T) []invocation {
 		{name: "dashdash then an option-looking name", args: []string{"--", "-a"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "dashdash alone", args: []string{"--"}, stdin: "x\n", seedTree: teeSeed},
 
-		// An open failure under a mode that exits: the operands after
-		// it are never created, and nothing is copied at all.
 		{name: "exit stops at a failing open", args: []string{"--output-error=exit", "d", "a"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "exit-nopipe stops at a failing open", args: []string{"--output-error=exit-nopipe", "d", "a"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "exit stops after opening the good ones", args: []string{"--output-error=exit", "a", "d", "b"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "warn keeps opening after a failure", args: []string{"--output-error=warn", "a", "d", "b"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "p keeps opening after a failure", args: []string{"-p", "d", "a"}, stdin: "x\n", seedTree: teeSeed},
 
-		// Read failures.
 		{name: "directory on stdin", args: []string{"a"}, stdinPath: aDir, seedTree: teeSeed},
 		{name: "directory on stdin no operands", stdinPath: aDir},
 
-		// Write failures that are not a broken pipe: diagnosed in every
-		// mode, and every mode exits 1. A mode that exits does it before
-		// the FILE is written, which the tree shows.
 		{name: "stdout full", args: []string{"a"}, stdin: "hello\n", stdout: stdoutFull, seedTree: teeSeed},
 		{name: "stdout full with p", args: []string{"-p", "a"}, stdin: "hello\n", stdout: stdoutFull, seedTree: teeSeed},
 		{name: "stdout full with warn", args: []string{"--output-error=warn", "a"}, stdin: "hello\n", stdout: stdoutFull, seedTree: teeSeed},
@@ -142,9 +101,6 @@ func teeCases(t *testing.T) []invocation {
 		{name: "stdout full no operands", stdin: "hello\n", stdout: stdoutFull},
 		{name: "stdout full with nothing to write", stdin: "", stdout: stdoutFull},
 		{name: "stdout closed", stdin: "hello\n", stdout: stdoutClosed},
-		// The FILE is opened while fd 1 is closed, so it must not be handed
-		// descriptor 1: GNU writes the input once, to the file, and reports
-		// standard output (#8823).
 		{name: "stdout closed with a file operand", args: []string{"a"}, stdin: "hello\n", stdout: stdoutClosed, seedTree: teeSeed},
 		{name: "stdout closed with two file operands", args: []string{"a", "b"}, stdin: "hello\n", stdout: stdoutClosed, seedTree: teeSeed},
 		{name: "stdout closed with nothing to write", stdin: "", stdout: stdoutClosed},
@@ -153,19 +109,12 @@ func teeCases(t *testing.T) []invocation {
 		{name: "full file operand with exit", args: []string{"--output-error=exit", "/dev/full"}, stdin: "hello\n"},
 		{name: "full file operand with p", args: []string{"-p", "/dev/full"}, stdin: "hello\n"},
 
-		// A broken stdout. Without a mode SIGPIPE keeps its default and
-		// kills; each mode below turns it into an EPIPE it decides
-		// about. The file operand appears only where the mode keeps
-		// going, so what the file holds is not a race.
 		{name: "pipe closed", stdin: teePipeStdin, limit: 4096},
 		{name: "pipe closed with p", args: []string{"-p"}, stdin: teePipeStdin, limit: 4096},
 		{name: "pipe closed with warn", args: []string{"--output-error=warn"}, stdin: teePipeStdin, limit: 4096},
 		{name: "pipe closed with warn-nopipe", args: []string{"--output-error=warn-nopipe"}, stdin: teePipeStdin, limit: 4096},
 		{name: "pipe closed with exit", args: []string{"--output-error=exit"}, stdin: teePipeStdin, limit: 4096},
 		{name: "pipe closed with exit-nopipe", args: []string{"--output-error=exit-nopipe"}, stdin: teePipeStdin, limit: 4096},
-		// Bare `--output-error` is warn-nopipe, not warn: the long name
-		// carries an OPTIONAL value and shares its id with -p, so with
-		// no value it is the same request.
 		{name: "pipe closed with a bare output-error", args: []string{"--output-error"}, stdin: teePipeStdin, limit: 4096},
 		{name: "pipe closed with a prefixed mode", args: []string{"--output-error=warn-"}, stdin: teePipeStdin, limit: 4096},
 		{name: "pipe closed with exit- prefix", args: []string{"--output-error=exit-"}, stdin: teePipeStdin, limit: 4096},
@@ -174,10 +123,6 @@ func teeCases(t *testing.T) []invocation {
 		{name: "pipe closed with warn-nopipe and a file", args: []string{"--output-error=warn-nopipe", "a"}, stdin: teePipeStdin, limit: 4096, seedTree: teeSeed},
 		{name: "pipe closed with exit-nopipe and a file", args: []string{"--output-error=exit-nopipe", "a"}, stdin: teePipeStdin, limit: 4096, seedTree: teeSeed},
 
-		// -i. The signal arrives while the child is blocked on the full
-		// pipe; the read end closes after it, so a tee that ignored
-		// SIGINT meets SIGPIPE next and a tee that did not is already
-		// gone.
 		{name: "sigint", stdin: teePipeStdin, limit: 4096, sigint: true},
 		{name: "sigint with i", args: []string{"-i"}, stdin: teePipeStdin, limit: 4096, sigint: true},
 		{name: "sigint with ignore-interrupts", args: []string{"--ignore-interrupts"}, stdin: teePipeStdin, limit: 4096, sigint: true},
@@ -188,7 +133,6 @@ func teeCases(t *testing.T) []invocation {
 		{name: "sigint with i and exit", args: []string{"-i", "--output-error=exit"}, stdin: teePipeStdin, limit: 4096, sigint: true},
 		{name: "sigint with i and exit-nopipe", args: []string{"-i", "--output-error=exit-nopipe"}, stdin: teePipeStdin, limit: 4096, sigint: true},
 
-		// --output-error's argmatch.
 		{name: "output-error invalid", args: []string{"--output-error=bogus"}},
 		{name: "output-error empty is ambiguous", args: []string{"--output-error="}},
 		{name: "output-error w is ambiguous", args: []string{"--output-error=w"}},
@@ -201,7 +145,6 @@ func teeCases(t *testing.T) []invocation {
 		{name: "output-error takes no separate argument", args: []string{"--output-error", "warn"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "output-error twice", args: []string{"--output-error=exit", "--output-error=warn"}, stdin: "x\n"},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "invalid short option in a cluster", args: []string{"-ax"}},
 		{name: "p takes no value", args: []string{"-p5"}},

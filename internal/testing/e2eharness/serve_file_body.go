@@ -9,11 +9,6 @@ import (
 	"time"
 )
 
-// FileBodyServerSource is a server whose handler answers the
-// file at `path` on /file and a file that does not exist on /missing,
-// both through `file`: the handler names the file and the
-// serve loop reads it as it writes the response, or answers 404 in its
-// place.
 func FileBodyServerSource(path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -29,13 +24,8 @@ function main(): i32 {
 `, path, path)
 }
 
-// FileBodyContent is what the file FileBodyServerSource serves holds.
 const FileBodyContent = "served from a file\nline two\n"
 
-// CheckFileBody drives FileBodyServerSource: /file answers 200 with the
-// file's bytes under their length and the handler's content type,
-// /missing answers 404, and /ok still answers on the same connection
-// after a file body, since the loop read the file and moved on.
 func CheckFileBody(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

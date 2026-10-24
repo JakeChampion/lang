@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// An `own` parameter's reference is the callee's to release, so an `own`
-// string must not leak a box per call (#8805). Each shape runs 100 times:
-// consumed in place, handed straight back, and forwarded to another `own`
-// position, beside an `own` array.
 const ownStringParamSrc = `import "std/i32";
 function takes(own s: string): i32 { return s.len(); }
 @noinline function back(own s: string): string { return s; }
@@ -32,7 +28,6 @@ function main(): i32 {
 }
 `
 
-// 3 x (10 x 2 + 90 x 3) + 100 x 3 = 1170.
 const ownStringParamWant = 1170 % 101
 
 func writeOwnStringParamSrc(t *testing.T) string {

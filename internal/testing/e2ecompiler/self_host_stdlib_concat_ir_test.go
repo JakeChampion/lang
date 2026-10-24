@@ -9,40 +9,31 @@ import (
 	"testing"
 )
 
-// stdlibConcatCase compiles a REAL no-import std module (concatenated with a main —
-// the single-module trick the std/hex / std/base64 self-host tests use; std/json
-// moved off it to the bundling loader when it grew a real cross-module method
-// dependency, #5420)
-// through the self-host IR path on x86-64 + wasm, confirming the module's functions
-// lower end-to-end. crypto/sha256 is the standout: it drives the whole u32-heavy
-// SHA-256 message schedule + compression (rotr / shr_u / wrapping add) through the
-// IR path. Each case is oracle-checked against the interpreter, routing-pinned to
-// "ir", and returns a value <= 120 (cf. the wasmtime exit-code gap #2908).
 type stdlibConcatCase struct {
 	name string
 	main string
 }
 
 var cryptoIRCases = []stdlibConcatCase{
-	{"sha256-len", `return sha256_hex("hello".as_bytes()).len();`},                                     // 64 hex chars
-	{"sha256-abc-d0", `return sha256_hex("abc".as_bytes())[0] as i32;`},                                // 'b' (0xba...) = 98
-	{"sha256-empty-d0", `return sha256_hex("".as_bytes())[0] as i32;`},                                 // 'e' (0xe3...) = 101
-	{"sha256-bytes-len", `return sha256_bytes("abc".as_bytes()).len();`},                               // 32 raw bytes
-	{"hmac-len", `return hmac_sha256_hex([107 as u8, 101 as u8, 121 as u8], "msg".as_bytes()).len();`}, // 64 hex chars
+	{"sha256-len", `return sha256_hex("hello".as_bytes()).len();`},
+	{"sha256-abc-d0", `return sha256_hex("abc".as_bytes())[0] as i32;`},
+	{"sha256-empty-d0", `return sha256_hex("".as_bytes())[0] as i32;`},
+	{"sha256-bytes-len", `return sha256_bytes("abc".as_bytes()).len();`},
+	{"hmac-len", `return hmac_sha256_hex([107 as u8, 101 as u8, 121 as u8], "msg".as_bytes()).len();`},
 }
 
 var pathIRCases = []stdlibConcatCase{
-	{"join-len", `return join(["usr", "local", "bin"]).len();`}, // "usr/local/bin" = 13
-	{"ext-len", `return extension("a.b.c.txt").len();`},         // "txt" = 3
-	{"filename-len", `return file_name("/a/b/c.txt").len();`},   // "c.txt" = 5
-	{"parent-len", `return parent("/a/b/c.txt").len();`},        // "/a/b" = 4
+	{"join-len", `return join(["usr", "local", "bin"]).len();`},
+	{"ext-len", `return extension("a.b.c.txt").len();`},
+	{"filename-len", `return file_name("/a/b/c.txt").len();`},
+	{"parent-len", `return parent("/a/b/c.txt").len();`},
 }
 
 var mathIRCases = []stdlibConcatCase{
-	{"range-sum", `let a = range(0, 10); let s = 0; for x in a { s = s + x; } return s - 35;`}, // 45-35=10
-	{"range-step-len", `return range_step(0, 20, 5).len();`},                                   // [0,5,10,15] = 4
-	{"pack-rgb-low", `return pack_rgb(255, 128, 64) & 255;`},                                   // 64
-	{"i32-max", `return i32_max() - 2147483527;`},                                              // 120
+	{"range-sum", `let a = range(0, 10); let s = 0; for x in a { s = s + x; } return s - 35;`},
+	{"range-step-len", `return range_step(0, 20, 5).len();`},
+	{"pack-rgb-low", `return pack_rgb(255, 128, 64) & 255;`},
+	{"i32-max", `return i32_max() - 2147483527;`},
 }
 
 func stdlibConcatSource(t *testing.T, mod, mainBody string) []byte {
@@ -56,7 +47,6 @@ func stdlibConcatSource(t *testing.T, mod, mainBody string) []byte {
 	return out
 }
 
-// runStdlibConcatX86 routes each case through the self-hosted x86-64 IR driver.
 func runStdlibConcatX86(t *testing.T, mod string, cases []stdlibConcatCase) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -92,7 +82,6 @@ func runStdlibConcatX86(t *testing.T, mod string, cases []stdlibConcatCase) {
 	}
 }
 
-// runStdlibConcatWasm routes each case through the wasm IR backend.
 func runStdlibConcatWasm(t *testing.T, mod string, cases []stdlibConcatCase) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host stdlib wasm IR e2e")

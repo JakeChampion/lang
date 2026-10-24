@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternListI32ParamCustomProvider is the P4c composite-parameter gate for
-// a non-u8 integer array (docs/WIT-BRING-YOUR-OWN.md): a Fern program passes an
-// `i32[]` to an `@import` extern, lowered to a canonical `list<s32>`
-// (ptr, len). It generalises the u8[] param: the wrapper forwards
-// `(elemPtr, load(elemPtr-4))` unchanged — the count prefix is the element
-// count for any width, and i32 elements are packed at 4-byte stride, so the
-// payload is already canonical. This pins that the Fern array layout matches
-// the canonical `list<s32>` for a 4-byte element.
-//
-// The provider exports `sum-i32: func(data: list<s32>) -> u32` summing the
-// elements; the Fern side passes [10, 20, 30] (sum 60).
 func TestExternListI32ParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -40,7 +29,6 @@ func TestExternListI32ParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-i32. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -49,9 +37,6 @@ func TestExternListI32ParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\ninterface sink { sum-i32: func(data: list<s32>) -> u32; }\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-i32 receives the lowered (ptr, len) — len is the element count, the
-	// caller writes the i32s into this module's memory via cabi_realloc — and
-	// returns their sum. Elements are read at 4-byte stride.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -79,7 +64,6 @@ func TestExternListI32ParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom sink iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -114,7 +98,6 @@ func TestExternListI32ParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: pass [10, 20, 30] (sum 60) to the extern. ---
 	const want = "sum-ok"
 	src := `@import("local:test/sink@0.1.0", "sum-i32")
 function sum_i32(data: i32[]): u32;

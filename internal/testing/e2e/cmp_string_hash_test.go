@@ -2,20 +2,6 @@ package e2e
 
 import "testing"
 
-// core/cmp's `impl Hash for string` and std/string's `hash_fnv32()` are ONE
-// FNV-1a: the impl delegates rather than open-coding a second copy (#4387).
-// The delegation crosses a signedness boundary — `hash_fnv32` is u32, `hash`
-// is i32 — so it is a bit reinterpretation, sound because two's-complement
-// multiply agrees with the unsigned one on the low 32 bits.
-//
-// Two properties, because either alone would pass on a broken change: the two
-// spellings AGREE (a re-open-coded copy that drifted would fail), and they
-// agree with FNV-1a's PUBLISHED values (both drifting together, e.g. a changed
-// offset basis, would fail). The constants below are the 32-bit FNV-1a of each
-// input, sign-reinterpreted into i32, computed independently of this tree.
-//
-// Not core/map's string hash: that one seeds the offset basis per process and
-// adds an fmix32 avalanche, and is covered by map_string_hash_test.go.
 const cmpStringHashProg = `import "core/cmp";
 import "std/string";
 import "std/i32";
@@ -44,7 +30,6 @@ function main(): i32 {
 }
 `
 
-// TestNativeCmpStringHash runs the shipped modules on interp / x86-64 / wasm.
 func TestNativeCmpStringHash(t *testing.T) {
 	p := writeIterProg(t, cmpStringHashProg)
 	if _, code := runFixtureInterp(t, p, ""); code != 42 {

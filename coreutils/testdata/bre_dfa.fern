@@ -1,12 +1,12 @@
 import "../lib/bre";
 
-// The lazy DFA answers where a match ends and whether a line matches;
-// the simulation answers a pattern's groups and the backtracker its
-// backreferences. These pin each engine's answers to GNU expr 9.12's and
-// the DFA's to the simulation's over the same program.
 
-// GNU's `expr SUBJ : PAT` as a number: the match length for a pattern
-// without groups, -1 where it does not match.
+
+
+
+
+
+
 function end_of(pat: string, subj: string): i32 {
   let m = bre.bre_compile(pat).exec(subj);
   if (!m.matched) {
@@ -15,7 +15,7 @@ function end_of(pat: string, subj: string): i32 {
   return m.end;
 }
 
-// Group 1's text, or "<none>".
+
 function group1(pat: string, subj: string): string {
   let m = bre.bre_compile(pat).exec(subj);
   if (!m.matched || m.starts[1] < 0) {
@@ -24,7 +24,7 @@ function group1(pat: string, subj: string): string {
   return slice_unchecked(subj, m.starts[1], m.ends[1]) + "";
 }
 
-// A deterministic subject over `alphabet`.
+
 function subject(seed: i32, n: i32, alphabet: string): u8[] {
   let out: u8[] = [];
   let x: i32 = seed;
@@ -37,7 +37,7 @@ function subject(seed: i32, n: i32, alphabet: string): u8[] {
   return out;
 }
 
-// Anchors, brackets, intervals and empty matches, against GNU expr.
+
 function check_exec(): i32 {
   if (end_of("[[:digit:]]\\{3\\}", "1234") != 3 || end_of("[^a-c]*", "xyzabc") != 3) {
     return 1;
@@ -45,16 +45,16 @@ function check_exec(): i32 {
   if (end_of("a\\{2,3\\}", "aaaa") != 3 || end_of("a\\{0,1\\}ab", "aab") != 3 || end_of("[a-z.]*", "ab.cd") != 5) {
     return 2;
   }
-  // An empty match is a match, of length 0.
+
   if (end_of("a*", "bbb") != 0 || end_of("", "abc") != 0) {
     return 3;
   }
-  // `$` holds only at the end; mid-pattern it is a literal, as is a
-  // leading `*`.
+
+
   if (end_of("x$", "xy") != 0 - 1 || end_of("x$y", "x$y") != 3 || end_of("*b", "a*b") != 0 - 1) {
     return 4;
   }
-  // The word tests read the byte behind and the byte ahead.
+
   if (end_of(".*\\<bar", "foo bar") != 7 || end_of(".*\\>", "foo bar") != 7 || end_of("foo\\b", "foo bar") != 3) {
     return 5;
   }
@@ -73,9 +73,9 @@ function check_exec(): i32 {
   return 0;
 }
 
-// Shapes that run one engine into its limits. A walk nested 32767
-// instructions deep ran the simulation's recursive closure out of
-// stack, and a DFA state per byte must stay one closure per byte.
+
+
+
 function check_pathological(): i32 {
   if (end_of("a*\\{3200\\}", "ab") != 1 || end_of("a\\{1,32767\\}", "aaa") != 3) {
     return 20;
@@ -90,11 +90,11 @@ function check_pathological(): i32 {
   return 0;
 }
 
-// The DFA (no groups) and the simulation (the same program inside one
-// group) report the same end, over subjects long enough to fill and
-// empty the DFA's cache: `[ab]*a[ab]\{12\}` has a state for every
-// 13-byte window. One compiled pattern serves every subject, so the
-// cache carried from call to call is exercised too.
+
+
+
+
+
 function check_agreement(): i32 {
   let pats: string[] = ["[ab]*a[ab]\\{12\\}", "[ab]*b", "a*b*a*", "\\(a\\|b\\)*a", "[ab]*a[ab]\\{3\\}c", "a\\{2,5\\}b\\{0,3\\}"];
   let p: i32 = 0;
@@ -116,9 +116,9 @@ function check_agreement(): i32 {
   return 0;
 }
 
-// `search_range` reads `^` and `$` at the window's ends, and at newlines
-// only where the syntax anchors there; one Bre answers every window, so
-// a state built for one is reused for the next.
+
+
+
 function check_search(): i32 {
   let mid = bre.bre_compile("^ab");
   if (!mid.search_range("xab", 1, 3) || mid.search_range("xab", 0, 3)) {
@@ -149,7 +149,7 @@ function check_search(): i32 {
   return 0;
 }
 
-// The searches that report positions, which run the DFA from each start.
+
 function check_positions(): i32 {
   let re = bre.bre_compile("[a-z][a-z0-9]*");
   let f = re.search_from("12 ab3 cd", 0, 9);

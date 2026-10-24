@@ -2,36 +2,10 @@ package e2ecompiler
 
 import "testing"
 
-// mapCompositeKeyLitCases pin #7001: a `Map { k: v, … }` literal whose key is a
-// struct or enum deriving Eq + Hash.
-//
-// E045 used to reject every non-i32, non-string key, which native accepts. The
-// rejection was essential rather than merely strict: `map_new` and
-// `__map_new_i32` are the only two constructor spellings, so a composite key has
-// neither and the literal's desugared chain based itself on `map_new` — the
-// STRING one. `insert` was typed as returning its receiver unchanged and
-// `map_new` types its columns unknown, so the chain stayed unknown-keyed and
-// everything downstream fell back to the constructor NAME. The map built itself
-// string-keyed and `__fern_str_eq` read each key box as a string, taking its
-// first field as a length: keys differing only PAST that field compared equal
-// and collapsed into one entry.
-//
-// That is why the discriminating cases below differ in exactly one field. A
-// probe whose keys differ in several fields passes even unfixed — the first
-// reduction of this bug did exactly that and read as "already fixed".
-//
-// The `Map {}` + `.insert` form was always correct (its receiver slot carries
-// the declared `Map[K, V]`), so it is here as a control: the fix must not
-// disturb the path that already worked.
-//
-// Exit 0 is correct; each nonzero code names the check that failed.
 var mapCompositeKeyLitCases = []struct {
 	name string
 	src  string
 }{
-	// Keys differing ONLY in the string field, and ONLY in the i32 field. A
-	// string-keyed build collapses the first pair; an i32-keyed build the
-	// second. Correct is 22 — both maps hold two entries.
 	{"struct-key-one-field-differs", `import "core/cmp";
 import "core/map";
 
@@ -48,7 +22,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// Read-back, absent-key miss, and overwrite through a composite key.
 	{"struct-key-read-miss-overwrite", `import "core/cmp";
 import "core/map";
 
@@ -66,9 +39,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// A payload-free enum key. This one needed its own fix: type_to_irtag
-	// returns "" for a plain union, so the refined `Map[T, V]` tag could not be
-	// spelled and the column fell back to the constructor name again.
 	{"enum-key-literal", `import "core/cmp";
 import "core/map";
 
@@ -83,7 +53,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// Control: the `Map {}` + `.insert` form, which was already correct.
 	{"insert-form-control", `import "core/cmp";
 import "core/map";
 
@@ -99,7 +68,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// Control: a scalar-keyed literal must be untouched by the composite path.
 	{"scalar-key-control", `import "core/map";
 
 function main(): i32 {
@@ -113,8 +81,6 @@ function main(): i32 {
 `},
 }
 
-// TestSelfHostMapCompositeKeyLitIRX86_64 runs each case through the self-hosted
-// CLI for x86-64.
 func TestSelfHostMapCompositeKeyLitIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapCompositeKeyLitCases {
@@ -126,7 +92,6 @@ func TestSelfHostMapCompositeKeyLitIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapCompositeKeyLitIRArm64 is the arm64 leg, run under qemu.
 func TestSelfHostMapCompositeKeyLitIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -139,7 +104,6 @@ func TestSelfHostMapCompositeKeyLitIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapCompositeKeyLitIRWasm is the wasm leg.
 func TestSelfHostMapCompositeKeyLitIRWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapCompositeKeyLitCases {

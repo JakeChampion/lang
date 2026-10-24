@@ -1,9 +1,3 @@
-// Command gen_selfhost_lists prints the Fern list literals
-// compiler/asmcore.fern carries for the strerror table, so the
-// self-host copy is regenerated from internal/tables/strerror rather than
-// typed. Paste the output over the strerror_* bodies and
-// wasi_error_code_errnos, and the rest over internal/stdlib/std/errno.fern's
-// constants and from_host tables; selfhost_parity_test.go checks the result.
 package main
 
 import (

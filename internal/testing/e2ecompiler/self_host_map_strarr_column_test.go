@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// --- Map value columns holding `string[]` (#7910 (a), the self-host half) ----
-//
-// `Map[K, string[]]`: the box-column credit refused a pointer-element array
-// value outright (one dec per element is not the whole release of a string[]),
-// so the column fell to the shallow map free and every value — its buffer and
-// every string in it — leaked. The credit now admits a string[] column whose
-// every inserted value is an array literal of literals or registered
-// fresh-string producers, and the map free routes it through the _vsa
-// variants: each value released whole by __fern_str_arr_free on the register
-// backends, by $__fern_arr_dec_ptr in the wasm release's value walk.
-//
-// The x86-64 and arm64 legs are the leak-matrix rows of the same names
-// (native oracle — clean since the native (a) commit — and the sanitize leg);
-// this file is the wasm leg, which asserts a balanced census and the
-// interpreter's exit code.
-
 const mapStrArrColumnInsertGetOrSrc = `import "core/map";
 function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function round(i: i32): i32 {

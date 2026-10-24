@@ -4,9 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptStructReclaimIRArm64 is the arm64 leg of
-// TestSelfHostOptStructReclaimIRX86_64, over the same case table: the
-// `Option[<struct-with-rc-field>]` reclaim must hold on arm64 too.
 func TestSelfHostOptStructReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optStructReclaimCases {

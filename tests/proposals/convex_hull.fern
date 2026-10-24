@@ -1,35 +1,9 @@
-// tests/proposals/convex_hull.fern — proposal turn, drawn line 77:
-// "A convex hull over a set of 2D points, printed as an ordered ring."
-//
-// Two independent algorithms — Andrew's monotone chain (sort, then sweep a
-// lower and an upper chain) and gift wrapping (repeatedly turn to the most
-// clockwise remaining point) — over the same inputs, required to agree ring
-// for ring. They share nothing but the orientation predicate, so a mistake
-// in either one's chain logic shows up as a disagreement rather than as a
-// plausible wrong answer.
-//
-// Beyond agreement, the result is checked against the DEFINITION rather than
-// against a stored expectation: every input point lies inside or on the ring,
-// every ring vertex is an input point, and every consecutive triple turns the
-// same way. A hull that is merely self-consistent fails those.
-//
-// Coordinates are i32 and the orientation predicate accumulates in i64, so
-// the cross product is exact — no epsilon, no near-collinear ambiguity. That
-// is the whole reason to do computational geometry on integers.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/i32";
 import "std/i64";
 
 struct Pt { x: i32, y: i32 }
 
-// The orientation of O->A->B: positive is a left turn (counter-clockwise),
-// negative a right turn, zero collinear. Computed in i64 because the product
-// of two i32 differences does not fit in i32 — the classic silent overflow in
-// every integer-geometry implementation.
 function cross(o: Pt, a: Pt, b: Pt): i64 {
   let ax: i64 = (a.x - o.x) as i64;
   let by: i64 = (b.y - o.y) as i64;
@@ -42,8 +16,6 @@ function pt_eq(a: Pt, b: Pt): boolean {
   return a.x == b.x && a.y == b.y;
 }
 
-// (x, y) lexicographic. Total, so the sort below is deterministic and the
-// two algorithms can be compared without normalising for tie order.
 function pt_less(a: Pt, b: Pt): boolean {
   if (a.x != b.x) {
     return a.x < b.x;
@@ -64,7 +36,6 @@ function sorted_unique(ps: Pt[]): Pt[] {
     if (dup) {
       continue;
     }
-    // Insertion into position.
     let at: i32 = out.len();
     for k in 0..out.len() {
       if (at == out.len() && pt_less(p, out[k])) {
@@ -84,12 +55,6 @@ function sorted_unique(ps: Pt[]): Pt[] {
   return out;
 }
 
-// ------------------------------------------------------- monotone chain
-
-// Andrew's monotone chain. Sort lexicographically, sweep left-to-right for
-// the lower hull and right-to-left for the upper, dropping any vertex that
-// does not turn left. Collinear points are dropped (`<= 0`), so the ring
-// carries only true corners.
 function hull_monotone(input: Pt[]): Pt[] {
   let ps: Pt[] = sorted_unique(input);
   if (ps.len() < 3) {
@@ -116,7 +81,6 @@ function hull_monotone(input: Pt[]): Pt[] {
     j = j - 1;
   }
 
-  // Both chains repeat the two endpoints; drop each chain's last.
   let ring: Pt[] = [];
   for i in 0..lower.len() - 1 {
     ring = ring.append(lower[i]);
@@ -138,19 +102,11 @@ function drop_last(ps: Pt[]): Pt[] {
   return out;
 }
 
-// --------------------------------------------------------- gift wrapping
-
-// Jarvis march. Start at the lexicographically smallest point and repeatedly
-// pick the point that everything else is to the left of. O(n*h) and utterly
-// unlike the chain sweep, which is the point of having it — the two share
-// only `cross`.
 function hull_gift(input: Pt[]): Pt[] {
   let ps: Pt[] = sorted_unique(input);
   if (ps.len() < 3) {
     return ps;
   }
-  // All collinear: the wrap degenerates, so answer directly with the two
-  // extreme points, matching what the chain produces.
   if (all_collinear(ps)) {
     return [ps[0], ps[ps.len() - 1]];
   }
@@ -170,10 +126,6 @@ function hull_gift(input: Pt[]): Pt[] {
         continue;
       }
       let c: i64 = cross(cur, cand, p);
-      // p is to the RIGHT of cur->cand, so taking it turns further
-      // clockwise — which walks the ring counter-clockwise, matching
-      // the chain. Collinear ties go to the further point, which is
-      // what keeps an interior collinear point off the ring.
       if (c < 0 || c == 0 && dist2(cur, p) > dist2(cur, cand)) {
         cand = p;
       }
@@ -182,7 +134,7 @@ function hull_gift(input: Pt[]): Pt[] {
     if (pt_eq(cur, start)) {
       break;
     }
-    if (ring.len() > ps.len()) {  // safety: never loop
+    if (ring.len() > ps.len()) {
       return ring;
     }
   }
@@ -207,11 +159,6 @@ function all_collinear(ps: Pt[]): boolean {
   return true;
 }
 
-// ------------------------------------------------------------- properties
-
-// Rotate a ring so it starts at its lexicographically smallest point. Both
-// algorithms produce the same CYCLE; this makes the two comparable as
-// sequences without either being adjusted to suit the other.
 function canonical(ring: Pt[]): Pt[] {
   if (ring.len() == 0) {
     return ring;
@@ -241,9 +188,6 @@ function rings_equal(a: Pt[], b: Pt[]): boolean {
   return true;
 }
 
-// Inside-or-on: for a counter-clockwise ring, every point is to the left of
-// (or on) every edge. This is the definition the hull has to satisfy, and it
-// owes nothing to either construction.
 function inside_or_on(ring: Pt[], p: Pt): boolean {
   if (ring.len() == 1) {
     return pt_eq(ring[0], p);
@@ -278,7 +222,7 @@ function is_convex_ccw(ring: Pt[]): boolean {
     let a: Pt = ring[i];
     let b: Pt = ring[(i + 1) % ring.len()];
     let c: Pt = ring[(i + 2) % ring.len()];
-    if (cross(a, b, c) <= 0) {  // strict: no collinear
+    if (cross(a, b, c) <= 0) {
       return false;
     }
   }
@@ -298,8 +242,6 @@ function render(ring: Pt[]): string {
   }
   return s;
 }
-
-// -------------------------------------------------------- point sets
 
 function pts(xs: i32[]): Pt[] {
   let out: Pt[] = [];
@@ -323,10 +265,7 @@ function corpus(): Case[] {
     Case { name: "triangle", points: pts([0, 0, 4, 0, 0, 3]) },
     Case { name: "triangle, wrong winding", points: pts([0, 0, 0, 3, 4, 0]) },
     Case { name: "square", points: pts([0, 0, 10, 0, 10, 10, 0, 10]) },
-    // An interior point must not reach the ring.
     Case { name: "square with a centre", points: pts([0, 0, 10, 0, 10, 10, 0, 10, 5, 5]) },
-    // Points ON an edge must not reach the ring either — the case that
-    // separates a `<= 0` orientation test from a `< 0` one.
     Case {
       name: "square with edge points",
       points: pts([0, 0, 10, 0, 10, 10, 0, 10, 5, 0, 10, 5, 5, 10, 0, 5]),
@@ -338,13 +277,10 @@ function corpus(): Case[] {
       name: "pentagon plus interior",
       points: pts([0, 0, 6, 0, 8, 5, 3, 9, 0 - 2, 5, 3, 3, 4, 4, 2, 2]),
     },
-    // Negative and mixed coordinates — the sign handling in cross().
     Case {
       name: "around the origin",
       points: pts([0 - 5, 0 - 5, 5, 0 - 5, 5, 5, 0 - 5, 5, 0, 0]),
     },
-    // Large magnitudes: (a.x-o.x)*(b.y-o.y) overflows i32 here, which is
-    // exactly what the i64 accumulation in cross() is for.
     Case {
       name: "large coordinates",
       points: pts([0, 0, 100000, 0, 100000, 100000, 0, 100000, 50000, 50000]),
@@ -363,10 +299,6 @@ function grid(n: i32): Pt[] {
   return out;
 }
 
-// ---------------------------------------------------------------- tests
-
-// THE test. Two algorithms that share only the orientation predicate must
-// produce the same ring, as a cycle, on every input.
 function test_the_two_algorithms_agree(): test.TestOutcome {
   let cs: Case[] = corpus();
   for i in 0..cs.len() {
@@ -380,9 +312,6 @@ function test_the_two_algorithms_agree(): test.TestOutcome {
   return test.pass();
 }
 
-// The hull contains every input point. Checked against the definition — for
-// a counter-clockwise ring, nothing is to the right of any edge — so it owes
-// nothing to how the ring was built.
 function test_every_input_point_is_inside_the_hull(): test.TestOutcome {
   let cs: Case[] = corpus();
   for i in 0..cs.len() {
@@ -402,8 +331,6 @@ function test_every_input_point_is_inside_the_hull(): test.TestOutcome {
   return test.pass();
 }
 
-// …and every ring vertex came from the input. A hull that invents a point
-// satisfies containment and is still wrong.
 function test_every_vertex_is_an_input_point(): test.TestOutcome {
   let cs: Case[] = corpus();
   for i in 0..cs.len() {
@@ -425,9 +352,6 @@ function test_every_vertex_is_an_input_point(): test.TestOutcome {
   return test.pass();
 }
 
-// The ring turns the same way at every vertex, and carries no collinear
-// vertex. That second half is what the "square with edge points" case is
-// for: an implementation using `< 0` instead of `<= 0` keeps them.
 function test_the_ring_is_convex_and_has_no_collinear_vertex(): test.TestOutcome {
   let cs: Case[] = corpus();
   for i in 0..cs.len() {
@@ -437,7 +361,6 @@ function test_the_ring_is_convex_and_has_no_collinear_vertex(): test.TestOutcome
         + " is not a strictly convex counter-clockwise ring");
     }
   }
-  // The square-with-edge-points case must reduce to exactly four corners.
   let square: Pt[] = hull_monotone(
     pts([0, 0, 10, 0, 10, 10, 0, 10, 5, 0, 10, 5, 5, 10, 0, 5]),
   );
@@ -448,8 +371,6 @@ function test_the_ring_is_convex_and_has_no_collinear_vertex(): test.TestOutcome
   return test.pass();
 }
 
-// The hull is a property of the SET, not of the order it arrived in.
-// Every rotation of the input must give the same ring.
 function test_input_order_does_not_matter(): test.TestOutcome {
   let cs: Case[] = corpus();
   for i in 0..cs.len() {
@@ -466,7 +387,6 @@ function test_input_order_does_not_matter(): test.TestOutcome {
           + r.to_string() + " changed the hull to " + render(got));
       }
     }
-    // Reversing too.
     let rev: Pt[] = [];
     for k in 0..n {
       rev = rev.append(cs[i].points[n - 1 - k]);
@@ -478,8 +398,6 @@ function test_input_order_does_not_matter(): test.TestOutcome {
   return test.pass();
 }
 
-// The hull of a hull is itself. A construction that drops or adds a vertex
-// on the second pass is not computing a fixed point of its own definition.
 function test_the_hull_is_idempotent(): test.TestOutcome {
   let cs: Case[] = corpus();
   for i in 0..cs.len() {
@@ -493,7 +411,6 @@ function test_the_hull_is_idempotent(): test.TestOutcome {
   return test.pass();
 }
 
-// Degenerate inputs answer, rather than crashing or inventing structure.
 function test_degenerate_inputs(): test.TestOutcome {
   if (hull_monotone([]).len() != 0) {
     return test.fail("empty input gave a ring");
@@ -509,7 +426,6 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("two distinct points should hull to a segment, got "
       + render(two));
   }
-  // A collinear set is a segment: its two extremes, nothing between.
   let line: Pt[] = hull_monotone(pts([0, 0, 1, 0, 2, 0, 3, 0]));
   if (line.len() != 2) {
     return test.fail("four collinear points should hull to 2 vertices, got "
@@ -524,8 +440,6 @@ function test_degenerate_inputs(): test.TestOutcome {
   return test.pass();
 }
 
-// The grid case pins the count: an n x n grid of lattice points hulls to
-// exactly four corners, because every edge point is collinear with them.
 function test_a_grid_hulls_to_its_corners(): test.TestOutcome {
   let sizes: i32[] = [2, 3, 5, 8];
   for i in 0..sizes.len() {
@@ -555,8 +469,6 @@ function test_a_grid_hulls_to_its_corners(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------ app
 
 function main(): i32 {
   eprint("convex_hull — two algorithms, one ring");

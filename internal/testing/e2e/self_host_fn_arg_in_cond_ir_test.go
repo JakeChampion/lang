@@ -9,35 +9,19 @@ import (
 	"testing"
 )
 
-// #2686 tail — a fn-typed CALL ARGUMENT inside a STATEMENT-CONDITION position
-// (an `if (…)` / `while (…)` condition, or a `for x in …` iterated expression)
-// must be env-boxed by the self-host IR lift pass, exactly as it already is in a
-// `let` initialiser / `return` / expr-statement / assignment. The lift pass
-// (lift_inline_closures_stmts) used to recurse only the nested BODIES of those
-// statements, never the condition / iterated expression, so a lambda argument
-// there stayed a bare function pointer while the callee's fn-param — marked a
-// closure local — unpacked an env box from it and crashed. These cases pin the
-// fix across the three condition positions on both the native backends and the
-// self-host IR path.
 var fnArgInCondCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// fn-typed arg inside an `if` condition. apply(<lambda>, 3) -> 3<10 -> true.
 	{"if-cond", `function apply(f: (i32) => boolean, x: i32): boolean { return f(x); }
 function main(): i32 { if (apply((x: i32): boolean => { return x < 10; }, 3)) { return 5; } return 0; }`, 5},
-	// fn-typed arg inside a `while` condition. Loops while i<3 -> i ends at 3.
 	{"while-cond", `function apply(f: (i32) => boolean, x: i32): boolean { return f(x); }
 function main(): i32 { let i = 0; while (apply((x: i32): boolean => { return x < 3; }, i)) { i = i + 1; } return i; }`, 3},
-	// fn-typed arg inside a `for x in <iter>` iterated expression. pick doubles
-	// 0,1,2 -> [0,2,4]; summed = 6.
 	{"for-iter", `function pick(f: (i32) => i32): i32[] { let out: i32[] = []; let i = 0; while (i < 3) { out = out.append(f(i)); i = i + 1; } return out; }
 function main(): i32 { let s = 0; for x in pick((n: i32): i32 => { return n * 2; }) { s = s + x; } return s; }`, 6},
 }
 
-// TestNativeFnArgInCond exercises the three condition positions on the native
-// interp / x86-64 / wasm backends, oracle-checked.
 func TestNativeFnArgInCond(t *testing.T) {
 	for _, tc := range fnArgInCondCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +43,6 @@ func TestNativeFnArgInCond(t *testing.T) {
 	}
 }
 
-// TestNativeFnArgInCondArm64 is the arm64 leg (CI-gated; runs under qemu).
 func TestNativeFnArgInCondArm64(t *testing.T) {
 	for _, tc := range fnArgInCondCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,8 +58,6 @@ func TestNativeFnArgInCondArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFnArgInCondIRX86_64 routes each case through the self-hosted x86-64
-// IR driver, pins routing to "ir", and oracle-checks the exit code.
 func TestSelfHostFnArgInCondIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -110,7 +91,6 @@ func TestSelfHostFnArgInCondIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFnArgInCondIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostFnArgInCondIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host fn-arg-in-cond wasm IR e2e")

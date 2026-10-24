@@ -9,15 +9,6 @@ import (
 	"testing"
 )
 
-// A record field read moves out of a record this frame owns when the record
-// dies at the read and is read after it only through its other fields
-// (ssaunits.payload_root), and a read of a field of a record it moved out
-// takes in turn. `scan` is fmt's scan_body in miniature: the words are read
-// out of the state, and out of the words their arrays, which the loop then
-// updates in place. Read as borrows, each array held a second count through
-// the words record, and the first update in every call copied it.
-//
-// The exit code is the allocations per call: the Words the call returns.
 const recordFieldTakeProg = `struct Words { lines: string[], nl: i32, pos: i64[], meta: i64[], n: i32, at: i32[], best: i64[] }
 struct State { words: Words, spare: Words, bytes: i32, o: i32 }
 @noinline function chunk(own w: Words, k: i32): Words {
@@ -80,10 +71,6 @@ function main(): i32 {
 }
 `
 
-// The fields are taken after a loop and read across later blocks, where the
-// flow from before the take keeps the record live: the record's drop must
-// still come, past the slots the takes emptied. Built with the leak census.
-// `id` keeps each array literal off the static data a constant one is.
 const recordFieldTakeAcrossProg = `struct Pair { a: i32[], b: i32[] }
 @noinline function id(x: i32): i32 { return x; }
 @noinline
@@ -134,16 +121,6 @@ func TestSelfHostRecordFieldTakeAcrossBlocks(t *testing.T) {
 	}
 }
 
-// A projection a call or instruction takes may leave a record that later
-// blocks read only through its other fields (ssaunits.projection_root). In
-// `step` the spliced `kept` branches inside the update, so `c` is read after
-// the branch, through its other fields alone: `a` and `b` are taken and
-// updated in place, where they were copied every call. `reread` reads the
-// taken field again in a later block and `again` reaches the take again round
-// a loop, so both keep the field the record's.
-//
-// The exit code: 1 for a wrong value, 2 for an allocation in the update loop,
-// 99 for a count that went under.
 const withTakeAcrossBlocksProg = `import "std/bench";
 
 struct F { n: i32, s: string }
@@ -243,17 +220,6 @@ func TestSelfHostWithTakeAcrossBlocks(t *testing.T) {
 	}
 }
 
-// A record updated in one arm of a branch reaches the join beside the
-// unchanged record of the arms that leave it alone, and the join's phi reads
-// the old record only on those arms' edges. In `joined` the field `grow`
-// rebuilds is taken at its read: the phi's read of the old record is not on
-// the path from the take, so `grow`'s loop appends in place. Read as live,
-// the record kept a second count on the field and the first append of every
-// call copied it. In `kept` the arm that skips the update hands the join the
-// record the field was read from, so that field stays the record's.
-//
-// The exit code: 1 for a wrong value, 2 for an allocation per call in
-// `joined`, 99 for a count that went under.
 const recordFieldTakeArmJoinProg = `struct A { xs: i32[], n: i32, tag: string }
 @noinline function bump(own a: A): A { return A { ...a, n: a.n + 1 }; }
 function grow(own buf: i32[], line: string): i32[] {
@@ -369,14 +335,6 @@ func TestSelfHostRecordFieldTake(t *testing.T) {
 	}
 }
 
-// A field that took its unit is the frame's own from then on, and its record
-// may already be freed. `keep` counts its operand and `a` is read after it,
-// so the call is handed a retained unit; `cost` only reads its operands, so
-// the loop calls it with no retain. Treated as a field of `r` or `w`, the
-// operand was gated on the dead record's count: `keep` took `a`'s only unit
-// and `f` read it after the free, and `step` retained and released both
-// arrays round every call. Built with the sanitizer, which quarantines a
-// freed block.
 const recordFieldTakeHandedProg = `struct R { a: i32[], n: i32 }
 struct B { xs: i32[] }
 struct W { a: i64[], b: i64[], c: i64[], n: i32 }

@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// forKvCases cover `for (k, v) in m { … }` map destructuring iteration.
-// The parser encodes the two names as "k,v"; the emitter iterates the
-// map's parallel keys[]/values[] arrays by index, binding k = keys[i+1],
-// v = values[i+1]. Exit codes cross-checked vs the Go backend.
 var forKvCases = []struct {
 	name string
 	src  string
@@ -20,8 +16,6 @@ var forKvCases = []struct {
 	{"string-keys", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 40); m = m.insert(\"b\", 2); let t: i32 = 0; for (k, v) in m { t = t + v; } return t; }", 42},
 }
 
-// TestSelfHostForKvX86_64 — `for (k,v) in m` with the self-hosted
-// x86-64 compiler.
 func TestSelfHostForKvX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -48,7 +42,6 @@ func TestSelfHostForKvX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostForKvArm64 — CI-gated arm64 counterpart.
 func TestSelfHostForKvArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range forKvCases {

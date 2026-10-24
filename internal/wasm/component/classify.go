@@ -2,16 +2,6 @@ package component
 
 import "strings"
 
-// classify.go turns a wasmbin core module's preview-2 import surface
-// (emitted under EmitOptions.Preview2WASI) into a ComposeRequest — the
-// single description Compose consumes. It is the importable half of the
-// "core bytes → component" operation; the fern CLI driver and the e2e
-// test harness both classify through ClassifyCore so they stay in
-// lock-step (and neither needs the preview-1 adapter).
-
-// preview2ImportSpec describes one structured preview-2 import the
-// composer knows how to route (exit / random / monotonic). Keyed by
-// (core-module, core-name) the core wasm module declared.
 type preview2ImportSpec struct {
 	interfaceName    string
 	paramNames       []string
@@ -21,14 +11,6 @@ type preview2ImportSpec struct {
 	resultValtypes   []byte
 }
 
-// knownPreview2Imports is the registry of (core-module, core-name) pairs
-// that map to a structured component-level WasiImport. Grows as more
-// preview-2 imports land in wasmbin (see docs/TOOLCHAIN-SELF-HOSTING.md).
-//
-// `wasi:cli/exit@0.2.0::exit` takes `func(status: result<_, _>)`, so its
-// WasiImport carries InnerTypes = [InnerTypeResultEmpty] and its param
-// valtype is byte 0x00 — read by the binary parser as the inner-scope
-// typeidx of the result type.
 var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 	{"wasi:cli/exit@0.2.0", "exit"}: {
 		interfaceName:    "wasi:cli/exit@0.2.0",
@@ -49,15 +31,6 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 	},
 }
 
-// ClassifyCore walks a core module's preview-2 imports and fills a
-// ComposeRequest. Every recognised import maps to a request field (CLI
-// stdio, io/streams methods + drops, the filesystem open-chain, TCP /
-// UDP / HTTP method surfaces, the standalone clock / args / env
-// capabilities, and the structured exit/random/monotonic no-opts).
-// Anything unrecognised is returned in unsupported so the caller can
-// surface a clear error. Because the request fields are independent, ANY
-// mix composes — sockets + files, stdout + stderr, args + env, an HTTP
-// handler that logs, etc.
 func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 	var req ComposeRequest
 	var unsupported []string
@@ -126,9 +99,6 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.read-directory",
 			m == "wasi:filesystem/types@0.2.0" && n == "[method]directory-entry-stream.read-directory-entry",
 			m == "wasi:filesystem/types@0.2.0" && n == "[resource-drop]directory-entry-stream":
-			// One flag for all three: a listing is a cursor, so the
-			// pull method and the drop are inseparable from the
-			// read-directory that mints the handle.
 			req.File.ReadDir = true
 		case m == "wasi:clocks/wall-clock@0.2.0" && n == "now":
 			req.WallNow = true
@@ -139,36 +109,23 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 		case m == wasiConfigStore && n == "get":
 			req.Config = true
 		case m == "wasi:sockets/tcp@0.2.0" && (n == "[method]tcp-socket.start-connect" || n == "[method]tcp-socket.finish-connect"):
-			// Outbound client: pulls in the connect variant of the tcp
-			// instance type (start-connect / finish-connect appended).
 			req.Tcp = true
 			req.TcpConnect = true
 		case strings.HasPrefix(m, "wasi:sockets/tcp"):
-			req.Tcp = true // wasi:sockets/tcp@ + tcp-create-socket@
+			req.Tcp = true
 		case m == "wasi:sockets/udp@0.2.0" && n == "[method]incoming-datagram-stream.receive":
 			req.Udp = true
 			req.UdpRecv = true
 		case strings.HasPrefix(m, "wasi:sockets/udp"):
 			req.Udp = true
 		case m == "wasi:sockets/instance-network@0.2.0":
-			// consumed by the TCP / UDP shape; accepted implicitly
 		case m == "wasi:clocks/monotonic-clock@0.2.0" && n == "subscribe-duration":
-			// wasm reactor timer: returns own<pollable>. Composed
-			// standalone (clocks + io/poll) — see WASM-REACTOR-PLAN.md.
 			req.Timer = true
 		case m == "wasi:io/poll@0.2.0" && n == "poll":
-			// wasm reactor multiplexer: poll(list<pollable>) ->
-			// list<u32>. Pulls in the heavier io/poll instance type.
 			req.Poll = true
 		case m == "wasi:io/poll@0.2.0" && n == "[resource-drop]pollable":
-			// wasm reactor: drop a consumed pollable. Only the reactor
-			// (timer / poll) standalone path needs this lowering added
-			// explicitly; the socket paths add their own drop.
 			req.PollableDrop = true
 		case m == "wasi:io/poll@0.2.0":
-			// consumed by the TCP shape / the reactor timer; accepted
-			// implicitly (the pollable.block lowering is added
-			// explicitly by the Tcp / Udp / Timer request paths).
 		case m == "wasi:http/types@0.2.0":
 			req.Http = true
 		default:
@@ -187,27 +144,12 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			}
 		}
 	}
-	// get-directories alone is an incomplete chain: a preopen is only
-	// ever resolved to hand it to a descriptor method. The reverse is
-	// not — a descriptor method without get-directories is a program
-	// whose only handles are stdio (`stdin().stat()` imports
-	// descriptor.stat and never opens a path), and it builds. open-at
-	// is not a prerequisite either: it opens a path for streaming,
-	// which stat / unlink / mkdir do not do — they take the preopen
-	// descriptor and a path directly.
-	//
-	// Which methods follow is otherwise a free choice: req.File already
-	// carries exactly the set the core imports and the instance type is
-	// built from it, so there is no combination left to reject.
 	if getDirs && !req.File.Any() {
 		unsupported = append(unsupported, "wasi:filesystem (incomplete chain: get-directories with no descriptor method)")
 	}
 	return req, unsupported
 }
 
-// RequestEmpty reports whether the request carries no preview-2 imports
-// at all — an import-free program that routes to the plain cli/run (or
-// lifted-export) builder rather than the composer.
 func RequestEmpty(req ComposeRequest) bool {
 	return !req.Stdout && !req.Stderr && !req.Stdin &&
 		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput && !req.DropError &&
@@ -216,12 +158,8 @@ func RequestEmpty(req ComposeRequest) bool {
 		!req.WallNow && !req.Args && !req.Env && !req.Config && len(req.Structured) == 0
 }
 
-// coreModuleImport is one (module, name) pair from the import section.
 type coreModuleImport struct{ module, name string }
 
-// coreModuleImportPairs walks a core wasm module's import section and
-// returns each (module, name) pair in declaration order. Bails out
-// silently on malformed input or no import section.
 func coreModuleImportPairs(bin []byte) []coreModuleImport {
 	const preambleLen = 8
 	if len(bin) < preambleLen {
@@ -259,16 +197,16 @@ func coreModuleImportPairs(bin []byte) []coreModuleImport {
 			kind := body3[0]
 			body3 = body3[1:]
 			switch kind {
-			case 0: // func: typeidx uleb
+			case 0:
 				_, ks := readULEB(body3)
 				body3 = body3[ks:]
-			case 1: // table: reftype byte + limits
+			case 1:
 				if len(body3) >= 2 {
 					body3 = body3[2:]
 					_, ks := readULEB(body3)
 					body3 = body3[ks:]
 				}
-			case 2: // memory: limits
+			case 2:
 				if len(body3) >= 1 {
 					flag := body3[0]
 					body3 = body3[1:]
@@ -279,7 +217,7 @@ func coreModuleImportPairs(bin []byte) []coreModuleImport {
 						body3 = body3[ks2:]
 					}
 				}
-			case 3: // global: valtype byte + mut byte
+			case 3:
 				if len(body3) >= 2 {
 					body3 = body3[2:]
 				}
@@ -292,8 +230,6 @@ func coreModuleImportPairs(bin []byte) []coreModuleImport {
 	return nil
 }
 
-// readULEB decodes a uleb128-encoded uint up to 10 bytes; returns
-// (value, bytes consumed). Returns (0, 0) on malformed input.
 func readULEB(b []byte) (uint64, int) {
 	var v uint64
 	var shift uint
@@ -308,8 +244,6 @@ func readULEB(b []byte) (uint64, int) {
 	return 0, 0
 }
 
-// readName reads a uleb-prefixed UTF-8 name; returns (name, rest) or
-// ("", b) when malformed.
 func readName(b []byte) (string, []byte) {
 	n, k := readULEB(b)
 	if k == 0 {

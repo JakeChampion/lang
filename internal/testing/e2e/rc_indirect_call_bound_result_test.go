@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// A local bound to the result of a call through a function value owns that
-// result whatever the callee expression is, so it is released at scope exit
-// even when an argument is borrowed. The field case is #10149's program.
 func TestIndirectCallBoundResultIsReleased(t *testing.T) {
 	cases := []struct {
 		name string
