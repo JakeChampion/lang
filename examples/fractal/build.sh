@@ -5,32 +5,26 @@
 # With no container tool set, this installs a static, rootless Podman set up
 # for an unprivileged build sandbox. Set CONTAINER_TOOL=docker (or podman) to
 # use a tool that is already installed.
-# The nightly release builds the checkout compiler before it builds the server.
+# The verified bootstrap pin builds the checkout compiler before the server.
 # Set FERN to use an installed compiler instead.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 IMAGE=fern-server
 OUTPUT=netlify/functions/fern-server.tar
-FERN_RELEASE="${FERN_RELEASE:-https://github.com/JakeChampion/lang/releases/download/nightly}"
 mkdir -p "$(dirname "$OUTPUT")" public
 rm -f "$OUTPUT"
 
-sha256_check() {
-  if command -v sha256sum > /dev/null; then sha256sum -c "$@"; else shasum -a 256 -c "$@"; fi
-}
-
 case "$(uname -s)-$(uname -m)" in
-    Linux-x86_64) release=fern-linux-x86_64 host_target=x86-64-linux ;;
-    Linux-aarch64) release=fern-linux-arm64 host_target=arm64-linux ;;
-    Darwin-arm64) release=fern-darwin-arm64 host_target=arm64-darwin ;;
-    *) echo "build.sh: no fern release for $(uname -s) $(uname -m); set FERN" >&2; exit 1 ;;
+    Linux-x86_64) host_target=x86-64-linux ;;
+    Linux-aarch64) host_target=arm64-linux ;;
+    Darwin-arm64) host_target=arm64-darwin ;;
+    *) echo "build.sh: unsupported build host $(uname -s) $(uname -m); set FERN" >&2; exit 1 ;;
 esac
 if [ -z "${FERN:-}" ]; then
   dir="$(mktemp -d)"
-  (cd "$dir" && curl -sSfLO "$FERN_RELEASE/$release.tar.gz" && curl -sSfLO "$FERN_RELEASE/$release.tar.gz.sha256" &&
-    sha256_check "$release.tar.gz.sha256" && tar xzf "$release.tar.gz")
-  "$dir/fern" -target "$host_target" -o "$dir/fern-checkout" ../../compiler/fern.fern ../../internal/stdlib
+  stage0="$(../../bootstrap/bootstrap.sh stage0)"
+  "$stage0" -target "$host_target" -o "$dir/fern-checkout" ../../compiler/fern.fern ../../internal/stdlib
   FERN="$dir/fern-checkout"
 fi
 "$FERN" -target x86-64-linux -O -o server ../showcase/server.fern.md ../../internal/stdlib

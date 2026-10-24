@@ -72,7 +72,8 @@ Set `FERN_ORIGINAL_ACCEPT_ENCODING` to change the proxy header name. An empty va
 A reverse proxy must preserve the browser value and overwrite that proxy header.
 
 The Netlify site keeps `examples/fractal` as its build base.
-Its build script compiles the showcase, prepares assets, and builds the container function archive.
+Its build script verifies the repository bootstrap pin and builds the current compiler from source.
+The current compiler builds the showcase and browser Wasm module. The script then prepares assets and the container function archive.
 
 ## State and measurements
 
