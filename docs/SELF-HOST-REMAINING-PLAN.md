@@ -544,7 +544,7 @@ planned order:
     as a wrapper heap box; `Ok` / `Err` fell through to the generic
     function-call path and emitted `call __fn_Ok` / `call __fn_Err` —
     undefined at link time inside any Fern body that constructs a
-    Result (`std/fuzz`'s `fuzz_corpus_from_dir`, user helpers, the
+    Result (`std/fuzz`'s `fuzz.corpus_from_dir`, user helpers, the
     obvious `return Ok(...)` pattern). Both backends now emit Result
     heap boxes (tag 0 / 1 @ 0, payload @ 8 — matching the StmtMatch
     discriminant and the existing runtime-helper-constructed Results).

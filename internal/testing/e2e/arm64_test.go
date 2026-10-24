@@ -6392,8 +6392,8 @@ function main(): i32 {
 // on parse). Covers hex addressing, binary debug dumps, octal
 // permissions, base-36 short IDs.
 // Path manipulation (string-level, POSIX) per STDLIB-ROADMAP
-// item #8: path_join / path_parent / path_file_name /
-// path_extension. Pure string ops — no FS interaction.
+// item #8: path.join / path.parent / path.file_name /
+// path.extension. Pure string ops — no FS interaction.
 // Big bundle from STDLIB-ROADMAP: most of item #3 (pad_start /
 // pad_end / split_once / trim_start_matches / trim_end_matches
 // / replace_n), plus string-count (a small adjacent helper),
@@ -7617,7 +7617,7 @@ function main(): i32 {
 
 // Twelfth stdlib bundle: bit accessors (bit/set/clear/
 // toggle), byte newline predicate, line_count, HTTP
-// response builders, log_info/warn/error. 12 helpers.
+// Response builders and log.info/log.warn/log.error: twelve helpers.
 func TestArm64StdlibBundle12(t *testing.T) {
 	src := `
 import "std/http";
@@ -7663,9 +7663,9 @@ function main(): i32 {
     // Log helpers — sanity-check they don't crash; output
     // goes to stderr so the e2e harness exit-code check still
     // sees the program's intended return value.
-    log.log_info("test info");
-    log.log_warn("test warn");
-    log.log_error("test error");
+    log.info("test info");
+    log.warn("test warn");
+    log.error("test error");
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -8298,42 +8298,42 @@ func TestArm64Paths(t *testing.T) {
 	src := `
 import "std/path";
 function main(): i32 {
-    // path_join — simple, leading/trailing slashes, empty parts.
-    if (path.path_join(["a", "b", "c"]) != "a/b/c") { return 1; }
-    if (path.path_join(["/usr", "local", "bin"]) != "/usr/local/bin") { return 2; }
-    if (path.path_join(["a", "", "b"]) != "a/b") { return 3; }
-    if (path.path_join(["a/", "b"]) != "a/b") { return 4; }
-    if (path.path_join(["a/", "/b"]) != "a/b") { return 5; }
-    if (path.path_join(["a", "/b"]) != "a/b") { return 6; }
-    if (path.path_join(["/", "a"]) != "/a") { return 7; }
-    if (path.path_join(["solo"]) != "solo") { return 8; }
+    // path.join — simple, leading/trailing slashes, empty parts.
+    if (path.join(["a", "b", "c"]) != "a/b/c") { return 1; }
+    if (path.join(["/usr", "local", "bin"]) != "/usr/local/bin") { return 2; }
+    if (path.join(["a", "", "b"]) != "a/b") { return 3; }
+    if (path.join(["a/", "b"]) != "a/b") { return 4; }
+    if (path.join(["a/", "/b"]) != "a/b") { return 5; }
+    if (path.join(["a", "/b"]) != "a/b") { return 6; }
+    if (path.join(["/", "a"]) != "/a") { return 7; }
+    if (path.join(["solo"]) != "solo") { return 8; }
     let empty: string[] = [];
-    if (path.path_join(empty) != "") { return 9; }
+    if (path.join(empty) != "") { return 9; }
 
-    // path_parent — handle root and trailing-slash cases.
-    if (path.path_parent("/a/b/c") != "/a/b") { return 10; }
-    if (path.path_parent("a/b") != "a") { return 11; }
-    if (path.path_parent("a") != "") { return 12; }
-    if (path.path_parent("/") != "/") { return 13; }
-    if (path.path_parent("") != "") { return 14; }
-    if (path.path_parent("/a") != "/") { return 15; }
-    if (path.path_parent("/a/b/") != "/a") { return 16; }
+    // path.parent — handle root and trailing-slash cases.
+    if (path.parent("/a/b/c") != "/a/b") { return 10; }
+    if (path.parent("a/b") != "a") { return 11; }
+    if (path.parent("a") != "") { return 12; }
+    if (path.parent("/") != "/") { return 13; }
+    if (path.parent("") != "") { return 14; }
+    if (path.parent("/a") != "/") { return 15; }
+    if (path.parent("/a/b/") != "/a") { return 16; }
 
-    // path_file_name — last component.
-    if (path.path_file_name("/a/b/c.txt") != "c.txt") { return 17; }
-    if (path.path_file_name("file") != "file") { return 18; }
-    if (path.path_file_name("/") != "") { return 19; }
-    if (path.path_file_name("") != "") { return 20; }
-    if (path.path_file_name("a/b/") != "b") { return 21; }
+    // path.file_name — last component.
+    if (path.file_name("/a/b/c.txt") != "c.txt") { return 17; }
+    if (path.file_name("file") != "file") { return 18; }
+    if (path.file_name("/") != "") { return 19; }
+    if (path.file_name("") != "") { return 20; }
+    if (path.file_name("a/b/") != "b") { return 21; }
 
-    // path_extension — last .X suffix on the last component.
-    if (path.path_extension("a.txt") != "txt") { return 22; }
-    if (path.path_extension("/path/to/file.log") != "log") { return 23; }
-    if (path.path_extension("multi.dot.tar.gz") != "gz") { return 24; }
-    if (path.path_extension("noext") != "") { return 25; }
-    if (path.path_extension(".hidden") != "") { return 26; }    // leading-dot file
-    if (path.path_extension("a.b/.hidden") != "") { return 27; }
-    if (path.path_extension("") != "") { return 28; }
+    // path.extension — last .X suffix on the last component.
+    if (path.extension("a.txt") != "txt") { return 22; }
+    if (path.extension("/path/to/file.log") != "log") { return 23; }
+    if (path.extension("multi.dot.tar.gz") != "gz") { return 24; }
+    if (path.extension("noext") != "") { return 25; }
+    if (path.extension(".hidden") != "") { return 26; }    // leading-dot file
+    if (path.extension("a.b/.hidden") != "") { return 27; }
+    if (path.extension("") != "") { return 28; }
 
     return 0;
 }`

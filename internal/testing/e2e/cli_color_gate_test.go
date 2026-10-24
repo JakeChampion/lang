@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// `cli_color_enabled()` is the gate every coloriser in `std/cli` consults.
+// `color_enabled()` is the gate every coloriser in `std/cli` consults.
 // It is decided by the environment AND by whether stdout is a terminal, so
 // it cannot be pinned by a conformance case (the case format can set
 // neither) and it needs the real CLI rather than an in-process check.
@@ -32,7 +32,7 @@ func TestCliColorGateHonoursTheConventions(t *testing.T) {
 	src := filepath.Join(dir, "gate.fern")
 	if err := os.WriteFile(src, []byte(`import "std/cli";
 function main(): i32 {
-    if (cli.cli_color_enabled()) { return 1; }
+    if (cli.color_enabled()) { return 1; }
     return 0;
 }
 `), 0o644); err != nil {
@@ -121,7 +121,7 @@ func runColorGate(t *testing.T, bin, src string, env []string, tty bool) bool {
 func TestColouredCliStripsEscapesWhenRedirected(t *testing.T) {
 	const src = `import "std/cli";
 function main(): i32 {
-    print(cli.cli_red("boom"));
+    print(cli.red("boom"));
     return 0;
 }`
 	t.Run("x86-64", func(t *testing.T) {

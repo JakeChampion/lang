@@ -26,7 +26,7 @@ function check_len_nonneg(input: u8[]): test.TestOutcome {
 
 // Property that holds: reversing the bytes twice is the
 // identity — checked directly on the `u8[]` input, no text
-// bridge needed. The fuzz_default_iterations loop exercises
+// bridge needed. The fuzz.DEFAULT_ITERATIONS loop exercises
 // the byte-level mutator thoroughly; if the round-trip
 // ever broke, the shrinker would localise the trigger to a
 // minimal byte sequence.
@@ -65,7 +65,7 @@ function main(): i32 {
   r = r.fuzz_shrink(
     "reverse_bytes idempotent",
     ["".bytes(), "a".bytes(), "abc".bytes(), "hello world".bytes()],
-    fuzz.fuzz_default_iterations(),
+    fuzz.DEFAULT_ITERATIONS,
     check_reverse_idempotent,
   );
 

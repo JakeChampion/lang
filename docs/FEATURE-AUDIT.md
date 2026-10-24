@@ -2640,16 +2640,16 @@ suite whose stdlib path exercises the `u8[]` / `__alloc_u8` / `.with()` /
 `string_from_bytes_unchecked` byte-buffer surface end-to-end through the self-host IR —
 no AST fallback.
 
-### 2026-06-21 — std/path: pure-Fern std/test migration coverage (`path_join` / `path_parent` / `path_file_name` / `path_extension`)
+### 2026-06-21 — std/path: pure-Fern std/test migration coverage (`path.join` / `path.parent` / `path.file_name` / `path.extension`)
 
 `std/path`'s POSIX helpers (string-level, no FS interaction) had Go-side
 coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion.
 Added `tests/stdlib/path_test.fern` — 17 assertions across all four
-functions, covering the tricky edges: `path_join` separator-collapsing
+functions, covering the tricky edges: `path.join` separator-collapsing
 (`["a/", "/b"]` → `"a/b"`), root preservation (`["/", "etc", "hosts"]` →
-`"/etc/hosts"`), empty-part skipping and join-of-nothing; `path_parent` of a
+`"/etc/hosts"`), empty-part skipping and join-of-nothing; `path.parent` of a
 relative path, a no-separator name, the root, and a top-level entry;
-`path_file_name` trailing-slash trimming; and `path_extension`'s last-dot rule
+`path.file_name` trailing-slash trimming; and `path.extension`'s last-dot rule
 plus the hidden-file (`.bashrc` → `""`) carve-out. Gated natively
 (`TestRunnerPathExamplePasses`) and through the self-host differential gate
 (`TestSelfHostStdTestE2E/path`), which compiles the suite with the self-hosted
@@ -3691,8 +3691,8 @@ is concatenated with a `main` (single-module, no modload), routing-pinned to `"i
 and oracle-checked on x86-64 + wasm (verified on arm64 via qemu). **std/crypto** is
 the standout — `sha256_hex` / `sha256_bytes` / `hmac_sha256_hex` drive the entire
 u32-heavy SHA-256 message schedule + compression (rotr / `shr_u` / wrapping add)
-through the IR path end-to-end. **std/path** (`path_join` / `path_extension` /
-`path_file_name` / `path_parent`) and **std/math** (`range` / `range_step` /
+through the IR path end-to-end. **std/path** (`path.join` / `path.extension` /
+`path.file_name` / `path.parent`) and **std/math** (`range` / `range_step` /
 `pack_rgb` / `i32_max`) round out the batch. Coverage-only, no compiler change.
 Guarded by `TestSelfHost{Crypto,Path,Math}IR{X86_64,Wasm}` in
 `self_host_stdlib_concat_ir_test.go` (a shared concat-driver harness).
@@ -4325,14 +4325,14 @@ over-release — so `audit_types_match`'s skip-list entry was removed.)
 
 ### 2026-06-12 — std/path + std/i64 + std/u32 + std/u64 + std/f64 audited (native 4-backend; no new bugs)
 
-New native fixture `audit_std_path_numeric` — `path_join` / `path_file_name` /
-`path_extension`; i64 `abs`/`min`/`max`; u32 `max`; u64 `clamp`; float
+New native fixture `audit_std_path_numeric` — `path.join` / `path.file_name` /
+`path.extension`; i64 `abs`/`min`/`max`; u32 `max`; u64 `clamp`; float
 `sqrt`/`floor`/`ceil`/`abs`/`is_finite`. ✅ on interp / x86-64 / arm64 / wasm and
 the wasm owned-vs-borrow gate. Self-host: `std/path` is import-free, covered by
 new `self_host_audit_stdpath_test.go` (join/file_name/extension); the wider-int
 and float modules are ⚠️ pending on self-host. No new bugs.
 
-Author note: `path_join(parts: string[])` takes an array, not varargs.
+Author note: `join(parts: string[])` takes an array, not varargs.
 
 ### 2026-06-12 — std/json + std/time + std/format + std/csv audited (native 4-backend; no new bugs)
 

@@ -5,7 +5,7 @@
 // composable primitive layer — `ansi.bold(ansi.red("x"))` nests
 // correctly because every wrap ends in `ESC[0m`. The NO_COLOR policy
 // (whether to emit codes at all) lives one level up in std/cli's
-// `cli_*` helpers, which gate on `cli_color_enabled()`; std/ansi itself
+// `cli.*` helpers, which gate on `cli.color_enabled()`; std/ansi itself
 // stays mechanism, not policy, so callers can build styled strings and
 // decide separately whether a terminal should see them.
 //

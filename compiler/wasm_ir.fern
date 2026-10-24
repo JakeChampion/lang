@@ -2063,17 +2063,17 @@ function p2_return_area(n: string): string {
 
 // free_env_list_p2 gives back a get-environment result: each tuple's key and
 // value, the list at $ptr ($count 16-byte tuples), and the 16-byte return
-// area at $base. It counts in $i.
+// area at $base. It counts in $i. Empty host results have no allocated block.
 function free_env_list_p2(): string {
   let o: string = "    (local.set $i (i32.const 0))\n";
   o = o + "    (block $fd (loop $fc\n";
   o = o + "      (br_if $fd (i32.ge_u (local.get $i) (local.get $count)))\n";
   o = o + "      (local.set $tup (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 16))))\n";
-  o = o + "      (call $__fern_raw_free (i32.load (local.get $tup)) (i32.load offset=4 (local.get $tup)))\n";
-  o = o + "      (call $__fern_raw_free (i32.load offset=8 (local.get $tup)) (i32.load offset=12 (local.get $tup)))\n";
+  o = o + "      (if (i32.load offset=4 (local.get $tup)) (then (call $__fern_raw_free (i32.load (local.get $tup)) (i32.load offset=4 (local.get $tup)))))\n";
+  o = o + "      (if (i32.load offset=12 (local.get $tup)) (then (call $__fern_raw_free (i32.load offset=8 (local.get $tup)) (i32.load offset=12 (local.get $tup)))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $fc)))\n";
-  o = o + "    (call $__fern_raw_free (local.get $ptr) (i32.mul (local.get $count) (i32.const 16)))\n";
+  o = o + "    (if (local.get $count) (then (call $__fern_raw_free (local.get $ptr) (i32.mul (local.get $count) (i32.const 16)))))\n";
   return o + "    (call $__fern_raw_free (local.get $base) (i32.const 16))\n";
 }
 
@@ -2304,11 +2304,11 @@ pub function args_func_p2(set_args: boolean): string {
   o = o + "        (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $sp) (local.get $j))))\n";
   o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
   o = o + "        (br $cc)))\n";
-  o = o + "      (call $__fern_raw_free (local.get $sp) (local.get $sl))\n";
+  o = o + "      (if (local.get $sl) (then (call $__fern_raw_free (local.get $sp) (local.get $sl))))\n";
   o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
-  o = o + "    (call $__fern_raw_free (local.get $ptr) (i32.mul (local.get $count) (i32.const 8)))\n";
+  o = o + "    (if (local.get $count) (then (call $__fern_raw_free (local.get $ptr) (i32.mul (local.get $count) (i32.const 8)))))\n";
   o = o + "    (call $__fern_raw_free (local.get $base) (i32.const 16))\n";
   o = o + "    (local.get $arr))\n";
   return o;

@@ -59,13 +59,8 @@ import "core/cmp";
 // TestRunner; import it so the receiver type resolves under no-prelude.
 import "std/test";
 
-// fuzz_default_iterations — used by callers that want the
-// default loop count without pulling in a config constant
-// per call site. Tuned for sub-second runs on small targets;
-// bigger property tests can pass a larger explicit count.
-pub function fuzz_default_iterations(): i32 {
-  return 200;
-}
+// DEFAULT_ITERATIONS is the default loop count. Callers can supply a larger count.
+pub const DEFAULT_ITERATIONS: i32 = 200;
 
 // __fuzz_pick_seed — round-robin a seed from the corpus.
 // Uses the iteration index modulo corpus length rather than
@@ -262,7 +257,7 @@ function __fuzz_escape(bs: u8[]): string {
   return out;
 }
 
-// fuzz_run(seeds, iterations, target) — run the `target`
+// run(seeds, iterations, target) — run the `target`
 // function against `iterations` inputs drawn from `seeds` +
 // mutations. Returns:
 //   Pass              — every input passed
@@ -270,7 +265,7 @@ function __fuzz_escape(bs: u8[]): string {
 //                       target's message, the escaped
 //                       offending bytes, and the RNG SEED
 //                       embedded — pass that seed to
-//                       `fuzz_run_seeded` to replay the exact
+//                       `run_seeded` to replay the exact
 //                       sequence that found it
 //
 // The mutation sequence comes from a seeded PCG32 (std/rand), seeded
@@ -280,20 +275,20 @@ function __fuzz_escape(bs: u8[]): string {
 // Use through `r.fuzz(...)` rather than calling directly;
 // the receiver-method form folds the result into the
 // runner's TAP stream.
-pub function fuzz_run(seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestOutcome {
-  return fuzz_run_seeded(seeds, iterations, math.random_int(0 - 2000000000, 2000000000) as i64, target);
+pub function run(seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestOutcome {
+  return run_seeded(seeds, iterations, math.random_int(0 - 2000000000, 2000000000) as i64, target);
 }
 
-// fuzz_run_seeded(seeds, iterations, rng_seed, target) — `fuzz_run` with the
+// run_seeded(seeds, iterations, rng_seed, target) — `run` with the
 // mutation sequence pinned to `rng_seed`. Equal seeds replay the identical
-// sequence of inputs, so a failure `fuzz_run` reports can be reproduced
+// sequence of inputs, so a failure `run` reports can be reproduced
 // exactly by calling this with the seed named in the diagnostic.
-pub function fuzz_run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, target: (u8[]) => test.TestOutcome): test.TestOutcome {
+pub function run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, target: (u8[]) => test.TestOutcome): test.TestOutcome {
   if (iterations <= 0) {
-    return test.fail("fuzz_run: iterations must be > 0, got " + iterations.to_string());
+    return test.fail("run: iterations must be > 0, got " + iterations.to_string());
   }
   if (seeds.len() == 0) {
-    return test.fail("fuzz_run: at least one seed required");
+    return test.fail("run: at least one seed required");
   }
   // Always run every seed verbatim first so a regression
   // in the trivial-input case isn't masked by mutation
@@ -323,7 +318,7 @@ pub function fuzz_run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, targ
     match (target(input)) {
       Fail(msg) => {
         // The rng seed is in the diagnostic on purpose: it is what
-        // makes the failure replayable via fuzz_run_seeded.
+        // makes the failure replayable via run_seeded.
         return test.fail("iter " + iter.to_string()
           + " mode " + mode.to_string()
           + " rng_seed " + rng_seed.to_string()
@@ -341,7 +336,7 @@ pub function fuzz_run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, targ
 // Pass at most one fuzz target per `it`-equivalent line so
 // the failure attribution stays clean.
 pub function (r: test.TestRunner) fuzz(name: string, seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestRunner {
-  return r.it(name, () => fuzz_run(seeds, iterations, target));
+  return r.it(name, () => run(seeds, iterations, target));
 }
 
 // =================== SHRINKING ===================
@@ -464,7 +459,7 @@ function __fuzz_shrink(seed: u8[], target: (u8[]) => test.TestOutcome): u8[] {
   return current;
 }
 
-// fuzz_run_shrink — run the regular fuzz loop, and on the
+// run_shrink — run the regular fuzz loop, and on the
 // first failure shrink the offending input to a minimal
 // reproducer before returning. The diagnostic embeds both
 // the original failing input AND the minimised one when
@@ -475,12 +470,12 @@ function __fuzz_shrink(seed: u8[], target: (u8[]) => test.TestOutcome): u8[] {
 // budget that does NOT inflate the user-visible `iterations`
 // param — `iterations` is the mutation count, shrinking is
 // a post-process amortised against the first failure.
-pub function fuzz_run_shrink(seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestOutcome {
+pub function run_shrink(seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestOutcome {
   if (iterations <= 0) {
-    return test.fail("fuzz_run_shrink: iterations must be > 0, got " + iterations.to_string());
+    return test.fail("run_shrink: iterations must be > 0, got " + iterations.to_string());
   }
   if (seeds.len() == 0) {
-    return test.fail("fuzz_run_shrink: at least one seed required");
+    return test.fail("run_shrink: at least one seed required");
   }
   // Pass 1: seeds verbatim.
   let i: i32 = 0;
@@ -546,7 +541,7 @@ function __fuzz_format_failure(origin: string, raw: u8[], minimised: u8[], msg: 
 // minimised counter-example so CI logs preserve a clean
 // reproducer.
 pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestRunner {
-  return r.it(name, () => fuzz_run_shrink(seeds, iterations, target));
+  return r.it(name, () => run_shrink(seeds, iterations, target));
 }
 
 // =================== CORPUS LOADING ===================
@@ -556,7 +551,7 @@ pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: u8[][], itera
 // committed to the repo as `testdata/fuzz_corpus/*.bin`
 // — same shape Go's testing.F+`-fuzz` uses.
 //
-// `fuzz_corpus_from_dir(path)` reads every file under
+// `corpus_from_dir(path)` reads every file under
 // `path` (non-recursive) and returns each file's contents
 // as a seed. Files are sorted by name so the verbatim
 // pass — which runs every seed first — has a deterministic
@@ -564,12 +559,12 @@ pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: u8[][], itera
 // order. Hidden / `_`-prefixed entries are skipped so
 // scratch metadata doesn't get treated as fuzz input.
 
-// fuzz_corpus_from_dir(path) — load every regular file under
+// corpus_from_dir(path) — load every regular file under
 // `path` as a raw byte seed. Returns the seeds via Result so
 // the caller can fall back to inline seeds when the corpus
 // directory isn't present (typical pattern: ship a small
 // inline corpus + grow it on disk over time).
-pub function fuzz_corpus_from_dir(path: string): Result[u8[][], IoError] {
+pub function corpus_from_dir(path: string): Result[u8[][], IoError] {
   match (read_dir(path)) {
     Err(e) => {
       return Err(e);
@@ -611,19 +606,19 @@ pub function fuzz_corpus_from_dir(path: string): Result[u8[][], IoError] {
   return Ok([]);
 }
 
-// fuzz_corpus_from_dir_or(path, fallback) — convenience for
+// corpus_from_dir_or(path, fallback) — convenience for
 // the typical "use the on-disk corpus when present, else
 // fall back to inline seeds" pattern:
 //
-//   let seeds: u8[][] = fuzz_corpus_from_dir_or(
+//   let seeds: u8[][] = corpus_from_dir_or(
 //       "testdata/parser_corpus",
 //       ["".bytes(), "function main(): i32 { return 0; }".bytes()]);
 //
 // Concatenates the on-disk seeds AFTER the fallback so the
 // inline ones are guaranteed to run even if the disk
 // corpus is empty.
-pub function fuzz_corpus_from_dir_or(path: string, fallback: u8[][]): u8[][] {
-  match (fuzz_corpus_from_dir(path)) {
+pub function corpus_from_dir_or(path: string, fallback: u8[][]): u8[][] {
+  match (corpus_from_dir(path)) {
     Ok(loaded) => {
       if (loaded.len() == 0) {
         return fallback;

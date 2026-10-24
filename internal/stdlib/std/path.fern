@@ -7,22 +7,22 @@
 // `std.fs.path` minimally.
 //
 // Functions:
-//   path_join(parts)    — joins parts with single `/` between,
+//   join(parts)    — joins parts with single `/` between,
 //                         collapses double separators.
-//   path_parent(p)      — leading-everything before the last
+//   parent(p)      — leading-everything before the last
 //                         `/`; "" for paths with no separator.
-//   path_file_name(p)   — last component.
-//   path_extension(p)   — substring after the LAST `.` of the
+//   file_name(p)   — last component.
+//   extension(p)   — substring after the LAST `.` of the
 //                         last component, or "" if none. A
 //                         leading-dot file (`.bashrc`) has no
 //                         extension.
-//   path_clean(p)       — lexically normalise a path: collapse
+//   clean(p)       — lexically normalise a path: collapse
 //                         duplicate `/`, drop `.` elements, and
 //                         resolve `..` against the preceding
 //                         element (Go `path.Clean`, Unix).
-//   path_is_absolute(p) — true iff `p` starts at the root (`/`).
-//   path_stem(p)        — last component minus its final extension.
-//   path_with_extension(p, ext)
+//   is_absolute(p) — true iff `p` starts at the root (`/`).
+//   stem(p)        — last component minus its final extension.
+//   with_extension(p, ext)
 //                       — replace/append the final extension.
 //
 // PATHS ARE ASSUMED TO BE VALID UTF-8. Every function here
@@ -59,7 +59,7 @@
 // declares `import "std/path";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
-pub function path_join(parts: string[]): string {
+pub function join(parts: string[]): string {
   let n: i32 = parts.len();
   if (n == 0) {
     return "";
@@ -98,7 +98,7 @@ pub function path_join(parts: string[]): string {
   return out;
 }
 
-pub function path_parent(p: string): string {
+pub function parent(p: string): string {
   let n: i32 = p.len();
   if (n == 0) {
     return "";
@@ -126,7 +126,7 @@ pub function path_parent(p: string): string {
   return slice_unchecked(p, 0, i) + "";
 }
 
-pub function path_file_name(p: string): string {
+pub function file_name(p: string): string {
   let n: i32 = p.len();
   if (n == 0) {
     return "";
@@ -146,8 +146,8 @@ pub function path_file_name(p: string): string {
   return slice_unchecked(p, i + 1, end) + "";
 }
 
-pub function path_extension(p: string): string {
-  let name: string = path_file_name(p);
+pub function extension(p: string): string {
+  let name: string = file_name(p);
   let n: i32 = name.len();
   if (n == 0) {
     return "";
@@ -164,7 +164,7 @@ pub function path_extension(p: string): string {
   return slice_unchecked(name, i + 1, n) + "";
 }
 
-// path_clean lexically normalises `p` (no FS access), matching Go
+// clean lexically normalises `p` (no FS access), matching Go
 // `path.Clean` in Unix mode. It applies, purely on the string:
 //   - collapse runs of `/` into a single separator;
 //   - drop `.` (current-dir) elements;
@@ -176,7 +176,7 @@ pub function path_extension(p: string): string {
 // when it is the bare root, and is never empty: an empty input or a
 // path that cleans away entirely (e.g. "a/..", "./") returns ".".
 // seg_pop returns a fresh array with the last element of `xs` removed
-// (path_clean's `..` resolution). A rebuild-by-append, mirroring
+// (clean's `..` resolution). A rebuild-by-append, mirroring
 // std/array's `take` idiom — array slice-assignment yields a distinct
 // slice type, and std/path keeps zero module dependencies.
 function seg_pop(xs: string[]): string[] {
@@ -190,7 +190,7 @@ function seg_pop(xs: string[]): string[] {
   return out;
 }
 
-pub function path_clean(p: string): string {
+pub function clean(p: string): string {
   let n: i32 = p.len();
   if (n == 0) {
     return ".";
@@ -247,21 +247,21 @@ pub function path_clean(p: string): string {
   return joined;
 }
 
-// path_is_absolute(p) — true iff `p` begins at the filesystem root
+// is_absolute(p) — true iff `p` begins at the filesystem root
 // (a leading `/`). Relative paths, `./x`, and the empty string are
 // all false. The POSIX-only counterpart to Rust `Path::is_absolute`.
-pub function path_is_absolute(p: string): boolean {
+pub function is_absolute(p: string): boolean {
   return p.len() > 0 && p[0] == 47;
 }
 
-// path_stem(p) — the last component with its final extension removed;
-// the leading half of the `path_stem` / `path_extension` split.
+// stem(p) — the last component with its final extension removed;
+// the leading half of the `stem` / `extension` split.
 //   "a/b/foo.txt"    → "foo"
 //   "archive.tar.gz" → "archive.tar"  (only the final extension goes)
 //   ".bashrc"        → ".bashrc"      (a leading-dot file has no ext)
 //   "foo"            → "foo"          (no dot: whole name)
-pub function path_stem(p: string): string {
-  let name: string = path_file_name(p);
+pub function stem(p: string): string {
+  let name: string = file_name(p);
   let n: i32 = name.len();
   if (n == 0) {
     return "";
@@ -278,7 +278,7 @@ pub function path_stem(p: string): string {
   return slice_unchecked(name, 0, i) + "";
 }
 
-// path_with_extension(p, ext) — `p` with its final extension replaced
+// with_extension(p, ext) — `p` with its final extension replaced
 // by `ext` (given WITHOUT a leading dot). If the last component has no
 // extension, `ext` is appended; an empty `ext` drops the extension
 // (and its dot) entirely. The directory portion is preserved.
@@ -286,7 +286,7 @@ pub function path_stem(p: string): string {
 //   ("foo", "md")         → "foo.md"
 //   ("archive.tar.gz", "") → "archive.tar"
 //   (".bashrc", "txt")    → ".bashrc.txt"  (hidden file has no ext)
-pub function path_with_extension(p: string, ext: string): string {
+pub function with_extension(p: string, ext: string): string {
   let n: i32 = p.len();
   // Locate the real last component, ignoring any trailing slashes.
   let end: i32 = n;

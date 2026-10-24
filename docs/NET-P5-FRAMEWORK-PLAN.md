@@ -303,9 +303,9 @@ first among them.
    each record goes through, stderr unless `logger.to(sink)` names
    another, so a handler builds one over `plat.log` and a test over a
    collector; `emit` hands the sink the line without its newline, as
-   `plat.log` and `eprint` take one. A handler that calls `log_info` and
+   `plat.log` and `eprint` take one. A handler that calls `log.info` and
    its siblings is already told to use `plat.log`: the ambient rule
-   reports the `eprint` under them with the chain through `log_info`. And
+   reports the `eprint` under them with the chain through `log.info`. And
    `eprint`, so `plat.log` on the host platform, writes a line and its
    newline in one `writev(2)` on the native targets, so workers sharing a
    stderr never land a write inside each other's line of up to `PIPE_BUF`

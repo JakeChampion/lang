@@ -2,7 +2,7 @@
 //
 // Two layers:
 //
-//   1. Zero-config wrappers — `log_info` / `log_warn` / `log_error`,
+//   1. Zero-config wrappers — `info` / `warn` / `error`,
 //      thin `eprint` calls with a level prefix. Unchanged, for CLI
 //      tools that just want a line on stderr.
 //
@@ -13,20 +13,20 @@
 //
 // The threshold lives ON the `Logger` value (passed where it's needed)
 // rather than in a mutable global. Construct one logger and thread it
-// through; `new_logger(level_info())` is the common case.
+// through; `new(INFO)` is the common case.
 //
 // A record goes to the logger's sink, one line at a time without its
 // newline, the way `eprint` and `plat.log` take a line. The default sink
 // is stderr, so records interleave with diagnostics rather than the
 // program's stdout; a handler builds its logger over the platform it was
-// handed, `new_json_logger(level_info()).to((line: string): void => plat.log(line))`,
+// handed, `new_json(INFO).to((line: string): void => plat.log(line))`,
 // which is the one route to a host effect the ambient-effect rule (E080)
 // allows it, and which a mock or simulated platform records.
 // Formatting is separated from emission: `render` builds the line (or ""
 // when filtered) and is pure/testable; `emit` hands it to the sink.
 
 // No prelude: a program now `import "std/log";` explicitly to
-// call `log_info(msg)` / etc. (docs/PRELUDE-TO-MODULES.md,
+// call `info(msg)` / etc. (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
 // for `(n: i32).to_string()` in the structured `int` field helper.
@@ -38,15 +38,15 @@ import "std/i32";
 // don't pay for the encoder/parser.
 import "std/json";
 
-pub function log_info(msg: string): void {
+pub function info(msg: string): void {
   eprint("[INFO] " + msg);
 }
 
-pub function log_warn(msg: string): void {
+pub function warn(msg: string): void {
   eprint("[WARN] " + msg);
 }
 
-pub function log_error(msg: string): void {
+pub function error(msg: string): void {
   eprint("[ERROR] " + msg);
 }
 
@@ -55,28 +55,18 @@ pub function log_error(msg: string): void {
 // Severity levels, low → high. A logger emits a record only when its
 // level is >= the logger's `min_level`, so raising the threshold mutes
 // the chattier levels.
-pub function level_trace(): i32 {
-  return 0;
-}
+pub const TRACE: i32 = 0;
 
-pub function level_debug(): i32 {
-  return 1;
-}
+pub const DEBUG: i32 = 1;
 
-pub function level_info(): i32 {
-  return 2;
-}
+pub const INFO: i32 = 2;
 
-pub function level_warn(): i32 {
-  return 3;
-}
+pub const WARN: i32 = 3;
 
-pub function level_error(): i32 {
-  return 4;
-}
+pub const ERROR: i32 = 4;
 
-// `level_name(n)` — the uppercase name for a level int (the value
-// `level_*()` returns). Out-of-range-low renders as TRACE, high as ERROR.
+// level_name returns the uppercase severity name. Values below zero use TRACE.
+// Values above four use ERROR.
 pub function level_name(n: i32): string {
   if (n <= 0) {
     return "TRACE";
@@ -103,16 +93,16 @@ pub struct Logger {
   sink: (string) => void,
 }
 
-// `new_logger(min_level)` — a plain-text logger that emits records at
+// `new(min_level)` — a plain-text logger that emits records at
 // `min_level` and above, to stderr.
-pub function new_logger(min_level: i32): Logger {
+pub function new(min_level: i32): Logger {
   return Logger { min_level: min_level, json: false, sink: __to_stderr };
 }
 
-// `new_json_logger(min_level)` — like `new_logger`, but each record is
+// `new_json(min_level)` — like `new`, but each record is
 // a single JSON object on its own line (JSON-lines / NDJSON), suited to
 // machine ingestion.
-pub function new_json_logger(min_level: i32): Logger {
+pub function new_json(min_level: i32): Logger {
   return Logger { min_level: min_level, json: true, sink: __to_stderr };
 }
 
@@ -156,23 +146,23 @@ pub function (lg: Logger) at(level: i32): LogEntry {
 // (Trailing underscore avoids colliding with the bare `level_*` names
 // and reads as "start a record at this level".)
 pub function (lg: Logger) trace_(): LogEntry {
-  return lg.at(level_trace());
+  return lg.at(TRACE);
 }
 
 pub function (lg: Logger) debug_(): LogEntry {
-  return lg.at(level_debug());
+  return lg.at(DEBUG);
 }
 
 pub function (lg: Logger) info_(): LogEntry {
-  return lg.at(level_info());
+  return lg.at(INFO);
 }
 
 pub function (lg: Logger) warn_(): LogEntry {
-  return lg.at(level_warn());
+  return lg.at(WARN);
 }
 
 pub function (lg: Logger) error_(): LogEntry {
-  return lg.at(level_error());
+  return lg.at(ERROR);
 }
 
 // `entry.str(key, val)` — attach a string-valued field (JSON-quoted in

@@ -25,7 +25,8 @@ Both namespaces have public APIs for application code.
 
 Module function names omit the module name prefix: use `hex.encode` and `uuid.v4`.
 Constructors use `new`, `of`, or `from`.
-Constants use uppercase names and `pub const`, such as `uuid.NIL`.
+Examples include `cli.new`, `log.new`, and `log.new_json`.
+Constants use uppercase names and `pub const`, such as `uuid.NIL`, `log.INFO`, and `fuzz.DEFAULT_ITERATIONS`.
 
 Import a module to use its functions and receiver methods.
 A qualified call uses the final path segment, or an explicit `as` alias.

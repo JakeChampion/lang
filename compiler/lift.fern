@@ -2402,7 +2402,7 @@ function lift_callee_param_is_fn(mfuncs: MFuncs, callee: string, idx: i32): bool
 // lifted to a `$clo` function reads each captured value through a synthesized
 // `let <cap> = __env[1+i]` at the top of its body, so inside the lifted
 // function a capture is a local `let`, not a parameter. `std/fuzz`'s receiver
-// method — `r.it(name, () => fuzz_run(seeds, iterations, target))` — captures
+// method — `r.it(name, () => run(seeds, iterations, target))` — captures
 // `target` exactly that way, and it is the DOCUMENTED entry point, so a
 // param-only guard would have left the real API broken while making the
 // direct-call form look fixed.
