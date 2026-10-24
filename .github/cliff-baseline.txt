@@ -1,3 +1,4 @@
+# 2026-10-24: source 11e1165005, Perf run 40042966170, after the main update.
 # 2026-10-23: source c703ab1451, Perf run 40037769986, after the main update.
 # rc==1 append-cliff baselines for the SELF-HOST COMPILER, checked against
 # every run by scripts/ci-check-perf (the same comparator the instruction-count
@@ -121,5 +122,5 @@
 # Re-pinned 2026-10-15 (#12418): 33,052,304 / 236,323 on main (the previous
 # pin was drift) to 33,306,720 / 239,924, semreach's facts grown per function.
 
-x86_64/checker.cliff_bytes	30984280
-x86_64/checker.cliff_count	276181
+x86_64/checker.cliff_bytes	30654976
+x86_64/checker.cliff_count	269474
