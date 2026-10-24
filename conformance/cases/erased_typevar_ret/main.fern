@@ -6,7 +6,7 @@
 // element type and a downstream generic monomorphised at the type PARAMETER:
 // `call to unknown symbol T.cmp`, refusing the module.
 //
-// The partially-erased sibling (`sort_key[T, K: Ord]`, where the bounded-only
+// The partially-erased sibling (`sort_by_key[T, K: Ord]`, where the bounded-only
 // substitution leaves T behind) was already resolved by the residual path;
 // this routes the fully-erased case through the same resolution instead of
 // short-circuiting past it.

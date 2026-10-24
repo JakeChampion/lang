@@ -44,7 +44,9 @@ FuncDecl    = { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
 Receiver    = '(' [ 'own' ] IDENT ':' Type ')' ;
 
 TypeParams  = '[' TypeParam { ',' TypeParam } [ ',' ] ']' ;
-TypeParam   = IDENT [ ':' Bounds ] ;
+# A const parameter (`const N: i32`) is a function's only. Its argument is
+# a NUMBER in a TypeArgs list.
+TypeParam   = 'const' IDENT ':' 'i32' | IDENT [ ':' Bounds ] ;
 Bounds      = Bound { '+' Bound } ;
 Bound       = QualName [ TypeArgs ] ;
 
@@ -140,7 +142,7 @@ PrimitiveType
 # `str`, `char`, `Self` are contextual type names, not keywords.
 NamedType   = IDENT [ '.' IDENT ] [ TypeArgs ] ;
 TypeArgs    = '[' TypeArg { ',' TypeArg } [ ',' ] ']' ;
-TypeArg     = IDENT '=' Type | Type ;
+TypeArg     = IDENT '=' Type | Type | NUMBER ;
 
 # --------------------------------------------------------------- statements
 
@@ -311,7 +313,9 @@ CallArg     = IDENT '=' Expr | Expr ;
 # `f[i32](x)` — explicit generic instantiation. A lone name (`f[Box](x)`)
 # derives as '[' Expr ']'; the checker reads it as a type argument when the
 # base names a generic function and the name a type.
-TypeArgList = Type { ',' Type } [ ',' ] ;
+# A NUMBER is a const argument (`count[3, string](x)`).
+TypeArgList = TypeArgItem { ',' TypeArgItem } [ ',' ] ;
+TypeArgItem = Type | NUMBER ;
 
 # NoStructExpr is Expr with the brace-suffixed struct literal withheld,
 # for the positions where a `{` opens a block instead: `for x in E {`

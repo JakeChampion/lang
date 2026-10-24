@@ -1,0 +1,834 @@
+{
+  "baseline_revision": "8c5e704903500165dbddccf5e092ea5fbda373c8",
+  "compiler_sha256": {
+    "baseline": "dabc8bfc3cc2488449768150cf049c90fada615b385f7d3766d01e6ddfc3f942",
+    "candidate": "a5a03d0fb0d1b8566f28c425e28436266aa2dba8881270bd80cc540bad89c2d5"
+  },
+  "candidate_function": "render_exact",
+  "stdlib_sha256": {
+    "internal/stdlib/std/_test_empty.fern": "a2ad8554fb5b1b1f9bb0bc104cac9b26e46cdc463d7686790d7bacf3871bc62a",
+    "internal/stdlib/std/ansi.fern": "1a8e6af553ec8974a95cfe72ec0d594e5064ea753e9dec46a2a7eb3510feeea0",
+    "internal/stdlib/std/array.fern": "45b9d187daaff1776fff45f433cecd340635a0cc4466225be8092e84e0850ef9",
+    "internal/stdlib/std/async.fern": "f41f2853b7902e2261f768aeb9da6de451435bdecd104523291adbd8da7974df",
+    "internal/stdlib/std/base32.fern": "3f4e5857a81304431e354152c916a07e14f60c4ec7b2797e7200d353a0dd0bf8",
+    "internal/stdlib/std/base64.fern": "33e2c4a34db5bfc1514b0d99fd54597a7916aab58af7228fe986948bc07ac5e2",
+    "internal/stdlib/std/bench.fern": "408c52802cb7c8ced06e4f9e0f2b959e259db8fc61a4bb7a661dbff226667a96",
+    "internal/stdlib/std/binary.fern": "959f8e8d7dedaa0d52e36e904f5744e2c2043c9d20461aa17b6978963805cc09",
+    "internal/stdlib/std/brotli.fern": "89f4159d984ea6f7d7c424455fafde502ff7d2b54a2a4dfc3e10f75820ed1ba1",
+    "internal/stdlib/std/cli.fern": "0d8f1b0665e7c2c72d956a6a9cbcdbf549db9e41446ad4d94e3868dbd219b775",
+    "internal/stdlib/std/constmap.fern": "9509d439974eee4e31f06a05990bb28b465accb9a6511d438aad63f5518eddd3",
+    "internal/stdlib/std/convert.fern": "60101a031a7a747e44a22e4f89abf7896389ea4337409b6a9dcaaa12e42c16c2",
+    "internal/stdlib/std/crypto.fern": "6063ed27be388ac224b5a7c750c33f3c3f11ca6e8c28235386b47add121ec7e7",
+    "internal/stdlib/std/csv.fern": "de43d7a70b826854b5d8cb7dd761da9e3fbba0f8f58bf00d1a87a9672d786128",
+    "internal/stdlib/std/deflate.fern": "5b8538eb60746ca549b9fc9b7f0ec6aa7e1a8c44db1c4040768c736a9804de24",
+    "internal/stdlib/std/dns.fern": "caf6fe27901c853d8b8459d3e06d654bc3d01e2f7be353554c5283c6d0b02b65",
+    "internal/stdlib/std/dotenv.fern": "59fd2c392a419f7641c1a95c2ee4c57130778cf7814e3a1a47e18a1657a1d1ef",
+    "internal/stdlib/std/envflag.fern": "5b311b915e5de59ae07e61bd2e769d73dd449e868831dad425082134f5ea05f7",
+    "internal/stdlib/std/errno.fern": "ed77d093688daac4795b87e4b72344c5d9ecc1649a7aba429b9c823351c90a4e",
+    "internal/stdlib/std/error.fern": "a1133a2fc8ee8dc17f0209560ff6d2460a78a19f2fde6db0f701f7faaf1190b8",
+    "internal/stdlib/std/f64.fern": "9b6a9b2aaca9edb1966bc91b3766fb7ab29dd1a93e9b035014605fb91e6c0509",
+    "internal/stdlib/std/fetch.fern": "0ac859b69bef136ddb5121da6c3a9cf47343046b13a4d4739947ad6b12ef9f06",
+    "internal/stdlib/std/format.fern": "572a0dadee7a4929c97adafc9093ef98d445614f9da34e77fb0299bc987979a0",
+    "internal/stdlib/std/fuzz.fern": "c2988f0ac7ec1cf1be8d04330eac6d724bf7d5eed5fe03f85ae0851f50cfcf35",
+    "internal/stdlib/std/glob.fern": "37b9fd117b437d03481aaf0c556fa37460b76551a601fc6b5d502b35c1fe9022",
+    "internal/stdlib/std/hash.fern": "74266c8b603f9ac51c6d8b0dd1ee8197ab6d69958b9716c114f80d6e79cbddd8",
+    "internal/stdlib/std/headers.fern": "9f7b4b3ca923f62a81b274a5ba36fba2ea8164559ce2aa1f8decf68ee583864a",
+    "internal/stdlib/std/hex.fern": "765ac908cd4f9077378d4524da3da60f6fa85db2e4c9137afd2a64f71d759242",
+    "internal/stdlib/std/http.fern": "3176c2eaf60f4e75da54e1f40f3f6457c0e95e6fe7b2fbefe0b5da889cc085f2",
+    "internal/stdlib/std/i32.fern": "3d0ed1955e162b87b0c15637275697df08ed5b2fe4810c76a7028b8eb5d5e160",
+    "internal/stdlib/std/i64.fern": "41f5b8263df88db2839c370290fb6600c8526f22a3a57bf3723f531b6fef5fde",
+    "internal/stdlib/std/io.fern": "d73db6ee2f3d93c451ea4dc2d7ab901350dba8fa4fb54d16ff60a301f6347253",
+    "internal/stdlib/std/io_buffered.fern": "03b615b36b97ebddde0f0da794deb5b1c4db61339baf641189d3317226c44fd5",
+    "internal/stdlib/std/io_outcome.fern": "a60d6d739c0fc53cabf0bc13413aa2253a4ea365924bd8c46a3118b9f63a6ed7",
+    "internal/stdlib/std/jni.fern": "ed1fa7b825ebcb2ee0e45747ecf49a9af8caa025b0c26b4b763ffcced88d994f",
+    "internal/stdlib/std/json.fern": "aa938a39c60825377a2e531f6a332724f06c8f7d64ee113ef8026281eb91367e",
+    "internal/stdlib/std/log.fern": "7c3621202f2f0b39c7bbe0202c776bf610a9279a886db89afebd36130335db0e",
+    "internal/stdlib/std/math.fern": "e960d8f193b41926b6b128423bc6a324902f33d7409715bf172f3fd4b688ced8",
+    "internal/stdlib/std/metrics.fern": "76c2c35637f5061dc871fd2238ed799ff39b135085a5bd4c0823216f92cda61f",
+    "internal/stdlib/std/mock_platform.fern": "74c431b6172f6c79fdb99bd8e1fdc852491e9872aff18c1d121c0fb8834b792c",
+    "internal/stdlib/std/ndarray.fern": "2bde7c6ce1fb24c16fd13fd61d6bb0bf5dbe0ef760b87aa7d795f73b58fe3105",
+    "internal/stdlib/std/net.fern": "34a3005c973b6170de1df0ea32e0656a693fed18e0161bf5dfef25de642ba604",
+    "internal/stdlib/std/num.fern": "db49539a1a841764291b1fb28842e5acf9295072c96a3bedbf43d5e5d9021e52",
+    "internal/stdlib/std/option.fern": "f4242d47c8019079635441ff3ddfad922072e187be6c7132cc6122ede73e3be0",
+    "internal/stdlib/std/ordmap.fern": "a4e687385890670300720d48be3ece4c6e02e8d0a86fe146c52b29e75a0d51ba",
+    "internal/stdlib/std/ordset.fern": "ae1d781853f91cb417281c7889499a1f32dbd98684f2d55d97850614baffddf8",
+    "internal/stdlib/std/parse.fern": "a2e7c938a3b71cd4f8116468fc78dbce14ee8f5bd35e96286e55e9450986d927",
+    "internal/stdlib/std/path.fern": "3f4cff23fa47492abe4a2bbae935ad9a7d207a87be9cf943fe661895e8538193",
+    "internal/stdlib/std/peg.fern": "b1e92855bc5ddaeeab4e548ec36636aa18dddc4c41f473d208b192544b17d72a",
+    "internal/stdlib/std/platform.fern": "33fa4e8426ce94d18a78f4a4b801b3793b613ddabf0c8a6bf9838eba12f686e4",
+    "internal/stdlib/std/pmap.fern": "f36d0f62f9ece62e75e5ec5509c648c7374177b05c3d274e8a6a3de11379fc06",
+    "internal/stdlib/std/png.fern": "bf4e8ec128d798a68315772430fe698ae52747f07d6b66d303763ae48c14dc3b",
+    "internal/stdlib/std/protobuf.fern": "5aeb8a234a0f98696ee466b7d08b121debffd62e75ceb617b6c449858764cdbe",
+    "internal/stdlib/std/pset.fern": "1c267256849f5806aed44c65dd9ef98cb62ec0c2f1c8d7206dbf4742d334d945",
+    "internal/stdlib/std/publicsuffix.fern": "76f68f97c34298c4f31ab89759fb2fa3de45d9d0e5a7a941ac00540493174ebf",
+    "internal/stdlib/std/pvec.fern": "04201bd56ce92fa2576b5fbadad390e91c796f513b7e7c1f0d48f97ebfff8a61",
+    "internal/stdlib/std/rand.fern": "49440d555b4bdc9145b9a485e1728030d8d4e938c2082363afbfcde354a35f0b",
+    "internal/stdlib/std/regex.fern": "f2ad8f7871ad5a9060d6cb3522943aa5a8013ad60dc9fa8faca1073cc0551d25",
+    "internal/stdlib/std/result.fern": "31f0fab4040680b977e846690f615fc54cffbc1d82066f1010767009009550ae",
+    "internal/stdlib/std/semver.fern": "6a7108a012041d3a0f8b815b9405e5b5ff5b93adee92126f39259851ddf7ea48",
+    "internal/stdlib/std/serve.fern": "7deed9e77043ee3d348c69ae546548641b6ffb66fc7b04f80c0e546fbacd1ae1",
+    "internal/stdlib/std/set.fern": "c6398b615b3a59f266f75f320a3a3e5619ca44202732dd9daf129a23150c2dc5",
+    "internal/stdlib/std/signal.fern": "3d5a146d23af0df2f79181565d717fd9101cd12c4249e1676825b2009b5e3627",
+    "internal/stdlib/std/sim.fern": "0f782ce91658762752f7421edeb52b634fa42784a6deb50da6d93f5b15b7a2c4",
+    "internal/stdlib/std/sim_fetch.fern": "7b50982cc22ea68f6b706c39c67275080117f2468255769cee9bb65054ff7f38",
+    "internal/stdlib/std/sim_platform.fern": "27a257fc6a0b1464b3a9e9960ac6766285abed112b9c82f2ce60f900d0050e5e",
+    "internal/stdlib/std/simd.fern": "28374d84143abb7c1e455b3560d6543aa8fafc15d1919ea8d6c77c92aafa3b4b",
+    "internal/stdlib/std/sort.fern": "1c048c30864f0687f42b98b2b55f03e33d948ef64ec0909b5d87ed2a57ed55a5",
+    "internal/stdlib/std/strdist.fern": "7a671a23982b26c8091586ebb91df9259fb5b8a91630dac8f684618f5610128c",
+    "internal/stdlib/std/stream.fern": "2f4dca95756cfcdee5c08f29a476e8643c1c14ad55126e36015239c85e630100",
+    "internal/stdlib/std/string.fern": "5adb3b15fe55a65efca388b8c5537eb6475ebf2017bb6514c73f42df97ab4232",
+    "internal/stdlib/std/table.fern": "5a9d0ed729cd372eda0c90332826107111fe3e1599529cea93487d559f4ffa8b",
+    "internal/stdlib/std/test.fern": "97caa32b2c24049aecef0f86943ca281c4c058d1f4448c8198285b88704a8248",
+    "internal/stdlib/std/textwrap.fern": "dfe3aec039af144071cbf146644656400c8a4a441003b8c38bd7549b64ef754c",
+    "internal/stdlib/std/time.fern": "29d2eaf29365b055713f1b6d84c431a52ca8d525f997f1d2872877ba18832b2e",
+    "internal/stdlib/std/tz.fern": "8b53754490393d2040405bd7ef0b77d22eb136f8f6114c0a8aaa4fd7ea258527",
+    "internal/stdlib/std/u32.fern": "51a7e94b520c5f0e64f91faa0f2e084f32505faa0ab6380f285aef7290162a5f",
+    "internal/stdlib/std/u64.fern": "b1557db2b4479b26424cd44546a0491953f11204bacfd610f993336e285ed176",
+    "internal/stdlib/std/unicode.fern": "2153271490d0f4e03e3e1f3b112fad4090684968f31d65cf12186f6abb925ecc",
+    "internal/stdlib/std/url.fern": "69c3443f2dfef1859879fdc6208fd0db67ad61ec6a649359e0765c188cf5a9cb",
+    "internal/stdlib/std/utf8.fern": "312e04d8e3500ed3c1c9cf6c676ff8e170253596c26b1a6d0e6ba8424a5c4cbd",
+    "internal/stdlib/std/uuid.fern": "39e1933ffe753b82b5d30a9ba381175fd07257ea14f1c0c4611d9c41c170f052",
+    "internal/stdlib/std/wasi_http.fern": "460507a8d918f7ab24f45e9f9d27a851509c0ab89ae16e86e5766edff5c29b3a",
+    "internal/stdlib/std/zstd.fern": "9f6cbf2bb87435d59840be5a5e7e4c7e06e6e0c6867f18a843dfd19c8d08edd2"
+  },
+  "source_sha256": {
+    "baseline": {
+      "fractal.fern": "24475529331812a119548f15162037d6dc8fbafeb68c7c6c76d541a37db02afb",
+      "binary.fern": "1f3f96cc0dec0fb3971fffab58963ede53451b9f9f5103578bf571265ba29b80"
+    },
+    "candidate": {
+      "fractal.fern": "6e917284edac147f32a64bbad2c144bf29e692d2a5bae6b9e11e8a97c1025633",
+      "linear.fern": "dd7ac8bd7ebe12f863e03943b5a8bd656dc6e61dbc70b00e53688052cc4d6f5e",
+      "kernel.fern": "f7b87dd80f1c5607febc71718c656684f5a5336e6de72e23cd55c0f3606e0880",
+      "series.fern": "74958c92e1d8508888b054470d54b05525d05857042cce1a99e1b0f7f5e7ce5a"
+    }
+  },
+  "target": "x86-64-linux",
+  "cases": [
+    {
+      "name": "whole",
+      "z": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "name": "seahorse14",
+      "z": 14,
+      "x": 7194,
+      "y": 7652
+    },
+    {
+      "name": "dive20",
+      "z": 20,
+      "x": 460418,
+      "y": 489730
+    },
+    {
+      "name": "dive30",
+      "z": 30,
+      "x": 471468254,
+      "y": 501484165
+    },
+    {
+      "name": "dive38",
+      "z": 38,
+      "x": 120695873044,
+      "y": 128379946314
+    },
+    {
+      "name": "dive42",
+      "z": 42,
+      "x": 1931133968718,
+      "y": 2054079141036
+    },
+    {
+      "name": "minibrot20",
+      "z": 20,
+      "x": 195329,
+      "y": 524288
+    },
+    {
+      "name": "spiral15",
+      "z": 15,
+      "x": 14241,
+      "y": 17078
+    },
+    {
+      "name": "exterior42",
+      "z": 42,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "png_bytes_match": true,
+  "pixel_differences": {
+    "whole": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "seahorse14": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "dive20": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "dive30": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "dive38": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "dive42": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "minibrot20": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "spiral15": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    },
+    "exterior42": {
+      "changed_pixels": 0,
+      "pixels": 65536,
+      "mean_absolute_channel_error": 0.0,
+      "max_channel_error": 0
+    }
+  },
+  "png_stream_sha256": "5aba77f45d2076946cdbc1b88bd16394a093c1fa988881bb8656a29833f1b4ea",
+  "runs": {
+    "baseline": [
+      {
+        "whole": {
+          "ms": 14.405421,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 33.551256,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 149.000321,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 160.622643,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 290.747259,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 285.712491,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 15.660864,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 39.817174,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 7.997207,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 12.7956,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 32.410084,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 145.423775,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 153.273261,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 295.714306,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 281.402975,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 13.402934,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 40.0603,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 8.458752,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 12.53954,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 27.993436,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 134.010395,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 143.839771,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 264.124406,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 271.256422,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 15.77866,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 41.047055,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 7.577076,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 13.270856,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 31.913427,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 161.214383,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 153.348684,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 292.652693,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 313.399111,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 16.669391,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 45.918769,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 11.643016,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 14.834669,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 38.011065,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 159.441285,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 161.299091,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 295.495546,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 286.080264,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 16.181177,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 40.726913,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 9.069211,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      }
+    ],
+    "candidate": [
+      {
+        "whole": {
+          "ms": 12.274536,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 25.485752,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 68.824126,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 76.476264,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 131.131973,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 129.133535,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 10.04513,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 28.669334,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 8.140734,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 12.781569,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 25.768808,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 71.182296,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 80.276073,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 136.365,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 134.713844,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 9.913883,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 30.055741,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 8.683871,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 12.689791,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 27.952305,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 67.618341,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 77.593034,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 131.430652,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 131.304763,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 9.939461,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 29.019771,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 8.054654,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 11.876852,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 23.892584,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 75.824222,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 82.062162,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 138.295416,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 141.943447,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 10.345262,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 34.831559,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 10.086773,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      },
+      {
+        "whole": {
+          "ms": 11.946833,
+          "iterations": 522386,
+          "bytes": 23765,
+          "crc32": 2195117617
+        },
+        "seahorse14": {
+          "ms": 25.86302,
+          "iterations": 7425317,
+          "bytes": 54637,
+          "crc32": 3748504818
+        },
+        "dive20": {
+          "ms": 75.154074,
+          "iterations": 67955350,
+          "bytes": 65167,
+          "crc32": 2474883356
+        },
+        "dive30": {
+          "ms": 78.735915,
+          "iterations": 70870379,
+          "bytes": 64514,
+          "crc32": 2597047574
+        },
+        "dive38": {
+          "ms": 135.817145,
+          "iterations": 138872102,
+          "bytes": 90609,
+          "crc32": 1468974131
+        },
+        "dive42": {
+          "ms": 134.645422,
+          "iterations": 140111224,
+          "bytes": 71729,
+          "crc32": 1306945335
+        },
+        "minibrot20": {
+          "ms": 9.724658,
+          "iterations": 7340032,
+          "bytes": 270,
+          "crc32": 4160868373
+        },
+        "spiral15": {
+          "ms": 29.180603,
+          "iterations": 12910503,
+          "bytes": 61019,
+          "crc32": 1008565390
+        },
+        "exterior42": {
+          "ms": 8.351832,
+          "iterations": 262144,
+          "bytes": 725,
+          "crc32": 757427088
+        }
+      }
+    ]
+  },
+  "summary": {
+    "whole": {
+      "baseline_ms": 13.270856,
+      "candidate_ms": 12.274536,
+      "speedup": 1.0811696670244806
+    },
+    "seahorse14": {
+      "baseline_ms": 32.410084,
+      "candidate_ms": 25.768808,
+      "speedup": 1.257725386443952
+    },
+    "dive20": {
+      "baseline_ms": 149.000321,
+      "candidate_ms": 71.182296,
+      "speedup": 2.0932216207243446
+    },
+    "dive30": {
+      "baseline_ms": 153.348684,
+      "candidate_ms": 78.735915,
+      "speedup": 1.9476332243043086
+    },
+    "dive38": {
+      "baseline_ms": 292.652693,
+      "candidate_ms": 135.817145,
+      "speedup": 2.1547551525987383
+    },
+    "dive42": {
+      "baseline_ms": 285.712491,
+      "candidate_ms": 134.645422,
+      "speedup": 2.121962163704311
+    },
+    "minibrot20": {
+      "baseline_ms": 15.77866,
+      "candidate_ms": 9.939461,
+      "speedup": 1.58747642352035
+    },
+    "spiral15": {
+      "baseline_ms": 40.726913,
+      "candidate_ms": 29.180603,
+      "speedup": 1.3956844209148112
+    },
+    "exterior42": {
+      "baseline_ms": 8.458752,
+      "candidate_ms": 8.351832,
+      "speedup": 1.0128019816490563
+    }
+  }
+}

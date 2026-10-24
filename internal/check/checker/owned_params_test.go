@@ -572,7 +572,7 @@ func TestOwnedSiblingMatchBindingNameReuseOK(t *testing.T) {
 	// same-named binding look already-moved. Regression: the arm-local binding's
 	// consumed-state leaked through the non-diverging join into the parent set,
 	// so the second `e` was flagged E050. An `own` func is present so the
-	// analysis is active (mirrors a program that imports std/sort, whose `own`
+	// analysis is active (mirrors a program that imports core/cmp, whose `own`
 	// in-place sorts now activate the guard for every function). Arms must NOT
 	// diverge (no `return`) so the buggy join path is exercised.
 	wantOK(t, "sibling-match-binding-name-reuse", ownConsumer+`

@@ -58,6 +58,16 @@ func TestFormatKeepsStreamType(t *testing.T) {
 	}
 }
 
+// A const parameter prints as declared, and a const argument keeps its
+// spelling.
+func TestFormatConstParams(t *testing.T) {
+	in := "function count[const N: i32, T](x: T): i32 { return N; }\nfunction main(): i32 { return count[0x10, string](\"a\") + count[3, i32](1); }\n"
+	want := "function count[const N: i32, T](x: T): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  return count[0x10, string](\"a\") + count[3, i32](1);\n}\n"
+	if got := formatSrc(t, in); got != want {
+		t.Errorf("format:\ngot  %q\nwant %q", got, want)
+	}
+}
+
 // An unsigned literal whose magnitude exceeds i64::MAX is stored by
 // the parser as a negative int64 bit pattern (via ParseUint). The
 // formatter must render it back as the unsigned decimal, not via

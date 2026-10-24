@@ -11,6 +11,7 @@ import (
 func TestSelfHostSSALayoutReadySuccessor(t *testing.T) {
 	const src = `import "./ssa";
 import "./ssalayout";
+import "./ssadeps";
 function br(target: i32): ssa.STerm {
   return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
@@ -29,7 +30,7 @@ function graph(blocks: ssa.SBlock[]): ssa.SFunc {
   return ssa.SFunc { name: "layout", nparams: 1, nvals: 1, entry: 0, takes_env: false, blocks: blocks };
 }
 function matches(g: ssa.SFunc, want: i32[], ends: i32[]): boolean {
-  let layout = ssalayout.compute(g);
+  let layout = ssalayout.compute(g, ssadeps.dominates(g));
   if (!layout.ok || layout.order.len() != want.len() || layout.loop_end.len() != ends.len()) { return false; }
   let i: i32 = 0;
   while (i < want.len()) {
@@ -53,7 +54,7 @@ function main(): i32 {
   if (!matches(nested, [0, 1, 2, 3, 4, 5, 6, 7], [-1, 6, 4, -1, -1, -1, -1, -1])) { return 3; }
   let irreducible = graph([block(0, [], branch(1, 2)), block(1, [0, 2], br(2)),
     block(2, [0, 1], branch(1, 3)), block(3, [2], ret())]);
-  if (ssalayout.compute(irreducible).ok) { return 4; }
+  if (ssalayout.compute(irreducible, ssadeps.dominates(irreducible)).ok) { return 4; }
   return 0;
 }`
 	gcc, runner := x86_64Tooling(t)

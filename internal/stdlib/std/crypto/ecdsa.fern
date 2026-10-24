@@ -3,7 +3,7 @@
 // signatures use.
 //
 //   let key: ecdsa.PublicKey = ecdsa.public_key(ecdsa.P256, sec1_point)?;
-//   if (ecdsa.verify(key, ecdsa.Sha256, message, der_signature)) { … }
+//   if (ecdsa.verify(key, sha2.Sha256, message, der_signature)) { … }
 //
 // Verification handles only public values, so it is built on `core/bigint`
 // rather than constant-time limbs; signing, which needs those, is a later
@@ -11,6 +11,7 @@
 
 import "core/bigint";
 import "std/crypto";
+import "std/crypto/sha2";
 import "std/crypto/montgomery" as mont;
 import "std/crypto/p256";
 import "std/error";
@@ -19,13 +20,6 @@ import "core/cmp";
 pub enum Curve {
   P256,
   P384,
-}
-
-// The digest a signature was made over.
-pub enum Hash {
-  Sha256,
-  Sha384,
-  Sha512,
 }
 
 // EcdsaError — why a public key was refused.
@@ -264,21 +258,6 @@ function __combine(c: Params, u1: bigint.BigInt, u2: bigint.BigInt, q: Point): P
   return r;
 }
 
-function __digest(h: Hash, msg: [u8]): u8[] {
-  match (h) {
-    Sha256 => {
-      return crypto.sha256_new().update(msg).final_bytes();
-    },
-    Sha384 => {
-      return crypto.sha384_new().update(msg).final_bytes();
-    },
-    Sha512 => {
-      return crypto.sha512_new().update(msg).final_bytes();
-    }
-  }
-  return [];
-}
-
 // __der_int reads a DER INTEGER of at most `max` bytes at `at` in sig: its
 // value and the offset after it, or nothing when it is malformed or not
 // minimally encoded.
@@ -301,12 +280,12 @@ function __der_int(sig: [u8], at: i32, max: i32): Option[(bigint.BigInt, i32)] {
 
 // __verify_rs is whether (r, s) is key's ECDSA signature over msg's
 // digest, a digest longer than the order cut to its leftmost bytes.
-function __verify_rs(c: Params, key: PublicKey, hash: Hash, msg: [u8], r: bigint.BigInt, s: bigint.BigInt): boolean {
+function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: bigint.BigInt, s: bigint.BigInt): boolean {
   let n: bigint.BigInt = c.n;
   if (r.is_zero() || s.is_zero() || r.cmp(n) >= 0 || s.cmp(n) >= 0) {
     return false;
   }
-  let d: u8[] = __digest(hash, msg);
+  let d: u8[] = hash.digest(msg);
   let take: i32 = d.len();
   if (take > c.bytes) {
     take = c.bytes;
@@ -328,7 +307,7 @@ function __verify_rs(c: Params, key: PublicKey, hash: Hash, msg: [u8], r: bigint
 // verify(key, hash, msg, sig) — whether sig, a DER ECDSA-Sig-Value
 // (SEQUENCE { r INTEGER, s INTEGER }) as TLS and X.509 carry it, is key's
 // signature over msg.
-pub function verify(key: PublicKey, hash: Hash, msg: [u8], sig: [u8]): boolean {
+pub function verify(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
   if (sig.len() < 8 || sig.len() > 129 || sig[0] != 48 as u8 || sig[1] as i32 != sig.len() - 2) {
     return false;
   }
@@ -448,14 +427,14 @@ pub function ecdh(key: PrivateKey, peer: [u8]): Result[u8[], EcdsaError] {
 
 // sign(key, hash, msg) — the DER ECDSA-Sig-Value over msg's digest, with
 // RFC 6979's nonce. SHA-256 and SHA-384 only.
-pub function sign(key: PrivateKey, hash: Hash, msg: [u8]): Result[u8[], EcdsaError] {
+pub function sign(key: PrivateKey, hash: sha2.Hash, msg: [u8]): Result[u8[], EcdsaError] {
   match (hash) {
-    Sha512 => {
+    sha2.Sha512 => {
       return Err(SigningHash);
     },
     _ => {}
   }
-  let digest: u8[] = __digest(hash, msg);
+  let digest: u8[] = hash.digest(msg);
   match (key.curve) {
     P256 => {
       let e: u8[] = p256.scalar_reduce(digest[0:32]);
@@ -475,7 +454,7 @@ pub function sign(key: PrivateKey, hash: Hash, msg: [u8]): Result[u8[], EcdsaErr
 // __sign_loop is the DER signature for the reduced digest e under the key
 // d, drawing RFC 6979's nonces until one is in range and gives an r and s
 // that are both nonzero; rs_of signs with a nonce.
-function __sign_loop(hash: Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[])): u8[] {
+function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[])): u8[] {
   let drbg: Drbg = __drbg_new(hash, d, e);
   while (true) {
     let next: (Drbg, u8[]) = __drbg_next(drbg, d.len());
@@ -639,11 +618,11 @@ function __der_integer(v: [u8]): u8[] {
 }
 
 // RFC 6979 §3.2's HMAC_DRBG: K and V, over the signature's hash.
-struct Drbg { hash: Hash, k: u8[], v: u8[] }
+struct Drbg { hash: sha2.Hash, k: u8[], v: u8[] }
 
-function __mac(h: Hash, key: [u8], msg: [u8]): u8[] {
+function __mac(h: sha2.Hash, key: [u8], msg: [u8]): u8[] {
   match (h) {
-    Sha384 => {
+    sha2.Sha384 => {
       return crypto.hmac_sha384(key, msg);
     },
     _ => {
@@ -669,8 +648,8 @@ function __cat3(a: [u8], tag: i32, b: [u8], c: [u8]): u8[] {
 
 // __drbg_new seeds the generator with the private scalar and the digest
 // reduced mod n (steps b to g).
-function __drbg_new(h: Hash, x: [u8], h1: [u8]): Drbg {
-  let size: i32 = __digest(h, []).len();
+function __drbg_new(h: sha2.Hash, x: [u8], h1: [u8]): Drbg {
+  let size: i32 = h.size();
   let v: u8[] = [];
   let k: u8[] = [];
   let i: i32 = 0;

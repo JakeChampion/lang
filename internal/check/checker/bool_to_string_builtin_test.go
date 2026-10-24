@@ -26,7 +26,7 @@ func TestBoolToStringBuiltin(t *testing.T) {
 	}
 	bad := []struct{ src, want string }{
 		{`function main(): i32 { let n: i32 = true.to_string(); return n; }`, "string"},
-		{`function main(): i32 { let b = true; return b.nope(); }`, "field access on non-struct value of type boolean"},
+		{`function main(): i32 { let b = true; return b.nope(); }`, `no method "nope" on boolean, and no stdlib module declares one`},
 		{`function (b: boolean) to_string(): string { return "y"; } function (b: boolean) to_string(): string { return "z"; } function main(): i32 { return 0; }`, "redeclared"},
 	}
 	for _, tc := range bad {

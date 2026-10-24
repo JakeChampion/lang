@@ -20,6 +20,7 @@ import "core/int";
 import "std/crypto";
 import "std/crypto/ed25519";
 import "std/crypto/ecdsa";
+import "std/crypto/sha2";
 import "std/crypto/rsa";
 import "std/hex";
 import "std/net";
@@ -265,7 +266,7 @@ function __rsa(n: u8[], e: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Res
 function __rsa_check(key: rsa.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
   let name: string = x509.algorithm_name(alg);
   let hashes: string[] = ["sha256", "sha384", "sha512"];
-  let hs: rsa.Hash[] = [rsa.Sha256, rsa.Sha384, rsa.Sha512];
+  let hs: sha2.Hash[] = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
   let i: i32 = 0;
   while (i < 3) {
     if (name == "rsa_pkcs1_" + hashes[i]) {
@@ -304,7 +305,7 @@ function __ecdsa(curve: ecdsa.Curve, point: u8[], alg: x509.Algorithm, msg: [u8]
     Ok(k) => {
       let name: string = x509.algorithm_name(alg);
       let hashes: string[] = ["sha256", "sha384", "sha512"];
-      let hs: ecdsa.Hash[] = [ecdsa.Sha256, ecdsa.Sha384, ecdsa.Sha512];
+      let hs: sha2.Hash[] = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
       let i: i32 = 0;
       while (i < 3) {
         if (name == "ecdsa_" + hashes[i]) {

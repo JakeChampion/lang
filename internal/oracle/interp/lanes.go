@@ -194,6 +194,17 @@ func (i *Interp) registerLaneBuiltins() {
 			}
 			return l.lane(int(n)), nil
 		}}
+		i.Builtins[p+"bitmask"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			ls, err := laneArgs(p+"bitmask", args, 1)
+			if err != nil {
+				return nil, err
+			}
+			var mask Number
+			for k, bits := range ls[0].Bits {
+				mask |= Number((bits>>(width-1))&1) << k
+			}
+			return mask, nil
+		}}
 		unary := map[string]func(x float64) float64{
 			"sqrt":  math.Sqrt,
 			"floor": math.Floor,

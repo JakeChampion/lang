@@ -1,10 +1,10 @@
-import "std/sort";
+import "core/cmp";
 import "std/test";
 
 // tests/stdlib/enum_payload_sort_rc_test.fern — self-host RC regression
 // guard for #5311: a heap `string[]` extracted from an enum payload with
 // `match Ok(names)` and passed to a CONSUMING, reallocating function (the
-// generic `sort.sort_by`, whose `src = dst` COW frees its working backing) must
+// generic `cmp.sort_by`, whose `src = dst` COW frees its working backing) must
 // be freed EXACTLY once. The bug: the match-arm's exit dec-sweep decremented the
 // extracted array in ADDITION to the consumer's free — a double-free that
 // poisoned the __fern_alloc freelist and SIGSEGV'd under alloc-reuse pressure,
@@ -25,10 +25,14 @@ function make_names(k: i32): Result[string[], i32] {
   return Ok(a);
 }
 
+function by_bytes(a: string, b: string): i32 {
+  return a.cmp(b);
+}
+
 function ascending(xs: string[]): boolean {
   let i: i32 = 1;
   while (i < xs.len()) {
-    if (sort.string_cmp(xs[i - 1], xs[i]) > 0) {
+    if (xs[i - 1].cmp(xs[i]) > 0) {
       return false;
     }
     i = i + 1;
@@ -45,7 +49,7 @@ function test_match_payload_sort(): test.TestOutcome {
     while (k <= 8) {
       match (make_names(k)) {
         Ok(names) => {
-          let sorted: string[] = sort.sort_by(names, sort.string_cmp);
+          let sorted: string[] = cmp.sort_by(names, by_bytes);
           let churn: string = "x";
           let c: i32 = 0;
           while (c < 40) {
@@ -78,7 +82,7 @@ function test_empty_payload_sort(): test.TestOutcome {
   while (rounds < 64) {
     match (make_names(0)) {
       Ok(names) => {
-        let sorted: string[] = sort.sort_by(names, sort.string_cmp);
+        let sorted: string[] = cmp.sort_by(names, by_bytes);
         let s: string = "a" + "b" + "c";
         if (sorted.len() != 0) {
           return test.fail("empty sort grew");

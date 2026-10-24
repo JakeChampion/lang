@@ -329,9 +329,9 @@ function region_order(l: Loops, region: boolean[], list: i32[], root: i32, out: 
 
 // A failed layout means the reachable graph has a cycle without a single
 // dominating header, which no structured `loop` can express.
-pub function compute(f: ssa.SFunc): Layout {
+pub function compute(f: ssa.SFunc, dom: ssadeps.Dom): Layout {
   let reachable: boolean[] = ssadeps.reachable_blocks(f);
-  let l: Loops = find_loops(f, reachable, ssadeps.dominates(f));
+  let l: Loops = find_loops(f, reachable, dom);
   return region_order(l, reachable, marked(reachable), position(l.at, f.entry), Layout { ok: true, order: [], loop_end: [] });
 }
 

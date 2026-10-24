@@ -34,7 +34,7 @@ function main(): i32 {
   report(http.fail(400, "bad body"));
   report(http.NotUtf8);
   report(wasi_http.Field("host"));
-  report(wasi_http.Code(7));
+  report(wasi_http.Code(wasi_http.ConnectionTerminated));
   report(wasi_http.BodyPastCap);
   report(wasi_http.CutShort);
   report(wasi_http.Lost);

@@ -1,7 +1,8 @@
 import "std/array";
-// sorted_asc() returns a fresh ascending copy; index the ends.
+import "core/cmp";
+// cmp.sort returns a fresh ascending copy; index the ends.
 function main(): i32 {
     let a = [5, 3, 8, 1, 9, 2];
-    let s = a.sorted_asc();
+    let s = cmp.sort(a);
     return s[0] * 10 + s[5];
 }

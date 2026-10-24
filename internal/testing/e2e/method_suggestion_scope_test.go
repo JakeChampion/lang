@@ -65,7 +65,7 @@ function main(): i32 {
 		// Element-polymorphic since #2663: applicable to BOTH receivers.
 		{"max", true, true},
 		{"count", true, true},
-		{"sorted_asc", true, true},
+		{"is_sorted", true, true},
 		{"take", true, true},
 		{"drop", true, true},
 		{"reverse", true, true},

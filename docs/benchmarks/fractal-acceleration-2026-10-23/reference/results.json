@@ -1,0 +1,727 @@
+{
+  "upstream_revision": "royward/optimized-mandelbrot@1051f96ee98ad347e153f56cc71dd4b8403e911a",
+  "source_sha256": {
+    "orange/Mandelbrot_point_simple.cpp": "080b1eb2a82b29364f9b53863129db4eff741944fae5c9a2f064518c570c06af",
+    "orange/Mandelbrot_render_simple.h": "3e11503cf25b6d53ded734ee3de84029151249045388f15c8508485e077577a2",
+    "orange/Mandelbrot.cpp": "07c25c7704da3cc89ff3b2e1ae2d53204836cb7af882c5ecb09206e65608749a",
+    "orange/MandelbrotStateEngineSimple.h": "ab4095354f087c1cbe7d8db5e6000fe388e764badda46a03c931a8d13159e242",
+    "orange/Makefile": "810a598f6be915744a7f14ad4d6a1856844717e1de1f4d6da45ee2fbc50671b7",
+    "orange/README.md": "665270c0914c24854dff59d14951462db989c5c350f48c0ab1167c1cd249c92d",
+    "orange/Mandelbrot.h": "906c642ae3d29dc27942115dd541964fb9b79316f7ec16fb33b4ae4e16144844",
+    "orange/LICENSE": "01e4800ad89af3bb1cf8e9d5fa7fc2a3009a8046af07c11e6f8c289e8fe1a5d4",
+    "orange/Mandelbrot_fastest_raw.cpp": "b8037647fc3d96977d2d0019240302c72ebbfbe8191c8d0deab7c7af6bc3e6ea",
+    "adapted/MandelbrotStateEngineSimple.h": "d5eec41a0fc572085793dba9cfd2b1dd0bd61d8b23957c6e83e8fb8dae0d34ba",
+    "adapted/Mandelbrot.h": "906c642ae3d29dc27942115dd541964fb9b79316f7ec16fb33b4ae4e16144844",
+    "adapted/reference.h": "d423fafd1d63a4ad59bd1a5985c7c8a7516ee19f5cebe4df54a3df248dc89f23",
+    "adapted/LICENSE": "01e4800ad89af3bb1cf8e9d5fa7fc2a3009a8046af07c11e6f8c289e8fe1a5d4",
+    "adapted/bench.cpp": "2e0e380848e112fc05122cd7eb74487a8b3067c5bfcbc5c22f99c6900212785d",
+    "adapted/Mandelbrot_fastest_raw.cpp": "c2c13df876f9001ca851526e808709ab01e124359c9e7053e85576563d9509b8",
+    "fern/kernel.fern": "44e2209cc784f159ae1c4b94f7fd89705db4257b6a1045b08cf67482d52f973e",
+    "fern/binary.fern": "1f3f96cc0dec0fb3971fffab58963ede53451b9f9f5103578bf571265ba29b80",
+    "same-kernel.cpp": "5b0899f5773a438d3e9e4f283d98b3946405b5c67a0fbfbc90d39b0782527b53"
+  },
+  "scope": "Single-thread escape computation only; no color calculation or PNG encoding. Both store per-pixel escape count and magnitude. Interior counts normalized to the per-tile limit.",
+  "cases": [
+    [
+      "whole",
+      0,
+      0,
+      0
+    ],
+    [
+      "seahorse14",
+      14,
+      7194,
+      7652
+    ],
+    [
+      "dive20",
+      20,
+      460418,
+      489730
+    ],
+    [
+      "dive30",
+      30,
+      471468254,
+      501484165
+    ],
+    [
+      "dive38",
+      38,
+      120695873044,
+      128379946314
+    ],
+    [
+      "dive42",
+      42,
+      1931133968718,
+      2054079141036
+    ],
+    [
+      "minibrot20",
+      20,
+      195329,
+      524288
+    ],
+    [
+      "spiral15",
+      15,
+      14241,
+      17078
+    ],
+    [
+      "exterior42",
+      42,
+      0,
+      0
+    ]
+  ],
+  "runs": {
+    "fern": [
+      {
+        "whole": {
+          "ms": 2.237024,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 16.461795,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 135.591404,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 143.579531,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 302.648418,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 294.983211,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 18.663846,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 29.211732,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 1.209694,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 2.123287,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 18.113466,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 148.78772,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 148.602826,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 272.574247,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 257.293535,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 14.069103,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 27.979145,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 1.279075,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 2.995644,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 19.937354,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 142.63629,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 141.324043,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 279.374283,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 268.885439,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 13.837381,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 30.410734,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 1.372778,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 7.273518,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 26.450386,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 128.408486,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 128.717934,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 254.829734,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 261.686506,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 15.222287,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 30.686261,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 1.561363,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 2.158557,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 14.293311,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 117.386376,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 131.077775,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 260.22991,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 270.721515,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 15.104774,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 29.757327,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 1.28828,
+          "normalized_iterations": 262144
+        }
+      }
+    ],
+    "same": [
+      {
+        "whole": {
+          "ms": 1.275914,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 8.323201,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 60.718655,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 64.635282,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 158.900494,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 137.310917,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 6.534274,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 17.418227,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.653195,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 1.339039,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 8.284763,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 58.319246,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 66.360814,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 152.779884,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 126.261194,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 7.727384,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 12.804008,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.659895,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 1.29506,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 9.628142,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 67.869376,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 89.313219,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 162.035829,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 155.788693,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 7.253517,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 17.638745,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.74635,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 1.676027,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 9.079021,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 65.808686,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 79.94435,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 150.703107,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 162.485538,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 6.19775,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 14.74123,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.669924,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 1.405857,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 8.476829,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 67.122405,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 75.434784,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 165.517797,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 139.180468,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 6.50181,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 14.943194,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.672908,
+          "normalized_iterations": 262144
+        }
+      }
+    ],
+    "orange": [
+      {
+        "whole": {
+          "ms": 1.902489,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 4.023828,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 19.936274,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 21.194321,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 40.6297,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 39.832328,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 33.309472,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 5.873027,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.746766,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 1.945804,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 4.048805,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 19.739788,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 20.772005,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 38.265024,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 38.806262,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 26.837644,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 5.776189,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.712833,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 2.087609,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 4.062138,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 21.728204,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 23.86685,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 47.360146,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 42.837011,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 28.852256,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 7.211925,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.73375,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 2.234312,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 4.892014,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 24.194637,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 22.86816,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 47.251451,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 49.150635,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 28.268352,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 6.999793,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.957018,
+          "normalized_iterations": 262144
+        }
+      },
+      {
+        "whole": {
+          "ms": 2.238588,
+          "normalized_iterations": 1973490
+        },
+        "seahorse14": {
+          "ms": 4.280949,
+          "normalized_iterations": 7425317
+        },
+        "dive20": {
+          "ms": 20.448507,
+          "normalized_iterations": 67955350
+        },
+        "dive30": {
+          "ms": 21.644397,
+          "normalized_iterations": 70870379
+        },
+        "dive38": {
+          "ms": 39.353669,
+          "normalized_iterations": 138872102
+        },
+        "dive42": {
+          "ms": 50.391684,
+          "normalized_iterations": 140111224
+        },
+        "minibrot20": {
+          "ms": 29.183287,
+          "normalized_iterations": 100663296
+        },
+        "spiral15": {
+          "ms": 6.126873,
+          "normalized_iterations": 12910503
+        },
+        "exterior42": {
+          "ms": 0.926141,
+          "normalized_iterations": 262144
+        }
+      }
+    ]
+  },
+  "summary": {
+    "whole": {
+      "fern_ms": 2.237024,
+      "same_ms": 1.339039,
+      "orange_ms": 2.087609,
+      "ratio": 1.0715723107152728,
+      "compiler_ratio": 1.6706190036287216
+    },
+    "seahorse14": {
+      "fern_ms": 18.113466,
+      "same_ms": 8.476829,
+      "orange_ms": 4.062138,
+      "ratio": 4.45909666289033,
+      "compiler_ratio": 2.136820973975056
+    },
+    "dive20": {
+      "fern_ms": 135.591404,
+      "same_ms": 65.808686,
+      "orange_ms": 20.448507,
+      "ratio": 6.630870605858902,
+      "compiler_ratio": 2.0603876515632
+    },
+    "dive30": {
+      "fern_ms": 141.324043,
+      "same_ms": 75.434784,
+      "orange_ms": 21.644397,
+      "ratio": 6.529359214765834,
+      "compiler_ratio": 1.8734599014693274
+    },
+    "dive38": {
+      "fern_ms": 272.574247,
+      "same_ms": 158.900494,
+      "orange_ms": 40.6297,
+      "ratio": 6.708743776104672,
+      "compiler_ratio": 1.7153769641521692
+    },
+    "dive42": {
+      "fern_ms": 268.885439,
+      "same_ms": 139.180468,
+      "orange_ms": 42.837011,
+      "ratio": 6.276942128385196,
+      "compiler_ratio": 1.9319193480510501
+    },
+    "minibrot20": {
+      "fern_ms": 15.104774,
+      "same_ms": 6.534274,
+      "orange_ms": 28.852256,
+      "ratio": 0.5235214189143477,
+      "compiler_ratio": 2.3116223776352203
+    },
+    "spiral15": {
+      "fern_ms": 29.757327,
+      "same_ms": 14.943194,
+      "orange_ms": 6.126873,
+      "ratio": 4.85685389594333,
+      "compiler_ratio": 1.9913632252917282
+    },
+    "exterior42": {
+      "fern_ms": 1.28828,
+      "same_ms": 0.669924,
+      "orange_ms": 0.746766,
+      "ratio": 1.725145494036954,
+      "compiler_ratio": 1.9230241042267484
+    }
+  },
+  "all_samples_match": true,
+  "samples": 589824,
+  "sample_bytes_sha256": "2fd0d1ce236b206b67bcb95ac268f238634292bd8cedd02af51e8d3530d5d133",
+  "compiler_sha256": "dabc8bfc3cc2488449768150cf049c90fada615b385f7d3766d01e6ddfc3f942"
+}

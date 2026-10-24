@@ -1,0 +1,9 @@
+selfhost/x86-64-linux/deflate_decode.emit	9897
+selfhost/arm64-linux/deflate_decode.emit	10723
+selfhost/wasm32-wasi/deflate_decode.emit	15733
+selfhost/x86-64-linux/deflate_encode.emit	6015
+selfhost/arm64-linux/deflate_encode.emit	6704
+selfhost/wasm32-wasi/deflate_encode.emit	9621
+selfhost/x86-64-linux/sort_inplace.emit	1343
+selfhost/arm64-linux/sort_inplace.emit	1573
+selfhost/wasm32-wasi/sort_inplace.emit	1088

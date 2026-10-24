@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -175,6 +176,10 @@ type parser struct {
 	// nestedTails remembers nestedBlockTail's answer per token index, so a
 	// chain of nested value blocks is read once rather than once per level.
 	nestedTails map[int]bool
+	// constParams is the const parameters (`const N: i32`) the last
+	// type-parameter list declared. parseFuncDecl reads it, and any other
+	// list refuses one.
+	constParams []string
 	// noStructLit suppresses the `Ident { … }` struct-literal
 	// shortcut while parsing expressions in positions that
 	// otherwise greedily consume a trailing `{` as the body —
@@ -1024,8 +1029,12 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	// arg. Names only for now (bounds parsed but ignored). See docs/TRAITS.md.
 	var typeParams []string
 	if p.match(lexer.Punct, "[") {
+		open := p.peek().Pos
 		typeParams, _, err = p.parseTypeParamList()
 		if err != nil {
+			return nil, err
+		}
+		if err := p.refuseConstParams(open); err != nil {
 			return nil, err
 		}
 	}
@@ -1097,8 +1106,12 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		var mbounds map[string][]string
 		var mbargs map[string][][]ast.Type
 		if p.match(lexer.Punct, "[") {
+			open := p.peek().Pos
 			mtps, mbounds, mbargs, err = p.parseTypeParamListWithArgs()
 			if err != nil {
+				return nil, err
+			}
+			if err := p.refuseConstParams(open); err != nil {
 				return nil, err
 			}
 		}
@@ -1199,8 +1212,12 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	var implBounds map[string][]string
 	var implBoundArgs map[string][][]ast.Type
 	if p.match(lexer.Punct, "[") {
+		open := p.peek().Pos
 		implTypeParams, implBounds, implBoundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
+			return nil, nil, err
+		}
+		if err := p.refuseConstParams(open); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1320,6 +1337,10 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		if fn.Receiver != nil {
 			return nil, nil, p.errorf(fn.P,
 				"impl method %q must not declare a receiver clause; its first parameter is `self: Self`", fn.Name)
+		}
+		if len(fn.ConstParams) > 0 {
+			p.constParams = fn.ConstParams
+			return nil, nil, p.refuseConstParams(fn.NamePos)
 		}
 		// An impl method is an IMPLEMENTATION, so it must have a body — the
 		// same standing `@export` has at the top level. Only a top-level
@@ -1636,7 +1657,20 @@ func (p *parser) parseTypeParamListWithArgs() ([]string, map[string][]string, ma
 	var typeParams []string
 	var bounds map[string][]string
 	var boundArgs map[string][][]ast.Type
+	p.constParams = nil
 	for {
+		if p.match(lexer.Keyword, "const") {
+			name, err := p.parseConstTypeParam()
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			typeParams = append(typeParams, name)
+			p.constParams = append(p.constParams, name)
+			if !p.moreElems("]") {
+				break
+			}
+			continue
+		}
 		pname, err := p.expect(lexer.Ident, "")
 		if err != nil {
 			return nil, nil, nil, err
@@ -1672,6 +1706,36 @@ func (p *parser) parseTypeParamListWithArgs() ([]string, map[string][]string, ma
 		return nil, nil, nil, err
 	}
 	return typeParams, bounds, boundArgs, nil
+}
+
+// parseConstTypeParam parses `const NAME: i32` and returns NAME. A const
+// parameter's type is i32 (docs/CONST-GENERICS.md).
+func (p *parser) parseConstTypeParam() (string, error) {
+	p.advance() // const
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return "", err
+	}
+	if t := p.peek(); t.Kind != lexer.Punct || t.Text != ":" {
+		return "", p.errorfCode(t.Pos, "P001", "const parameter %s needs a type: write const %s: i32", name.Text, name.Text)
+	}
+	p.advance()
+	if t := p.peek(); t.Kind != lexer.Keyword || t.Text != "i32" {
+		return "", p.errorfCode(t.Pos, "P001", "const parameter %s has type i32, got %s", name.Text, tokenDesc(t))
+	}
+	p.advance()
+	return name.Text, nil
+}
+
+// refuseConstParams is the P001 for a const parameter in a list other than a
+// function's.
+func (p *parser) refuseConstParams(pos ast.Position) error {
+	if len(p.constParams) == 0 {
+		return nil
+	}
+	name := p.constParams[0]
+	p.constParams = nil
+	return p.errorfCode(pos, "P001", "const parameter %s: only a function takes a const parameter", name)
 }
 
 // parseOptBounds parses an optional trait-bound list on a type
@@ -1741,11 +1805,13 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	var typeParams []string
 	var bounds map[string][]string
 	var boundArgs map[string][][]ast.Type
+	var constParams []string
 	if p.match(lexer.Punct, "[") {
 		typeParams, bounds, boundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, err
 		}
+		constParams, p.constParams = p.constParams, nil
 	}
 	// Optional method receiver: `function (p: Point) name(...)`.
 	// We distinguish receiver from regular params by the lookahead
@@ -1792,6 +1858,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		if err != nil {
 			return nil, err
 		}
+		constParams, p.constParams = p.constParams, nil
 	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
@@ -1897,11 +1964,16 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		}
 		prependParamDestructures(body, paramDestrs)
 	}
+	if receiver != nil && len(constParams) > 0 {
+		p.constParams = constParams
+		return nil, p.refuseConstParams(funcNamePos)
+	}
 	return &ast.FuncDecl{
 		P:                 kw.Pos,
 		Name:              name.Text,
 		NamePos:           funcNamePos,
 		TypeParams:        typeParams,
+		ConstParams:       constParams,
 		Bounds:            bounds,
 		BoundArgs:         boundArgs,
 		Params:            params,
@@ -3822,9 +3894,10 @@ func (p *parser) peekTypeArgs(opener string) bool {
 	switch {
 	case next.Kind == lexer.Keyword && isTypeKeyword(next.Text):
 		typeShaped = true
-	case next.Kind == lexer.Ident:
+	case next.Kind == lexer.Ident || isConstArgTok(next):
 		// `Name[...] {` is only ever a struct literal; the caller gates it
-		// on noStructLit, as it does the bare `Name { … }` form.
+		// on noStructLit, as it does the bare `Name { … }` form. A const
+		// argument leads a list as a name does.
 		typeShaped = opener == "{"
 	case next.Kind == lexer.Punct && next.Text == "(":
 		// A tuple or function type; the walk decides.
@@ -3884,6 +3957,12 @@ func (p *parser) peekTypeArgs(opener string) bool {
 	return false
 }
 
+// isConstArgTok reports whether t is an unsuffixed integer literal, which is a
+// const argument in a type-argument list.
+func isConstArgTok(t lexer.Token) bool {
+	return t.Kind == lexer.Number && t.Suffix == ""
+}
+
 func isTypeKeyword(s string) bool {
 	switch s {
 	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "void":
@@ -3892,12 +3971,28 @@ func isTypeKeyword(s string) bool {
 	return false
 }
 
-// parseTypeArgList parses the comma-separated types of a
+// parseTypeArgList parses the comma-separated types and const arguments of a
 // `[T1, T2]` type-argument list, the `[` already consumed, and
 // consumes the closing `]`. A trailing comma is accepted.
 func (p *parser) parseTypeArgList() ([]ast.Type, error) {
 	var args []ast.Type
 	for {
+		if isConstArgTok(p.peek()) {
+			e, err := p.parsePrimary()
+			if err != nil {
+				return nil, err
+			}
+			lit := e.(*ast.NumberLit)
+			v := lit.Value
+			if lit.ExceedsI64 || lit.ExceedsU64 {
+				v = math.MaxInt64
+			}
+			args = append(args, ast.ConstArg{Value: v, Raw: lit.Raw})
+			if !p.moreElems("]") {
+				break
+			}
+			continue
+		}
 		t, err := p.parseType()
 		if err != nil {
 			return nil, err

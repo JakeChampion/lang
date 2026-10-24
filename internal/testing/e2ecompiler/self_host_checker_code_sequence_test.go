@@ -141,22 +141,9 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// those suspects minus accumulated param shadowing, or recomputes them
 		// for the inner scope. That choice changes which diagnostics appear.
 		{"nested-lambda-bad-capture", "function v(): void { return; }\nfunction main(): i32 {\n  let x = v();\n  let g = (): i32 => { let h = () => x; return 0; };\n  return 0;\n}\n", "E044", false},
-		// E032 from e032_expr, which prunes at ExprLambda and hands the body to
-		// e032_stmts — the same prune-and-delegate shape as vref_expr. The
-		// lambda row exercises that path. These also pin how two SEPARATE
-		// passes interleave: the Go checker emits both E032s before either
-		// E038, so the sequence records pass grouping, not just per-pass order.
-		// PASS-ORDER divergence, pinned: the self-host runs the E038 pass before
-		// the E032 pass and the Go checker runs them the other way round. Same
-		// multiset both ways, so every set-based gate is blind to it, and it is
-		// user-visible — it decides which error you are shown first.
-		//
-		// This is NOT an SH-022 concern: it is the order check_module sequences
-		// its passes in, not the order any one walk visits nodes, so folding a
-		// collector cannot change it. Recorded here because this gate is where
-		// it became visible, and pinned so it cannot drift while someone
-		// decides whether the self-host should match the oracle's order.
-		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E032,E032,E038,E038", false},
+		// E032 and E038 follow each use binding in source order, as in the Go
+		// checker. Keep both reports for each call and their exact order.
+		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E032,E038,E032,E038", false},
 		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    let f = (): i32 => { use n <- add(1); return n; };\n    return f();\n}\n", "E032,E038", false},
 		// E060 / E062 from e060_e062_stmts. Captured against the UNCONVERTED hand
 		// walk first, which is how the three divergences below were found rather
@@ -215,7 +202,7 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// withMsg because the codes alone cannot see it: the sequence is
 		// E026,E028,E028 either way. Only the variant names in the messages
 		// distinguish the inner E028 from the outer one.
-		{"nested-match-arm-order", "enum Outer { P, Q }\nenum Inner { X, Y }\nfunction main(): i32 {\n    let o = P;\n    let i = X;\n    match (o) {\n        _ => {\n            match (i) {\n                Inner.X => { return 1; },\n                Inner.X => { return 2; },\n                _ => { return 3; }\n            }\n        },\n        Outer.Q => { return 4; },\n        Outer.Q => { return 5; }\n    }\n}\n", "E026(wildcard `_` arm must be last in the match),E028(variant \"Inner.X\" already covered earlier in this match),E028(variant \"Outer.Q\" already covered earlier in this match)", true},
+		{"nested-match-arm-order", "enum Outer { P, Q }\nenum Inner { X, Y }\nfunction main(): i32 {\n    let o = P;\n    let i = X;\n    match (o) {\n        _ => {\n            match (i) {\n                Inner.X => { return 1; },\n                Inner.X => { return 2; },\n                _ => { return 3; }\n            }\n        },\n        Outer.Q => { return 4; },\n        Outer.Q => { return 5; }\n    }\n}\n", "E026(wildcard `_` arm must be last in the match),E028(variant \"X\" already covered earlier in this match),E028(variant \"Q\" already covered earlier in this match)", true},
 		// dupvar_diags reaching into lambda bodies — the last instance of the
 		// same class match_diags had, found by sweeping eight diagnostic triggers
 		// in a top-level and an in-lambda variant and diffing against the Go

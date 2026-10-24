@@ -1,0 +1,104 @@
+// A bounded Taylor prefix extends linear skips through small reference orbits.
+import "std/f64";
+
+const ORDER: i32 = 16;
+
+pub struct Model {
+  steps: i32,
+  radius: f64,
+  real: f64,
+  imaginary: f64,
+  cr: f64[],
+  ci: f64[],
+  error: f64,
+}
+
+function norm(real: f64, imaginary: f64): f64 {
+  return (real * real + imaginary * imaginary).sqrt();
+}
+
+// Coefficients use t = delta/radius, so |t| <= 1 and coefficients stay finite.
+// The bound includes discarded products and accumulated arithmetic error.
+pub function build(zr: f64[], zi: f64[], radius: f64, tolerance: f64): Model {
+  let cr: f64[] = [];
+  let ci: f64[] = [];
+  let k: i32 = 0;
+  while (k < ORDER) {
+    cr = cr.append(0.0);
+    ci = ci.append(0.0);
+    k = k + 1;
+  }
+  let best: Model = Model { steps: 0, radius: radius, real: 0.0, imaginary: 0.0, cr: cr, ci: ci, error: 0.0 };
+  let error: f64 = 0.0;
+  let bound: f64 = 0.0;
+  let n: i32 = 0;
+  while (n + 1 < zr.len() && radius > 0.0) {
+    let sizes: f64[] = [];
+    let j: i32 = 0;
+    while (j < ORDER) {
+      sizes = sizes.append(norm(cr[j], ci[j]));
+      j = j + 1;
+    }
+    let tail: f64 = 0.0;
+    j = 0;
+    while (j < ORDER) {
+      let q: i32 = ORDER - 1 - j;
+      while (q < ORDER) {
+        tail = tail + sizes[j] * sizes[q];
+        q = q + 1;
+      }
+      j = j + 1;
+    }
+    let center: f64 = norm(zr[n], zi[n]);
+    error = (2.0 * center + 2.0 * bound) * error + error * error + tail
+      + 1.5e-14 * (2.0 * center * bound + bound * bound + radius);
+    let nr: f64[] = [];
+    let ni: f64[] = [];
+    bound = 0.0;
+    k = 0;
+    while (k < ORDER) {
+      let r: f64 = 2.0 * (zr[n] * cr[k] - zi[n] * ci[k]);
+      let i: f64 = 2.0 * (zr[n] * ci[k] + zi[n] * cr[k]);
+      if (k == 0) {
+        r = r + radius;
+      }
+      j = 0;
+      while (j < k) {
+        let q: i32 = k - 1 - j;
+        r = r + cr[j] * cr[q] - ci[j] * ci[q];
+        i = i + cr[j] * ci[q] + ci[j] * cr[q];
+        j = j + 1;
+      }
+      nr = nr.append(r);
+      ni = ni.append(i);
+      bound = bound + norm(r, i);
+      k = k + 1;
+    }
+    n = n + 1;
+    if (!(bound < 1.0 && error <= tolerance * bound + 1e-30 && norm(zr[n], zi[n]) + bound + error < 256.0)) {
+      break;
+    }
+    cr = nr;
+    ci = ni;
+    best = Model { steps: n, radius: radius, real: zr[n], imaginary: zi[n], cr: cr, ci: ci, error: error };
+  }
+  return best;
+}
+
+pub struct Value { real: f64, imaginary: f64 }
+
+// Horner evaluation has fixed cost, independent of the skipped iteration count.
+pub function evaluate(model: Model, real: f64, imaginary: f64): Value {
+  let tr: f64 = real / model.radius;
+  let ti: f64 = imaginary / model.radius;
+  let r: f64 = 0.0;
+  let i: f64 = 0.0;
+  let k: i32 = model.cr.len() - 1;
+  while (k >= 0) {
+    let next: f64 = r * tr - i * ti + model.cr[k];
+    i = r * ti + i * tr + model.ci[k];
+    r = next;
+    k = k - 1;
+  }
+  return Value { real: r * tr - i * ti, imaginary: r * ti + i * tr };
+}

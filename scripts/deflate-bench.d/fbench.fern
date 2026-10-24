@@ -1,0 +1,109 @@
+// fbench — std/deflate on one file.
+//   fbench c FILE RUNS OUT  compress RUNS times, write the stream to OUT,
+//                           decompress it RUNS times, verify the round trip
+//   fbench d STREAM ORIG RUNS  decompress another encoder's raw stream
+import "std/deflate";
+import "std/i64";
+import "std/i32";
+import "std/option";
+
+function median(xs: i64[]): i64 {
+  let s: i64[] = xs;
+  let i: i32 = 1;
+  while (i < s.len()) {
+    let j: i32 = i;
+    while (j > 0 && s[j - 1] > s[j]) {
+      let t: i64 = s[j];
+      s = s.with(j, s[j - 1]).with(j - 1, t);
+      j = j - 1;
+    }
+    i = i + 1;
+  }
+  return s[s.len() / 2];
+}
+
+function load(path: string): u8[] {
+  match (read_file_bytes(path)) {
+    Ok(b) => {
+      return b;
+    },
+    Err(e) => {
+      eprint("fbench: cannot read " + path);
+      exit(2);
+    }
+  }
+  return [];
+}
+
+function same(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function decode_runs(stream: u8[], orig: u8[], runs: i32): i64 {
+  let times: i64[] = [];
+  let r: i32 = 0;
+  while (r < runs) {
+    let t0: i64 = now_ns();
+    let out: u8[] = [];
+    match (deflate.inflate(stream, orig.len())) {
+      Ok(inf) => {
+        out = inf.out;
+      },
+      Err(e) => {
+        eprint("fbench: inflate failed: " + e.message());
+        exit(3);
+      }
+    }
+    times = times.append(now_ns() - t0);
+    if (!same(out, orig)) {
+      eprint("fbench: round trip differs");
+      exit(4);
+    }
+    r = r + 1;
+  }
+  return median(times);
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() >= 5 && argv[1] == "c") {
+    let input: u8[] = load(argv[2]);
+    let runs: i32 = argv[3].parse_int().unwrap_or(1);
+    let times: i64[] = [];
+    let stream: u8[] = [];
+    let r: i32 = 0;
+    while (r < runs) {
+      let t0: i64 = now_ns();
+      stream = deflate.deflate(input);
+      times = times.append(now_ns() - t0);
+      r = r + 1;
+    }
+    match (write_file_bytes(argv[4], stream)) {
+      Ok(_) => {},
+      Err(e) => {
+        eprint("fbench: cannot write " + argv[4]);
+        return 2;
+      }
+    }
+    let d: i64 = decode_runs(stream, input, runs);
+    print("in=" + input.len().to_string() + " out=" + stream.len().to_string() + " comp_ns=" + median(times).to_string() + " decomp_ns=" + d.to_string());
+    return 0;
+  }
+  if (argv.len() >= 5 && argv[1] == "d") {
+    let d: i64 = decode_runs(load(argv[2]), load(argv[3]), argv[4].parse_int().unwrap_or(1));
+    print("decomp_ns=" + d.to_string());
+    return 0;
+  }
+  eprint("usage: fbench c FILE RUNS OUT | fbench d STREAM ORIG RUNS");
+  return 2;
+}

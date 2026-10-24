@@ -576,7 +576,7 @@ pub function mod_names(mod: parser.Module): string[] {
 // module_ident is a module's IDENTITY: the resolved file path with the
 // `.fern` extension removed, so basename() still yields the short name the
 // mangle prefix and PerModule.ns are built from. One string per file, which
-// a basename is not -- `std/sort` and `coreutils/sort` share theirs.
+// a basename is not -- `std/test` and `coreutils/test` share theirs.
 pub function module_ident(mpath: string): string {
   if (mpath.len() > 5) {
     if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()) + "" == ".fern") {
@@ -923,8 +923,8 @@ function index_of_str(want: string, list: string[]): i32 {
 // imports was ASSIGNED by the bundle, looked up by the identity the driver
 // resolved it to. This is the only prefix authority: deriving one from the
 // basename here and another in the bundle is how two files sharing a name
-// (`std/sort` and `coreutils/sort`) ended up with one emitting under the
-// other's prefix and every reference to the loser undefined (#9762).
+// ended up with one emitting under the other's prefix and every reference to
+// the loser undefined (#9762).
 //
 // Falls back to the basename when `resolved` is empty, which is every
 // single-file driver -- with one module there is nothing to collide with.

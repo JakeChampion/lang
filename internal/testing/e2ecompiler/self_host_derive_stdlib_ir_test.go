@@ -15,7 +15,7 @@ import (
 // inline lowerings (#3759 Eq, #3765 Ord) deliberately did NOT cover:
 //   - `@derive(Hash)`     — core/cmp's __hash_mix_i32 + per-width / FNV string,
 //   - `@derive(Json)`     — std/json's field-/variant-wise renderer,
-//   - string-keyed `@derive(Ord)` — core/cmp's string `cmp` via sort.string_cmp.
+//   - string-keyed `@derive(Ord)` — core/cmp's `impl Ord for string`.
 //
 // All route IR (the merged module fits the budget after treeshake) and match
 // the native interpreter. Drives the self-hosted x86-64 loader (asm_load_run)

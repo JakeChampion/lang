@@ -4603,6 +4603,17 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 // (0F F8), vpshufb (0F38 00) and the fused multiply-adds vfmadd213ps /
 // vfmadd213pd (0F38 A8, W0 / W1).
 function x86_vex_three_op(mnem: string): i32 {
+  if (mnem.len() >= 4 && mnem[0] == b'v') {
+    let name: string = slice_unchecked(mnem, 1, mnem.len()) + "";
+    for packed in [
+      "addpd", "subpd", "mulpd", "divpd", "andpd", "orpd", "xorpd", "andnpd", "minpd", "maxpd",
+      "addps", "subps", "mulps", "divps", "andps", "orps", "xorps", "andnps", "minps", "maxps",
+    ] {
+      if (packed == name) {
+        return 256 + (x86_gas_sse_fp_op(name) & 255);
+      }
+    }
+  }
   match (mnem) {
     "vfmadd213ps" => {
       return 512 + 168;
@@ -4668,7 +4679,11 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return a;
   }
   let mo: i32 = x86_vex_three_op(mnem);
-  return x86_gas_vex_rm(a, mnem, mo / 256, 1, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16, mnem == "vfmadd213pd");
+  let pp: i32 = 1;
+  if (mnem.len() >= 2 && mnem[mnem.len() - 2] == b'p' && mnem[mnem.len() - 1] == b's' && mnem != "vfmadd213ps") {
+    pp = 0;
+  }
+  return x86_gas_vex_rm(a, mnem, mo / 256, pp, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16, mnem == "vfmadd213pd");
 }
 
 // BMI1 ANDN: AT&T `other, inverted, dst`, or dst = ~inverted & other.

@@ -1,6 +1,7 @@
 import "std/test";
 import "std/hex";
 import "std/codec";
+import "std/crypto/aead";
 import "std/crypto/aes_gcm";
 
 // tests/stdlib/aes_gcm_test.fern — std/crypto/aes_gcm against the AES known
@@ -9,7 +10,7 @@ import "std/crypto/aes_gcm";
 // additional data alone, a one-byte message, and messages of 33 and 255
 // bytes, plus the refusals.
 
-function shown(r: Result[u8[], aes_gcm.AeadError]): string {
+function shown(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
       return hex.encode(b);
@@ -156,11 +157,11 @@ function test_255_bytes(): test.TestOutcome {
   return test.assert_eq(shown(aes_gcm.open(key, nonce, __codec_bytes(hex.decode(sealed255())), aad64())), plain255());
 }
 
-function forged(r: Result[u8[], aes_gcm.AeadError]): boolean {
+function forged(r: Result[u8[], aead.AeadError]): boolean {
   match (r) {
     Err(e) => {
       match (e) {
-        aes_gcm.Forged => {
+        aead.Forged => {
           return true;
         },
         _ => {
@@ -205,13 +206,13 @@ function test_open_refuses(): test.TestOutcome {
 }
 
 function test_lengths(): test.TestOutcome {
-  if (shown(aes_gcm.seal(zeros(24), zeros(12), zeros(0), zeros(0))) != "aes_gcm: the key is 24 bytes, want 16 or 32") {
+  if (shown(aes_gcm.seal(zeros(24), zeros(12), zeros(0), zeros(0))) != "aead: the key is 24 bytes, the wrong length for this cipher") {
     return test.fail("a 24-byte key was not refused by its length");
   }
-  if (shown(aes_gcm.open(zeros(15), zeros(12), zeros(16), zeros(0))) != "aes_gcm: the key is 15 bytes, want 16 or 32") {
+  if (shown(aes_gcm.open(zeros(15), zeros(12), zeros(16), zeros(0))) != "aead: the key is 15 bytes, the wrong length for this cipher") {
     return test.fail("open took a 15-byte key");
   }
-  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(8), zeros(0), zeros(0))), "aes_gcm: the nonce is 8 bytes, want 12");
+  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(8), zeros(0), zeros(0))), "aead: the nonce is 8 bytes, want 12");
 }
 
 // A key prepared once seals and opens as the one-shot calls do, under
@@ -232,7 +233,7 @@ function test_prepared_key(): test.TestOutcome {
   if (shown(k2.seal(iv3(), p60(), aad3())) != sealed16()) {
     return test.fail("the prepared AES-256 key sealed differently");
   }
-  if (shown(k.seal(zeros(8), zeros(0), zeros(0))) != "aes_gcm: the nonce is 8 bytes, want 12") {
+  if (shown(k.seal(zeros(8), zeros(0), zeros(0))) != "aead: the nonce is 8 bytes, want 12") {
     return test.fail("the prepared key took an 8-byte nonce");
   }
   match (aes_gcm.key(zeros(24))) {
@@ -240,7 +241,7 @@ function test_prepared_key(): test.TestOutcome {
       return test.fail("a 24-byte key was prepared");
     },
     Err(e) => {
-      return test.assert_eq(e.message(), "aes_gcm: the key is 24 bytes, want 16 or 32");
+      return test.assert_eq(e.message(), "aead: the key is 24 bytes, the wrong length for this cipher");
     }
   }
   return test.fail("unreachable");

@@ -297,6 +297,11 @@ file, so the slice starts from facts rather than from §4's table:
 - **The interpreters** take a `VLanes` / `Lanes` value kind with the element
   width and the lane values; `tyarg_of_value` names it `f64x2`.
 
+`__f64x2_bitmask(v)` and `__f32x4_bitmask(v)` return an `i32` with one sign bit per lane.
+Bit zero comes from lane zero. Comparison masks therefore give compact sets of matching lanes.
+The operation preserves the sign of zero and NaN. It allocates no storage and has a FIP contract.
+The native backends extract lane signs. WASI uses `i64x2.bitmask` or `i32x4.bitmask`.
+
 The slice is a register-class project across the two native emitters, the
 wasm emitter, two front ends and two interpreters, with the Atlas §1.2
 estimate (two weeks before the SSA backend existed) as its floor. It is
@@ -408,8 +413,8 @@ whole group are the next steps.
 | 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | done (#12945) |
 | 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | done (#12961) |
 | 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the lowering and its call ABI, both interpreters | done (#13004) |
-| 5a | A lane type as a method receiver and a type argument; `impl Lanes` / `impl Math` and the `std/num` traits for `f64x2` / `f32x4` | receivers done (#13026), impls this PR |
-| 5b | Array fusion: `xs.map(k)` runs a lane kernel on whole groups of lanes | this PR |
+| 5a | A lane type as a method receiver and a type argument; `impl Lanes` / `impl Math` and the `std/num` traits for `f64x2` / `f32x4` | done (#13026, #13040) |
+| 5b | Array fusion: `xs.map(k)` runs a lane kernel on whole groups of lanes | done (#13040) |
 | 5c | Lane memory: one 16-byte load and one 16-byte store per group | done (#13026) |
 | 6 | Const generics; `Vec[N, T]` | follow-on project, `docs/CONST-GENERICS.md` |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |

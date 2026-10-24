@@ -162,6 +162,7 @@ concrete_view_methods                                0
 const_composite                                      0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
+const_param_functions                                0
 const_settles_across_modules                         0
 const_settles_where_it_is_read                       0
 const_shadowed_by_binder                             0
@@ -409,6 +410,7 @@ local_array_views_keep_their_storage                  0
 log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0
+loop_values_survive_cold_calls                       0
 loop_var_reclaim                                     0
 map_bool_column                                      0
 map_bool_key                                         0
@@ -1074,6 +1076,7 @@ variant_pattern_rename                               0
 variant_pattern_rename_rest                          0
 variant_pattern_rest                                 0
 variant_payload_from_array_field                     0
+wasi_http_error_code_names                           0
 while_sum                                            0
 wide_array_append_grow                               0
 wide_shift_by_variable                               0

@@ -22,7 +22,7 @@
 // locale and digits sort before capitals before lowercase.
 import "std/string";
 import "std/array";
-import "std/sort";
+import "core/cmp";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/utmp";
@@ -54,7 +54,7 @@ pub function main(): i32 {
     names = names.append(entries[i].name());
     i = i + 1;
   }
-  names = names.sort_by(sort.string_cmp);
+  names = cmp.sort(names);
   if (names.len() == 0) {
     gnu.finish(gnu.out_new());
     return 0;

@@ -2,6 +2,7 @@ import "std/test";
 import "std/hex";
 import "std/codec";
 import "std/string";
+import "std/crypto/aead";
 import "std/crypto/chacha20poly1305";
 
 // tests/stdlib/chacha20poly1305_test.fern — std/crypto/chacha20poly1305
@@ -10,7 +11,7 @@ import "std/crypto/chacha20poly1305";
 // implementation for an empty message, a message spanning several blocks
 // with a partial last one, and Poly1305's final reduction.
 
-function shown(r: Result[u8[], chacha20poly1305.AeadError]): string {
+function shown(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
       return hex.encode(b);
@@ -132,11 +133,11 @@ function test_open_long(): test.TestOutcome {
   return test.assert_eq(shown(chacha20poly1305.open(key_seq(128), aead_nonce(), __codec_bytes(hex.decode(long_sealed())), long_aad())), hex.encode(long_plaintext()));
 }
 
-function forged(r: Result[u8[], chacha20poly1305.AeadError]): boolean {
+function forged(r: Result[u8[], aead.AeadError]): boolean {
   match (r) {
     Err(e) => {
       match (e) {
-        chacha20poly1305.Forged => {
+        aead.Forged => {
           return true;
         },
         _ => {
@@ -173,10 +174,10 @@ function test_open_refuses(): test.TestOutcome {
 
 function test_lengths(): test.TestOutcome {
   let none: u8[] = [];
-  if (shown(chacha20poly1305.seal(__codec_bytes(hex.decode("0011")), aead_nonce(), none, none)) != "chacha20poly1305: the key is 2 bytes, want 32") {
+  if (shown(chacha20poly1305.seal(__codec_bytes(hex.decode("0011")), aead_nonce(), none, none)) != "aead: the key is 2 bytes, the wrong length for this cipher") {
     return test.fail("a short key was not refused by its length");
   }
-  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(0), __codec_bytes(hex.decode("00")), none, none)), "chacha20poly1305: the nonce is 1 bytes, want 12");
+  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(0), __codec_bytes(hex.decode("00")), none, none)), "aead: the nonce is 1 bytes, want 12");
 }
 
 function main(): i32 {

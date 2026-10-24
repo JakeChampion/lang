@@ -6672,14 +6672,9 @@ function main(): i32 {
 	}
 }
 
-// Twenty-eighth stdlib bundle: i32[] sorted_asc / sorted_desc
-// / cumsum, string[] sorted_str_asc / sorted_str_desc, string
-// ellipsis / first_line, i32 min_zero / sign_str. 9 helpers.
-//
-// The `sorted_*` variants are method wrappers around the
-// existing free `sort_*` functions; they read better in
-// pipelines (`arr.sorted_asc().take(3)`). They collapse to a
-// single `sorted()` once generic Ord methods land.
+// Twenty-eighth stdlib bundle: cmp.sort / cmp.sort_desc over i32[]
+// and string[], i32[] cumsum, string ellipsis / first_line, i32
+// min_zero / sign_str.
 //
 // `ellipsis(n)` differs from `truncate(n, "...")`: with
 // `n == 3` on a longer string, ellipsis returns "..." while
@@ -6688,23 +6683,24 @@ function main(): i32 {
 func TestArm64StdlibBundle28(t *testing.T) {
 	src := `
 import "std/array";
+import "core/cmp";
 function main(): i32 {
     let xs: i32[] = [3, 1, 4, 1, 5];
-    let a: i32[] = xs.sorted_asc();
+    let a: i32[] = cmp.sort(xs);
     if (a[0] != 1 || a[1] != 1 || a[2] != 3 || a[3] != 4 || a[4] != 5) { return 1; }
-    let d: i32[] = xs.sorted_desc();
+    let d: i32[] = cmp.sort_desc(xs);
     if (d[0] != 5 || d[1] != 4 || d[2] != 3 || d[3] != 1 || d[4] != 1) { return 2; }
     let empty_i: i32[] = [];
-    if ((empty_i.sorted_asc()).len() != 0) { return 3; }
-    if ((empty_i.sorted_desc()).len() != 0) { return 4; }
+    if ((cmp.sort(empty_i)).len() != 0) { return 3; }
+    if ((cmp.sort_desc(empty_i)).len() != 0) { return 4; }
 
     let ss: string[] = ["banana", "apple", "cherry"];
-    let sa: string[] = ss.sorted_asc();
+    let sa: string[] = cmp.sort(ss);
     if (sa[0] != "apple" || sa[1] != "banana" || sa[2] != "cherry") { return 10; }
-    let sd: string[] = ss.sorted_desc();
+    let sd: string[] = cmp.sort_desc(ss);
     if (sd[0] != "cherry" || sd[1] != "banana" || sd[2] != "apple") { return 11; }
     let empty_s: string[] = [];
-    if ((empty_s.sorted_asc()).len() != 0) { return 12; }
+    if ((cmp.sort(empty_s)).len() != 0) { return 12; }
 
     let cs: i32[] = [1, 2, 3, 4].cumsum();
     if (cs[0] != 1 || cs[1] != 3 || cs[2] != 6 || cs[3] != 10) { return 20; }
@@ -7683,7 +7679,9 @@ function main(): i32 {
 // to_binary / to_oct. 11 helpers.
 func TestArm64StdlibBundle11(t *testing.T) {
 	src := `
-import "std/sort";
+import "core/cmp";
+import "std/string";
+function fold_order(a: string, b: string): i32 { return a.cmp_ignore_ascii_case(b); }
 function main(): i32 {
     // splitn
     let s1: string[] = "a=b=c=d".splitn("=", 2);
@@ -7720,10 +7718,10 @@ function main(): i32 {
     if (c4.len() != 1 || c4[0] != "abc") { return 20; }
 
     // case-insensitive sort + cmp
-    let asc: string[] = sort.sort_strings_asc_ci(["Banana", "apple", "Cherry"]);
+    let asc: string[] = cmp.sort_by(["Banana", "apple", "Cherry"], fold_order);
     if (asc[0] != "apple" || asc[1] != "Banana" || asc[2] != "Cherry") { return 21; }
-    if (sort.string_cmp_ci("APPLE", "apple") != 0) { return 22; }
-    if (sort.string_cmp_ci("apple", "banana") != (0 - 1)) { return 23; }
+    if ("APPLE".cmp_ignore_ascii_case("apple") != 0) { return 22; }
+    if ("apple".cmp_ignore_ascii_case("banana") != (0 - 1)) { return 23; }
 
     // to_binary / to_oct
     if ((5).to_binary() != "101") { return 24; }
@@ -7742,11 +7740,10 @@ function main(): i32 {
 // Tenth stdlib bundle: numeric range constants (i32_max /
 // i32_min / i64_max / i64_min), one-sided trim (trim_start /
 // trim_end), trim_chars, case-insensitive prefix/suffix,
-// string sort, and string_cmp. 11 helpers.
+// string sort, and string Ord.cmp. 11 helpers.
 func TestArm64StdlibBundle10(t *testing.T) {
 	src := `
 import "std/math";
-import "std/sort";
 import "core/cmp";
 function main(): i32 {
     // Range constants
@@ -7773,11 +7770,11 @@ function main(): i32 {
     if ("hello".starts_with_ci("WORLD")) { return 15; }
     if ("hello".ends_with_ci("WORLD")) { return 16; }
 
-    // string_cmp + generic string sort (cmp.sort / cmp.sort_desc)
-    if (sort.string_cmp("apple", "banana") != (0 - 1)) { return 17; }
-    if (sort.string_cmp("banana", "apple") != 1) { return 18; }
-    if (sort.string_cmp("same", "same") != 0) { return 19; }
-    if (sort.string_cmp("short", "shorter") != (0 - 1)) { return 20; }   // shorter <
+    // string Ord.cmp + generic string sort (cmp.sort / cmp.sort_desc)
+    if ("apple".cmp("banana") != (0 - 1)) { return 17; }
+    if ("banana".cmp("apple") != 1) { return 18; }
+    if ("same".cmp("same") != 0) { return 19; }
+    if ("short".cmp("shorter") != (0 - 1)) { return 20; }   // shorter <
 
     let unsorted: string[] = ["banana", "apple", "cherry"];
     let asc: string[] = cmp.sort(unsorted);
@@ -11084,7 +11081,7 @@ function main(): i32 {
 //   - `i32_string_cycle` — std/i32 imports std/string for
 //     `pad_start` inside to_string_padded; the cycle resolves.
 //   - `array_method_chain` — std/array transitively pulls in
-//     std/i32 (for `.abs()` inside abs_each) and std/sort.
+//     std/i32 (for `.abs()` inside abs_each).
 //   - `qualified_int_call` — qualified `int.int_to_string_radix`
 //     resolves through modload's normal mangling path under
 //     no-prelude.

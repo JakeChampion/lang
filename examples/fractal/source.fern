@@ -3,7 +3,7 @@ import "std/url";
 import "../../compiler/util";
 import "../../compiler/weave";
 
-const FILES: string[] = ["server.fern", "fractal.fern", "binary.fern", "source.fern", "fractal_test.fern", "source_test.fern"];
+const FILES: string[] = ["server.fern", "fractal.fern", "linear.fern", "series.fern", "kernel.fern", "acceleration_test.fern", "source.fern", "fractal_test.fern", "source_test.fern"];
 
 const REPOSITORY: string = "https://github.com/JakeChampion/lang/blob/main/";
 

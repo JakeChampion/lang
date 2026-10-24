@@ -76,7 +76,7 @@ func wantOwners(t *testing.T, info *Info, typeName, name string, want []string) 
 	}
 }
 
-func sortedKeys(m map[string]string) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

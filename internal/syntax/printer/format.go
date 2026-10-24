@@ -560,7 +560,7 @@ func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	}
 	f.b.WriteString("type ")
 	f.b.WriteString(ud.Name)
-	f.writeTypeParams(ud.TypeParams, nil, nil)
+	f.writeTypeParams(ud.TypeParams, nil, nil, nil)
 	f.b.WriteString(" = ")
 	ln := ud.MemberLines
 	kept := len(ln) == len(ud.Members) && len(ln) > 0 && ln[0] > 0 && ln[len(ln)-1] > ln[0]
@@ -613,8 +613,10 @@ func (f *formatter) writeMustConsumeAttr(mustConsume bool) {
 // (nil / absent for an unbounded param), and `boundArgs` carries the
 // type arguments of a generic-trait bound (`From[i32]`), parallel to
 // `bounds`. Structs pass nil for both (struct params are never bounded).
-// Emitting nothing for an empty list keeps non-generic decls unchanged.
-func (f *formatter) writeTypeParams(names []string, bounds map[string][]string, boundArgs map[string][][]ast.Type) {
+// `consts` names the const parameters (`const N: i32`), which only a function
+// declares. Emitting nothing for an empty list keeps non-generic decls
+// unchanged.
+func (f *formatter) writeTypeParams(names []string, bounds map[string][]string, boundArgs map[string][][]ast.Type, consts []string) {
 	if len(names) == 0 {
 		return
 	}
@@ -622,6 +624,10 @@ func (f *formatter) writeTypeParams(names []string, bounds map[string][]string, 
 	for i, name := range names {
 		if i > 0 {
 			f.b.WriteString(", ")
+		}
+		if slices.Contains(consts, name) {
+			f.b.WriteString("const " + name + ": i32")
+			continue
 		}
 		f.b.WriteString(name)
 		bs := bounds[name]
@@ -664,7 +670,7 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	}
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
-	f.writeTypeParams(sd.TypeParams, nil, nil)
+	f.writeTypeParams(sd.TypeParams, nil, nil, nil)
 	// Written across lines, or with a comment inside the braces, the struct
 	// prints one field per line, as the enum printer does. A synthetic field (NamePos zero) has no line to attach to, so a struct
 	// carrying one keeps the one-liner.
@@ -709,7 +715,7 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 	}
 	f.b.WriteString("trait ")
 	f.b.WriteString(td.Name)
-	f.writeTypeParams(td.TypeParams, nil, nil)
+	f.writeTypeParams(td.TypeParams, nil, nil, nil)
 	if len(td.Supertraits) > 0 {
 		f.b.WriteString(": ")
 		f.b.WriteString(strings.Join(td.Supertraits, " + "))
@@ -759,7 +765,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	}
 	f.b.WriteString("function ")
 	f.b.WriteString(m.Name)
-	f.writeTypeParams(m.TypeParams, m.Bounds, m.BoundArgs)
+	f.writeTypeParams(m.TypeParams, m.Bounds, m.BoundArgs, nil)
 	f.b.WriteByte('(')
 	for i, p := range m.Params {
 		if i > 0 {
@@ -793,7 +799,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 // then the methods.
 func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("impl")
-	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs)
+	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs, nil)
 	f.b.WriteByte(' ')
 	f.b.WriteString(id.Trait)
 	if len(id.TraitArgs) > 0 {
@@ -878,7 +884,7 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 	f.b.WriteString("function ")
 	f.b.WriteString(fn.Name)
 	if !parametric {
-		f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
+		f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs, fn.ConstParams)
 	}
 	params := fn.Params
 	if fn.Receiver != nil {
@@ -1007,7 +1013,7 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	// (`function name[T](x: T)`, `function (b: Box[T]) has[T: Eq](x: T)`) —
 	// the form spec/grammar.ebnf derives; the receiver's own variables are
 	// bound by the receiver type.
-	f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
+	f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs, fn.ConstParams)
 	f.b.WriteByte('(')
 	for i, p := range fn.Params {
 		if i > 0 {
@@ -2603,6 +2609,11 @@ func formatType(t ast.Type) string {
 		}
 		return x.String()
 	case ast.LanesType:
+		return x.String()
+	case ast.ConstArg:
+		if x.Raw != "" {
+			return x.Raw
+		}
 		return x.String()
 	case ast.StructType:
 		return x.Name

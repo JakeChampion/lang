@@ -309,7 +309,7 @@ pub function op_f32_from_bits(): Op {
 
 pub const LANE_KIND_FIRST: i32 = 447;
 
-pub const LANE_KIND_LAST: i32 = 478;
+pub const LANE_KIND_LAST: i32 = 479;
 
 pub function lane_kind_names(): string[] {
   return [
@@ -318,18 +318,18 @@ pub function lane_kind_names(): string[] {
     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround",
     "veq", "vne", "vlt", "vle", "vgt", "vge",
     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
-    "vget", "vset",
+    "vget", "vset", "vbitmask",
   ];
 }
 
 // lane_kind_pops parallels lane_kind_names: each op's operand count.
 function lane_kind_pops(): i32[] {
-  return [1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 1, 2, 2, 3];
+  return [1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 1, 2, 2, 3, 1];
 }
 
 // lane_writes names vstore and vset, the lane ops that push nothing.
 pub function lane_writes(id: i32): boolean {
-  return id == LANE_KIND_FIRST + 29 || id == LANE_KIND_LAST;
+  return id == LANE_KIND_FIRST + 29 || id == LANE_KIND_FIRST + 31;
 }
 
 pub function is_lane_kind(id: i32): boolean {

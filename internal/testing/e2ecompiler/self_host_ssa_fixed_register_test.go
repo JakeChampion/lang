@@ -59,7 +59,7 @@ function main(): i32 {
     let fixed = ssafixed.table(0, 1, []);
     if (av[1] == "register-range") { fixed = ssafixed.table(1, 1, [0, 0, 0, 0]); }
     if (av[1] == "mask-range") { fixed = ssafixed.table(0, 1, [2, 0, 0, 0]); }
-    let invalid = ssa.regalloc_linear_fixed(f, 1, 0, 0, false, [], [], [], 0, 0, fixed);
+    let invalid = ssa.regalloc_linear_fixed(f, 1, 0, 0, false, [], [], [], 0, 0, fixed, []);
     print(util.i32_to_string(invalid.reg_of.len()));
     return 1;
   }
@@ -73,7 +73,7 @@ function main(): i32 {
         let masks = [pattern & 1, (pattern >> 1) & 1, (pattern >> 2) & 1, (pattern >> 3) & 1];
         let fixed = ssafixed.table(nregs - 1, 1, masks);
         let pref = [nregs - 1, nregs - 1, nregs - 1];
-        let a = ssa.regalloc_linear_fixed(f, nregs, saved, 0, false, [], pref, [], 0, 0, fixed);
+        let a = ssa.regalloc_linear_fixed(f, nregs, saved, 0, false, [], pref, [], 0, 0, fixed, []);
         if (execute(f, a, nregs - 1, masks) != 42) {
           eprint("bad assigned execution: registers=" + util.i32_to_string(nregs) + " pattern=" + util.i32_to_string(pattern));
           return 2;
@@ -90,7 +90,7 @@ function main(): i32 {
   let pressure = pressure_graph();
   let masks = __alloc_i32(14).with(11, 1);
   let fixed = ssafixed.table(1, 1, masks);
-  let a = ssa.regalloc_linear_fixed(pressure, 2, 0, 0, false, [], [1, 0, 1, 0], [], 0, 0, fixed);
+  let a = ssa.regalloc_linear_fixed(pressure, 2, 0, 0, false, [], [1, 0, 1, 0], [], 0, 0, fixed, []);
   if (execute(pressure, a, 1, masks) != 40) { return 3; }
   count = count + 1;
   print("fixed-register allocation: " + util.i32_to_string(count) + " executions agree");

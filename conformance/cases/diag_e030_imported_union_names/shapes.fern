@@ -1,0 +1,4 @@
+pub struct Dot { x: i32 }
+pub struct Ring { r: i32 }
+pub type Shape = Dot | Ring;
+pub enum Outer { In(Option[i32]), Out }

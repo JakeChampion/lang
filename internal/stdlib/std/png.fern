@@ -1,0 +1,64 @@
+// RGB PNG encoding with eight bits per channel and no interlace.
+
+import "std/binary";
+import "std/deflate";
+import "std/hash";
+import "std/error";
+
+pub enum EncodeError { InvalidDimensions, InvalidBufferLength }
+
+pub function (e: EncodeError) message(): string {
+  match (e) {
+    InvalidDimensions => {
+      return "PNG dimensions are invalid or exceed the buffer limit";
+    },
+    InvalidBufferLength => {
+      return "RGB buffer length does not match the PNG dimensions";
+    }
+  }
+}
+
+impl error.Error for EncodeError {}
+
+// Pixels are consecutive RGB triples, from left to right and top to bottom.
+pub function encode_rgb8(width: i32, height: i32, pixels: [u8]): Result[u8[], EncodeError] {
+  if (width <= 0 || height <= 0 || width as i64 * 3 + 1 > 2147483647) {
+    return Err(InvalidDimensions);
+  }
+  let stride: i64 = width as i64 * 3;
+  let bytes: i64 = (stride + 1) * (height as i64);
+  if (bytes > 2147483647) {
+    return Err(InvalidDimensions);
+  }
+  if (pixels.len() as i64 != stride * (height as i64)) {
+    return Err(InvalidBufferLength);
+  }
+  let rows: u8[] = __alloc_u8(bytes as i32);
+  let row: i32 = 0;
+  while (row < height) {
+    // Filter 0 preserves each RGB byte.
+    let column: i32 = 0;
+    while (column < stride as i32) {
+      rows = rows.with(row * (stride as i32 + 1) + 1 + column, pixels[row * (stride as i32) + column]);
+      column = column + 1;
+    }
+    row = row + 1;
+  }
+  let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
+  let header: u8[] = binary.append_u32_be([], width as u32);
+  header = binary.append_u32_be(header, height as u32);
+  header = header.append(8 as u8).append(2 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
+  output = chunk(output, "IHDR", header);
+  let compressed: u8[] = binary.append_bytes([120 as u8, 1 as u8], deflate.deflate(rows));
+  compressed = binary.append_u32_be(compressed, deflate.adler32(rows));
+  output = chunk(output, "IDAT", compressed);
+  return Ok(chunk(output, "IEND", []));
+}
+
+function chunk(own output: u8[], kind: string, data: u8[]): u8[] {
+  let checksum: u32 = hash.crc32_new().update(kind.as_bytes()).update(data).finish();
+  output = binary.append_u32_be(output, data.len() as u32);
+  output = binary.append_bytes(output, kind.as_bytes());
+  output = binary.append_bytes(output, data);
+  return binary.append_u32_be(output, checksum);
+}

@@ -1,0 +1,6 @@
+variant left__side expects 1 payload argument(s); call it as left__side(...)
+enum Pair__Kind has no variant "middle__side"
+match does not cover variant left__side of enum Pair__Kind — add an arm for it, or a `_` arm
+match does not cover variant right__side of enum Pair__Kind — add an arm for it, or a `_` arm
+variant "left__sida" is not part of enum Pair__Kind (did you mean "left__side"?)
+cannot find "n" in this scope

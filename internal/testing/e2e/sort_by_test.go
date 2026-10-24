@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// std/sort's generic comparator sort — `sort_by[T](arr, cmp)` / `is_sorted_by`.
+// core/cmp's generic comparator sort — `sort_by[T](arr, order)` / `is_sorted_by`.
 // The comparator is a `(T, T) => i32` closure called in a `while` CONDITION, so
 // these exercise the lift-fn-args-in-conditions path (#2686 tail) on a bounded-
 // generic body. Lower on every native backend AND the self-host IR path.
@@ -75,15 +75,15 @@ func TestNativeSortByArm64(t *testing.T) {
 	}
 }
 
-// TestNativeSortByModule exercises the shipped `import "std/sort"` sort_by /
+// TestNativeSortByModule exercises the shipped core/cmp sort_by /
 // is_sorted_by over an i32 array with a descending comparator.
 func TestNativeSortByModule(t *testing.T) {
-	src := `import "std/sort" as sort;
+	src := `import "core/cmp";
 function desc(a: i32, b: i32): i32 { if (a > b) { return 0 - 1; } if (a < b) { return 1; } return 0; }
 function main(): i32 {
-    let s = sort.sort_by([5, 1, 9, 2], desc); // [9,5,2,1]
+    let s = cmp.sort_by([5, 1, 9, 2], desc); // [9,5,2,1]
     let ok = 0;
-    if (sort.is_sorted_by(s, desc)) { ok = 1; } // 1
+    if (cmp.is_sorted_by(s, desc)) { ok = 1; } // 1
     return s[0] * 10 + s[3] + ok;               // 91 + 1 = 92
 }
 `
@@ -134,43 +134,43 @@ func TestSelfHostSortByIRX86_64(t *testing.T) {
 	}
 }
 
-// sortByI32KeyProg sorts a struct array by an i32-key projection (closure
+// sortByKeyProg sorts a struct array by an i32-key projection (closure
 // `(P) => i32`), the common "sort records by a numeric field" case. Keys are
 // precomputed once (Schwartzian transform). [k:3, k:1, k:2] → [1,2,3];
 // 1*100 + 2*10 + 3 = 123.
-const sortByI32KeyProg = `import "std/sort" as sort;
+const sortByKeyProg = `import "core/cmp";
 struct P { k: i32, tag: i32 }
 function main(): i32 {
     let xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
-    let s = sort.sort_by_i32_key(xs, (p: P): i32 => { return p.k; });
+    let s = cmp.sort_by_key(xs, (p: P): i32 => { return p.k; });
     return s[0].k * 100 + s[1].k * 10 + s[2].k;
 }
 `
 
-// TestNativeSortByI32Key exercises the shipped `import "std/sort"`
-// `sort_by_i32_key` on interp / x86-64 / wasm.
-func TestNativeSortByI32Key(t *testing.T) {
-	p := writeIterProg(t, sortByI32KeyProg)
+// TestNativeSortByKey exercises the shipped core/cmp `sort_by_key` on
+// interp / x86-64 / wasm.
+func TestNativeSortByKey(t *testing.T) {
+	p := writeIterProg(t, sortByKeyProg)
 	if _, code := runFixtureInterp(t, p, ""); code != 123 {
-		t.Errorf("sort_by_i32_key interp = %d, want 123", code)
+		t.Errorf("sort_by_key interp = %d, want 123", code)
 	}
 	if _, code := runFixtureX86_64(t, p, ""); code != 123 {
-		t.Errorf("sort_by_i32_key x86-64 = %d, want 123", code)
+		t.Errorf("sort_by_key x86-64 = %d, want 123", code)
 	}
-	if code := runWasm(t, sortByI32KeyProg); code != 123 {
-		t.Errorf("sort_by_i32_key wasm = %d, want 123", code)
+	if code := runWasm(t, sortByKeyProg); code != 123 {
+		t.Errorf("sort_by_key wasm = %d, want 123", code)
 	}
 }
 
-// TestNativeSortByI32KeyArm64 is the arm64 leg (CI-gated; qemu).
-func TestNativeSortByI32KeyArm64(t *testing.T) {
-	p := writeIterProg(t, sortByI32KeyProg)
+// TestNativeSortByKeyArm64 is the arm64 leg (CI-gated; qemu).
+func TestNativeSortByKeyArm64(t *testing.T) {
+	p := writeIterProg(t, sortByKeyProg)
 	if _, code := runFixtureArm64(t, p, ""); code != 123 {
-		t.Errorf("sort_by_i32_key arm64 = %d, want 123", code)
+		t.Errorf("sort_by_key arm64 = %d, want 123", code)
 	}
 }
 
-// TestSelfHostSortByI32Key drives `sort_by_i32_key` through the self-hosted
+// TestSelfHostSortByI32Key drives an i32-key projection sort through the self-hosted
 // x86-64 compiler and oracle-checks the result. It asserts BEHAVIOUR, not the
 // routing tag: a closure-typed param over a generic `T[]` currently lowers via
 // the AST emitter rather than the IR path on the self-host, which is still
@@ -187,8 +187,8 @@ func TestSelfHostSortByI32Key(t *testing.T) {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
-	// Inline the helper (the self-host single-program driver doesn't resolve
-	// `import "std/sort"`); same body as the shipped sort_by_i32_key.
+	// Inline the helper: the self-host single-program driver doesn't resolve
+	// imports.
 	prog := `struct P { k: i32, tag: i32 }
 function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
     let out: T[] = arr;

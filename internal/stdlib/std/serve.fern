@@ -115,6 +115,7 @@ import "std/stream";
 import "std/net";
 import "std/time";
 import "std/metrics";
+import "std/tls";
 import "std/tls/server";
 import "std/tls/ktls";
 import "std/i64";
@@ -1626,7 +1627,7 @@ function __peer_of(fd: i32): Option[net.SocketAddr] {
 
 // __tls_session(opts) — a fresh TLS session for a connection under
 // `Config.tls`, or none without it.
-function __tls_session(opts: Config): Result[__Tls, server.TlsError] {
+function __tls_session(opts: Config): Result[__Tls, tls.TlsError] {
   match (opts.tls) {
     Some(cfg) => {
       let offered: server.Config = cfg;
