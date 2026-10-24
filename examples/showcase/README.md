@@ -112,6 +112,8 @@ It requires Playwright and a Chromium executable:
 ```sh
 PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
   node examples/showcase/tests/browser.mjs http://localhost:8080
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
+  node examples/showcase/tests/interaction.browser.mjs http://localhost:8080
 ```
 
 ## Real-time latency
@@ -133,3 +135,13 @@ These calls allocate no heap memory. The host reuses its graphics buffer and run
 The build compiles the core Wasm module before asset preparation and creates all three compressed variants.
 
 Pause and hidden tabs stop the animation loop. Reduced-motion preferences select pause by default.
+
+## Fullscreen and touch controls
+
+Fractal, Rally, Mosaic, Wave, Swarm, and Pulse have fullscreen controls.
+Browsers without the Fullscreen API use an expanded view with a visible exit button.
+Canvas coordinates account for any space around the rendered image after a resize.
+
+Touch controls cover paddle movement, paint strokes, palette selection, sequencer notes, and all particle interaction modes.
+Swarm retains the last touch position until the visitor selects Free flow or resets the field.
+Fractal has touch zoom buttons and a control to hide or show its panels.

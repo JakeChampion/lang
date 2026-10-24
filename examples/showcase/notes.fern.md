@@ -76,20 +76,20 @@ pub function document(state: State, req: HttpRequest, notice: string, status: i3
     token = signed(state, common.token());
   }
   let entries: Note[] = state.entries.get();
-  let html: string = "<section class=\"notes-intro app-intro\"><div class=\"eyebrow\">05 / THE HYPERTEXT WEB</div><h1>Leave a little<br><em>something.</em></h1>"
-    + "<p>A guestbook for this corner of the internet. No JavaScript. No account. Just a form, a server, and your words.</p>"
+  let html: string = "<section class=\"notes-intro app-intro\"><div class=\"eyebrow\">05 / THE HYPERTEXT WEB</div><h1><em>Guestbook.</em></h1>"
+    + "<p>Post a public note with an HTML form. The server validates submissions and adds them to an Atom feed.</p>"
     + "<div class=\"tech-chips\"><span>Server-rendered HTML</span><span>POST → 303 → GET</span><span>Signed cookies</span><a href=\"/notes/feed.xml\">Atom feed ↗</a></div></section>";
   if (notice != "") {
     html = html + "<p class=\"notice\" role=\"status\">" + common.escape(notice) + "</p>";
   }
   html = html + "<div class=\"notes-layout\"><form class=\"note-form\" method=\"post\" action=\"/notes/\"><span class=\"eyebrow\">YOUR NOTE</span>"
     + "<input type=\"hidden\" name=\"token\" value=\"" + common.escape(token) + "\"><label for=\"name\">Name</label>"
-    + "<input id=\"name\" name=\"name\" maxlength=\"48\" autocomplete=\"nickname\" required placeholder=\"What should we call you?\">"
-    + "<label for=\"message\">A thought, a hello, a small discovery.</label><textarea id=\"message\" name=\"message\" maxlength=\"600\" rows=\"5\" required placeholder=\"I was here, and…\"></textarea>"
-    + "<button class=\"button primary\" type=\"submit\">Pin your note ↗</button><p class=\"fine-print\">Notes are public. This demo keeps the last 80 notes in server memory and resets on restart.</p></form>"
+    + "<input id=\"name\" name=\"name\" maxlength=\"48\" autocomplete=\"nickname\" required placeholder=\"Your name\">"
+    + "<label for=\"message\">Message</label><textarea id=\"message\" name=\"message\" maxlength=\"600\" rows=\"5\" required placeholder=\"Your message\"></textarea>"
+    + "<button class=\"button primary\" type=\"submit\">Post note</button><p class=\"fine-print\">Notes are public. This demo keeps the last 80 notes in server memory and resets on restart.</p></form>"
     + "<section class=\"note-wall\" aria-label=\"Guestbook notes\">";
   if (entries.len() == 0) {
-    html = html + "<article class=\"paper-note seed-note\"><span class=\"note-pin\"></span><p>The web can still feel like a place. Leave the first note.</p><footer>Fern, in action <span>✳</span></footer></article>";
+    html = html + "<article class=\"paper-note seed-note\"><span class=\"note-pin\"></span><p>No notes yet. Add the first one.</p><footer>Fern, in action <span>✳</span></footer></article>";
   }
   let at: i32 = entries.len() - 1;
   while (at >= 0) {
@@ -98,7 +98,7 @@ pub function document(state: State, req: HttpRequest, notice: string, status: i3
       + "</p><footer>" + common.escape(note.name) + "<a href=\"#note-" + note.id + "\" aria-label=\"Link to note\">↗</a></footer></article>";
     at = at - 1;
   }
-  html = html + "</section></div><details class=\"how-it-works\"><summary>How Fern makes this work</summary><p>The server validates a signed cookie and form token, escapes the text, and returns a redirect. Refresh does not repeat the POST. This entire page works with JavaScript disabled.</p><a href=\"/_src/showcase/notes.fern\">Read the complete implementation ↗</a></details>";
+  html = html + "</section></div><details class=\"how-it-works\"><summary>How it works</summary><p>The server validates a signed cookie and form token, escapes the text, and returns a redirect. Refresh does not repeat the POST. This entire page works with JavaScript disabled.</p><a href=\"/_src/showcase/notes.fern\">Read the complete implementation ↗</a></details>";
   let response: HttpResponse = HttpResponse { ...http.html(common.page("The guestbook", "notes", html)), status: status };
   let item: cookie.SetCookie = cookie.SetCookie { ...cookie.new("fern-notes", token), path: "/notes", same_site: cookie.SameSite.Strict, secure: req.headers.get("X-Forwarded-Proto").unwrap_or("") == "https" };
   return response.with_cookie(item).unwrap_or(http.internal_error("cookie serialization failed")).with_header("Cache-Control", "no-store");

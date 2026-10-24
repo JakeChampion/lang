@@ -73,7 +73,7 @@ Literate modules use their canonical `.fern.md` names. Old `.fern` source links 
 pub function files(): string[] {
   return [
     "fractal/server.fern.md", "fractal/fractal.fern", "fractal/kernel.fern", "fractal/linear.fern", "fractal/series.fern", "fractal/source.fern",
-    "fractal/web/app.js", "fractal/web/delivery.mjs", "fractal/web/style.css", "fractal/web/index.html",
+    "fractal/web/app.js", "fractal/web/delivery.mjs", "fractal/web/fullscreen.mjs", "fractal/web/style.css", "fractal/web/index.html",
     "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md", "showcase/live.fern.md", "showcase/swarm.fern.md",
     "showcase/web/index.html", "showcase/web/home.mjs", "showcase/web/shared/showcase.css", "showcase/web/shared/ui.mjs",
     "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/rally/prediction.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",

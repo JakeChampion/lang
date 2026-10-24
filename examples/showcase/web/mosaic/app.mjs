@@ -1,3 +1,4 @@
+import { mountFullscreen } from "/assets/ui.mjs";
 import { $, status, toast, copy } from "/assets/ui.mjs";
 
 const canvas = $("board"),
@@ -132,7 +133,7 @@ function send() {
 function paint(points) {
   if (!board || socket?.readyState !== WebSocket.OPEN) return;
   if (outbox.length + pending.size > 128) {
-    toast("The canvas connection is slow. Let your strokes catch up.");
+    toast("Connection busy. Wait for your strokes to sync.");
     return;
   }
   for (let start = 0; start < points.length; start += 64) {
@@ -158,7 +159,14 @@ function segment(a, b) {
   return points;
 }
 function point(event) {
-  const rect = canvas.getBoundingClientRect();
+  const bounds = canvas.getBoundingClientRect(),
+    scale = Math.min(bounds.width / 64, bounds.height / 40);
+  const rect = {
+    left: bounds.left + (bounds.width - 64 * scale) / 2,
+    top: bounds.top + (bounds.height - 40 * scale) / 2,
+    width: 64 * scale,
+    height: 40 * scale,
+  };
   return {
     x: Math.max(
       0,
@@ -319,3 +327,5 @@ addEventListener("pagehide", () => {
     socket.close();
   }
 });
+
+mountFullscreen(document.querySelector(".mosaic-layout"));

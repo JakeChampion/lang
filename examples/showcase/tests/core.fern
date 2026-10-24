@@ -135,7 +135,8 @@ function literate_source(): test.TestOutcome {
   let files = ["showcase/server.fern.md", "showcase/common.fern.md"];
   let html = source.render_files(files[0], document, files);
   let pages = [source.Page { name: files[0], html: html }];
-  return test.assert_true(html.contains("A real lesson") && html.contains("href=\"/_src/showcase/common.fern.md\"") && html.contains("<span class=\"k\">return</span>") && source.serve(pages, "showcase/server.fern").status == 200);
+  let reexport = source.highlight_from("export { mountFullscreen } from \"/fractal/fullscreen.mjs\";", "showcase/web/shared/ui.mjs", ["fractal/web/fullscreen.mjs"]);
+  return test.assert_true(html.contains("A real lesson") && html.contains("href=\"/_src/showcase/common.fern.md\"") && html.contains("<span class=\"k\">return</span>") && source.serve(pages, "showcase/server.fern").status == 200 && reexport.contains("<a class=\"import\" href=\"/_src/fractal/web/fullscreen.mjs\""));
 }
 
 function streams_stay_lazy(): test.TestOutcome {

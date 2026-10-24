@@ -1,3 +1,4 @@
+import { mountFullscreen } from "/assets/ui.mjs";
 import { $, status, toast, copy } from "/assets/ui.mjs";
 import { paddle, reconcile, ball } from "./prediction.mjs";
 
@@ -39,7 +40,7 @@ function resize() {
   const rect = canvas.getBoundingClientRect(),
     ratio = Math.min(devicePixelRatio || 1, 2);
   canvas.width = Math.round(rect.width * ratio);
-  canvas.height = Math.round(((rect.width * 9) / 16) * ratio);
+  canvas.height = Math.round(rect.height * ratio);
 }
 resize();
 addEventListener("resize", resize);
@@ -109,17 +110,17 @@ function connect(room = "", newMode = "solo") {
       true,
     );
     $("opponent").textContent = value.game.solo
-      ? "You are playing Fern. The server moves the other paddle and checks every collision."
-      : "A shared court. Send the invite link to your opponent. Each player controls one paddle.";
+      ? "You control the left paddle. Fern controls the right."
+      : "Share the room link with another player. Each player controls one paddle.";
     $("court-message").hidden = value.game.running;
     if (!value.game.running) {
       document.querySelector("#court-message strong").textContent =
         !value.game.solo && value.players < 2
-          ? "A court for two."
-          : "Ready for a rally?";
+          ? "Waiting for another player."
+          : "Ready to play.";
       document.querySelector("#court-message span").textContent =
         !value.game.solo && value.players < 2
-          ? "Share your invite link. Start when your friend arrives."
+          ? "Share the room link, then press Start."
           : "Press Start rally. Move with ↑ ↓, W S, or drag on the court.";
     }
     if (!value.game.solo) {
@@ -176,7 +177,9 @@ addEventListener("keyup", (event) => keys.delete(event.code));
 addEventListener("blur", () => keys.clear());
 function point(event) {
   const rect = canvas.getBoundingClientRect();
-  target = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+  const height = Math.min(rect.height, (rect.width * 9) / 16),
+    top = rect.top + (rect.height - height) / 2;
+  target = Math.max(0, Math.min(1, (event.clientY - top) / height));
 }
 canvas.onpointerdown = (event) => {
   canvas.setPointerCapture(event.pointerId);
@@ -204,8 +207,17 @@ function draw(now) {
     target = Math.min(1, target + dt * 1.6);
   localPaddle = paddle(localPaddle, target, dt);
   canvas.dataset.paddle = localPaddle.toFixed(4);
-  context.setTransform(canvas.width / 960, 0, 0, canvas.height / 540, 0, 0);
-  context.clearRect(0, 0, 960, 540);
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const scale = Math.min(canvas.width / 960, canvas.height / 540);
+  context.setTransform(
+    scale,
+    0,
+    0,
+    scale,
+    (canvas.width - 960 * scale) / 2,
+    (canvas.height - 540 * scale) / 2,
+  );
   context.strokeStyle = "#abc79230";
   context.lineWidth = 1;
   context.setLineDash([5, 12]);
@@ -264,3 +276,7 @@ addEventListener("pagehide", () => {
   clearInterval(timer);
   socket?.close();
 });
+
+mountFullscreen(document.querySelector(".game-layout"));
+
+new ResizeObserver(resize).observe(canvas);

@@ -4,6 +4,7 @@
 // in fractal.fern. In Leaflet's simple CRS that square is lng 0..256 and
 // lat -256..0 at zoom 0, so a point c maps to
 // lng = (re + 2.5) * 64 and lat = (im - 2) * 64.
+import { mountFullscreen } from "./fullscreen.mjs";
 import { TileDelivery, TileCache, percentile } from "./delivery.mjs";
 
 const MAX_ZOOM = 42;
@@ -42,8 +43,10 @@ const map = L.map("map", {
   wheelPxPerZoomLevel: 90,
   maxBounds: [[-320, -64], [64, 320]],
   maxBoundsViscosity: 0.6,
-  zoomControl: true,
+  zoomControl: false,
 });
+
+L.control.zoom({ position: "bottomleft" }).addTo(map);
 
 const Fractal = L.GridLayer.extend({
   createTile(coords, done) {
@@ -280,3 +283,22 @@ async function start() {
 }
 start().catch((error) => setServer(error.message, false));
 window.addEventListener("pagehide", () => delivery?.close());
+
+const viewerControls = document.createElement("div");
+viewerControls.className = "viewer-controls";
+document.body.append(viewerControls);
+const panels = document.createElement("button");
+panels.type = "button";
+panels.className = "fullscreen-toggle";
+panels.textContent = "Hide panels";
+panels.setAttribute("aria-pressed", "false");
+panels.onclick = () => {
+  const hidden = document.body.classList.toggle("panels-hidden");
+  panels.textContent = hidden ? "Show panels" : "Hide panels";
+  panels.setAttribute("aria-pressed", String(hidden));
+};
+viewerControls.append(panels);
+mountFullscreen(document.body, {
+  container: viewerControls,
+  onchange: () => map.invalidateSize(),
+});

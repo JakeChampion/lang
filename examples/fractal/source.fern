@@ -123,7 +123,7 @@ function import_markup(line: string, name: string, files: string[]): Option[stri
 
 function import_start(line: string): Option[i32] {
   let trimmed: string = line.trim_start();
-  if (!trimmed.starts_with("import ") && !trimmed.starts_with("import\t")) {
+  if (!trimmed.starts_with("import ") && !trimmed.starts_with("import\t") && !trimmed.starts_with("export ") && !trimmed.starts_with("export\t")) {
     return None;
   }
   let start: i32 = line.len() - trimmed.len() + 6;
@@ -174,6 +174,9 @@ pub function import_href_from(module: string, current: string, files: string[]):
   let path: string = util.resolve_path(module, directory, "internal/stdlib");
   if (module.ends_with(".mjs") || module.ends_with(".js")) {
     path = util.clean_path(directory + "/" + module);
+  }
+  if (module.starts_with("/fractal/")) {
+    path = "examples/fractal/web/" + module.drop(9);
   }
   if (module.starts_with("/assets/")) {
     path = "examples/showcase/web/shared/" + module.drop(8);

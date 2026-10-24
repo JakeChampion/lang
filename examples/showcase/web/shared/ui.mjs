@@ -1,3 +1,4 @@
+export { mountFullscreen } from "/fractal/fullscreen.mjs";
 export const $ = (id) => document.getElementById(id);
 export function toast(message) {
   let element = document.querySelector(".toast");

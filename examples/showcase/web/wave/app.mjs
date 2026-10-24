@@ -1,3 +1,4 @@
+import { mountFullscreen } from "/assets/ui.mjs";
 import { $, status, toast, copy, bytes } from "/assets/ui.mjs";
 
 const names = ["C4", "D4", "E4", "G4", "A4", "C5", "D5", "E5"];
@@ -225,3 +226,5 @@ addEventListener("pagehide", () => {
   stop();
   if (audioUrl) URL.revokeObjectURL(audioUrl);
 });
+
+mountFullscreen(document.querySelector(".wave-player"));

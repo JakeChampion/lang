@@ -26,8 +26,8 @@
       <div class="app-heading">
         <section class="app-intro">
           <div class="eyebrow">02 / REAL-TIME PLAY</div>
-          <h1>Good old <em>Rally.</em></h1>
-          <p>One ball. Two paddles. A native Fern server calling the shots.</p>
+          <h1><em>Rally.</em></h1>
+          <p>Play Pong against the server, or invite another player.</p>
           <div class="tech-chips">
             <span>WebSocket</span><span>Server-owned physics</span
             ><span>Shared game rooms</span>
@@ -69,7 +69,7 @@
         <aside class="game-sidebar">
           <div>
             <div class="eyebrow">THE SCOREBOARD</div>
-            <h2 style="margin-top: 12px">Keep it in play.</h2>
+            <h2 style="margin-top: 12px">Score</h2>
           </div>
           <div class="game-score">
             <span><small>LEFT</small><b id="score-left">0</b></span
@@ -103,7 +103,7 @@
         </aside>
       </div>
       <details class="how-it-works">
-        <summary>How Fern makes this work</summary>
+        <summary>How it works</summary>
         <p>
           The browser sends paddle targets through a WebSocket. Fern limits
           movement, advances the ball, checks collisions, and returns the shared
@@ -116,8 +116,7 @@
       </details>
     </main>
     <footer class="app-footer">
-      <span>Made with Fern. Open from top to bottom.</span
-      ><a href="/_src/">Read the source ↗</a>
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
     </footer>
     <script type="module" src="./app.mjs"></script>
   </body>

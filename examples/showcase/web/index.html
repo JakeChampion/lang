@@ -8,7 +8,7 @@
       content="Seven working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Fern, in action — small binary, big possibilities</title>
+    <title>Fern web application examples</title>
     <link rel="stylesheet" href="/assets/showcase.css" />
   </head>
   <body>
@@ -30,12 +30,12 @@
     <main class="shell">
       <section class="home-hero">
         <div class="hero-copy">
-          <div class="eyebrow">A language with places to go</div>
-          <h1>Small binary.<br /><em>Big possibilities.</em></h1>
+          <div class="eyebrow">WEB APPLICATIONS IN FERN</div>
+          <h1>Web apps.<br /><em>Built with Fern.</em></h1>
           <p>
-            Seven working applications. One native Fern server. Come for the
-            fractals, stay for the multiplayer, shared canvases, and little
-            musical accidents.
+            Play a game, draw together, or make a sound. These seven examples
+            show Fern on the server and in the browser. Each one includes its
+            source code.
           </p>
           <div class="hero-links">
             <a class="button primary" href="#examples"
@@ -144,13 +144,13 @@
             </g>
           </svg>
           <div class="hero-art-caption">
-            <span>ONE PROCESS. MANY POSSIBILITIES.</span
+            <span>ONE SERVER. SEVEN APPLICATIONS.</span
             ><span>HTTP / WS / SSE / WASM</span>
           </div>
         </div>
       </section>
       <div class="build-strip">
-        <span>Not mockups. <strong>Try the real thing.</strong></span>
+        <span><strong>Seven examples.</strong> Source included.</span>
         <div class="strip-values">
           <span><strong id="binary-size">Native</strong> binary</span
           ><span><strong>07</strong> applications</span
@@ -162,7 +162,7 @@
       </div>
       <section id="examples" aria-labelledby="gallery-title">
         <div class="gallery-top">
-          <h2 id="gallery-title">Choose your next rabbit hole.</h2>
+          <h2 id="gallery-title">Explore the examples.</h2>
           <div class="filter-tabs" aria-label="Filter examples">
             <button type="button" data-filter="all" aria-pressed="true">
               All seven</button
@@ -184,17 +184,17 @@
                   alt=""
                 /><img data-fractal="2" alt="" /><img data-fractal="3" alt="" />
               </div>
-              <span class="preview-caption">A DIFFERENT WORLD, EVERY ZOOM</span>
+              <span class="preview-caption">NATIVE MANDELBROT TILES</span>
             </div>
             <div class="example-body">
               <div class="example-meta">
                 <span>01 / INFINITE EXPLORATION</span
                 ><span class="open-arrow" aria-hidden="true">↗</span>
               </div>
-              <h3>The fractal explorer</h3>
+              <h3>Fractal explorer</h3>
               <p>
-                Take a very deep breath. Then dive 4 trillion times into the
-                Mandelbrot set, one server-rendered tile at a time.
+                Pan and zoom through the Mandelbrot set. Fern renders PNG tiles
+                with SIMD and perturbation for deep zooms.
               </p>
               <div class="example-tags">
                 <span>SIMD</span><span>PNG encoding</span
@@ -210,7 +210,7 @@
                 ><span class="mini-paddle right"></span
                 ><span class="mini-ball"></span>
               </div>
-              <span class="preview-caption">A CLASSIC. WITH A CONNECTION.</span>
+              <span class="preview-caption">PONG OVER WEBSOCKET</span>
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -219,8 +219,9 @@
               </div>
               <h3>Rally</h3>
               <p>
-                A paddle, a ball, and a worthy opponent. Play the server or
-                invite a friend into your own live game room.
+                Play Pong against the server or share a room with another
+                player. Fern runs the physics. The browser predicts paddle
+                movement.
               </p>
               <div class="example-tags">
                 <span>WebSocket</span><span>Server-owned physics</span
@@ -231,19 +232,17 @@
           <a class="example" href="/mosaic/" data-categories="live media"
             ><div class="example-preview mosaic-preview" aria-hidden="true">
               <canvas id="mosaic-preview" width="64" height="40"></canvas
-              ><span class="preview-caption"
-                >LEAVE A PIXEL. FIND A FRIEND.</span
-              >
+              ><span class="preview-caption">SHARED PIXELS OVER WEBSOCKET</span>
             </div>
             <div class="example-body">
               <div class="example-meta">
                 <span>03 / MAKE IT TOGETHER</span
                 ><span class="open-arrow" aria-hidden="true">↗</span>
               </div>
-              <h3>A little shared canvas</h3>
+              <h3>Mosaic</h3>
               <p>
-                Pick a color and leave your mark. Every brushstroke travels
-                through Fern to everyone else in the room.
+                Draw together on a 64 × 40 pixel board. Changes travel over
+                WebSocket. Download the result as a PNG.
               </p>
               <div class="example-tags">
                 <span>WebSocket</span><span>Immediate room updates</span
@@ -271,9 +270,7 @@
                 ><span style="height: 80%"></span
                 ><span style="height: 18%"></span>
               </div>
-              <span class="preview-caption"
-                >SIXTEEN STEPS. YOUR KIND OF NOISE.</span
-              >
+              <span class="preview-caption">PCM AUDIO FROM A FERN SERVER</span>
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -282,8 +279,8 @@
               </div>
               <h3>Wave lab</h3>
               <p>
-                A pocket-sized music studio. Compose a loop, choose an
-                oscillator, and let Fern turn your pattern into a real WAV file.
+                Choose notes, tempo, and an oscillator. Fern synthesizes a WAV
+                file you can play or download.
               </p>
               <div class="example-tags">
                 <span>Audio synthesis</span><span>Binary codecs</span
@@ -294,9 +291,7 @@
           <a class="example narrow" href="/notes/" data-categories="html"
             ><div class="example-preview notes-preview" aria-hidden="true">
               <div class="mini-note">
-                The web can still<br />feel like a place.<small
-                  >LEAVE A LITTLE SOMETHING. ↗</small
-                >
+                HTML forms.<br />No JavaScript.<small>POST A NOTE ↗</small>
               </div>
             </div>
             <div class="example-body">
@@ -304,10 +299,10 @@
                 <span>05 / THE HYPERTEXT WEB</span
                 ><span class="open-arrow" aria-hidden="true">↗</span>
               </div>
-              <h3>The guestbook</h3>
+              <h3>Guestbook</h3>
               <p>
-                A small corner for hellos and discoveries. Real HTML forms,
-                signed cookies, and an Atom feed. JavaScript not required.
+                Post a note through an HTML form. The server validates a signed
+                cookie and form token. Entries are also available as Atom.
               </p>
               <div class="example-tags">
                 <span>Server-rendered HTML</span><span>Forms + cookies</span
@@ -335,8 +330,8 @@
               </div>
               <h3>Pulse</h3>
               <p>
-                The server, with the lid off. Watch real memory, CPU, requests,
-                and latency change as you explore the other applications.
+                Inspect process memory, CPU, request times, and active
+                connections from the server that handles your request.
               </p>
               <div class="example-tags">
                 <span>RSS + cgroups</span><span>Live telemetry</span
@@ -350,7 +345,7 @@
               <div class="swarm-orbit orbit-two"></div>
               <div class="swarm-orbit orbit-three"></div>
               <span class="preview-caption"
-                >A WHOLE ATMOSPHERE. RIGHT HERE.</span
+                >FERN KERNEL / WEBGL / WEB AUDIO</span
               >
             </div>
             <div class="example-body">
@@ -360,9 +355,8 @@
               </div>
               <h3>Swarm</h3>
               <p>
-                A particle field you can touch. An atmosphere you can hear. Fern
-                compiles to WebAssembly and runs every particle and audio sample
-                on your device.
+                Move a particle field and play synthesized audio. Fern computes
+                both in the browser through WebAssembly.
               </p>
               <div class="example-tags">
                 <span>Fern → Wasm</span><span>WebGL</span
@@ -380,20 +374,17 @@
       </section>
       <section class="source-callout">
         <div>
-          <div class="eyebrow" style="margin-bottom: 16px">
-            NOTHING BEHIND THE CURTAIN
-          </div>
-          <h2>Curiosity comes with source code.</h2>
+          <div class="eyebrow" style="margin-bottom: 16px">SOURCE CODE</div>
+          <h2>Read the implementation.</h2>
           <p>
-            Each application links to its actual implementation. Follow the
-            imports, inspect the protocols, and take an idea into your next Fern
-            project.
+            Each demo links to its Fern and browser code. The literate modules
+            explain the design beside the code they compile.
           </p>
         </div>
-        <a class="button" href="/_src/">Open the source browser ↗</a>
+        <a class="button" href="/_src/">Browse source ↗</a>
       </section>
       <footer class="site-footer">
-        <span>✳ Fern, in action. Built to be explored.</span>
+        <span>✳ Fern examples</span>
         <div>
           <a href="https://jakechampion.github.io/lang/">Documentation</a
           ><a

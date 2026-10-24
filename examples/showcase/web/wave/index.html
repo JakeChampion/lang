@@ -26,98 +26,107 @@
       <div class="app-heading">
         <section class="app-intro">
           <div class="eyebrow">04 / SOUND FROM SCRATCH</div>
-          <h1>A small pattern.<br /><em>A little possibility.</em></h1>
-          <p>
-            Draw a melody. Choose your sound. Fern synthesizes the samples and
-            sends back a real, loopable WAV file.
-          </p>
+          <h1>WAV <em>sequencer.</em></h1>
+          <p>Build a 16-step pattern. Fern synthesizes it into a WAV file.</p>
           <div class="tech-chips">
             <span>24 kHz PCM audio</span><span>Four oscillators</span
             ><span>ETag caching</span>
           </div>
         </section>
         <div class="status" id="connection" role="status">
-          Ready when you are
+          Choose notes, then press Play.
         </div>
       </div>
-      <section class="wave-panel" aria-label="Music sequencer">
-        <div class="wave-panel-top">
-          <h2>WAVE LAB / 16-STEP SEQUENCER</h2>
-          <span class="wave-meter" id="pattern-label">C MAJOR PENTATONIC</span>
-        </div>
-        <div class="sequence-scroll">
-          <div class="sequencer-wrap">
-            <div class="note-labels" id="note-labels" aria-hidden="true"></div>
-            <div
-              class="sequencer"
-              id="sequencer"
-              role="group"
-              aria-label="Sixteen-step melody. Arrow keys move focus. Space toggles a note."
-            ></div>
-          </div>
-          <div class="step-numbers" id="step-numbers" aria-hidden="true"></div>
-        </div>
-        <div class="wave-controls">
-          <button class="button primary" id="play">Play your loop ▶</button
-          ><button
-            class="button"
-            id="stop"
-            style="color: #dce8ce; border-color: #506447"
-          >
-            Stop</button
-          ><label
-            >Tempo
-            <input
-              type="range"
-              id="bpm"
-              min="60"
-              max="180"
-              value="112"
-            /><output id="bpm-value" for="bpm">112</output> BPM</label
-          ><label
-            >Oscillator
-            <select id="voice" style="border-color: #506447">
-              <option value="sine">Sine / soft</option>
-              <option value="triangle">Triangle / warm</option>
-              <option value="square">Square / arcade</option>
-              <option value="saw">Saw / bright</option>
-            </select></label
-          >
-        </div>
-        <div class="waveform-wrap">
-          <canvas
-            id="waveform"
-            width="960"
-            height="128"
-            aria-label="Waveform of the server-generated audio"
-          ></canvas>
-          <div class="waveform-info">
-            <b id="render-ms">—</b>FERN SYNTHESIS<br /><span id="audio-size"
-              >Play to render this pattern.</span
+      <div class="wave-player">
+        <section class="wave-panel" aria-label="Music sequencer">
+          <div class="wave-panel-top">
+            <h2>WAVE LAB / 16-STEP SEQUENCER</h2>
+            <span class="wave-meter" id="pattern-label"
+              >C MAJOR PENTATONIC</span
             >
           </div>
+          <div class="sequence-scroll">
+            <div class="sequencer-wrap">
+              <div
+                class="note-labels"
+                id="note-labels"
+                aria-hidden="true"
+              ></div>
+              <div
+                class="sequencer"
+                id="sequencer"
+                role="group"
+                aria-label="Sixteen-step melody. Arrow keys move focus. Space toggles a note."
+              ></div>
+            </div>
+            <div
+              class="step-numbers"
+              id="step-numbers"
+              aria-hidden="true"
+            ></div>
+          </div>
+          <div class="wave-controls">
+            <button class="button primary" id="play">Play ▶</button
+            ><button
+              class="button"
+              id="stop"
+              style="color: #dce8ce; border-color: #506447"
+            >
+              Stop</button
+            ><label
+              >Tempo
+              <input
+                type="range"
+                id="bpm"
+                min="60"
+                max="180"
+                value="112"
+              /><output id="bpm-value" for="bpm">112</output> BPM</label
+            ><label
+              >Oscillator
+              <select id="voice" style="border-color: #506447">
+                <option value="sine">Sine / soft</option>
+                <option value="triangle">Triangle / warm</option>
+                <option value="square">Square / arcade</option>
+                <option value="saw">Saw / bright</option>
+              </select></label
+            >
+          </div>
+          <div class="waveform-wrap">
+            <canvas
+              id="waveform"
+              width="960"
+              height="128"
+              aria-label="Waveform of the server-generated audio"
+            ></canvas>
+            <div class="waveform-info">
+              <b id="render-ms">—</b>FERN SYNTHESIS<br /><span id="audio-size"
+                >Play to render this pattern.</span
+              >
+            </div>
+          </div>
+        </section>
+        <div class="wave-bottom">
+          <div class="button-group">
+            <button class="button" id="shuffle">Random pattern</button
+            ><button class="button" id="clear">Clear pattern</button
+            ><button class="button" id="share">Share this loop ↗</button
+            ><a
+              class="button"
+              id="download"
+              href="/wave/render.wav?download=1"
+              download="fern-loop.wav"
+              >Download WAV ↓</a
+            >
+          </div>
+          <p class="fine-print">
+            One note per step. Click a note again for a rest. Audio starts only
+            when you press Play.
+          </p>
         </div>
-      </section>
-      <div class="wave-bottom">
-        <div class="button-group">
-          <button class="button" id="shuffle">Surprise me ↗</button
-          ><button class="button" id="clear">Clear pattern</button
-          ><button class="button" id="share">Share this loop ↗</button
-          ><a
-            class="button"
-            id="download"
-            href="/wave/render.wav?download=1"
-            download="fern-loop.wav"
-            >Download WAV ↓</a
-          >
-        </div>
-        <p class="fine-print">
-          One note per step. Click a note again for a rest. Audio starts only
-          when you press Play.
-        </p>
       </div>
       <details class="how-it-works">
-        <summary>How Fern makes this work</summary>
+        <summary>How it works</summary>
         <p>
           Your URL describes the notes, tempo, and oscillator. Fern validates
           that pattern, generates a 16-bit PCM waveform, applies a short
@@ -129,8 +138,7 @@
       </details>
     </main>
     <footer class="app-footer">
-      <span>Made with Fern. Open from top to bottom.</span
-      ><a href="/_src/">Read the source ↗</a>
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
     </footer>
     <script type="module" src="./app.mjs"></script>
   </body>

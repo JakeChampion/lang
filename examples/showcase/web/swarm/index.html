@@ -27,10 +27,10 @@
       <div class="app-heading">
         <section class="app-intro">
           <div class="eyebrow">07 / FERN IN YOUR BROWSER</div>
-          <h1>A little <em>atmosphere.</em></h1>
+          <h1>Fern in <em>WebAssembly.</em></h1>
           <p>
-            Thousands of particles. One living field. Fern becomes WebAssembly
-            and runs right here, on your device.
+            An interactive particle field and synthesizer. Fern computes the
+            positions and audio. WebGL and Web Audio handle output.
           </p>
           <div class="tech-chips">
             <span>Fern → Wasm</span><span>WebGL</span
@@ -41,49 +41,58 @@
           Load the Fern kernel
         </div>
       </div>
-      <div class="swarm-stage">
-        <canvas
-          id="field"
-          tabindex="0"
-          aria-label="Interactive particle field. Move the pointer to attract particles. Hold Shift to repel. Arrow keys move the attractor. Space pauses the field."
-          >Your browser needs Canvas to display the particle field.</canvas
-        >
-        <div class="swarm-caption" aria-hidden="true">
-          <span>FERN / WEBASSEMBLY</span
-          ><span id="gesture">MOVE TO ATTRACT · SHIFT TO REPEL</span>
+      <div class="swarm-player">
+        <div class="swarm-stage">
+          <canvas
+            id="field"
+            tabindex="0"
+            aria-label="Interactive particle field. Touch or drag to move the field. Select Attract, Repel, or Free flow. Arrow keys also move the attractor. Space pauses the field."
+            >Your browser needs Canvas to display the particle field.</canvas
+          >
+          <div class="swarm-caption" aria-hidden="true">
+            <span>FERN / WEBASSEMBLY</span
+            ><span id="gesture">TOUCH OR DRAG TO MOVE THE FIELD</span>
+          </div>
         </div>
-      </div>
-      <div class="toolbar swarm-controls">
-        <div class="button-group">
-          <button class="button primary" id="pause">Pause field</button
-          ><button class="button" id="reset">Reset field</button
-          ><button class="button" id="audio">Enable audio ♫</button>
+        <div class="toolbar swarm-controls">
+          <div class="button-group">
+            <button class="button primary" id="pause">Pause field</button
+            ><button class="button" id="reset">Reset field</button
+            ><button class="button" id="audio">Enable audio ♫</button>
+          </div>
+          <label
+            >Particles
+            <input
+              id="density"
+              type="range"
+              min="512"
+              max="16384"
+              step="512"
+              value="4096"
+            /><output id="count" for="density">4,096</output></label
+          ><label
+            >Interaction
+            <select id="interaction">
+              <option value="1">Attract</option>
+              <option value="-1">Repel</option>
+              <option value="0">Free flow</option>
+            </select></label
+          ><label
+            >Tone
+            <select id="tone">
+              <option value="165">E · warm</option>
+              <option value="220" selected>A · clear</option>
+              <option value="330">E · bright</option>
+            </select></label
+          >
         </div>
-        <label
-          >Particles
-          <input
-            id="density"
-            type="range"
-            min="512"
-            max="16384"
-            step="512"
-            value="4096"
-          /><output id="count" for="density">4,096</output></label
-        ><label
-          >Tone
-          <select id="tone">
-            <option value="165">E · warm</option>
-            <option value="220" selected>A · clear</option>
-            <option value="330">E · bright</option>
-          </select></label
-        >
-      </div>
-      <div class="swarm-readings">
-        <div><b id="fps">—</b><span>DISPLAY / FPS</span></div>
-        <div><b id="kernel-time">—</b><span>FERN KERNEL / MS</span></div>
-        <div><b id="wasm-size">—</b><span>WASM / KiB</span></div>
-        <div><b id="memory">—</b><span>LINEAR MEMORY / KiB</span></div>
-        <div><b id="renderer">—</b><span>RENDERER</span></div>
+        <div class="swarm-readings">
+          <div><b id="fps">—</b><span>DISPLAY / FPS</span></div>
+          <div><b id="kernel-time">—</b><span>FERN KERNEL / MS</span></div>
+          <div><b id="wasm-size">—</b><span>WASM / KiB</span></div>
+          <div><b id="memory">—</b><span>LINEAR MEMORY / KiB</span></div>
+          <div><b id="renderer">—</b><span>RENDERER</span></div>
+        </div>
       </div>
       <p class="fine-print">
         The field follows a procedural flow, with no saved simulation history.
@@ -91,7 +100,7 @@
         microphone access.
       </p>
       <details class="how-it-works">
-        <summary>How Fern makes this work</summary>
+        <summary>How it works</summary>
         <p>
           The same literate Fern module compiles to native code or a Wasm core
           module. Two scalar exports compute particle coordinates and PCM audio
@@ -105,8 +114,7 @@
       </details>
     </main>
     <footer class="app-footer">
-      <span>Made with Fern. Open from top to bottom.</span
-      ><a href="/_src/">Read the source ↗</a>
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
     </footer>
     <script type="module" src="./app.mjs"></script>
   </body>

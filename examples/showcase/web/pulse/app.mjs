@@ -1,3 +1,4 @@
+import { mountFullscreen } from "/assets/ui.mjs";
 import { $, bytes, json, status, toast, fitCanvas } from "/assets/ui.mjs";
 
 let source,
@@ -247,3 +248,5 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("pagehide", stop);
 start();
+
+mountFullscreen(document.querySelector("main"));

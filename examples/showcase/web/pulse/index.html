@@ -25,12 +25,9 @@
     <main id="main">
       <div class="app-heading">
         <section class="app-intro">
-          <div class="eyebrow">06 / UNDER THE HOOD</div>
-          <h1>The server.<br /><em>With a pulse.</em></h1>
-          <p>
-            Real measurements from the process serving this page. Open another
-            application and watch the machine respond.
-          </p>
+          <div class="eyebrow">06 / PROCESS METRICS</div>
+          <h1>Server <em>metrics.</em></h1>
+          <p>Live memory, CPU, and request metrics from this Fern process.</p>
           <div class="tech-chips">
             <span>Process RSS + CPU</span><span>Live event stream</span
             ><a href="/pulse/metrics">Prometheus ↗</a
@@ -133,7 +130,7 @@
           </table>
         </section>
         <section class="chart-panel">
-          <h2>THE APPLICATIONS, RIGHT NOW</h2>
+          <h2>APPLICATION ACTIVITY</h2>
           <dl class="runtime-list">
             <div>
               <dt>FRACTAL TILES RENDERED</dt>
@@ -180,7 +177,7 @@
         </section>
       </div>
       <details class="how-it-works">
-        <summary>How Fern makes this work</summary>
+        <summary>How it works</summary>
         <p>
           One-second server-sent events carry real process samples. OS reads
           share a short cache across viewers. RSS measures resident physical
@@ -201,8 +198,7 @@
       >
     </main>
     <footer class="app-footer">
-      <span>Made with Fern. Open from top to bottom.</span
-      ><a href="/_src/">Read the source ↗</a>
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
     </footer>
     <script type="module" src="./app.mjs"></script>
   </body>

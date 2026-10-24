@@ -1,3 +1,4 @@
+import { mountFullscreen } from "/assets/ui.mjs";
 import { $, status, toast } from "/assets/ui.mjs";
 import { load } from "./kernel.mjs";
 const canvas = $("field"),
@@ -173,7 +174,7 @@ function pointer(e) {
   const r = canvas.getBoundingClientRect();
   px = (e.clientX - r.left) / r.width;
   py = (e.clientY - r.top) / r.height;
-  force = e.shiftKey ? -1 : 1;
+  force = e.shiftKey ? -1 : Number($("interaction").value);
   refresh();
 }
 canvas.onpointerdown = (e) => {
@@ -181,9 +182,11 @@ canvas.onpointerdown = (e) => {
   pointer(e);
 };
 canvas.onpointermove = pointer;
-canvas.onpointerleave = () => {
-  force = 0;
-  refresh();
+canvas.onpointerleave = (event) => {
+  if (event.pointerType === "mouse") {
+    force = 0;
+    refresh();
+  }
 };
 canvas.onkeydown = (e) => {
   if (
@@ -216,7 +219,9 @@ canvas.onkeydown = (e) => {
       py + (e.key === "ArrowDown" ? 0.04 : e.key === "ArrowUp" ? -0.04 : 0),
     ),
   );
-  force = e.key === "Escape" ? 0 : e.shiftKey ? -1 : 1;
+  force =
+    e.key === "Escape" ? 0 : e.shiftKey ? -1 : Number($("interaction").value);
+  if (e.key === "Escape") $("interaction").value = "0";
   refresh();
 };
 canvas.addEventListener("webglcontextlost", (e) => {
@@ -281,6 +286,10 @@ $("audio").onclick = async () => {
   }
 };
 $("tone").onchange = synthesize;
+$("interaction").onchange = () => {
+  force = Number($("interaction").value);
+  refresh();
+};
 addEventListener("resize", resize);
 addEventListener("visibilitychange", () => {
   previous = 0;
@@ -314,3 +323,7 @@ try {
   status("connection", error.message, false, true);
   $("pause").disabled = $("audio").disabled = true;
 }
+
+mountFullscreen(document.querySelector(".swarm-player"));
+
+new ResizeObserver(resize).observe(canvas);

@@ -1595,7 +1595,8 @@
   }
   .app-intro h1,
   .app-heading h1 {
-    font-size: 52px;
+    font-size: clamp(40px, 12vw, 52px);
+    overflow-wrap: anywhere;
   }
   .app-intro p {
     font-size: 14px;
@@ -1859,5 +1860,123 @@
   }
   .swarm-preview {
     min-height: 240px;
+  }
+}
+
+.game-layout.is-fullscreen {
+  grid-template-rows: auto 1fr;
+  align-content: start;
+  gap: 12px;
+}
+.game-layout.is-fullscreen .court-wrap {
+  height: calc(100dvh - 190px);
+  min-height: 180px;
+}
+.game-layout.is-fullscreen .court-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+.mosaic-layout.is-fullscreen {
+  align-content: start;
+  gap: 12px;
+}
+.mosaic-layout.is-fullscreen .mosaic-stage {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 240px);
+  min-height: 200px;
+}
+.mosaic-layout.is-fullscreen .mosaic-stage canvas {
+  height: 0;
+  min-height: 0;
+  flex: 1;
+  object-fit: contain;
+  aspect-ratio: auto;
+}
+.swarm-player.is-fullscreen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100dvh;
+}
+.swarm-player.is-fullscreen .swarm-stage {
+  flex: 1;
+  min-height: 180px;
+}
+.swarm-player.is-fullscreen #field {
+  height: 100%;
+  min-height: 0;
+}
+.swarm-player.is-fullscreen .swarm-readings {
+  margin: 0;
+  padding: 8px;
+}
+.swarm-player.is-fullscreen .swarm-readings b {
+  font-size: 20px;
+}
+.wave-player.is-fullscreen {
+  height: 100dvh;
+}
+.fullscreen-bar {
+  margin-bottom: 12px;
+}
+.is-fullscreen .fullscreen-bar {
+  flex: none;
+  margin-bottom: 0;
+}
+.is-fullscreen .toolbar {
+  margin-top: 8px;
+}
+canvas {
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (max-width: 720px) {
+  .game-layout.is-fullscreen .court-wrap {
+    height: calc(100dvh - 230px);
+  }
+  .mosaic-layout.is-fullscreen .mosaic-stage {
+    height: calc(100dvh - 330px);
+  }
+  .swarm-player.is-fullscreen .swarm-readings {
+    display: none;
+  }
+}
+@media (pointer: coarse) {
+  .button,
+  .filter-tabs button,
+  .swatch,
+  summary,
+  select {
+    min-height: 44px;
+  }
+  .swatch {
+    min-width: 44px;
+  }
+  .filter-tabs {
+    flex-wrap: wrap;
+  }
+  .sequencer button {
+    min-height: 36px;
+    min-width: 36px;
+  }
+  .sequence-scroll {
+    touch-action: pan-x;
+  }
+  .palette {
+    gap: 8px;
+  }
+}
+@media (pointer: coarse) {
+  .palette {
+    grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+  }
+  .sequencer {
+    grid-template-rows: repeat(8, 36px);
+  }
+  .note-labels {
+    grid-template-rows: repeat(8, 36px);
   }
 }

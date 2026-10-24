@@ -26,10 +26,10 @@
       <div class="app-heading">
         <section class="app-intro">
           <div class="eyebrow">03 / MAKE IT TOGETHER</div>
-          <h1>Many hands.<br /><em>One little canvas.</em></h1>
+          <h1>Shared <em>pixel canvas.</em></h1>
           <p>
-            Leave a pixel. Paint a tiny world. Open this page in another window
-            and watch your strokes arrive.
+            Pick a color and draw. Anyone with the room link can edit this
+            board.
           </p>
           <div class="tech-chips">
             <span>WebSocket</span><span>Immediate local paint</span
@@ -42,7 +42,7 @@
       </div>
       <div class="mosaic-layout">
         <aside class="palette-panel">
-          <h2>A little color.</h2>
+          <h2>Brush color</h2>
           <div class="palette" id="palette" aria-label="Brush color"></div>
           <label><input id="grid" type="checkbox" /> Show the grid</label>
           <p class="fine-print">
@@ -80,7 +80,7 @@
               ><button class="button" id="new-room">Start a new canvas</button>
             </div>
             <span id="sync" class="fine-print" role="status"
-              >A fresh pattern, ready for your mark.</span
+              >Draw to start.</span
             >
           </div>
           <div class="game-stats">
@@ -94,7 +94,7 @@
         </section>
       </div>
       <details class="how-it-works">
-        <summary>How Fern makes this work</summary>
+        <summary>How it works</summary>
         <p>
           The browser displays each stroke immediately and sends bounded JSON
           over a WebSocket. Fern validates every pixel, updates the board, and
@@ -106,8 +106,7 @@
       </details>
     </main>
     <footer class="app-footer">
-      <span>Made with Fern. Open from top to bottom.</span
-      ><a href="/_src/">Read the source ↗</a>
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
     </footer>
     <script type="module" src="./app.mjs"></script>
   </body>

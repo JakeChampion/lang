@@ -116,7 +116,7 @@ pub function page(title: string, app: string, body: string): string {
     + "<body class=\"app-page " + app + "-page\"><a class=\"skip-link\" href=\"#main\">Skip to content</a>"
     + "<header class=\"app-nav\"><a class=\"brand\" href=\"/\"><span class=\"brand-mark\">✳</span> fern<span class=\"brand-suffix\"> / in action</span></a>"
     + "<nav><a href=\"/\">All examples</a><a href=\"/_src/showcase/" + app + ".fern\">View source ↗</a></nav></header>"
-    + "<main id=\"main\">" + body + "</main><footer class=\"app-footer\"><span>Made with Fern. Open from top to bottom.</span>"
+    + "<main id=\"main\">" + body + "</main><footer class=\"app-footer\"><span>Built with Fern.</span>"
     + "<a href=\"/_src/\">Read the source ↗</a></footer></body></html>";
 }
 ```
