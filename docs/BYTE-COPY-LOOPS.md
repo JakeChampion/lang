@@ -11,14 +11,22 @@ while (i < src.len()) { a = a.append(src[i]); i = i + 1; }
 
 let i = 0;
 while (i < n) { a = a.with(at + i, src[from + i]); i = i + 1; }
+
+let i = 0;
+while (i < n) { a = a.append(a[a.len() - dist]); i = i + 1; }
 ```
+
+The third shape is the LZ77 back-reference copy. Its source is the receiver
+itself, so when `dist` is less than `n` the appended bytes repeat the last
+`dist` bytes. A read of `a[from + i]` with an invariant `from` is the same
+copy. Its distance is the receiver's length before the loop minus `from`.
 
 The arrays must be owned `u8[]` values, the source and offsets invariant, and
 the body exactly the read, update and increment. Counts may be invariant
 values, integer literals or the length of an invariant value. The pass keeps
-the final index, including zero for a negative count. A source carried by the
-receiver's evolving phi, additional effects, extra loop-carried state and
-other loop shapes retain their scalar walk.
+the final index, including zero for a negative count. Other reads of the
+receiver's evolving phi keep their scalar walk. Additional effects, extra
+loop-carried state and other loop shapes also keep it.
 
 Each replacement is an ordinary typed call that consumes the receiver and
 borrows the source. The unit planner and independent verifier account for
@@ -34,10 +42,14 @@ still alive, and releases the consumed receiver afterwards. Native helpers
 use Fern ownership lowering over the packed array representation. WASM uses
 the corresponding linear-memory headers and `memory.copy`.
 
+The back-reference helper aborts when `dist` is less than 1 or more than the
+receiver's length. It copies in chunks that double in size. Each chunk reads
+only bytes that already hold their final values.
+
 `ssarc` pushes the private runtime calls in reverse parameter order. Their
-physical ownership signatures consume the receiver at push slot 3 or 4;
-native entry shims and WASM parameter declarations use that same convention.
-The runtime need and symbol inventories include both parent helpers.
+physical ownership signatures consume the receiver at push slot 2, 3 or 4.
+Native entry shims and WASM parameter declarations use that same convention.
+The runtime need and symbol inventories include all three parent helpers.
 
 The byte-copy tests cover native helper bodies with reuse enabled and
 disabled, all three targets, exact allocation counts, ordinary and sanitized
