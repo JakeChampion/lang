@@ -1,6 +1,7 @@
 // Checked decimal integer conversion.
 // A sign is optional. Whitespace and non-ASCII digits are invalid.
 
+import "core/cmp";
 import "std/error";
 import "std/i32";
 
@@ -25,7 +26,13 @@ pub function (e: IntError) message(): string {
   }
 }
 
+pub function (e: IntError) to_string(): string {
+  return e.message();
+}
+
 impl error.Error for IntError {}
+
+impl cmp.Display for IntError {}
 
 // Parse the complete string, including the full signed 64-bit range.
 pub function int64(text: string): Result[i64, IntError] {
