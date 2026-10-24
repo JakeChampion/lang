@@ -2,12 +2,15 @@ package e2ecompiler
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const playgroundProgram = `import "std/i64";
@@ -29,10 +32,14 @@ func buildPlaygroundDriver(t *testing.T) string {
 
 func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 	t.Helper()
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("playground driver needs a supported native compiler host")
+	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "playground_run.fern")
 	bin := filepath.Join(dir, "playground_run")
-	cmd := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux",
+	cmd := exec.Command(buildFernCLIBin(t), "-target", target,
 		"-embed", stdlib, "-o", bin, filepath.Join(dir, "playground_run.fern"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building the playground driver failed: %v\n%s", err, out)
@@ -48,7 +55,12 @@ func runPlayground(t *testing.T, bin, cwd, src string, args ...string) (string, 
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() < 0 {
+			t.Fatalf("run playground %v: %v\n%s", args, err, errb.String())
+		}
+	}
 	return out.String(), errb.String(), cmd.ProcessState.ExitCode()
 }
 
