@@ -30099,6 +30099,14 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
     while (go_sup && !p.at_end()) {
       let parent_at: Par = p;
       let parent_ident: boolean = p.peek_ident().len() > 0;
+      let parent_path: Par = p.advance();
+      while (parent_path.peek_punct() == "." && parent_path.peek_ident_at(1).len() > 0) {
+        parent_path = parent_path.advance().advance();
+      }
+      if (parent_path.peek_punct() == "::") {
+        p = parent_path;
+        break;
+      }
       let (sup_name, sup_ret, sup_end) = parse_type_name(p);
       let parent_ref: TypeRef = parse_type_ref(sup_name);
       if (!parent_ident || parent_ref.array_depth > 0 || parent_ref.is_tuple || parent_ref.is_fn || parent_ref.is_view) {

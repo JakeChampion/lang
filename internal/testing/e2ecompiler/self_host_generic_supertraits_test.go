@@ -175,25 +175,25 @@ pub trait Default[A, B] { function value(a: A, b: B): i32 { return A + B(); } }`
 			}
 			if strings.HasPrefix(tc.name, "imported") || tc.name == "qualified-parent" {
 				for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi", "arm64-darwin"} {
-					dest := filepath.Join(filepath.Dir(path), target)
-					cmd := runX86_64Bin(cli.runner, cli.bin, "-target", target, "-o", dest, path, cli.stdlib)
-					cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-					if out, err := cmd.CombinedOutput(); err != nil {
-						t.Fatalf("%s build: %v\n%s", target, err, out)
-					}
-					if target == "arm64-darwin" {
-						continue
-					}
-					cmd = exec.Command(dest)
-					if target == "arm64-linux" {
-						cmd = exec.Command("qemu-aarch64", dest)
-					}
-					if target == "wasm32-wasi" {
-						cmd = exec.Command("wasmtime", "run", dest)
-					}
-					if out, err := cmd.CombinedOutput(); err != nil {
-						t.Errorf("%s run: %v\n%s", target, err, out)
-					}
+					t.Run(target, func(t *testing.T) {
+						if target == "arm64-darwin" {
+							dest := filepath.Join(filepath.Dir(path), target)
+							cmd := runX86_64Bin(cli.runner, cli.bin, "-target", target, "-o", dest, path, cli.stdlib)
+							cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+							if out, err := cmd.CombinedOutput(); err != nil {
+								t.Fatalf("%s build: %v\n%s", target, err, out)
+							}
+							return
+						}
+						stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+						if code != 0 {
+							t.Fatalf("%s exit %d\n%s", target, code, stderr)
+						}
+						allocs, frees, live := parseLeakcheck(t, target, stderr)
+						if allocs != frees || live != 0 {
+							t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", target, allocs, frees, live)
+						}
+					})
 				}
 				return
 			}
