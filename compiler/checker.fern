@@ -979,7 +979,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([t_string(), t_i32(), t_string(), t_i32(), t_i32()], true);
   }
   if (name == "__mismatch_bytes") {
-    return ([t_array(t_u8()), t_i32(), t_array(t_u8()), t_i32(), t_i32()], true);
+    return ([t_view(t_u8()), t_i32(), t_view(t_u8()), t_i32(), t_i32()], true);
   }
   if (name == "__mismatch_bytes_str") {
     return ([t_array(t_u8()), t_i32(), t_string(), t_i32(), t_i32()], true);

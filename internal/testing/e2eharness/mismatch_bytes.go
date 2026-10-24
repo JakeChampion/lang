@@ -16,7 +16,7 @@ func MismatchBytesSource(allocations bool) string {
 	return strings.Replace(mismatchBytesProgram, "// Allocation probe", probe, 1)
 }
 
-const mismatchBytesProgram = `function slow(a: u8[], ao0: i32, b: u8[], bo0: i32, n0: i32): i32 {
+const mismatchBytesProgram = `function slow(a: [u8], ao0: i32, b: [u8], bo0: i32, n0: i32): i32 {
     let ao: i32 = ao0;
     let bo: i32 = bo0;
     let n: i32 = n0;
@@ -36,6 +36,12 @@ const mismatchBytesProgram = `function slow(a: u8[], ao0: i32, b: u8[], bo0: i32
 }
 fip function scan(a: u8[], ao: i32, b: u8[], bo: i32, n: i32): i32 {
     return __mismatch_bytes(a, ao, b, bo, n);
+}
+fip function scan_view(a: [u8], ao: i32, b: [u8], bo: i32, n: i32): i32 {
+    return __mismatch_bytes(a, ao, b, bo, n);
+}
+function check_view(a: [u8], ao: i32, b: [u8], bo: i32, n: i32): boolean {
+    return scan_view(a, ao, b, bo, n) == slow(a, ao, b, bo, n);
 }
 function check(a: u8[], ao: i32, b: u8[], bo: i32, n: i32): boolean {
     return scan(a, ao, b, bo, n) == slow(a, ao, b, bo, n);
@@ -82,5 +88,24 @@ function main(): i32 {
     all = all.with(128, 17 as u8);
     if (scan(held, 0, other, 0, 256) != 256 || scan(all, 0, other, 0, 256) != 128) { return 7; }
     if (scan([], 0, all, 0, 256) != 0 || scan(all, 0, [], 0, 256) != 0) { return 8; }
+    let text: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz";
+    let words: [u8] = text.as_bytes();
+    if (scan_view(words, 0, words[36:62], 0, 99) != 26 || scan_view(words[36:62], 0, words, 0, 99) != 26) { return 12; }
+    let starts: i32[] = [0, 1, 7, 16, 33];
+    let offsets: i32[] = [0 - 1, 0, 3, 17, 40, 41];
+    let counts: i32[] = [0 - 1, 0, 5, 40, 2147483647];
+    for lo in starts {
+        let window: [u8] = other[lo:lo + 40];
+        if (scan_view(window, 0, other, lo, 99) != 40) { return 13; }
+        for ao in offsets {
+            for bo in offsets {
+                for n in counts {
+                    if (!check_view(window, ao, other, bo + lo, n) || !check_view(other, ao + lo, window, bo, n)) { return 14; }
+                    if (!check_view(words, ao, window, bo, n) || !check_view(window, ao, words, bo, n)) { return 15; }
+                    if (!check_view(words, ao, words[lo:words.len()], bo, n)) { return 16; }
+                }
+            }
+        }
+    }
     return 0;
 }`

@@ -5700,7 +5700,7 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.op_mismatch()) };
   }
   if (ins.str == "__mismatch_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_mismatch_bytes())) };
+    return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.mismatch_name(), 5)) };
   }
   if (ins.str == "__mismatch_bytes_str") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_mismatch_bytes_str())) };
