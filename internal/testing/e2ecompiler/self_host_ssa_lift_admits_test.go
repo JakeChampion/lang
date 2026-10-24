@@ -61,10 +61,11 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// (124) adds one with two inputs, popped as struct_set's. tcp_recv,
 	// tcp_send, tcp_connect, udp_send, udp_send_bytes and read_line are
 	// retired: std/net and io.read_line report the failure they could not.
+	// vbitmask adds one admitted kind with one input and one integer result.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=418 declined=3\n"
+		"registered=419 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
