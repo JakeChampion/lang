@@ -8,14 +8,16 @@ pub struct Rewritten { func: ssasem.Func, changed: boolean }
 
 struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
 
-struct Loop { ok: boolean, head: i32, body: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, src: i32, from: i32, at: i32 }
+// A back loop appends a[a.len() - from] to a itself, or a[from + i] when it
+// is rebased, with -1 for a zero from.
+struct Loop { ok: boolean, head: i32, body: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
 
 function none(): ssa.SInst {
   return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
 
 function no_loop(): Loop {
-  return Loop { ok: false, head: 0, body: 0, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, src: 0, from: 0, at: 0 };
+  return Loop { ok: false, head: 0, body: 0, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, src: 0, from: 0, at: 0, back: false, rebased: false };
 }
 
 function bytes(t: typeinfo.Type): boolean {
@@ -196,6 +198,12 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
   if (!copy_update(update, l.array.result)) {
     return no;
   }
+  if (!write) {
+    let back = back_loop(f, ix, l, update);
+    if (back.ok) {
+      return back;
+    }
+  }
   let read = source_read(f, ix, update, l);
   if (read.result < 0) {
     return no;
@@ -220,6 +228,40 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
     return no;
   }
   let out = Loop { ...l, update: update, src: read.args[0], from: from, at: at };
+  if (!closed_body(f, ix, out)) {
+    return no;
+  }
+  return out;
+}
+
+function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop {
+  let no = no_loop();
+  let read = ix.defs[update.args[1]];
+  if (read.kind_tag != ssasem.array_get() || read.imm == ssasem.check_only() || read.args.len() != 2 || read.args[0] != l.array.result) {
+    return no;
+  }
+  let inc = ix.defs[l.counter.args[1 - l.outer]];
+  if (!increment(ix, inc, l.counter.result)) {
+    return no;
+  }
+  let allowed = [update.result, read.result, read.args[1], inc.result, inc.args[1]];
+  let from = offset(ix, read.args[1], l.counter.result, l.head, l.body);
+  let rebased = from >= 0 - 1;
+  let at = ix.defs[read.args[1]];
+  if (!rebased && at.kind_tag == 9 && at.str == "-" && at.args.len() == 2 && invariant(ix, at.args[1], l.head, l.body)) {
+    let len = ix.defs[at.args[0]];
+    if (len.kind_tag != ssasem.length() || len.args.len() != 1 || len.args[0] != l.array.result) {
+      return no;
+    }
+    from = at.args[1];
+    allowed = allowed.append(len.result);
+  } else if (!rebased) {
+    return no;
+  }
+  if (!pure_body(f.graph.blocks[ix.blocks[l.body]], allowed)) {
+    return no;
+  }
+  let out = Loop { ...l, update: update, src: 0 - 1, from: from, at: 0 - 1, back: true, rebased: rebased };
   if (!closed_body(f, ix, out)) {
     return no;
   }
@@ -319,6 +361,7 @@ function outside(blk: ssa.SBlock, l: Loop, fresh: i32): ssa.SBlock {
 function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.Func {
   let fresh = f.values.len();
   let values = f.values.append(f.values[l.counter.result]);
+  let distance: ssa.SInst[] = [];
   let zero = l.counter.args[l.outer];
   let from = l.from;
   if (from < 0) {
@@ -331,7 +374,18 @@ function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.
   let receiver = l.array.args[l.outer];
   let args = [receiver, l.src, from, l.count];
   let ci = 0;
-  if (l.update.kind_tag == ssasem.with()) {
+  if (l.back) {
+    distance = rebased_distance(l, receiver, values.len());
+    while (values.len() < fresh + 1 + distance.len()) {
+      values = values.append(f.values[l.counter.result]);
+    }
+    let dist = l.from;
+    if (distance.len() > 0) {
+      dist = distance[distance.len() - 1].result;
+    }
+    args = [receiver, dist, l.count];
+    ci = 2;
+  } else if (l.update.kind_tag == ssasem.with()) {
     args = [receiver, at, l.src, from, l.count];
     ci = 1;
   }
@@ -340,7 +394,7 @@ function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.
   for old in f.graph.blocks {
     let b = old;
     if (b.id == l.head) {
-      b = replaced_header(b, l, call, zero);
+      b = replaced_header(b, l, call, zero, distance);
     } else if (b.id == l.body) {
       b = ssa.SBlock { ...b, insts: [], term: ssa.STerm { ...b.term, target: l.exit } };
     } else {
@@ -356,10 +410,22 @@ function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.
   if (ssasem.find_contract_in(calls, contracts[ci].name) < 0) {
     calls = calls.append(contracts[ci]);
   }
-  return ssasem.Func { ...f, source_positions: replaced_source(f.source_positions, l, fresh), calls: calls, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
+  return ssasem.Func { ...f, source_positions: replaced_source(f.source_positions, l, values.len() - 1), calls: calls, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
 }
 
-function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32): ssa.SBlock {
+// The distance of a rebased back loop is the receiver's entry length minus from.
+function rebased_distance(l: Loop, receiver: i32, next: i32): ssa.SInst[] {
+  if (!l.rebased) {
+    return [];
+  }
+  let len = ssa.SInst { kind_tag: ssasem.length(), result: next, args: [receiver], imm: 0, str: "" };
+  if (l.from < 0) {
+    return [len];
+  }
+  return [len, ssa.SInst { kind_tag: 9, result: next + 1, args: [next, l.from], imm: 0, str: "-" }];
+}
+
+function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32, distance: ssa.SInst[]): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
     if (ins.result == l.count) {
@@ -370,6 +436,7 @@ function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32): ss
     let ins = old;
     if (ins.result != l.count) {
       if (ins.result == l.array.result) {
+        insts = util.append_all(insts, distance);
         ins = call;
       } else if (ins.result == l.counter.result) {
         ins = copy(ins.result, zero);
@@ -380,12 +447,12 @@ function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32): ss
   return ssa.SBlock { ...b, insts: insts, preds: [b.preds[l.outer]] };
 }
 
-function replaced_source(source: sourcepos.SourceInfo, l: Loop, fresh: i32): sourcepos.SourceInfo {
+function replaced_source(source: sourcepos.SourceInfo, l: Loop, last: i32): sourcepos.SourceInfo {
   if (source.entry.line == 0) {
     return source;
   }
   let values = source.values;
-  while (values.len() <= fresh) {
+  while (values.len() <= last) {
     values = values.append(sourcepos.SourcePos { line: 0, col: "0" });
   }
   return sourcepos.SourceInfo { ...source, values: values.with(l.array.result, sourcepos.at(source.values, l.update.result)) };

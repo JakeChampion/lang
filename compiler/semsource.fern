@@ -6930,6 +6930,7 @@ function byte_copy_contracts(): ssasem.Contract[] {
   return [
     ssasem.Contract { name: "__fern_bytes_append_range", params: [bytes, bytes, t_i32(), t_i32()], modes: [counted, borrow, value, value], result: bytes },
     ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, t_i32(), bytes, t_i32(), t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_append_back", params: [bytes, t_i32(), t_i32()], modes: [counted, value, value], result: bytes },
   ];
 }
 

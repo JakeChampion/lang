@@ -89,6 +89,7 @@ pub function table(): Table {
   rows = add(rows, move_helpers(), sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["__fern_bytes_append_range"], sig(3, effect_move(), result_fresh()));
   rows = add(rows, ["__fern_bytes_write_range"], sig(4, effect_move(), result_fresh()));
+  rows = add(rows, ["__fern_bytes_append_back"], sig(2, effect_move(), result_fresh()));
   rows = add(rows, ["__fern_alloc_reuse"], sig(0, effect_move_if_held(), result_fresh()));
   rows = add(rows, ["__fern_bytes_into"], sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["__fern_str_grow", "__fern_str_grow_range"], inert(result_none()));

@@ -26,6 +26,29 @@ const byteCopyLoopFunctions = `@noinline function bytes(n: i32): u8[] {
   while (i < n) { a = a.with(at + i, src[from + i]); i = i + 1; }
   return a;
 }
+@noinline function back(own a: u8[], n: i32, dist: i32): u8[] {
+  let i = 0;
+  while (i < n) { a = a.append(a[a.len() - dist]); i = i + 1; }
+  return a;
+}
+@noinline function rebased(own a: u8[], n: i32, dist: i32): u8[] {
+  let i = 0; let start = a.len() - dist;
+  while (i < n) { a = a.append(a[start + i]); i = i + 1; }
+  return a;
+}
+@noinline function repeat(a: u8[], n: i32, dist: i32): u8[] {
+  let out: u8[] = []; let i = 0;
+  while (i < a.len()) { out = out.append(a[i]); i = i + 1; }
+  i = 0; let j = out.len() - dist;
+  while (i < n) { out = out.append(out[j]); i = i + 1; j = j + 1; }
+  return out;
+}
+@noinline function same(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) { return false; }
+  let i = 0;
+  while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+  return true;
+}
 @noinline function sum(a: u8[]): i32 {
   let i = 0; let n = 0;
   while (i < a.len()) { n = n + (a[i] as i32); i = i + 1; }
@@ -56,6 +79,14 @@ func TestSelfHostByteCopyLoops(t *testing.T) {
   let z = put(grown, 0 - 2147483647, more, 2147483647, 0);
   let negative = append(z, more, 0 - 2147483647, 0 - 1);
   if (__heap_alloc_count() != before3 || negative.len() != 204) { return 4; }
+  let kept = negative;
+  let repeated = back(negative, 300, 7);
+  if (kept.len() != 204 || !same(repeated, repeat(kept, 300, 7))) { return 5; }
+  let dists: i32[] = [1, 2, 3, 8, 9, 64];
+  for d in dists {
+    if (!same(back(bytes(70), 129, d), repeat(bytes(70), 129, d)) || back(bytes(70), 0 - 1, d).len() != 70) { return 6; }
+    if (!same(rebased(bytes(70), 129, d), repeat(bytes(70), 129, d)) || rebased(bytes(70), 0 - 1, d).len() != 70) { return 7; }
+  }
   return 0;
 }`, input, copies)
 				stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -71,7 +102,7 @@ func TestSelfHostByteCopyLoops(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, name := range []string{"__fern_bytes_append_range", "__fern_bytes_write_range"} {
+				for _, name := range []string{"__fern_bytes_append_range", "__fern_bytes_write_range", "__fern_bytes_append_back"} {
 					if !strings.Contains(string(assembly), name) {
 						t.Errorf("loop did not reach %s", name)
 					}
@@ -204,6 +235,10 @@ func TestSelfHostByteCopyLoopBounds(t *testing.T) {
 			"target":          "put(a, 2, src, 0, 3)",
 			"negative-source": "append(a, src, 0 - 1, 1)",
 			"overflow-target": "put(a, 2147483647, src, 0, 2)",
+			"back-distance":   "back(a, 2, 5)",
+			"back-zero":       "back(a, 2, 0)",
+			"rebased-before":  "rebased(a, 2, 5)",
+			"rebased-at-end":  "rebased(a, 2, 0)",
 		} {
 			t.Run(target+"/"+name, func(t *testing.T) {
 				program := byteCopyLoopFunctions + "function main(): i32 { let a = bytes(4); let src = bytes(4); let out = " + call + "; return out.len(); }"
