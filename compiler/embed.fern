@@ -214,9 +214,9 @@ const ASSET_ALL: string = "__fern_assets";
 
 const ASSET_ALL_BYTES: string = "__fern_assets_bytes";
 
-pub struct Folded { module: parser.Module, errs: string[] }
+pub struct Folded { module: parser.Module, errs: util.Diag[] }
 
-struct FoldAcc { assets: Assets, errs: string[] }
+struct FoldAcc { assets: Assets, errs: util.Diag[] }
 
 pub function fold_assets(mod: parser.Module, assets: Assets): Folded {
   let acc: FoldAcc = FoldAcc { assets: assets, errs: [] };
@@ -266,12 +266,9 @@ function callee_ident(callee: ast.Expr): string {
   return "";
 }
 
-function at(line: i32, col: i32): string {
-  return util.i32_to_string(line) + ":" + util.i32_to_string(col) + ": ";
-}
-
 function fail(c: ast.ExprCall, a: FoldAcc, msg: string): (ast.Expr, FoldAcc, boolean) {
-  return (ast.ExprCall { ...c }, FoldAcc { ...a, errs: a.errs.append(msg) }, true);
+  let d: util.Diag = util.Diag { related: [], length: 0, code: "E094", message: msg, line: c.line, col: c.col, fix: None };
+  return (ast.ExprCall { ...c }, FoldAcc { ...a, errs: a.errs.append(d) }, true);
 }
 
 function is_bytes_form(name: string): boolean {
@@ -291,7 +288,7 @@ function content(c: ast.ExprCall, a: Assets, idx: i32, name: string): Content {
     },
     None => {}
   }
-  let msg: string = at(c.line, c.col) + name + ": embedded asset \"" + a.names[idx] + "\" under " + a.root;
+  let msg: string = name + ": embedded asset \"" + a.names[idx] + "\" under " + a.root;
   return Content { lit: ast.ExprCall { ...c }, err: msg + " is not valid UTF-8 — read it as u8[] with " + name + "_bytes" };
 }
 
@@ -301,7 +298,7 @@ function bytes_literal(bs: u8[], line: i32, col: i32): ast.Expr {
 
 function resolve_one(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, FoldAcc, boolean) {
   if (c.args.len() != 1) {
-    return fail(c, a, at(c.line, c.col) + name + " takes exactly one argument, got " + util.i32_to_string(c.args.len()));
+    return fail(c, a, name + " takes exactly one argument, got " + util.i32_to_string(c.args.len()));
   }
   let lit: string = "";
   let is_lit: boolean = false;
@@ -313,14 +310,14 @@ function resolve_one(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
     _ => {}
   }
   if (!is_lit) {
-    return fail(c, a, at(c.line, c.col) + name + " needs a string literal — assets are resolved at compile time, so the name cannot be computed");
+    return fail(c, a, name + " needs a string literal — assets are resolved at compile time, so the name cannot be computed");
   }
   if (!a.assets.present) {
-    return fail(c, a, at(c.line, c.col) + name + "(\"" + lit + "\") but no assets were embedded — pass -embed DIR to the compiler");
+    return fail(c, a, name + "(\"" + lit + "\") but no assets were embedded — pass -embed DIR to the compiler");
   }
   let idx: i32 = lookup(a.assets, lit);
   if (idx < 0) {
-    let msg: string = at(c.line, c.col) + "no embedded asset \"" + lit + "\" under " + a.assets.root;
+    let msg: string = "no embedded asset \"" + lit + "\" under " + a.assets.root;
     let did: string = suggest(a.assets, lit);
     if (did.len() > 0) {
       return fail(c, a, msg + "; did you mean \"" + did + "\"?");
@@ -336,10 +333,10 @@ function resolve_one(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
 
 function resolve_all(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, FoldAcc, boolean) {
   if (c.args.len() != 0) {
-    return fail(c, a, at(c.line, c.col) + name + " takes no arguments, got " + util.i32_to_string(c.args.len()));
+    return fail(c, a, name + " takes no arguments, got " + util.i32_to_string(c.args.len()));
   }
   if (!a.assets.present) {
-    return fail(c, a, at(c.line, c.col) + name + "() but no assets were embedded — pass -embed DIR to the compiler");
+    return fail(c, a, name + "() but no assets were embedded — pass -embed DIR to the compiler");
   }
   let elems: ast.Expr[] = [];
   let i: i32 = 0;
