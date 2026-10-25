@@ -227,6 +227,7 @@ pub struct Streams {
   limits: i64[],
   opened: i64[],
   limits_dirty: boolean[],
+  closed: i64[],
   open_blocked: i64[],
   recv_max: i64,
   recv_window: i64,
@@ -258,7 +259,7 @@ pub struct Streams {
 <<7 pub function table(server: boolean, local: params.Params): Streams>>=
 pub function table(server: boolean, local: params.Params): Streams {
   let none: params.Params = params.defaults();
-  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0, index: [], base: 0 as i64 };
+  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], closed: [0 as i64, 0 as i64, 0 as i64, 0 as i64], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0, index: [], base: 0 as i64 };
   let bidi: i32 = s.__peer_type(false);
   return Streams { ...s, limits: s.limits.with(bidi, local.initial_max_streams_bidi).with(bidi + 2, local.initial_max_streams_uni) };
 }
@@ -1133,6 +1134,13 @@ function (s: Streams) __restate(id: i64, send: boolean): Streams {
   return s;
 }
 
+function (s: Streams) __initial_streams(t: i32): i64 {
+  if ((t & 2) == 0) {
+    return s.local.initial_max_streams_bidi;
+  }
+  return s.local.initial_max_streams_uni;
+}
+
 function (s: Streams) __retire_done(i: i32): Streams {
   let st: Stream = s.list[i];
   if (st.closed || !__done(st)) {
@@ -1141,7 +1149,14 @@ function (s: Streams) __retire_done(i: i32): Streams {
   let cur: Streams = Streams { ...s, retired: s.retired + 1 };
   if (!cur.__is_local(st.id)) {
     let t: i32 = (st.id & 3) as i32;
-    cur = Streams { ...cur, limits: cur.limits.with(t, cur.limits[t] + 1), limits_dirty: cur.limits_dirty.with(t, true) };
+    let initial: i64 = cur.__initial_streams(t);
+    let target: i64 = cur.closed[t] + 1 + initial;
+    cur = Streams { ...cur, closed: cur.closed.with(t, cur.closed[t] + 1) };
+    // The peer may open its initial number of streams past those it has
+    // closed; the limit is advertised once it moves by an eighth of that.
+    if (target - cur.limits[t] >= __max(1 as i64, initial / 8)) {
+      cur = Streams { ...cur, limits: cur.limits.with(t, target), limits_dirty: cur.limits_dirty.with(t, true) };
+    }
   }
   cur = cur.__put(i, Stream { ...st, closed: true });
   if (cur.retired >= 32 && cur.retired * 2 >= cur.list.len()) {
