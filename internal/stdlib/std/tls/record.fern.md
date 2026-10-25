@@ -518,6 +518,29 @@ pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): 
 }
 ```
 
+Where a writer has built the content into a buffer with room around it, the record is sealed in that buffer: five bytes ahead of the content for the header, and behind it one for the content type and sixteen for the tag.
+
+```fern
+<<19 pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): Result[Sealed, RecordError]>>=
+pub const FRAMED_HEAD: i32 = 5;
+
+pub const FRAMED_TAIL: i32 = 17;
+
+pub function (p: Protection) seal_framed(t: ContentType, own buf: u8[]): Result[Sealed, RecordError] {
+  let n: i32 = buf.len() - FRAMED_HEAD - FRAMED_TAIL;
+  if (n < 0) {
+    return Err(EmptyFragment);
+  }
+  if (n > MAX_FRAGMENT) {
+    return Err(RecordOverflow(n));
+  }
+  __inner_type(t.code(), n)?;
+  __advanceable(p)?;
+  buf = __header(buf, 0, 23, 0x0303, n + 1 + TAG_LEN).with(5 + n, t.code() as u8);
+  return Ok(Sealed { record: __seal(p, buf, 5, n + 1)?, next: __advanced(p) });
+}
+```
+
 ### `20 pub struct Opened`
 
 ```fern

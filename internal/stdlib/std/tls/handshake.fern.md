@@ -2838,6 +2838,32 @@ pub function (s: Server) resumption_psk(nonce: [u8]): Result[u8[], HandshakeErro
   return Ok(keyschedule.resumption_psk(s.conn.suite.hash(), s.res_master, nonce));
 }
 
+// buf holds the content at buf[FRAMED_HEAD:buf.len() - FRAMED_TAIL] with room around it, so one record is sealed
+// where the content was written.
+pub function (s: Server) write_framed(own buf: u8[]): Result[ServerStep, HandshakeError] {
+  if (s.state != S_CONNECTED) {
+    return Err(Misuse("write"));
+  }
+  let w: Wrote = __write_framed(s.conn, buf)?;
+  return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
+}
+
+function __write_framed(c: Conn, own buf: u8[]): Result[Wrote, HandshakeError] {
+  let n: i32 = buf.len() - record.FRAMED_HEAD - record.FRAMED_TAIL;
+  if (c.quic || c.writing == 0 || c.kernel || n > 16384) {
+    return __write(c, record.ApplicationData, buf[record.FRAMED_HEAD:record.FRAMED_HEAD + n]);
+  }
+  match (c.write.seal_framed(record.ApplicationData, buf)) {
+    Ok(s) => {
+      return Ok(Wrote { conn: Conn { ...c, write: s.next }, bytes: s.record });
+    },
+    Err(e) => {
+      return Err(Record(e));
+    }
+  }
+  return Err(Misuse("write"));
+}
+
 pub function (s: Server) write(data: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state != S_CONNECTED) {
     return Err(Misuse("write"));

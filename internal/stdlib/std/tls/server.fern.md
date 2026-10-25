@@ -238,6 +238,12 @@ pub function (s: Session) write(data: [u8]): Result[Step, tls.TlsError] {
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });
 }
 
+// The response in buf, framed as handshake.Server.write_framed takes it, sealed where it was written.
+pub function (s: Session) write_framed(own buf: u8[]): Result[Step, tls.TlsError] {
+  let step: handshake.ServerStep = __step(s.server.write_framed(buf))?;
+  return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });
+}
+
 pub function (s: Session) close(): Result[Step, tls.TlsError] {
   let step: handshake.ServerStep = __step(s.server.close())?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });

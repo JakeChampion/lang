@@ -2932,26 +2932,57 @@ function __serve_send_raw[D: async.Driver](drv: D, c: __Conns, at: i32, payload:
   return (__serve_pend(drv, c, at, rest, opts), Partial);
 }
 
+// The out buffer keeps OUT_HEAD bytes ahead of what is written to it, so a TLS response is sealed as a record in
+// the buffer it is taken in: the header goes there, and the content type and the tag go in OUT_TAIL bytes pushed
+// behind it.
+const OUT_HEAD: string = "\x00\x00\x00\x00\x00";
+
+const OUT_TAIL: string = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+
+function __out_new(): usize {
+  let b: usize = buf_new(4096);
+  buf_push(b, OUT_HEAD);
+  return b;
+}
+
+function __out_reset(b: usize): void {
+  buf_clear(b);
+  buf_push(b, OUT_HEAD);
+}
+
 function __serve_send_out[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config): (__Conns, __Sent) {
   match (c.tls[at]) {
     Secured(sess) => {
-      return __serve_send(drv, c, at, buf_take_bytes(c.out), opts);
+      buf_push(c.out, OUT_TAIL);
+      let framed: u8[] = buf_take_bytes(c.out);
+      buf_push(c.out, OUT_HEAD);
+      c = __Conns { ...c, tls: c.tls.with(at, Plain) };
+      match (sess.write_framed(framed)) {
+        Ok(step) => {
+          return __serve_send_raw(drv, __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) }, at, step.output, opts);
+        },
+        Err(_) => {
+          return (c, Failed);
+        }
+      }
     },
     _ => {}
   }
-  let n: i32 = tcp_send_buf(c.fds[at], c.out, 0);
-  if (n >= buf_len(c.out)) {
-    buf_clear(c.out);
+  let n: i32 = tcp_send_buf(c.fds[at], c.out, OUT_HEAD.len());
+  if (n >= buf_len(c.out) - OUT_HEAD.len()) {
+    __out_reset(c.out);
     return (c, Whole);
   }
   if (n < 0 && n != 0 - __eagain()) {
-    buf_clear(c.out);
+    __out_reset(c.out);
     return (c, Failed);
   }
-  let rest: u8[] = buf_take_bytes(c.out);
+  let sent: i32 = OUT_HEAD.len();
   if (n > 0) {
-    rest = __bytes_from(rest, n);
+    sent = sent + n;
   }
+  let rest: u8[] = __bytes_from(buf_take_bytes(c.out), sent);
+  buf_push(c.out, OUT_HEAD);
   return (__serve_pend(drv, c, at, rest, opts), Partial);
 }
 
@@ -3967,7 +3998,7 @@ function __request_host(plat: platform.Host, req: HttpRequest, opts: Config): (p
 
 function __serve_park[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, fl: __Flight, opts: Config): (__Conns, __Flight[]) {
   let fd: i32 = c.fds[at];
-  if (buf_len(c.out) > 0) {
+  if (buf_len(c.out) > OUT_HEAD.len()) {
     let sent: (__Conns, __Sent) = __serve_send_out(drv, c, at, opts);
     c = sent.0;
     match (sent.1) {
@@ -4511,7 +4542,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
@@ -4710,7 +4741,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };

@@ -432,6 +432,56 @@ function test_bad_keys(): test.TestOutcome {
   return test.assert_eq(sealed(aes.seal(record.ApplicationData, app_data(), 0)), "tls record: a 32-byte key and a 12-byte iv do not fit the cipher suite");
 }
 
+function framed(content: [u8]): u8[] {
+  let buf: u8[] = __alloc_u8(record.FRAMED_HEAD + content.len() + record.FRAMED_TAIL);
+  for i in 0..buf.len() {
+    buf = buf.with(i, 0 as u8);
+  }
+  for i in 0..content.len() {
+    buf = buf.with(record.FRAMED_HEAD + i, content[i]);
+  }
+  return buf;
+}
+
+function framed_matches(p: record.Protection, what: string): string {
+  let want: string = sealed(p.seal(record.ApplicationData, app_data(), 0));
+  match (p.seal_framed(record.ApplicationData, framed(app_data()))) {
+    Ok(s) => {
+      if (hex.encode(s.record) != want) {
+        return what + ": " + hex.encode(s.record);
+      }
+      if (s.next.seq != p.seq + 1 as u64) {
+        return what + ": sequence";
+      }
+      return opened(p.open(one(s.record)));
+    },
+    Err(e) => {
+      return what + ": " + e.message();
+    }
+  }
+  return what;
+}
+
+function test_seal_framed(): test.TestOutcome {
+  let aes: record.Protection = record.protection(keyschedule.Aes128GcmSha256, __codec_bytes(hex.decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5")));
+  let want: string = "23 " + hex.encode(app_data());
+  if (framed_matches(aes, "AES-128-GCM") != want) {
+    return test.fail(framed_matches(aes, "AES-128-GCM"));
+  }
+  return test.assert_eq(framed_matches(client_write(), "ChaCha20-Poly1305"), want);
+}
+
+function test_seal_framed_refusals(): test.TestOutcome {
+  let p: record.Protection = client_write();
+  if (sealed(p.seal_framed(record.ApplicationData, __alloc_u8(21))) != "tls record: a handshake or alert record with no content") {
+    return test.fail("short");
+  }
+  if (sealed(p.seal_framed(record.Handshake, framed([]))) != "tls record: a handshake or alert record with no content") {
+    return test.fail("empty handshake");
+  }
+  return test.assert_eq(sealed(p.seal_framed(record.ApplicationData, framed(__alloc_u8(16385)))), "tls record: 16385 bytes is over the record size limit");
+}
+
 // A record taken from the wire is the open's own, and a held one is opened through a copy, so the held record
 // still carries its ciphertext afterwards.
 function test_record_at(): test.TestOutcome {
@@ -491,6 +541,8 @@ function main(): i32 {
   r = r.it("AES-128-GCM records of RFC 8448", test_aes_128_gcm_trace);
   r = r.it("AES-256-GCM records", test_aes_256_gcm);
   r = r.it("keys that do not fit the suite", test_bad_keys);
+  r = r.it("seal a framed record where it was written", test_seal_framed);
+  r = r.it("seal_framed refusals", test_seal_framed_refusals);
   r = r.it("a record taken from the wire, and a held one opened through a copy", test_record_at);
   return r.finish();
 }
