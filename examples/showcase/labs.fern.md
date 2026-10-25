@@ -71,7 +71,7 @@ function failure(message: string): http.HttpError {
 function restore(directory: string, name: string): Result[Room, string] {
   let db = fernbase.initial();
   if let Some(saved) = store.load(directory, "fernbase-" + name)? {
-    db = json.decode[fernbase.Database](saved)?;
+    db = json.decode[fernbase.Database](saved).map_err((e: json.JsonError): string => e.message())?;
     if (db.rows.len() > 10000 || db.revision < 0) {
       return Err("Invalid database checkpoint.");
     }
@@ -88,7 +88,7 @@ function restore(directory: string, name: string): Result[Room, string] {
   let archive = lantern.empty();
   let revision = 0i64;
   if let Some(saved) = store.load(directory, "lantern-" + name)? {
-    let data = json.decode[SavedArchive](saved)?;
+    let data = json.decode[SavedArchive](saved).map_err((e: json.JsonError): string => e.message())?;
     if (data.revision < 0) {
       return Err("Invalid archive revision.");
     }

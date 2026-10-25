@@ -156,24 +156,29 @@ function main(): i32 {
 	}
 }
 
-func TestFoldRejectsNumberBoolMix(t *testing.T) {
-	got := foldErr(t, `const X: i32 = 1 < true;`)
-	if !strings.Contains(got, "aren't both numbers") {
-		t.Errorf("expected number-path mismatch diagnostic, got %v", got)
+func TestIllTypedConstIsTheCheckersError(t *testing.T) {
+	for src, want := range map[string]string{
+		`const X: i32 = 1 - true;`:     `type error at 1:18: operator "-" requires an integer type, got boolean`,
+		`const X: string = 1;`:         `type error at 1:1: const X: expected string, got i32`,
+		`const X: f32 = 1 + 1.5;`:      `type error at 1:18: operator "+" requires float, got i32`,
+		`const X: i32 = true + 1;`:     `type error at 1:21: operator "+" requires an integer type, got boolean`,
+		`const S: string = "a" - "b";`: `type error at 1:23: operator "-" requires an integer type, got string`,
+		"const A: i32 = 1 + true;\nconst B: i32 = A + 1;\nfunction main(): i32 { return A + B; }": `type error at 1:18: operator "+" requires an integer type, got boolean`,
+	} {
+		if got := foldErr(t, src); got != want {
+			t.Errorf("%s\n  error %q, want %q", src, got, want)
+		}
 	}
 }
 
-func TestFoldRejectsIntFloatMix(t *testing.T) {
-	got := foldErr(t, `const X: f32 = 1 + 1.5;`)
-	if !strings.Contains(got, "aren't both numbers") {
-		t.Errorf("expected numeric-mix rejection, got %v", got)
+func TestWellTypedUnfoldableConstIsE093(t *testing.T) {
+	got := foldErr(t, `const X: i32 = 1 / 0 + (1 + true);`)
+	if !strings.Contains(got, "division by zero") {
+		t.Errorf("a zero divisor outranks a sibling's type error, as the self-host's eval_const does; got %v", got)
 	}
-}
-
-func TestFoldRejectsBoolNonBoolMix(t *testing.T) {
-	got := foldErr(t, `const X: i32 = true + 1;`)
-	if !strings.Contains(got, "bool and non-bool") {
-		t.Errorf("expected bool-path mismatch diagnostic, got %v", got)
+	got = foldErr(t, `const X: f32 = 5;`)
+	if !strings.Contains(got, "1:1: const X: declared type f32") {
+		t.Errorf("a well-typed initializer the folder cannot settle stays the folder's E093; got %v", got)
 	}
 }
 

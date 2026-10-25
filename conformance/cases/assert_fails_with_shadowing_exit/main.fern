@@ -1,0 +1,17 @@
+import "std/i32";
+
+// A failing assert calls the builtin exit even when a parameter named exit
+// (and one named eprint) is in scope: the program stops with status 1, and
+// neither closure runs.
+
+function check(exit: (i32) => void, eprint: (string) => void, n: i32): void {
+  assert(n == 0, f"n is {n}");
+  print("after the assert");
+}
+
+function main(): i32 {
+  print("before");
+  check((c: i32): void => { print("local exit"); }, (s: string): void => { print("local eprint"); }, 3);
+  print("after the call");
+  return 0;
+}

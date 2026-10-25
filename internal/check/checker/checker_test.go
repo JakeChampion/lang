@@ -2576,6 +2576,44 @@ func TestShadowedOrNonExitCallDoesNotDiverge(t *testing.T) {
 	}
 }
 
+func TestAssertAndTodoIgnoreShadowingNames(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"todo-param-closure", `function f(exit: (i32) => void): i32 { todo("later"); }`},
+		{"todo-let-values", `function f(): string {
+			let exit: i32 = 1;
+			let eprint: string = "x";
+			todo;
+		}`},
+		{"todo-arm-binding", `enum Opt { Has(i32), Nil }
+		function f(o: Opt): i32 {
+			match (o) { Has(exit) => { todo; }, Nil => { return 0; } }
+		}`},
+		{"todo-in-closure", `function f(exit: i32): i32 {
+			let g: () => i32 = (): i32 => { todo; };
+			return g() + exit;
+		}`},
+		{"todo-after-owned-move", `function take(own s: string): void { print(s); }
+		function f(own exit: string): i32 {
+			take(exit);
+			todo;
+		}`},
+		{"assert-param-values", `function f(exit: i32, eprint: string): i32 {
+			assert(exit > 0, eprint);
+			return exit;
+		}`},
+		{"assert-in-closure", `function f(exit: i32): i32 {
+			let g: (i32) => i32 = (k: i32): i32 => { assert(k > exit); return k; };
+			return g(2);
+		}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if err := checkSource(t, c.src); err != nil {
+				t.Errorf("assert and todo call the builtins whatever is in scope, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestFoldedAssertFalseDoesNotDiverge(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 { assert(false, "never"); }`)
 	if err != nil {
@@ -8698,5 +8736,18 @@ function main(): i32 { let m: Map[string, i32] = map_new(4); if (m.contains("a")
 	es, _ := err.(diag.Errors)
 	if len(es) != 1 || es[0].(*Error).ErrCode != "E006" {
 		t.Errorf("a user `contains` on Map should redeclare the builtin (E006), got %v", err)
+	}
+}
+
+func TestBoundGenericParameterTakesWhatItsTypeTakes(t *testing.T) {
+	src := `function identity[T](x: T): T { return x; }
+function pair[T](a: T, b: T): i32 { return 2; }
+function main(): i32 {
+    let lit: str = identity[str]("de");
+    let raw: str = "abc";
+    return lit.len() + pair("x", raw);
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
