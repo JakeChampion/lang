@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       name="description"
-      content="Nine working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
+      content="Fifteen working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Fern web application examples</title>
@@ -33,7 +33,7 @@
           <div class="eyebrow">WEB APPLICATIONS IN FERN</div>
           <h1>Web apps.<br /><em>Built with Fern.</em></h1>
           <p>
-            Play a game, draw together, or make a sound. These nine examples
+            Play a game, draw together, or make a sound. These fifteen examples
             show Fern on the server and in the browser. Each one includes its
             source code.
           </p>
@@ -46,7 +46,7 @@
         <div
           class="hero-art"
           role="img"
-          aria-label="One native Fern server connects nine applications through HTTP, WebSocket, and server-sent events."
+          aria-label="One native Fern server connects fifteen applications through HTTP, WebSocket, and server-sent events."
         >
           <svg viewBox="0 0 500 410" aria-hidden="true">
             <path
@@ -165,7 +165,7 @@
           <h2 id="gallery-title">Explore the examples.</h2>
           <div class="filter-tabs" aria-label="Filter examples">
             <button type="button" data-filter="all" aria-pressed="true">
-              All nine</button
+              All fifteen</button
             ><button type="button" data-filter="live" aria-pressed="false">
               Live together</button
             ><button type="button" data-filter="media" aria-pressed="false">
@@ -176,9 +176,215 @@
           </div>
         </div>
         <div class="gallery">
-          <a class="example wide" href="/blockyard/" data-categories="live media">
-            <div class="example-preview blockyard-preview" aria-hidden="true"><canvas id="blockyard-preview" width="660" height="280"></canvas><span class="preview-caption">A SHARED VOXEL WORLD</span><span class="blockyard-count" id="home-blockyard-count">512 seats</span></div>
-            <div class="example-body"><div class="example-meta"><span>09 / BUILD A PLACE TOGETHER</span><span class="open-arrow" aria-hidden="true">↗</span></div><h3>Blockyard</h3><p>Fly through a shared voxel world. Place blocks, build with friends, and meet nearby players. Fern runs the world and the browser terrain kernel.</p><div class="example-tags"><span>Fern Wasm</span><span>WebGL 2</span><span>512 participants</span></div></div>
+          <a class="example" href="/foundry/" data-categories="live media"
+            ><div
+              class="example-preview"
+              style="
+                display: grid;
+                place-content: center;
+                background: linear-gradient(135deg, #12273c, #245342);
+                color: #a7e7bc;
+                font:
+                  clamp(24px, 4vw, 44px) ui-monospace,
+                  monospace;
+                min-height: 210px;
+              "
+              aria-hidden="true"
+            >
+              → ▣ → ▣
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>10 / FACTORY TRANSPORT AND A SHARED LAYOUT</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Foundry</h3>
+              <p>
+                Build transport lines together and measure a large simulation.
+              </p>
+              <div class="example-tags">
+                <span>Fern Wasm</span><span>Measured workloads</span>
+              </div>
+            </div></a
+          >
+          <a class="example" href="/patchbay/" data-categories="live media"
+            ><div
+              class="example-preview"
+              style="
+                display: grid;
+                place-content: center;
+                background: linear-gradient(135deg, #12273c, #245342);
+                color: #a7e7bc;
+                font:
+                  clamp(24px, 4vw, 44px) ui-monospace,
+                  monospace;
+                min-height: 210px;
+              "
+              aria-hidden="true"
+            >
+              ∿ ⌁ ∿
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>11 / A SHARED MUSIC STUDIO</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Patchbay</h3>
+              <p>Make a sequence, play live notes, and record a loop.</p>
+              <div class="example-tags">
+                <span>Fern Wasm</span><span>Measured workloads</span>
+              </div>
+            </div></a
+          >
+          <a class="example" href="/prism/" data-categories="media"
+            ><div
+              class="example-preview"
+              style="
+                display: grid;
+                place-content: center;
+                background: linear-gradient(135deg, #12273c, #245342);
+                color: #a7e7bc;
+                font:
+                  clamp(24px, 4vw, 44px) ui-monospace,
+                  monospace;
+                min-height: 210px;
+              "
+              aria-hidden="true"
+            >
+              ◉ ◯ ◉
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>12 / PROGRESSIVE PATH TRACING</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Prism</h3>
+              <p>Move a sphere and compare native Fern with browser Wasm.</p>
+              <div class="example-tags">
+                <span>Fern Wasm</span><span>Measured workloads</span>
+              </div>
+            </div></a
+          >
+          <a class="example" href="/fernbase/" data-categories="live html"
+            ><div
+              class="example-preview"
+              style="
+                display: grid;
+                place-content: center;
+                background: linear-gradient(135deg, #12273c, #245342);
+                color: #a7e7bc;
+                font:
+                  clamp(24px, 4vw, 44px) ui-monospace,
+                  monospace;
+                min-height: 210px;
+              "
+              aria-hidden="true"
+            >
+              BEGIN → COMMIT
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>13 / TRANSACTIONS AND RECOVERY</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Fernbase</h3>
+              <p>
+                Run SQL, inspect a primary index, and test a private
+                transaction.
+              </p>
+              <div class="example-tags">
+                <span>Fern native</span><span>Measured workloads</span>
+              </div>
+            </div></a
+          >
+          <a class="example" href="/circuit/" data-categories="live media"
+            ><div
+              class="example-preview"
+              style="
+                display: grid;
+                place-content: center;
+                background: linear-gradient(135deg, #12273c, #245342);
+                color: #a7e7bc;
+                font:
+                  clamp(24px, 4vw, 44px) ui-monospace,
+                  monospace;
+                min-height: 210px;
+              "
+              aria-hidden="true"
+            >
+              ⊕ ∧ ¬
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>14 / LOGIC CIRCUITS AND FEEDBACK</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Circuit</h3>
+              <p>
+                Connect gates, build an adder, and step through a feedback loop.
+              </p>
+              <div class="example-tags">
+                <span>Fern Wasm</span><span>Measured workloads</span>
+              </div>
+            </div></a
+          >
+          <a class="example" href="/lantern/" data-categories="live html"
+            ><div
+              class="example-preview"
+              style="
+                display: grid;
+                place-content: center;
+                background: linear-gradient(135deg, #12273c, #245342);
+                color: #a7e7bc;
+                font:
+                  clamp(24px, 4vw, 44px) ui-monospace,
+                  monospace;
+                min-height: 210px;
+              "
+              aria-hidden="true"
+            >
+              Aa → ▤
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>15 / A SEARCHABLE DOCUMENT ARCHIVE</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Lantern</h3>
+              <p>Import Unicode documents and inspect ranked search results.</p>
+              <div class="example-tags">
+                <span>Fern native</span><span>Measured workloads</span>
+              </div>
+            </div></a
+          >
+          <a
+            class="example wide"
+            href="/blockyard/"
+            data-categories="live media"
+          >
+            <div class="example-preview blockyard-preview" aria-hidden="true">
+              <canvas id="blockyard-preview" width="660" height="280"></canvas
+              ><span class="preview-caption">A SHARED VOXEL WORLD</span
+              ><span class="blockyard-count" id="home-blockyard-count"
+                >512 seats</span
+              >
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>09 / BUILD A PLACE TOGETHER</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Blockyard</h3>
+              <p>
+                Fly through a shared voxel world. Place blocks, build with
+                friends, and meet nearby players. Fern runs the world and the
+                browser terrain kernel.
+              </p>
+              <div class="example-tags">
+                <span>Fern Wasm</span><span>WebGL 2</span
+                ><span>512 participants</span>
+              </div>
+            </div>
           </a>
           <a class="example wide" href="/fractal/" data-categories="media"
             ><div class="example-preview fractal-preview" aria-hidden="true">

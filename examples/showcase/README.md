@@ -1,6 +1,6 @@
 # Fern, in action
 
-Nine web applications share one native Fern server. The homepage links each application and its source lesson.
+Fifteen web applications share one native Fern server. The homepage links each application and its source lesson.
 The application modules use literate Fern. Named sections explain the code that Fern compiles.
 
 | Application | URL | Server behavior |
@@ -10,6 +10,12 @@ The application modules use literate Fern. Named sections explain the code that 
 | Mosaic | `/mosaic/` | Shared pixel boards, atomic WebSocket strokes, immediate revision push, PNG export |
 | Gather | `/gather/` | Shared arena for 512 participants, binary WebSocket snapshots, authoritative collection |
 | Blockyard | `/blockyard/` | Shared voxel worlds, 512 participants, spatial WebSocket updates, Fern Wasm terrain and collision, optional durable journal |
+| Foundry | `/foundry/` | Factory transport and a shared layout |
+| Patchbay | `/patchbay/` | A shared music studio |
+| Prism | `/prism/` | Progressive path tracing |
+| Fernbase | `/fernbase/` | Transactions and recovery |
+| Circuit | `/circuit/` | Logic circuits and feedback |
+| Lantern | `/lantern/` | A searchable document archive |
 | Swarm | `/swarm/` | Browser Wasm particle field and PCM synthesis, WebGL, Web Audio, worker |
 | Wave lab | `/wave/` | Sixteen-step sequencer, four oscillators, native PCM WAV synthesis |
 | Guestbook | `/notes/` | HTML forms without JavaScript, signed tokens, 303 redirects, Atom feed |

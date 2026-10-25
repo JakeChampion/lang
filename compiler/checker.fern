@@ -15932,7 +15932,7 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
   for export in mod.exports {
     let ename: string = export.func_name;
     for xfd in mod.funcs {
-      if (xfd.name == ename) {
+      if (xfd.name == ename && xfd.receiver_name.len() > 0 == export.method) {
         if (xfd.all_type_params.len() > 0) {
           out = out.append(dg_at("E054", "@export function \"" + xfd.name + "\" cannot be generic (a world export has a single concrete ABI)", xfd.line, xfd.col));
         }

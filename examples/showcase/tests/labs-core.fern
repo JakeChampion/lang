@@ -1,0 +1,102 @@
+import "../fernbase";
+import "../lantern";
+import "../foundry";
+import "../circuit";
+import "../patchbay";
+import "../prism";
+import "std/array";
+import "std/result";
+import "std/option";
+import "std/f64";
+
+function main(): i32 {
+  let empty = fernbase.initial();
+  let Ok(first) = fernbase.execute(empty, "INSERT INTO entries VALUES ('z','last'); INSERT INTO entries VALUES ('a','first'); SELECT * FROM entries;") else {
+    return 1;
+  };
+  if (first.database.revision != 1 || first.output.rows.len() != 2 || first.output.rows[0].key != "a" || empty.rows.len() != 0) {
+    return 2;
+  }
+  if (fernbase.execute(first.database, "INSERT INTO entries VALUES ('b','second'); INSERT INTO entries VALUES ('a','duplicate');").is_ok() || first.database.rows.len() != 2) {
+    return 3;
+  }
+  let Ok(changed) = fernbase.execute(first.database, "UPDATE entries SET value = 'café; ''Fern''' WHERE key = 'a'; SELECT * FROM entries WHERE key='a';") else {
+    return 4;
+  };
+  if (changed.output.rows[0].value != "café; 'Fern'" || changed.database.revision != 2 || first.database.rows[0].value != "first" || changed.output.comparisons > 2) {
+    return 5;
+  }
+  let Ok(plan) = fernbase.execute(first.database, "EXPLAIN SELECT * FROM entries WHERE key='z';") else {
+    return 6;
+  };
+  if (plan.output.changed || plan.database.revision != 1 || plan.output.rows.len() != 0 || !plan.output.plan.contains("BINARY")) {
+    return 7;
+  }
+  for sql in ["INSERT INTO entries VALUES ('a','unterminated);", "DROP TABLE entries;", "EXPLAIN EXPLAIN SELECT * FROM entries;", "SELECT * FROM entries WHERE key = unquoted;", "INSERT INTO entries VALUES ('','bad');"] {
+    if (fernbase.execute(empty, sql).is_ok()) {
+      return 8;
+    }
+  }
+  let Ok(deleted) = fernbase.execute(first.database, "DELETE FROM entries WHERE key='a'; SELECT * FROM entries;") else {
+    return 9;
+  };
+  if (deleted.output.rows.len() != 1 || deleted.output.rows[0].key != "z") {
+    return 10;
+  }
+  let index = lantern.empty();
+  let Ok(index) = lantern.add(index, lantern.Document { id: 0, title: "Fern native", text: "fern fern server" }) else {
+    return 11;
+  };
+  let Ok(index) = lantern.add(index, lantern.Document { id: 1, title: "Fern browser", text: "Wasm café 東京" }) else {
+    return 12;
+  };
+  let Ok(index) = lantern.add(index, lantern.Document { id: 2, title: "Ocean", text: "The blue sea" }) else {
+    return 13;
+  };
+  let found = lantern.search(index, "FERN fern");
+  if (found.hits.len() != 2 || found.hits[0].id != 0 || found.postings_read != 2 || found.query_terms.len() != 1 || found.hits[0].score <= found.hits[1].score) {
+    return 14;
+  }
+  if (lantern.search(index, "CAFÉ").hits[0].id != 1 || lantern.search(index, "東京").hits[0].id != 1 || lantern.search(index, "unknown").hits.len() != 0 || lantern.search(index, "").hits.len() != 0) {
+    return 15;
+  }
+  if (lantern.add(index, lantern.Document { id: 0, title: "duplicate", text: "x" }).is_ok() || lantern.add(index, lantern.Document { id: 3, title: "", text: "x" }).is_ok()) {
+    return 16;
+  }
+  let layout: i32[] = __alloc_i32(16);
+  layout = layout.with(0, 1).with(1, 2).with(2, 2).with(3, 6);
+  let factory = foundry.factory(16);
+  for tick in 0..129 {
+    factory = foundry.step(layout, factory, 4);
+  }
+  let inventory = 0i64;
+  for amount in factory.cargo {
+    inventory = inventory + amount as i64;
+  }
+  if (factory.produced != factory.consumed + inventory || factory.consumed == 0) {
+    return 17;
+  }
+  let removed = foundry.clear(factory, [0, 1, 2, 3]);
+  if (removed.removed != inventory || removed.cargo[0] != 0 || factory.cargo[0] == 0) {
+    return 18;
+  }
+  if (circuit.gate(3, 1, 0, 0) != 0 || circuit.gate(4, 1, 0, 0) != 1 || circuit.gate(5, 1, 1, 0) != 0 || circuit.gate(9, 0, 0, 0) != 1 || circuit.gate(8, 1, 1, 1) != 0 || circuit.gate(0, 0, 0, 1) != 1) {
+    return 19;
+  }
+  for wave in 0..4 {
+    for frame in 0..100 {
+      let value = patchbay.sample(frame, 48000, 69, wave, frame as f64 / 48000.0, -1.0);
+      if (!value.is_finite() || value.abs() > 0.25) {
+        return 20;
+      }
+    }
+  }
+  if (patchbay.sample(10, 0, 69, 0, 0.1, -1.0) != 0.0 || patchbay.drive(1000.0, 8.0) >= 1.0) {
+    return 21;
+  }
+  let pixel = prism.pixel(10, 10, 32, 20, 0, 6324352, 0.0);
+  if (pixel < 0 || pixel != prism.pixel(10, 10, 32, 20, 0, 6324352, 0.0)) {
+    return 22;
+  }
+  return 0;
+}

@@ -1,4 +1,4 @@
-# One native server, nine web applications
+# One native server, fifteen web applications
 
 This is the entry point for the Fern web showcase. It mounts each application under a separate URL prefix.
 The homepage and browser modules are static files. Fern owns the live state, protocols, images, audio, and HTML forms.
@@ -48,8 +48,10 @@ import "./wave";
 import "./notes";
 import "./metrics";
 import "./encoding";
+import "./studio";
+import "./labs";
 
-pub struct State { voxels: blockyard.State, arena: gather.State, games: rally.State, canvases: mosaic.State, guestbook: notes.State, metrics: metrics.State, fractal: fractal.Stats }
+pub struct State { studios: studio.State, labs: labs.State, voxels: blockyard.State, arena: gather.State, games: rally.State, canvases: mosaic.State, guestbook: notes.State, metrics: metrics.State, fractal: fractal.Stats }
 
 @derive(json.Json)
 struct Meta { apps: i32, instance: string, binary_bytes: i64, uptime_ms: i64, requests: i64 }
@@ -62,7 +64,7 @@ pub function state(binary_bytes: i64, version: string): State {
   let voxels = blockyard.state(renderer.instance);
   let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels);
   return State {
-    voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
+    studios: studio.state(), labs: labs.state(), voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
     fractal: renderer,
   };
 }
@@ -80,6 +82,8 @@ pub function files(): string[] {
     "fractal/server.fern.md", "fractal/fractal.fern", "fractal/kernel.fern", "fractal/linear.fern", "fractal/series.fern", "fractal/source.fern",
     "fractal/web/app.js", "fractal/web/delivery.mjs", "fractal/web/fullscreen.mjs", "fractal/web/style.css", "fractal/web/index.html",
     "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md", "showcase/live.fern.md", "showcase/swarm.fern.md", "showcase/gather.fern.md", "showcase/voxel.fern.md", "showcase/blockyard.fern.md", "showcase/blockyard_world.fern.md", "showcase/blockyard_store.fern.md",
+    "showcase/foundry.fern.md", "showcase/patchbay.fern.md", "showcase/prism.fern.md", "showcase/fernbase.fern.md", "showcase/circuit.fern.md", "showcase/lantern.fern.md", "showcase/studio.fern.md", "showcase/labs.fern.md", "showcase/labs_store.fern.md",
+    "showcase/web/foundry/index.html", "showcase/web/patchbay/index.html", "showcase/web/prism/index.html", "showcase/web/fernbase/index.html", "showcase/web/circuit/index.html", "showcase/web/lantern/index.html", "showcase/web/labs/lantern.mjs", "showcase/web/labs/patchbay.mjs", "showcase/web/labs/prism-worker.mjs", "showcase/web/labs/simulation-worker.mjs", "showcase/web/labs/circuit.mjs", "showcase/web/labs/prism.mjs", "showcase/web/labs/session.mjs", "showcase/web/labs/foundry.mjs", "showcase/web/labs/patchbay-worklet.mjs", "showcase/web/labs/style.css", "showcase/web/labs/shell.mjs", "showcase/web/labs/fernbase.mjs",
     "showcase/web/index.html", "showcase/web/home.mjs", "showcase/web/shared/showcase.css", "showcase/web/shared/ui.mjs", "showcase/web/shared/wasm.mjs",
     "showcase/web/blockyard/index.html", "showcase/web/blockyard/style.css", "showcase/web/blockyard/app.mjs", "showcase/web/blockyard/protocol.mjs", "showcase/web/blockyard/mesh.mjs", "showcase/web/blockyard/mesh-worker.mjs", "showcase/web/blockyard/renderer.mjs",
     "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/rally/prediction.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",
@@ -117,7 +121,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     return Ok(response);
   });
   app = app.get("/api/meta", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let meta: Meta = Meta { apps: 9, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
+    let meta: Meta = Meta { apps: 15, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
     return Ok(http.json_of(meta).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
@@ -138,6 +142,22 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   app = app.get("/blockyard/status", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(blockyard.status(state.voxels, req)?));
   app = app.get("/blockyard/chunk", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(blockyard.chunk(state.voxels, req)?));
   app = app.get("/blockyard/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => blockyard.socket(state.voxels, req));
+  app = app.get("/prism/reference", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.reference(req)?));
+  for name in ["foundry", "patchbay", "circuit"] {
+    let application = name;
+    app = app.get("/" + name + "/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => studio.socket(state.studios, application, req));
+  }
+  for name in ["fernbase", "lantern"] {
+    let application = name;
+    for verb in ["state", "search"] {
+      let action = verb;
+      app = app.get("/" + name + "/" + verb, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.handle(state.labs, application, action, req)?));
+    }
+    for verb in ["query", "import", "recover"] {
+      let action = verb;
+      app = app.post("/" + name + "/" + verb, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.handle(state.labs, application, action, req)?));
+    }
+  }
   app = app.get("/gather/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => gather.socket(state.arena, req));
   app = app.get("/gather/status", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(gather.status(state.arena)));
   app = app.get("/rally/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => rally.socket(state.games, req));
@@ -183,7 +203,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     }
     return Ok(source.serve(pages, name));
   });
-  for name in ["rally", "mosaic", "wave", "notes", "pulse", "swarm", "gather"] {
+  for name in ["rally", "mosaic", "wave", "notes", "pulse", "swarm", "gather", "foundry", "patchbay", "prism", "fernbase", "circuit", "lantern"] {
     let destination: string = "/" + name + "/";
     app = app.get("/" + name, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect(destination)));
   }
