@@ -96,6 +96,14 @@ pub function render_tile(graph: pipeline.Graph, region: Region, limits: pipeline
 }
 
 pub function render_cached_tile(graph: pipeline.Graph, region: Region, limits: pipeline.Limits, cache_bytes: i32, cancelled: () => boolean): Result[CachedTile, pipeline.PipelineError] {
+  return render_cached_tile_mode(graph, region, limits, cache_bytes, false, cancelled);
+}
+
+pub function render_cached_tile_fused(graph: pipeline.Graph, region: Region, limits: pipeline.Limits, cache_bytes: i32, cancelled: () => boolean): Result[CachedTile, pipeline.PipelineError] {
+  return render_cached_tile_mode(graph, region, limits, cache_bytes, true, cancelled);
+}
+
+function render_cached_tile_mode(graph: pipeline.Graph, region: Region, limits: pipeline.Limits, cache_bytes: i32, fused: boolean, cancelled: () => boolean): Result[CachedTile, pipeline.PipelineError] {
   if (cancelled()) {
     return Err(pipeline.Cancelled);
   }
@@ -120,9 +128,8 @@ pub function render_cached_tile(graph: pipeline.Graph, region: Region, limits: p
     }
     return Ok(TileState { image: tile, row: state.row + 1 });
   };
-  let result = match (pipeline.fold_rows(
-    graph, region.y, region.height, limits, cache_bytes, cancelled,
-    TileState { image: tile, row: 0 }, consume,
-  )) { Ok(v) => v, Err(pipeline.GraphFailure(e)) => { return Err(e); }, Err(pipeline.ConsumerFailure(e)) => { return Err(e); } };
+  let state = TileState { image: tile, row: 0 };
+  let folded = if (fused) { pipeline.fold_rows_fused(graph, region.y, region.height, limits, cache_bytes, cancelled, state, consume) } else { pipeline.fold_rows(graph, region.y, region.height, limits, cache_bytes, cancelled, state, consume) };
+  let result = match (folded) { Ok(v) => v, Err(pipeline.GraphFailure(e)) => { return Err(e); }, Err(pipeline.ConsumerFailure(e)) => { return Err(e); } };
   return Ok(CachedTile { image: result.value.image, stats: result.stats });
 }

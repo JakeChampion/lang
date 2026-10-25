@@ -77,4 +77,32 @@ These values exclude metadata, allocator overhead, source retention, and consume
 
 Six additional cases cover exact admission, RGB/RGBA crops across cache sizes, cancellation, tile isolation, and generic fold state with heap errors.
 The original uncached row and tile interfaces keep their existing contracts.
-Fusion for cached requests, decoder row providers, isolated workers, and aggregate memory qualification remain separate work under #13215.
+Decoder graph providers, physical scratch allocation, production worker pools, and aggregate resource qualification remain unfinished under #13215.
+
+## Fused cached tile execution
+
+`render_cached_tile_fused` selects the explicit [fused row fold](cached-fusion.md) for the same tile request.
+Both cached tile interfaces share planning, allocation, the pixel-copy consumer, and error conversion.
+The existing `render_cached_tile` path and its statistics remain unchanged.
+
+The fused interface repeats `cached_plan` before allocation.
+The plan still charges conservative graph row scratch, the entire cache allowance, and twice the tile payload.
+The cumulative sample charge still includes all row estimates and every copied tile pixel.
+The providers still render complete output rows for narrow crops.
+
+Coordinates preserve every nearest mapping step and every bilinear interpolation boundary.
+An expanding nearest chain retains the ordinary path when fusion exceeds admitted horizontal work.
+Skipped nodes still undergo graph and storage validation.
+Hits and misses count actual row requests. Skipped intermediate nodes cause no cache lookup.
+
+One independent RGBA fixture crops the right column after a 4x4 to 3x3 to 2x2 nearest chain.
+Both APIs admit 160 logical scratch bytes and 20 samples.
+The charges include 72 row bytes, 72 cache bytes, twice the eight-byte tile, 18 row samples, and two copy samples.
+The existing path renders six node rows and reaches 72 cache payload bytes.
+The fused path renders four node rows and reaches 48 cache payload bytes.
+These are fixture work and payload counters rather than timing, allocator, RSS, or process-bound measurements.
+
+Eight additional cases cover independent RGB/RGBA crops, mixed filters, tiny caches, exact limits, and actual lookup statistics.
+They also cover every cancellation poll, retained values, fallback, invalid skipped nodes, malformed source storage, and the 64-node limit.
+Cancellation during row execution or tile copying returns an error and releases the private cache and partial tile.
+The interface provides no hard CPU deadline, physical scratch bound, or production-safety guarantee.
