@@ -1,0 +1,52 @@
+// Closing a socket stops every reactor watching it, whichever reactors are
+// still open and in whatever order the others were closed (#13311). One
+// socket is watched on two reactors at once; reactors are closed oldest
+// first, newest first and from the middle of three before a watched socket
+// is closed; and each reactor left open then reports nothing for the closed
+// socket while it still reports a socket watched afterwards.
+import "std/string";
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  let events: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+
+  let c1: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s1: i32 = tcp_accept(ls);
+  let a: i32 = reactor_new();
+  let b: i32 = reactor_new();
+  print(f"watch on both: {reactor_ctl(a, 1, s1, 1)} {reactor_ctl(b, 1, s1, 1)}");
+  print(f"send: {tcp_send_bytes(c1, "AB".bytes())}");
+  print(f"close the older reactor: {reactor_ctl(a, 3, 0, 0)}");
+  print(f"close the socket: {tcp_close(s1)}");
+  print(f"newer reactor idle: {reactor_wait(b, events, 10)}");
+  print(f"close it: {reactor_ctl(b, 3, 0, 0)}");
+
+  let older: i32 = reactor_new();
+  let newer: i32 = reactor_new();
+  print(f"watch on both: {reactor_ctl(older, 1, c1, 1)} {reactor_ctl(newer, 1, c1, 1)}");
+  print(f"close the newer reactor: {reactor_ctl(newer, 3, 0, 0)}");
+  print(f"close the socket: {tcp_close(c1)}");
+  print(f"older reactor idle: {reactor_wait(older, events, 10)}");
+  print(f"close it: {reactor_ctl(older, 3, 0, 0)}");
+
+  let c2: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s2: i32 = tcp_accept(ls);
+  let x: i32 = reactor_new();
+  let y: i32 = reactor_new();
+  let z: i32 = reactor_new();
+  print(f"watch on the outer two: {reactor_ctl(x, 1, s2, 1)} {reactor_ctl(z, 1, s2, 1)}");
+  print(f"send: {tcp_send_bytes(c2, "C".bytes())}");
+  print(f"close the middle reactor: {reactor_ctl(y, 3, 0, 0)}");
+  print(f"close the socket: {tcp_close(s2)}");
+  print(f"idle: {reactor_wait(x, events, 10)} {reactor_wait(z, events, 10)}");
+
+  let c3: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s3: i32 = tcp_accept(ls);
+  print(f"watch a new socket: {reactor_ctl(x, 1, s3, 1)}");
+  print(f"send: {tcp_send_bytes(c3, "D".bytes())}");
+  let got: i32 = reactor_wait(x, events, 1000);
+  print(f"reactor_wait: {got} fd {events[0] == s3} readable {(events[1] & 1) == 1}");
+  print(f"close: {reactor_ctl(z, 3, 0, 0)} {tcp_close(s3)} {reactor_ctl(x, 3, 0, 0)} {tcp_close(c3)} {tcp_close(c2)} {tcp_close(ls)}");
+  return 0;
+}

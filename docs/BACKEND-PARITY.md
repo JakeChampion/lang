@@ -239,7 +239,8 @@ every target: a host may report readiness spuriously (wasmtime does after a
 read that did not drain the socket), so a reader reads until -EAGAIN; and
 closing a socket stops every set watching it, as close(2) does for epoll and
 kqueue: on wasm, where the pollables a watch holds are children of the
-socket's streams, `tcp_close` unwatches it from each live set first. Behind it, `tcp_recv_into(fd, buf)` is
+socket's streams, `tcp_close` unwatches it from each live set first. Behind
+it, `tcp_recv_into(fd, buf)` is
 the owned-buffer read: the bytes read into the caller's `u8[]`, 0 at EOF,
 -EAGAIN (wasi's 6) when nothing is queued and the socket is non-blocking,
 else -errno; a blocking socket waits for bytes or the end of the stream on
