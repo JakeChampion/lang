@@ -64,16 +64,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The aarch64 leg was one shard of 9.9-12.2 minutes in two workers,
-          # the longest job outside the self-host lane (docs/ci-log/2026-09-15-performance.md).
-          # Four x86_64 shards keep the catch-all within its unchanged 25m
-          # worker budget. With three, run 39034198170's shard2 reached
-          # 25m while its other worker finished at 16m22s; the tests still
-          # active at the alarm had run for only 0-4s.
-          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 0 }
-          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 1 }
-          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 2 }
-          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 3 }
+          # The lane's selection measured 41.7 minutes in two workers on the
+          # 4-core dev container on 2026-10-25, after the interpreter re-runs
+          # of the stdtest suites left it (docs/ci-log/2026-10-25-pr-ci-queue.md).
+          # Three x86_64 shards and two aarch64 shards keep every worker well
+          # inside the 25m budget, with .github/other-test-weights.txt
+          # balancing the 64 tests above 10 s.
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 0 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 1 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 2 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
