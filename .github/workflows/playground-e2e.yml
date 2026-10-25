@@ -16,9 +16,13 @@ name: Playground E2E
 #                        Bombadil found a counter-example to one of
 #                        our always-true invariants.
 #
-# All three jobs share one path filter, in ci.yml's lane table, so
-# unrelated edits don't burn CI minutes. Daily schedule runs Bombadil
-# with fresh random seeds to catch drift Playwright wouldn't.
+# The three suites run in ONE job, in that order. Each is one to four
+# minutes of work. Three jobs paid three checkouts, three Go setups and
+# three slots of the runner pool for it. The shim suite comes first because
+# it needs no browser. The job builds the playground bundle once for the two
+# browser suites. The lane has one path filter, in ci.yml's lane table, so
+# an unrelated edit does not run it. The daily schedule runs the job with
+# new Bombadil seeds, to catch a drift that Playwright does not see.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -38,15 +42,10 @@ env:
   BOMBADIL_VERSION: "v0.5.0"
 
 jobs:
-  # The shim is the page's half of running a compiled program, and the
-  # browser suites reach it only through whatever the page happens to do.
-  # This drives it directly against modules the real compiler emitted, so a
-  # syscall the shim gets wrong fails here by name instead of surfacing as a
-  # blank output pane two suites later. No browser, so it is the fast one.
-  shim:
-    name: shim
+  playground:
+    name: playground
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
 
@@ -61,38 +60,24 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/test/playwright/package.json
 
-      # No dependencies: node:test is built in, and the fixtures are compiled
-      # by the fern the test builds from this checkout.
+      # The shim is the page's half of running a compiled program, and the
+      # browser suites reach it only through whatever the page happens to do.
+      # This drives it directly against modules the real compiler emitted, so a
+      # syscall the shim gets wrong fails here by name instead of surfacing as a
+      # blank output pane two suites later. No dependencies: node:test is built
+      # in, and the fixtures are compiled by the fern the test builds from this
+      # checkout.
       - name: Run the shim suite
         run: node --test web/test/shim/*.test.mjs
-
-  playwright:
-    name: playwright
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Go (pinned in mise.toml)
-        uses: jdx/mise-action@v4
-        with:
-          version: 2026.9.1
-          github_token: ${{ github.token }}
-          install_args: go
 
       # Its own step, outside Playwright's webServer timeout: it builds the
       # self-host compiler and then the playground with it. Ahead of the browser
       # download, so a broken build fails before the network work.
       - name: Build the playground bundle
         run: ./web/build.sh
-
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: web/test/playwright/package.json
 
       # The browser is a ~170 MB download; caching it keeps most runs off the
       # network for that half. The apt half of `--with-deps` below is NOT
@@ -124,20 +109,6 @@ jobs:
           name: playwright-report
           path: web/test/playwright/playwright-report/
           if-no-files-found: ignore
-
-  bombadil:
-    name: bombadil
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Go (pinned in mise.toml)
-        uses: jdx/mise-action@v4
-        with:
-          version: 2026.9.1
-          github_token: ${{ github.token }}
-          install_args: go
 
       - name: Install Chromium
         # browser-actions/setup-chrome ships a pinned Chromium build
