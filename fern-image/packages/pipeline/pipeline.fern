@@ -91,8 +91,10 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
           return Err(InvalidGraph);
         }
         let input_bytes: i64 = input.width as i64 * (pixels.channels(input.format) as i64);
-        cost = Cost { scratch: cost.scratch + input_bytes + costs[parent].scratch,
-          samples: cost.samples + costs[parent].samples * 2 };
+        cost = Cost {
+          scratch: cost.scratch + input_bytes + costs[parent].scratch,
+          samples: cost.samples + costs[parent].samples * 2,
+        };
       }
     }
     if (cost.scratch > limits.max_scratch_bytes as i64 || cost.samples > limits.max_samples as i64) {
@@ -199,30 +201,35 @@ function nearest_chain(graph: Graph, at: i32): NearestChain {
         depth = depth + 1;
         cursor = parent;
       },
-      _ => { return NearestChain { root: cursor, depth: depth, width_sum: width_sum }; }
+      _ => {
+        return NearestChain { root: cursor, depth: depth, width_sum: width_sum };
+      }
     }
   }
 }
 
-function nearest_coordinate(graph: Graph, at: i32, root: i32, index: i32, vertical: boolean,
-  cancelled: () => boolean): Result[i32, PipelineError] {
+function nearest_coordinate(graph: Graph, at: i32, root: i32, index: i32, vertical: boolean, cancelled: () => boolean): Result[i32, PipelineError] {
   let cursor = at;
   let mapped = index;
   while (cursor != root) {
-    if (vertical && cancelled()) { return Err(Cancelled); }
+    if (vertical && cancelled()) {
+      return Err(Cancelled);
+    }
     let node = graph.nodes[cursor];
     let parent = match (node.operation) { NearestSource(v) => v, _ => { return Err(InvalidGraph); } };
     let from = graph.nodes[parent].width;
     let to = node.width;
-    if (vertical) { from = graph.nodes[parent].height; to = node.height; }
+    if (vertical) {
+      from = graph.nodes[parent].height;
+      to = node.height;
+    }
     mapped = match (resize.nearest_index(mapped, from, to)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
     cursor = parent;
   }
   return Ok(mapped);
 }
 
-function render_nearest_chain(graph: Graph, at: i32, chain: NearestChain, y: i32, limits: Limits,
-  cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+function render_nearest_chain(graph: Graph, at: i32, chain: NearestChain, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   let source_y = nearest_coordinate(graph, at, chain.root, y, true, cancelled)?;
   let row = render_node(graph, chain.root, source_y, limits, None, cancelled)?;
   let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
@@ -305,7 +312,9 @@ function cache_put(cache: Option[Cell[RowCache]], at: i32, y: i32, row: pixels.I
     let i = 0;
     while (i < state.entries.len()) {
       if (state.entries[i].node == at) {
-        if (count == 0) { first = i; }
+        if (count == 0) {
+          first = i;
+        }
         count = count + 1;
       }
       i = i + 1;
@@ -320,10 +329,16 @@ function cache_put(cache: Option[Cell[RowCache]], at: i32, y: i32, row: pixels.I
     let bytes = state.bytes + row.layout.bytes;
     let peak_bytes = state.stats.peak_cache_bytes;
     let peak_entries = state.stats.peak_cache_entries;
-    if (bytes > peak_bytes) { peak_bytes = bytes; }
-    if (entries.len() > peak_entries) { peak_entries = entries.len(); }
-    cell.set(RowCache { ...state, entries: entries, bytes: bytes,
-      stats: RowStats { ...state.stats, peak_cache_bytes: peak_bytes, peak_cache_entries: peak_entries } });
+    if (bytes > peak_bytes) {
+      peak_bytes = bytes;
+    }
+    if (entries.len() > peak_entries) {
+      peak_entries = entries.len();
+    }
+    cell.set(RowCache {
+      ...state, entries: entries, bytes: bytes,
+      stats: RowStats { ...state.stats, peak_cache_bytes: peak_bytes, peak_cache_entries: peak_entries },
+    });
   }
 }
 
@@ -351,18 +366,18 @@ pub function render_row(graph: Graph, y: i32, limits: Limits, cancelled: () => b
   return render_node(graph, output, y, limits, None, cancelled);
 }
 
-pub function render_rows[E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean,
-  consume: (pixels.Image) => Result[void, E]): Result[RowStats, RowFailure[E]] {
-  let result = fold_rows(graph, first, count, limits, cache_bytes, cancelled, 0,
+pub function render_rows[E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean, consume: (pixels.Image) => Result[void, E]): Result[RowStats, RowFailure[E]] {
+  let result = fold_rows(
+    graph, first, count, limits, cache_bytes, cancelled, 0,
     (_state: i32, row: pixels.Image): Result[i32, E] => {
       consume(row)?;
       return Ok(0);
-    })?;
+    },
+  )?;
   return Ok(result.stats);
 }
 
-pub function fold_rows[S, E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean,
-  value: S, consume: (S, pixels.Image) => Result[S, E]): Result[RowFold[S], RowFailure[E]] {
+pub function fold_rows[S, E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean, value: S, consume: (S, pixels.Image) => Result[S, E]): Result[RowFold[S], RowFailure[E]] {
   if (cancelled()) {
     return Err(GraphFailure(Cancelled));
   }
@@ -384,10 +399,7 @@ pub function fold_rows[S, E](graph: Graph, first: i32, count: i32, limits: Limit
   let i = 0;
   while (i < count) {
     let row = match (render_node(graph, output, first + i, limits, Some(cache), cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
-    value = match (consume(value, row)) {
-      Ok(next) => next,
-      Err(e) => { return Err(ConsumerFailure(e)); }
-    };
+    value = match (consume(value, row)) { Ok(next) => next, Err(e) => { return Err(ConsumerFailure(e)); } };
     let state = cache.get();
     cache.set(RowCache { ...state, stats: RowStats { ...state.stats, rows: state.stats.rows + 1 } });
     i = i + 1;

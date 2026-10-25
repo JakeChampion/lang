@@ -44,7 +44,8 @@ The native and Wasm scripts include all 76 image TAP cases.
 ## Allocator observations
 
 One compiler builds both implementations from the same workload and stdlib sources.
-The baseline pipeline comes from main `9414af3254eb`.
+The baseline pipeline comes from main `7f5fa78e09f4`.
+The allocator record uses compiler `9414af3254eb` for both implementations.
 The workload creates a virtual 1024x8192 RGBA solid source and four nearest nodes.
 The final node has dimensions 128x24000 and returns 512-byte rows.
 The consumer discards each checked output row.
@@ -76,7 +77,7 @@ Use the same absolute compiler path for both builds.
 ```sh
 fusion_root=$PWD
 fusion_compiler=$PWD/bin/fern
-git worktree add --detach /tmp/fusion-before 9414af3254ebde5beb1dcf63ff09b62788725b77
+git worktree add --detach /tmp/fusion-before 7f5fa78e09f49440a804b139107e0a1d58e95067
 cp fern-image/benchmarks/nearest_fusion.fern /tmp/fusion-before/fern-image/benchmarks/
 (
   cd /tmp/fusion-before

@@ -8,14 +8,22 @@ import "./util";
 
 pub struct Sunk { f: ssasem.Func, reread: i32 }
 
-struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], kids: i32[][], grown: i32[][], first: i32[] }
+struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], strict: i32[][], kids: i32[][], grown: i32[][], first: i32[] }
 
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
   let ru: Reused = reuse(f);
-  let sk: Sunk = sink_rereads(ru.s.f, ru.reads);
+  let sk: Sunk = sink_rereads(ru.s.f, ru.reads, false);
   return Sunk { f: sk.f, reread: ru.s.reread + sk.reread };
+}
+
+// sink_past_lent re-reads a projection below a call that only borrows its
+// parent. It runs once ownership inference has settled the callees' modes,
+// which `sink` runs before: a record or variant parameter declared
+// borrowed that a callee consumes is counted by then.
+pub function sink_past_lent(f: ssasem.Func): Sunk {
+  return sink_rereads(f, None, true);
 }
 
 struct Reused { s: Sunk, reads: Option[Reads] }
@@ -26,7 +34,7 @@ function reuse(f: ssasem.Func): Reused {
   if (at.len() == 0 || !repeated_across(g, f.values, at)) {
     return Reused { s: Sunk { f: f, reread: 0 }, reads: None };
   }
-  let rd: Reads = reads_of(g, f.values, at);
+  let rd: Reads = reads_of(f, at, false);
   if (!rd.flow.ok) {
     return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
   }
@@ -111,13 +119,13 @@ function field_kept_apart(rd: Reads, r: ssa.SInst, bi: i32): boolean {
   return r.kind_tag == ssasem.record_get() && !ssalive.live_out_has(rd.flow, bi, r.result);
 }
 
-function sink_rereads(f: ssasem.Func, known: Option[Reads]): Sunk {
+function sink_rereads(f: ssasem.Func, known: Option[Reads], lent: boolean): Sunk {
   let g: ssa.SFunc = f.graph;
   let at: i32[] = crossing_projections(g, f.values);
   if (at.len() == 0) {
     return Sunk { f: f, reread: 0 };
   }
-  let rd: Reads = reads_at(g, f.values, at, known);
+  let rd: Reads = reads_at(f, at, known, lent);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
@@ -170,26 +178,34 @@ function projection(kind: i32): boolean {
 
 struct Tree { par: i32[], parent: boolean[], kids: i32[][], first: i32[] }
 
-function reads_at(g: ssa.SFunc, values: typeinfo.Type[], at: i32[], known: Option[Reads]): Reads {
+function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean): Reads {
   match (known) {
     Some(k) => {
       return Reads { ...k, at: at };
     },
     None => {
-      return reads_of(g, values, at);
+      return reads_of(f, at, lent);
     }
   }
-  return reads_of(g, values, at);
+  return reads_of(f, at, lent);
 }
 
-function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
+// reads_of with lent leaves a call's record or variant argument unspent
+// when its callee's contract borrows it, and keeps the spends of every
+// argument in strict.
+function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
+  let g: ssa.SFunc = f.graph;
   let deps: i32[][] = [];
-  while (deps.len() < values.len()) {
+  while (deps.len() < f.values.len()) {
     deps = deps.append([]);
   }
-  let t: Tree = projection_tree(g, values, deps);
+  let t: Tree = projection_tree(g, f.values, deps);
   let pos: i32[] = ssa.block_positions(g);
-  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent_by(g, t.parent, deps, pos), kids: t.kids, grown: grown_by(g, deps), first: t.first };
+  let strict: i32[][] = [];
+  if (lent) {
+    strict = spent_by(f, false, t.parent, deps, pos);
+  }
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), first: t.first };
 }
 
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
@@ -236,14 +252,21 @@ function grown_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
   return grown;
 }
 
-function spent_by(g: ssa.SFunc, parent: boolean[], deps: i32[][], pos: i32[]): i32[][] {
+function spent_by(f: ssasem.Func, lent: boolean, parent: boolean[], deps: i32[][], pos: i32[]): i32[][] {
+  let g: ssa.SFunc = f.graph;
   let spent: i32[][] = deps;
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (spends(ins.kind_tag)) {
-        for a in ins.args {
-          spent = spend(spent, parent, a, bi);
+        let modes: i32[] = [];
+        if (lent && ins.kind_tag == ssasem.call()) {
+          modes = callee_modes(f, ins);
+        }
+        for k in 0..ins.args.len() {
+          if (!lent_to(f, modes, ins.args, k)) {
+            spent = spend(spent, parent, ins.args[k], bi);
+          }
         }
       }
       spent = spend(spent, parent, ssasem.update_base(ins), bi);
@@ -255,6 +278,21 @@ function spent_by(g: ssa.SFunc, parent: boolean[], deps: i32[][], pos: i32[]): i
     bi = bi + 1;
   }
   return spent;
+}
+
+// lent_to says argument k is a record or variant the callee borrows.
+// Inference counts no other parameter, so a borrowed string or array may
+// still be one the callee keeps.
+function lent_to(f: ssasem.Func, modes: i32[], args: i32[], k: i32): boolean {
+  return k < modes.len() && modes[k] == ssasem.borrow_mode() && args[k] >= 0 && ssasem.owned_shape(f.values[args[k]]);
+}
+
+function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
+  let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
+  if (at < 0) {
+    return [];
+  }
+  return f.calls[at].modes;
 }
 
 function spends(k: i32): boolean {
@@ -487,8 +525,13 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
   return Sinking { b: ssa.SBlock { ...b, insts: out, term: term }, values: r.values, added: r.insts.len(), edits: edits };
 }
 
+// read_above says v can be read again in bi. With strict spends it says so
+// only where a lent argument is what allows it.
 function read_above(rd: Reads, bi: i32, v: i32): boolean {
-  return read_above_for(rd, bi, v, v) && !child_used_above(rd, rd.grown, bi, v, 0) && !child_live_out(rd, bi, v, 0);
+  if (!read_above_for(rd, rd.spent, bi, v, v) || child_used_above(rd, rd.grown, bi, v, 0) || child_live_out(rd, bi, v, 0)) {
+    return false;
+  }
+  return rd.strict.len() == 0 || !read_above_for(rd, rd.strict, bi, v, v);
 }
 
 function child_used_above(rd: Reads, by: i32[][], bi: i32, v: i32, depth: i32): boolean {
@@ -520,7 +563,7 @@ function child_live_out(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   return false;
 }
 
-function read_above_for(rd: Reads, bi: i32, v: i32, leaf: i32): boolean {
+function read_above_for(rd: Reads, spent: i32[][], bi: i32, v: i32, leaf: i32): boolean {
   if (v < 0 || v >= rd.at.len() || rd.at[v] < 0 || rd.at[v] == bi) {
     return false;
   }
@@ -528,10 +571,10 @@ function read_above_for(rd: Reads, bi: i32, v: i32, leaf: i32): boolean {
   if (!ssadeps.dom_holds(rd.dom, bi, rd.at[v]) || ssalive.live_out_has(rd.flow, bi, p)) {
     return false;
   }
-  if (!ssalive.live_out_has(rd.flow, rd.at[v], p) && !read_above_for(rd, bi, p, leaf)) {
+  if (!ssalive.live_out_has(rd.flow, rd.at[v], p) && !read_above_for(rd, spent, bi, p, leaf)) {
     return false;
   }
-  for s in rd.spent[p] {
+  for s in spent[p] {
     if (s == rd.at[v] || ssalive.live_out_has(rd.flow, s, v) || ssalive.live_out_has(rd.flow, s, leaf)) {
       return false;
     }
