@@ -25,5 +25,5 @@ function main(): i32 {
     return http.ok(body).with_header("Cache-Control", "max-age=60");
   };
   eprint("origin: serving on port " + port.to_string());
-  return serve.run(port, serve.config(), handler);
+  return serve.exit_code(serve.run(port, serve.config(), handler));
 }

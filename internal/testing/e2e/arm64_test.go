@@ -7341,6 +7341,7 @@ function main(): i32 {
 func TestArm64StdlibBundle2(t *testing.T) {
 	src := `
 import "std/i32";
+import "std/unicode";
 function main(): i32 {
     // Byte-level case classifiers + flippers.
     if (!(65 as u8).is_ascii_upper()) { return 1; }

@@ -1,0 +1,18 @@
+// An unannotated local of unsettled literals takes one type, from its first
+// use that names a width. A later use at another width is an E003. This holds
+// for the literals in a tuple or an array, as it does for a scalar.
+function main(): i32 {
+    let t = (1, 2);
+    let a: (i64, i32) = t;
+    let b: (i32, i32) = t;
+    let xs = [1, 2];
+    let c: i64[] = xs;
+    let d: i32[] = xs;
+    let o = Some((1, 2));
+    let e: Option[(i64, i32)] = o;
+    let f: Option[(i32, i32)] = o;
+    let n = (1, (2, 3));
+    let g: (i32, (i64, u8)) = n;
+    let h: (i32, (i64, i32)) = n;
+    return 0;
+}
