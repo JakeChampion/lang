@@ -31,8 +31,8 @@ func byteView(name string, v Value) ([]byte, error) {
 	case String:
 		return []byte(string(x)), nil
 	case Array:
-		out := make([]byte, len(x.E))
-		for at, e := range x.E {
+		out := make([]byte, len(x.Elems()))
+		for at, e := range x.Elems() {
 			b, ok := e.(Number)
 			if !ok || b < 0 || b > 255 {
 				return nil, fmt.Errorf("%s: element %d is not u8", name, at)
@@ -47,7 +47,7 @@ func byteView(name string, v Value) ([]byte, error) {
 func byteArray(b []byte) Array {
 	out := newArray(len(b))
 	for at, c := range b {
-		out.E[at] = Number(c)
+		out.Elems()[at] = Number(c)
 	}
 	return out
 }

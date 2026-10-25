@@ -5162,7 +5162,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     for n in shared_roots {
-      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
+      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true, method: false }) };
     }
   }
   if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {

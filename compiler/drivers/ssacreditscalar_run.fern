@@ -99,6 +99,7 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
   let hits: i32 = 0;
   for b in f.blocks {
+    let exiting = exits_in(b);
     let insts: ssa.SInst[] = [];
     for op in b.insts {
       let next = op;
@@ -120,7 +121,7 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
           hits = hits + 1;
         }
       }
-      if (mode == 6 && b.term.kind_tag == 1 && op.result == b.term.value) {
+      if (mode == 6 && b.term.kind_tag == 1 && !exiting && op.result == b.term.value) {
         next = ssa.SInst { ...op, imm: 7 };
         hits = hits + 1;
       } else if (mode == 7 && op.kind_tag == 8) {
@@ -139,11 +140,14 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
       } else if (mode == 11 && op.kind_tag == 6 && op.imm == 1) {
         next = ssa.SInst { ...op, result: 0 };
         hits = hits + 1;
-      } else if (mode == 12 && b.term.kind_tag == 1 && op.result == b.term.value) {
+      } else if (mode == 12 && b.term.kind_tag == 1 && !exiting && op.result == b.term.value) {
         next = ssa.SInst { ...op, kind_tag: 7, args: [1] };
         hits = hits + 1;
       } else if (mode == 13 && op.kind_tag == 50) {
         next = ssa.SInst { ...op, args: [f.nvals - 1] };
+        hits = hits + 1;
+      } else if (mode == 14 && b.term.kind_tag == 1 && exiting && op.result == b.term.value) {
+        next = ssa.SInst { ...op, imm: 7 };
         hits = hits + 1;
       }
       insts = insts.append(next);
@@ -167,8 +171,52 @@ function with_join_phi(f: ssa.SFunc): ssa.SFunc {
       blocks = blocks.append(b);
     }
   }
-  require(added == 1 && ex.zero >= 0 && ex.results.len() == 1, 53);
+  require(added == 1 && ex.zero >= 0 && ex.results.len() == 1, 39);
   return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + 1 };
+}
+
+// A builtin exit ends its block, which returns zero behind it.
+function exits_in(b: ssa.SBlock): boolean {
+  for op in b.insts {
+    if (op.kind_tag == 50 && op.str == "exit") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The helper with its exit block branching into the normal return block, the
+// two-predecessor join a CFG has when the exit does not end its block.
+function joined_form(f: ssa.SFunc): ssa.SFunc {
+  let normal: i32 = 0 - 1;
+  let exiting: i32 = 0 - 1;
+  for b in f.blocks {
+    if (b.term.kind_tag == 1 && exits_in(b)) {
+      exiting = b.id;
+    } else if (b.term.kind_tag == 1) {
+      normal = b.id;
+    }
+  }
+  require(normal >= 0 && exiting >= 0, 59);
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    if (b.id == exiting) {
+      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 2, target: normal } });
+    } else if (b.id == normal) {
+      blocks = blocks.append(ssa.SBlock { ...b, preds: b.preds.append(exiting) });
+    } else {
+      blocks = blocks.append(b);
+    }
+  }
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
+function mutation_checks(form: ssa.SFunc, phi_form: ssa.SFunc, reasons: string[], first_id: i32): void {
+  let i: i32 = 0;
+  while (i < reasons.len()) {
+    expect(changed(control_form(form, phi_form, i), i), false, reasons[i], first_id + i);
+    i = i + 1;
+  }
 }
 
 struct Exits { zero: i32, blocks: i32[], results: i32[] }
@@ -236,15 +284,15 @@ function target_checks(target: string): void {
   outcome_controls(f);
   expect(f, true, "proved scalar zero-or-exit effects", 6);
   let reasons = ["unsupported scalar helper effect", "unsupported scalar helper effect", "unsupported scalar helper effect", "unavailable scalar helper operand", "unsupported scalar helper effect", "unsupported scalar helper effect", "scalar helper return not proven zero", "unavailable scalar phi operand", "invalid scalar helper parameter", "invalid scalar helper phi", "unavailable scalar phi operand", "invalid scalar helper definition", "scalar helper return not proven zero", "unavailable scalar helper operand"];
-  let phi_form = with_join_phi(f);
+  let joined = joined_form(f);
+  expect(joined, true, "proved scalar zero-or-exit effects", 57);
+  expect_outcomes(joined, [false, true], [true, false], 58);
+  let phi_form = with_join_phi(joined);
   expect(phi_form, true, "proved scalar zero-or-exit effects", 52);
-  let i: i32 = 0;
-  while (i < reasons.len()) {
-    expect(changed(control_form(f, phi_form, i), i), false, reasons[i], 10 + i);
-    i = i + 1;
-  }
+  mutation_checks(f, phi_form, reasons.append("scalar helper return not proven zero"), 10);
+  mutation_checks(joined, phi_form, reasons, 60);
   let reverse: ssa.SBlock[] = [];
-  i = f.blocks.len();
+  let i: i32 = f.blocks.len();
   while (i > 0) {
     i = i - 1;
     reverse = reverse.append(f.blocks[i]);

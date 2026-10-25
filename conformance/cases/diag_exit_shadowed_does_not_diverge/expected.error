@@ -1,0 +1,2 @@
+missing return: "through_param" has return type i32 but can fall off the end without returning a value
+missing return: "through_local" has return type i32 but can fall off the end without returning a value

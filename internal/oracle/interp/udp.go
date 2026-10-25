@@ -40,29 +40,30 @@ func sockaddrOf(name string, addr Value, port int64) (syscall.Sockaddr, error) {
 }
 
 func senderInto(from Array, sa syscall.Sockaddr) {
-	if len(from.E) < 19 {
+	if len(from.Elems()) < 19 {
 		return
 	}
+	into := from.intoElems()
 	for k := 0; k < 19; k++ {
-		from.E[k] = Number(0)
+		into[k] = Number(0)
 	}
 	var port int
 	switch a := sa.(type) {
 	case *syscall.SockaddrInet4:
-		from.E[0] = Number(4)
+		into[0] = Number(4)
 		for k, b := range a.Addr {
-			from.E[1+k] = Number(b)
+			into[1+k] = Number(b)
 		}
 		port = a.Port
 	case *syscall.SockaddrInet6:
-		from.E[0] = Number(6)
+		into[0] = Number(6)
 		for k, b := range a.Addr {
-			from.E[1+k] = Number(b)
+			into[1+k] = Number(b)
 		}
 		port = a.Port
 	}
-	from.E[17] = Number(port >> 8)
-	from.E[18] = Number(port & 255)
+	into[17] = Number(port >> 8)
+	into[18] = Number(port & 255)
 }
 
 func (i *Interp) newUdpHandle(fd int) Value {
@@ -166,8 +167,8 @@ func udpPayload(name string, value Value) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s: expected u8[] data arg, got %T", name, value)
 	}
-	data := make([]byte, len(array.E))
-	for k, value := range array.E {
+	data := make([]byte, len(array.Elems()))
+	for k, value := range array.Elems() {
 		n, ok := value.(Number)
 		if !ok {
 			return nil, fmt.Errorf("%s: expected u8 data element, got %T", name, value)
@@ -207,7 +208,7 @@ func udpSendto(i *Interp, args []Value, raw bool) (Value, error) {
 		return Number(-int64(syscall.EBADF)), nil
 	}
 	var to syscall.Sockaddr
-	if addr, ok := args[1].(Array); ok && len(addr.E) != 0 {
+	if addr, ok := args[1].(Array); ok && len(addr.Elems()) != 0 {
 		to, err = sockaddrOf(name, args[1], n[1])
 		if err != nil {
 			return nil, err
@@ -244,13 +245,14 @@ func builtinUdpRecvfrom(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return Number(-int64(syscall.EBADF)), nil
 	}
-	bytes := make([]byte, len(buf.E))
+	bytes := make([]byte, len(buf.Elems()))
 	n, sa, err := syscall.Recvfrom(fd, bytes, 0)
 	if err != nil {
 		return negErrno(err), nil
 	}
+	into := buf.intoElems()
 	for k := 0; k < n; k++ {
-		buf.E[k] = Number(bytes[k])
+		into[k] = Number(bytes[k])
 	}
 	senderInto(from, sa)
 	return Number(n), nil
