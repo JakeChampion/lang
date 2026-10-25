@@ -40,6 +40,7 @@ import "std/binary";
 import "std/async";
 import "std/array";
 import "std/crypto";
+import "std/hex";
 import "./fractal";
 import "./source";
 
@@ -431,7 +432,7 @@ function own_binary(): (i64, string) {
   for path in paths {
     match (read_file_bytes(path)) {
       Ok(bytes) => {
-        return (bytes.len() as i64, crypto.sha256_new().update(bytes).final_hex().take(24));
+        return (bytes.len() as i64, hex.encode(crypto.sha256_new().update(bytes).finish()).take(24));
       },
       Err(_) => {}
     }
@@ -445,7 +446,7 @@ function own_binary(): (i64, string) {
       Err(_) => {}
     }
   }
-  return (0, crypto.sha256_hex(text.as_bytes()).take(24));
+  return (0, hex.encode(crypto.sha256(text.as_bytes())).take(24));
 }
 
 // The standalone entry also mounts the app at the showcase path.
@@ -482,7 +483,7 @@ function main(): i32 {
   match (source.load(".")) {
     Ok(sources) => {
       let handler: (HttpRequest, platform.Host) => HttpResponse = mounted_routes[platform.Host](state, "web", sources).handler();
-      return serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason));
+      return serve.exit_code(serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason)));
     },
     Err(message) => {
       eprint("server: " + message);

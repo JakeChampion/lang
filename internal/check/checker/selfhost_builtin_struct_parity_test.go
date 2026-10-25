@@ -68,7 +68,7 @@ func parseFernStructDecls(t *testing.T, src string) map[string]string {
 func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 	t.Helper()
 	head := regexp.MustCompile(`(?m)^([ \t]*)if \(!(?:name|struct)_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{`)
-	field := regexp.MustCompile(`StructFieldDecl \{[^}]*\}`)
+	field := regexp.MustCompile(`StructFieldDecl \{[^}]*\}|bare_field\("[^"]*", "[^"]*"\)`)
 	out := map[string]string{}
 	for _, m := range head.FindAllStringSubmatchIndex(src, -1) {
 		rest := src[m[1]:]
@@ -91,6 +91,9 @@ func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 }
 
 func injectedFieldSpelling(lit string) string {
+	if m := regexp.MustCompile(`^bare_field\("([^"]*)", "([^"]*)"\)$`).FindStringSubmatch(lit); m != nil {
+		return m[1] + ": " + m[2]
+	}
 	attr := func(key string) string {
 		m := regexp.MustCompile(key + `: "([^"]*)"`).FindStringSubmatch(lit)
 		if m == nil {

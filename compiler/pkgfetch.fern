@@ -1,4 +1,5 @@
 import "std/crypto";
+import "std/hex";
 import "std/deflate";
 import "std/error";
 import "std/fetch";
@@ -16,7 +17,7 @@ pub function fetch(url: string, hash: string): fern.Fetched {
   if (derr.len() > 0) {
     return failed(derr);
   }
-  let got: string = "sha256:" + crypto.sha256_new().update(raw).final_hex();
+  let got: string = "sha256:" + hex.encode(crypto.sha256_new().update(raw).finish());
   if (hash.len() > 0 && got != hash) {
     return failed("fetch " + url + ": hash mismatch — manifest declares " + hash + ", server sent " + got + "; refusing to unpack");
   }

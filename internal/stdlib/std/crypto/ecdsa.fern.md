@@ -4,7 +4,7 @@ This module provides ECDSA operations for the NIST P-256 and P-384 curves.
 
 ## Model
 
-Curve-tagged keys distinguish the NIST P-256 and P-384 curves. Public-key construction validates an encoded point before signature verification.
+Curve-tagged keys distinguish the NIST P-256 and P-384 curves. Public-key construction validates an encoded point before signature verification. Signing, verifying and ECDH are methods on the keys.
 
 ## Contracts
 
@@ -38,7 +38,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<11 function __double(p: bigint.BigInt, q: Point): Point>>
 
-<<12 pub function verify(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>
+<<12 pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>
 
 <<13 pub struct PrivateKey>>
 
@@ -385,11 +385,11 @@ function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: b
 }
 ```
 
-### `12 pub function verify(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean`
+### `12 pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean`
 
 ```fern
-<<12 pub function verify(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
-pub function verify(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
+<<12 pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
+pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
   if (sig.len() < 8 || sig.len() > 129 || sig[0] != 48 as u8 || sig[1] as i32 != sig.len() - 2) {
     return false;
   }
@@ -495,7 +495,7 @@ pub function (k: PrivateKey) public_point(): u8[] {
   return out;
 }
 
-pub function ecdh(key: PrivateKey, peer: [u8]): Result[u8[], EcdsaError] {
+pub function (key: PrivateKey) ecdh(peer: [u8]): Result[u8[], EcdsaError] {
   match (public_key(key.curve, peer)) {
     Ok(_) => {},
     Err(e) => {
@@ -513,7 +513,7 @@ pub function ecdh(key: PrivateKey, peer: [u8]): Result[u8[], EcdsaError] {
   return Ok(__affine(s, __scalar_mul(s, q, key.d)).0);
 }
 
-pub function sign(key: PrivateKey, hash: sha2.Hash, msg: [u8]): Result[u8[], EcdsaError] {
+pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], EcdsaError] {
   match (hash) {
     sha2.Sha512 => {
       return Err(SigningHash);

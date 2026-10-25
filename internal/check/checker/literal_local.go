@@ -6,6 +6,7 @@ type litLocal struct {
 	decl  *ast.Var
 	scope *scope
 	arg   int
+	path  []int
 	fixed bool
 	width ast.NumberType
 	onFix []func(ast.NumberType)
@@ -44,6 +45,101 @@ func (c *checker) beginLitCompositeLocal(decl *ast.Var, args []ast.Type, s *scop
 	if et, ok := decl.Type.(ast.EnumType); ok {
 		c.defaultWideEnumLiterals(decl, et, lls)
 	}
+}
+
+// beginLitNestedLocal tracks each polymorphic integer inside a tuple or an
+// array of an unannotated local's type, by its path through that type.
+func (c *checker) beginLitNestedLocal(decl *ast.Var, s *scope) {
+	var lls []*litLocal
+	var walk func(t ast.Type, path []int, nested bool)
+	walk = func(t ast.Type, path []int, nested bool) {
+		switch x := t.(type) {
+		case ast.NumberType:
+			if x.Polymorphic && nested {
+				lls = append(lls, &litLocal{decl: decl, scope: s, arg: -1, path: append([]int(nil), path...)})
+			}
+		case ast.TupleType:
+			for i, el := range x.Elems {
+				walk(el, append(path, i), true)
+			}
+		case ast.ArrayType:
+			walk(x.Elem, append(path, 0), true)
+		case ast.EnumType:
+			for i, a := range x.Args {
+				walk(a, append(path, i), nested)
+			}
+		case ast.StructType:
+			for i, a := range x.Args {
+				walk(a, append(path, i), nested)
+			}
+		}
+	}
+	walk(decl.Type, nil, false)
+	if lls == nil {
+		return
+	}
+	if c.litNestedOf == nil {
+		c.litNestedOf = map[*ast.Var][]*litLocal{}
+	}
+	if c.litCompositeReads == nil {
+		c.litCompositeReads = map[*ast.Ident]*ast.Var{}
+	}
+	c.litNestedOf[decl] = lls
+	c.litLocals = append(c.litLocals, lls...)
+}
+
+// typeAt is the part of t at path, or nil when t has no such part.
+func typeAt(t ast.Type, path []int) ast.Type {
+	for _, i := range path {
+		switch x := t.(type) {
+		case ast.TupleType:
+			if i >= len(x.Elems) {
+				return nil
+			}
+			t = x.Elems[i]
+		case ast.ArrayType:
+			t = x.Elem
+		case ast.EnumType:
+			if i >= len(x.Args) {
+				return nil
+			}
+			t = x.Args[i]
+		case ast.StructType:
+			if i >= len(x.Args) {
+				return nil
+			}
+			t = x.Args[i]
+		default:
+			return nil
+		}
+	}
+	return t
+}
+
+// withTypeAt is t with its part at path replaced by w.
+func withTypeAt(t ast.Type, path []int, w ast.Type) ast.Type {
+	if len(path) == 0 {
+		return w
+	}
+	i := path[0]
+	switch x := t.(type) {
+	case ast.TupleType:
+		elems := append([]ast.Type(nil), x.Elems...)
+		elems[i] = withTypeAt(elems[i], path[1:], w)
+		return ast.TupleType{Elems: elems}
+	case ast.ArrayType:
+		x.Elem = withTypeAt(x.Elem, path[1:], w)
+		return x
+	case ast.EnumType:
+		args := append([]ast.Type(nil), x.Args...)
+		args[i] = withTypeAt(args[i], path[1:], w)
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.StructType:
+		args := append([]ast.Type(nil), x.Args...)
+		args[i] = withTypeAt(args[i], path[1:], w)
+		return ast.StructType{Name: x.Name, Args: args}
+	}
+	return t
 }
 
 func (c *checker) defaultWideEnumLiterals(decl *ast.Var, et ast.EnumType, lls []*litLocal) {
@@ -104,6 +200,11 @@ func (c *checker) noteLitField(fa *ast.FieldAccess, t ast.Type, s *scope) {
 
 func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 	decl := c.litCompositeReads[id]
+	for _, ll := range c.litNestedOf[decl] {
+		if nt, ok := typeAt(hint, ll.path).(ast.NumberType); ok && !nt.Polymorphic && !ll.fixed {
+			c.fixLitLocal(ll, nt, id.P)
+		}
+	}
 	name, args := literalNominalArgs(hint)
 	if decl == nil || name == "" {
 		return
@@ -184,10 +285,10 @@ func (c *checker) litCompositeType(id *ast.Ident) ast.Type {
 }
 
 func (c *checker) noteLitIdent(id *ast.Ident, t ast.Type, decl *ast.Var) {
-	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil {
+	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil && c.litNestedOf == nil {
 		return
 	}
-	if c.litCompositeOf[decl] != nil {
+	if c.litCompositeOf[decl] != nil || c.litNestedOf[decl] != nil {
 		c.litCompositeReads[id] = decl
 		return
 	}
@@ -269,7 +370,15 @@ func (c *checker) fixLitLocal(ll *litLocal, w ast.NumberType, pos ast.Position) 
 	}
 	ll.fixed = true
 	ll.width = w
-	if ll.arg >= 0 {
+	if ll.path != nil {
+		nt := withTypeAt(ll.decl.Type, ll.path, w)
+		ll.decl.Type = nt
+		c.info.VarTypes[ll.decl] = nt
+		if ll.scope.vars[ll.decl.Name] == ll.decl {
+			ll.scope.set(ll.decl.Name, nt)
+		}
+		c.settleNumeric(ll.decl.Init, nt)
+	} else if ll.arg >= 0 {
 		if et, ok := ll.decl.Type.(ast.EnumType); ok {
 			args := append([]ast.Type(nil), et.Args...)
 			args[ll.arg] = w
@@ -341,6 +450,7 @@ func (c *checker) settleLitLocals(body *ast.Block) {
 	c.litLocalOf = nil
 	c.litIdents = nil
 	c.litCompositeOf = nil
+	c.litNestedOf = nil
 	c.litFields = nil
 	c.litCompositeReads = nil
 }

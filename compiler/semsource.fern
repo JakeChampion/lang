@@ -1574,15 +1574,10 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
 }
 
 function width_bearing(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprNumber(n) => {
-      return n.suffix != "";
-    },
-    _ => {
-      return true;
-    }
+  if let ast.ExprNumber(n) = e {
+    return n.suffix != "";
   }
-  return true;
+  return !parser.int_literal_tree(e);
 }
 
 function operand_type(t: typeinfo.Type): boolean {
@@ -1596,7 +1591,7 @@ function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typei
   if (parser.int_literal_tree(e) && ssasem.is_integer(expected)) {
     return expected;
   }
-  if (parser.float_literal_tree(e) && ssasem.is_float(expected)) {
+  if ((parser.float_literal_tree(e) || parser.is_unsettled_int_literal(e)) && ssasem.is_float(expected)) {
     return expected;
   }
   let (whole_t, left_t, right_t) = checker.binary_types(b, s.scope);
@@ -1652,7 +1647,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
       return first;
     }
     let wide: typeinfo.Type = first.s.values[first.id];
-    if (ssasem.is_integer(wide)) {
+    if (ssasem.is_integer(wide) || ssasem.is_float(wide) && parser.is_unsettled_int_literal(b.left)) {
       let right_id: i32 = first.id;
       let lit: Value = expr(b.left, first.s, wide);
       if (!lit.s.ok) {

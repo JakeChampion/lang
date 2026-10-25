@@ -17,7 +17,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(0, serve.Config { ...serve.config(), workers: 1, max_connections_per_ip: 2 }, handle);
+    return serve.exit_code(serve.supervise(0, serve.Config { ...serve.config(), workers: 1, max_connections_per_ip: 2 }, handle));
 }
 `)
 }

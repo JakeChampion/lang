@@ -189,6 +189,7 @@ import "std/tls/client";
 import "std/tls/ktls";
 import "std/tls/verify";
 import "std/crypto";
+import "std/hex";
 import "std/envflag";
 import "std/http/h2";
 import "core/int";
@@ -201,6 +202,19 @@ import "core/cmp";
 <<3 pub enum Phase>>=
 pub enum Phase { Connecting, Inactivity, Total }
 
+// FetchError is why a request failed. `InvalidUrl`: a URL with no scheme
+// or host, a scheme other than http and https, or a path that cannot stand
+// on a request line. `InvalidRequest`: a method that is not a token or a
+// header that cannot be one line. `Dns`: a name that did not resolve.
+// `Connect`: every address failed. `Blocked`: a host that resolves to an
+// address the route may not reach. `Tls`: the TLS connection failed, with
+// its `tls.TlsError`. `Timeout`: a bound passed. `Protocol`: a response
+// this client cannot read. `Io`: a send or read the kernel refused.
+// `Redirect`: a redirect the client would not follow. `BodyLimit`: a body
+// past `HttpLimits.body`. `Decode`: a content coding the client could not
+// undo. `Host`: a failure the wasi:http host reported that no other variant
+// fits, with its `wasi_http.ErrorCode`. `Cancelled`: the request's task was
+// cancelled while it waited.
 pub enum FetchError {
   InvalidUrl(string),
   InvalidRequest(string),
@@ -1334,7 +1348,7 @@ function __roots_key(roots: Option[verify.Roots]): string {
       for c in r.certs {
         h = h.update(c.raw);
       }
-      return h.final_hex();
+      return hex.encode(h.finish());
     },
     None => {
       return "system";

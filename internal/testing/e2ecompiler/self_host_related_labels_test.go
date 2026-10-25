@@ -29,7 +29,7 @@ function main(): i32 {
   if (mapped.line != 7 || mapped.col != 2 || mapped.related.len() != 1 || mapped.related[0].line != 9 || mapped.related[0].col != 3 || mapped.related[0].length != 2) { return 1; }
   let Some(fix) = mapped.fix else { return 2; };
   if (fix.line != 9 || fix.col != 1) { return 3; }
-  if (!util.contains(util.format_diags_in([mapped], []), "note: context (9:3)")) { return 4; }
+  if (!util.contains(util.format_diags([mapped]), "note: context (9:3)")) { return 4; }
   let text: lsp.Text = lsp.text_of("🙂ab");
   let a: string = lsp.related_information("file:///a.fern", text, util.Related { line: 1, col: 5, length: 1, message: "first \"label\"" });
   let b: string = lsp.related_information("file:///b.fern", text, util.Related { line: 1, col: 6, length: 0, message: "second" });

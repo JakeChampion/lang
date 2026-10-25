@@ -10136,14 +10136,11 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   return asmcore.EmitState { ...s, reg_entries: previous_regs, leaves: previous_leaves, float_abi: previous_float.names, float_abi_masks: previous_float.masks };
 }
 
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, check_claims: boolean): asmcore.EmitState {
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
-  }
-  if (check_claims) {
-    ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   }
   let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
@@ -10185,7 +10182,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], physical: physicalbody.Collection): string[] {
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, retain_prepared: false, memo: irverifygate.open_memo("x86-64") }, all_funcs);
-  s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical, false);
+  s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical);
   irverifygate.close_memo(s.memo);
   s.release();
   return s.needed;
@@ -10209,6 +10206,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub, recs:
       return "";
     }
   }
+  ircore.refuse_claims(sub.refused);
   let lm: parser.Module = ircore.sub_lifted(sub, tm);
   let g: string = emit_module_ir_gated_sub(lm, sub, recs);
   if (g != "") {
@@ -10253,7 +10251,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
   }
-  s = emit_module_funcs(mod, all_funcs, s, globl_defs, lo, hi, cache, physical, true);
+  s = emit_module_funcs(mod, all_funcs, s, globl_defs, lo, hi, cache, physical);
   let en: i32 = 0;
   while (en < extra_needs.len()) {
     s = s.need(extra_needs[en]);

@@ -1,5 +1,6 @@
 import "std/test";
 import "std/crypto" as crypto;
+import "std/hex";
 import "std/string";
 
 function __pseudo(): u8[] {
@@ -23,22 +24,22 @@ function __thousand_a(): string {
 }
 
 function test_empty(): test.TestOutcome {
-  return test.assert_eq(crypto.sha1_new().final_hex(), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+  return test.assert_eq(hex.encode(crypto.sha1_new().finish()), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
 }
 
 function test_abc(): test.TestOutcome {
-  return test.assert_eq(crypto.sha1_new().update("abc".as_bytes()).final_hex(), "a9993e364706816aba3e25717850c26c9cd0d89d");
+  return test.assert_eq(hex.encode(crypto.sha1_new().update("abc".as_bytes()).finish()), "a9993e364706816aba3e25717850c26c9cd0d89d");
 }
 
 function test_multiblock(): test.TestOutcome {
   return test.assert_eq(
-    crypto.sha1_new().update("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".as_bytes()).final_hex(),
+    hex.encode(crypto.sha1_new().update("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".as_bytes()).finish()),
     "84983e441c3bd26ebaae4aa1f95129e5e54670f1",
   );
 }
 
 function test_bytes_len(): test.TestOutcome {
-  return test.assert_eq(crypto.sha1_new().update("abc".as_bytes()).final_bytes().len(), 20);
+  return test.assert_eq(crypto.sha1_new().update("abc".as_bytes()).finish().len(), 20);
 }
 
 function test_million_a_chunked(): test.TestOutcome {
@@ -49,7 +50,7 @@ function test_million_a_chunked(): test.TestOutcome {
     h = h.update(chunk.as_bytes());
     i = i + 1;
   }
-  return test.assert_eq(h.final_hex(), "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
+  return test.assert_eq(hex.encode(h.finish()), "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
 }
 
 function test_seven_byte_updates(): test.TestOutcome {
@@ -61,8 +62,8 @@ function test_seven_byte_updates(): test.TestOutcome {
     i = i + 7;
   }
   h = h.update(msg[i:10003]);
-  let chunked: string = h.final_hex();
-  let whole: string = crypto.sha1_new().update(msg).final_hex();
+  let chunked: string = hex.encode(h.finish());
+  let whole: string = hex.encode(crypto.sha1_new().update(msg).finish());
   if (chunked != "ac83250f3bb27589b0bac6369143019a48a18f21") {
     return test.fail("chunked: " + chunked);
   }
@@ -70,8 +71,8 @@ function test_seven_byte_updates(): test.TestOutcome {
 }
 
 function test_update_bytes_and_oneshot(): test.TestOutcome {
-  let via_bytes: string = crypto.sha1_new().update("abc".bytes()).final_hex();
-  if (via_bytes != crypto.sha1_hex("abc".as_bytes())) {
+  let via_bytes: string = hex.encode(crypto.sha1_new().update("abc".bytes()).finish());
+  if (via_bytes != hex.encode(crypto.sha1("abc".as_bytes()))) {
     return test.fail("one-shot differs: " + via_bytes);
   }
   return test.assert_eq(via_bytes, "a9993e364706816aba3e25717850c26c9cd0d89d");
@@ -82,7 +83,7 @@ function main(): i32 {
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);
-  r = r.it("final_bytes len", test_bytes_len);
+  r = r.it("finish len", test_bytes_len);
   r = r.it("million a, 1000x1000", test_million_a_chunked);
   r = r.it("7-byte updates", test_seven_byte_updates);
   r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);

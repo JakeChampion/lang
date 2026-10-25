@@ -88,6 +88,9 @@ plain = { path = "../plain" }
 	if got := m.Deps["plain"].Capabilities; got != nil {
 		t.Errorf("plain capabilities (want nil — key absent): %#v", got)
 	}
+	if kv, plain := m.Deps["kv"].Line, m.Deps["plain"].Line; kv != 4 || plain != 7 {
+		t.Errorf("dependency lines: kv %d, plain %d, want 4 and 7", kv, plain)
+	}
 }
 
 func TestParseDepCapabilitiesUnknownName(t *testing.T) {

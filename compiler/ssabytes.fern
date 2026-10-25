@@ -2,11 +2,11 @@ import "./ir";
 import "./irtables";
 
 pub function length_name(): string {
-  return "__sem_byte_view_len";
+  return "__sem_view_len";
 }
 
 function check_name(): string {
-  return "__sem_byte_view_check";
+  return "__sem_view_check";
 }
 
 pub function get_name(unchecked: boolean): string {
@@ -46,10 +46,23 @@ pub function check(value: i32): ir.Op {
   return ir.Op { ...ir.op_call_direct(check_name(), 2), i64_imm: value as i64 + 1 };
 }
 
+// A read from a view of anything but bytes: `op` is the read a box would take,
+// and lower_reads points it at the view's decoded data.
+pub function element(value: i32, op: ir.Op): ir.Op {
+  return ir.Op { ...op, str: element_name(), decl: value };
+}
+
+function element_name(): string {
+  return "__sem_view_element";
+}
+
 function read_value(op: ir.Op, call_direct: i32): i32 {
   if (op.kind_tag == call_direct && op.i64_imm > 0
     && (op.str == length_name() || op.str == data_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == check_name() || op.str == word_name(4) || op.str == word_name(8))) {
     return (op.i64_imm - 1) as i32;
+  }
+  if (op.kind_tag != call_direct && op.str == element_name()) {
+    return op.decl;
   }
   return 0 - 1;
 }
@@ -78,9 +91,13 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
     return [ir.op_drop(), ir.op_load_local(base)];
   }
   let ops: ir.Op[] = [ir.op_store_local(index), ir.op_drop()];
-  if (op.str == get_name(false) || op.str == check_name()) {
+  if (op.str == get_name(false) || op.str == check_name() || op.str == element_name() && op.i32_imm == 0) {
     ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_u", 0, false)]);
     ops = abort_if(ops);
+  }
+  if (op.str == element_name()) {
+    let slot: ir.Op = ir.Op { ...op, str: "", decl: 0 - 1, i32_imm: 1 };
+    return joined(ops, [ir.op_load_local(base), ir.op_const_i32(0 - 8), ir.op_raw_addr(), ir.op_load_local(index), slot]);
   }
   if (op.str == check_name()) {
     return ops.append(ir.op_const_i32(0));
@@ -147,16 +164,36 @@ pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
   return irtables.LowerResult { ...r, ops: ops, n_locals: next + 1 };
 }
 
-pub function slice_name(): string {
-  return "__sem_byte_view_slice";
+// `width` is the element width the array lowering uses: 8 for bytes, 64 for
+// eight-byte slots, and 32 for pointer-width slots.
+pub function slice_name(width: i32): string {
+  if (width == 8) {
+    return "__sem_byte_view_slice";
+  }
+  if (width == 64) {
+    return "__sem_view_slice_wide";
+  }
+  return "__sem_view_slice";
+}
+
+function scaled(width: i32): ir.Op[] {
+  if (width == 8) {
+    return [];
+  }
+  let stride: ir.Op[] = [ir.op_ptr_width(), ir.op_int_extend(true)];
+  if (width == 64) {
+    stride = [ir.op_const_i64(8i64)];
+  }
+  let ops: ir.Op[] = joined([ir.op_int_extend(true)], stride);
+  return joined(ops, [ir.op_bin("mul", 64, false), ir.op_int_wrap_ptr()]);
 }
 
 pub function release_name(): string {
-  return "__sem_byte_view_release";
+  return "__sem_view_release";
 }
 
 function data_name(): string {
-  return "__sem_byte_view_data";
+  return "__sem_view_data";
 }
 
 function body(name: string, params: i32, locals: i32, ops: ir.Op[]): irtables.LowerResult {
@@ -208,35 +245,41 @@ function abort_if(own ops: ir.Op[]): ir.Op[] {
   return joined(ops, [ir.op_if(0), ir.op_call_direct("__fern_oob_abort", 0), ir.op_drop(), ir.op_end()]);
 }
 
-function slice(): irtables.LowerResult {
+function range_abort_if(own ops: ir.Op[]): ir.Op[] {
+  return joined(ops, [ir.op_if(0), ir.op_call_direct("__fern_slice_abort", 0), ir.op_drop(), ir.op_end()]);
+}
+
+function slice(width: i32): irtables.LowerResult {
   let ops: ir.Op[] = [ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)];
-  ops = abort_if(ops);
+  ops = range_abort_if(ops);
   ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("lt_s", 0, false)]);
-  ops = abort_if(ops);
+  ops = range_abort_if(ops);
   ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(0), ir.op_call_direct(length_name(), 1), ir.op_bin("gt_s", 0, false)]);
-  ops = abort_if(ops);
+  ops = range_abort_if(ops);
+  ops = joined(ops, [ir.op_load_local(0), ir.op_call_direct(data_name(), 1), ir.op_load_local(1)]);
+  ops = joined(ops, scaled(width));
   ops = joined(ops, [
-    ir.op_load_local(0), ir.op_call_direct(data_name(), 1), ir.op_load_local(1), ir.op_raw_addr(),
-    ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("sub", 0, false),
+    ir.op_raw_addr(), ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("sub", 0, false),
     ir.op_call_direct(borrow_name(), 2), ir.op_const_i32(2), ir.op_raw_addr(), ir.op_return(),
   ]);
-  return body(slice_name(), 3, 3, ops);
+  return body(slice_name(width), 3, 3, ops);
 }
 
 pub function borrow_name(): string {
   return "__fern_str_borrow";
 }
 
-pub function slice_frame(src: i32, lo: i32, hi: i32): ir.Op[] {
+pub function slice_frame(src: i32, lo: i32, hi: i32, width: i32): ir.Op[] {
   let ops: ir.Op[] = [ir.op_load_local(lo), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)];
-  ops = abort_if(ops);
+  ops = range_abort_if(ops);
   ops = joined(ops, [ir.op_load_local(hi), ir.op_load_local(lo), ir.op_bin("lt_s", 0, false)]);
-  ops = abort_if(ops);
+  ops = range_abort_if(ops);
   ops = joined(ops, [ir.op_load_local(hi), ir.op_load_local(src), read(src, false, false), ir.op_bin("gt_s", 0, false)]);
-  ops = abort_if(ops);
+  ops = range_abort_if(ops);
+  ops = joined(ops, [ir.op_load_local(src), data_read(src), ir.op_load_local(lo)]);
+  ops = joined(ops, scaled(width));
   return joined(ops, [
-    ir.op_load_local(src), data_read(src), ir.op_load_local(lo), ir.op_raw_addr(),
-    ir.op_load_local(hi), ir.op_load_local(lo), ir.op_bin("sub", 0, false),
+    ir.op_raw_addr(), ir.op_load_local(hi), ir.op_load_local(lo), ir.op_bin("sub", 0, false),
     ir.op_raw_string_frame(0), ir.op_const_i32(2), ir.op_raw_addr(),
   ]);
 }
@@ -341,5 +384,5 @@ pub function served_builtin(helper: string): string {
 }
 
 pub function helpers(): irtables.LowerResult[] {
-  return [length(), data(), slice(), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
+  return [length(), data(), slice(8), slice(32), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
 }
