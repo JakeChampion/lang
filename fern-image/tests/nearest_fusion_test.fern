@@ -1,0 +1,192 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+import "../packages/resize/resize";
+import "../packages/color/color";
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function source(format: pixels.Format): Result[pixels.Image, pixels.ImageError] {
+  let image = pixels.create(4, 4, 4 * pixels.channels(format) + 3, format, pixels.default_limits())?;
+  let y = 0;
+  while (y < 4) {
+    let x = 0;
+    while (x < 4) {
+      let alpha: u8 = 255;
+      if (pixels.channels(format) == 4) {
+        alpha = ((x + y) * 30) as u8;
+      }
+      image = pixels.write_pixel(image, x, y, color.rgba(
+        (10 + x * 30 + y * 4) as u8,
+        (40 + x * 4 + y * 30) as u8, (100 + x + y) as u8, alpha,
+      ))?;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(image);
+}
+
+function golden(format: pixels.Format): boolean {
+  let input = match (source(format)) { Ok(v) => v, Err(_) => { return false; } };
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.from_image(input, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  graph = match (pipeline.nearest(graph, 3, 3, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  graph = match (pipeline.nearest(graph, 2, 2, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let expected_r: u8[] = [10, 100, 22, 112];
+  let expected_g: u8[] = [40, 52, 130, 142];
+  let expected_b: u8[] = [100, 103, 103, 106];
+  let expected_a: u8[] = [0, 90, 90, 180];
+  let y = 0;
+  while (y < 2) {
+    let row = match (pipeline.render_row(graph, y, limits, never_cancel)) { Ok(v) => v, Err(_) => { return false; } };
+    if (row.data.len() != 2 * pixels.channels(format)) {
+      return false;
+    }
+    let x = 0;
+    while (x < 2) {
+      let p = match (pixels.read_pixel(row, x, 0)) { Ok(v) => v, Err(_) => { return false; } };
+      let i = y * 2 + x;
+      let alpha = expected_a[i];
+      if (pixels.channels(format) == 3) {
+        alpha = 255 as u8;
+      }
+      if (p.r != expected_r[i] || p.g != expected_g[i] || p.b != expected_b[i] || p.a != alpha) {
+        return false;
+      }
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return true;
+}
+
+function coordinates(): test.TestOutcome {
+  return test.assert_true(golden(pixels.RGB8) && golden(pixels.RGBA8));
+}
+
+function agrees(format: pixels.Format): boolean {
+  let input = match (source(format)) { Ok(v) => v, Err(_) => { return false; } };
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.from_image(input, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let eager = input;
+  let widths: i32[] = [7, 5, 6, 3, 2];
+  let heights: i32[] = [5, 7, 9, 5, 3];
+  let i = 0;
+  while (i < widths.len()) {
+    let filter = resize.Nearest;
+    if (i == 2) {
+      filter = resize.Bilinear;
+      graph = match (pipeline.bilinear(graph, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    } else {
+      graph = match (pipeline.nearest(graph, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    }
+    eager = match (resize.resize(eager, widths[i], heights[i], filter, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+    i = i + 1;
+  }
+  let y = 0;
+  while (y < 3) {
+    let row = match (pipeline.render_row(graph, y, limits, never_cancel)) { Ok(v) => v, Err(_) => { return false; } };
+    let x = 0;
+    while (x < 2) {
+      let a = match (pixels.read_pixel(row, x, 0)) { Ok(v) => v, Err(_) => { return false; } };
+      let b = match (pixels.read_pixel(eager, x, y)) { Ok(v) => v, Err(_) => { return false; } };
+      if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+        return false;
+      }
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return true;
+}
+
+function mixed(): test.TestOutcome {
+  return test.assert_true(agrees(pixels.RGB8) && agrees(pixels.RGBA8));
+}
+
+function admission(): test.TestOutcome {
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 1064, max_samples: 133 };
+  let graph = match (pipeline.solid(4, 1, pixels.RGBA8, color.rgba(17 as u8, 23 as u8, 99 as u8, 128 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.nearest(graph, 1, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("small node"); } };
+  graph = match (pipeline.nearest(graph, 128, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("large node"); } };
+  let row = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("fallback row"); } };
+  let p = match (pixels.read_pixel(row, 127, 0)) { Ok(v) => v, Err(_) => { return test.fail("pixel"); } };
+  let samples = match (pipeline.required_samples(graph, limits)) { Ok(v) => v == 133, _ => false };
+  let scratch = match (pipeline.required_scratch(graph, limits)) { Ok(v) => v == 1064, _ => false };
+  let work = match (pipeline.render_row(graph, 0, pipeline.Limits { ...limits, max_samples: 132 }, never_cancel)) { Err(pipeline.Budget()) => true, _ => false };
+  let memory = match (pipeline.render_row(graph, 0, pipeline.Limits { ...limits, max_scratch_bytes: 1063 }, never_cancel)) { Err(pipeline.Budget()) => true, _ => false };
+  return test.assert_true(samples && scratch && work && memory && p.r == 17 as u8 && p.a == 128 as u8 && row.data.len() == 512);
+}
+
+function cancellation(): test.TestOutcome {
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.solid(384, 1, pixels.RGBA8, color.rgb(17 as u8, 23 as u8, 99 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.nearest(graph, 256, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("middle"); } };
+  graph = match (pipeline.nearest(graph, 128, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("output"); } };
+  let good = true;
+  for stop in [1, 3, 4, 6, 10, 12, 13] {
+    let calls = cell_new(0);
+    let cancelled = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() >= stop;
+    };
+    let result = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled()) => true, _ => false };
+    good = good && result && calls.get() == stop;
+  }
+  let after = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v.data.len() == 512, _ => false };
+  return test.assert_true(good && after);
+}
+
+function ownership(): test.TestOutcome {
+  let input = match (source(pixels.RGBA8)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_nodes: 64 };
+  let graph = match (pipeline.from_image(input, limits)) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
+  let i = 1;
+  while (i < 64) {
+    graph = match (pipeline.nearest(graph, 4, 4, limits)) { Ok(v) => v, Err(_) => { return test.fail("depth"); } };
+    i = i + 1;
+  }
+  let row = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("row"); } };
+  let kept = row;
+  let changed = match (pixels.write_pixel(row, 0, 0, color.rgb(255 as u8, 0 as u8, 0 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  let other = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("other row"); } };
+  let a = match (pixels.read_pixel(kept, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("kept"); } };
+  let b = match (pixels.read_pixel(changed, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("changed"); } };
+  let c = match (pixels.read_pixel(other, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("other"); } };
+  let d = match (pixels.read_pixel(input, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("input"); } };
+  return test.assert_true(a.r == 10 as u8 && a.a == 0 as u8 && b.r == 255 as u8 && b.a == 255 as u8
+    && c.r == 10 as u8 && c.a == 0 as u8 && d.r == 10 as u8 && d.a == 0 as u8);
+}
+
+function cached(): test.TestOutcome {
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 144, max_samples: 18 };
+  let graph = match (pipeline.solid(4, 2, pixels.RGBA8, color.rgba(17 as u8, 23 as u8, 99 as u8, 128 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.nearest(graph, 3, 2, limits)) { Ok(v) => v, Err(_) => { return test.fail("middle"); } };
+  graph = match (pipeline.nearest(graph, 2, 2, limits)) { Ok(v) => v, Err(_) => { return test.fail("output"); } };
+  let calls = cell_new(0);
+  let consume = (row: pixels.Image): Result[void, string] => {
+    let p = match (pixels.read_pixel(row, 1, 0)) { Ok(v) => v, Err(_) => { return Err("pixel"); } };
+    if (p.r != 17 as u8 || p.a != 128 as u8) {
+      return Err("bytes");
+    }
+    calls.set(calls.get() + 1);
+    return Ok(());
+  };
+  let stats = match (pipeline.render_rows(graph, 0, 2, limits, 72, never_cancel, consume)) { Ok(v) => v, Err(_) => { return test.fail("batch"); } };
+  return test.assert_true(calls.get() == 2 && stats.rows == 2 && stats.hits == 0 && stats.misses == 6
+    && stats.peak_cache_bytes == 72 && stats.peak_cache_entries == 6);
+}
+
+function main(): i32 {
+  let r = test.test_new("uncached nearest fusion");
+  r = r.it("sequential 4-to-3-to-2 coordinates preserve padded RGB/RGBA bytes", coordinates);
+  r = r.it("nearest chains preserve eager output across bilinear boundaries", mixed);
+  r = r.it("existing work and scratch admission covers upsample fallback", admission);
+  r = r.it("cancellation releases source and partially rendered rows", cancellation);
+  r = r.it("64-node chains preserve retained rows and source ownership", ownership);
+  r = r.it("cached execution keeps per-node statistics and exact budgets", cached);
+  return r.finish();
+}

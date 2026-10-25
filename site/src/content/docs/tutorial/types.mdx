@@ -139,8 +139,9 @@ function main(): i32 {
 }`}
 />
 
-`parse_int` answers an `Option[i32]`; `ok_or` turns its `None` into an
-`Err` carrying the message. [Error handling](../../reference/error-handling/)
+`i32.parse_i32` returns a `Result[i32, number_parse.ParseNumberError]`.
+`ok` converts the result to an `Option[i32]`.
+`ok_or` converts `None` to an `Err` with the message for that input. [Error handling](../../reference/error-handling/)
 lists the combinators on both types; `let … else` and `defer` /
 `errdefer` are in [Language features](../../reference/language-features/).
 
