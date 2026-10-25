@@ -1,0 +1,68 @@
+import "../packages/color/color";
+import "std/test";
+
+function near(a: f64, b: f64): boolean {
+  let difference: f64 = a - b;
+  return difference < 0.000001 && difference > 0.0 - 0.000001;
+}
+
+function transfer(): test.TestOutcome {
+  let good: boolean = near(color.srgb_to_linear(0.0), 0.0)
+    && near(color.srgb_to_linear(1.0), 1.0)
+    && near(color.srgb_to_linear(0.5), 0.21404114048223255)
+    && near(color.linear_to_srgb(0.0031308), 0.040449936)
+    && near(color.srgb_to_linear(0.04045), 0.00313080495356)
+    && near(color.srgb_to_linear(0.0 - 1.0), 0.0)
+    && near(color.linear_to_srgb(2.0), 1.0);
+  let i: i32 = 0;
+  while (i < 256) {
+    let x: f64 = i as f64 / 255.0;
+    good = good && near(color.linear_to_srgb(color.srgb_to_linear(x)), x);
+    i = i + 1;
+  }
+  return test.assert_true(good);
+}
+
+function alpha(): test.TestOutcome {
+  let p = color.rgba(200 as u8, 100 as u8, 50 as u8, 128 as u8);
+  let premul = color.premultiply(p);
+  let straight = color.unpremultiply(premul);
+  let zero = color.unpremultiply(color.premultiply(color.with_alpha(p, 0 as u8)));
+  let clamped = color.unpremultiply(color.Premultiplied { r: 255, g: 0, b: 0, a: 1 });
+  return test.assert_true(premul.r == 100 as u8 && premul.g == 50 as u8 && premul.b == 25 as u8
+    && straight.r == 199 as u8 && straight.g == 100 as u8 && straight.b == 50 as u8 && straight.a == 128 as u8
+    && zero.r == 0 as u8 && zero.a == 0 as u8 && clamped.r == 255 as u8);
+}
+
+function composite(): test.TestOutcome {
+  let black = color.rgb(0 as u8, 0 as u8, 0 as u8);
+  let white = color.rgb(255 as u8, 255 as u8, 255 as u8);
+  let mixed = color.source_over(color.with_alpha(white, 128 as u8), black);
+  let transparent = color.with_alpha(white, 0 as u8);
+  let both = color.source_over(transparent, transparent);
+  let over = color.source_over(transparent, black);
+  let opaque = color.source_over(white, black);
+  let half = color.source_over(color.with_alpha(white, 128 as u8), color.with_alpha(black, 128 as u8));
+  return test.assert_true(mixed.r == 188 as u8 && mixed.g == 188 as u8 && mixed.a == 255 as u8
+    && both.r == 0 as u8 && both.a == 0 as u8 && over.r == 0 as u8 && over.a == 255 as u8
+    && opaque.r == 255 as u8 && half.a == 192 as u8 && half.r == 213 as u8);
+}
+
+function gray(): test.TestOutcome {
+  let black = color.grayscale(color.rgb(0 as u8, 0 as u8, 0 as u8));
+  let white = color.grayscale(color.rgb(255 as u8, 255 as u8, 255 as u8));
+  let red = color.grayscale(color.rgba(255 as u8, 0 as u8, 0 as u8, 17 as u8));
+  let swapped = color.swap_rb(color.rgba(1 as u8, 2 as u8, 3 as u8, 4 as u8));
+  return test.assert_true(black.r == 0 as u8 && white.r == 255 as u8 && red.r == 127 as u8
+    && red.g == red.r && red.b == red.r && red.a == 17 as u8
+    && swapped.r == 3 as u8 && swapped.g == 2 as u8 && swapped.b == 1 as u8 && swapped.a == 4 as u8);
+}
+
+function main(): i32 {
+  let r = test.test_new("color M1");
+  r = r.it("sRGB thresholds and exhaustive byte round trips", transfer);
+  r = r.it("premultiply, unpremultiply, zero alpha and saturation", alpha);
+  r = r.it("linear source over and transparent pixels", composite);
+  r = r.it("linear luminance and channel operations", gray);
+  return r.finish();
+}

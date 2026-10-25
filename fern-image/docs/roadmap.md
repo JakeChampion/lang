@@ -1,6 +1,7 @@
 # Roadmap and proposed issues
 
-M0 is the only implemented milestone.
+M0 and M1 are implemented.
+M1 provides scalar pixel color operations. Whole-image transforms remain future work.
 These issue proposals are local documents. No GitHub issues were created.
 
 ## M1: Color primitives
