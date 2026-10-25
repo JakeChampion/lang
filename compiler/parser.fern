@@ -8497,7 +8497,7 @@ function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
   if (!name_declared(structs, "BodySource")) {
     let bsf: StructFieldDecl[] = [];
     bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "", line: 0, col: 0 });
-    bsf = bsf.append(bare_field("fault", "Cell[i32]"));
+    bsf = bsf.append(bare_field("fault", "Cell[Option[StreamFault]]"));
     bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }

@@ -308,7 +308,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "next", Type: &ast.FuncType{
 					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
 				}},
-				{Name: "fault", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.NumberType{}}}},
+				{Name: "fault", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.EnumType{Name: "Option", Args: []ast.Type{ast.EnumType{Name: "StreamFault"}}}}}},
 				{Name: "send", Type: &ast.FuncType{
 					Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 					Result: ast.NumberType{},

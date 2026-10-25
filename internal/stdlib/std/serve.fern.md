@@ -2380,7 +2380,7 @@ function __h2_opened[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config,
 <<40 struct __H2Answered>>=
 struct __H2Answered { conn: h2.Conn, conns: __Conns, fls: __Flight[], out: u8[] }
 
-struct __H2Body { data: Cell[u8[]], ended: Cell[i32], consumed: Cell[i32], fault: Cell[i32], done: Cell[boolean] }
+struct __H2Body { data: Cell[u8[]], ended: Cell[i32], consumed: Cell[i32], fault: Cell[Option[StreamFault]], done: Cell[boolean] }
 
 struct __H2Pull { fd: i32, stream: i32, body: __H2Body }
 
@@ -2529,7 +2529,7 @@ function __h2_stream_reset(c: __Conns, fd: i32, sid: i32): __Conns {
   if (pi >= 0) {
     let body: __H2Body = c.pulls[pi].body;
     body.ended.set(2);
-    body.fault.set(400);
+    body.fault.set(Some(StreamCutShort));
     c = __Conns { ...c, pulls: __pull_removed(c.pulls, pi) };
   }
   let pr: i32 = __producer_at(c, fd, sid);
@@ -2541,7 +2541,8 @@ function __h2_stream_reset(c: __Conns, fd: i32, sid: i32): __Conns {
 
 function __h2_streamed[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, req: HttpRequest, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): __H2Answered {
   let empty: u8[] = [];
-  let body: __H2Body = __H2Body { data: cell_new(empty), ended: cell_new(0), consumed: cell_new(0), fault: cell_new(0), done: cell_new(false) };
+  let no_fault: Option[StreamFault] = None;
+  let body: __H2Body = __H2Body { data: cell_new(empty), ended: cell_new(0), consumed: cell_new(0), fault: cell_new(no_fault), done: cell_new(false) };
   let fd: i32 = a.conns.fds[at];
   let conns: __Conns = __Conns { ...a.conns, pulls: a.conns.pulls.append(__H2Pull { fd: fd, stream: sid, body: body }) };
   let streamed: HttpRequest = HttpRequest { ...req, body: stream.stream_from_source(__h2_body_source(body, fd)) };
@@ -3484,7 +3485,7 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: 
 <<53 struct __Body>>=
 struct __Body { state: Cell[i32], rest: Cell[u8[]], tls: Cell[Option[server.Session]] }
 
-struct __Pull { fd: i32, left: Cell[i32], dstate: Cell[i32], dheld: Cell[u8[]], dleft: Cell[i32], dbudget: Cell[i32], droom: Cell[i32], pending: Cell[u8[]], since: Cell[i64], got: Cell[i32], continue_owed: Cell[i32], opts: Config, body: __Body, fault: Cell[i32] }
+struct __Pull { fd: i32, left: Cell[i32], dstate: Cell[i32], dheld: Cell[u8[]], dleft: Cell[i32], dbudget: Cell[i32], droom: Cell[i32], pending: Cell[u8[]], since: Cell[i64], got: Cell[i32], continue_owed: Cell[i32], opts: Config, body: __Body, fault: Cell[Option[StreamFault]] }
 ```
 
 ### `54 function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource`
@@ -3492,7 +3493,8 @@ struct __Pull { fd: i32, left: Cell[i32], dstate: Cell[i32], dheld: Cell[u8[]], 
 ```fern
 <<54 function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource>>=
 function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource {
-  let fault: Cell[i32] = cell_new(0);
+  let no_fault: Option[StreamFault] = None;
+  let fault: Cell[Option[StreamFault]] = cell_new(no_fault);
   let owed: i32 = 0;
   if (head.expects_continue && initial.len() == 0) {
     owed = 1;
@@ -3581,15 +3583,15 @@ function __body_take(p: __Pull): u8[] {
   while (true) {
     let wait_ms: i32 = __body_wait_ms(p);
     if (wait_ms <= 0) {
-      return __body_fault(p, 408);
+      return __body_fault(p, StreamTimeout);
     }
     let set: i32[] = [p.fd, 1];
     let woke: i32 = async.wait_any(set, wait_ms);
     if (woke == async.cancelled()) {
-      return __body_fault(p, async.cancelled());
+      return __body_fault(p, StreamCancelled);
     }
     if (woke < 0) {
-      return __body_fault(p, 408);
+      return __body_fault(p, StreamTimeout);
     }
     match (__pull_chunk(p)) {
       Some(bytes) => {
@@ -3613,7 +3615,7 @@ function __pull_chunk(p: __Pull): Option[u8[]] {
     return None;
   }
   if (n != 0 - __eagain()) {
-    return Some(__body_fault(p, 400));
+    return Some(__body_fault(p, StreamCutShort));
   }
   return None;
 }
@@ -3631,7 +3633,7 @@ function __pull_read(p: __Pull, raw: u8[]): u8[] {
           return data;
         },
         None => {
-          return __body_fault(p, 400);
+          return __body_fault(p, StreamMalformed);
         }
       }
     },
@@ -3744,15 +3746,25 @@ function __body_decode_chunked(p: __Pull, bytes: u8[]): u8[] {
       return data;
     },
     http.ChunkRefused(status) => {
-      return __body_fault(p, status);
+      return __body_fault(p, __chunk_fault(status));
     }
   }
-  return __body_fault(p, 400);
+  return __body_fault(p, StreamMalformed);
 }
 
-function __body_fault(p: __Pull, status: i32): u8[] {
+function __chunk_fault(status: i32): StreamFault {
+  if (status == 413) {
+    return StreamTooLarge;
+  }
+  if (status == 431) {
+    return StreamFramingTooLarge;
+  }
+  return StreamMalformed;
+}
+
+function __body_fault(p: __Pull, fault: StreamFault): u8[] {
   let none: u8[] = [];
-  p.fault.set(status);
+  p.fault.set(Some(fault));
   p.body.state.set(2);
   return none;
 }
