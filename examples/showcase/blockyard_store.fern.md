@@ -146,7 +146,7 @@ pub function recover(directory: string, name: string): Result[Recovered, string]
       return Err("World snapshot is incomplete.");
     }
     let body = payload(source.take(source.len() - 1))?;
-    let snapshot = json.decode[Snapshot](body)?;
+    let snapshot = json.decode[Snapshot](body).map_err((error: json.JsonError): string => error.message())?;
     if (snapshot.version != 1 || snapshot.revision < 0 || snapshot.blocks.len() > model.MAX_EDITS) {
       return Err("World snapshot has an invalid version or size.");
     }
@@ -169,7 +169,7 @@ pub function recover(directory: string, name: string): Result[Recovered, string]
         return Err("World journal contains an empty record.");
       }
       let body = payload(line)?;
-      let batch = json.decode[Batch](body)?;
+      let batch = json.decode[Batch](body).map_err((error: json.JsonError): string => error.message())?;
       if (batch.version != 1 || batch.changes.len() < 1 || batch.changes.len() > 512 || batch.revision < 1) {
         return Err("World journal has an invalid batch.");
       }

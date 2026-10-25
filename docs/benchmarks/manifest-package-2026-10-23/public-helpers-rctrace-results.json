@@ -1,0 +1,17 @@
+{
+  "args": [
+    "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+    "-target",
+    "x86-64-linux",
+    "-o",
+    "/workspace/scratch/lang-manifest-package/public-helpers-rctrace",
+    "/workspace/lang-manifest-package-current/conformance/cases/package_scoped_stdlib_helpers/main.fern",
+    "/workspace/lang-manifest-package-current/internal/stdlib"
+  ],
+  "compiler_sha256": "7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599",
+  "binary_sha256": "5efc2d5c16d10d85d367580de756ef12c856b86e16a2c78bafbf0c976ae52878",
+  "exit": 0,
+  "stdout": "package helpers ok\n",
+  "events": 434,
+  "unpaired": 0
+}

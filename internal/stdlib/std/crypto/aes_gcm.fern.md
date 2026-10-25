@@ -96,10 +96,9 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
     diff = diff | out[n + i] ^ sealed[n + i];
     i = i + 1;
   }
-  let verdict: u8[] = __alloc_u8(1);
-  verdict = verdict.with(0, diff);
-  __ct_public(verdict);
-  if (verdict[0] != 0) {
+  out = out.with(n, diff);
+  __ct_public(out[n:n + 1]);
+  if (out[n] != 0) {
     return Err(aead.Forged);
   }
   __arr_set_len(out, n);

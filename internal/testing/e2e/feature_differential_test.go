@@ -541,25 +541,25 @@ function main(): i32 {
 	{"stdlib_json", `import "std/json";
 import "std/i32";
 function main(): i32 {
-    match (json.json_parse("{\"a\": 42, \"b\": \"hi\"}")) {
-        Some(v) => {
+    match (json.parse("{\"a\": 42, \"b\": \"hi\"}")) {
+        Ok(v) => {
             match (json.json_get_i32(v, "a")) { Some(n) => { print(n.to_string()); }, None => { print("noa"); } }
             match (json.json_get_string(v, "b")) { Some(s) => { print(s); }, None => { print("nob"); } }
         },
-        None => { print("parsefail"); }
+        Err(_) => { print("parsefail"); }
     }
     return 0;
 }`},
 	{"stdlib_json_get_f64", `import "std/json";
 import "std/i32";
 function main(): i32 {
-    match (json.json_parse("{\"pi\":3.5,\"big\":2.5e1,\"neg\":-0.5}")) {
-        Some(v) => {
+    match (json.parse("{\"pi\":3.5,\"big\":2.5e1,\"neg\":-0.5}")) {
+        Ok(v) => {
             match (json.json_get_f64(v, "pi")) { Some(x) => { print(((x * 2.0) as i32).to_string()); }, None => { print("nopi"); } }
             match (json.json_get_f64(v, "big")) { Some(x) => { print((x as i32).to_string()); }, None => { print("nobig"); } }
             match (json.json_get_f64(v, "neg")) { Some(x) => { print(((x * 0.0 - x * 4.0) as i32).to_string()); }, None => { print("noneg"); } }
         },
-        None => { print("parsefail"); }
+        Err(_) => { print("parsefail"); }
     }
     return 0;
 }`},

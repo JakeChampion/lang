@@ -1,0 +1,70 @@
+trait Read {
+  function read(n: i32): Self;
+}
+
+impl Read for i32 {
+  function read(n: i32): Self {
+    return n;
+  }
+}
+
+impl Read for string {
+  function read(n: i32): Self {
+    return "text";
+  }
+}
+
+function read_inner[T: Read](n: i32): T {
+  return T.read(n);
+}
+
+impl[T: Read] Read for Option[T] {
+  function read(n: i32): Self {
+    return Some(read_inner[T](n));
+  }
+}
+
+function main(): i32 {
+  let value: Option[i32] = Option.read(42);
+  match (value) {
+    Some(n) => {
+      if (n != 42) {
+        return 1;
+      }
+    },
+    None => {
+      return 2;
+    }
+  }
+  let text: Option[string] = Option.read(3);
+  match (text) {
+    Some(s) => {
+      if (s != "text") {
+        return 3;
+      }
+    },
+    None => {
+      return 4;
+    }
+  }
+  let nested: Option[Option[i32]] = Option.read(7);
+  match (nested) {
+    Some(inner) => {
+      match (inner) {
+        Some(n) => {
+          if (n != 7) {
+            return 5;
+          }
+        },
+        None => {
+          return 6;
+        }
+      }
+    },
+    None => {
+      return 7;
+    }
+  }
+  print("ok");
+  return 0;
+}

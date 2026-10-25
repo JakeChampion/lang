@@ -25,10 +25,12 @@ env:
   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
 
 jobs:
-  # Two shards of equal count (scripts/shard-tests with no weights file): one
-  # job of the ^TestX86_64 set in two workers was 13.3 minutes, the longest
-  # job outside the self-host lane once the driver cache landed. The fixture
-  # corpus is not a seed sweep, so it runs once, on the first shard.
+  # One shard: the ^TestX86_64 set in two workers is about 3 minutes of tests
+  # since the one-process modload driver (#13197), so a second shard bought a
+  # runner slot and a setup for about 90 seconds of wall-clock. The shard
+  # mechanics stay (scripts/shard-tests with no weights file) so a second
+  # shard is one matrix row away. The fixture corpus is not a seed sweep, so
+  # it runs once, on the first shard.
   test:
     name: test-e2e-x86_64-shard${{ matrix.shard }}
     runs-on: ubuntu-24.04
@@ -37,8 +39,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { nshard: 2, shard: 0 }
-          - { nshard: 2, shard: 1 }
+          - { nshard: 1, shard: 0 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern

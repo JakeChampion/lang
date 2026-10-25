@@ -1,0 +1,12 @@
+enum Color { Red, Blue }
+
+function color_code(value: Option[Color]): i32 {
+  return match (value) { Some(Color.Red()) => 1, Some(color) => 2, None => 0 };
+}
+
+function main(): i32 {
+  assert(color_code(Some(Color.Red)) == 1);
+  assert(color_code(Some(Color.Blue)) == 2);
+  assert(color_code(None) == 0);
+  return 0;
+}

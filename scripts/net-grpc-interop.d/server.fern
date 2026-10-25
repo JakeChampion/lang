@@ -1,3 +1,13 @@
+// The server the gRPC interop suite drives (grpc/grpc's
+// doc/interop-test-descriptions.md): grpc.testing.TestService on std/serve
+// with HTTP/2 and streamed bodies, the messages read and written with
+// std/protobuf and framed with std/http/grpc. Unary and server-streaming
+// calls answer from the whole request; a client-streaming call sums the
+// payloads it is sent; the full-duplex call answers each request message
+// as it arrives through a producer reading the body stream, which is how
+// ping_pong flows. An unknown method or service is UNIMPLEMENTED, and a
+// request's EchoStatus is echoed as the call's status.
+import "std/i32";
 import "std/headers";
 import "std/http";
 import "std/http/grpc";
@@ -303,11 +313,11 @@ function answer(req: HttpRequest): HttpResponse {
 function port(): i32 {
   match (env("PORT")) {
     Some(p) => {
-      match (int.parse_int_radix(p, 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(p, 10)) {
+        Ok(n) => {
           return n;
         },
-        None => {
+        Err(_) => {
           return 8080;
         }
       }

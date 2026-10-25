@@ -1,0 +1,10 @@
+// A const may read only earlier consts; a function name is not one.
+function f(): i32 {
+    return 1;
+}
+
+const A: i32 = f + 1;
+
+function main(): i32 {
+    return A;
+}

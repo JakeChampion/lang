@@ -639,7 +639,11 @@ function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, H
     }
     match (p.seal(t, content[from:to], 0)) {
       Ok(s) => {
-        out = __cat(out, s.record);
+        if (out.len() == 0) {
+          out = s.record;
+        } else {
+          out = out.concat(s.record);
+        }
         p = s.next;
       },
       Err(e) => {
@@ -749,19 +753,19 @@ struct Next { conn: Conn, raw: message.Raw, has: boolean }
 ```fern
 <<22 function __next(c: Conn): Result[Next, HandshakeError]>>=
 function __next(c: Conn): Result[Next, HandshakeError] {
-  match (message.split(c.pending)) {
-    Ok(s) => {
-      if (s.messages.len() == 0) {
+  match (message.head(c.pending)) {
+    Ok(n) => {
+      if (n == 0) {
         return Ok(Next { conn: c, raw: message.Raw { kind: 0, bytes: [] }, has: false });
       }
-      let raw: message.Raw = s.messages[0];
-      return Ok(Next { conn: Conn { ...c, pending: __copy(c.pending[raw.bytes.len():c.pending.len()]) }, raw: raw, has: true });
+      let raw: message.Raw = message.Raw { kind: c.pending[0] as i32, bytes: __copy(c.pending[0:n]) };
+      return Ok(Next { conn: Conn { ...c, pending: __copy(c.pending[n:c.pending.len()]) }, raw: raw, has: true });
     },
     Err(e) => {
       return Err(Message(e));
     }
   }
-  return Err(Misuse("split"));
+  return Err(Misuse("head"));
 }
 
 function __decode(raw: message.Raw): Result[message.Message, HandshakeError] {
@@ -869,14 +873,22 @@ pub function (earlier: KernelKeys) then(later: KernelKeys): KernelKeys {
 ```fern
 <<27 function __alert_record(c: Conn, e: HandshakeError): u8[]>>=
 function __alert_record(c: Conn, e: HandshakeError): u8[] {
-  if (e.alert() == 0) {
+  return __sealed_alert(c.write, c.writing == 0 || c.kernel, c.quic, e);
+}
+
+function __sealed_alert(p: record.Protection, plain: boolean, quic: boolean, e: HandshakeError): u8[] {
+  if (e.alert() == 0 || quic) {
     return [];
   }
-  match (__write(c, record.Alert, [2 as u8, e.alert() as u8])) {
-    Ok(w) => {
-      return w.bytes;
+  let alert: u8[] = [2 as u8, e.alert() as u8];
+  if (plain) {
+    return record.frame(record.Alert, 0x0303, alert);
+  }
+  match (p.seal(record.Alert, alert, 0)) {
+    Ok(s) => {
+      return s.record;
     },
-    Err(err) => {
+    Err(_) => {
       return [];
     }
   }
@@ -1746,6 +1758,9 @@ function __rest(records: record.Record[], from: i32): record.Record[] {
 function __deframe(c: Conn, input: [u8]): Result[Conn, HandshakeError] {
   match (__records(c.inbox, input)) {
     Ok(d) => {
+      if (c.held.len() == 0) {
+        return Ok(Conn { ...c, held: d.records, inbox: d.rest });
+      }
       let held: record.Record[] = c.held;
       let i: i32 = 0;
       while (i < d.records.len()) {
@@ -2654,6 +2669,28 @@ function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError] {
 ```fern
 <<62 pub function (s: Server) read(input: [u8]): Result[ServerStep, HandshakeError]>>=
 pub function (s: Server) read(input: [u8]): Result[ServerStep, HandshakeError] {
+  return __server_read(s, input);
+}
+
+pub struct Refusal { error: HandshakeError, alert: u8[] }
+
+// The alert is sealed under the write keys the read started with, kept apart so the read consumes the server alone.
+pub function (s: Server) read_alerting(input: [u8]): Result[ServerStep, Refusal] {
+  let keys: record.Protection = s.conn.write;
+  let plain: boolean = s.conn.writing == 0 || s.conn.kernel;
+  let quic: boolean = s.conn.quic;
+  match (__server_read(s, input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err(Refusal { error: e, alert: __sealed_alert(keys, plain, quic, e) });
+    }
+  }
+  return Err(Refusal { error: Misuse("read"), alert: [] });
+}
+
+function __server_read(s: Server, input: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state == S_CLOSED) {
     return Err(Misuse("read after close"));
   }

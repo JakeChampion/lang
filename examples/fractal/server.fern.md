@@ -33,7 +33,8 @@ import "std/http/websocket";
 import "std/json";
 import "std/platform";
 import "std/serve";
-import "std/parse";
+import "std/i64";
+import "std/number_parse";
 import "std/result";
 import "std/binary";
 import "std/async";
@@ -266,7 +267,7 @@ pub struct TileRequest { id: u32, z: i32, x: i64, y: i64 }
 pub enum RequestError {
   InvalidFields,
   InvalidToken(TokenError),
-  InvalidNumber(string, parse.IntError),
+  InvalidNumber(string, number_parse.ParseNumberError),
   OutOfRange,
   Rendering(fractal.RenderError),
 }
@@ -281,7 +282,7 @@ pub function parse_request(request: string): Result[TileRequest, RequestError] {
   let x: i64 = request_integer(fields[2], "x")?;
   let y: i64 = request_integer(fields[3], "y")?;
   if (!request_range(id, z) || !fractal.valid(z as i32, x, y)) {
-    return Err(OutOfRange);
+    return Err(RequestError.OutOfRange);
   }
   return Ok(TileRequest { id: id as u32, z: z as i32, x: x, y: y });
 }
@@ -305,7 +306,7 @@ function answer(state: Stats, session_id: string, request: string): Result[u8[],
 }
 
 function request_integer(text: string, field: string): Result[i64, RequestError] {
-  match (parse.int64(text)) {
+  match (i64.parse_i64(text)) {
     Ok(value) => {
       return Ok(value);
     },
@@ -317,7 +318,7 @@ function request_integer(text: string, field: string): Result[i64, RequestError]
 
 function coordinate(params: router.Params, name: string): Result[i64, http.HttpError] {
   let text: string = params.param(name)?;
-  match (parse.int64(text)) {
+  match (i64.parse_i64(text)) {
     Ok(value) => {
       return Ok(value);
     },
@@ -327,7 +328,7 @@ function coordinate(params: router.Params, name: string): Result[i64, http.HttpE
   }
 }
 
-pub enum TokenError { InvalidSession, InvalidID(parse.IntError), InvalidIDRange }
+pub enum TokenError { InvalidSession, InvalidID(number_parse.ParseNumberError), InvalidIDRange }
 ```
 
 ## Cancel obsolete work
@@ -347,7 +348,7 @@ pub function request_key(session_id: string, id: string): Result[string, TokenEr
       return Err(InvalidSession);
     }
   }
-  let value: i64 = parse.int64(id).map_err((error: parse.IntError): TokenError => InvalidID(error))?;
+  let value: i64 = i64.parse_i64(id).map_err((error: number_parse.ParseNumberError): TokenError => InvalidID(error))?;
   if (value < 1 || value > 4294967295) {
     return Err(InvalidIDRange);
   }

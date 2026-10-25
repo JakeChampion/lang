@@ -533,10 +533,9 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
     diff = diff | want[i] ^ sealed[n + i];
     i = i + 1;
   }
-  let verdict: u8[] = __alloc_u8(1);
-  verdict = verdict.with(0, diff);
-  __ct_public(verdict);
-  if (verdict[0] != 0) {
+  want = want.with(0, diff);
+  __ct_public(want[0:1]);
+  if (want[0] != 0) {
     return Err(aead.Forged);
   }
   return Ok(__xor_stream(st, 1, sealed, 0, n, 0));

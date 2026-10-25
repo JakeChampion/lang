@@ -161,7 +161,7 @@ function __format_apply_spec(s: string, spec: string): string {
   let fill: str = " ";
   let align: i32 = 1;
   let fw: i32 = 1;
-  match (utf8.utf8_decode_at(spec, p)) {
+  match (utf8.decode_at(spec, p)) {
     Some(pair) => {
       fw = pair.1;
     },

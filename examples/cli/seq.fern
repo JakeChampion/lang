@@ -20,11 +20,11 @@ function main(): i32 {
     } else if (a == "-w") {
       equal_width = true;
     } else {
-      match (a.parse_int()) {
-        Some(n) => {
+      match (i32.parse_i32(a)) {
+        Ok(n) => {
           nums = nums.append(n);
         },
-        None => {
+        Err(_) => {
           eprint("seq: invalid integer argument: " + a);
           return 1;
         }

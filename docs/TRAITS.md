@@ -318,7 +318,6 @@ through it, so any `Display` value can be printed directly — no
 stringify-first dance:
 
 ```fern
-import "std/i32";
 import "core/cmp";
 
 @derive(cmp.Display)
@@ -334,7 +333,7 @@ function main(): i32 {
 
 `print(x)` / `write(x)` / `eprint(x)` accept any `T` whose type carries a
 `to_string(): string` in scope — a `@derive(Display)` / `impl Display`
-type, a scalar with its stdlib `to_string` imported, or a bounded generic
+type, any primitive scalar, or a bounded generic
 `T: Display`. A plain `string` argument is passed through unchanged; a
 non-string argument is rewritten by the checker to `arg.to_string()` (the
 same desugar f-strings use), so the value stringifies through the trait
@@ -342,6 +341,20 @@ before reaching the string-only runtime helper. A type with no `to_string`
 in scope is rejected with a `Display`-specific diagnostic. This is a
 checker-stage rewrite only — the formatter still renders the source
 `print(x)` form, and every backend sees an ordinary `print(string)` call.
+Every primitive (`i32`, `i64`, `u8`, `u32`, `u64`, `usize`, `f32`, `f64`,
+`boolean`, `char`, and `string`) has `to_string()` and supports interpolation
+without a source import. A visible user-defined method takes precedence.
+The compiler loads the private formatting bodies as runtime dependencies;
+this adds no source import and exposes no unrelated methods or module names.
+Float formatting uses the same shortest-round-trip kernels as `std/f64`.
+
+Importing `core/cmp` supplies `Eq`, `Ord`, `Hash`, and `Display` instances for
+all eleven primitives. Boolean order is `false < true`. Float hashes follow
+the total equality of those instances: both zero signs share a hash, and
+all NaN signs and payloads share a hash. IEEE operators retain their usual
+semantics. The arithmetic traits in `std/num` include `u8` and `usize`;
+unsigned types implement `Add`, `Sub`, `Mul`, `Div`, `Zero`, `One`, and `Num`.
+
 The self-hosted compiler makes the same rewrite in `checker.annotate_module`
 and raises the same E038 in `check_module` (#9945;
 docs/SELFHOST-CHECKER-PORT.md, 2026-09-22).

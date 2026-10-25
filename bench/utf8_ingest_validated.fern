@@ -20,11 +20,11 @@ function main(): i32 {
   while (round < 200) {
     match (utf8.from_bytes(b)) {
       Some(s) => {
-        match (json.json_parse(s)) {
-          Some(_) => {
+        match (json.parse(s)) {
+          Ok(_) => {
             acc = acc + 1;
           },
-          None => {
+          Err(_) => {
             acc = acc + 2;
           }
         }

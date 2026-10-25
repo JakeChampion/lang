@@ -16,7 +16,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-const metricsServeSource = `import "std/http";
+const metricsServeSource = `import "std/i32";
+import "std/http";
 import "std/platform";
 import "std/serve";
 import "std/metrics";
@@ -27,9 +28,9 @@ function main(): i32 {
   let port: i32 = 0;
   match (env("METRICS_PORT")) {
     Some(p) => {
-      match (int.parse_int_radix(p, 10)) {
-        Some(n) => { port = n; },
-        None => {}
+      match (i32.parse_i32_radix(p, 10)) {
+        Ok(n) => { port = n; },
+        Err(_) => {}
       }
     },
     None => {}
@@ -37,9 +38,9 @@ function main(): i32 {
   let workers: i32 = 1;
   match (env("WORKERS")) {
     Some(w) => {
-      match (int.parse_int_radix(w, 10)) {
-        Some(n) => { workers = n; },
-        None => {}
+      match (i32.parse_i32_radix(w, 10)) {
+        Ok(n) => { workers = n; },
+        Err(_) => {}
       }
     },
     None => {}

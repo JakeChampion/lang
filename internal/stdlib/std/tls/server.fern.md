@@ -217,12 +217,12 @@ function __then(own a: u8[], b: u8[]): u8[] {
 }
 
 function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure] {
-  match (s.server.read(record)) {
+  match (s.server.read_alerting(record)) {
     Ok(step) => {
       return __signed(s, step, now);
     },
-    Err(e) => {
-      return Err(tls.Failure { error: tls.HandshakeFailed(e), alert: s.server.alert(e) });
+    Err(r) => {
+      return Err(tls.Failure { error: tls.HandshakeFailed(r.error), alert: r.alert });
     }
   }
   return Err(tls.Failure { error: tls.ClosedEarly, alert: [] });

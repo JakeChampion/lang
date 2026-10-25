@@ -8,11 +8,11 @@ function main(): i32 {
   let argv: string[] = args();
   let port: i32 = 9000;
   if (argv.len() > 1) {
-    match (argv[1].parse_int()) {
-      Some(n) => {
+    match (i32.parse_i32(argv[1])) {
+      Ok(n) => {
         port = n;
       },
-      None => {
+      Err(_) => {
         eprint("origin: bad port '" + argv[1] + "'");
         return 2;
       }

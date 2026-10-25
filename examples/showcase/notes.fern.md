@@ -126,10 +126,10 @@ pub function post(state: State, req: HttpRequest): HttpResponse {
       }
       let name: string = fields.get("name").unwrap_or("").trim();
       let text: string = fields.get("message").unwrap_or("").trim();
-      if (name.len() < 1 || utf8.codepoint_count(name) > 48 || text.len() < 1 || utf8.codepoint_count(text) > 600) {
+      if (name.len() < 1 || name.codepoint_count() > 48 || text.len() < 1 || text.codepoint_count() > 600) {
         return document(state, req, "Please use a name of 48 characters and a note of 600 characters or fewer.", 422);
       }
-      for point in utf8.codepoints(name + text) {
+      for point in (name + text).chars() {
         let c: i32 = point as i32;
         if (c < 32 && c != 9 && c != 10 && c != 13 || c == 65534 || c == 65535) {
           return document(state, req, "Please remove unsupported characters from your name or note.", 422);

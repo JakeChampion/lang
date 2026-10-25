@@ -1,0 +1,28 @@
+import "../packages/pixels/pixels";
+import "../packages/resize/resize";
+
+function main(): i32 {
+  let source = match (pixels.create(32, 32, 128, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return 1; } };
+  let y = 0;
+  while (y < 32) {
+    let x = 0;
+    while (x < 32) {
+      let p = pixels.Pixel { r: (x * 8) as u8, g: (y * 8) as u8, b: 64, a: 128 };
+      source = match (pixels.write_pixel(source, x, y, p)) { Ok(v) => v, Err(_) => { return 2; } };
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  let total = 0;
+  let iteration = 0;
+  while (iteration < 10) {
+    let output = match (resize.resize(source, 16, 16, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return 3; } };
+    let p = match (pixels.read_pixel(output, 8, 8)) { Ok(v) => v, Err(_) => { return 4; } };
+    total = total + p.r as i32;
+    iteration = iteration + 1;
+  }
+  if (total != 1320) {
+    return 5;
+  }
+  return 0;
+}

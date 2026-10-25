@@ -1,3 +1,23 @@
+// nl.fern — number lines of input, like `nl(1)`.
+//
+// More configurable than `cat -n`:
+//
+//   -b a    number all lines       (default for nl is `t`)
+//   -b t    number only non-empty lines (default)
+//   -b n    number no lines
+//   -w N    number field width      (default 6)
+//   -s STR  separator between number and text (default a tab)
+//   -v N    starting line number     (default 1)
+//   -i N    line-number increment    (default 1)
+//
+//   $ printf 'a\n\nb\n' | ./nl
+//        1\ta
+//          \t
+//        2\tb
+//
+// Showcases: multiple option arguments, right-aligned numeric
+// formatting via `pad_start`.
+import "std/result";
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -27,16 +47,16 @@ function main(): i32 {
       o = Opts { ...o, body: argv[i + 1] };
       i = i + 1;
     } else if (a == "-w" && i + 1 < argv.len()) {
-      o = Opts { ...o, width: argv[i + 1].parse_int_or(6) };
+      o = Opts { ...o, width: i32.parse_i32(argv[i + 1]).unwrap_or(6) };
       i = i + 1;
     } else if (a == "-s" && i + 1 < argv.len()) {
       o = Opts { ...o, sep: argv[i + 1] };
       i = i + 1;
     } else if (a == "-v" && i + 1 < argv.len()) {
-      o = Opts { ...o, start: argv[i + 1].parse_int_or(1) };
+      o = Opts { ...o, start: i32.parse_i32(argv[i + 1]).unwrap_or(1) };
       i = i + 1;
     } else if (a == "-i" && i + 1 < argv.len()) {
-      o = Opts { ...o, incr: argv[i + 1].parse_int_or(1) };
+      o = Opts { ...o, incr: i32.parse_i32(argv[i + 1]).unwrap_or(1) };
       i = i + 1;
     } else {
       inputs = inputs.append(a);

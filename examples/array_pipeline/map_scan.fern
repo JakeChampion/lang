@@ -1,3 +1,8 @@
+// Compare this identical workload with FERN_NO_ARRAY_FUSION=1 and enabled.
+// A fourth argument, "loop", selects the handwritten while/append control.
+// Time and count only the pipeline; verify every prefix outside the timer.
+import "std/i32";
+import "std/result";
 import "std/array";
 import "std/string";
 
@@ -55,10 +60,10 @@ function main(): i32 {
   let filtered: boolean = false;
   let variant: string = "pipeline";
   if (argv.len() > 1) {
-    n = argv[1].parse_int_or(n);
+    n = i32.parse_i32(argv[1]).unwrap_or(n);
   }
   if (argv.len() > 2) {
-    rounds = argv[2].parse_int_or(rounds);
+    rounds = i32.parse_i32(argv[2]).unwrap_or(rounds);
   }
   if (argv.len() > 3) {
     filtered = argv[3] == "1";

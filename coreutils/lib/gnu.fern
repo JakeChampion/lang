@@ -4,6 +4,48 @@ import "std/io";
 import "std/io_buffered";
 import "std/errno";
 
+pub function push_decimal(h: usize, n: u64): void {
+  if (n < 100 as u64) {
+    if (n < 10 as u64) {
+      buf_push_byte(h, 48 + n as i32);
+      return;
+    }
+    let k: i32 = n as i32 * 2;
+    buf_push_range(h, decimal_pairs(), k, k + 2);
+    return;
+  }
+  let q: u64 = n / (100 as u64);
+  push_decimal(h, q);
+  let r: i32 = (n - q * (100 as u64)) as i32 * 2;
+  buf_push_range(h, decimal_pairs(), r, r + 2);
+}
+
+pub function push_signed_decimal(h: usize, n: i64): void {
+  if (n < 0 as i64) {
+    buf_push_byte(h, 45);
+    push_decimal(h, 0 as u64 - n as u64);
+    return;
+  }
+  push_decimal(h, n as u64);
+}
+
+pub function decimal_pairs(): string {
+  return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
+}
+
+pub function decimal_len(n: u64): i32 {
+  let d: i32 = 1;
+  let p: u64 = 10 as u64;
+  while (n >= p) {
+    d = d + 1;
+    if (d == 20) {
+      return d;
+    }
+    p = p * (10 as u64);
+  }
+  return d;
+}
+
 pub function prog(): string {
   let argv: string[] = args();
   if (argv.len() == 0) {
