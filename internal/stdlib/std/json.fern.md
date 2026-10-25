@@ -126,6 +126,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<48 pub trait FromJson>>
 
+<<Container JSON decoders>>
+
 <<49 pub function json_kind(v: JsonValue): string>>
 
 <<50 impl FromJson for i32>>
@@ -2349,6 +2351,31 @@ pub trait FromJson {
 }
 ```
 
+## Container JSON decoders
+
+Arrays decode each element with its own codec. Missing optional fields and explicit JSON null both decode to None.
+
+```fern
+<<Container JSON decoders>>=
+pub function decode_array[T: FromJson](text: string): Result[T[], string] {
+  match (json_parse_result(text)) {
+    Ok(value) => {
+      return from_json_array[T](value);
+    },
+    Err(error) => {
+      return Err("invalid JSON: " + error.to_string());
+    }
+  }
+  return Err("invalid JSON");
+}
+
+impl[T: FromJson] FromJson for Option[T] {
+  function from_json_value(v: JsonValue): Result[Option[T], string] {
+    return from_json_option[T](Some(v));
+  }
+}
+```
+
 ### `49 pub function json_kind(v: JsonValue): string`
 
 ```fern
@@ -2593,6 +2620,9 @@ pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
 pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], string] {
   match (v) {
     Some(jv) => {
+      if let JNull = jv {
+        return Ok(None);
+      }
       match (T.from_json_value(jv)) {
         Ok(x) => {
           return Ok(Some(x));
