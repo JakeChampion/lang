@@ -1,0 +1,29 @@
+// An explicit asmcore.Switches is the whole emit configuration: the leak
+// census and the free-debug quarantine it sets do not follow FERN_LEAKCHECK
+// or FERN_RC_FREE_DEBUG in the environment the emitter runs in. The test runs
+// this with both set.
+import "../asmcore";
+import "../wasm_ir";
+
+function main(): i32 {
+  let env = asmcore.env_switches();
+  if (!env.leak_check || !env.rc_free_debug) {
+    return 1;
+  }
+  let off = asmcore.Switches { backtrace: false, sanitize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false };
+  let s = asmcore.with_switches(asmcore.new_state(), off);
+  if (s.leak_check || s.rc_free_debug || wasm_ir.census_on(off)) {
+    return 2;
+  }
+  let census = asmcore.Switches { ...off, leak_check: true };
+  s = asmcore.with_switches(s, census);
+  if (!s.leak_check || s.rc_free_debug || !wasm_ir.census_on(census)) {
+    return 3;
+  }
+  s = asmcore.with_switches(s, asmcore.Switches { ...off, sanitize: true });
+  if (!s.leak_check || !s.rc_free_debug) {
+    return 4;
+  }
+  s.release();
+  return 0;
+}
