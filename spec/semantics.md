@@ -113,8 +113,8 @@ of them.
 | `CC-03` | `docs/CLOSURE-CAPTURE.md` | Assigning a reference-typed capture is rejected, inside the closure and from the enclosing scope when the stored value can reach a closure (`E049`) | `diag_e049` |
 | `ML-01` | `docs/MODE-LATTICE.md` | A borrowed value cannot be passed to an `own` parameter (`E051`) | `diag_e051` |
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
-| `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`) | `diag_e063` |
-| `ML-04` | `docs/MODE-LATTICE.md` | A `str` view of a function-local string, may not be returned (`E065`) | `diag_e065` |
+| `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`), on its own or inside a returned struct, tuple, array or enum | `diag_e063` |
+| `ML-04` | `docs/MODE-LATTICE.md` | A `str` view of a function-local string, may not be returned (`E065`), on its own or inside a returned struct, tuple, array or enum | `diag_e065` |
 | `ML-05` | `docs/MODE-LATTICE.md` | Using an owned parameter after it is consumed is rejected (`E050`) | `diag_e050` |
 | `ML-06` | `docs/MODE-LATTICE.md` | A `fbip` function that allocates without a donor to reuse is rejected (`E068`) | `diag_e068` |
 | `ML-07` | `docs/MODE-LATTICE.md` | A closure may not capture a value holding a borrowed view (`E082`) | `diag_e082` |

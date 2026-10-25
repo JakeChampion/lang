@@ -1,0 +1,22 @@
+// spec: ML-03
+// An enum value whose payload is a view of function-local storage cannot
+// be returned.
+
+enum Chunk { Part([i32]), Empty }
+
+function first_part(): Chunk {
+    let a: i32[] = [1, 2, 3];
+    return Chunk.Part(a[0:2]);
+}
+
+function part_of(a: i32[]): Chunk {
+    return Chunk.Part(a[0:2]);
+}
+
+function main(): i32 {
+    let a: i32[] = [1, 2, 3];
+    match (part_of(a)) {
+        Chunk.Part(xs) => { return xs.len(); },
+        Chunk.Empty => { return 0; }
+    }
+}

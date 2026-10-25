@@ -1,0 +1,4 @@
+9:3: error[E003]: variable "rows": expected [u8][], got u8[][]
+10:3: error[E003]: variable "pair": expected ([u8], i32), got (u8[], i32)
+12:3: error[E003]: variable "copied": expected ([u8], i32), got (u8[], i32)
+13:15: error[E038]: argument 1 to "size": expected [u8][], got u8[][]

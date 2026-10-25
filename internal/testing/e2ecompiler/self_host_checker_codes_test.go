@@ -22,6 +22,12 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 
 func goCheckerCodes(t *testing.T, dir, src string) []string {
 	t.Helper()
+	return uniqueSortedCodes(goCheckerDiagCodes(t, dir, src))
+}
+
+// goCheckerDiagCodes returns one code per Go checker diagnostic, sorted.
+func goCheckerDiagCodes(t *testing.T, dir, src string) []string {
+	t.Helper()
 	p := filepath.Join(dir, "gocheck_input.fern")
 	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 		t.Fatalf("write gocheck input: %v", err)
@@ -36,7 +42,14 @@ func goCheckerCodes(t *testing.T, dir, src string) []string {
 	if err == nil {
 		return nil
 	}
-	return uniqueSortedCodes(codeRE.FindAllString(diag.Format(p, src, err), -1))
+	return sortedCodes(diag.Format(p, src, err))
+}
+
+// sortedCodes returns every diagnostic code in out, repeats kept, sorted.
+func sortedCodes(out string) []string {
+	codes := codeRE.FindAllString(out, -1)
+	sort.Strings(codes)
+	return codes
 }
 
 type driverDiag struct {
@@ -754,6 +767,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-elem-assign-bad", "struct P { x: i32 }\nfunction main(): i32 { let a: P[] = [P { x: 1 }]; a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
 		{"arr-elem-field-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction main(): i32 { let p = P { xs: [Q { n: 1 }, 5] }; return 0; }\n", []string{"E034"}},
 		{"arr-elem-field-update-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction f(p: P): P { return P { ...p, xs: [Q { n: 1 }, 5] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"arr-mix-struct-then-prim", "struct P { x: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
+		{"arr-mix-struct-then-struct", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", []string{"E034"}},
+		{"typed-arr-struct-mix-unlike-dest", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a: P[] = [Q { y: 2 }, P { x: 1 }]; return 0; }\n", []string{"E003", "E034"}},
+		{"arr-elem-struct-return-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction f(p: P): Q[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"arr-elem-struct-let-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let p = P { x: 1 }; let a: Q[] = [p, p]; return a.len(); }\n", []string{"E003"}},
+		{"arr-elem-struct-field-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nstruct W { qs: Q[] }\nfunction main(): i32 { let p = P { x: 1 }; let w = W { qs: [p] }; return w.qs.len(); }\n", []string{"E043"}},
+		{"arr-elem-generic-return-clash", "struct Box[T] { v: T }\nfunction f(b: Box[i32]): Box[i64][] { return [b]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"arr-elem-generic-let-clash", "struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; let a: Box[i64][] = [b]; return a.len(); }\n", []string{"E003"}},
+		{"arr-elem-generic-arg-clash", "struct Box[T] { v: T }\nfunction g(xs: Box[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; return g([b]); }\n", []string{"E038"}},
+		{"arr-elem-generic-ok", "struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; let a: Box[i32][] = [b, b]; return a.len(); }\n", nil},
 		{"arr-elem-field-union-ok", "struct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nstruct P { xs: U[] }\nfunction main(): i32 { let p = P { xs: [A { a: 1 }, B { b: 2 }] }; return 0; }\n", nil},
 		{"arr-append-arg-bad", "function main(): i32 { let a: i32[] = [1]; a = a.append(\"x\"); return 0; }\n", []string{"E038"}},
 		{"arr-append-arg-ok", "function main(): i32 { let a: i32[] = [1]; a = a.append(2); return 0; }\n", nil},
@@ -1940,6 +1963,27 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-sliced-temporary", "function mkstr(): string { return \"a\" + \"b\"; }\nfunction f(): str { return slice_unchecked(mkstr(), 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-sliced-temporary-param-ok", "function idstr(s: string): string { return s; }\nfunction f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-literal-ok", "function lit(): string { return \"hello\"; }\nfunction f(): str { return slice_unchecked(lit(), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-struct-field-local", "struct H { xs: [i32] }\nfunction f(): H { let a: i32[] = [1, 2, 3]; return H { xs: a[0:2] }; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-struct-field-literal-slice", "struct H { xs: [i32] }\nfunction f(): H { return H { xs: [1, 2, 3][0:2] }; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-struct-update-local", "struct H { xs: [i32], n: i32 }\nfunction f(h: H): H { let a: i32[] = [1, 2, 3]; return H { ...h, xs: a[0:2] }; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-nested-struct-local", "struct H { xs: [i32] }\nstruct O { h: H, n: i32 }\nfunction f(): O { let a: i32[] = [1, 2, 3]; return O { h: H { xs: a[0:2] }, n: 1 }; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-tuple-elem-local", "function f(): ([i32], i32) { let a: i32[] = [1, 2, 3]; return (a[0:2], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-enum-payload-local", "enum E { V([i32]), N }\nfunction f(): E { let a: i32[] = [1, 2, 3]; return E.V(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-option-payload-local", "function f(): Option[[i32]] { let a: i32[] = [1, 2, 3]; return Some(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-array-elem-local", "function f(): [i32][] { let a: i32[] = [1, 2, 3]; return [a[0:2]]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-bound-struct-local", "struct H { xs: [i32] }\nfunction f(): H { let a: i32[] = [1, 2, 3]; let h: H = H { xs: a[0:2] }; return h; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-wrapping-callee", "struct H { xs: [i32] }\nfunction wrap(xs: [i32]): H { return H { xs: xs }; }\nfunction f(): H { let a: i32[] = [1, 2, 3]; return wrap(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-wrapping-method", "struct H { xs: [i32] }\nstruct B { n: i32 }\nfunction (b: B) wrap(xs: [i32]): H { return H { xs: xs }; }\nfunction f(): H { let a: i32[] = [1, 2, 3]; let b: B = B { n: 0 }; return b.wrap(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-wrapping-generic", "struct H[T] { v: T }\nfunction wrap[T](x: T): H[T] { return H { v: x }; }\nfunction f(): H[[i32]] { let a: i32[] = [1, 2, 3]; return wrap(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-struct-field-param-ok", "struct H { xs: [i32] }\nfunction f(a: i32[]): H { return H { xs: a[0:2] }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-struct-local-not-returned-ok", "struct H { xs: [i32] }\nfunction n(h: H): i32 { return h.xs.len(); }\nfunction f(): i32 { let a: i32[] = [1, 2, 3]; let h: H = H { xs: a[0:2] }; return n(h); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-fresh-array-in-generic-struct-ok", "struct P[T] { tail: T[] }\nfunction mk[T](x: T): T[] { let t: T[] = [x]; return t; }\nfunction f[T](x: T): P[T] { let t: T[] = mk(x); return P { tail: t }; }\nfunction main(): i32 { return f(1).tail.len(); }\n", nil},
+		{"e063-array-of-param-views-ok", "struct P { parts: [i32][] }\nfunction mk(a: i32[]): [i32][] { return [a[0:1]]; }\nfunction f(a: i32[]): P { let p = mk(a); return P { parts: p }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-owned-field-ok", "struct H { xs: i32[] }\nfunction f(): H { let a: i32[] = [1, 2, 3]; return H { xs: a }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-struct-field-local", "struct T { s: str }\nfunction f(): T { let s: string = \"a\" + \"b\"; return T { s: slice_unchecked(s, 0, 1) }; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-option-payload-local", "function f(): Option[str] { let s: string = \"a\" + \"b\"; let v: str = slice_unchecked(s, 0, 1); return Some(v); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-struct-field-param-ok", "struct T { s: str }\nfunction f(s: string): T { return T { s: slice_unchecked(s, 0, 1) }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-owned-string-field-ok", "struct T { s: string }\nfunction f(): T { let s: string = \"a\" + \"b\"; return T { s: s }; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-owned-return-through-callee-ok", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(): i32[] { let a: i32[] = [1, 2, 3]; return idarr(a); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e023-match-unknown-enum", "function f(s: Statuus[i32]): i32 {\n    match (s) {\n        _ => { return 0; }\n    }\n}\nfunction main(): i32 { return 0; }\n", []string{"E023", "E064"}},
 		{"e023-iflet-unknown-enum", "function f(s: Statuus[i32]): i32 {\n    if let Some(v) = s {\n        return 0;\n    }\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E023", "E064"}},

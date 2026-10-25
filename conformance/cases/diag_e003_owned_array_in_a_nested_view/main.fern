@@ -1,0 +1,14 @@
+// An owned array can fill one view slot, but not a view slot inside another value.
+function size(rows: [u8][]): i32 {
+  return rows.len();
+}
+
+function main(): i32 {
+  let data: u8[] = [1u8, 2u8];
+  let owned: u8[][] = [data];
+  let rows: [u8][] = owned;
+  let pair: ([u8], i32) = (data, 1);
+  let stored: (u8[], i32) = (data, 1);
+  let copied: ([u8], i32) = stored;
+  return size(owned) + rows.len() + pair.1 + copied.1;
+}
