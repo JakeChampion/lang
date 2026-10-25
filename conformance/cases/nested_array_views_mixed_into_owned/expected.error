@@ -1,0 +1,2 @@
+main.fern:4:3: error[E003]: variable "all": expected u8[][], got [u8][]
+main.fern:4:32: error[E034]: array element: expected [u8], got u8[]

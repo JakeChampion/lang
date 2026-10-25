@@ -1,5 +1,6 @@
 import "std/test";
 import "std/io_buffered" as io;
+import "std/result";
 
 function test_empty(): test.TestOutcome {
   let w = io.bytes_writer_new();
@@ -83,49 +84,131 @@ function test_reset_then_reuse(): test.TestOutcome {
 
 function test_buf_writer_holds_below_cap(): test.TestOutcome {
   let b: io.BufWriter = io.buf_writer_new(stderr(), 16);
-  b = b.write_string("abc");
-  b = b.write_byte(100);
-  return test.assert_true(b.buffered() == 4);
+  let held: Result[i32, IoError] = writes_below_cap(b);
+  return test.assert_true(held.is_ok() && held.unwrap_or(0) == 4);
+}
+
+function writes_below_cap(b0: io.BufWriter): Result[i32, IoError] {
+  let b: io.BufWriter = b0.write_string("abc")?;
+  b = b.write_byte(100)?;
+  return Ok(b.buffered());
+}
+
+function u64_widths(b0: io.BufWriter): Result[boolean, IoError] {
+  let b: io.BufWriter = b0.write_u64(0 as u64)?;
+  let one: i32 = b.buffered();
+  b = b.write_u64(9 as u64)?;
+  let two: i32 = b.buffered();
+  b = b.write_u64(10 as u64)?;
+  let four: i32 = b.buffered();
+  b = b.write_u64(18446744073709551615 as u64)?;
+  return Ok(one == 1 && two == 2 && four == 4 && b.buffered() == 24);
 }
 
 function test_buf_writer_write_u64(): test.TestOutcome {
-  let b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
-  b = b.write_u64(0 as u64);
-  let one: i32 = b.buffered();
-  b = b.write_u64(9 as u64);
+  let got: Result[boolean, IoError] = u64_widths(io.buf_writer_new(stderr(), 1024));
+  return test.assert_true(got.unwrap_or(false));
+}
+
+function i64_widths(b0: io.BufWriter): Result[boolean, IoError] {
+  let b: io.BufWriter = b0.write_i64(0 - 5 as i64)?;
   let two: i32 = b.buffered();
-  b = b.write_u64(10 as u64);
+  b = b.write_i64(42 as i64)?;
   let four: i32 = b.buffered();
-  b = b.write_u64(18446744073709551615 as u64);
-  return test.assert_true(one == 1 && two == 2 && four == 4 && b.buffered() == 24);
+  b = b.write_i64(0 - 9223372036854775807 as i64 - 1 as i64)?;
+  return Ok(two == 2 && four == 4 && b.buffered() == 24);
 }
 
 function test_buf_writer_write_i64(): test.TestOutcome {
-  let b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
-  b = b.write_i64(0 - 5 as i64);
-  let two: i32 = b.buffered();
-  b = b.write_i64(42 as i64);
-  let four: i32 = b.buffered();
-  b = b.write_i64(0 - 9223372036854775807 as i64 - 1 as i64);
-  return test.assert_true(two == 2 && four == 4 && b.buffered() == 24);
+  let got: Result[boolean, IoError] = i64_widths(io.buf_writer_new(stderr(), 1024));
+  return test.assert_true(got.unwrap_or(false));
+}
+
+function flushes_at_cap(b0: io.BufWriter): Result[boolean, IoError] {
+  let b: io.BufWriter = b0.write_string("abcd")?;
+  b = b.write_string("efgh")?;
+  let after_cap: i32 = b.buffered();
+  b = b.write_string("ijklmnopqrstuvwxyz")?;
+  let after_big: i32 = b.buffered();
+  b = b.write_string("z")?;
+  b = b.flush()?;
+  return Ok(after_cap == 0 && after_big == 0 && b.buffered() == 0);
 }
 
 function test_buf_writer_flushes_at_cap(): test.TestOutcome {
-  let b: io.BufWriter = io.buf_writer_new(stderr(), 8);
-  b = b.write_string("abcd");
-  b = b.write_string("efgh");
-  let after_cap: i32 = b.buffered();
-  b = b.write_string("ijklmnopqrstuvwxyz");
-  let after_big: i32 = b.buffered();
-  b = b.write_string("z");
-  b = b.flush();
-  let ok: boolean = after_cap == 0 && after_big == 0 && b.buffered() == 0;
-  match (b.error()) {
-    Some(_) => {
-      return test.fail("write error on stderr");
-    },
-    None => {
+  match (flushes_at_cap(io.buf_writer_new(stderr(), 8))) {
+    Ok(ok) => {
       return test.assert_true(ok);
+    },
+    Err(_) => {
+      return test.fail("write error on stderr");
+    }
+  }
+}
+
+function is_no_space(r: Result[io.BufWriter, IoError]): boolean {
+  match (r) {
+    Err(Other(_, msg, _)) => {
+      return msg == "No space left on device";
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function test_buf_writer_write_reports_failed_flush(): test.TestOutcome {
+  match (open_writer("/dev/full")) {
+    Ok(w) => {
+      let b: io.BufWriter = io.buf_writer_new(w, 4);
+      if (!is_no_space(b.write_string("past the capacity"))) {
+        return test.fail("write_string past the capacity did not answer the refused write");
+      }
+      let c: io.BufWriter = io.buf_writer_new(w, 4);
+      if (!is_no_space(c.write_bytes("abcd".bytes()))) {
+        return test.fail("write_bytes reaching the capacity did not answer the refused flush");
+      }
+      return test.assert_true(c.buffered() == 0);
+    },
+    Err(_) => {
+      return test.fail("open_writer failed");
+    }
+  }
+}
+
+function test_buf_writer_failure_is_sticky(): test.TestOutcome {
+  match (open_writer("/dev/full")) {
+    Ok(w) => {
+      let b: io.BufWriter = io.buf_writer_new(w, 64);
+      match (b.write_string("held")) {
+        Ok(held) => {
+          b = held;
+        },
+        Err(_) => {
+          return test.fail("a write that only buffers answered an error");
+        }
+      }
+      if (!is_no_space(b.flush())) {
+        return test.fail("flush did not answer the refused write");
+      }
+      if (!is_no_space(b.flush())) {
+        return test.fail("a later flush did not answer the earlier failure");
+      }
+      if (!is_no_space(b.write_string("past the sixty-four byte capacity of this writer, so it reaches the Writer"))) {
+        return test.fail("a later write reaching the Writer did not answer the earlier failure");
+      }
+      match (b.error()) {
+        Some(Other(_, msg, _)) => {
+          return test.assert_true(msg == "No space left on device");
+        },
+        _ => {
+          return test.fail("error() lost the failure");
+        }
+      }
+    },
+    Err(_) => {
+      return test.fail("open_writer failed");
     }
   }
 }
@@ -136,14 +219,20 @@ function lines_of(path: string, term: i32, chunk: i32): string[] {
     Ok(r) => {
       let lr: io.LineReader = io.line_reader_new(r, term, chunk);
       while (true) {
-        let (line, next) = lr.next_line();
-        lr = next;
-        match (line) {
-          Some(l) => {
-            out = out.append(l);
+        match (lr.next_line()) {
+          Ok((line, next)) => {
+            lr = next;
+            match (line) {
+              Some(l) => {
+                out = out.append(l);
+              },
+              None => {
+                return out;
+              }
+            }
           },
-          None => {
-            return out;
+          Err(_) => {
+            return ["read failed"];
           }
         }
       }
@@ -180,7 +269,7 @@ function test_buf_writer_close_writes(): test.TestOutcome {
   match (open_writer(path)) {
     Ok(w) => {
       let b: io.BufWriter = io.buf_writer_new(w, 64);
-      b = b.write_string("held");
+      b = b.write_string("held").unwrap_or(b);
       let held: i32 = b.buffered();
       if let Err(_) = b.close() {
         return test.fail("close failed");
@@ -207,15 +296,15 @@ function test_buf_writer_close_refused(): test.TestOutcome {
   match (open_writer("/dev/full")) {
     Ok(w) => {
       let b: io.BufWriter = io.buf_writer_new(w, 4);
-      b = b.write_string("first flush fails");
+      let failed: boolean = is_no_space(b.write_string("first flush fails"));
       let sticky: boolean = false;
       match (b.error()) {
         Some(_) => {
-          sticky = true;
+          sticky = failed;
         },
         None => {}
       }
-      b = b.write_string("x");
+      b.write_string("x");
       match (b.close()) {
         Err(Other(_, msg, _)) => {
           return test.assert_eq(sticky && msg == "No space left on device", true);
@@ -249,6 +338,99 @@ function test_buf_writer_close_empty(): test.TestOutcome {
     },
     Err(_) => {
       return test.fail("open_writer failed");
+    }
+  }
+}
+
+function is_read_failure[T](r: Result[T, IoError]): boolean {
+  match (r) {
+    Err(Other(_, _, _)) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function test_readers_answer_read_failure(): test.TestOutcome {
+  match (temp_dir("io_buffered_test")) {
+    Ok(dir) => {
+      let ok: boolean = true;
+      for step in [0, 1, 2, 3, 4] {
+        match (open_reader(dir)) {
+          Ok(r) => {
+            let raw: io.ByteLineReader = io.byte_line_reader_new(r, 10, 4096);
+            let text: io.LineReader = io.line_reader_new(r, 10, 4096);
+            if (step == 0) {
+              ok = ok && is_read_failure(raw.next_line_bytes());
+            } else if (step == 1) {
+              ok = ok && is_read_failure(raw.next_chunk_bytes());
+            } else if (step == 2) {
+              ok = ok && is_read_failure(raw.skip_line());
+            } else if (step == 3) {
+              ok = ok && is_read_failure(text.next_line());
+            } else {
+              ok = ok && is_read_failure(text.next_chunk());
+            }
+            r.close();
+          },
+          Err(_) => {
+            return test.fail("open_reader on a directory failed");
+          }
+        }
+      }
+      return test.assert_true(ok);
+    },
+    Err(_) => {
+      return test.fail("temp_dir failed");
+    }
+  }
+}
+
+function is_invalid_text(r: Result[(Option[string], io.LineReader), IoError]): boolean {
+  match (r) {
+    Err(InvalidUtf8(path)) => {
+      return path == "";
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function test_line_reader_answers_invalid_text(): test.TestOutcome {
+  match (temp_dir("io_buffered_test")) {
+    Ok(dir) => {
+      let path: string = dir + "/invalid";
+      let bad: u8[] = [111, 107, 10, 255, 10];
+      match (write_file_bytes(path, bad)) {
+        Ok(_) => {},
+        Err(_) => {
+          return test.fail("write_file_bytes failed");
+        }
+      }
+      let ok: boolean = false;
+      match (open_reader(path)) {
+        Ok(r) => {
+          let lr: io.LineReader = io.line_reader_new(r, 10, 4096);
+          match (lr.next_line()) {
+            Ok((Some(first), next)) => {
+              ok = first == "ok\n" && is_invalid_text(next.next_line());
+            },
+            _ => {}
+          }
+          r.close();
+        },
+        Err(_) => {}
+      }
+      remove_file(path);
+      return test.assert_true(ok);
+    },
+    Err(_) => {
+      return test.fail("temp_dir failed");
     }
   }
 }
@@ -287,6 +469,10 @@ function main(): i32 {
   r = r.it("BufWriter close writes what is held", test_buf_writer_close_writes);
   r = r.it("BufWriter close reports the refused write", test_buf_writer_close_refused);
   r = r.it("BufWriter close with nothing held", test_buf_writer_close_empty);
+  r = r.it("BufWriter write answers a refused flush", test_buf_writer_write_reports_failed_flush);
+  r = r.it("BufWriter failure is answered again and kept", test_buf_writer_failure_is_sticky);
+  r = r.it("line readers answer a read failure as Err", test_readers_answer_read_failure);
+  r = r.it("LineReader answers invalid UTF-8 as Err", test_line_reader_answers_invalid_text);
   r = r.it("LineReader keeps terminators", test_line_reader_keeps_terminators);
   r = r.it("LineReader spans chunks", test_line_reader_spans_chunks);
   r = r.it("LineReader empty and NUL", test_line_reader_empty_and_nul);

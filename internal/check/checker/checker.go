@@ -237,6 +237,17 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "BodyFileRanges", Payloads: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ast.ArrayType{Elem: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}},
 			},
 		},
+		{
+			Name: "StreamFault",
+			Variants: []ast.EnumVariant{
+				{Name: "StreamTooLarge"},
+				{Name: "StreamFramingTooLarge"},
+				{Name: "StreamTimeout"},
+				{Name: "StreamMalformed"},
+				{Name: "StreamCutShort"},
+				{Name: "StreamCancelled"},
+			},
+		},
 	}
 }
 
@@ -297,7 +308,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "next", Type: &ast.FuncType{
 					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
 				}},
-				{Name: "fault", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.NumberType{}}}},
+				{Name: "fault", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.EnumType{Name: "Option", Args: []ast.Type{ast.EnumType{Name: "StreamFault"}}}}}},
 				{Name: "send", Type: &ast.FuncType{
 					Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 					Result: ast.NumberType{},
@@ -571,10 +582,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	{
 		var inject []*ast.EnumDecl
 		for _, ed := range builtinEnumDecls() {
-			if existing, dup := userEnums[ed.Name]; dup && existing.P == (ast.Position{}) {
+			if shadow(ed.Name) {
 				continue
 			}
-			if shadow(ed.Name) {
+			if existing, dup := userEnums[ed.Name]; dup && existing.P == (ast.Position{}) {
 				continue
 			}
 			inject = append(inject, ed)
@@ -586,10 +597,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	{
 		var inject []*ast.StructDecl
 		for _, sd := range builtinStructDecls() {
-			if existing, dup := userStructs[sd.Name]; dup && existing.P == (ast.Position{}) {
+			if shadow(sd.Name) {
 				continue
 			}
-			if shadow(sd.Name) {
+			if existing, dup := userStructs[sd.Name]; dup && existing.P == (ast.Position{}) {
 				continue
 			}
 			inject = append(inject, sd)
@@ -630,22 +641,23 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		},
 		variantOf:            map[string][]variantRef{},
 		shadowedGenericCalls: map[*ast.Call]bool{},
-		reservedShadows:      map[string]bool{},
 	}
 	if prog.LoadedStdlibPaths != nil && !prog.LoadedStdlibPaths["stdlib://core/map.fern"] {
 		c.requireMapImport = true
 	}
-	for _, fe := range defaultargs.Fill(prog) {
-		c.errfCode(fe.Pos, fe.Code, "%s", fe.Msg)
-	}
-
 	for _, ed := range shadowedEnums {
 		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
-		c.reservedShadows[ed.Name] = true
 	}
 	for _, sd := range shadowedStructs {
 		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
-		c.reservedShadows[sd.Name] = true
+	}
+	// Reserved names invalidate the namespace before signature resolution.
+	if len(shadowedEnums)+len(shadowedStructs) > 0 {
+		sourceNamed(prog, c.errors)
+		return c.info, diag.Errors(c.errors)
+	}
+	for _, fe := range defaultargs.Fill(prog) {
+		c.errfCode(fe.Pos, fe.Code, "%s", fe.Msg)
 	}
 
 	for _, sd := range prog.Structs {
@@ -5281,8 +5293,6 @@ type checker struct {
 
 	shadowedGenericCalls map[*ast.Call]bool
 
-	reservedShadows map[string]bool
-
 	elemHint ast.Type
 
 	typedRecv     ast.Expr
@@ -5701,7 +5711,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			c.resolveType(&args[i], params, pos)
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
-			if len(sd.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
+			if len(sd.TypeParams) != len(args) {
 				c.errfCode(sd.P, "E019", "%s", arityMsg("struct "+t.Name, len(sd.TypeParams), len(args), "type argument"))
 			}
 			if t.Name == "Cell" && len(args) == 1 {
@@ -5715,7 +5725,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			return
 		}
 		if ed, ok := c.info.Enums[t.Name]; ok && len(args) > 0 {
-			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
+			if len(ed.TypeParams) != len(args) {
 				c.errfCode(ed.P, "E019", "%s", arityMsg("enum "+t.Name, len(ed.TypeParams), len(args), "type argument"))
 			}
 		}
@@ -8601,7 +8611,6 @@ func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 func (c *checker) checkEscapes(prog *ast.Program) {
 	c.checkSliceEscapes(prog)
 	c.checkStrEscapes(prog)
-	c.checkCompositeViewEscapes(prog)
 }
 
 type escapeEnv struct {
@@ -8660,15 +8669,24 @@ func (c *checker) escapeEnvs(prog *ast.Program, wants func(ast.Type) bool) (map[
 	return envs, order
 }
 
+// params are the parameters whose storage the value views; carried are the
+// aggregate parameters whose own views the value passes on.
 type viewRoots struct {
-	local  bool
-	params map[int]bool
+	local   bool
+	params  map[int]bool
+	carried map[int]bool
 }
 
 func (r *viewRoots) merge(o viewRoots) {
 	r.local = r.local || o.local
 	for i := range o.params {
 		r.params[i] = true
+	}
+	for i := range o.carried {
+		if r.carried == nil {
+			r.carried = map[int]bool{}
+		}
+		r.carried[i] = true
 	}
 }
 
@@ -8682,14 +8700,15 @@ func forEachReturn(fn *ast.FuncDecl, f func(*ast.Return)) {
 }
 
 type viewSummary struct {
-	params map[int]bool
-	fresh  bool
+	params  map[int]bool
+	carried map[int]bool
+	fresh   bool
 }
 
 func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Expr, map[string]viewSummary) viewRoots) map[string]viewSummary {
 	sums := map[string]viewSummary{}
 	for _, fn := range fns {
-		sums[fn.Name] = viewSummary{params: map[int]bool{}}
+		sums[fn.Name] = viewSummary{params: map[int]bool{}, carried: map[int]bool{}}
 	}
 	for changed := true; changed; {
 		changed = false
@@ -8698,12 +8717,8 @@ func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Ex
 			owned := !isViewReturn(fn.ReturnType)
 			forEachReturn(fn, func(ret *ast.Return) {
 				roots := rootsOf(fn, ret.Value, sums)
-				for i := range roots.params {
-					if !cur.params[i] {
-						cur.params[i] = true
-						changed = true
-					}
-				}
+				changed = addFlags(cur.params, roots.params) || changed
+				changed = addFlags(cur.carried, roots.carried) || changed
 				if roots.local && owned && !cur.fresh {
 					cur.fresh = true
 					sums[fn.Name] = cur
@@ -8715,6 +8730,17 @@ func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Ex
 	return sums
 }
 
+func addFlags(into, from map[int]bool) bool {
+	added := false
+	for i := range from {
+		if !into[i] {
+			into[i] = true
+			added = true
+		}
+	}
+	return added
+}
+
 func isViewReturn(t ast.Type) bool {
 	switch t.(type) {
 	case ast.SliceType, ast.StrType:
@@ -8723,11 +8749,183 @@ func isViewReturn(t ast.Type) bool {
 	return false
 }
 
+// viewLeaf is one kind of view (`[T]` or `str`) the escape analysis follows
+// into an aggregate: the roots of an expression in a slot of that type, and of
+// an argument the callee's returned value may view.
+type viewLeaf struct {
+	is   func(ast.Type) bool
+	slot func(ast.Expr) viewRoots
+	arg  func(ast.Expr) viewRoots
+}
+
+func (c *checker) sliceLeaf(env *escapeEnv, sums map[string]viewSummary) viewLeaf {
+	return viewLeaf{
+		is:   func(t ast.Type) bool { _, ok := t.(ast.SliceType); return ok },
+		slot: func(e ast.Expr) viewRoots { return c.sliceViewRoots(e, env, sums) },
+		arg:  func(e ast.Expr) viewRoots { return c.sliceSourceRoots(e, env, sums) },
+	}
+}
+
+func (c *checker) strLeaf(env *escapeEnv, sums map[string]viewSummary) viewLeaf {
+	roots := func(e ast.Expr) viewRoots { return c.strViewRoots(e, env, sums) }
+	return viewLeaf{
+		is:   func(t ast.Type) bool { _, ok := t.(ast.StrType); return ok },
+		slot: roots,
+		arg:  roots,
+	}
+}
+
+// aggregateViewRoots finds the roots of every leaf view that a value of type t
+// carries in a struct field, tuple element, array element or variant payload.
+func (c *checker) aggregateViewRoots(expr ast.Expr, t ast.Type, env *escapeEnv, sums map[string]viewSummary, leaf viewLeaf) viewRoots {
+	if leaf.is(t) {
+		return leaf.slot(expr)
+	}
+	if _, isParam := t.(ast.ParamType); isParam {
+		// A type-parameter slot holds a view only through what the caller passed.
+		r := leaf.slot(expr)
+		r.local = false
+		return r
+	}
+	out := viewRoots{params: map[int]bool{}}
+	if !c.holdsViewAggregate(t) {
+		return out
+	}
+	part := func(e ast.Expr, pt ast.Type) {
+		out.merge(c.aggregateViewRoots(e, pt, env, sums, leaf))
+	}
+	switch e := expr.(type) {
+	case *ast.StructLit:
+		c.structLitParts(e, t, part)
+	case *ast.TupleLit:
+		if tt, ok := t.(ast.TupleType); ok && len(tt.Elems) == len(e.Elems) {
+			for i, el := range e.Elems {
+				part(el, tt.Elems[i])
+			}
+		}
+	case *ast.ArrayLit:
+		if at, ok := t.(ast.ArrayType); ok {
+			for _, el := range e.Elems {
+				part(el, at.Elem)
+			}
+		}
+	case *ast.Call:
+		if e.IsVariantCall {
+			c.variantCallParts(e, t, part)
+		} else {
+			out.merge(c.aggregateCallRoots(e, env, sums, leaf))
+		}
+	case *ast.Ident:
+		if i, ok := env.params[e.Name]; ok {
+			out.carried = map[int]bool{i: true}
+			return out
+		}
+		if v, ok := env.locals[e.Name]; ok && v.Init != nil && !env.visiting[e.Name] {
+			env.visiting[e.Name] = true
+			defer delete(env.visiting, e.Name)
+			part(v.Init, t)
+		}
+	}
+	return out
+}
+
+func (c *checker) structLitParts(e *ast.StructLit, t ast.Type, part func(ast.Expr, ast.Type)) {
+	sd, ok := c.info.Structs[e.TypeName]
+	if !ok {
+		return
+	}
+	st, _ := t.(ast.StructType)
+	sub := declArgs(sd.TypeParams, st.Args)
+	for _, fi := range e.Fields {
+		for _, f := range sd.Fields {
+			if f.Name == fi.Name {
+				part(fi.Value, substituteType(f.Type, sub))
+			}
+		}
+	}
+	if e.Base != nil {
+		part(e.Base, t)
+	}
+}
+
+func (c *checker) variantCallParts(e *ast.Call, t ast.Type, part func(ast.Expr, ast.Type)) {
+	id, isIdent := e.Callee.(*ast.Ident)
+	et, isEnum := t.(ast.EnumType)
+	if !isIdent || !isEnum {
+		return
+	}
+	ed, ok := c.info.Enums[et.Name]
+	if !ok {
+		return
+	}
+	sub := declArgs(ed.TypeParams, et.Args)
+	for _, variant := range ed.Variants {
+		if variant.Name != id.Name {
+			continue
+		}
+		for i, a := range e.Args {
+			if i < len(variant.Payloads) {
+				part(a, substituteType(variant.Payloads[i], sub))
+			}
+		}
+	}
+}
+
+func (c *checker) aggregateCallRoots(e *ast.Call, env *escapeEnv, sums map[string]viewSummary, leaf viewLeaf) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	id, ok := e.Callee.(*ast.Ident)
+	if !ok {
+		return out
+	}
+	sum := sums[id.Name]
+	for i := range sum.params {
+		if i < len(e.Args) {
+			out.merge(leaf.arg(e.Args[i]))
+		}
+	}
+	sig := c.info.FuncSigs[id.Name]
+	for i := range sum.carried {
+		if i < len(e.Args) && sig != nil && i < len(sig.Params) {
+			out.merge(c.aggregateViewRoots(e.Args[i], sig.Params[i], env, sums, leaf))
+		}
+	}
+	return out
+}
+
+// holdsViewAggregate reports a type that is not itself a view but may carry
+// one: a view inside it, or a type parameter a view can instantiate.
+func (c *checker) holdsViewAggregate(t ast.Type) bool {
+	return !isViewReturn(t) && (c.typeHoldsView(t, map[string]bool{}) || mentionsTypeParam(t))
+}
+
+func mentionsTypeParam(t ast.Type) bool {
+	switch v := t.(type) {
+	case ast.ParamType:
+		return true
+	case ast.ArrayType:
+		return mentionsTypeParam(v.Elem)
+	case ast.TupleType:
+		return slices.ContainsFunc(v.Elems, mentionsTypeParam)
+	case ast.StructType:
+		return slices.ContainsFunc(v.Args, mentionsTypeParam)
+	case ast.EnumType:
+		return slices.ContainsFunc(v.Args, mentionsTypeParam)
+	}
+	return false
+}
+
+const sliceEscapeMsg = "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when %q returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead"
+
+const strEscapeMsg = "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead"
+
 func (c *checker) checkSliceEscapes(prog *ast.Program) {
 	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool { return true })
 	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]viewSummary) viewRoots {
 		if _, isSlice := fn.ReturnType.(ast.SliceType); isSlice {
 			return c.sliceViewRoots(ret, envs[fn], sums)
+		}
+		if c.holdsViewAggregate(fn.ReturnType) {
+			return c.aggregateViewRoots(ret, fn.ReturnType, envs[fn], sums, c.sliceLeaf(envs[fn], sums))
 		}
 		return c.sliceSourceRoots(ret, envs[fn], sums)
 	})
@@ -8736,12 +8934,13 @@ func (c *checker) checkSliceEscapes(prog *ast.Program) {
 		if !ok {
 			continue
 		}
-		if _, isSlice := fn.ReturnType.(ast.SliceType); !isSlice {
+		_, isSlice := fn.ReturnType.(ast.SliceType)
+		if !isSlice && !c.holdsViewAggregate(fn.ReturnType) {
 			continue
 		}
 		forEachReturn(fn, func(ret *ast.Return) {
-			if c.sliceViewRoots(ret.Value, env, sums).local {
-				c.errfCode(ret.P, "E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when %q returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", fn.Name)
+			if c.aggregateViewRoots(ret.Value, fn.ReturnType, env, sums, c.sliceLeaf(env, sums)).local {
+				c.errfCode(ret.P, "E063", sliceEscapeMsg, fn.Name)
 			}
 		})
 	}
@@ -8830,21 +9029,21 @@ func (c *checker) checkStrEscapes(prog *ast.Program) {
 		case ast.StrType, ast.StringType:
 			return true
 		}
-		return false
+		return c.holdsViewAggregate(t)
 	})
 	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]viewSummary) viewRoots {
-		if _, isStr := fn.ReturnType.(ast.StrType); isStr {
-			return c.strViewRoots(ret, envs[fn], sums)
+		if _, isString := fn.ReturnType.(ast.StringType); isString {
+			return c.stringSourceRoots(ret, envs[fn], sums)
 		}
-		return c.stringSourceRoots(ret, envs[fn], sums)
+		return c.aggregateViewRoots(ret, fn.ReturnType, envs[fn], sums, c.strLeaf(envs[fn], sums))
 	})
 	for _, fn := range order {
-		if _, isStr := fn.ReturnType.(ast.StrType); !isStr {
+		if _, isString := fn.ReturnType.(ast.StringType); isString {
 			continue
 		}
 		forEachReturn(fn, func(ret *ast.Return) {
-			if c.strViewRoots(ret.Value, envs[fn], sums).local {
-				c.errfCode(ret.P, "E065", "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", fn.Name)
+			if c.aggregateViewRoots(ret.Value, fn.ReturnType, envs[fn], sums, c.strLeaf(envs[fn], sums)).local {
+				c.errfCode(ret.P, "E065", strEscapeMsg, fn.Name)
 			}
 		})
 	}

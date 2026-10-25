@@ -1016,6 +1016,7 @@ stdlib_errors_box_through_try                        0
 str_to_owned_into_own_param                          0
 strarrarr_struct_field                               0
 strconcat                                            0
+stream_fault_builtin_variants                        0
 stream_reader                                        0
 strength_reduction_mul                               0
 string_and_i64                                       0
@@ -1134,6 +1135,7 @@ variant_pattern_rename                               0
 variant_pattern_rename_rest                          0
 variant_pattern_rest                                 0
 variant_payload_from_array_field                     0
+views_in_aggregates_stay_local                       0
 wasi_http_error_code_names                           0
 while_sum                                            0
 wide_array_append_grow                               0

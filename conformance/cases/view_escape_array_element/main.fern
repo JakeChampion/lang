@@ -1,0 +1,17 @@
+// spec: ML-03
+// An owned array of views cannot be returned when an element views
+// function-local storage.
+
+function halves(): [i32][] {
+    let a: i32[] = [1, 2, 3, 4];
+    return [a[0:2], a[2:4]];
+}
+
+function halves_of(a: i32[]): [i32][] {
+    return [a[0:2], a[2:4]];
+}
+
+function main(): i32 {
+    let a: i32[] = [1, 2, 3, 4];
+    return halves_of(a).len();
+}

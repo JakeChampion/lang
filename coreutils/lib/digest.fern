@@ -942,7 +942,15 @@ function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffer
   let no: i64 = 0 as i64;
   let cur: Algo = a;
   while (true) {
-    let nx: (Option[u8[]], io_buffered.ByteLineReader) = lr.next_line_bytes();
+    let nx: (Option[u8[]], io_buffered.ByteLineReader) = (None, lr);
+    match (lr.next_line_bytes()) {
+      Ok(read) => {
+        nx = read;
+      },
+      Err(_) => {
+        return Check { ...st, properly: 0 - 1 as i64 };
+      }
+    }
     lr = nx.1;
     match (nx.0) {
       Some(raw) => {
@@ -977,12 +985,6 @@ function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffer
         break;
       }
     }
-  }
-  match (lr.error()) {
-    Some(_) => {
-      return Check { ...st, properly: 0 - 1 as i64 };
-    },
-    None => {}
   }
   return st;
 }

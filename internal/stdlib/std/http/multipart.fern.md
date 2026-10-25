@@ -586,8 +586,8 @@ function __need(r: Reader, n: i32): Result[Reader, MultipartError] {
 function __pull(r: Reader): Result[Reader, MultipartError] {
   let got: (u8[], ByteStream) = r.s.read_n(4096);
   if (got.0.len() == 0) {
-    if (got.1.fault() != 0) {
-      return Err(MultipartBody(http.EndedEarly(got.1.fault())));
+    if let Some(fault) = got.1.fault() {
+      return Err(MultipartBody(http.EndedEarly(fault)));
     }
     return Ok(Reader { ...r, s: got.1, eof: true });
   }

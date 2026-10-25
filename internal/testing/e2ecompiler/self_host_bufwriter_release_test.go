@@ -4,44 +4,51 @@ import "testing"
 
 const bufWriterReleaseSrc = `import "std/io_buffered" as io;
 
-function more(b: io.BufWriter, s: string): io.BufWriter { return b.write_string(s); }
+function more(b: io.BufWriter, s: string): Result[io.BufWriter, IoError] { return b.write_string(s); }
 
-function main(): i32 {
+function run(): Result[i32, IoError] {
     let kept: io.BufWriter = io.buf_writer_new(stdout(), 8);
-    kept = kept.write_string("one two three\n");
-    kept = kept.write_string("four\n");
-    kept = kept.flush();
+    kept = kept.write_string("one two three\n")?;
+    kept = kept.write_string("four\n")?;
+    kept = kept.flush()?;
 
     let b: io.BufWriter = io.buf_writer_new(stdout(), 64);
     let c: io.BufWriter = b;
-    b = b.write_string("two\n");
-    if (c.buffered() != 4) { return 1; }
-    c = more(c, "kept\n");
-    if (c.buffered() != 9) { return 2; }
-    c = c.flush();
-    if (c.buffered() != 0) { return 3; }
+    b = b.write_string("two\n")?;
+    if (c.buffered() != 4) { return Ok(1); }
+    c = more(c, "kept\n")?;
+    if (c.buffered() != 9) { return Ok(2); }
+    c = c.flush()?;
+    if (c.buffered() != 0) { return Ok(3); }
 
     let path: string = "/tmp/fern_bufwriter_release_test.txt";
     match (open_writer(path)) {
         Ok(w) => {
             let f: io.BufWriter = io.buf_writer_new(w, 4);
-            f = f.write_string("abcdef");
-            f = f.write_string("gh");
+            f = f.write_string("abcdef")?;
+            f = f.write_string("gh")?;
             match (f.close()) {
-                Err(_) => { return 4; },
+                Err(_) => { return Ok(4); },
                 Ok(_) => {}
             }
         },
-        Err(_) => { return 5; }
+        Err(_) => { return Ok(5); }
     }
     match (read_file(path)) {
         Ok(s) => {
             remove_file(path);
-            if (s != "abcdefgh") { return 6; }
+            if (s != "abcdefgh") { return Ok(6); }
         },
-        Err(_) => { return 7; }
+        Err(_) => { return Ok(7); }
     }
-    return 42;
+    return Ok(42);
+}
+
+function main(): i32 {
+  match (run()) {
+    Ok(code) => { return code; },
+    Err(_) => { return 99; }
+  }
 }`
 
 func TestSelfHostBufWriterReleasesItsBuffer(t *testing.T) {

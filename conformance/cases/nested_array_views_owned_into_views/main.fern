@@ -1,0 +1,6 @@
+// An owned array does not become a view inside an array of arrays.
+function main(): i32 {
+  let data: u8[] = [1u8, 2u8];
+  let all: [u8][] = [data];
+  return all.len();
+}

@@ -305,7 +305,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
               buf_push_range(h, pad, 0, take);
               need = need - take as u64;
               if (buf_len(h) >= block_size()) {
-                o = o.flush();
+                o = gnu.flush(o);
               }
             }
           }
@@ -329,7 +329,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       nulat = __memchr_bytes(chunk, 0, pos);
     }
     if (buf_len(h) >= block_size()) {
-      o = o.flush();
+      o = gnu.flush(o);
     }
   }
 

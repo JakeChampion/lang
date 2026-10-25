@@ -1,6 +1,6 @@
 // A returned struct or tuple may not hold a view of storage the function
 // owns: that storage is reclaimed when the function returns. The diagnostic
-// is at the function, E063 for a `[T]` view and E065 for a `str` view.
+// is at the return, E063 for a `[T]` view and E065 for a `str` view.
 struct Holder { xs: [i32] }
 struct Named { s: str, n: i32 }
 

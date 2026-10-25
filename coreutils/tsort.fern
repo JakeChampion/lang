@@ -124,7 +124,7 @@ function byte_order(names: Name[]): i32[] {
 function put_name(out: io_buffered.BufWriter, name: Name): io_buffered.BufWriter {
   buf_push_bytes_range(out.handle(), name.data, name.lo, name.hi);
   buf_push_byte(out.handle(), 10);
-  return out.settle();
+  return gnu.settle(out);
 }
 
 function error_name(name: Name): void {
