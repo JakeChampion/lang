@@ -134,7 +134,7 @@ function unary(body: u8[]): HttpResponse {
       return grpc.response([protobuf.bytes_field(1, payload(size))], grpc.OK, "");
     },
     Err(e) => {
-      return grpc.error(grpc.INVALID_ARGUMENT, e);
+      return grpc.error(grpc.INVALID_ARGUMENT, e.message());
     }
   }
   return grpc.error(grpc.INTERNAL, "");
@@ -185,7 +185,7 @@ function output_stream(body: u8[]): HttpResponse {
       return grpc.response(output_responses(fields), grpc.OK, "");
     },
     Err(e) => {
-      return grpc.error(grpc.INVALID_ARGUMENT, e);
+      return grpc.error(grpc.INVALID_ARGUMENT, e.message());
     }
   }
   return grpc.error(grpc.INTERNAL, "");
@@ -257,7 +257,7 @@ function duplex_reply(m: u8[], status: Cell[i32], message: Cell[string]): u8[] {
     },
     Err(e) => {
       status.set(grpc.INVALID_ARGUMENT);
-      message.set(e);
+      message.set(e.message());
       return [];
     }
   }
