@@ -8186,7 +8186,7 @@ pub function export_runtime_fns(s: EmitState, fns: parser.FuncDecl[]): EmitState
 pub function emit_runtime_globls(s: EmitState): EmitState {
   let names: string[] = [
     "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_str_box", "__fern_arr_push",
-    "__fern_capw",
+    "__fern_capw", "__fern_memcpy",
     "__fern_oob_abort",
     "__fern_str_oob_abort",
     "__fern_alloc_size_abort",

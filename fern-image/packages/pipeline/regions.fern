@@ -37,12 +37,19 @@ pub function dependency_rows(graph: pipeline.Graph, at: i32, y: i32, limits: pip
 }
 
 pub function plan(graph: pipeline.Graph, region: Region, limits: pipeline.Limits): Result[Plan, pipeline.PipelineError] {
-  return cached_plan(graph, region, limits, 0);
+  let request = cached_plan(graph, region, limits, 0)?;
+  let setup_samples = pipeline.required_setup_samples(graph, limits)?;
+  let samples = request.samples as i64 + setup_samples as i64 * ((region.height - 1) as i64);
+  if (samples > limits.max_samples as i64) {
+    return Err(pipeline.Budget);
+  }
+  return Ok(Plan { ...request, samples: samples as i32 });
 }
 
 pub function cached_plan(graph: pipeline.Graph, region: Region, limits: pipeline.Limits, cache_bytes: i32): Result[Plan, pipeline.PipelineError] {
   let metadata = pipeline.metadata(graph, limits)?;
-  if (cache_bytes < 0) {
+  let minimum_cache = pipeline.required_cache(graph, limits)?;
+  if (cache_bytes < 0 || cache_bytes < minimum_cache) {
     return Err(pipeline.Budget);
   }
   if (region.width <= 0 || region.height <= 0) {
@@ -58,8 +65,9 @@ pub function cached_plan(graph: pipeline.Graph, region: Region, limits: pipeline
   let layout = match (pixels.checked_layout(region.width, region.height, stride, metadata.format, output_limits)) { Ok(v) => v, Err(pixels.Limit()) => { return Err(pipeline.Budget); }, Err(e) => { return Err(pipeline.Pixel(e)); } };
   let row_scratch = pipeline.required_scratch(graph, limits)?;
   let row_samples = pipeline.required_samples(graph, limits)?;
+  let setup_samples = pipeline.required_setup_samples(graph, limits)?;
   let scratch: i64 = row_scratch as i64 + layout.bytes as i64 * 2 + cache_bytes as i64;
-  let samples: i64 = row_samples as i64 * (region.height as i64) + region.width as i64 * (region.height as i64);
+  let samples: i64 = setup_samples as i64 + row_samples as i64 * (region.height as i64) + region.width as i64 * (region.height as i64);
   if (scratch > limits.max_scratch_bytes as i64 || samples > limits.max_samples as i64) {
     return Err(pipeline.Budget);
   }

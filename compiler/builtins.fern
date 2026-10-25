@@ -27,8 +27,17 @@ struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
 
 struct HeaderMap { names: string[], values: string[] }
 
+enum StreamFault {
+  StreamTooLarge,
+  StreamFramingTooLarge,
+  StreamTimeout,
+  StreamMalformed,
+  StreamCutShort,
+  StreamCancelled,
+}
+
 // BodySource — what a lazy ByteStream pulls from: `next` answers the next
-struct BodySource { next: () => Option[u8[]], fault: Cell[i32], send: (u8[]) => i32 }
+struct BodySource { next: () => Option[u8[]], fault: Cell[Option[StreamFault]], send: (u8[]) => i32 }
 
 // ByteStream — std/stream's byte-stream value, and the type of
 struct ByteStream { data: u8[], pos: i32, source: Option[BodySource] }

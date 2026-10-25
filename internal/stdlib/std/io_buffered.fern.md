@@ -8,7 +8,7 @@ Memory writers collect bytes in owned buffers. Buffered writers batch output to 
 
 ## Contracts
 
-Reader and writer state must follow the returned value. Error accessors preserve the I/O failure that stopped progress. Byte readers avoid premature text conversion.
+Reader and writer state must follow the returned value. A line reader answers `Ok((None, reader))` at end of input and `Err` when a read fails or, for the text readers, when the input is not UTF-8. A buffered writer answers `Err` from the write or flush whose bytes did not reach its `Writer`, and every later operation that reaches the `Writer` answers the same error; `error()` reports it to a caller that carried on, as stdio's `ferror` does. Byte readers avoid premature text conversion.
 
 ## Executable example
 
@@ -41,7 +41,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 pub(package) function buf_u64_len(n: u64): i32>>
 
-<<7 function __buf_writer_put(b: BufWriter, s: string): BufWriter>>
+<<7 function __buf_writer_put(b: BufWriter, s: string): Result[BufWriter, IoError]>>
 
 <<8 pub struct ByteLineReader>>
 
@@ -49,19 +49,17 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 function copy_line_bytes(chunk: u8[], lo: i32, hi: i32): u8[]>>
 
-<<11 pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineReader)>>
+<<11 pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteLineReader), IoError]>>
 
 <<12 pub struct LineReader>>
 
 <<13 pub function line_reader_new(r: Reader, term: i32, chunk_size: i32): LineReader>>
 
-<<14 function invalid_text_reader(raw: ByteLineReader): LineReader>>
-
-<<15 pub function (lr: LineReader) next_line(): (Option[string], LineReader)>>
+<<15 pub function (lr: LineReader) next_line(): Result[(Option[string], LineReader), IoError]>>
 
 <<16 function text_scalar_width(lead: i32): i32>>
 
-<<17 pub function (lr: LineReader) next_chunk(): (Option[string], LineReader)>>
+<<17 pub function (lr: LineReader) next_chunk(): Result[(Option[string], LineReader), IoError]>>
 ```
 
 ### `module introduction`
@@ -140,7 +138,7 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 
 ```fern
 <<4 pub struct BufWriter>>=
-pub struct BufWriter { w: Writer, buf: BufBlock, cap: i32, err: Option[IoError] }
+pub struct BufWriter { w: Writer, buf: BufBlock, cap: i32, err: Cell[Option[IoError]] }
 
 pub(package) struct BufBlock { h: usize }
 
@@ -156,21 +154,22 @@ impl mem.Drop for BufBlock {
 ```fern
 <<5 pub function buf_writer_new(w: Writer, cap: i32): BufWriter>>=
 pub function buf_writer_new(w: Writer, cap: i32): BufWriter {
-  return BufWriter { w: w, buf: BufBlock { h: buf_new(cap) }, cap: cap, err: None };
+  let none: Option[IoError] = None;
+  return BufWriter { w: w, buf: BufBlock { h: buf_new(cap) }, cap: cap, err: cell_new(none) };
 }
 
-pub function (b: BufWriter) write_string(s: string): BufWriter {
+pub function (b: BufWriter) write_string(s: string): Result[BufWriter, IoError] {
   if (buf_len(b.buf.h) == 0 && s.len() >= b.cap) {
     return __buf_writer_put(b, s);
   }
   buf_push(b.buf.h, s);
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
 
-pub function (b: BufWriter) write_bytes(bytes: u8[]): BufWriter {
+pub function (b: BufWriter) write_bytes(bytes: u8[]): Result[BufWriter, IoError] {
   if (buf_len(b.buf.h) == 0 && bytes.len() >= b.cap) {
     return __buf_writer_put_bytes(b, bytes);
   }
@@ -178,7 +177,7 @@ pub function (b: BufWriter) write_bytes(bytes: u8[]): BufWriter {
   return b.settle();
 }
 
-pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): BufWriter {
+pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): Result[BufWriter, IoError] {
   if (lo <= 0 && hi >= bytes.len()) {
     return b.write_bytes(bytes);
   }
@@ -186,72 +185,73 @@ pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): Bu
   return b.settle();
 }
 
-pub function (b: BufWriter) write_bytes_mapped(bytes: u8[], table: u8[]): BufWriter {
+pub function (b: BufWriter) write_bytes_mapped(bytes: u8[], table: u8[]): Result[BufWriter, IoError] {
   buf_push_bytes_mapped(b.buf.h, bytes, table);
   return b.settle();
 }
 
-pub function (b: BufWriter) write_bytes_filtered(bytes: u8[], drop: u8[]): BufWriter {
+pub function (b: BufWriter) write_bytes_filtered(bytes: u8[], drop: u8[]): Result[BufWriter, IoError] {
   buf_push_bytes_filtered(b.buf.h, bytes, drop);
   return b.settle();
 }
 
-pub function (b: BufWriter) write_bytes_expanded(bytes: u8[], table: u8[]): BufWriter {
+pub function (b: BufWriter) write_bytes_expanded(bytes: u8[], table: u8[]): Result[BufWriter, IoError] {
   buf_push_bytes_expanded(b.buf.h, bytes, table);
   return b.settle();
 }
 
-pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): BufWriter {
+pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): Result[BufWriter, IoError] {
   buf_push_range(b.buf.h, s, lo, hi);
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
 
-pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
+pub function (b: BufWriter) write_mapped(s: string, table: u8[]): Result[BufWriter, IoError] {
   buf_push_mapped(b.buf.h, s, table);
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
 
-pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
+pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): Result[BufWriter, IoError] {
   buf_push_filtered(b.buf.h, s, drop);
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
 
-pub function (b: BufWriter) write_expanded(s: string, table: u8[]): BufWriter {
+pub function (b: BufWriter) write_expanded(s: string, table: u8[]): Result[BufWriter, IoError] {
   buf_push_expanded(b.buf.h, s, table);
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
 
-pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
+pub function (b: BufWriter) write_byte(byte: i32): Result[BufWriter, IoError] {
   buf_push_byte(b.buf.h, byte);
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
 
-pub function (b: BufWriter) write_u64(n: u64): BufWriter {
+pub function (b: BufWriter) write_u64(n: u64): Result[BufWriter, IoError] {
   buf_push_u64(b.buf.h, n);
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
 
-pub function (b: BufWriter) write_i64(n: i64): BufWriter {
+pub function (b: BufWriter) write_i64(n: i64): Result[BufWriter, IoError] {
   if (n < 0 as i64) {
-    return b.write_string("-").write_u64(0 as u64 - n as u64);
+    let w: BufWriter = b.write_string("-")?;
+    return w.write_u64(0 as u64 - n as u64);
   }
   return b.write_u64(n as u64);
 }
@@ -303,21 +303,21 @@ pub(package) function digit_pairs(): string {
   return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
 }
 
-pub function (b: BufWriter) flush(): BufWriter {
+pub function (b: BufWriter) flush(): Result[BufWriter, IoError] {
   if (buf_len(b.buf.h) == 0) {
-    return b;
+    return __buf_writer_failed(b);
   }
   return __buf_writer_put_bytes(b, buf_take_bytes(b.buf.h));
 }
 
 pub function (b: BufWriter) close(): Result[void, IoError] {
   let pending: i32 = buf_len(b.buf.h);
-  let flushed: BufWriter = b.flush();
+  let flushed: Result[BufWriter, IoError] = b.flush();
   if let Err(e) = b.w.close() {
     return Err(e);
   }
   if (pending > 0) {
-    if let Some(e) = flushed.error() {
+    if let Err(e) = flushed {
       return Err(e);
     }
   }
@@ -325,16 +325,16 @@ pub function (b: BufWriter) close(): Result[void, IoError] {
 }
 
 pub function (b: BufWriter) error(): Option[IoError] {
-  return b.err;
+  return b.err.get();
 }
 
 pub function (b: BufWriter) handle(): usize {
   return b.buf.h;
 }
 
-pub function (b: BufWriter) settle(): BufWriter {
+pub function (b: BufWriter) settle(): Result[BufWriter, IoError] {
   if (buf_len(b.buf.h) < b.cap) {
-    return b;
+    return Ok(b);
   }
   return b.flush();
 }
@@ -344,34 +344,37 @@ pub function (b: BufWriter) buffered(): i32 {
 }
 ```
 
-### `7 function __buf_writer_put(b: BufWriter, s: string): BufWriter`
+### `7 function __buf_writer_put(b: BufWriter, s: string): Result[BufWriter, IoError]`
 
 ```fern
-<<7 function __buf_writer_put(b: BufWriter, s: string): BufWriter>>=
-function __buf_writer_put(b: BufWriter, s: string): BufWriter {
-  match (b.err) {
-    Some(_) => {
-      return b;
-    },
-    None => {}
+<<7 function __buf_writer_put(b: BufWriter, s: string): Result[BufWriter, IoError]>>=
+function __buf_writer_put(b: BufWriter, s: string): Result[BufWriter, IoError] {
+  if let Some(e) = b.err.get() {
+    return Err(e);
   }
   if let Err(e) = b.w.write(s) {
-    return BufWriter { ...b, err: Some(e) };
+    b.err.set(Some(e));
+    return Err(e);
   }
-  return b;
+  return Ok(b);
 }
 
-function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
-  match (b.err) {
-    Some(_) => {
-      return b;
-    },
-    None => {}
+function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): Result[BufWriter, IoError] {
+  if let Some(e) = b.err.get() {
+    return Err(e);
   }
   if let Err(e) = b.w.write_bytes(bytes) {
-    return BufWriter { ...b, err: Some(e) };
+    b.err.set(Some(e));
+    return Err(e);
   }
-  return b;
+  return Ok(b);
+}
+
+function __buf_writer_failed(b: BufWriter): Result[BufWriter, IoError] {
+  if let Some(e) = b.err.get() {
+    return Err(e);
+  }
+  return Ok(b);
 }
 ```
 
@@ -379,7 +382,9 @@ function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
 
 ```fern
 <<8 pub struct ByteLineReader>>=
-pub struct ByteLineReader { r: Reader, chunk: u8[], pos: i32, eof: boolean, term: i32, chunk_size: i32, err: Option[IoError] }
+// `failed` holds a read error that arrived behind a partial record: the
+// record is answered first and the error on the next call.
+pub struct ByteLineReader { r: Reader, chunk: u8[], pos: i32, eof: boolean, term: i32, chunk_size: i32, failed: Option[IoError] }
 ```
 
 ### `9 pub function byte_line_reader_new(r: Reader, term: i32, chunk_size: i32): ByteLineReader`
@@ -387,11 +392,14 @@ pub struct ByteLineReader { r: Reader, chunk: u8[], pos: i32, eof: boolean, term
 ```fern
 <<9 pub function byte_line_reader_new(r: Reader, term: i32, chunk_size: i32): ByteLineReader>>=
 pub function byte_line_reader_new(r: Reader, term: i32, chunk_size: i32): ByteLineReader {
-  return ByteLineReader { r: r, chunk: [], pos: 0, eof: false, term: term, chunk_size: chunk_size, err: None };
+  return ByteLineReader { r: r, chunk: [], pos: 0, eof: false, term: term, chunk_size: chunk_size, failed: None };
 }
 
-pub function (lr: ByteLineReader) error(): Option[IoError] {
-  return lr.err;
+function byte_line_end_of_input[T](s: ByteLineReader, last: T): Result[(T, ByteLineReader), IoError] {
+  if let Some(e) = s.failed {
+    return Err(e);
+  }
+  return Ok((last, s));
 }
 ```
 
@@ -418,11 +426,11 @@ function byte_line_end(chunk: u8[], pos: i32, term: i32): i32 {
 }
 ```
 
-### `11 pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineReader)`
+### `11 pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteLineReader), IoError]`
 
 ```fern
-<<11 pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineReader)>>=
-pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineReader) {
+<<11 pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteLineReader), IoError]>>=
+pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteLineReader), IoError] {
   let s: ByteLineReader = lr;
   let b: usize = 0 as usize;
   while (true) {
@@ -430,12 +438,12 @@ pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineRead
     if (end < s.chunk.len()) {
       end = end + 1;
       if (b == 0 as usize) {
-        return (Some(copy_line_bytes(s.chunk, s.pos, end)), ByteLineReader { ...s, pos: end });
+        return Ok((Some(copy_line_bytes(s.chunk, s.pos, end)), ByteLineReader { ...s, pos: end }));
       }
       buf_push_bytes_range(b, s.chunk, s.pos, end);
       let line: u8[] = buf_take_bytes(b);
       buf_free(b);
-      return (Some(line), ByteLineReader { ...s, pos: end });
+      return Ok((Some(line), ByteLineReader { ...s, pos: end }));
     }
     if (s.pos < s.chunk.len()) {
       if (b == 0 as usize) {
@@ -446,70 +454,76 @@ pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineRead
     if (s.eof) {
       s = ByteLineReader { ...s, chunk: [], pos: 0 };
       if (b == 0 as usize) {
-        return (None, s);
+        let none: Option[u8[]] = None;
+        return byte_line_end_of_input(s, none);
       }
       let tail: u8[] = buf_take_bytes(b);
       buf_free(b);
-      return (Some(tail), s);
+      return Ok((Some(tail), s));
     }
     match (s.r.read_chunk_bytes(s.chunk_size)) {
       Ok(chunk) => {
         s = ByteLineReader { ...s, chunk: chunk, pos: 0, eof: chunk.len() == 0 };
       },
       Err(e) => {
-        s = ByteLineReader { ...s, chunk: [], pos: 0, eof: true, err: Some(e) };
+        if (b == 0 as usize) {
+          return Err(e);
+        }
+        s = ByteLineReader { ...s, chunk: [], pos: 0, eof: true, failed: Some(e) };
       }
     }
   }
-  return (None, s);
+  return Ok((None, s));
 }
 
-pub function (lr: ByteLineReader) skip_line(): (boolean, ByteLineReader) {
+pub function (lr: ByteLineReader) skip_line(): Result[(boolean, ByteLineReader), IoError] {
   let s: ByteLineReader = lr;
   let partial: boolean = false;
   while (true) {
     let end: i32 = byte_line_end(s.chunk, s.pos, s.term);
     if (end < s.chunk.len()) {
-      return (true, ByteLineReader { ...s, pos: end + 1 });
+      return Ok((true, ByteLineReader { ...s, pos: end + 1 }));
     }
     if (s.pos < s.chunk.len()) {
       partial = true;
     }
     if (s.eof) {
-      return (partial, ByteLineReader { ...s, chunk: [], pos: 0 });
+      s = ByteLineReader { ...s, chunk: [], pos: 0 };
+      if (partial) {
+        return Ok((true, s));
+      }
+      return byte_line_end_of_input(s, false);
     }
     match (s.r.read_chunk_bytes(s.chunk_size)) {
       Ok(chunk) => {
         s = ByteLineReader { ...s, chunk: chunk, pos: 0, eof: chunk.len() == 0 };
       },
       Err(e) => {
-        s = ByteLineReader { ...s, chunk: [], pos: 0, eof: true, err: Some(e) };
+        if (!partial) {
+          return Err(e);
+        }
+        s = ByteLineReader { ...s, chunk: [], pos: 0, eof: true, failed: Some(e) };
       }
     }
   }
-  return (false, s);
+  return Ok((false, s));
 }
 
-pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineReader) {
+pub function (lr: ByteLineReader) next_chunk_bytes(): Result[(Option[u8[]], ByteLineReader), IoError] {
   let s: ByteLineReader = lr;
   if (s.pos < s.chunk.len()) {
     let rest: u8[] = copy_line_bytes(s.chunk, s.pos, s.chunk.len());
-    return (Some(rest), ByteLineReader { ...s, chunk: [], pos: 0 });
+    return Ok((Some(rest), ByteLineReader { ...s, chunk: [], pos: 0 }));
   }
   if (s.eof) {
-    return (None, s);
+    let none: Option[u8[]] = None;
+    return byte_line_end_of_input(s, none);
   }
-  match (s.r.read_chunk_bytes(s.chunk_size)) {
-    Ok(chunk) => {
-      if (chunk.len() == 0) {
-        return (None, ByteLineReader { ...s, eof: true });
-      }
-      return (Some(chunk), s);
-    },
-    Err(e) => {
-      return (None, ByteLineReader { ...s, eof: true, err: Some(e) });
-    }
+  let chunk: u8[] = s.r.read_chunk_bytes(s.chunk_size)?;
+  if (chunk.len() == 0) {
+    return Ok((None, ByteLineReader { ...s, eof: true }));
   }
+  return Ok((Some(chunk), s));
 }
 ```
 
@@ -527,50 +541,37 @@ pub struct LineReader { raw: ByteLineReader }
 pub function line_reader_new(r: Reader, term: i32, chunk_size: i32): LineReader {
   return LineReader { raw: byte_line_reader_new(r, term, chunk_size) };
 }
-
-pub function (lr: LineReader) error(): Option[IoError] {
-  return lr.raw.error();
-}
 ```
 
-### `14 function invalid_text_reader(raw: ByteLineReader): LineReader`
+### `15 pub function (lr: LineReader) next_line(): Result[(Option[string], LineReader), IoError]`
 
 ```fern
-<<14 function invalid_text_reader(raw: ByteLineReader): LineReader>>=
-function invalid_text_reader(raw: ByteLineReader): LineReader {
-  let err: Option[IoError] = raw.err;
-  match (err) {
-    None => {
-      err = Some(InvalidUtf8(""));
-    },
-    Some(_) => {}
-  }
-  return LineReader { raw: ByteLineReader { ...raw, chunk: [], pos: 0, eof: true, err: err } };
-}
-```
-
-### `15 pub function (lr: LineReader) next_line(): (Option[string], LineReader)`
-
-```fern
-<<15 pub function (lr: LineReader) next_line(): (Option[string], LineReader)>>=
-pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
-  let (line, raw) = lr.raw.next_line_bytes();
+<<15 pub function (lr: LineReader) next_line(): Result[(Option[string], LineReader), IoError]>>=
+pub function (lr: LineReader) next_line(): Result[(Option[string], LineReader), IoError] {
+  let (line, raw) = lr.raw.next_line_bytes()?;
   match (line) {
     None => {
-      return (None, LineReader { raw: raw });
+      return Ok((None, LineReader { raw: raw }));
     },
     Some(bytes) => {
       match (utf8.from_bytes(bytes)) {
         Some(text) => {
-          return (Some(text), LineReader { raw: raw });
+          return Ok((Some(text), LineReader { raw: raw }));
         },
         None => {
-          return (None, invalid_text_reader(raw));
+          return Err(invalid_text(raw));
         }
       }
     }
   }
-  return (None, LineReader { raw: raw });
+  return Ok((None, LineReader { raw: raw }));
+}
+
+function invalid_text(raw: ByteLineReader): IoError {
+  if let Some(e) = raw.failed {
+    return e;
+  }
+  return InvalidUtf8("");
 }
 ```
 
@@ -636,16 +637,16 @@ function text_chunk_end(bytes: u8[]): i32 {
 }
 ```
 
-### `17 pub function (lr: LineReader) next_chunk(): (Option[string], LineReader)`
+### `17 pub function (lr: LineReader) next_chunk(): Result[(Option[string], LineReader), IoError]`
 
 ```fern
-<<17 pub function (lr: LineReader) next_chunk(): (Option[string], LineReader)>>=
-pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
-  let (first, raw) = lr.raw.next_chunk_bytes();
+<<17 pub function (lr: LineReader) next_chunk(): Result[(Option[string], LineReader), IoError]>>=
+pub function (lr: LineReader) next_chunk(): Result[(Option[string], LineReader), IoError] {
+  let (first, raw) = lr.raw.next_chunk_bytes()?;
   let bytes: u8[] = [];
   match (first) {
     None => {
-      return (None, LineReader { raw: raw });
+      return Ok((None, LineReader { raw: raw }));
     },
     Some(chunk) => {
       bytes = chunk;
@@ -660,21 +661,21 @@ pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
       }
       match (utf8.from_bytes(prefix)) {
         None => {
-          return (None, invalid_text_reader(raw));
+          return Err(invalid_text(raw));
         },
         Some(text) => {
           if (end < bytes.len()) {
             raw = ByteLineReader { ...raw, chunk: bytes, pos: end };
           }
-          return (Some(text), LineReader { raw: raw });
+          return Ok((Some(text), LineReader { raw: raw }));
         }
       }
     }
-    let (more, next) = raw.next_chunk_bytes();
+    let (more, next) = raw.next_chunk_bytes()?;
     raw = next;
     match (more) {
       None => {
-        return (None, invalid_text_reader(raw));
+        return Err(invalid_text(raw));
       },
       Some(chunk) => {
         let b: usize = buf_new(bytes.len() + chunk.len());
@@ -685,6 +686,6 @@ pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
       }
     }
   }
-  return (None, LineReader { raw: raw });
+  return Ok((None, LineReader { raw: raw }));
 }
 ```

@@ -6,6 +6,11 @@ import "std/stream";
 import "std/string";
 import "core/int";
 
+function no_fault(): Cell[Option[StreamFault]] {
+  let none: Option[StreamFault] = None;
+  return cell_new(none);
+}
+
 function sample(): multipart.Builder {
   return sample_after(multipart.builder_with("xYzBoundary"));
 }
@@ -35,7 +40,7 @@ function scripted(bytes: u8[], k: i32): BodySource {
       }
       return Some(out);
     },
-    fault: cell_new(0),
+    fault: no_fault(),
     send: (b: u8[]): i32 => 0 - 95,
   };
 }

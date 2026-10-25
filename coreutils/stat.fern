@@ -1003,8 +1003,7 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
         }
       },
       RenderNumber(v) => {
-        w = w.write_u64(v);
-        w = gnu.settle(w);
+        w = gnu.check(w.write_u64(v));
       }
     }
     i = i + 1;

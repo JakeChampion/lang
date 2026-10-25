@@ -3,6 +3,7 @@
 package e2eharness
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,14 +41,21 @@ func acquireHostBuildSlot() func() {
 			f.Close()
 		}
 	}
-	// flock cannot wait on several files at once, so a waiter polls every
-	// slot and takes whichever is released first.
+	// Every slot may be held: take whichever frees first rather than blocking
+	// on one, which would wait out a long build while another slot sits free.
 	for {
 		for _, f := range slots {
-			if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
+			err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			if err == nil {
+				return release
+			}
+			if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
 				return release
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(slotPoll)
 	}
 }
+
+// slotPoll is how often a waiting build retries the held slots.
+const slotPoll = 50 * time.Millisecond
