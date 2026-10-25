@@ -12145,7 +12145,7 @@ function lanes_inside_diags(t: typeinfo.Type, line: i32, col: i32): util.Diag[] 
   if (!lanes_inside(t)) {
     return [];
   }
-  return [dg_at("E085", util.demangle_all(type_label(t)) + " holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", line, col)];
+  return [dg_at("E085", type_label(t) + " holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", line, col)];
 }
 
 function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeNames): util.Diag[] {
@@ -12165,7 +12165,7 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
     for field in esd.fields {
       let ft: typeinfo.Type = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
       if (holds_lanes(ft)) {
-        out = out.append(dg_at("E085", "a field or payload of type " + util.demangle_all(type_label(ft)) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
+        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
       }
     }
   }
@@ -13287,8 +13287,8 @@ function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): uti
   if (!spellable(sr) || !spellable(rr) || type_eq(sr, rr)) {
     return out;
   }
-  let sl: string = util.demangle_all(type_label(sr));
-  let rl: string = util.demangle_all(type_label(rr));
+  let sl: string = type_label(sr);
+  let rl: string = type_label(rr);
   if let typeinfo.TypeDyn(d) = rr {
     if (dyn_conforms(sr, rr, s)) {
       return out;
@@ -13304,7 +13304,7 @@ function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): uti
 function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): string {
   let set: string[] = parser.dyn_trait_set("dyn " + traits);
   if (is_owned_array(src) || is_arr_view(src) || is_dyn_slot(src)) {
-    return util.demangle_all(set[0]);
+    return set[0];
   }
   let tn: string = util.base_type_name(type_label(src));
   let missing: string = "";
@@ -13313,11 +13313,11 @@ function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): str
       if (missing.len() > 0) {
         missing = missing + " + ";
       }
-      missing = missing + util.demangle_all(tr);
+      missing = missing + tr;
     }
   }
   if (missing.len() == 0) {
-    return util.demangle_all(set[0]);
+    return set[0];
   }
   return missing;
 }
@@ -13627,7 +13627,7 @@ function lambda_lane_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
   let seen: string[] = [];
   for name in astwalk.collect_lambda_idents(lm, []) {
     if (!util.has_str(seen, name) && s.is_bound(name) && is_lanes(s.lookup(name))) {
-      out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + util.demangle_all(type_label(s.lookup(name))) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
+      out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + type_label(s.lookup(name)) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
     }
     seen = seen.append(name);
   }
@@ -14135,7 +14135,7 @@ function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
   if (builtin_iterable(it) || is_unknown(it) && tvar_name(it).len() == 0 || iter_subject(it, s).ok) {
     return none;
   }
-  return [dg_at("E083", "cannot iterate over a value of type " + util.demangle_all(util.show_type_vars(type_label_or_tvar(it))) + ": `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", expr_line(fr.iter), expr_col(fr.iter))];
+  return [dg_at("E083", "cannot iterate over a value of type " + util.show_type_vars(type_label_or_tvar(it)) + ": `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", expr_line(fr.iter), expr_col(fr.iter))];
 }
 
 function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.Diag[] {
@@ -15178,7 +15178,9 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
 
 function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.Diag[] {
   let out: util.Diag[] = [];
-  if (!cur.defines(a.target)) {
+  if (!cur.defines(a.target) && cur.lookup_sig(a.target).is_const) {
+    out = out.append(dg_at("E091", "cannot assign to const " + a.target, a.target_line, a.target_col));
+  } else if (!cur.defines(a.target)) {
     out = out.append(undefined_name(a.target, cur, a.target_line, a.target_col));
   } else if (cur.is_const_param(a.target)) {
     out = out.append(dg_at("E091", "cannot assign to const parameter " + a.target + ": it is the constant its instance is made for", a.target_line, a.target_col));
@@ -15495,20 +15497,57 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   return false;
 }
 
-function const_expr_err(e: ast.Expr, earlier: string[]): string {
+function const_literal(e: ast.Expr): boolean {
   match (e) {
     ast.ExprBytes(_) => {
-      return "";
+      return true;
     },
     ast.ExprNumber(_) => {
-      return "";
+      return true;
     },
     ast.ExprString(_) => {
-      return "";
+      return true;
     },
     ast.ExprBool(_) => {
-      return "";
+      return true;
     },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function const_unary_err(u: ast.ExprUnary, earlier: string[]): string {
+  if (util.str_has_prefix(u.op, "as_")) {
+    return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
+  }
+  return const_expr_err(u.operand, earlier);
+}
+
+function const_struct_err(st: ast.ExprStructLit, earlier: string[]): string {
+  if (st.has_base) {
+    return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
+  }
+  return const_elems_err(st.field_values, earlier);
+}
+
+function const_binary_err(b: ast.ExprBinary, earlier: string[]): string {
+  if (const_refused_op(b.op)) {
+    return "operator `" + b.op + "` not allowed in integer constant expressions";
+  }
+  let le: string = const_expr_err(b.left, earlier);
+  if (le.len() > 0) {
+    return le;
+  }
+  return const_expr_err(b.right, earlier);
+}
+
+function const_expr_err(e: ast.Expr, earlier: string[]): string {
+  if (const_literal(e)) {
+    return "";
+  }
+  match (e) {
     ast.ExprIdent(id) => {
       if (util.has_str(earlier, id.name)) {
         return "";
@@ -15516,10 +15555,7 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
       return "\"" + id.name + "\" is not a constant (must reference an earlier `const` declaration)";
     },
     ast.ExprUnary(u) => {
-      if (util.str_has_prefix(u.op, "as_")) {
-        return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
-      }
-      return const_expr_err(u.operand, earlier);
+      return const_unary_err(u, earlier);
     },
     ast.ExprArray(a) => {
       return const_elems_err(a.elements, earlier);
@@ -15528,20 +15564,10 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
       return const_elems_err(t.elements, earlier);
     },
     ast.ExprStructLit(st) => {
-      if (st.has_base) {
-        return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
-      }
-      return const_elems_err(st.field_values, earlier);
+      return const_struct_err(st, earlier);
     },
     ast.ExprBinary(b) => {
-      if (const_refused_op(b.op)) {
-        return "operator `" + b.op + "` not allowed in integer constant expressions";
-      }
-      let le: string = const_expr_err(b.left, earlier);
-      if (le.len() > 0) {
-        return le;
-      }
-      return const_expr_err(b.right, earlier);
+      return const_binary_err(b, earlier);
     },
     _ => {}
   }
@@ -15568,7 +15594,7 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
           ast.StmtReturn(r) => {
             let msg: string = const_expr_err(r.value, earlier);
             if (msg.len() > 0) {
-              out = out.append(dg_at("", "const " + fd.name + ": " + msg, fd.line, fd.col));
+              out = out.append(dg_at("E093", "const " + fd.name + ": " + msg, fd.line, fd.col));
             }
           },
           _ => {}
@@ -16038,7 +16064,9 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   while (di < mod.funcs.len()) {
     let f2: parser.FuncDecl = mod.funcs[di];
     if (redeclares(mod.funcs, decl_index, di)) {
-      if (f2.receiver_type.len() == 0) {
+      if (f2.is_const) {
+        out = out.append(dg_at("E006", "const \"" + f2.name + "\" redeclared", f2.line, f2.col));
+      } else if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
         out = out.append(dg_at("E006", "method \"" + decl_key(f2) + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
@@ -21316,6 +21344,60 @@ function admission_env(mod: parser.Module, entry_file: string, raw_floor: boolea
 }
 
 function check_module_raw_floor(raw_mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleTypes {
+  let mt: ModuleTypes = checked_module(raw_mod, entry_file, raw_floor);
+  if (mt.diags.len() == 0) {
+    return mt;
+  }
+  let mangled: util.NameIndex = util.name_index(imported_decl_names(raw_mod));
+  let named: util.Diag[] = [];
+  for d in mt.diags {
+    named = named.append(source_named_diag(d, mangled));
+  }
+  return ModuleTypes { ...mt, diags: named };
+}
+
+// source_named_diag spells each name an imported module declares as its
+// source does, `iter.ArrayIter` for the bundle's `iter__ArrayIter`.
+function source_named_diag(d: util.Diag, mangled: util.NameIndex): util.Diag {
+  let related: util.Related[] = [];
+  for r in d.related {
+    related = related.append(util.Related { ...r, message: util.demangle_named(r.message, mangled) });
+  }
+  return util.Diag { ...d, message: util.demangle_named(d.message, mangled), related: related };
+}
+
+// imported_decl_names is every bundle name an imported module's declaration
+// carries; an entry-module name is never mangled, whatever it contains.
+function imported_decl_names(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for fd in mod.funcs {
+    out = with_mangled(out, fd.name, fd.module);
+  }
+  for sd in mod.structs {
+    out = with_mangled(out, sd.name, sd.module);
+  }
+  for ed in mod.enums {
+    out = with_mangled(out, ed.name, ed.module);
+  }
+  for a in mod.aliases {
+    out = with_mangled(out, a.name, a.module);
+  }
+  for sight in mod.sights {
+    for td in mod.trait_decls {
+      out = with_mangled(out, td.name, sight.module);
+    }
+  }
+  return out;
+}
+
+function with_mangled(out: string[], name: string, prefix: string): string[] {
+  if (prefix.len() == 0 || !util.str_has_prefix(name, prefix + "__")) {
+    return out;
+  }
+  return out.append(name);
+}
+
+function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleTypes {
   let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   let mod: parser.Module = prepared_module(filled);
   let env: ModuleEnv = admission_env(mod, entry_file, raw_floor);
@@ -21778,6 +21860,10 @@ pub function func_type_params(s: Scope, name: string): string[] {
 
 pub function spelled_type(s: Scope, spelling: string): typeinfo.Type {
   return s.resolve_type(spelling);
+}
+
+pub function signature_receiver(s: Scope, sig: FuncSig): typeinfo.Type {
+  return type_from_name_erasing_tparams(sig.receiver, sig.all_type_params, s.type_names());
 }
 
 pub function struct_sig(s: Scope, name: string): StructSig {

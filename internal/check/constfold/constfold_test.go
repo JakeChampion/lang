@@ -266,10 +266,11 @@ func TestFoldCompositeConstRefusals(t *testing.T) {
 
 func TestFoldRefusalsRenderAsPositionedErrors(t *testing.T) {
 	for _, c := range []struct{ src, want string }{
-		{"const B: i32 = 6 /? 2;\n", "main.fern:1:1: error: const B: operator `/?` not allowed in integer constant expressions"},
-		{"const B: i32 = A + 1;\nconst A: i32 = 2;\n", "main.fern:1:1: error: const B: \"A\" is not a constant"},
-		{"const N: i32 = 1;\nconst N: i32 = 2;\n", "main.fern:2:1: error: const \"N\" redeclared"},
-		{"const N: i32 = 1;\nfunction main(): i32 { N = 3; return 0; }\n", "main.fern:2:24: error: cannot assign to const N"},
+		{"const B: i32 = 6 /? 2;\n", "main.fern:1:1: error[E093]: const B: operator `/?` not allowed in integer constant expressions"},
+		{"const B: i32 = A + 1;\nconst A: i32 = 2;\n", "main.fern:1:1: error[E093]: const B: \"A\" is not a constant"},
+		{"const N: i32 = 1;\nconst N: i32 = 2;\n", "main.fern:2:1: error[E006]: const \"N\" redeclared"},
+		{"const N: i32 = 1;\nfunction main(): i32 { N = 3; return 0; }\n", "main.fern:2:24: error[E091]: cannot assign to const N"},
+		{"function main(): void { let s: string = __fern_asset(\"a.txt\"); }\n", "main.fern:1:53: error[E094]: __fern_asset(\"a.txt\") but no assets were embedded"},
 	} {
 		prog, err := parser.Parse(c.src)
 		if err != nil {
