@@ -43,11 +43,11 @@ function graphics() {
     return {
       name: "Canvas 2D",
       draw() {
-        context.fillStyle = "#090e22";
+        context.fillStyle = "#0c1510";
         context.fillRect(0, 0, canvas.width, canvas.height);
         context.globalCompositeOperation = "lighter";
         for (let i = 0; i < count; i++) {
-          context.fillStyle = `hsla(${210 + points[i * 3 + 2] * 100},75%,65%,.55)`;
+          context.fillStyle = `hsla(${150 - points[i * 3 + 2] * 110},55%,62%,.55)`;
           context.fillRect(
             ((points[i * 3] + 1) * canvas.width) / 2,
             ((1 - points[i * 3 + 1]) * canvas.height) / 2,
@@ -73,7 +73,7 @@ function graphics() {
     shader(
       gl,
       gl.FRAGMENT_SHADER,
-      `precision mediump float;varying float hue;void main(){float r=length(gl_PointCoord-.5)*2.;if(r>1.)discard;vec3 color=mix(vec3(.22,.72,.88),vec3(.87,.39,.92),hue);gl_FragColor=vec4(color,(1.-r)*(1.-r)*.85);}`,
+      `precision mediump float;varying float hue;void main(){float r=length(gl_PointCoord-.5)*2.;if(r>1.)discard;vec3 color=mix(vec3(.45,.78,.62),vec3(.85,.69,.41),hue);gl_FragColor=vec4(color,(1.-r)*(1.-r)*.85);}`,
     ),
   );
   gl.linkProgram(program);
@@ -88,7 +88,7 @@ function graphics() {
   const size = gl.getUniformLocation(program, "size");
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-  gl.clearColor(0.035, 0.055, 0.13, 1);
+  gl.clearColor(0.047, 0.082, 0.063, 1);
   return {
     name: "WebGL",
     draw() {

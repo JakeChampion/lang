@@ -208,7 +208,7 @@ pub function (c: SetCookie) serialize(): Result[string, CookieError] {
     out = out + "; Domain=" + c.domain;
   }
   if (c.expires != 0 as i64) {
-    out = out + "; Expires=" + time.instant_from_unix(c.expires).format_http_date();
+    out = out + "; Expires=" + time.timestamp_from_unix(c.expires).format_http_date();
   }
   if (c.max_age >= 0) {
     out = out + "; Max-Age=" + int.int_to_string(c.max_age);

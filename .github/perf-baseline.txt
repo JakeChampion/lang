@@ -6,6 +6,9 @@
 # and adds 1% `.text` to deflate_decode on both targets. The other aarch64 rows take the
 # moves of #13251 and main that no PR re-pinned: deflate_encode.ir is 17% lower,
 # and the utf8_ingest_*.text rows take main's typed JSON decoding.
+# Re-pinned 2026-10-25 from Perf run 40215520155 (main at 5ee00b33): aarch64/map_string.ir
+# 61661591 to 60356414, a 2.1% win over its 2% tolerance, from the semunique fix (#13276)
+# and the HTTP/3 pass (#13324).
 # Re-pinned 2026-10-25 (#13276), aarch64 `.text` counted the way scripts/perf-bench counts it
 # (indented lines of fern -target arm64-linux) on main 1aaec0fd plus the semunique fix, which
 # main now carries: deflate_decode 13460, deflate_encode 7851, utf8_ingest_unchecked 8637.
@@ -409,7 +412,7 @@ aarch64/map_int.ir	35711954
 aarch64/map_probe_chain.text	5932
 aarch64/map_probe_chain.ir	340503732
 aarch64/map_string.text	7013
-aarch64/map_string.ir	61661591	2
+aarch64/map_string.ir	60356414	2
 aarch64/ordmap_insert.text	3184
 aarch64/ordmap_insert.ir	114034987
 aarch64/pmap_insert.text	2936

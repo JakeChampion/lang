@@ -1,0 +1,46 @@
+import "../packages/codecs/png/png";
+import "../packages/pixels/pixels";
+import "std/i32";
+
+function error_name(error: png.PngError): string {
+  return match (error) { png.Signature => "signature", png.Truncated => "truncated", png.Length => "length", png.Crc => "crc", png.Order => "order", png.Unsupported => "unsupported", png.Dimensions => "dimensions", png.Limit => "limit", png.Compressed => "compressed", png.Scanline => "scanline" };
+}
+
+function inspect(path: string, index: i32): i32 {
+  let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let prefix = "index=" + index.to_string();
+  let limits = pixels.Limits { max_pixels: 65536, max_bytes: 262144 };
+  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => { print(prefix + " status=error error=" + error_name(e)); return 0; } };
+  let encoded = match (png.encode(image, 1048576)) { Ok(v) => v, Err(_) => { return 3; } };
+  match (write_file_bytes(path + ".raw", image.data)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 4;
+    }
+  }
+  match (write_file_bytes(path + ".encoded.png", encoded)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 5;
+    }
+  }
+  print(prefix + " status=ok width=" + image.layout.width.to_string() + " height=" + image.layout.height.to_string()
+    + " channels=" + pixels.channels(image.layout.format).to_string());
+  return 0;
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() < 2 || av.len() > 17) {
+    return 1;
+  }
+  let i = 1;
+  while (i < av.len()) {
+    let result = inspect(av[i], i - 1);
+    if (result != 0) {
+      return result;
+    }
+    i = i + 1;
+  }
+  return 0;
+}

@@ -105,7 +105,7 @@ function draw() {
   canvas.width = Math.round(r.width * d);
   canvas.height = Math.round(r.height * d);
   ctx.scale(d, d);
-  ctx.fillStyle = "#0d1728";
+  ctx.fillStyle = "#0c1510";
   ctx.fillRect(0, 0, r.width, r.height);
   const start = Number($("page").value) * 64,
     w = r.width / 8,
@@ -119,23 +119,23 @@ function draw() {
       const source = session.cells[i * 3 + port] || 0;
       if (source >= start && source < start + 64) {
         const q = source - start;
-        ctx.strokeStyle = frame?.values[source] ? "#79e8b0" : "#30465f";
+        ctx.strokeStyle = frame?.values[source] ? "#74c69d" : "#2c3d33";
         ctx.beginPath();
         ctx.moveTo(((q % 8) + 0.5) * w, (Math.floor(q / 8) + 0.5) * h);
         ctx.lineTo(x, y);
         ctx.stroke();
       }
     }
-    ctx.fillStyle = frame?.values[i] ? "#79e8b0" : "#21344e";
-    ctx.strokeStyle = i === selected ? "#ffd077" : "#516783";
+    ctx.fillStyle = frame?.values[i] ? "#74c69d" : "#1a2620";
+    ctx.strokeStyle = i === selected ? "#d9b169" : "#384a3f";
     ctx.lineWidth = i === selected ? 3 : 1;
     ctx.beginPath();
     ctx.roundRect(x - w * 0.4, y - h * 0.34, w * 0.8, h * 0.68, 5);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = frame?.values[i] ? "#0d2230" : "#c0cedb";
+    ctx.fillStyle = frame?.values[i] ? "#0c1510" : "#b9c8be";
     ctx.textAlign = "center";
-    ctx.font = `${Math.max(8, Math.min(12, w / 6))}px ui-monospace,monospace`;
+    ctx.font = `${Math.max(8, Math.min(12, w / 6))}px "IBM Plex Mono", monospace`;
     ctx.fillText(labels[session.cells[i * 3] || 0] || "?", x, y);
     ctx.fillText(String(i), x, y + 13);
   }
