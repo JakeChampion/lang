@@ -50,7 +50,7 @@ function verified(point: string, h: sha2.Hash, msg: u8[], sig: string): boolean 
 function verified_on(curve: ecdsa.Curve, point: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
   match (ecdsa.public_key(curve, __codec_bytes(hex.decode(point)))) {
     Ok(k) => {
-      return ecdsa.verify(k, h, msg, __codec_bytes(hex.decode(sig)));
+      return k.verify(h, msg, __codec_bytes(hex.decode(sig)));
     },
     Err(e) => {
       return false;
@@ -146,7 +146,7 @@ function signed(curve: ecdsa.Curve, d: string, point: string, h: sha2.Hash, msg:
       if (hex.encode(k.public_point()) != point) {
         return "public point " + hex.encode(k.public_point());
       }
-      match (ecdsa.sign(k, h, msg.bytes())) {
+      match (k.sign(h, msg.bytes())) {
         Ok(sig) => {
           if (!verified_on(curve, point, h, msg.bytes(), hex.encode(sig))) {
             return "does not verify";
@@ -181,7 +181,7 @@ function test_signing(): test.TestOutcome {
 function key_refusal(curve: ecdsa.Curve, d: string): string {
   match (ecdsa.private_key(curve, __codec_bytes(hex.decode(d)))) {
     Ok(k) => {
-      match (ecdsa.sign(k, sha2.Sha512, "x".bytes())) {
+      match (k.sign(sha2.Sha512, "x".bytes())) {
         Ok(_) => {
           return "signed";
         },
@@ -228,7 +228,7 @@ function test_bad_keys(): test.TestOutcome {
 function ecdh_shown(curve: ecdsa.Curve, d: string, peer: string): string {
   match (ecdsa.private_key(curve, __codec_bytes(hex.decode(d)))) {
     Ok(k) => {
-      match (ecdsa.ecdh(k, __codec_bytes(hex.decode(peer)))) {
+      match (k.ecdh(__codec_bytes(hex.decode(peer)))) {
         Ok(shared) => {
           return hex.encode(shared);
         },

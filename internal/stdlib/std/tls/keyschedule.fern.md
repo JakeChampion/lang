@@ -86,10 +86,10 @@ pub function (h: Hash) size(): i32 {
 pub function (h: Hash) digest(msg: [u8]): u8[] {
   match (h) {
     Sha256 => {
-      return crypto.sha256_new().update(msg).final_bytes();
+      return crypto.sha256(msg);
     },
     Sha384 => {
-      return crypto.sha384_new().update(msg).final_bytes();
+      return crypto.sha384(msg);
     }
   }
   return [];
@@ -203,7 +203,7 @@ pub function (s: CipherSuite) aead(): Aead {
 pub function hkdf_extract(h: Hash, salt: [u8], ikm: [u8]): u8[] {
   match (h) {
     Sha256 => {
-      return crypto.hkdf_extract(salt, ikm);
+      return crypto.hkdf_sha256_extract(salt, ikm);
     },
     Sha384 => {
       return crypto.hkdf_sha384_extract(salt, ikm);
@@ -222,7 +222,7 @@ pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u
   info = __put(info, 10 + full.len(), context);
   match (h) {
     Sha256 => {
-      return crypto.hkdf_expand(secret, info, length);
+      return crypto.hkdf_sha256_expand(secret, info, length);
     },
     Sha384 => {
       return crypto.hkdf_sha384_expand(secret, info, length);

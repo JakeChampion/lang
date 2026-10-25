@@ -296,6 +296,12 @@ function main(): i32 {
 	{name: "be_word_i32_sign_extends", fn: "bword32", exit: 125, src: signedWordSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bbswapl %(e\w+|r\d+d)\n\s*movslq`}, "arm64-linux": {`\brev w\d+, w\d+\n\s*sxtw x\d+`}},
 		forbid: wordForbid},
+	{name: "identity_operations_fold", fn: "mix", exit: 0, src: identitySrc,
+		want:   map[string][]string{"x86-64-linux": {`\baddq %r\w+, %rax`}, "arm64-linux": {`\badd x\d+, x\d+, x\d+`}},
+		forbid: map[string][]string{"x86-64-linux": {`\b(add|sub|or|xor|shl|sar|shr)q \$0,`}, "arm64-linux": {`#0\n`, `\blsl x\d+, x\d+, #0`}}},
+	{name: "copy_loop_leaves_no_compare", fn: "run", exit: 0, src: copyLoopSrc,
+		want:   map[string][]string{"x86-64-linux": {`call __fn___fern_bytes_append_range`}, "arm64-linux": {`bl __fn___fern_bytes_append_range`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bset[a-z]+ %`}, "arm64-linux": {`\bcset\b`}}},
 	{name: "le_word_bytes_scrambled", fn: "scrambled", exit: 5, src: wordLoadSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
@@ -666,6 +672,50 @@ const maskTestSrc = `
 function main(): i32 {
     let p: u8[] = pad([1u8, 2u8, 3u8]);
     return masked(args().len() * 300, "set") * 10 + p.len();
+}
+`
+
+// Each operation in mix leaves its operand as it is.
+const identitySrc = `
+const BASE: i32 = 0;
+const ONE: i32 = 1;
+const WIDE: i64 = 0i64;
+@noinline
+function mix(x: i32, y: i64, s: i32): i64 {
+  let a: i32 = (x + BASE) * ONE;
+  let b: i32 = (a | BASE) ^ BASE;
+  let c: i64 = (y - WIDE) << (BASE as i64);
+  return (b << BASE) as i64 + c + (s >> BASE) as i64;
+}
+function main(): i32 {
+  return (mix(3, 4i64, 5) - 12i64) as i32;
+}
+`
+
+// The copy loop in exec becomes one runtime call, and its count test
+// leaves the loop with nothing to branch on.
+const copyLoopSrc = `
+@inline
+function exec(own out: u8[], lits: u8[], li: i32, ll: i32): u8[] {
+  let k: i32 = 0;
+  while (k < ll) {
+    out = out.append(lits[li + k]);
+    k = k + 1;
+  }
+  return out;
+}
+@noinline
+function run(own out: u8[], lits: u8[], lens: i32[]): u8[] {
+  let li: i32 = 0;
+  for ll in lens {
+    out = exec(out, lits, li, ll);
+    li = li + ll;
+  }
+  return out;
+}
+function main(): i32 {
+  let lits: u8[] = [1, 2, 3, 4, 5, 6];
+  return run([], lits, [2, 0, 4]).len() - 6;
 }
 `
 

@@ -781,7 +781,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__count_byte") {
     return t_i32();
   }
-  if (argc == 2 && (name == "__crc32_cksum" || name == "__crc32_cksum_array")) {
+  if (argc == 2 && (name == "__crc32_cksum" || name == "__crc32_cksum_array" || name == "__crc32_ieee_array")) {
     return t_i32();
   }
   if (argc == 3 && name == "__memchr") {
@@ -1020,7 +1020,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__crc32_cksum") {
     return ([t_i32(), t_string()], true);
   }
-  if (name == "__crc32_cksum_array") {
+  if (name == "__crc32_cksum_array" || name == "__crc32_ieee_array") {
     return ([t_i32(), t_view(t_u8())], true);
   }
   if (name == "__memchr" || name == "__rmemchr") {
@@ -16026,41 +16026,61 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
   return "";
 }
 
+// The E093s to report at once, and for each const that waits for the type
+// check, the E093 to report when its initializer is well-typed.
+struct ConstInit { diags: util.Diag[], deferred: string[], messages: string[] }
+
 function const_init_diags(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = [];
+  return const_init(mod).diags;
+}
+
+function const_init(mod: parser.Module): ConstInit {
+  let out: ConstInit = ConstInit { diags: [], deferred: [], messages: [] };
   let earlier: string[] = [];
   let evaluated_names: string[] = [];
   let values: consteval.Value[] = [];
   for fd in mod.funcs {
     if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
-        match (stmt) {
-          ast.StmtReturn(r) => {
-            let msg: string = const_expr_err(r.value, earlier);
-            if (msg.len() > 0) {
-              out = out.append(dg_at("E093", "const " + fd.name + ": " + msg, fd.line, fd.col));
-              continue;
-            }
-            let ranges: util.Diag[] = util.append_diags(suffix_range_stmts(fd.body), int_range_diags(r.value, fd.ret_type, false));
-            if (ranges.len() > 0) {
-              out = util.append_diags(out, ranges);
-              continue;
-            }
-            let value: consteval.Value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
-            if (value.error.len() > 0) {
-              out = out.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col));
-            } else {
-              evaluated_names = evaluated_names.append(fd.name);
-              values = values.append(value);
-            }
-          },
-          _ => {}
+        if let ast.StmtReturn(r) = stmt {
+          let pre: util.Diag[] = const_pre_diags(fd, r.value, earlier);
+          if (pre.len() > 0) {
+            out = ConstInit { ...out, diags: util.append_diags(out.diags, pre) };
+            continue;
+          }
+          let value: consteval.Value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
+          if (value.definite) {
+            out = ConstInit { ...out, diags: out.diags.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col)) };
+            continue;
+          }
+          evaluated_names = evaluated_names.append(fd.name);
+          values = values.append(consteval.held(value));
+          if (value.error.len() > 0 && !consteval.reads_deferred(value)) {
+            out = ConstInit { ...out, deferred: out.deferred.append(fd.name), messages: out.messages.append("const " + fd.name + ": " + value.error) };
+          }
         }
       }
       earlier = earlier.append(fd.name);
     }
   }
   return out;
+}
+
+function const_pre_diags(fd: parser.FuncDecl, value: ast.Expr, earlier: string[]): util.Diag[] {
+  let msg: string = const_expr_err(value, earlier);
+  if (msg.len() > 0) {
+    return [dg_at("E093", "const " + fd.name + ": " + msg, fd.line, fd.col)];
+  }
+  return util.append_diags(suffix_range_stmts(fd.body), int_range_diags(value, fd.ret_type, false));
+}
+
+// A deferred const's E093 is reported only when its initializer type-checks.
+function deferred_const_diags(fd: parser.FuncDecl, init: ConstInit, found: util.Diag[]): util.Diag[] {
+  let k: i32 = util.index_of_str(init.deferred, fd.name);
+  if (k < 0 || found.len() > 0) {
+    return [];
+  }
+  return [dg_at("E093", init.messages[k], fd.line, fd.col)];
 }
 
 function is_script(mod: parser.Module): boolean {
@@ -16221,7 +16241,7 @@ function registered_intrinsics(): string[] {
     "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
     "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
-    "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
+    "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
@@ -20135,7 +20155,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   let out: string[] = [];
   for name in [
-    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
+    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
     "__f64x2_of", "__f64x2_splat", "__f64x2_lane",
@@ -21979,6 +21999,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     slc_first = false;
     slc_marked = util.name_index(slc_now);
   }
+  let const_inits: ConstInit = const_init(mod);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (!in_focus(focus, mod.funcs[i]) || derive_body_suppressed(mod.funcs[i], derive_keys)) {
@@ -22050,6 +22071,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (ambig.len() > 0) {
       function_diags = util.append_diags(function_diags, vref_stmts(dbody, fsc, ambig));
     }
+    function_diags = util.append_diags(function_diags, deferred_const_diags(mod.funcs[i], const_inits, function_diags));
     body_diags = util.append_diags(body_diags, body_source_order(function_diags));
     i = i + 1;
   }
@@ -22228,7 +22250,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     body_diags = util.append_diags(body_diags, e057_struct_diags(esd, mod.enums, fld_scope));
   }
   body_diags = util.append_diags(body_diags, e085_decl_diags(mod, focus, e064_tn));
-  let cgd: util.Diag[] = const_init_diags(mod);
+  let cgd: util.Diag[] = const_inits.diags;
   if (cgd.len() > 0) {
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
   }

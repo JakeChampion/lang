@@ -806,13 +806,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x2, x2, #1\n    b " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
   }
-  if (o.kind_tag == 309 || o.kind_tag == 373) {
-    s = s.need("crc32_cksum");
-    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 373) {
-      s = s.write("    ldr x6, [x1]\n    add x7, x1, #8\n    bl __fern_crc32_cksum_data\n");
+  if (ir.is_crc32_op(o.kind_tag)) {
+    let kernel: string = "crc32_cksum";
+    if (o.kind_tag >= 480) {
+      kernel = "crc32_ieee";
+      s = s.need("crc32_ieee");
     } else {
-      s = s.write("    bl __fern_crc32_cksum\n");
+      s = s.need("crc32_cksum");
+    }
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    if (o.kind_tag == 373 || o.kind_tag == 481) {
+      s = s.write("    ldr x6, [x1]\n    add x7, x1, #8\n    bl __fern_" + kernel + "_data\n");
+    } else {
+      s = s.write("    bl __fern_" + kernel + "\n");
     }
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
@@ -2903,7 +2909,22 @@ function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmc
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// An instruction whose caller registers are saved around its call.
+function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, around: i32, own s: asmcore.EmitState): asmcore.EmitState {
+  if (around != 0 && ssa_inline_rc_dec(blk.insts[ii], s)) {
+    return ssa_rc_dec(blk.insts[ii], reg_of, lp, around, fr.cold_base, ssa_x0_forget(s));
+  }
+  s = ssa_cold_save(s, around, fr.cold_base, false);
+  s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
+  return ssa_cold_save(s, around, fr.cold_base, true);
+}
+
+// A release whose count test is inline, so only its freeing call is slow.
+function ssa_inline_rc_dec(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  return ins.kind_tag == 11 && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && ins.imm != 5;
+}
+
+function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (ins.imm == 5) {
     return ssa_helper_entry(ins, reg_of, ".u", s);
   }
@@ -2927,7 +2948,9 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_cmp_imm(s, "w5", 1);
   s = ssa_bcond(s, CC_GT, dec);
   s = ssa_tbz(s, true, "w5", 31, kept);
+  s = ssa_cold_save(s, around, base, false);
   s = ssa_helper_entry(ins, reg_of, ".u", s);
+  s = ssa_cold_save(s, around, base, true);
   s = ssa_b(s, done);
   s = s.lab_def(dec);
   s = ssa_addsub_imm(s, true, "w5", "w5", 1);
@@ -2943,7 +2966,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   }
   s = ssa_x0_forget(s);
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
-    return ssa_rc_dec(ins, reg_of, lp, s);
+    return ssa_rc_dec(ins, reg_of, lp, 0, 0, s);
   }
   if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
     return ssa_helper_call(ins, reg_of, s);
@@ -4582,10 +4605,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
         tailed = true;
       } else {
         s = ssa_prepared_loc(prepared.source.values, ins.result, s);
-        let around: i32 = cold.by_pos[pos + ii];
-        s = ssa_cold_save(s, around, fr.cold_base, false);
-        s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
-        s = ssa_cold_save(s, around, fr.cold_base, true);
+        s = ssa_saved_inst(blk, ii, reg_of, lp, fr, r, cold.by_pos[pos + ii], s);
       }
       ii = ii + 1;
     }
@@ -8927,6 +8947,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("crc32_cksum")) {
     s = emit_rt_crc32_cksum(s);
   }
+  if (s.has_need("crc32_ieee")) {
+    s = emit_rt_crc32_ieee(s);
+  }
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
   }
@@ -10372,6 +10395,48 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldp x29, x30, [sp], #64\n");
   s = s.write("    ret\n");
   s = s.write("    .size __fern_crc32_cksum, .-__fern_crc32_cksum\n");
+  return s;
+}
+
+// The reflected IEEE CRC-32 register update: w0 is the register, x7 the data and x6 the length.
+function emit_rt_crc32_ieee(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .arch_extension crc\n");
+  s = s.write("    .global __fern_crc32_ieee\n");
+  s = s.write("    .global __fern_crc32_ieee_data\n");
+  s = s.write("    .type __fern_crc32_ieee, %function\n");
+  s = s.write("__fern_crc32_ieee:\n");
+  s = s.write("    ldr x6, [x1, #8]\n");
+  s = s.write("    ldr x7, [x1]\n");
+  s = s.write("__fern_crc32_ieee_data:\n");
+  s = s.write(".Lcrc32_ieee_32:\n");
+  s = s.write("    subs x6, x6, #32\n");
+  s = s.write("    b.lo .Lcrc32_ieee_8in\n");
+  s = s.write("    ldp x2, x3, [x7], #16\n");
+  s = s.write("    ldp x4, x5, [x7], #16\n");
+  s = s.write("    crc32x w0, w0, x2\n");
+  s = s.write("    crc32x w0, w0, x3\n");
+  s = s.write("    crc32x w0, w0, x4\n");
+  s = s.write("    crc32x w0, w0, x5\n");
+  s = s.write("    b .Lcrc32_ieee_32\n");
+  s = s.write(".Lcrc32_ieee_8in:\n");
+  s = s.write("    add x6, x6, #32\n");
+  s = s.write(".Lcrc32_ieee_8:\n");
+  s = s.write("    subs x6, x6, #8\n");
+  s = s.write("    b.lo .Lcrc32_ieee_1in\n");
+  s = s.write("    ldr x2, [x7], #8\n");
+  s = s.write("    crc32x w0, w0, x2\n");
+  s = s.write("    b .Lcrc32_ieee_8\n");
+  s = s.write(".Lcrc32_ieee_1in:\n");
+  s = s.write("    adds x6, x6, #8\n");
+  s = s.write("    b.eq .Lcrc32_ieee_ret\n");
+  s = s.write(".Lcrc32_ieee_1:\n");
+  s = s.write("    ldrb w2, [x7], #1\n");
+  s = s.write("    crc32b w0, w0, w2\n");
+  s = s.write("    subs x6, x6, #1\n");
+  s = s.write("    b.ne .Lcrc32_ieee_1\n");
+  s = s.write(".Lcrc32_ieee_ret:\n");
+  s = s.write("    ret\n");
+  s = s.write("    .size __fern_crc32_ieee, .-__fern_crc32_ieee\n");
   return s;
 }
 

@@ -122,6 +122,7 @@ bool_to_string_receivers                             0
 boolean_logic                                        0
 boolean_scalar_dispatch                              0
 both_arms_read_p                                     0
+bound_generic_parameter_takes_a_string_literal       0
 break_continue                                       0
 byte_slice_after_set_len_regrows                     0
 byte_stream_and_async_channel                       0
@@ -162,15 +163,18 @@ codec_errors                                         0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
+const_char_comparison                                0
 const_composite                                      0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
 const_folds_at_declared_width                        0
+const_integer_literals_settle_to_float               0
 const_param_functions                                0
 const_settles_across_modules                         0
 const_settles_where_it_is_read                       0
 const_shadowed_by_binder                             0
 const_shadowed_by_pattern_binder                     0
+const_string_ordering                                0
 const_struct_literal                                 0
 const_struct_negative_fields                         0
 const_without_a_type                                 0
@@ -307,7 +311,6 @@ generic_enum_method_builds_a_variant                 0
 generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
 generic_enum_payload_settles_its_parameter           0
-generic_char_ordering                                0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0

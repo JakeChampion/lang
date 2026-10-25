@@ -430,7 +430,11 @@ function masked(g: Graph, x: i32): i32 {
 function mask_const(g: Graph, v: i32): i32 {
   let d: ssa.SInst = def_of(g, v);
   if (d.kind_tag != 1) {
-    return 0 - 1;
+    let n: i64 = folded(g, v, 4);
+    if (n == NOT_FOLDED || n < 0i64) {
+      return 0 - 1;
+    }
+    return n as i32;
   }
   if (d.str.len() > 0) {
     let n: i64 = util.lit_to_i64(d.str);

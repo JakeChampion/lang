@@ -93,7 +93,7 @@ function main(): i32 {
 
 func TestSelfHostRuntimeUnitByteCopyMoves(t *testing.T) {
 	cli := newStrictCLI(t)
-	stackCopy := regexp.MustCompile(`(?m)(?:    (?:pushq|popq) %[^\n]+\n){2,}    rep movsb\n`)
+	stackCopy := regexp.MustCompile(`(?m)(?:    (?:pushq|popq) %[^\n]+\n){2,}    call __fern_memcpy\n`)
 	for _, name := range []string{"byte_copy_append", "byte_copy_with"} {
 		t.Run(name, func(t *testing.T) {
 			source, err := os.ReadFile(langSrcAbs(t, "bench/"+name+".fern"))
@@ -101,7 +101,7 @@ func TestSelfHostRuntimeUnitByteCopyMoves(t *testing.T) {
 				t.Fatal(err)
 			}
 			asm := cli.emit(t, "x86-64-linux", string(source))
-			if !strings.Contains(asm, "    rep movsb\n") {
+			if !strings.Contains(asm, "    call __fern_memcpy\n") {
 				t.Fatal("byte-copy kernel is absent")
 			}
 			if stackCopy.MatchString(asm) {
