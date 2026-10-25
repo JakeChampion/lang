@@ -1,0 +1,80 @@
+// Fixtures generated offline with Python zlib and PNG filter equations.
+pub function rgb0(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 174 as u8, 3 as u8, 202 as u8, 18 as u8, 116 as u8, 51 as u8, 100 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgb1(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 252 as u8, 207 as u8, 32 as u8, 200 as u8, 115 as u8, 226 as u8, 61 as u8, 35 as u8, 19 as u8, 51 as u8, 203 as u8, 143 as u8, 218 as u8, 120 as u8, 0 as u8, 33 as u8, 53 as u8, 4 as u8, 179 as u8, 95 as u8, 13 as u8, 55 as u8, 43 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgb2(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 250 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 137 as u8, 153 as u8, 249 as u8, 243 as u8, 251 as u8, 29 as u8, 201 as u8, 0 as u8, 29 as u8, 233 as u8, 4 as u8, 235 as u8, 200 as u8, 197 as u8, 187 as u8, 83 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgb3(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 254 as u8, 207 as u8, 32 as u8, 216 as u8, 115 as u8, 226 as u8, 7 as u8, 115 as u8, 51 as u8, 243 as u8, 159 as u8, 47 as u8, 210 as u8, 137 as u8, 0 as u8, 44 as u8, 191 as u8, 6 as u8, 85 as u8, 63 as u8, 165 as u8, 79 as u8, 94 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgb4(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 249 as u8, 207 as u8, 32 as u8, 200 as u8, 115 as u8, 226 as u8, 61 as u8, 11 as u8, 51 as u8, 243 as u8, 231 as u8, 31 as u8, 59 as u8, 146 as u8, 1 as u8, 37 as u8, 176 as u8, 5 as u8, 232 as u8, 104 as u8, 138 as u8, 24 as u8, 81 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgba0(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 6 as u8, 0 as u8, 0 as u8, 0 as u8, 114 as u8, 182 as u8, 13 as u8, 36 as u8, 0 as u8, 0 as u8, 0 as u8, 26 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 192 as u8, 125 as u8, 130 as u8, 161 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 255 as u8, 175 as u8, 134 as u8, 100 as u8, 65 as u8, 0 as u8, 44 as u8, 102 as u8, 5 as u8, 90 as u8, 113 as u8, 71 as u8, 50 as u8, 125 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgba1(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 6 as u8, 0 as u8, 0 as u8, 0 as u8, 114 as u8, 182 as u8, 13 as u8, 36 as u8, 0 as u8, 0 as u8, 0 as u8, 26 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 252 as u8, 207 as u8, 32 as u8, 200 as u8, 192 as u8, 115 as u8, 226 as u8, 125 as u8, 3 as u8, 35 as u8, 19 as u8, 51 as u8, 203 as u8, 255 as u8, 31 as u8, 181 as u8, 241 as u8, 66 as u8, 0 as u8, 54 as u8, 187 as u8, 6 as u8, 68 as u8, 26 as u8, 161 as u8, 239 as u8, 193 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgba2(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 6 as u8, 0 as u8, 0 as u8, 0 as u8, 114 as u8, 182 as u8, 13 as u8, 36 as u8, 0 as u8, 0 as u8, 0 as u8, 27 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 250 as u8, 207 as u8, 32 as u8, 200 as u8, 192 as u8, 125 as u8, 130 as u8, 161 as u8, 129 as u8, 137 as u8, 153 as u8, 249 as u8, 243 as u8, 255 as u8, 247 as u8, 59 as u8, 146 as u8, 39 as u8, 2 as u8, 0 as u8, 51 as u8, 58 as u8, 6 as u8, 251 as u8, 5 as u8, 231 as u8, 137 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgba3(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 6 as u8, 0 as u8, 0 as u8, 0 as u8, 114 as u8, 182 as u8, 13 as u8, 36 as u8, 0 as u8, 0 as u8, 0 as u8, 26 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 254 as u8, 207 as u8, 32 as u8, 200 as u8, 208 as u8, 115 as u8, 226 as u8, 71 as u8, 3 as u8, 115 as u8, 51 as u8, 243 as u8, 159 as u8, 255 as u8, 95 as u8, 164 as u8, 19 as u8, 131 as u8, 0 as u8, 70 as u8, 186 as u8, 8 as u8, 38 as u8, 154 as u8, 162 as u8, 161 as u8, 255 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgba4(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 6 as u8, 0 as u8, 0 as u8, 0 as u8, 114 as u8, 182 as u8, 13 as u8, 36 as u8, 0 as u8, 0 as u8, 0 as u8, 27 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 249 as u8, 207 as u8, 32 as u8, 200 as u8, 192 as u8, 115 as u8, 226 as u8, 125 as u8, 3 as u8, 11 as u8, 51 as u8, 243 as u8, 231 as u8, 255 as u8, 63 as u8, 118 as u8, 36 as u8, 11 as u8, 1 as u8, 0 as u8, 61 as u8, 103 as u8, 7 as u8, 121 as u8, 155 as u8, 66 as u8, 152 as u8, 154 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function unsupported(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 69 as u8, 104 as u8, 253 as u8, 22 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 174 as u8, 3 as u8, 202 as u8, 18 as u8, 116 as u8, 51 as u8, 100 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function bad_filter(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 253 as u8, 207 as u8, 32 as u8, 200 as u8, 115 as u8, 226 as u8, 61 as u8, 43 as u8, 51 as u8, 243 as u8, 231 as u8, 31 as u8, 59 as u8, 146 as u8, 1 as u8, 37 as u8, 197 as u8, 5 as u8, 234 as u8, 37 as u8, 231 as u8, 5 as u8, 220 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function compressed_trailing(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 23 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 174 as u8, 3 as u8, 202 as u8, 88 as u8, 253 as u8, 127 as u8, 231 as u8, 57 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function transparency(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 116 as u8, 82 as u8, 78 as u8, 83 as u8, 54 as u8, 185 as u8, 112 as u8, 204 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 174 as u8, 3 as u8, 202 as u8, 18 as u8, 116 as u8, 51 as u8, 100 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function profile(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 105 as u8, 67 as u8, 67 as u8, 80 as u8, 165 as u8, 137 as u8, 25 as u8, 62 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 174 as u8, 3 as u8, 202 as u8, 18 as u8, 116 as u8, 51 as u8, 100 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function animation(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 97 as u8, 99 as u8, 84 as u8, 76 as u8, 73 as u8, 242 as u8, 175 as u8, 232 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 174 as u8, 3 as u8, 202 as u8, 18 as u8, 116 as u8, 51 as u8, 100 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function critical(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 65 as u8, 66 as u8, 67 as u8, 68 as u8, 219 as u8, 23 as u8, 32 as u8, 165 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 129 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 174 as u8, 3 as u8, 202 as u8, 18 as u8, 116 as u8, 51 as u8, 100 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function short_scanline(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 9 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8, 0 as u8, 1 as u8, 94 as u8, 255 as u8, 125 as u8, 249 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
+pub function rgb_bytes(): u8[] {
+  return [255 as u8, 0 as u8, 17 as u8, 11 as u8, 200 as u8, 0 as u8, 2 as u8, 3 as u8, 4 as u8, 250 as u8, 128 as u8, 99 as u8];
+}
+
+pub function rgba_bytes(): u8[] {
+  return [255 as u8, 0 as u8, 17 as u8, 0 as u8, 11 as u8, 200 as u8, 0 as u8, 128 as u8, 2 as u8, 3 as u8, 4 as u8, 255 as u8, 250 as u8, 128 as u8, 99 as u8, 17 as u8];
+}

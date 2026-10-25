@@ -1,0 +1,30 @@
+import "std/deflate";
+
+pub enum CompressionError { Limit, Header, Truncated, Trailing, Checksum, Deflate }
+
+pub function decode(input: [u8], max_out: i32): Result[u8[], CompressionError] {
+  if (max_out < 0 || max_out > 67108864 || input.len() > 16777216) {
+    return Err(Limit);
+  }
+  if (input.len() < 6) {
+    return Err(CompressionError.Truncated);
+  }
+  let cmf: i32 = input[0] as i32;
+  let flg: i32 = input[1] as i32;
+  if (cmf != 120 || (cmf * 256 + flg) % 31 != 0 || (flg & 32) != 0) {
+    return Err(Header);
+  }
+  let value: deflate.Inflated = match (deflate.inflate_from(input, 2, max_out)) { Ok(v) => v, Err(deflate.OutputLimit()) => { return Err(Limit); }, Err(deflate.Truncated()) => { return Err(CompressionError.Truncated); }, Err(_) => { return Err(Deflate); } };
+  let trailer: i32 = 2 + value.consumed;
+  if (trailer < 2 || trailer > input.len() - 4) {
+    return Err(CompressionError.Truncated);
+  }
+  if (trailer != input.len() - 4) {
+    return Err(Trailing);
+  }
+  let want: u32 = input[trailer] as u32 << 24 | input[trailer + 1] as u32 << 16 | input[trailer + 2] as u32 << 8 | input[trailer + 3] as u32;
+  if (want != deflate.adler32(value.out)) {
+    return Err(Checksum);
+  }
+  return Ok(value.out);
+}

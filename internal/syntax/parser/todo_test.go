@@ -43,8 +43,8 @@ func requireTodoBlock(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Block {
 	if !ok {
 		t.Fatalf("body[0] expr = %T, want *ast.Call", es0.Expr)
 	}
-	if id, ok := call0.Callee.(*ast.Ident); !ok || id.Name != "eprint" {
-		t.Fatalf("body[0] callee = %v, want eprint", call0.Callee)
+	if id, ok := call0.Callee.(*ast.Ident); !ok || id.Name != "eprint" || !id.Builtin {
+		t.Fatalf("body[0] callee = %#v, want the builtin eprint", call0.Callee)
 	}
 	es1, ok := body.Stmts[1].(*ast.ExprStmt)
 	if !ok {
@@ -54,8 +54,8 @@ func requireTodoBlock(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Block {
 	if !ok {
 		t.Fatalf("body[1] expr = %T, want *ast.Call", es1.Expr)
 	}
-	if id, ok := call1.Callee.(*ast.Ident); !ok || id.Name != "exit" {
-		t.Fatalf("body[1] callee = %v, want exit", call1.Callee)
+	if id, ok := call1.Callee.(*ast.Ident); !ok || id.Name != "exit" || !id.Builtin {
+		t.Fatalf("body[1] callee = %#v, want the builtin exit", call1.Callee)
 	}
 	num, ok := call1.Args[0].(*ast.NumberLit)
 	if !ok || num.Value != 101 {

@@ -112,6 +112,9 @@ function params(ps: ast.ParamDecl[], s: Scope, line: i32, col: i32): (ast.ParamD
 function expr_at(e: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
   match (e) {
     ast.ExprIdent(i) => {
+      if (i.builtin) {
+        return (e, s, true);
+      }
       return (ast.ExprIdent { ...i, name: lookup(s, i.name) }, s, true);
     },
     ast.ExprLambda(lm) => {

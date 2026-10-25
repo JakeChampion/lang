@@ -3928,13 +3928,18 @@ func (p *parser) parseAssert() (ast.Stmt, error) {
 		}
 	}
 	notCond := &ast.Unary{P: pos, Op: "!", Operand: cond}
-	eprintCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "eprint"}, Args: []ast.Expr{text}}
-	exitCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "exit"}, Args: []ast.Expr{&ast.NumberLit{P: pos, Value: 1}}}
-	then := &ast.Block{P: pos, Stmts: []ast.Stmt{
-		&ast.ExprStmt{P: pos, Expr: eprintCall},
-		&ast.ExprStmt{P: pos, Expr: exitCall},
-	}}
+	then := &ast.Block{P: pos, Stmts: abortStmts(pos, text, 1)}
 	return &ast.If{P: pos, Cond: notCond, Then: then, IsAssert: true}, nil
+}
+
+// abortStmts is the body assert and todo desugar to: the builtin eprint of
+// text, then the builtin exit with status.
+func abortStmts(pos ast.Position, text ast.Expr, status int64) []ast.Stmt {
+	builtin := func(name string, arg ast.Expr) ast.Stmt {
+		callee := &ast.Ident{P: pos, Name: name, Builtin: true}
+		return &ast.ExprStmt{P: pos, Expr: &ast.Call{P: pos, Callee: callee, Args: []ast.Expr{arg}}}
+	}
+	return []ast.Stmt{builtin("eprint", text), builtin("exit", &ast.NumberLit{P: pos, Value: status})}
 }
 
 func (p *parser) parseTodo() (ast.Stmt, error) {
@@ -3964,12 +3969,7 @@ func (p *parser) parseTodo() (ast.Stmt, error) {
 			Right: msg,
 		}
 	}
-	eprintCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "eprint"}, Args: []ast.Expr{text}}
-	exitCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "exit"}, Args: []ast.Expr{&ast.NumberLit{P: pos, Value: 101}}}
-	return &ast.Block{P: pos, Stmts: []ast.Stmt{
-		&ast.ExprStmt{P: pos, Expr: eprintCall},
-		&ast.ExprStmt{P: pos, Expr: exitCall},
-	}, IsTodo: true, TodoMsg: msg}, nil
+	return &ast.Block{P: pos, Stmts: abortStmts(pos, text, 101), IsTodo: true, TodoMsg: msg}, nil
 }
 
 func (p *parser) parseUse(parent *ast.Block) error {
