@@ -7909,7 +7909,7 @@ function bind_element(env: Env, header: string, elem: Value, elem_ty: string): E
 }
 
 function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
-  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "" };
+  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "", builtin: false };
   let subject: ast.Expr = held;
   if (!receiver_has_method(env.funcs, iv, "next")) {
     if (!receiver_has_method(env.funcs, iv, "iter")) {
