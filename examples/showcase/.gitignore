@@ -8,3 +8,4 @@
 /web/blockyard/kernel.wasm.gz
 /web/blockyard/kernel.wasm.zst
 /web/swarm/compiler/
+/web/bench/*.wasm
