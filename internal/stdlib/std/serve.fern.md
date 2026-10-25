@@ -5994,6 +5994,9 @@ function __each_shutdown(cs: h3q.Conn[]): h3q.Conn[] {
 }
 
 function __h3_forget_done(c: __Conns): __Conns {
+  if (!__h3_any_done(c.quic.conns)) {
+    return c;
+  }
   let q: __Quic = c.quic;
   let kept: __Quic = __Quic { ...q, conns: [], keys: [], origs: [], peers: [], serials: [] };
   let producers: __H3Producer[] = q.producers;
@@ -6007,6 +6010,15 @@ function __h3_forget_done(c: __Conns): __Conns {
     i = i + 1;
   }
   return __Conns { ...c, quic: __Quic { ...kept, producers: producers } };
+}
+
+function __h3_any_done(cs: h3q.Conn[]): boolean {
+  for x in cs {
+    if (x.done()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function __h3_producers_of_gone(ps: __H3Producer[], serial: i32): __H3Producer[] {
