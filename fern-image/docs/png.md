@@ -5,6 +5,9 @@ It uses Fern-native CRC-32, DEFLATE, and Adler-32 from the standard library.
 
 It does not call an external image codec.
 
+The [sequential row interface](png-rows.md) can emit selected rows without a complete decoded pixel array.
+It still materializes the entire filtered frame before row callbacks.
+
 ## Decode contract
 
 The decoder validates the signature, chunk lengths, CRCs, and chunk type letters.
