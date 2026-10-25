@@ -22,6 +22,12 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 
 func goCheckerCodes(t *testing.T, dir, src string) []string {
 	t.Helper()
+	return uniqueSortedCodes(goCheckerDiagCodes(t, dir, src))
+}
+
+// goCheckerDiagCodes returns one code per Go checker diagnostic, sorted.
+func goCheckerDiagCodes(t *testing.T, dir, src string) []string {
+	t.Helper()
 	p := filepath.Join(dir, "gocheck_input.fern")
 	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 		t.Fatalf("write gocheck input: %v", err)
@@ -36,7 +42,14 @@ func goCheckerCodes(t *testing.T, dir, src string) []string {
 	if err == nil {
 		return nil
 	}
-	return uniqueSortedCodes(codeRE.FindAllString(diag.Format(p, src, err), -1))
+	return sortedCodes(diag.Format(p, src, err))
+}
+
+// sortedCodes returns every diagnostic code in out, repeats kept, sorted.
+func sortedCodes(out string) []string {
+	codes := codeRE.FindAllString(out, -1)
+	sort.Strings(codes)
+	return codes
 }
 
 type driverDiag struct {
@@ -754,6 +767,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-elem-assign-bad", "struct P { x: i32 }\nfunction main(): i32 { let a: P[] = [P { x: 1 }]; a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
 		{"arr-elem-field-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction main(): i32 { let p = P { xs: [Q { n: 1 }, 5] }; return 0; }\n", []string{"E034"}},
 		{"arr-elem-field-update-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction f(p: P): P { return P { ...p, xs: [Q { n: 1 }, 5] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"arr-mix-struct-then-prim", "struct P { x: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
+		{"arr-mix-struct-then-struct", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", []string{"E034"}},
+		{"typed-arr-struct-mix-unlike-dest", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a: P[] = [Q { y: 2 }, P { x: 1 }]; return 0; }\n", []string{"E003", "E034"}},
+		{"arr-elem-struct-return-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction f(p: P): Q[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"arr-elem-struct-let-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let p = P { x: 1 }; let a: Q[] = [p, p]; return a.len(); }\n", []string{"E003"}},
+		{"arr-elem-struct-field-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nstruct W { qs: Q[] }\nfunction main(): i32 { let p = P { x: 1 }; let w = W { qs: [p] }; return w.qs.len(); }\n", []string{"E043"}},
+		{"arr-elem-generic-return-clash", "struct Box[T] { v: T }\nfunction f(b: Box[i32]): Box[i64][] { return [b]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"arr-elem-generic-let-clash", "struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; let a: Box[i64][] = [b]; return a.len(); }\n", []string{"E003"}},
+		{"arr-elem-generic-arg-clash", "struct Box[T] { v: T }\nfunction g(xs: Box[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; return g([b]); }\n", []string{"E038"}},
+		{"arr-elem-generic-ok", "struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; let a: Box[i32][] = [b, b]; return a.len(); }\n", nil},
 		{"arr-elem-field-union-ok", "struct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nstruct P { xs: U[] }\nfunction main(): i32 { let p = P { xs: [A { a: 1 }, B { b: 2 }] }; return 0; }\n", nil},
 		{"arr-append-arg-bad", "function main(): i32 { let a: i32[] = [1]; a = a.append(\"x\"); return 0; }\n", []string{"E038"}},
 		{"arr-append-arg-ok", "function main(): i32 { let a: i32[] = [1]; a = a.append(2); return 0; }\n", nil},

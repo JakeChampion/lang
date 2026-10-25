@@ -1,0 +1,12 @@
+// Widening does not reach an array already stored in an argument literal.
+function g(xs: i64[][]): i32 {
+  return xs.len();
+}
+
+function f(values: i32[]): i32 {
+  return g([values]);
+}
+
+function main(): i32 {
+  return 0;
+}
