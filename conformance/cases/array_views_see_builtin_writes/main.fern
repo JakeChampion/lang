@@ -40,6 +40,6 @@ function main(): i32 {
   print(f"whole view: fd {whole[0] == s} ready {whole[1] > 0} len {whole.len()}");
   print(f"view in a field: fd {w.events[0] == s} ready {w.events[1] > 0}");
 
-  print(f"close: {reactor_ctl(r, 3, 0, 0)} {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)}");
+  print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)} {reactor_ctl(r, 3, 0, 0)}");
   return 0;
 }

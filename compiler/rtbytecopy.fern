@@ -39,9 +39,19 @@ function native_append(unique: string): string {
 
 // The copy moves 8-byte words, so the array keeps 8 bytes of room past its
 // new length. A word reads from step back, the first multiple of dist that is
-// at least 8, so it reads only bytes that hold their final value.
+// at least 8, so it reads only bytes that hold their final value. The first
+// function copies a unique array with room and a dist of 8 or more, and makes
+// no call. The slow function handles every other case.
 function native_back(unique: string): string {
   return "function __fern_bytes_append_back(own a: i32[], dist: i32, n: i32): i32[] { "
+    + "let len = a.len(); if (n > 0 && dist >= 8 && dist <= len && " + unique + ") { "
+    + "let total: i64 = (len as i64) + (n as i64); "
+    + "if (total <= 2147483647i64 && total + 8i64 <= __load_i64(__raw_arr_ptr(a) - 16) * 8i64) { "
+    + "let base: usize = __raw_arr_ptr(a) + 8; let p: usize = base + len; let end: usize = base + (total as i32); "
+    + "let q: usize = p - dist; while (p < end) { __store_i64(p, __load_i64(q)); p = p + 8; q = q + 8; } "
+    + "__store_i64(__raw_arr_ptr(a), total); return a; } } "
+    + "return __fern_bytes_append_back_slow(a, dist, n); } "
+    + "@noinline function __fern_bytes_append_back_slow(own a: i32[], dist: i32, n: i32): i32[] { "
     + "if (n <= 0) { return a; } let len = a.len(); if (dist < 1 || dist > len) { __fern_oob_abort(); } "
     + "let total64: i64 = (len as i64) + (n as i64); if (total64 > 2147483647i64) { return __raw_array(__raw_arr_box(0 - 1)); } "
     + "let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16); let reuse = " + unique + " && total64 + 8i64 <= cap * 8i64; "

@@ -1,0 +1,3 @@
+# Playwright install for the browser suites.
+node_modules/
+package-lock.json

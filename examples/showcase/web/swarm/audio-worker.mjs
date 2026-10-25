@@ -1,8 +1,9 @@
-import { load } from "./kernel.mjs";
-const kernel = load();
-onmessage = async ({ data: { tone, id } }) => {
+import { instantiate, load } from "./kernel.mjs";
+const original = load();
+// The page sends the module bytes after a visitor edits the kernel.
+onmessage = async ({ data: { tone, id, bytes } }) => {
   try {
-    const { sample } = await kernel,
+    const { sample } = await (bytes ? instantiate(bytes) : original),
       rate = 24000,
       pcm = new Float32Array(rate * 8);
     for (let i = 0; i < pcm.length; i++) pcm[i] = sample(i, rate, tone);

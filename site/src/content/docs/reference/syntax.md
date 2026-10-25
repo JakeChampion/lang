@@ -133,6 +133,16 @@ downcast to a concrete type — see [Traits](../traits/#runtime-dispatch--dyn-tr
 From an integer it is the checked conversion to another integer type:
 `Some` when the value fits `T`, so `300 as? u8` is `None`.
 
+## Control headers
+
+A bare `for` header uses the next unprotected brace to start its body.
+Put a struct or map expression in parentheses at that level.
+For example, use `for p in (Group { values: points }.values) { ... }`.
+
+Arrays, tuples, calls, and indices already delimit their operands.
+Those operands can contain struct and map literals, as in `for p in [Point { x: 1 }] { ... }`.
+The formatter preserves the required grouping.
+
 ## Trailing commas
 
 A trailing comma is legal in the comma-separated lists you write most —
