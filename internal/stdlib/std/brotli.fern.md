@@ -133,8 +133,7 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
   if (w.0 < 0) {
     return Err(BrotliMalformed("window size"));
   }
-  let none: u8[] = [];
-  let s: __St = __St { bit: w.1, ring: [4, 11, 15, 16], window: (1 << w.0) - 16, dict: none, t: __tables() };
+  let s: __St = __St { bit: w.1, ring: [4, 11, 15, 16], window: (1 << w.0) - 16, t: __tables() };
   let out: u8[] = [];
   let last: boolean = false;
   while (!last) {
@@ -155,7 +154,7 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
 
 ```fern
 <<6 struct __St>>=
-struct __St { bit: i32, ring: i32[], window: i32, dict: u8[], t: __Tab }
+struct __St { bit: i32, ring: i32[], window: i32, t: __Tab }
 
 struct __Run { out: u8[], s: __St }
 ```
@@ -710,7 +709,7 @@ function __tables(): __Tab {
 
 ```fern
 <<20 struct __Cs>>=
-struct __Cs { lit: __Cat, cmd: __Cat, dist: __Cat, bit: i32, ring: i32[], dict: u8[] }
+struct __Cs { lit: __Cat, cmd: __Cat, dist: __Cat, bit: i32, ring: i32[] }
 
 struct __Cmd { insert: i32, copy: i32, implicit: boolean, c: __Cs }
 ```
@@ -720,7 +719,7 @@ struct __Cmd { insert: i32, copy: i32, implicit: boolean, c: __Cs }
 ```fern
 <<21 function __commands(buf: [u8], m: __Mb, s: __St, out: u8[], end: i32): Result[__Run, BrotliError]>>=
 function __commands(buf: [u8], m: __Mb, s: __St, out: u8[], end: i32): Result[__Run, BrotliError] {
-  let c: __Cs = __Cs { lit: m.lit, cmd: m.cmd, dist: m.dist, bit: m.bit, ring: s.ring, dict: s.dict };
+  let c: __Cs = __Cs { lit: m.lit, cmd: m.cmd, dist: m.dist, bit: m.bit, ring: s.ring };
   let dst: u8[] = out;
   while (dst.len() < end) {
     let cmd: __Cmd = __command(buf, m, c)?;
@@ -736,7 +735,7 @@ function __commands(buf: [u8], m: __Mb, s: __St, out: u8[], end: i32): Result[__
       return Err(__overrun(dst.len() > end));
     }
   }
-  return Ok(__Run { out: dst, s: __St { ...s, bit: c.bit, ring: c.ring, dict: c.dict } });
+  return Ok(__Run { out: dst, s: __St { ...s, bit: c.bit, ring: c.ring } });
 }
 
 function __overrun(past_end: boolean): BrotliError {
@@ -762,18 +761,7 @@ function __copy_step(buf: [u8], m: __Mb, s: __St, c: __Cs, cmd: __Cmd, dst: u8[]
   let d: (i32, i32, __Cs) = __distance(buf, m, c, cmd)?;
   let max: i32 = cmp.min(s.window, dst.len());
   if (d.0 > max) {
-    let loaded: __Cs = d.2;
-    if (loaded.dict.len() == 0) {
-      match (dictionary.bytes()) {
-        Ok(bytes) => {
-          loaded = __Cs { ...loaded, dict: bytes };
-        },
-        Err(problem) => {
-          return Err(BrotliMalformed("dictionary: " + problem.message()));
-        }
-      }
-    }
-    return Ok(__Step { bytes: __dict_word(s.t, loaded.dict, d.0 - max - 1, cmd.copy)?, c: loaded });
+    return Ok(__Step { bytes: __dict_word(s.t, d.0 - max - 1, cmd.copy)?, c: d.2 });
   }
   let bytes: u8[] = [];
   let from: i32 = dst.len() - d.0;
@@ -902,7 +890,7 @@ function __distance_of(buf: [u8], bit: i32, code: i32, m: __Mb, ring: i32[]): (i
   return ((offset + __bits(buf, bit, nb) << m.postfix) + low + m.direct + 1, bit + nb);
 }
 
-function __dict_word(t: __Tab, dict: u8[], id: i32, len: i32): Result[u8[], BrotliError] {
+function __dict_word(t: __Tab, id: i32, len: i32): Result[u8[], BrotliError] {
   if (len < 4 || len > 24) {
     return Err(BrotliMalformed("dictionary word length"));
   }
@@ -915,7 +903,7 @@ function __dict_word(t: __Tab, dict: u8[], id: i32, len: i32): Result[u8[], Brot
   let word: u8[] = [];
   let k: i32 = 0;
   while (k < len) {
-    word = word.append(dict[at + k]);
+    word = word.append(dictionary.WORDS[at + k]);
     k = k + 1;
   }
   let out: u8[] = t.pre[tr].bytes();
