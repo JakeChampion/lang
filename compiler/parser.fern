@@ -163,7 +163,7 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
 
 pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, col: i32 }
 
-pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean }
+pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean, method: boolean }
 
 pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
 
@@ -24598,7 +24598,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
       }
       if (attr.name == "export") {
-        exports = exports.append(ExportBinding { func_name: fr_func.name, iface: attr.iface, wit: attr.wit, c_abi: false });
+        exports = exports.append(ExportBinding { func_name: fr_func.name, iface: attr.iface, wit: attr.wit, c_abi: false, method: fr_func.receiver_name.len() > 0 });
       }
       let fr_out: FuncDecl = fr_pub;
       if (decl_fip || decl_fbip) {
@@ -24913,7 +24913,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
   let xi: i32 = 0;
   while (xi < from.exports.len()) {
     let xb: ExportBinding = from.exports[xi];
-    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit, c_abi: xb.c_abi });
+    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit, c_abi: xb.c_abi, method: xb.method });
     xi = xi + 1;
   }
   let nimpls: ImplInfo[] = into.impls;

@@ -16,9 +16,9 @@ func TestOuterMulRejectsOverflowBeforeAllocation(t *testing.T) {
 
 func TestOuterMulBuiltinArguments(t *testing.T) {
 	floats := newArray(1)
-	floats.E[0] = Float{V: 2, Width: 64}
+	floats.Elems()[0] = Float{V: 2, Width: 64}
 	bad := newArray(1)
-	bad.E[0] = Number(2)
+	bad.Elems()[0] = Number(2)
 	for _, tc := range []struct {
 		name string
 		args []Value

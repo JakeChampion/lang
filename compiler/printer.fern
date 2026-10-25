@@ -3209,6 +3209,24 @@ pub function format_parsed(pf: parser.ParsedFmt, comments: lexer.Comment[], blan
   return format_module_with_inline(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, pf.pinline, pf.pspans, comments, blanks);
 }
 
+function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBinding[], hints: parser.FunctionInlineHint[], cursor: i32, f: Fmt): (string, Fmt, i32) {
+  let prefix = "";
+  for binding in exports {
+    if (binding.func_name == fd.name && !binding.c_abi && fd.receiver_name.len() > 0 == binding.method) {
+      prefix = prefix + "@export(" + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n";
+    }
+  }
+  let has_hint = cursor < hints.len() && hints[cursor].line == fd.line && hints[cursor].col == fd.col;
+  let never = false;
+  let next_hint = cursor;
+  if (has_hint) {
+    never = hints[cursor].never;
+    next_hint = cursor + 1;
+  }
+  let (text, next) = print_func_decl(fd, has_hint, never, f);
+  return (prefix + text, next, next_hint);
+}
+
 function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
   let f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0 };
   let chunks: string[] = [];
@@ -3354,19 +3372,8 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = cf;
       } else {
         let fd: parser.FuncDecl = mod.funcs[idxs[di]];
-        for binding in mod.exports {
-          if (binding.func_name == fd.name && !binding.c_abi) {
-            chunks = chunks.append("@export(" + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n");
-          }
-        }
-        let has_hint: boolean = hint_cursor < hints.len()
-          && hints[hint_cursor].line == fd.line && hints[hint_cursor].col == fd.col;
-        let never: boolean = false;
-        if (has_hint) {
-          never = hints[hint_cursor].never;
-          hint_cursor = hint_cursor + 1;
-        }
-        let (ftext, ff) = print_func_decl(fd, has_hint, never, f);
+        let (ftext, ff, next_hint) = print_annotated_function(fd, mod.exports, hints, hint_cursor, f);
+        hint_cursor = next_hint;
         chunks = chunks.append(ftext);
         wrote = true;
         f = ff;

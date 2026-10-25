@@ -165,6 +165,7 @@ concrete_view_methods                                0
 const_composite                                      0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
+const_folds_at_declared_width                        0
 const_param_functions                                0
 const_settles_across_modules                         0
 const_settles_where_it_is_read                       0

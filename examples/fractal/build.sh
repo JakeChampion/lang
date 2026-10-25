@@ -32,6 +32,10 @@ fi
 "$FERN" -target wasm32-wasi -emit core-module -O -o ../showcase/web/swarm/kernel.wasm ../showcase/swarm.fern.md ../../internal/stdlib
 "$FERN" -target wasm32-wasi -emit core-module -O -o ../showcase/web/blockyard/kernel.wasm ../showcase/voxel.fern.md ../../internal/stdlib
 
+for kernel in foundry circuit patchbay prism; do
+  "$FERN" -target wasm32-wasi -emit core-module -O -o "../showcase/web/labs/$kernel.wasm" "../showcase/$kernel.fern.md" ../../internal/stdlib
+done
+
 # Weave source lessons with a host binary before asset compression.
 prepare_server="$PWD/server"
 if [ "$host_target" != x86-64-linux ]; then

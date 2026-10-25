@@ -1,0 +1,1 @@
+main.fern:6:1: error[E093]: const A: modulo by zero in constant expression
