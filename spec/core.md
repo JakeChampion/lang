@@ -496,6 +496,8 @@ is the number of slots it leaves.
 | `vget` | 477 | 2 | 1 |
 | `vset` | 478 | 3 | 0 |
 | `vbitmask` | 479 | 1 | 1 |
+| `crc32_ieee` | 480 | 2 | 1 |
+| `crc32_ieee_array` | 481 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true
