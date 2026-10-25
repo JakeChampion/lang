@@ -56,7 +56,7 @@ function wait_ms(c: h3q.Conn): i32 {
 }
 
 function request(method: string, path: string, body: u8[]): HttpRequest {
-  return HttpRequest { method: method, path: path, body: Stream { data: body, pos: 0, source: None }, headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
+  return HttpRequest { method: method, path: path, body: ByteStream { data: body, pos: 0, source: None }, headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
 }
 
 struct Fetches { todo: HttpRequest[], owed: i32, answered: i32, closing: boolean }
