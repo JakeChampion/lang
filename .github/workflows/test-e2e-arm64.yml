@@ -39,15 +39,16 @@ env:
   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
 
 jobs:
-  # THREE SHARDS, then a leaf named `test-e2e-arm64`. The leaf carries the
-  # name because `Full suite / Test e2e arm64 / test-e2e-arm64` is a required
-  # status check in the main ruleset, and the one the repository merges on:
-  # one job of ~690 tests took 8-9 minutes in two worker processes, so the
-  # merge gate was that job. Three shards of equal count (scripts/shard-tests,
-  # no weights file: a name with no entry weighs 1) are each ~3 minutes, and
-  # the leaf is seconds, so the gate is the slowest shard plus the leaf's
-  # queue wait. The leaf fails unless every shard succeeded, a vanished
-  # runner included.
+  # ONE SHARD, then a leaf named `test-e2e-arm64`. The leaf carries the
+  # lane's stable name, so the check a reader looks for does not move with
+  # the shard count, and it fails unless every shard succeeded, a vanished
+  # runner included. The ~690 tests run about 5 minutes in two worker
+  # processes since the one-process modload driver (#13197); three shards
+  # of about 1.5 minutes each spent two extra runner slots and setups on a
+  # pool that queued jobs for 20 minutes or more
+  # (docs/ci-log/2026-10-25-pr-ci-queue.md). The shard mechanics stay
+  # (scripts/shard-tests, no weights file) so a second shard is one matrix
+  # row away.
   shards:
     name: test-e2e-arm64-shard${{ matrix.shard }}
     runs-on: ubuntu-24.04-arm
@@ -56,9 +57,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { nshard: 3, shard: 0 }
-          - { nshard: 3, shard: 1 }
-          - { nshard: 3, shard: 2 }
+          - { nshard: 1, shard: 0 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -87,7 +86,7 @@ jobs:
           "$RUNNER_TEMP/ci-test-workers" \
             -binary "$RUNNER_TEMP/e2e-arm64.test" \
             -output "$RUNNER_TEMP/arm64-test-results" \
-            -workers 2 -timeout 10m -run "$PAT"
+            -workers 2 -timeout 15m -run "$PAT"
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$RUNNER_TEMP"/arm64-test-results/worker-*.jsonl

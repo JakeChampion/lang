@@ -1160,8 +1160,8 @@ function parse_options(f: string[], rc0: ResolvConf): ResolvConf {
 }
 
 function option_value(o: string, at: i32, lo: i32, hi: i32, current: i32): i32 {
-  match ((slice_unchecked(o, at, o.len()) + "").parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(slice_unchecked(o, at, o.len()) + "")) {
+    Ok(n) => {
       if (n < lo) {
         return lo;
       }
@@ -1170,7 +1170,7 @@ function option_value(o: string, at: i32, lo: i32, hi: i32, current: i32): i32 {
       }
       return n;
     },
-    None => {
+    Err(_) => {
       return current;
     }
   }

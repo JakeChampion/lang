@@ -84,8 +84,7 @@ function main(): i32 {
 `
 		asm, progDir := compileSourceModload(t, runner, driverBin, src)
 		if !strings.Contains(asm, ".Lssa_") {
-			t.Error("http-parse did not lower through the IR: with the rescue's gate removed, " +
-				"every over-budget program in the window routes per-module IR (#3457)")
+			t.Error("http-parse did not lower through the IR")
 		}
 		bin := buildBin(t, gcc, progDir, "http_parse", asm)
 		out, exit := runBin(binCmd(runner, bin), "")

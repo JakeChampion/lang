@@ -1,3 +1,4 @@
+import "std/i32";
 import "std/test";
 import "core/int" as int;
 
@@ -5,13 +6,13 @@ function test_to_string_zero(): test.TestOutcome {
   let i: i32 = 0;
   while (i < 120) {
     let s: string = int.int_to_string(i);
-    match (int.parse_int_radix(s, 10)) {
-      Some(n) => {
+    match (i32.parse_i32_radix(s, 10)) {
+      Ok(n) => {
         if (n != i || s[s.len() - 1] != (48 + i % 10) as u8) {
           return test.fail("int_to_string " + s);
         }
       },
-      None => {
+      Err(_) => {
         return test.fail("int_to_string " + s);
       }
     }
@@ -37,11 +38,11 @@ function test_to_string_min(): test.TestOutcome {
 }
 
 function parsed(s: string, base: i32): string {
-  match (int.parse_int_radix(s, base)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(s, base)) {
+    Ok(v) => {
       return int.int_to_string(v);
     },
-    None => {
+    Err(_) => {
       return "None";
     }
   }
@@ -54,88 +55,89 @@ function test_parse_overflow_none(): test.TestOutcome {
 }
 
 function test_parse_hex(): test.TestOutcome {
-  match (int.parse_int_radix("ff", 16)) {
-    Some(v) => {
+  match (i32.parse_i32_radix("ff", 16)) {
+    Ok(v) => {
       return test.assert_eq(v, 255);
     },
-    None => {
+    Err(_) => {
       return test.fail("parse_int_radix(ff,16) expected Some");
     }
   }
 }
 
 function test_parse_binary(): test.TestOutcome {
-  match (int.parse_int_radix("1010", 2)) {
-    Some(v) => {
+  match (i32.parse_i32_radix("1010", 2)) {
+    Ok(v) => {
       return test.assert_eq(v, 10);
     },
-    None => {
+    Err(_) => {
       return test.fail("parse_int_radix(1010,2) expected Some");
     }
   }
 }
 
 function test_parse_neg_base36(): test.TestOutcome {
-  match (int.parse_int_radix("-z", 36)) {
-    Some(v) => {
+  match (i32.parse_i32_radix("-z", 36)) {
+    Ok(v) => {
       return test.assert_eq(v, 0 - 35);
     },
-    None => {
+    Err(_) => {
       return test.fail("parse_int_radix(-z,36) expected Some");
     }
   }
 }
 
 function test_parse_plus_sign(): test.TestOutcome {
-  match (int.parse_int_radix("+42", 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix("+42", 10)) {
+    Ok(v) => {
       return test.assert_eq(v, 42);
     },
-    None => {
+    Err(_) => {
       return test.fail("parse_int_radix(+42,10) expected Some");
     }
   }
 }
 
 function test_parse_empty_none(): test.TestOutcome {
-  match (int.parse_int_radix("", 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix("", 10)) {
+    Ok(v) => {
       return test.fail("expected None for empty");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
 }
 
 function test_parse_bad_base_none(): test.TestOutcome {
-  match (int.parse_int_radix("12", 1)) {
-    Some(v) => {
+  match (i32.parse_i32_radix("12", 1)) {
+    Ok(v) => {
       return test.fail("expected None for base 1");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
 }
 
 function test_parse_digit_ge_base_none(): test.TestOutcome {
-  match (int.parse_int_radix("8", 8)) {
-    Some(v) => {
+  // '8' is not a valid base-8 digit.
+  match (i32.parse_i32_radix("8", 8)) {
+    Ok(v) => {
       return test.fail("expected None for digit >= base");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
 }
 
 function test_parse_sign_only_none(): test.TestOutcome {
-  match (int.parse_int_radix("-", 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix("-", 10)) {
+    Ok(v) => {
       return test.fail("expected None for sign-only");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
@@ -162,11 +164,11 @@ function test_radix_min(): test.TestOutcome {
 }
 
 function test_roundtrip(): test.TestOutcome {
-  match (int.parse_int_radix(int.int_to_string_radix(48879, 16), 16)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(int.int_to_string_radix(48879, 16), 16)) {
+    Ok(v) => {  // 0xBEEF
       return test.assert_eq(v, 48879);
     },
-    None => {
+    Err(_) => {
       return test.fail("round-trip expected Some");
     }
   }

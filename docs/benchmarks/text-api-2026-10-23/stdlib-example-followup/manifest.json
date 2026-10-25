@@ -1,0 +1,52 @@
+{
+  "source_commit": "c638e0f4adeb80c51afceeebd8aac9ac7716aa23",
+  "native_cases": 79,
+  "skips": 0,
+  "certificate": {
+    "recorded_source": "885a3fec4f25c7d07d85c5ee04d06eee6f85b460",
+    "current_source": "c638e0f4adeb80c51afceeebd8aac9ac7716aa23",
+    "paths": [
+      "compiler",
+      "internal",
+      "cmd",
+      "coreutils",
+      "bootstrap/stage0.lock",
+      ".github/selfhost-driver-sizes.txt",
+      "go.mod",
+      "go.sum",
+      ":(exclude)internal/stdlib/std/utf8.fern.md"
+    ],
+    "compiler": "/workspace/scratch/lang-text-api-cohesion/module-driver-integration/bootstrap/stage3",
+    "compiler_sha256": "7016e4d8981c88ccb251278aefb4febafc48480144b69fdc19e26a748584195a",
+    "literate_files": [
+      {
+        "path": "internal/stdlib/std/utf8.fern.md",
+        "before_sha256": "da49cb55d5bae567b77930044f9cab83ba8dce599be16876764d823fc178f07a",
+        "after_sha256": "0ef0ceea1077b13c09ad515c6795abfe49cd92ccadbbd88eebcf0a08b5f1bac2",
+        "tangled_sha256": "41b6f10ad4679bc9c3b06e326435c8f8ac97692cb4431eb5a74596664a2e7ab1"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "sha256": "d3ff3812acb312b3411a9b39717e35211f4315ba19020a7368cc749ca95a7d87",
+      "bytes": 546
+    },
+    {
+      "path": "source-certificate.json.gz",
+      "sha256": "7764b942611f03a76e622615a3f8501bd539ce46cd668a39050dfa36dfd73704",
+      "bytes": 530
+    },
+    {
+      "path": "native-docs.jsonl.gz",
+      "sha256": "bd12cbece6c4c4142f8954c60754c2d720a763fc600cbd7926111ed5ce8d3f29",
+      "bytes": 5164
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0",
+      "bytes": 141
+    }
+  ]
+}

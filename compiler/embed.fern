@@ -1,3 +1,4 @@
+import "std/string";
 import "./ast";
 import "./astwalk";
 import "./parser";
@@ -70,7 +71,7 @@ pub function load(dir: string): LoadResult {
       if (kind != ENTRY_FILE) {
         continue;
       }
-      if (!utf8.is_valid_utf8(child_rel)) {
+      if (!utf8.is_valid(child_rel)) {
         return LoadResult { assets: no_assets(), err: "-embed " + dir + ": file name \"" + utf8.from_bytes_lossy(child_rel.bytes()) + "\" is not valid UTF-8" };
       }
       let body: u8[] = [];

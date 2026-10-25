@@ -53,7 +53,7 @@ function main(): i32 {
 }`},
 	{"json-from-var-try", `import "std/json";
 @derive(json.FromJson) struct User { id: i32, name: string }
-function pick(s: string): Result[i32, string] { let u: User = User.from_json(s)?; return Ok(u.id); }
+function pick(s: string): Result[i32, json.JsonError] { let u: User = User.from_json(s)?; return Ok(u.id); }
 function main(): i32 {
     let r = User.from_json("{\"id\":8,\"name\":\"y\"}");
     let a = 0;

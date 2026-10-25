@@ -2,7 +2,7 @@ import "std/string";
 import "std/i32";
 import "std/i64";
 import "std/u64";
-import "std/io_buffered";
+import "core/mem";
 import "std/signal";
 import "std/errno";
 import "./lib/gnu";
@@ -580,10 +580,18 @@ function apply_sync(piece: u8[], s: Settings): u8[] {
   return bytes;
 }
 
-struct Sink { w: Writer, buf: io_buffered.BufBlock, held: i32, obs: i32, name: string, c: Counts, ok: boolean, sparse: boolean, seeked: boolean, intr: i32, stopped: boolean }
+struct BufBlock { h: usize }
+
+impl mem.Drop for BufBlock {
+  function drop(self: BufBlock): void {
+    buf_free(self.h);
+  }
+}
+
+struct Sink { w: Writer, buf: BufBlock, held: i32, obs: i32, name: string, c: Counts, ok: boolean, sparse: boolean, seeked: boolean, intr: i32, stopped: boolean }
 
 function sink_new(w: Writer, name: string, obs: i32, c: Counts, sparse: boolean, intr: i32): Sink {
-  return Sink { w: w, buf: io_buffered.BufBlock { h: buf_new(obs * 2) }, held: 0, obs: obs, name: name, c: c, ok: true, sparse: sparse, seeked: false, intr: intr, stopped: false };
+  return Sink { w: w, buf: BufBlock { h: buf_new(obs * 2) }, held: 0, obs: obs, name: name, c: c, ok: true, sparse: sparse, seeked: false, intr: intr, stopped: false };
 }
 
 function all_nul(data: u8[]): boolean {
@@ -1019,7 +1027,7 @@ function convert_record(sw: Swab, tab: u8[], data: u8[], s: Settings, last: bool
   return (state, out);
 }
 
-struct Rec { pend: io_buffered.BufBlock, len: i32, drop: boolean, cbs: i32, trunc: i64, nl: u8, sp: u8, pad: u8[] }
+struct Rec { pend: BufBlock, len: i32, drop: boolean, cbs: i32, trunc: i64, nl: u8, sp: u8, pad: u8[] }
 
 function rec_new(cbs: i32, conv: i32): Rec {
   let nl: u8 = b'\n';
@@ -1038,7 +1046,7 @@ function rec_new(cbs: i32, conv: i32): Rec {
     pad = pad.with(i, sp);
     i = i + 1;
   }
-  return Rec { pend: io_buffered.BufBlock { h: buf_new(cbs + 1) }, len: 0, drop: false, cbs: cbs, trunc: 0 as i64, nl: nl, sp: sp, pad: pad };
+  return Rec { pend: BufBlock { h: buf_new(cbs + 1) }, len: 0, drop: false, cbs: cbs, trunc: 0 as i64, nl: nl, sp: sp, pad: pad };
 }
 
 function rec_emit_block(st: Rec, out: usize): Rec {

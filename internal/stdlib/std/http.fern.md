@@ -179,17 +179,12 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<75 pub function http_method_idempotent(method: string): boolean>>
 ```
 
-### `module introduction`
-
-```fern
-<<module introduction>>=
-// This module parses HTTP/1.1 requests and constructs responses.
-```
 
 ### `dependencies 2`
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "core/int";
 import "core/map";
 import "std/string";
@@ -579,14 +574,14 @@ pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]
     }
   }
   let text: string = req.body_string()?;
-  match (json.json_parse_result(text)) {
+  match (json.parse(text)) {
     Ok(v) => {
       match (T.from_json_value(v)) {
         Ok(t) => {
           return Ok(t);
         },
         Err(why) => {
-          return Err(WrongShape(why));
+          return Err(WrongShape(why.to_string()));
         }
       }
     },
@@ -863,7 +858,7 @@ function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32)
     return None;
   }
   let v: string = __bytes_string(buf, from, end);
-  if (!utf8.is_valid_utf8(v)) {
+  if (!utf8.is_valid(v)) {
     return None;
   }
   return Some(v);
@@ -2258,7 +2253,7 @@ function __dropped_to(out: u8[], seg: i32, dots: i32, escaped_high: boolean): i3
   while (out[prev] != 47 as u8) {
     prev = prev - 1;
   }
-  if (escaped_high && !utf8.is_valid_utf8(__bytes_string(out, prev, seg))) {
+  if (escaped_high && !utf8.is_valid(__bytes_string(out, prev, seg))) {
     return -1;
   }
   return prev;
@@ -2276,7 +2271,7 @@ function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boo
     i = i + 1;
   }
   let path: string = __bytes_string(out, 0, w);
-  if (escaped_high && !utf8.is_valid_utf8(path)) {
+  if (escaped_high && !utf8.is_valid(path)) {
     return Err(400);
   }
   return Ok(path);
@@ -2650,11 +2645,11 @@ pub function (r: HttpRequest) body_len(): i32 {
 function __declared_length(h: HeaderMap): i32 {
   match (h.get("content-length")) {
     Some(v) => {
-      match (int.parse_int_radix(v.trim(), 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(v.trim(), 10)) {
+        Ok(n) => {
           return n;
         },
-        None => {
+        Err(_) => {
           return 0 - 1;
         }
       }
@@ -3278,4 +3273,11 @@ pub function http_fields_ok(fields: HeaderMap): boolean {
 pub function http_field_value_ok(value: string): boolean {
   return __scan_set(value, 0, FIELD_CTL) == value.len();
 }
+```
+
+### Module introduction
+
+```fern
+<<module introduction>>=
+// HTTP/1.1 request parsing and response construction.
 ```

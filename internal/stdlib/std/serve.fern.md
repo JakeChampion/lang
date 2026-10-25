@@ -76,7 +76,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<30 function __serve_read_proxy[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option[server.Session], hea...>>
 
-<<31 function __serve_handshook(c: __Conns, at: i32, was: boolean, sess: server.Session, done: boolean, opts: Co...>>
+<<31 function __serve_handshook(c: __Conns, at: i32, was: boolean, done: boolean, opts: Config): (__Conns, boole...>>
 
 <<32 enum __Behind>>
 
@@ -188,6 +188,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "std/async";
 import "std/platform";
 import "std/fetch";
@@ -369,13 +370,13 @@ function __listen_failed(l: __Listen): i32 {
 function __listener_of(port: i32, opts: Config): __Listen {
   match (env("LISTEN_FDS")) {
     Some(n) => {
-      match (int.parse_int_radix(n, 10)) {
-        Some(count) => {
+      match (i32.parse_i32_radix(n, 10)) {
+        Ok(count) => {
           if (count >= 1) {
             return __Listen { fd: 3, addr: "" };
           }
         },
-        None => {}
+        Err(_) => {}
       }
     },
     None => {}
@@ -1433,8 +1434,8 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 
 function __serve_read[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
   match (c.tls[at]) {
-    Secured(sess) => {
-      return __serve_read_tls(drv, c, at, sess, scratch, opts);
+    Secured(_) => {
+      return __serve_read_tls(drv, c, at, scratch, opts);
     },
     Awaiting(next, head) => {
       return __serve_read_proxy(drv, c, at, next, head, scratch, opts);
@@ -1497,8 +1498,8 @@ function __proxied[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option[se
   }
   match (next) {
     Some(sess) => {
-      let took: (__Conns, server.Session, u8[], boolean) = __tls_taken(drv, c, at, sess, rest[0:rest.len()], opts);
-      return (__Conns { ...took.0, bufs: took.0.bufs.with(at, took.2), tls: took.0.tls.with(at, Secured(took.1)) }, done || took.3);
+      let took: (__Conns, __Tls, u8[], boolean) = __tls_taken(drv, c, at, Secured(sess), rest[0:rest.len()], opts);
+      return (__Conns { ...took.0, bufs: took.0.bufs.with(at, took.2), tls: took.0.tls.with(at, took.1) }, done || took.3);
     },
     None => {
       return (__Conns { ...c, bufs: c.bufs.with(at, rest), tls: c.tls.with(at, Plain) }, done);
@@ -1557,10 +1558,15 @@ function __read_onto(buf: u8[], plain: u8[]): u8[] {
   return buf.concat(plain);
 }
 
-function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.Session, scratch: u8[], opts: Config): (__Conns, boolean) {
+function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
   let buf: u8[] = c.bufs[at];
   let was_idle: boolean = buf.len() == 0;
-  let s: server.Session = sess;
+  let t: __Tls = c.tls[at];
+  c = __Conns { ...c, tls: c.tls.with(at, Plain) };
+  let was: boolean = false;
+  if let Secured(sess) = t {
+    was = sess.connected();
+  }
   let done: boolean = false;
   let more: boolean = true;
   while (more) {
@@ -1572,9 +1578,9 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
       more = false;
       done = true;
     } else {
-      let took: (__Conns, server.Session, u8[], boolean) = __tls_taken(drv, c, at, s, scratch[0:n], opts);
+      let took: (__Conns, __Tls, u8[], boolean) = __tls_taken(drv, c, at, t, scratch[0:n], opts);
       c = took.0;
-      s = took.1;
+      t = took.1;
       buf = __read_onto(buf, took.2);
       done = took.3;
       more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
@@ -1583,8 +1589,8 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
       }
     }
   }
-  c = __Conns { ...c, bufs: c.bufs.with(at, buf), tls: c.tls.with(at, Secured(s)) };
-  let off: (__Conns, boolean) = __serve_handshook(c, at, sess.connected(), s, done, opts);
+  c = __Conns { ...c, bufs: c.bufs.with(at, buf), tls: c.tls.with(at, t) };
+  let off: (__Conns, boolean) = __serve_handshook(c, at, was, done, opts);
   c = off.0;
   done = off.1;
   if (done || !was_idle || buf.len() == 0) {
@@ -1595,15 +1601,20 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
 }
 ```
 
-### `31 function __serve_handshook(c: __Conns, at: i32, was: boolean, sess: server.Session, done: boolean, opts: Co...`
+### `31 function __serve_handshook(c: __Conns, at: i32, was: boolean, done: boolean, opts: Config): (__Conns, boole...`
 
 ```fern
-<<31 function __serve_handshook(c: __Conns, at: i32, was: boolean, sess: server.Session, done: boolean, opts: Co...>>=
-function __serve_handshook(c: __Conns, at: i32, was: boolean, sess: server.Session, done: boolean, opts: Config): (__Conns, boolean) {
-  if (done || was || !sess.connected() || !__ktls_asked(opts)) {
+<<31 function __serve_handshook(c: __Conns, at: i32, was: boolean, done: boolean, opts: Config): (__Conns, boole...>>=
+function __serve_handshook(c: __Conns, at: i32, was: boolean, done: boolean, opts: Config): (__Conns, boolean) {
+  if (done || was || !__ktls_asked(opts)) {
     return (c, done);
   }
-  return __serve_offload(c, at, sess);
+  if let Secured(sess) = c.tls[at] {
+    if (sess.connected()) {
+      return __serve_offload(c, at, sess);
+    }
+  }
+  return (c, done);
 }
 
 function __serve_offload(c: __Conns, at: i32, sess: server.Session): (__Conns, boolean) {
@@ -1669,29 +1680,31 @@ function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
   return (c, true);
 }
 
-function __tls_taken[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.Session, raw: [u8], opts: Config): (__Conns, server.Session, u8[], boolean) {
+function __tls_taken[D: async.Driver](drv: D, c: __Conns, at: i32, t: __Tls, raw: [u8], opts: Config): (__Conns, __Tls, u8[], boolean) {
   let none: u8[] = [];
-  match (sess.read(raw, now_unix_ms())) {
-    Ok(step) => {
-      let done: boolean = step.closed;
-      if (step.output.len() > 0) {
-        let sent: (__Conns, __Sent) = __serve_send_raw(drv, c, at, step.output, opts);
-        c = sent.0;
-        match (sent.1) {
-          Failed => {
-            done = true;
-          },
-          _ => {}
+  if let Secured(sess) = t {
+    match (sess.read(raw, now_unix_ms())) {
+      Ok(step) => {
+        let done: boolean = step.closed;
+        if (step.output.len() > 0) {
+          let sent: (__Conns, __Sent) = __serve_send_raw(drv, c, at, step.output, opts);
+          c = sent.0;
+          match (sent.1) {
+            Failed => {
+              done = true;
+            },
+            _ => {}
+          }
         }
+        return (c, Secured(step.session), step.data, done);
+      },
+      Err(f) => {
+        tcp_send_bytes(c.fds[at], f.alert);
+        return (c, Plain, none, true);
       }
-      return (c, step.session, step.data, done);
-    },
-    Err(f) => {
-      tcp_send_bytes(c.fds[at], f.alert);
-      return (c, sess, none, true);
     }
   }
-  return (c, sess, none, true);
+  return (c, t, none, true);
 }
 
 function __bytes_from(buf: u8[], from: i32): u8[] {
@@ -2835,6 +2848,7 @@ enum __Sent { Whole, Partial, Failed }
 function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
   match (c.tls[at]) {
     Secured(sess) => {
+      c = __Conns { ...c, tls: c.tls.with(at, Plain) };
       match (sess.write(payload)) {
         Ok(step) => {
           return __serve_send_raw(drv, __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) }, at, step.output, opts);

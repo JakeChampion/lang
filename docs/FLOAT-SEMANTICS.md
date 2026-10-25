@@ -153,7 +153,7 @@ changes what its operators answer (#12697).
 ## Printing and round-trip
 
 The sections above cover float *arithmetic and conversion*. Float
-*formatting* (`to_string`) and *parsing* (`parse_float`) have their own
+*formatting* (`to_string`) and *parsing* (`f64.parse_f64`) have their own
 contract, pinned here.
 
 ### `to_string` is shortest-round-trip, correctly rounded, and cross-backend-identical
@@ -190,7 +190,7 @@ Guaranteed:
 - **Shortest.** No decimal with fewer significant digits parses back to
   the same float.
 - **Round-trip.** `parse` ∘ `to_string` is the identity for every finite
-  value. That holds for Fern's own `parse_float`, which is correctly
+  value. That holds for Fern's own `f64.parse_f64`, which is correctly
   rounded (see below), as well as for any other correct parser such as
   Go's `strconv.ParseFloat`.
 - **Correctly rounded**, including the asymmetric interval at a power of
@@ -232,14 +232,24 @@ subnormal-heavy mix. Allocation for 200 conversions, by
 `to_string_prec(prec)` is the fixed-width sibling: exactly `prec`
 fractional digits, no trailing-zero trim, rounded half-away-from-zero.
 
-### `parse_float` is correctly rounded
+### `f64.parse_f64` is correctly rounded
 
-`(string).parse_float(): Option[f64]` (`std/string.fern`) accepts an
-optional sign, integer and fractional digits, and returns `None` on empty
-/ sign-only / no-digit / trailing-garbage input. It parses in the f64
-domain (flipped from f32 alongside the #5363 default-width decision;
-`std/json`'s number decoding now reuses it instead of carrying a private
-f64 mirror).
+`f64.parse_f64(s: str): Result[f64, ParseNumberError]` accepts decimal input.
+The optional sign can be `+` or `-`. At least one digit is required.
+An exponent can follow the integer or fraction. Whitespace and digit separators are rejected.
+Empty input, invalid digits, and finite overflow have distinct typed errors.
+An invalid digit error carries its byte offset. An incomplete input reports its end offset.
+
+Case-insensitive `NaN`, `inf`, and `infinity` accept either sign.
+Finite underflow produces zero with the input sign. Explicit infinity remains valid.
+`std/json` uses the same conversion after its JSON syntax check.
+The shared decimal kernels and generated table live in `std/number_parse`.
+
+`f32.parse_f32` returns the nearest binary32 value with ties to even.
+A binary64 estimate supplies the common path. At a binary32 midpoint, the parser
+compares the exact decimal input with that midpoint before selecting the result.
+This avoids the double rounding that a direct f64-to-f32 cast can cause.
+Finite binary32 overflow reports `OutOfRange`. Negative zero keeps its sign.
 
 It returns the **nearest f64 to the exact decimal value**, ties to even —
 bit-exact with `strconv.ParseFloat` for every input, however many digits
@@ -268,10 +278,10 @@ Cost: the fast path is ~1.3 µs per parse against ~3.2 ms for the refinement
 loop alone (~2,400x), measured on x86-64 over shortest-repr inputs. The
 power-of-five table is 651 128-bit entries, ~14 KB of rodata, generated and
 checked against the upstream fast_float table by `cmd/floattablegen`. It is
-dead-code eliminated in programs that never call `parse_float`.
+dead-code eliminated in programs that never parse a float.
 
-Because `to_string` is shortest-round-trip and `parse_float` is correctly
-rounded, **`parse_float ∘ to_string` is the exact identity** on every
+Because `to_string` is shortest-round-trip and `f64.parse_f64` is correctly
+rounded, **`f64.parse_f64 ∘ to_string` is the exact identity** on every
 finite value — not a tolerance. Code may compare the result with `==`.
 
 > Historical note: this section previously documented a mantissa

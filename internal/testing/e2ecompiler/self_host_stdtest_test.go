@@ -343,6 +343,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"json_pointer", langSrcAbs(t, "tests/stdlib/json_pointer_test.fern"), ""},
 		{"json_object", langSrcAbs(t, "tests/stdlib/json_object_test.fern"), ""},
 		{"json_document", langSrcAbs(t, "tests/stdlib/json_document_test.fern"), ""},
+		{"regex", langSrcAbs(t, "tests/stdlib/regex_test.fern"), ""},
 		{"array_combinators", langSrcAbs(t, "tests/stdlib/array_combinators_test.fern"), ""},
 		{"array_hof", langSrcAbs(t, "tests/stdlib/array_hof_test.fern"), ""},
 		{"array_accessors", langSrcAbs(t, "tests/stdlib/array_accessors_test.fern"), ""},

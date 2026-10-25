@@ -513,10 +513,11 @@ function group_end(ops: ir.Op[], at: i32): i32 {
   if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
     return 0 - 1;
   }
-  if (at + 3 < ops.len() && ops[at + 2].kind_tag == 385 && ops[at + 3].kind_tag == 19) {
-    return at + 4;
+  let end: i32 = at + 2;
+  while (end + 1 < ops.len() && ops[end].kind_tag == 385 && ops[end + 1].kind_tag == 19) {
+    end = end + 2;
   }
-  return at + 2;
+  return end;
 }
 
 function site_saves(t: Tx, r: irtables.LowerResult, at: i32, call: ir.Op, again: ir.Op[]): i32[] {

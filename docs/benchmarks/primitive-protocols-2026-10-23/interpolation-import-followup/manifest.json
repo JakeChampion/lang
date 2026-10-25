@@ -1,0 +1,48 @@
+{
+  "source_commit": "5eb27e4553e9dce0eb9c6d93d659172e20c19ea5",
+  "prior_scope": "a089a7aea65e8b65511ffea19b5e3677731b48d8",
+  "tests": {
+    "hints": 55,
+    "ir": 1088,
+    "skipped": 0
+  },
+  "prototype_commands": 12,
+  "balanced_censuses": 6,
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 815,
+      "sha256": "7a73e067acbfb367d62d6f4d5406ef322abb4115e0f7ea9d1df615ad11cc0c8f"
+    },
+    {
+      "path": "native-regressions.jsonl.gz",
+      "bytes": 4520,
+      "sha256": "f39fb358015e75fa43249fed859bc4d544464d7f0805b8f91b6370e6b9eec3bb"
+    },
+    {
+      "path": "ir-regressions.jsonl.gz",
+      "bytes": 127021,
+      "sha256": "dd02966008f162e1e030f5755915bb40e1d22bf8a5644348865ff126198b177b"
+    },
+    {
+      "path": "explicit-array-import-prototypes.json.gz",
+      "bytes": 750,
+      "sha256": "29d9aa8c5c7d3ec46e02212ce65e6651f3a24c345e05852879adbab51c657a53"
+    },
+    {
+      "path": "publication-source-certificate.json.gz",
+      "bytes": 259,
+      "sha256": "f323af89ceb02f05a0e383ee6711b6577c0375ab3b714f5e572432b80076afcf"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 553,
+      "sha256": "23f0fff9cf73fe5939f4133399d97d74c63daa4c3feaac714075737e72f4f511"
+    }
+  ]
+}

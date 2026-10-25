@@ -1,0 +1,262 @@
+[
+  {
+    "name": "no-import-i32",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-i32.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-i32.fern:1:30: error[E043]: no method \"to_string\" on i32 \u2014 add `import \"std/i32\"` (an f-string like `f\"{x}\"` desugars to `x.to_string()`)\n    function main(): i32 { print(f\"{42}\"); return 0; }\n                                 ^\n"
+  },
+  {
+    "name": "no-import-i32",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-i32.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-i32.fern:1:30: error[E043]: no method \"to_string\" on i32 \u2014 add `import \"std/i32\"` (an f-string like `f\"{x}\"` desugars to `x.to_string()`)\n    function main(): i32 { print(f\"{42}\"); return 0; }\n                                 ^\n"
+  },
+  {
+    "name": "no-import-string",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-string.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-string.fern:1:58: error[E043]: no method \"to_string\" on string \u2014 add `import \"std/string\"` (an f-string like `f\"{x}\"` desugars to `x.to_string()`)\n    function main(): i32 { let text: string = \"hello\"; print(f\"{text}\"); return 0; }\n                                                             ^\n"
+  },
+  {
+    "name": "no-import-string",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-string.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-string.fern:1:58: error[E043]: no method \"to_string\" on string \u2014 add `import \"std/string\"` (an f-string like `f\"{x}\"` desugars to `x.to_string()`)\n    function main(): i32 { let text: string = \"hello\"; print(f\"{text}\"); return 0; }\n                                                             ^\n"
+  },
+  {
+    "name": "no-import-char",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-char.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-char.fern:1:50: error[E043]: field access on non-struct value of type char\n    function main(): i32 { let c: char = '\u00e9'; print(f\"{c}\"); return 0; }\n                                                     ^\n"
+  },
+  {
+    "name": "no-import-char",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-char.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-char.fern:1:50: error[E043]: field access on non-struct value of type char\n    function main(): i32 { let c: char = '\u00e9'; print(f\"{c}\"); return 0; }\n                                                     ^\n"
+  },
+  {
+    "name": "no-import-usize",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-usize.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-usize.fern:1:58: error[E043]: no method \"to_string\" on usize \u2014 add `import \"std/u64\"` (an f-string like `f\"{x}\"` desugars to `x.to_string()`)\n    function main(): i32 { let n: usize = 42 as usize; print(f\"{n}\"); return 0; }\n                                                             ^\n"
+  },
+  {
+    "name": "no-import-usize",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/no-import-usize.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/no-import-usize.fern:1:58: error[E043]: no method \"to_string\" on usize \u2014 add `import \"std/u64\"` (an f-string like `f\"{x}\"` desugars to `x.to_string()`)\n    function main(): i32 { let n: usize = 42 as usize; print(f\"{n}\"); return 0; }\n                                                             ^\n"
+  },
+  {
+    "name": "boolean-ord",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/boolean-ord.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/boolean-ord.fern:1:124: error[E021]: type argument T = boolean does not implement trait cmp.Ord required by ordered\n    import \"core/cmp\"; function ordered[T: cmp.Ord](a: T, b: T): i32 { return a.cmp(b); } function main(): i32 { return ordered(false, true); }\n                                                                                                                               ^\n"
+  },
+  {
+    "name": "boolean-ord",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/boolean-ord.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/boolean-ord.fern:1:124: error[E021]: type argument T = boolean does not implement trait cmp.Ord required by ordered\n    import \"core/cmp\"; function ordered[T: cmp.Ord](a: T, b: T): i32 { return a.cmp(b); } function main(): i32 { return ordered(false, true); }\n                                                                                                                               ^\n"
+  },
+  {
+    "name": "float-hash",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/float-hash.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/float-hash.fern:1:117: error[E021]: type argument T = f64 does not implement trait cmp.Hash required by hashed\n    import \"core/cmp\"; function hashed[T: cmp.Hash](a: T): i32 { return a.hash(); } function main(): i32 { return hashed(1.5); }\n                                                                                                                        ^\n"
+  },
+  {
+    "name": "float-hash",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/float-hash.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/float-hash.fern:1:117: error[E021]: type argument T = f64 does not implement trait cmp.Hash required by hashed\n    import \"core/cmp\"; function hashed[T: cmp.Hash](a: T): i32 { return a.hash(); } function main(): i32 { return hashed(1.5); }\n                                                                                                                        ^\n"
+  },
+  {
+    "name": "char-display",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/char-display.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/char-display.fern:1:125: error[E021]: type argument T = char does not implement trait cmp.Display required by shown\n    import \"core/cmp\"; function shown[T: cmp.Display](a: T): string { return a.to_string(); } function main(): i32 { print(shown('\u00e9')); return 0; }\n                                                                                                                                ^\n"
+  },
+  {
+    "name": "char-display",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/char-display.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/char-display.fern:1:125: error[E021]: type argument T = char does not implement trait cmp.Display required by shown\n    import \"core/cmp\"; function shown[T: cmp.Display](a: T): string { return a.to_string(); } function main(): i32 { print(shown('\u00e9')); return 0; }\n                                                                                                                                ^\n"
+  },
+  {
+    "name": "usize-display",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/usize-display.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/usize-display.fern:1:125: error[E021]: type argument T = usize does not implement trait cmp.Display required by shown\n    import \"core/cmp\"; function shown[T: cmp.Display](a: T): string { return a.to_string(); } function main(): i32 { print(shown(42 as usize)); return 0; }\n                                                                                                                                ^\n"
+  },
+  {
+    "name": "usize-display",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/usize-display.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/usize-display.fern:1:125: error[E021]: type argument T = usize does not implement trait cmp.Display required by shown\n    import \"core/cmp\"; function shown[T: cmp.Display](a: T): string { return a.to_string(); } function main(): i32 { print(shown(42 as usize)); return 0; }\n                                                                                                                                ^\n"
+  },
+  {
+    "name": "u8-num",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/u8-num.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/u8-num.fern:1:117: error[E021]: type argument T = u8 does not implement trait num.Num required by added\n    import \"std/num\"; function added[T: num.Num](a: T, b: T): T { return a.add(b); } function main(): i32 { return added(40 as u8, 2 as u8) as i32; }\n                                                                                                                        ^\n"
+  },
+  {
+    "name": "u8-num",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/u8-num.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/u8-num.fern:1:117: error[E021]: type argument T = u8 does not implement trait num.Num required by added\n    import \"std/num\"; function added[T: num.Num](a: T, b: T): T { return a.add(b); } function main(): i32 { return added(40 as u8, 2 as u8) as i32; }\n                                                                                                                        ^\n"
+  },
+  {
+    "name": "usize-num",
+    "compiler": "go",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/usize-num.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/usize-num.fern:1:117: error[E021]: type argument T = usize does not implement trait num.Num required by added\n    import \"std/num\"; function added[T: num.Num](a: T, b: T): T { return a.add(b); } function main(): i32 { return added(40 as usize, 2 as usize) as i32; }\n                                                                                                                        ^\n"
+  },
+  {
+    "name": "usize-num",
+    "compiler": "self",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/usize-num.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/usize-num.fern:1:117: error[E021]: type argument T = usize does not implement trait num.Num required by added\n    import \"std/num\"; function added[T: num.Num](a: T, b: T): T { return a.add(b); } function main(): i32 { return added(40 as usize, 2 as usize) as i32; }\n                                                                                                                        ^\n"
+  }
+]

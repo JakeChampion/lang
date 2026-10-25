@@ -78,6 +78,9 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
 }
 
 pub function is_runtime_helper_name(name: string): boolean {
+  if (util.str_has_prefix(name, "__primitive_")) {
+    return true;
+  }
   if (name == "map_new_impl") {
     return true;
   }
@@ -964,6 +967,12 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
         ast.ExprIdent(id) => {
           if (is_in(id.name, ctx.modnames) && !is_in(id.name, ctx.locals)) {
             let mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
+            // Primitive display bodies share the compiler's canonical ABI.
+            if (util.str_has_prefix(fa.field, "__primitive_")) {
+              mangled = fa.field;
+            }
+            // `ty: ""` and not `id.ty`: the result names a module-qualified
+            // FUNCTION, so the module ident's own tag says nothing about it.
             return ast.ExprIdent { ...id, name: mangled, ty: "" };
           }
           if (!is_in(id.name, ctx.locals) && is_in(id.name, ctx.enumnames)) {
@@ -1486,8 +1495,8 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
       col: e.col,
       must_consume: e.must_consume,
       try_marker: e.try_marker,
-      is_pub: true,
-      is_package: false, module: ctx.prefix,
+      is_pub: e.is_pub,
+      is_package: e.is_package, module: ctx.prefix,
       instance: rewrite_type_name(e.instance, with_type_params(ctx, e.type_params)),
       visible_from: e.visible_from,
     });

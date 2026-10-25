@@ -6,7 +6,7 @@ const graphemesProgram = `
 import "std/unicode" as unicode;
 import "std/utf8" as utf8;
 
-function cp(n: i32): string { return utf8.utf8_encode((n) as char); }
+function cp(n: i32): string { return utf8.encode((n) as char); }
 
 function main(): i32 {
     // A combining sequence is ONE cluster -- the main case.

@@ -59,10 +59,10 @@ function test_one_codepoint_per_sample(): test.TestOutcome {
   for i in 0..series.len() {
     let s: string = spark(series[i]);
     let want: i32 = series[i].len();
-    if (utf8.codepoint_count(s) != want) {
+    if (s.codepoint_count() != want) {
       return test.fail("series " + i.to_string() + ": wanted "
         + want.to_string() + " codepoints, got "
-        + utf8.codepoint_count(s).to_string());
+        + s.codepoint_count().to_string());
     }
     if (s.len() != want * 3) {
       return test.fail("series " + i.to_string() + ": wanted "
@@ -74,7 +74,7 @@ function test_one_codepoint_per_sample(): test.TestOutcome {
 
 function test_output_is_valid_utf8_blocks(): test.TestOutcome {
   let s: string = spark([3, 1, 4, 1, 5, 9, 2, 6]);
-  if (!utf8.is_valid_utf8(s)) {
+  if (!utf8.is_valid(s)) {
     return test.fail("sparkline is not valid UTF-8");
   }
   let bs: string[] = blocks();
@@ -144,7 +144,7 @@ function test_rendering_is_order_preserving(): test.TestOutcome {
 
 function test_a_flat_series_renders_flat(): test.TestOutcome {
   let s: string = spark([7, 7, 7, 7]);
-  if (utf8.codepoint_count(s) != 4) {
+  if (s.codepoint_count() != 4) {
     return test.fail("flat series lost bars");
   }
   let bs: string[] = blocks();
@@ -168,7 +168,7 @@ function test_empty_series(): test.TestOutcome {
   if (s.len() != 0) {
     return test.fail("empty series emitted bytes");
   }
-  if (utf8.codepoint_count(s) != 0) {
+  if (s.codepoint_count() != 0) {
     return test.fail("empty series emitted codepoints");
   }
   return test.pass();
@@ -193,7 +193,7 @@ function main(): i32 {
   eprint("  noisy    " + spark([3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]));
   eprint("  flat     " + spark([7, 7, 7, 7, 7]));
   let s: string = spark([3, 1, 4, 1, 5]);
-  eprint("  (5 bars = " + utf8.codepoint_count(s).to_string()
+  eprint("  (5 bars = " + s.codepoint_count().to_string()
     + " codepoints, " + s.len().to_string() + " bytes)");
 
   let r: test.TestRunner = test.test_new("sparkline");

@@ -1,14 +1,5 @@
-
-
-
-
-
-
-
-
 import "std/regex";
-
-
+import "std/result";
 
 function patterns(): string[] {
   return [
@@ -27,46 +18,47 @@ function texts(): string[] {
 function main(): i32 {
   let r: i32 = 0;
 
-
-  let an: regex.RCaps = require_caps(regex.regex_captures("^(a+)", "aab"));
-  if (require_regex_text(an.group(1)) == "aa" && at(an.group_start(0), 0)) {
+  // ^ anchor through the capture engine
+  let an: regex.Captures = require_caps({ let __checked_regex_10: regex.Regex = match (regex.compile("^(a+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_10.captures("aab") });
+  if (require_regex_text(match (an.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "aa" && at(an.group_start(0), 0)) {
     r = r + 1;
   }
-  match (regex.regex_captures("^(b)", "ab")) {
+  match ({ let __checked_regex_9: regex.Regex = match (regex.compile("^(b)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_9.captures("ab") }) {
     Some(_) => {},
     None => {
       r = r + 2;
     }
   }
 
-
-  let en: regex.RCaps = require_caps(regex.regex_captures("([a-z]+)$", "Hello world"));
-  if (require_regex_text(en.group(1)) == "world" && at(en.group_end(0), 11)) {
+  // $ anchor
+  let en: regex.Captures = require_caps({ let __checked_regex_8: regex.Regex = match (regex.compile("([a-z]+)$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_8.captures("Hello world") });
+  if (require_regex_text(match (en.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "world" && at(en.group_end(0), 11)) {
     r = r + 4;
   }
 
-
-  let wb: regex.RCaps = require_caps(regex.regex_captures("\\b(cat)\\b", "a cat sat"));
-  let nb: regex.RCaps = require_caps(regex.regex_captures("\\B(at)", "a cat sat"));
+  // \b and \B word boundaries
+  let wb: regex.Captures = require_caps({ let __checked_regex_7: regex.Regex = match (regex.compile("\\b(cat)\\b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_7.captures("a cat sat") });
+  let nb: regex.Captures = require_caps({ let __checked_regex_6: regex.Regex = match (regex.compile("\\B(at)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.captures("a cat sat") });
   if (at(wb.group_start(1), 2) && at(nb.group_start(1), 3)) {
     r = r + 8;
   }
 
-
-
-  let ep: regex.RCaps = require_caps(regex.regex_captures("(a?)*b", "b"));
+  // a group whose star body matches only empty still PARTICIPATES with
+  // an empty span (Go: FindStringSubmatchIndex("(a?)*b","b") = [0,1,0,0])
+  let ep: regex.Captures = require_caps({ let __checked_regex_5: regex.Regex = match (regex.compile("(a?)*b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.captures("b") });
   if (ep.has_group(1) && at(ep.group_start(1), 0) && at(ep.group_end(1), 0)) {
     r = r + 16;
   }
 
-
-
-  let uf: regex.RCaps = require_caps(regex.regex_captures("(?=a)(b)", "?=ab"));
-  if (uf.group_count() == 1 && require_regex_text(uf.group(1)) == "b") {
-    r = r + 32;
+  // Unsupported group syntax reports a typed compile error.
+  match (regex.compile("(?=a)(b)")) {
+    Err(error) => {
+      if (error.kind == UnsupportedGroup && error.offset == 0) {
+        r = r + 32;
+      }
+    },
+    Ok(_) => {}
   }
-
-
 
   let ps: string[] = patterns();
   let ts: string[] = texts();
@@ -75,7 +67,7 @@ function main(): i32 {
   while (i < ps.len()) {
     let j: i32 = 0;
     while (j < ts.len()) {
-      if (!same_span(regex.regex_captures(ps[i], ts[j]), regex.regex_search(ps[i], ts[j]))) {
+      if (!same_span({ let __checked_regex_3: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.captures(ts[j]) }, { let __checked_regex_2: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.find(ts[j]) })) {
         spans_agree = false;
       }
       j = j + 1;
@@ -86,13 +78,12 @@ function main(): i32 {
     r = r + 64;
   }
 
-
   let counts_agree: boolean = true;
   i = 0;
   while (i < ps.len()) {
     let j2: i32 = 0;
     while (j2 < ts.len()) {
-      if (regex.regex_captures_all(ps[i], ts[j2]).len() != regex.regex_find_all(ps[i], ts[j2]).len()) {
+      if ({ let __checked_regex_1: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.captures_all(ts[j2]) }.len() != { let __checked_regex_0: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.find_all(ts[j2]) }.len()) {
         counts_agree = false;
       }
       j2 = j2 + 1;
@@ -106,9 +97,9 @@ function main(): i32 {
   return r;
 }
 
-
-
-function same_span(c: Option[regex.RCaps], s: Option[regex.RMatch]): boolean {
+// same_span is whether both engines found a match with one span, or neither
+// found one.
+function same_span(c: Option[regex.Captures], s: Option[regex.Match]): boolean {
   match (c) {
     Some(caps) => {
       if let Some(m) = s {
@@ -126,13 +117,13 @@ function same_span(c: Option[regex.RCaps], s: Option[regex.RMatch]): boolean {
   return false;
 }
 
-
-function require_caps(result: Option[regex.RCaps]): regex.RCaps {
+// require_caps is the match, exiting 1 when there is none.
+function require_caps(result: Option[regex.Captures]): regex.Captures {
   if let Some(c) = result {
     return c;
   }
   exit(1);
-  return regex.RCaps { text: "", starts: [], ends: [], names: [] };
+  return regex.Captures { text: "", starts: [], ends: [], names: [] };
 }
 
 function at(o: Option[i32], want: i32): boolean {

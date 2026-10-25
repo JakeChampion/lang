@@ -90,6 +90,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "core/int";
 import "std/string";
 import "std/time";
@@ -301,11 +302,11 @@ function __real_signal_fd(d: RealDriver, sig: i32): i32 {
   for row in d.signals.get().split(";") {
     let parts: string[] = row.split(":");
     if (parts.len() == 2 && parts[0] == int.int_to_string(sig)) {
-      match (int.parse_int_radix(parts[1], 10)) {
-        Some(v) => {
+      match (i32.parse_i32_radix(parts[1], 10)) {
+        Ok(v) => {
           return v;
         },
-        None => {
+        Err(_) => {
           return -1;
         }
       }

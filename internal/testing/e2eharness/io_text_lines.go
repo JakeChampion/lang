@@ -35,7 +35,7 @@ function main(): i32 {
         match (next.0) {
             None => { break; },
             Some(text) => {
-                if (text.len() == 0 || !utf8.is_valid_utf8(text)) { return 4; }
+                if (text.len() == 0 || !utf8.is_valid(text)) { return 4; }
                 held = held.append(text);
             }
         }
