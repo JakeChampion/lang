@@ -1,0 +1,1 @@
+main.fern:6:1: error[E093]: const A: "f" is not a constant (must reference an earlier `const` declaration)

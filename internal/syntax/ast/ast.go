@@ -2047,6 +2047,9 @@ type ConstDecl struct {
 	Public        bool
 	SourceModule  string
 	PackageScoped bool
+	// FoldErr is constfold's E093 for an initializer it could not evaluate;
+	// the checker reports it only when the initializer type-checks.
+	FoldErr string
 }
 
 type Import struct {

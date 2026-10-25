@@ -2758,6 +2758,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.computeResultBorrows(prog)
 
 	c.rewriteAssocConstReads(prog)
+	c.checkConsts(prog)
 	for _, fn := range prog.Funcs {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -5795,6 +5796,9 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 	for _, impl := range prog.Impls {
 		params := typeParamSet(impl.TypeParams)
 		c.checkTypeKnown(impl.Type, params, impl.P)
+	}
+	for _, cd := range prog.Consts {
+		c.checkTypeKnown(cd.Type, nil, cd.P)
 	}
 }
 
@@ -12335,20 +12339,45 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	c.restampLitCaptures(fn.Captures, outer)
 }
 
+// checkConsts type-checks the initializers constfold left in prog.Consts,
+// reporting the folder's E093 for one only when it is well-typed.
+func (c *checker) checkConsts(prog *ast.Program) {
+	for _, cd := range prog.Consts {
+		before := len(c.errors)
+		c.constType(cd)
+		if len(c.errors) == before && cd.FoldErr != "" {
+			c.report(cd.SourceModule, cd.P, "E093", cd.FoldErr)
+		}
+	}
+}
+
 func (c *checker) constType(cd *ast.ConstDecl) ast.Type {
 	if t, ok := c.constTypes[cd.Name]; ok {
 		return t
-	}
-	if cd.Type != nil {
-		c.constTypes[cd.Name] = cd.Type
-		return cd.Type
 	}
 	if c.constBusy[cd.Name] {
 		c.errfCode(cd.P, "E001", "const %s is defined in terms of itself", cd.Name)
 		return nil
 	}
 	c.constBusy[cd.Name] = true
-	t := c.checkExpr(cd.Value, newScope(nil))
+	prev := c.current
+	c.current = &ast.FuncDecl{P: cd.P, SourceModule: cd.SourceModule}
+	c.setElemHintFor(cd.Value, cd.Type)
+	c.expectedType = cd.Type
+	s := newScope(nil)
+	t := c.checkExpr(cd.Value, s)
+	c.expectedType = nil
+	c.elemHint = nil
+	if cd.Type != nil {
+		c.settleNumeric(cd.Value, cd.Type)
+		t = c.postSettleType(cd.Value, t)
+		t = c.maybeWrapForUnion(cd.Type, &cd.Value, t, s)
+		if t != nil && !c.assignable(cd.Type, t) {
+			c.errfCode(cd.P, "E002", "const %s: expected %s, got %s%s", cd.Name, cd.Type, t, assignHint(cd.Type, t))
+		}
+		t = cd.Type
+	}
+	c.current = prev
 	delete(c.constBusy, cd.Name)
 	c.constTypes[cd.Name] = t
 	return t
