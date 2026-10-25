@@ -107,7 +107,7 @@ function __stream_seq(k: Key, iv: [u8], seq: u64): Result[Stream, aead.AeadError
 // The low 32 bits of v as big-endian bytes read little-endian.
 function __be_word(v: u64): u32 {
   let w: u32 = (v & 0xffffffff as u64) as u32;
-  return (w >> 24) | (w >> 8 & 0xff00) | ((w & 0xff00) << 8) | (w << 24);
+  return w >> 24 | w >> 8 & 0xff00 | (w & 0xff00) << 8 | w << 24;
 }
 ```
 
