@@ -2615,6 +2615,7 @@ pub function (s: string) is_http_idempotent_method(): boolean {
 
 ```fern
 <<50 pub function repeat_char(ch: char, n: i32): string>>=
+// Return n copies of ch.
 pub function repeat_char(ch: char, n: i32): string {
   if (n <= 0) {
     return "";
