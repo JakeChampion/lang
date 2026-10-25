@@ -10129,6 +10129,10 @@ function find_struct_sig(structs: StructTable, name: string): StructSig {
   if (first >= 0) {
     return structs.structs[first];
   }
+  return no_struct_sig();
+}
+
+function no_struct_sig(): StructSig {
   let none: string[] = [];
   let nonet: typeinfo.Type[] = [];
   let none_tp: string[] = [];
@@ -10146,6 +10150,10 @@ function find_variant_sig(structs: StructTable, name: string): StructSig {
         return structs.structs[k];
       }
       k = structs.index.next[k];
+    }
+    // Option.Some, Result.Ok and Result.Err are the builtin's even when a user enum declares the same name.
+    if (parser.builtin_enum_of(bare) == owner) {
+      return no_struct_sig();
     }
   }
   let k2: i32 = structs.index.chain(bare);
