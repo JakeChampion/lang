@@ -537,6 +537,30 @@ function f(): i32 {
 }`)
 }
 
+func TestOwnGuardAllowsSelfReassignMoveThroughTry(t *testing.T) {
+	wantOK(t, "self-reassign-through-try", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): Result[B, string] { return Ok(B { items: b.items.append(x) }); }
+function (k: B) into(own b: B): Result[B, string] { return Ok(b); }
+function f(k: B): Result[i32, string] {
+    let a = B { items: [] };
+    a = grow(a, 1)?;
+    a = k.into(a)?;
+    return Ok(a.items.len());
+}`)
+}
+
+func TestOwnGuardRejectsSelfReassignThroughTrySecondRead(t *testing.T) {
+	wantE051(t, "self-reassign-through-try-second-read", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): Result[B, string] { return Ok(B { items: b.items.append(x) }); }
+function f(): Result[i32, string] {
+    let a = B { items: [7] };
+    a = grow(a, a.items[0])?;
+    return Ok(a.items.len());
+}`)
+}
+
 func TestOwnGuardAllowsSelfReassignMoveInLambda(t *testing.T) {
 	wantOK(t, "self-reassign-in-lambda", ownConsumer+`
 struct B { items: i32[] }

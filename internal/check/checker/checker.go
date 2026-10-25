@@ -9116,8 +9116,19 @@ func traitSelfIsOwn(m ast.TraitMethod) bool {
 	return !m.Assoc && len(m.Params) > 0 && m.Params[0].Own
 }
 
+// selfReassignCall is the call of x = f(x) or x = f(x)?: on the error path of
+// the second the function returns, so x is not read again either way.
+func selfReassignCall(asn *ast.Assign) (*ast.Call, bool) {
+	v := asn.Value
+	if try, ok := v.(*ast.TryOp); ok {
+		v = try.Inner
+	}
+	call, ok := v.(*ast.Call)
+	return call, ok
+}
+
 func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Ident {
-	call, ok := asn.Value.(*ast.Call)
+	call, ok := selfReassignCall(asn)
 	if !ok {
 		return nil
 	}
@@ -9136,7 +9147,7 @@ func selfReassignOwnMoveArgWith(asn *ast.Assign, flags []bool) *ast.Ident {
 	if !ok {
 		return nil
 	}
-	call, ok := asn.Value.(*ast.Call)
+	call, ok := selfReassignCall(asn)
 	if !ok {
 		return nil
 	}
@@ -9169,7 +9180,7 @@ func (c *checker) selfReassignOwnMoveArg(asn *ast.Assign) *ast.Ident {
 	if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
 		return arg
 	}
-	call, ok := asn.Value.(*ast.Call)
+	call, ok := selfReassignCall(asn)
 	if !ok {
 		return nil
 	}

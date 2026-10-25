@@ -17361,7 +17361,13 @@ function ow_count_ident(e: ast.Expr, name: string): i32 {
   return astwalk.fold_expr(e, 0, tally);
 }
 
+// `x = f(x)?` moves x as `x = f(x)` does: on the error path the function returns and x is not read again.
 function ow_self_move_admits(target: string, value: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprUnary(u) = value {
+    if (u.op == "try_") {
+      return ow_self_move_admits(target, u.operand, ctx);
+    }
+  }
   if let ast.ExprCall(c) = value {
     let oc: OwnCall = ow_own_call(c, ctx);
     if (oc.flags.len() == 0 || ow_count_ident_list(oc.args, target) != 1) {
