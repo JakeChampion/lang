@@ -1,0 +1,70 @@
+import "../ssa";
+import "../util";
+
+function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
+  return ssa.SInst { kind_tag: kind, result: v, args: args, imm: 0, str: str };
+}
+
+function jump(to: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 2, cond: 0, target: to, t: 0, f: 0, value: 0 };
+}
+
+function branch(cond: i32, t: i32, f: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 };
+}
+
+function ret(v: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: v };
+}
+
+// A counter that a wrap keeps in range, read after the loop through an
+// extension, and a parameter read through one.
+function counted(): ssa.SFunc {
+  let b0: ssa.SBlock = ssa.SBlock { id: 0, insts: [inst(6, 0, [], ""), inst(1, 1, [], "")], term: jump(1), preds: [] };
+  let b1: ssa.SBlock = ssa.SBlock { id: 1, insts: [inst(8, 2, [1, 4], ""), inst(9, 5, [2, 0], "lt_s")], term: branch(5, 2, 3), preds: [0, 2] };
+  let b2: ssa.SBlock = ssa.SBlock { id: 2, insts: [inst(9, 3, [2, 0], "add"), inst(10, 4, [3], "int_wrap")], term: jump(1), preds: [1] };
+  let tail: ssa.SInst[] = [inst(10, 6, [2], "int_extend"), inst(10, 7, [0], "int_extend"), inst(9, 8, [6, 7], "add"), inst(9, 9, [8, 1], "and"), inst(10, 10, [9], "int_cast:u8")];
+  let b3: ssa.SBlock = ssa.SBlock { id: 3, insts: tail, term: ret(10), preds: [1] };
+  return ssa.SFunc { name: "counted", nparams: 1, nvals: 11, blocks: [b0, b1, b2, b3], entry: 0, takes_env: false };
+}
+
+function has(f: ssa.SFunc, v: i32): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result == v) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function check(ok: boolean, what: string, failures: i32): i32 {
+  if (ok) {
+    return failures;
+  }
+  print("FAIL " + what);
+  return failures + 1;
+}
+
+function main(): i32 {
+  let failures: i32 = 0;
+  let folded: ssa.Formed = ssa.fold_extensions(counted());
+  let g: ssa.SFunc = folded.f;
+  failures = check(!has(g, 6) && folded.repl[6] == 2, "an extension of a phi of wrapped values goes", failures);
+  failures = check(has(g, 4), "the wrap of a sum stays", failures);
+  failures = check(has(g, 7), "an extension of a parameter stays", failures);
+  failures = check(!has(g, 10) && g.blocks[3].term.value == 9, "a byte cast of an and with a byte constant goes", failures);
+  failures = check(g.blocks[3].insts[1].result == 8 && g.blocks[3].insts[1].args[0] == 2, "a read of a dropped extension reads its operand", failures);
+  let w: i32[] = ssa.block_loop_weights(counted());
+  failures = check(w[0] == 1 && w[1] == 8 && w[2] == 8 && w[3] == 1, "a loop weighs 8", failures);
+  let f: ssa.SFunc = counted();
+  let b1: ssa.SBlock = ssa.SBlock { ...f.blocks[1], insts: [inst(8, 2, [1, 4, 4], ""), inst(9, 5, [2, 0], "lt_s")], preds: [0, 2, 3] };
+  let b3: ssa.SBlock = ssa.SBlock { ...f.blocks[3], term: branch(9, 1, 4) };
+  let b4: ssa.SBlock = ssa.SBlock { id: 4, insts: [], term: ret(9), preds: [3] };
+  let twice: ssa.SFunc = ssa.SFunc { ...f, blocks: [f.blocks[0], b1, f.blocks[2], b3, b4] };
+  let tw: i32[] = ssa.block_loop_weights(twice);
+  failures = check(tw[1] == 8 && tw[2] == 8 && tw[3] == 8 && tw[4] == 1, "a loop with two back edges weighs 8", failures);
+  print("failures=" + util.i32_to_string(failures));
+  return failures;
+}

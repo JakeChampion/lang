@@ -4,6 +4,14 @@ import "std/codec";
 import "std/crypto/aead";
 import "std/crypto/aes_gcm";
 
+function seal_bytes(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  return aes_gcm.key(key)?.seal(nonce, plaintext, aad);
+}
+
+function open_bytes(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  return aes_gcm.key(key)?.open(nonce, sealed, aad);
+}
+
 function shown(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
@@ -59,65 +67,65 @@ function sealed16(): string {
 }
 
 function test_case1(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(12), zeros(0), zeros(0))), "58e2fccefa7e3061367f1d57a4e7455a");
+  return test.assert_eq(shown(seal_bytes(zeros(16), zeros(12), zeros(0), zeros(0))), "58e2fccefa7e3061367f1d57a4e7455a");
 }
 
 function test_case2(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(12), zeros(16), zeros(0))), "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf");
+  return test.assert_eq(shown(seal_bytes(zeros(16), zeros(12), zeros(16), zeros(0))), "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf");
 }
 
 function test_case3(): test.TestOutcome {
   return test.assert_eq(
-    shown(aes_gcm.seal(__codec_bytes(hex.decode(k3())), iv3(), p64(), zeros(0))),
+    shown(seal_bytes(__codec_bytes(hex.decode(k3())), iv3(), p64(), zeros(0))),
     "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985" + "4d5c2af327cd64a62cf35abd2ba6fab4",
   );
 }
 
 function test_case4(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(__codec_bytes(hex.decode(k3())), iv3(), p60(), aad3())), sealed4());
+  return test.assert_eq(shown(seal_bytes(__codec_bytes(hex.decode(k3())), iv3(), p60(), aad3())), sealed4());
 }
 
 function test_open4(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.open(__codec_bytes(hex.decode(k3())), iv3(), __codec_bytes(hex.decode(sealed4())), aad3())), hex.encode(p60()));
+  return test.assert_eq(shown(open_bytes(__codec_bytes(hex.decode(k3())), iv3(), __codec_bytes(hex.decode(sealed4())), aad3())), hex.encode(p60()));
 }
 
 function test_aad_only(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(__codec_bytes(hex.decode(k3())), iv3(), zeros(0), aad3())), "346434fd51d5cd0c5887ec63e39b907a");
+  return test.assert_eq(shown(seal_bytes(__codec_bytes(hex.decode(k3())), iv3(), zeros(0), aad3())), "346434fd51d5cd0c5887ec63e39b907a");
 }
 
 function test_case13(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(zeros(32), zeros(12), zeros(0), zeros(0))), "530f8afbc74536b9a963b4f1c4cb738b");
+  return test.assert_eq(shown(seal_bytes(zeros(32), zeros(12), zeros(0), zeros(0))), "530f8afbc74536b9a963b4f1c4cb738b");
 }
 
 function test_case14(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(zeros(32), zeros(12), zeros(16), zeros(0))), "cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919");
+  return test.assert_eq(shown(seal_bytes(zeros(32), zeros(12), zeros(16), zeros(0))), "cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919");
 }
 
 function test_case15(): test.TestOutcome {
   return test.assert_eq(
-    shown(aes_gcm.seal(__codec_bytes(hex.decode(k3() + k3())), iv3(), p64(), zeros(0))),
+    shown(seal_bytes(__codec_bytes(hex.decode(k3() + k3())), iv3(), p64(), zeros(0))),
     "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad" + "b094dac5d93471bdec1a502270e3cc6c",
   );
 }
 
 function test_case16(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(__codec_bytes(hex.decode(k3() + k3())), iv3(), p60(), aad3())), sealed16());
+  return test.assert_eq(shown(seal_bytes(__codec_bytes(hex.decode(k3() + k3())), iv3(), p60(), aad3())), sealed16());
 }
 
 function test_open16(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.open(__codec_bytes(hex.decode(k3() + k3())), iv3(), __codec_bytes(hex.decode(sealed16())), aad3())), hex.encode(p60()));
+  return test.assert_eq(shown(open_bytes(__codec_bytes(hex.decode(k3() + k3())), iv3(), __codec_bytes(hex.decode(sealed16())), aad3())), hex.encode(p60()));
 }
 
 function test_one_byte(): test.TestOutcome {
   return test.assert_eq(
-    shown(aes_gcm.seal(__codec_bytes(hex.decode("6bde975873204aa11ef4542e6534cdcc")), __codec_bytes(hex.decode("b97eb97974f6ae3cb42c48b0")), __codec_bytes(hex.decode("d1")), zeros(0))),
+    shown(seal_bytes(__codec_bytes(hex.decode("6bde975873204aa11ef4542e6534cdcc")), __codec_bytes(hex.decode("b97eb97974f6ae3cb42c48b0")), __codec_bytes(hex.decode("d1")), zeros(0))),
     "5cf01f12c6abc9aab9f74f52c57def930b",
   );
 }
 
 function test_33_bytes(): test.TestOutcome {
   return test.assert_eq(
-    shown(aes_gcm.seal(
+    shown(seal_bytes(
       __codec_bytes(hex.decode("8aabbb8fc6f7fb70889749a4217c6b25fef57f1026be930ca781337b0b6cc916")),
       __codec_bytes(hex.decode("b1a9caa290eea335ac6ae190")),
       __codec_bytes(hex.decode("3e07904f4e861069bdfbd2ed4f8f301ef617a6932c92ff8a7c644796f44fed8441")),
@@ -144,10 +152,10 @@ function sealed255(): string {
 function test_255_bytes(): test.TestOutcome {
   let key: u8[] = __codec_bytes(hex.decode("504cae995b35bdd93579f9e580109f8a"));
   let nonce: u8[] = __codec_bytes(hex.decode("053f345b77676adbfa3035f1"));
-  if (shown(aes_gcm.seal(key, nonce, __codec_bytes(hex.decode(plain255())), aad64())) != sealed255()) {
+  if (shown(seal_bytes(key, nonce, __codec_bytes(hex.decode(plain255())), aad64())) != sealed255()) {
     return test.fail("seal disagrees with crypto/cipher");
   }
-  return test.assert_eq(shown(aes_gcm.open(key, nonce, __codec_bytes(hex.decode(sealed255())), aad64())), plain255());
+  return test.assert_eq(shown(open_bytes(key, nonce, __codec_bytes(hex.decode(sealed255())), aad64())), plain255());
 }
 
 function forged(r: Result[u8[], aead.AeadError]): boolean {
@@ -173,37 +181,37 @@ function test_open_refuses(): test.TestOutcome {
   let key: u8[] = __codec_bytes(hex.decode(k3()));
   let sealed: u8[] = __codec_bytes(hex.decode(sealed4()));
   let last: i32 = sealed.len() - 1;
-  if (!forged(aes_gcm.open(key, iv3(), sealed.with(last, sealed[last] ^ 1 as u8), aad3()))) {
+  if (!forged(open_bytes(key, iv3(), sealed.with(last, sealed[last] ^ 1 as u8), aad3()))) {
     return test.fail("a flipped tag bit opened");
   }
-  if (!forged(aes_gcm.open(key, iv3(), sealed.with(0, sealed[0] ^ 128 as u8), aad3()))) {
+  if (!forged(open_bytes(key, iv3(), sealed.with(0, sealed[0] ^ 128 as u8), aad3()))) {
     return test.fail("a flipped ciphertext bit opened");
   }
   let aad: u8[] = aad3();
-  if (!forged(aes_gcm.open(key, iv3(), sealed, aad.with(19, aad[19] ^ 2 as u8)))) {
+  if (!forged(open_bytes(key, iv3(), sealed, aad.with(19, aad[19] ^ 2 as u8)))) {
     return test.fail("a flipped additional-data bit opened");
   }
-  if (!forged(aes_gcm.open(key.with(0, key[0] ^ 1 as u8), iv3(), sealed, aad3()))) {
+  if (!forged(open_bytes(key.with(0, key[0] ^ 1 as u8), iv3(), sealed, aad3()))) {
     return test.fail("another key opened");
   }
   let nonce: u8[] = iv3();
-  if (!forged(aes_gcm.open(key, nonce.with(11, nonce[11] ^ 1 as u8), sealed, aad3()))) {
+  if (!forged(open_bytes(key, nonce.with(11, nonce[11] ^ 1 as u8), sealed, aad3()))) {
     return test.fail("another nonce opened");
   }
-  if (!forged(aes_gcm.open(key, iv3(), sealed[0:15], aad3()))) {
+  if (!forged(open_bytes(key, iv3(), sealed[0:15], aad3()))) {
     return test.fail("a message shorter than a tag opened");
   }
   return test.pass();
 }
 
 function test_lengths(): test.TestOutcome {
-  if (shown(aes_gcm.seal(zeros(24), zeros(12), zeros(0), zeros(0))) != "aead: the key is 24 bytes, the wrong length for this cipher") {
+  if (shown(seal_bytes(zeros(24), zeros(12), zeros(0), zeros(0))) != "aead: the key is 24 bytes, the wrong length for this cipher") {
     return test.fail("a 24-byte key was not refused by its length");
   }
-  if (shown(aes_gcm.open(zeros(15), zeros(12), zeros(16), zeros(0))) != "aead: the key is 15 bytes, the wrong length for this cipher") {
+  if (shown(open_bytes(zeros(15), zeros(12), zeros(16), zeros(0))) != "aead: the key is 15 bytes, the wrong length for this cipher") {
     return test.fail("open took a 15-byte key");
   }
-  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(8), zeros(0), zeros(0))), "aead: the nonce is 8 bytes, want 12");
+  return test.assert_eq(shown(seal_bytes(zeros(16), zeros(8), zeros(0), zeros(0))), "aead: the nonce is 8 bytes, want 12");
 }
 
 function test_prepared_key(): test.TestOutcome {

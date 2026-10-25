@@ -214,6 +214,12 @@ var Scalar = []Family{
 		Probe: "%s c", Ops: []ScalarOp{{Mnemonic: "bti"}}},
 	{Name: "lse", Doc: "the LSE acquire-release add and compare-and-swap, word or doubleword by register",
 		Probe: "%s x2, x0, [x1]", Ops: []ScalarOp{{Mnemonic: "ldaddal"}, {Mnemonic: "casal"}}},
+	{Name: "crc", Doc: "the reflected IEEE CRC-32 steps; the operand width follows the suffix",
+		Probe: "%s w0, w1, w2", Base: "arm64_crc_base",
+		Ops: []ScalarOp{
+			{Mnemonic: "crc32b", Word: 0x1AC04000}, {Mnemonic: "crc32h", Word: 0x1AC04400},
+			{Mnemonic: "crc32w", Word: 0x1AC04800}, {Mnemonic: "crc32x", Word: 0x9AC04C00, Probe: "crc32x w0, w1, x2"},
+		}},
 }
 
 var scalarIndex = func() map[string][2]int {

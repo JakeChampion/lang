@@ -129,6 +129,20 @@ function test_adler32(): test.TestOutcome {
   return test.assert_eq(deflate.adler32("Wikipedia".bytes()) == 300286872 as u32, true);
 }
 
+function test_adler32_long(): test.TestOutcome {
+  let ones: u8[] = [];
+  let mixed: u8[] = [];
+  let i: i32 = 0;
+  while (i < 100000) {
+    ones = ones.append(255 as u8);
+    if (i < 11105) {
+      mixed = mixed.append((i * 7 % 256) as u8);
+    }
+    i = i + 1;
+  }
+  return test.assert_eq((deflate.adler32(ones) as i64).to_string() + " " + (deflate.adler32(mixed) as i64).to_string(), "345649196 1725208588");
+}
+
 function test_output_limit(): test.TestOutcome {
   if (bytes_text(deflate.gunzip(__codec_bytes(hex.decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000")), 11)) != "error: the decompressed data is past its limit") {
     return test.fail("a cap below the output: " + bytes_text(deflate.gunzip(__codec_bytes(hex.decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000")), 11)));
@@ -295,6 +309,7 @@ function main(): i32 {
   r = r.it("gzip two members", test_gzip_two_members);
   r = r.it("zlib", test_zlib);
   r = r.it("adler32", test_adler32);
+  r = r.it("adler32 past the deferred modulus", test_adler32_long);
   r = r.it("output limit", test_output_limit);
   r = r.it("truncated", test_truncated);
   r = r.it("bad checksums", test_bad_checksums);

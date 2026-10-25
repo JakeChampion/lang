@@ -192,7 +192,7 @@ function signing(events: handshake.Event[]): handshake.Signing {
 function trace_verifies(signed: u8[], signature: u8[]): boolean {
   match (rsa.public_key(__codec_bytes(hex.decode("b4bb498f8279303d980836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f")), __codec_bytes(hex.decode("010001")))) {
     Ok(k) => {
-      return rsa.verify_pss(k, sha2.Sha256, signed, signature);
+      return k.verify_pss(sha2.Sha256, signed, signature);
     },
     Err(e) => {
       return false;
@@ -363,9 +363,9 @@ function seed(): u8[] {
 }
 
 function ed_public(): u8[] {
-  match (ed25519.public_key(seed())) {
-    Ok(p) => {
-      return p;
+  match (ed25519.private_key(seed())) {
+    Ok(k) => {
+      return k.public_point();
     },
     Err(e) => {
       return [];
@@ -384,7 +384,7 @@ function handshake_between(cc: handshake.ClientConfig, sc: handshake.ServerConfi
   }
   let sg: handshake.Signing = signing(s1.events);
   let sig: u8[] = [];
-  match (ed25519.sign(seed(), sg.signed)) {
+  match (signed_with(seed(), sg.signed)) {
     Ok(b) => {
       sig = b;
     },
@@ -395,7 +395,7 @@ function handshake_between(cc: handshake.ClientConfig, sc: handshake.ServerConfi
   let s2: handshake.ServerStep = s1.server.signature(sig)?;
   let c1: handshake.ClientStep = start.client.read(cat(s1.output, s2.output))?;
   let v: handshake.Verification = verification(c1.events);
-  let c2: handshake.ClientStep = c1.client.verdict(v.chain.len() == 1 && ed25519.verify(v.chain[0], v.signed, v.signature))?;
+  let c2: handshake.ClientStep = c1.client.verdict(v.chain.len() == 1 && verified_by(v.chain[0], v.signed, v.signature))?;
   let s3: handshake.ServerStep = s2.server.read(c2.output)?;
   if (!c2.client.connected() || !s3.server.connected()) {
     return Err(handshake.Misuse("not connected"));
@@ -845,7 +845,7 @@ function test_out_of_turn(): test.TestOutcome {
 }
 
 function signed(content: u8[]): u8[] {
-  match (ed25519.sign(seed(), content)) {
+  match (signed_with(seed(), content)) {
     Ok(b) => {
       return b;
     },
@@ -1033,7 +1033,7 @@ function client_auth(cc: handshake.ClientConfig, sc: handshake.ServerConfig, acc
       asked = true;
       chain_len = v.chain.len();
       shown = shown + " chain " + int.int_to_string(v.chain.len());
-      if (v.chain.len() > 0 && ed25519.verify(ed_public(), v.signed, v.signature)) {
+      if (v.chain.len() > 0 && verified_by(ed_public(), v.signed, v.signature)) {
         shown = shown + " verified";
       }
     },
@@ -1164,7 +1164,7 @@ function quic_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): R
   let s1: handshake.ServerStep = server.read_crypto(0, crypto_at(start.events, 0))?;
   let sg: handshake.Signing = signing(s1.events);
   let sig: u8[] = [];
-  match (ed25519.sign(seed(), sg.signed)) {
+  match (signed_with(seed(), sg.signed)) {
     Ok(b) => {
       sig = b;
     },
@@ -1176,7 +1176,7 @@ function quic_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): R
   let c1: handshake.ClientStep = start.client.read_crypto(0, crypto_at(s1.events, 0))?;
   let c2: handshake.ClientStep = c1.client.read_crypto(1, cat(crypto_at(s1.events, 1), crypto_at(s2.events, 1)))?;
   let v: handshake.Verification = verification(c2.events);
-  let c3: handshake.ClientStep = c2.client.verdict(v.chain.len() == 1 && ed25519.verify(v.chain[0], v.signed, v.signature))?;
+  let c3: handshake.ClientStep = c2.client.verdict(v.chain.len() == 1 && verified_by(v.chain[0], v.signed, v.signature))?;
   let s3: handshake.ServerStep = s2.server.read_crypto(1, crypto_at(c3.events, 1))?;
   if (!c3.client.connected() || !s3.server.connected()) {
     return Err(handshake.Misuse("not connected"));
@@ -1337,4 +1337,21 @@ function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
       return [];
     }
   }
+}
+
+function signed_with(key_seed: [u8], msg: [u8]): Result[u8[], ed25519.Ed25519Error] {
+  let k: ed25519.PrivateKey = ed25519.private_key(key_seed)?;
+  return Ok(k.sign(msg));
+}
+
+function verified_by(public: [u8], msg: [u8], sig: [u8]): boolean {
+  match (ed25519.public_key(public)) {
+    Ok(k) => {
+      return k.verify(msg, sig);
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
 }

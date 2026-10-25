@@ -417,3 +417,5 @@ vstore=476
 vget=477
 vset=478
 vbitmask=479
+crc32_ieee=480
+crc32_ieee_array=481

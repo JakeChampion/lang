@@ -107,6 +107,7 @@ struct View {
   stab: irtables.StructTab,
   contracts: string[],
   rt: (string) => physicalbody.Lowered,
+  refused: util.Diag[],
 }
 
 function per_module_view(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], target: string): View {
@@ -122,7 +123,7 @@ function per_module_view(entry_path: string, entry: parser.Module, loaded: flatt
     }
     k = k + 1;
   }
-  return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, contracts: d.sub.contracts, rt: d.sub.rt_lower };
+  return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, contracts: d.sub.contracts, rt: d.sub.rt_lower, refused: d.sub.refused };
 }
 
 function merged_program(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string): parser.Module {
@@ -151,6 +152,7 @@ function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
 }
 
 function emit_unit(v: View, idx: i32, is_entry: boolean, ns: string, extra: string[], lo: i32, hi: i32, target: string): string {
+  ircore.refuse_claims(v.refused);
   if (target == "arm64-linux") {
     return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.u.physical[idx], v.rt, asmcore.env_switches());
   }

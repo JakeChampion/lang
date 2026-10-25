@@ -93,7 +93,7 @@ pub enum Kind { Initial, ZeroRtt, Handshake, Retry, OneRtt, VersionNegotiation, 
 
 pub struct Header { kind: Kind, version: i64, dcid: u8[], scid: u8[], token: u8[], tag: u8[], versions: i64[], at: i32, pn_at: i32, end: i32 }
 
-pub struct Keys { suite: keyschedule.CipherSuite, secret: u8[], key: u8[], iv: u8[], hp: u8[], hp_round_keys: u8[], gcm: Option[aes_gcm.Key] }
+pub struct Keys { suite: keyschedule.CipherSuite, secret: u8[], key: u8[], iv: u8[], hp: u8[], hp_round_keys: u8[], hp_chacha: Option[chacha20poly1305.Key], gcm: Option[aes_gcm.Key], chacha: Option[chacha20poly1305.Key] }
 
 pub struct Opened { pn: i64, payload: u8[], key_phase: boolean, spin: boolean, reserved_ok: boolean }
 ```
@@ -123,7 +123,7 @@ pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys {
     }
   }
   let key: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
-  return Keys { suite: suite, secret: __copy(secret), key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk, gcm: __gcm(suite, key) };
+  return Keys { suite: suite, secret: __copy(secret), key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk, hp_chacha: __chacha(suite, hp), gcm: __gcm(suite, key), chacha: __chacha(suite, key) };
 }
 ```
 
@@ -139,6 +139,23 @@ function __gcm(suite: keyschedule.CipherSuite, key: [u8]): Option[aes_gcm.Key] {
     _ => {}
   }
   match (aes_gcm.key(key)) {
+    Ok(k) => {
+      return Some(k);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+function __chacha(suite: keyschedule.CipherSuite, key: [u8]): Option[chacha20poly1305.Key] {
+  match (suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {},
+    _ => {
+      return None;
+    }
+  }
+  match (chacha20poly1305.key(key)) {
     Ok(k) => {
       return Some(k);
     },
@@ -171,7 +188,7 @@ pub function (k: Keys) updated(): Keys {
   let secret: u8[] = keyschedule.hkdf_expand_label(h, k.secret, "quic ku", [], h.size());
   let n: i32 = k.suite.aead().key_len();
   let key: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
-  return Keys { ...k, secret: secret, key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), gcm: __gcm(k.suite, key) };
+  return Keys { ...k, secret: secret, key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), gcm: __gcm(k.suite, key), chacha: __chacha(k.suite, key) };
 }
 
 pub function pn_len(pn: i64, largest_acked: i64): i32 {
@@ -333,7 +350,10 @@ pub function mask(k: Keys, sample: [u8]): u8[] {
   match (k.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
       let counter: u32 = sample[0] as u32 | sample[1] as u32 << 8 | sample[2] as u32 << 16 | sample[3] as u32 << 24;
-      match (chacha20poly1305.chacha20_xor(k.hp, sample[4:16], counter, ZERO_MASK)) {
+      let Some(hp) = k.hp_chacha else {
+        return __copy(ZERO_MASK);
+      };
+      match (hp.chacha20_xor(sample[4:16], counter, ZERO_MASK)) {
         Ok(m) => {
           return m;
         },
@@ -374,7 +394,10 @@ function __nonce(iv: [u8], pn: i64): u8[] {
 function __seal(k: Keys, pn: i64, plaintext: [u8], aad: [u8]): u8[] {
   match (k.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.seal(k.key, __nonce(k.iv, pn), plaintext, aad)) {
+      let Some(c) = k.chacha else {
+        return [];
+      };
+      match (c.seal(__nonce(k.iv, pn), plaintext, aad)) {
         Ok(ct) => {
           return ct;
         },
@@ -402,7 +425,10 @@ function __seal(k: Keys, pn: i64, plaintext: [u8], aad: [u8]): u8[] {
 function __open(k: Keys, pn: i64, sealed: [u8], aad: [u8]): Option[u8[]] {
   match (k.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.open(k.key, __nonce(k.iv, pn), sealed, aad)) {
+      let Some(c) = k.chacha else {
+        return None;
+      };
+      match (c.open(__nonce(k.iv, pn), sealed, aad)) {
         Ok(pt) => {
           return Some(pt);
         },
@@ -598,7 +624,10 @@ function __retry_nonce(): u8[] {
 
 function __retry_tag(unprotected: [u8], odcid: [u8]): u8[] {
   let pseudo: u8[] = __empty(64).append(odcid.len() as u8).concat(__copy(odcid)).concat(__copy(unprotected));
-  match (aes_gcm.seal(__retry_key(), __retry_nonce(), [], pseudo)) {
+  let Ok(k) = aes_gcm.key(__retry_key()) else {
+    return [];
+  };
+  match (k.seal(__retry_nonce(), [], pseudo)) {
     Ok(tag) => {
       return tag;
     },
