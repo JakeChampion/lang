@@ -293,6 +293,9 @@ function main(): i32 {
 	{name: "le_word_owned_i32", fn: "iword32", exit: 125, src: signedWordSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
+	{name: "be_word_i32_sign_extends", fn: "bword32", exit: 125, src: signedWordSrc,
+		want:   map[string][]string{"x86-64-linux": {`\bbswapl %(e\w+|r\d+d)\n\s*movslq`}, "arm64-linux": {`\brev w\d+, w\d+\n\s*sxtw x\d+`}},
+		forbid: wordForbid},
 	{name: "le_word_bytes_scrambled", fn: "scrambled", exit: 5, src: wordLoadSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
@@ -673,7 +676,12 @@ const signedWordSrc = `
 @noinline function iword32(bs: u8[], o: i32): i32 {
     return bs[o] as i32 | bs[o + 1] as i32 << 8 | bs[o + 2] as i32 << 16 | bs[o + 3] as i32 << 24;
 }
+@noinline function bword32(bs: [u8], o: i32): i32 {
+    return bs[o] as i32 << 24 | bs[o + 1] as i32 << 16 | bs[o + 2] as i32 << 8 | bs[o + 3] as i32;
+}
 function main(): i32 {
+    let top: u8[] = [128u8, 0u8, 0u8, 1u8, 128u8];
+    if (bword32(top, 0) >= 0 || iword32(top, 1) >= 0 || bword32(top, 0) != 0 - 2147483647) { return 1; }
     let b: u8[] = [];
     let i: i32 = 0;
     while (i < 24) { b = b.append(((i * 29 + 3) & 255) as u8); i = i + 1; }
