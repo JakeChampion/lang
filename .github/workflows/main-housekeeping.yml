@@ -1,20 +1,39 @@
-name: Cancel runs on conflict
-
-# A push to main can leave an open pull request conflicting with it. CI already
-# queued or running for that PR is then testing a merge that can no longer
-# happen, while it holds the PR queue's lock (ci-suite.yml) that every other PR
-# waits behind. GitHub starts no `pull_request` run while a PR conflicts, so no
-# newer run will supersede it either. This cancels those runs and tells the PR
-# which files conflict.
+name: Main housekeeping
+# One job per push to main for the three things a merge makes necessary, each
+# of which once ran as a workflow of its own and so cost a runner slot per
+# merge. Under a burst of merges those slots stood ahead of the suite's own
+# jobs in the pool's queue (docs/ci-log/2026-10-25-pr-ci-queue.md). The steps
+# are independent: each runs whatever the others concluded, and a red job
+# names its step.
 #
-# Conflicts are found with `git merge-tree` against main's tip as fetched here,
-# not with the API's `mergeable` field: GitHub recomputes that lazily after a
-# push, so right after one it reads null or the pre-push value, and it never
-# names the files.
+# 1. REAP STALE RUNS (.github/actions/reap-stale-runs): the queued runs nobody
+#    is waiting on. A merge is one of the moments runs go stale.
 #
-# Only ci.yml runs at the conflicting head SHA are cancelled. A push that
-# resolves the conflict gets a new SHA, so its run is never touched.
-
+# 2. CANCEL RUNS ON CONFLICT. A push to main can leave an open pull request
+#    conflicting with it. CI already queued or running for that PR is then
+#    testing a merge that can no longer happen, while it holds the PR queue's
+#    lock (ci-suite.yml) that every other PR waits behind. GitHub starts no
+#    `pull_request` run while a PR conflicts, so no newer run will supersede
+#    it either. This cancels those runs and tells the PR which files conflict.
+#    Conflicts are found with `git merge-tree` against main's tip as fetched
+#    here, not with the API's `mergeable` field: GitHub recomputes that lazily
+#    after a push, so right after one it reads null or the pre-push value, and
+#    it never names the files. Only ci.yml runs at the conflicting head SHA
+#    are cancelled. A push that resolves the conflict gets a new SHA, so its
+#    run is never touched.
+#
+# 3. CHECK SOURCES: `make check-sources`, native `fern -check` over the
+#    self-host sources and every stdlib module as a standalone import, plus
+#    the feature census over the same sources. The lint job runs the same gate
+#    on PRs, but a merge race between two individually-green PRs once landed
+#    an unbuildable main with no red run to name it (#7317). This step reports
+#    that against the merge that caused it, with the compiler's own diagnostic
+#    as the whole failure output, instead of leaving it to surface as a
+#    driver-build failure at the top of some twenty self-host jobs on the next
+#    unrelated PR. The census rides along for the same reason: it reads the
+#    sources as text in 2 s, but it is filed in internal/testing/e2ecompiler,
+#    a package the unit lane excludes, and so once ran only on pull requests
+#    while its ratchet stood red on main with nothing to report it (#7570).
 on:
   push:
     branches: [main]
@@ -25,26 +44,31 @@ permissions:
   contents: read
   pull-requests: write
 
-# No concurrency group, for the reason reap-stale-runs.yml gives: GitHub keeps
-# only the newest pending run per group, so under steady merges a grouped run is
-# replaced before it reaches a runner and never runs. Overlapping runs are
-# harmless: a repeated cancel returns 409, and a comment already posted for the
-# head is not posted again.
+# No concurrency group, deliberately. GitHub keeps only the newest pending run
+# per group, so under steady merges a grouped run is replaced before it reaches
+# a runner and never runs; and back-to-back merges each keep their own run, so
+# a check-sources failure is attributed to one merge rather than to the newest
+# of several. Overlapping sweeps are harmless: a repeated cancel returns 409,
+# and a conflict comment already posted for a head is not posted again.
 
 jobs:
-  check:
+  housekeeping:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           # merge-tree needs each PR's merge base with main, and reads blobs
           # only for paths both sides changed; git fetches those on demand.
+          # check-sources reads the tree at HEAD, which the checkout fetches.
           fetch-depth: 0
           filter: blob:none
-          sparse-checkout: .github
-
-      - uses: actions/github-script@v9
+      - name: reap stale runs
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/reap-stale-runs
+      - name: cancel runs on conflict
+        if: ${{ !cancelled() }}
+        uses: actions/github-script@v9
         env:
           BASE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         with:
@@ -166,3 +190,8 @@ jobs:
                 ]),
               ])
               .write();
+      - uses: ./.github/actions/setup-fern
+        if: ${{ !cancelled() }}
+      - name: fern -check self-host + stdlib
+        if: ${{ !cancelled() }}
+        run: make check-sources
