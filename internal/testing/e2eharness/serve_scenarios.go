@@ -81,7 +81,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
 
 function main(): i32 {
     let init: Map[string, i32] = map_new(8);
-    return serve.run_with(0, serve.config(), init, handle);
+    return serve.exit_code(serve.run_with(0, serve.config(), init, handle));
 }
 `)
 }
@@ -113,7 +113,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {
-    return serve.run(0, serve.config(), handle);
+    return serve.exit_code(serve.run(0, serve.config(), handle));
 }
 `, LargeResponseBytes)
 }
@@ -158,7 +158,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(0, serve.Config { ...serve.config(), recv_deadline: time.duration_millis(400) }, handle);
+    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), recv_deadline: time.duration_millis(400) }, handle));
 }
 `)
 }
@@ -240,7 +240,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 1 }, handle);
+    return serve.exit_code(serve.supervise(%d, serve.Config { ...serve.config(), workers: 1 }, handle));
 }
 `, port)
 }
@@ -282,7 +282,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };
-    return serve.run(%d, opts, handle);
+    return serve.exit_code(serve.run(%d, opts, handle));
 }
 `, port)
 }
@@ -323,7 +323,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), reuse_port: true, max_connections_per_ip: 0 };
-    return serve.run(%d, opts, handle);
+    return serve.exit_code(serve.run(%d, opts, handle));
 }
 `, port)
 }
@@ -473,7 +473,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(0, serve.Config { ...serve.config(), max_connections: 0 }, handle);
+    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), max_connections: 0 }, handle));
 }
 `)
 }
@@ -519,7 +519,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(0, serve.Config { ...serve.config(), workers: 2 }, handle);
+    return serve.exit_code(serve.supervise(0, serve.Config { ...serve.config(), workers: 2 }, handle));
 }
 `)
 }
@@ -581,7 +581,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(0, serve.Config { ...serve.config(), workers: 1 }, handle);
+    return serve.exit_code(serve.supervise(0, serve.Config { ...serve.config(), workers: 1 }, handle));
 }
 `)
 }
@@ -967,9 +967,90 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.%s(%d, serve.config(), handle);
+    return serve.exit_code(serve.%s(%d, serve.config(), handle));
 }
 `, entry, port)
+}
+
+// ListenErrorTypedSource binds the held port every way a server can: its
+// own listener single-process, supervised, and per worker with reuse_port,
+// then the metrics exporter single-process and supervised. Each must come
+// back as Err(ListenError) naming the port and AddrInUse; the exit code
+// names the first that did not (tens digit the case, units the defect).
+func ListenErrorTypedSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/net";
+import "core/int";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    return http.ok("ok");
+}
+function refused(r: Result[i32, serve.ListenError], port: i32): i32 {
+    match (r) {
+        Ok(code) => {
+            return 1;
+        },
+        Err(e) => {
+            if (e.port != port) {
+                return 2;
+            }
+            if (!e.error.eq(net.AddrInUse)) {
+                return 3;
+            }
+            if (e.message() != "cannot listen on port " + int.int_to_string(port) + ": " + net.AddrInUse.message()) {
+                return 4;
+            }
+            return 0;
+        }
+    }
+    return 5;
+}
+function main(): i32 {
+    let held: i32 = %d;
+    let got: i32 = refused(serve.run(held, serve.config(), handle), held);
+    if (got != 0) {
+        return 10 + got;
+    }
+    got = refused(serve.supervise(held, serve.Config { ...serve.config(), workers: 1 }, handle), held);
+    if (got != 0) {
+        return 20 + got;
+    }
+    got = refused(serve.supervise(held, serve.Config { ...serve.config(), workers: 2, reuse_port: true }, handle), held);
+    if (got != 0) {
+        return 30 + got;
+    }
+    got = refused(serve.run(0, serve.Config { ...serve.config(), metrics_port: held }, handle), held);
+    if (got != 0) {
+        return 40 + got;
+    }
+    got = refused(serve.supervise(0, serve.Config { ...serve.config(), workers: 1, metrics_port: held }, handle), held);
+    if (got != 0) {
+        return 50 + got;
+    }
+    return 0;
+}
+`, port)
+}
+
+func CheckListenErrorTyped(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	var out strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &out
+	done := make(chan error, 1)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("the program did not finish\n--- output ---\n%s", out.String())
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit code %d, want 0 (tens digit the case, units the defect)\n--- output ---\n%s", code, out.String())
+	}
 }
 
 func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
@@ -990,7 +1071,7 @@ func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	if code := cmd.ProcessState.ExitCode(); code != 98 {
 		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
 	}
-	want := regexp.MustCompile(fmt.Sprintf(`serve: cannot listen on (\[::\]|0\.0\.0\.0):%d: Address already in use`, port))
+	want := regexp.MustCompile(fmt.Sprintf(`serve: cannot listen on port %d: Address already in use`, port))
 	if !want.MatchString(stderr.String()) {
 		t.Errorf("stderr does not match %q:\n%s", want, stderr.String())
 	}
@@ -1085,7 +1166,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
-    return serve.run(0, serve.Config { ...serve.config(), limits: limits }, handle);
+    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), limits: limits }, handle));
 }
 `)
 }

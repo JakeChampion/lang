@@ -42,7 +42,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
-    return %s;
+    return serve.exit_code(%s);
 }
 `, drainMs, entry)
 }

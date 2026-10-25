@@ -217,6 +217,25 @@ function main(): i32 {
 }
 `
 
+// A view of 60000 i32 slots allocates its descriptor and nothing more (#13188).
+const wordViewSubRangeCopyProgram = `@noinline function window(v: [i32]): [i32] { return v[1:60001]; }
+function main(): i32 {
+    let a: i32[] = [];
+    let i: i32 = 0;
+    while (i < 60002) { a = a.append(i); i = i + 1; }
+    let before: i64 = __heap_bump_bytes();
+    let w: [i32] = window(a);
+    let mid: i64 = __heap_bump_bytes();
+    let x: [i32] = a[1:60001];
+    let after: i64 = __heap_bump_bytes();
+    if (w.len() != 60000 || w[0] != 1 || w[59999] != 60000) { return 3; }
+    if (x.len() != 60000 || x[0] != 1 || x[59999] != 60000) { return 4; }
+    if (mid - before >= 1024i64) { return 7; }
+    if (after - mid >= 1024i64) { return 8; }
+    return 0;
+}
+`
+
 const byteViewArraySubRangeProgram = `struct Hold { b: [u8] }
 @noinline function mk(n: i32): u8[] {
     let a: u8[] = [];
@@ -297,12 +316,13 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 			})
 		}
 		t.Run(target+"/sub-range-zero-copy", func(t *testing.T) {
-			want := 0
-			if target == "wasm32-wasi" {
-				want = 7
+			if stderr, code := cli.exitOf(t, byteViewSubRangeCopyProgram, target); code != 0 {
+				t.Fatalf("sub-range: exit %d, want 0\n%s", code, stderr)
 			}
-			if stderr, code := cli.exitOf(t, byteViewSubRangeCopyProgram, target); code != want {
-				t.Fatalf("sub-range: exit %d, want %d\n%s", code, want, stderr)
+		})
+		t.Run(target+"/i32-sub-range-zero-copy", func(t *testing.T) {
+			if stderr, code := cli.exitOf(t, wordViewSubRangeCopyProgram, target); code != 0 {
+				t.Fatalf("i32 sub-range: exit %d, want 0\n%s", code, stderr)
 			}
 		})
 		for _, storage := range []struct{ name, value string }{

@@ -1,0 +1,13 @@
+5:7: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+5:11: error[E003]: assignment: expected i32, got string
+6:7: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+6:11: error[E009]: operator "+" requires an integer type, got string
+7:7: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+9:12: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+9:16: error[E003]: assignment: expected i32, got string
+10:9: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+10:13: error[E003]: assignment: expected i32[], got i32
+12:7: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+12:13: error[E047]: literal 300 does not fit in u8
+14:7: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+14:11: error[E003]: assignment: expected f64, got boolean

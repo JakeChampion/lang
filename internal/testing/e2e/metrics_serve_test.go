@@ -46,13 +46,13 @@ function main(): i32 {
     None => {}
   }
   let cfg: serve.Config = serve.Config { ...serve.config(), workers: workers, metrics: metrics.registry().with_counter(hits), metrics_port: port };
-  return serve.supervise(0, cfg, (req: HttpRequest, plat: platform.Host): HttpResponse => {
+  return serve.exit_code(serve.supervise(0, cfg, (req: HttpRequest, plat: platform.Host): HttpResponse => {
     hits.inc();
     if (req.path == "/missing") {
       return http.not_found();
     }
     return http.ok("hi");
-  });
+  }));
 }
 `
 

@@ -2,6 +2,7 @@ import "std/deflate";
 import "std/i64";
 import "std/i32";
 import "std/option";
+import "std/result";
 
 function median(xs: i64[]): i64 {
   let s: i64[] = xs;
@@ -74,7 +75,7 @@ function main(): i32 {
   let argv: string[] = args();
   if (argv.len() >= 5 && argv[1] == "c") {
     let input: u8[] = load(argv[2]);
-    let runs: i32 = argv[3].parse_int().unwrap_or(1);
+    let runs: i32 = i32.parse_i32(argv[3]).unwrap_or(1);
     let times: i64[] = [];
     let stream: u8[] = [];
     let r: i32 = 0;
@@ -96,7 +97,7 @@ function main(): i32 {
     return 0;
   }
   if (argv.len() >= 5 && argv[1] == "d") {
-    let d: i64 = decode_runs(load(argv[2]), load(argv[3]), argv[4].parse_int().unwrap_or(1));
+    let d: i64 = decode_runs(load(argv[2]), load(argv[3]), i32.parse_i32(argv[4]).unwrap_or(1));
     print("decomp_ns=" + d.to_string());
     return 0;
   }
