@@ -1,8 +1,12 @@
-# Re-pinned 2026-10-25 (#13276), `.text` counted the way scripts/perf-bench counts it on
-# main 1aaec0fd plus this change. Main alone already emits x86_64 deflate_encode 7250,
-# http_hello 17393 and deflate_decode 12599, and aarch64 deflate_encode 7851; this change
-# moves deflate_decode to 12626 (x86_64) and 13460 (aarch64), and utf8_ingest_unchecked
-# to 8196 (x86_64) and 8637 (aarch64).
+# Re-pinned 2026-10-25 (#13276), aarch64 `.text` counted the way scripts/perf-bench counts it
+# (indented lines of fern -target arm64-linux) on main 1aaec0fd plus the semunique fix, which
+# main now carries: deflate_decode 13460, deflate_encode 7851, utf8_ingest_unchecked 8637.
+# Re-pinned 2026-10-25 (h3-hello-allocs-2), x86_64 .text rows from a local perf-bench run on
+# b9ca4974a1, the merge of main at 89756b51: deflate_decode 12488 to 12626, deflate_encode
+# 7144 to 7250, http_hello 17206 to 17393, utf8_ingest_validated 8710 to 8803. Main alone
+# reads 12599, 7250, 17393 and 8895 there.
+# Re-pinned 2026-10-25 (#13276): x86_64/utf8_ingest_unchecked.text 8288 to 8196 and
+# utf8_ingest_validated.text 8802 to 8710, from a local perf-bench run on e5f90a40.
 # Re-pinned 2026-10-25 from Perf run 40200803636 (main at 127eb63c), the aarch64 rows
 # #13251 pinned on x86_64 only: deflate_encode.ir -17%, deflate_decode.ir -7.8%,
 # http_hello.text -1.2%, string_find_byte.text -1.5%, and utf8_ingest_unchecked.text
@@ -154,7 +158,7 @@ x86_64/tokenize.text	1104
 x86_64/tokenize.ir	37880086
 x86_64/utf8_ingest_unchecked.text	8196
 x86_64/utf8_ingest_unchecked.ir	2205771
-x86_64/utf8_ingest_validated.text	8802
+x86_64/utf8_ingest_validated.text	8803
 x86_64/utf8_ingest_validated.ir	5297772
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
