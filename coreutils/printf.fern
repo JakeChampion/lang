@@ -6,15 +6,19 @@ import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/ld";
 
+// Like glibc's printf, a failed write is not answered where it happens: `o`
+// keeps it, stream_failed reads it, and close_stdout reports it.
 struct Pf { o: io_buffered.BufWriter, status: i32, werr: boolean, posix: boolean, ldbl: ld.Format }
 
 function emit(p: Pf, s: string): Pf {
-  return Pf { ...p, o: p.o.write_string(s) };
+  p.o.write_string(s);
+  return p;
 }
 
 function emit_byte(p: Pf, b: i32): Pf {
   buf_push_byte(p.o.handle(), b);
-  return Pf { ...p, o: p.o.settle() };
+  p.o.settle();
+  return p;
 }
 
 function emit_range(p: Pf, s: string, lo: i32, hi: i32): Pf {
@@ -24,17 +28,18 @@ function emit_range(p: Pf, s: string, lo: i32, hi: i32): Pf {
   if (lo == 0 && hi == s.len()) {
     return emit(p, s);
   }
-  return Pf { ...p, o: p.o.write_range(s, lo, hi) };
+  p.o.write_range(s, lo, hi);
+  return p;
 }
 
 function diag(p: Pf, msg: string): Pf {
-  let o: io_buffered.BufWriter = p.o.flush();
+  p.o.flush();
   gnu.error(msg);
-  return Pf { ...p, o: o };
+  return p;
 }
 
 function diag_range(p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: string): Pf {
-  let o: io_buffered.BufWriter = p.o.flush();
+  p.o.flush();
   let h: usize = buf_new(prefix.len() + hi - lo + suffix.len());
   buf_push(h, gnu.prog());
   buf_push(h, ": ");
@@ -46,7 +51,7 @@ function diag_range(p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: 
   buf_free(h);
   let w: Writer = stderr();
   w.write_bytes(bytes);
-  return Pf { ...p, o: o };
+  return p;
 }
 
 function close_stdout(p: Pf, code: i32): void {

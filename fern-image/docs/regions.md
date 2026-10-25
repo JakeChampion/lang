@@ -106,3 +106,7 @@ Eight additional cases cover independent RGB/RGBA crops, mixed filters, tiny cac
 They also cover every cancellation poll, retained values, fallback, invalid skipped nodes, malformed source storage, and the 64-node limit.
 Cancellation during row execution or tile copying returns an error and releases the private cache and partial tile.
 The interface provides no hard CPU deadline, physical scratch bound, or production-safety guarantee.
+
+All 100 image TAP cases pass on native Linux, Wasm, and ARM64/QEMU with compiler `2105e9e82250` and zero final live bytes.
+Native and ARM64 runs use heap sanitization. Wasm provides the leak census only.
+The native and Wasm scripts also pass their allocator/cache smoke checks and existing negative probes.

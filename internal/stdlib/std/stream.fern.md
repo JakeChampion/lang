@@ -8,7 +8,7 @@ The `ByteStream` reader stores bytes or reads them from a body source. Its state
 
 ## Contracts
 
-Remaining length, end of input, and faults describe different states. A caller must preserve progress rather than reread from an earlier stream value.
+Remaining length, end of input, and faults describe different states. A stream read from a body source ends with `None` whether the body arrived whole or not; `fault()` then says which, as `Some(StreamFault)` for a body that ended early. A caller must preserve progress rather than reread from an earlier stream value.
 
 ## Module assembly
 
@@ -59,16 +59,16 @@ pub function stream_from_source(src: BodySource): ByteStream {
   return ByteStream { data: empty, pos: 0, source: Some(src) };
 }
 
-pub function (s: ByteStream) fault(): i32 {
+pub function (s: ByteStream) fault(): Option[StreamFault] {
   match (s.source) {
     Some(src) => {
       return src.fault.get();
     },
     None => {
-      return 0;
+      return None;
     }
   }
-  return 0;
+  return None;
 }
 ```
 
