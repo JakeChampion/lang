@@ -1,35 +1,48 @@
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
-    let r: i32 = 0;
-    if (at(regex.regex_find("cat", "the cat sat"), 4)) { r = r + 1; }
-    match (regex.regex_find("dog", "the cat sat")) {
-        Some(_) => {},
-        None => { r = r + 2; }
+  let r: i32 = 0;
+  if (at({ let __checked_regex_5: regex.Regex = match (regex.compile("cat")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.index_of("the cat sat") }, 4)) {  // start index
+    r = r + 1;
+  }
+  match ({ let __checked_regex_4: regex.Regex = match (regex.compile("dog")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.index_of("the cat sat") }) {
+    Some(_) => {},
+    None => {
+      // no match → None
+      r = r + 2;
     }
-    if (at(regex.regex_find("[0-9]+", "abc42"), 3)) { r = r + 4; }
-    if (at(regex.regex_find("^the", "the cat"), 0)) { r = r + 8; }
+  }
+  if (at({ let __checked_regex_3: regex.Regex = match (regex.compile("[0-9]+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.index_of("abc42") }, 3)) {  // leftmost digit run
+    r = r + 4;
+  }
+  if (at({ let __checked_regex_2: regex.Regex = match (regex.compile("^the")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.index_of("the cat") }, 0)) {  // anchored at 0
+    r = r + 8;
+  }
 
-    if let Some(m) = regex.regex_search("(a|b)+", "xxabbay") {
-        r = r + 16;
-        if (m.start == 2) { r = r + 32; }
-        if (m.end == 6) { r = r + 64; }
+  let __checked_regex_1: regex.Regex = match (regex.compile("(a|b)+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } };
+  if let Some(m) = __checked_regex_1.find("xxabbay") {  // greedy span
+    r = r + 16;
+    if (m.start == 2) {
+      r = r + 32;
     }
+    if (m.end == 6) {  // "abba" → [2,6)
+      r = r + 64;
+    }
+  }
 
-    match (regex.regex_search("zzz", "abc")) {
-        Some(_) => {},
-        None => { r = r + 128; }
+  match ({ let __checked_regex_0: regex.Regex = match (regex.compile("zzz")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.find("abc") }) {
+    Some(_) => {},
+    None => {
+      r = r + 128;
     }
-    return r;
+  }
+  return r;
 }
 
 function at(o: Option[i32], want: i32): boolean {
-    if let Some(v) = o {
-        return v == want;
-    }
-    return false;
+  if let Some(v) = o {
+    return v == want;
+  }
+  return false;
 }

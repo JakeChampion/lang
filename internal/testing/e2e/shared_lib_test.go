@@ -897,7 +897,8 @@ func TestStdlibInSharedLib(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	src := `import "std/string";
+	src := `import "std/unicode";
+import "std/string";
 import "std/base64";
 import "std/codec";
 import "std/hex";

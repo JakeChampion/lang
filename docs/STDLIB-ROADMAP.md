@@ -22,13 +22,13 @@ What Fern's prelude / built-ins cover today, as a baseline:
 - **strings**: `is_empty`, `to_string`, `repeat`, `starts_with`,
   `ends_with`, `contains`, `index_of`, `trim`, `bytes` /
   `as_bytes`, `to_lower` / `to_upper`, `split`, `lines`,
-  `replace`, `parse_int`, `parse_float`
+  `replace`, `i32.parse_i32`, `f64.parse_f64`
 - **arrays**: `push` (generic), and on `string[]`: `join`,
   `index_of`, `contains`, `reverse`. `sort_i32_asc / desc`
   for `i32[]`.
 - **numbers**: `int_to_string`, method-style `to_string` for
   `i32` / `u32` / `i64` / `u64` / `f32` / `f64`, plus
-  `parse_int`, `parse_float`.
+  `i32.parse_i32`, `f64.parse_f64`.
 - **bytes**: `is_digit`, `is_alpha`, `is_alnum`, `is_ascii`,
   `is_ascii_white_space`, `is_hex_digit`.
 - **encoding**: `encode` / `_decode`, `encode` /
@@ -352,8 +352,9 @@ medium-effort; convention alone is small.
 
 ### 14. Integer parsing / formatting in arbitrary base · small · ☑
 
-**Surface**: `parse_int_radix(s, base) Result[i64, string]`,
-`int_to_string_radix(n, base) string`.
+**Surface**: Numeric modules provide `parse_i32_radix`, `parse_i64_radix`,
+`parse_u32_radix`, and `parse_u64_radix`. Each returns `Result[T, ParseNumberError]`.
+Every integer width provides `to_string_radix(radix)` and the same formatting helpers.
 
 **Why**: Hex / binary / octal parsing currently needs hand-
 rolled loops. Tiny code.
@@ -736,8 +737,8 @@ think they're free additions to make.
 - **`is_valid_http_status(code)`**: `[100, 599]` per RFC
   9110.
 - **String numeric predicates**: `s.is_int()` /
-  `s.is_float()`. Don't validate i32 overflow — use the
-  parse variants for that.
+  `s.is_float()` agree with `i32.parse_i32(s)` / `f64.parse_f64(s)`.
+  Range errors make the predicate false.
 - **`s.wrap(prefix, suffix)`**: thin concat helper.
 - **String[] take / drop**: bounds-clamped prefix /
   suffix selection on string arrays.
@@ -745,9 +746,8 @@ think they're free additions to make.
   into a 24-bit i32. Pairs with `to_rgb_hex` for round-trip.
 - **Byte printability**: `(b).is_ascii_printable()` (32..126),
   `(b).is_ascii_control()` (0..31 or 127).
-- **Radix parse sugar**: `s.parse_hex_int()` /
-  `s.parse_bin_int()`. Companion to the generic
-  `parse_int_radix`.
+- **Radix parsing**: Numeric modules provide typed radix parsers.
+  Use radix 16 for hexadecimal and radix 2 for binary.
 - **`(n: i32).is_in_range(lo, hi)`**: half-open bucket check.
 - **`(b: i32).matches_any(bytes)`**: scan check; saves the
   `b == x || b == y || ...` chain.

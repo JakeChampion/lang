@@ -1,0 +1,82 @@
+import "std/json" as js;
+import "std/string";
+
+@derive(js.FromJson)
+struct Box[T] { value: T }
+
+@derive(js.FromJson)
+struct Leaf { value: i32 }
+
+@derive(js.FromJson)
+struct Record { r: i32, value: i32, nested: Leaf }
+
+@derive(js.FromJson)
+enum Message { NoValue, Value(i32), Pair(i32, string) }
+
+function main(): i32 {
+  let result: Result[Box[i32], js.JsonError] = Box.from_json("{\"value\":1}");
+  let Ok(box) = result else {
+    return 1;
+  };
+  if (box.value != 1) {
+    return 2;
+  }
+
+  let Ok(record) = Record.from_json("{\"r\":2,\"value\":3,\"nested\":{\"value\":4}}") else {
+    return 3;
+  };
+  if (record.r != 2 || record.value != 3 || record.nested.value != 4) {
+    return 4;
+  }
+
+  let Ok(empty) = Message.from_json("\"NoValue\"") else {
+    return 5;
+  };
+  match (empty) {
+    Message.NoValue => {},
+    _ => {
+      return 6;
+    }
+  }
+  let Ok(value) = Message.from_json("{\"Value\":7}") else {
+    return 7;
+  };
+  match (value) {
+    Message.Value(n) => {
+      if (n != 7) {
+        return 8;
+      }
+    },
+    _ => {
+      return 9;
+    }
+  }
+  let Ok(pair) = Message.from_json("{\"Pair\":[8,\"text\"]}") else {
+    return 10;
+  };
+  match (pair) {
+    Message.Pair(n, text) => {
+      if (n != 8 || text != "text") {
+        return 11;
+      }
+    },
+    _ => {
+      return 12;
+    }
+  }
+
+  let invalid: Result[Box[i32], js.JsonError] = Box.from_json("{\"value\":\"bad\"}");
+  let Err(why) = invalid else {
+    return 13;
+  };
+  if (!why.to_string().starts_with("field \"value\":")) {
+    return 14;
+  }
+  let Err(unknown) = Message.from_json("\"Missing\"") else {
+    return 15;
+  };
+  if (unknown.to_string() != "unknown variant \"Missing\"") {
+    return 16;
+  }
+  return 0;
+}

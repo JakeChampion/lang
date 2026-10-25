@@ -1,0 +1,91 @@
+import "core/cmp";
+import "std/num";
+import "std/array";
+
+function lawful[T: cmp.Eq + cmp.Ord + cmp.Hash + cmp.Display](a: T, b: T, text: string): boolean {
+  return a.eq(b) && a.cmp(b) == 0 && a.hash() == b.hash() && a.to_string() == text;
+}
+
+function arithmetic[T: num.Num + num.Zero + num.One](a: T, b: T): T {
+  return a.add(b).sub(T.zero()).mul(T.one()).div(T.one());
+}
+
+function main(): i32 {
+  if (!lawful(42 as i32, 42 as i32, "42")) {
+    return 1;
+  }
+  if (!lawful(42 as i64, 42 as i64, "42")) {
+    return 2;
+  }
+  if (!lawful(42 as u8, 42 as u8, "42")) {
+    return 3;
+  }
+  if (!lawful(42 as u32, 42 as u32, "42")) {
+    return 4;
+  }
+  if (!lawful(42 as u64, 42 as u64, "42")) {
+    return 5;
+  }
+  if (!lawful(42 as usize, 42 as usize, "42")) {
+    return 6;
+  }
+  if (!lawful(1.5 as f32, 1.5 as f32, "1.5")) {
+    return 7;
+  }
+  if (!lawful(1.25 as f64, 1.25 as f64, "1.25")) {
+    return 8;
+  }
+  if (!lawful(true, true, "true")) {
+    return 9;
+  }
+  if (!lawful('🦊', '🦊', "🦊")) {
+    return 10;
+  }
+  if (!lawful("hello", "hello", "hello")) {
+    return 11;
+  }
+  if (false.cmp(true) != -1 || true.cmp(false) != 1) {
+    return 12;
+  }
+  let cs: char[] = cmp.sort(['🦊', 'a', 'é']);
+  if (cs[0] != 'a' || cs[1] != 'é' || cs[2] != '🦊' || !cs.contains('é')) {
+    return 13;
+  }
+  let ns: usize[] = cmp.sort([3 as usize, 1 as usize, 2 as usize]);
+  if (ns[0] != 1 as usize || !ns.contains(2 as usize)) {
+    return 14;
+  }
+  let bs: u8[] = [250, 10];
+  let sizes: usize[] = [40, 2];
+  if (bs.sum() != 4 as u8 || sizes.sum() != 42 as usize) {
+    return 15;
+  }
+  if (arithmetic(250 as u8, 10 as u8) != 4 as u8) {
+    return 16;
+  }
+  if (arithmetic(40 as usize, 2 as usize) != 42 as usize) {
+    return 17;
+  }
+  let z64: f64 = 0.0;
+  let nz64: f64 = -1.0 * z64;
+  let n64: f64 = z64 / z64;
+  let z32: f32 = 0.0;
+  let nz32: f32 = -1.0 * z32;
+  let n32: f32 = z32 / z32;
+  if (!z64.eq(nz64) || z64.hash() != nz64.hash() || !n64.eq(-n64) || n64.hash() != (-n64).hash()) {
+    return 18;
+  }
+  if (!z32.eq(nz32) || z32.hash() != nz32.hash() || !n32.eq(-n32) || n32.hash() != (-n32).hash()) {
+    return 19;
+  }
+  let payload64: f64 = f64_from_bits(0x7ff0000000000001);
+  let payload32: f32 = f32_from_bits(0x7f800001);
+  if (!n64.eq(payload64) || n64.hash() != payload64.hash()) {
+    return 20;
+  }
+  if (!n32.eq(payload32) || n32.hash() != payload32.hash()) {
+    return 21;
+  }
+  print("primitive protocols ok");
+  return 0;
+}

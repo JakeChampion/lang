@@ -1,3 +1,9 @@
+// The server scripts/net-autobahn runs the Autobahn suite against: the
+// echo at /ws with compression on and a 16 MiB message, which the
+// suite's largest cases send; /ok for the readiness probe. PORT names
+// its port, 9001 by default.
+import "std/i32";
+import "std/result";
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -26,7 +32,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function port(): i32 {
   match (env("PORT")) {
     Some(p) => {
-      return int.parse_int_radix(p, 10).unwrap_or(9001);
+      return i32.parse_i32_radix(p, 10).unwrap_or(9001);
     },
     None => {
       return 9001;

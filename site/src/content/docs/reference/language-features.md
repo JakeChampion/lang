@@ -251,6 +251,27 @@ exactly why its bindings stay live there. So exhaustiveness and
 refutability are decided in a single place, and any pattern form the
 language gains reaches every binding site at once.
 
+## Constructors inside payload patterns
+
+A bare name in a payload position binds the payload. Its capitalization does not make it a constructor. Use a qualified name to match a constructor without a payload. In this example, `Some(Color.Red())` selects `Red`. `Some(color)` matches every other `Some` value and binds its payload to `color`.
+
+```fern
+enum Color { Red, Blue }
+
+function color_code(value: Option[Color]): i32 {
+  return match (value) { Some(Color.Red()) => 1, Some(color) => 2, None => 0 };
+}
+
+function main(): i32 {
+  assert(color_code(Some(Color.Red)) == 1);
+  assert(color_code(Some(Color.Blue)) == 2);
+  assert(color_code(None) == 0);
+  return 0;
+}
+```
+
+`Some(color)` without a guard matches every `Some` value. An arm for `Some(Color.Blue())` after it is unreachable and reports E028. Put the narrower constructor arm first.
+
 ## Destructuring parameters
 
 A parameter can be a pattern instead of a name, annotated with the type

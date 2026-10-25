@@ -1,3 +1,4 @@
+import "std/utf8";
 import "../ssadecrementtext" as text;
 import "std/string";
 
@@ -72,7 +73,7 @@ function entries(s: string, entry: string, local: string): void {
 
 function control_bytes(s: string, entry: string): void {
   for code in [0, 1, 8, 11, 12, 14, 31, 127] {
-    let byte = string.string_from_codepoint(code as char);
+    let byte = utf8.encode(code as char);
     check(byte + "\n" + s, entry, false);
     check("# comment " + byte + "\n" + s, entry, false);
   }

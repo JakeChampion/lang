@@ -52,7 +52,7 @@ function __tbl_pad(s: string, width: i32): string {
     out = out.append(s[i] as u8);
     i = i + 1;
   }
-  let pad: i32 = width - utf8.codepoint_count(s);
+  let pad: i32 = width - s.codepoint_count();
   let p: i32 = 0;
   while (p < pad) {
     out = out.append(32 as u8);
@@ -80,7 +80,7 @@ function __tbl_widths(rows: string[][]): i32[] {
   while (r < rows.len()) {
     c = 0;
     while (c < rows[r].len()) {
-      let w: i32 = utf8.codepoint_count(rows[r][c]);
+      let w: i32 = rows[r][c].codepoint_count();
       if (w > widths[c]) {
         widths = widths.with(c, w);
       }

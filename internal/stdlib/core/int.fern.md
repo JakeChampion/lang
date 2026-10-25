@@ -8,16 +8,17 @@ Decimal and radix conversion share digit helpers. The conversion code separates 
 
 ## Contracts
 
-`parse_int_radix` returns an option for invalid digits or an unsupported value. A radix determines the interpretation of each digit.
+Typed numeric parsers belong to the scalar modules. This module contains shared integer format kernels.
 
 ## Executable example
 
 ```fern test name=core-int-example
 import "core/int";
+import "std/i32";
 
 function main(): i32 {
   if (int.int_to_string(42) != "42") { return 1; }
-  match (int.parse_int_radix("2a", 16)) { Some(n) => { if (n != 42) { return 2; } }, None => { return 3; } }
+  match (i32.parse_i32_radix("2a", 16)) { Ok(n) => { if (n != 42) { return 2; } }, Err(_) => { return 3; } }
   return 0;
 }
 ```
@@ -36,9 +37,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function int_to_string(n: i32): string>>
 
-<<5 function __radix_value(s: string, from: i32, base: i32, neg: boolean): Option[i32]>>
 
 <<6 pub function int_to_string_radix(n: i32, base: i32): string>>
+<<numeric parser and format additions>>
 ```
 
 ### `module introduction`
@@ -141,7 +142,7 @@ pub function int_to_string(n: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function __int_to_string_u64(mag: i64, neg: i32): string {
+pub(package) function __int_to_string_u64(mag: i64, neg: i32): string {
   let m: u64 = mag as u64;
   let ndig: i32 = 1;
   let probe: u64 = m;
@@ -181,7 +182,7 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function __radix_digit(c: i32): i32 {
+pub(package) function __radix_digit(c: i32): i32 {
   if (c >= 48 && c <= 57) {
     return c as i32 - 48;
   }
@@ -194,105 +195,138 @@ pub function __radix_digit(c: i32): i32 {
   return 0 - 1;
 }
 
-pub function __radix_char(d: i32): i32 {
+pub(package) function __radix_char(d: i32): i32 {
   if (d < 10) {
     return d + 48;
   }
   return d + 87;
 }
-
-pub function parse_int_radix(s: string, base: i32): Option[i32] {
-  if (base < 2 || base > 36) {
-    return None;
-  }
-  let n: i32 = s.len();
-  if (n == 0) {
-    return None;
-  }
-  let neg: boolean = false;
-  let i: i32 = 0;
-  if (s[0] == 45) {
-    neg = true;
-    i = 1;
-  } else if (s[0] == 43) {
-    i = 1;
-  }
-  if (i >= n) {
-    return None;
-  }
-  return __radix_value(s, i, base, neg);
-}
 ```
 
-### `5 function __radix_value(s: string, from: i32, base: i32, neg: boolean): Option[i32]`
-
-```fern
-<<5 function __radix_value(s: string, from: i32, base: i32, neg: boolean): Option[i32]>>=
-function __radix_value(s: string, from: i32, base: i32, neg: boolean): Option[i32] {
-  let limit: i64 = 2147483647 as i64;
-  if (neg) {
-    limit = limit + 1 as i64;
-  }
-  let v: i64 = 0 as i64;
-  let i: i32 = from;
-  while (i < s.len()) {
-    let d: i32 = __radix_digit(s[i] as i32);
-    if (d < 0 || d >= base) {
-      return None;
-    }
-    v = v * (base as i64) + d as i64;
-    if (v > limit) {
-      return None;
-    }
-    i = i + 1;
-  }
-  if (neg) {
-    v = 0 as i64 - v;
-  }
-  return Some(v as i32);
-}
-```
 
 ### `6 pub function int_to_string_radix(n: i32, base: i32): string`
 
 ```fern
 <<6 pub function int_to_string_radix(n: i32, base: i32): string>>=
 pub function int_to_string_radix(n: i32, base: i32): string {
+  if (base == 10) {
+    return int_to_string(n);
+  }
+  return _format_integer(_magnitude(n as i64), n < 0, base);
+}
+```
+
+### Numeric parsers and formats
+
+```fern
+<<numeric parser and format additions>>=
+pub(package) function _format_integer(magnitude: u64, negative: boolean, base: i32): string {
   if (base < 2 || base > 36) {
     return "";
   }
-  if (n == 0) {
+  if (base == 10) {
+    let sign: i32 = 0;
+    if (negative) {
+      sign = 1;
+    }
+    return __int_to_string_u64(magnitude as i64, sign);
+  }
+  if (magnitude == 0 as u64) {
     return "0";
   }
-  let neg: boolean = n < 0;
-  let mag: i64 = n as i64;
-  if (neg) {
-    mag = 0 - mag;
+  let mag: u64 = magnitude;
+  let radix: u64 = base as u64;
+  let digits: u8[] = __alloc_u8(65);
+  let count: i32 = 0;
+  while (mag > 0 as u64) {
+    digits = digits.with(count, __radix_char((mag % radix) as i32) as u8);
+    count = count + 1;
+    mag = mag / radix;
   }
-  let digits: u8[] = __alloc_u8(33);
-  let k: i32 = 0;
-  let b64: i64 = base as i64;
-  while (mag > 0 as i64) {
-    let d: i32 = (mag % b64) as i32;
-    digits = digits.with(k, __radix_char(d) as u8);
-    k = k + 1;
-    mag = mag / b64;
+  let sign_bytes: i32 = 0;
+  if (negative) {
+    sign_bytes = 1;
   }
-  let out_len: i32 = k;
-  if (neg) {
-    out_len = k + 1;
-  }
-  let buf: u8[] = __alloc_u8(out_len);
-  let bi: i32 = 0;
-  if (neg) {
+  let buf: u8[] = __alloc_u8(count + sign_bytes);
+  if (negative) {
     buf = buf.with(0, 45 as u8);
-    bi = 1;
   }
-  let j: i32 = k - 1;
-  while (j >= 0) {
-    buf = buf.with(bi, digits[j]);
-    bi = bi + 1;
-    j = j - 1;
+  let i: i32 = 0;
+  while (i < count) {
+    buf = buf.with(i + sign_bytes, digits[count - 1 - i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
+}
+
+pub(package) function _group_integer(text: string, separator: string): string {
+  let start: i32 = 0;
+  if (text.len() > 0 && text[0] == 45) {
+    start = 1;
+  }
+  let digits: i32 = text.len() - start;
+  if (digits <= 3 || separator.len() == 0) {
+    return text;
+  }
+  let groups: i32 = (digits - 1) / 3;
+  let total: i64 = text.len() as i64 + groups as i64 * (separator.len() as i64);
+  if (total > 2147483647 as i64) {
+    exit(1);
+    return "";
+  }
+  let buf: u8[] = __alloc_u8(total as i32);
+  let pos: i32 = 0;
+  if (start == 1) {
+    buf = buf.with(0, 45 as u8);
+    pos = 1;
+  }
+  let i: i32 = start;
+  while (i < text.len()) {
+    if (i > start && (text.len() - i) % 3 == 0) {
+      let j: i32 = 0;
+      while (j < separator.len()) {
+        buf = buf.with(pos, separator[j]);
+        pos = pos + 1;
+        j = j + 1;
+      }
+    }
+    buf = buf.with(pos, text[i]);
+    pos = pos + 1;
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
+}
+
+pub(package) function _magnitude(n: i64): u64 {
+  let raw: u64 = n as u64;
+  if (n < 0 as i64) {
+    return 0 as u64 - raw;
+  }
+  return raw;
+}
+
+pub(package) function _pad_integer(text: string, width: i32): string {
+  let n: i32 = text.len();
+  if (n >= width) {
+    return text;
+  }
+  let start: i32 = 0;
+  let buf: u8[] = __alloc_u8(width);
+  if (n > 0 && text[0] == 45) {
+    start = 1;
+    buf = buf.with(0, 45 as u8);
+  }
+  let gap: i32 = width - n;
+  let i: i32 = start;
+  while (i < start + gap) {
+    buf = buf.with(i, 48 as u8);
+    i = i + 1;
+  }
+  let j: i32 = start;
+  while (j < n) {
+    buf = buf.with(i, text[j]);
+    i = i + 1;
+    j = j + 1;
   }
   return string_from_bytes_unchecked(buf);
 }

@@ -92,8 +92,8 @@ function lower_ascii(s: string): string {
 pub struct Message { method: string, id: string, params: json.JsonValue }
 
 pub function parse_message(body: string): Option[Message] {
-  match (json.json_parse(body)) {
-    Some(v) => {
+  match (json.parse(body)) {
+    Ok(v) => {
       let method: string = get_string(v, "method");
       if (method.len() == 0) {
         return None;
@@ -107,7 +107,7 @@ pub function parse_message(body: string): Option[Message] {
       }
       return Some(Message { method: method, id: id, params: get_value(v, "params") });
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }

@@ -1,3 +1,4 @@
+import "std/unicode";
 import "std/test";
 import "std/string";
 
@@ -14,11 +15,11 @@ function test_is_float(): test.TestOutcome {
 }
 
 function test_is_numeric(): test.TestOutcome {
-  return test.assert_true("12345".is_numeric() && !"12a".is_numeric() && !"".is_numeric());
+  return test.assert_true("12345".is_digits() && !"12a".is_digits() && !"".is_digits());
 }
 
 function test_is_alpha_only(): test.TestOutcome {
-  return test.assert_true("abcDEF".is_alpha_only() && !"ab1".is_alpha_only() && !"".is_alpha_only());
+  return test.assert_true("abcDEF".is_letters() && !"ab1".is_letters() && !"".is_letters());
 }
 
 function test_is_blank(): test.TestOutcome {
@@ -70,7 +71,7 @@ function test_kebab_case_caps(): test.TestOutcome {
 }
 
 function test_word_count(): test.TestOutcome {
-  let n: i32 = "  hello   world  ".word_count();
+  let n: i32 = "  hello   world  ".whitespace_word_count();
   return test.assert_eq(n, 2);
 }
 
@@ -114,8 +115,8 @@ function main(): i32 {
   let r: test.TestRunner = test.test_new("std/string classify + transform");
   r = r.it("is_int", test_is_int);
   r = r.it("is_float", test_is_float);
-  r = r.it("is_numeric", test_is_numeric);
-  r = r.it("is_alpha_only", test_is_alpha_only);
+  r = r.it("is_digits", test_is_numeric);
+  r = r.it("is_letters", test_is_alpha_only);
   r = r.it("is_blank", test_is_blank);
   r = r.it("is_email_like", test_is_email_like);
   r = r.it("is_url_like", test_is_url_like);

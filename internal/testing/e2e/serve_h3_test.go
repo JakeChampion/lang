@@ -77,7 +77,9 @@ func newServeH3WorldWithConfig(t *testing.T, config string) *serveH3World {
 	return w
 }
 
-const serveH3Source = `import "std/http";
+const serveH3Source = `import "std/i32";
+import "std/result";
+import "std/http";
 import "std/headers";
 import "std/platform";
 import "std/option";
@@ -129,7 +131,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
     return http.chunks_with_trailers(200, part, parts_trailers);
   }
   if (req.path.starts_with("/stream?n=")) {
-    let n: i32 = req.path.drop(10).parse_int().unwrap_or(0);
+    let n: i32 = i32.parse_i32(req.path.drop(10)).unwrap_or(0);
     return http.chunks(200, (i: i32): Option[u8[]] => piece(n, i));
   }
   return http.ok("hello " + req.path);
@@ -149,7 +151,10 @@ function main(): i32 {
 }
 `
 
-const serveH3ClientSource = `import "std/net";
+// The client: ten requests at once on one HTTP/3 connection, each answer
+// printed in the order asked once all are in, then a close.
+const serveH3ClientSource = `import "std/i32";
+import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
 import "std/http/h3q";
@@ -245,7 +250,7 @@ function main(): i32 {
     return 2;
   };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
-  let Some(upload) = argv[3].parse_int() else {
+  let Ok(upload) = i32.parse_i32(argv[3]) else {
     return 2;
   };
   let reqs: HttpRequest[] = [request("GET", "/hello", []), request("POST", "/upload", __alloc_u8(upload)), request("GET", "/slow", []), request("GET", "/chunks", []), request("GET", "/stream?n=" + argv[4], []), request("HEAD", "/hello", []), request("HEAD", "/chunks", []), request("HEAD", "/stream?n=2", []), request("GET", "/no-content-chunks", []), request("GET", "/not-modified-chunks", [])];

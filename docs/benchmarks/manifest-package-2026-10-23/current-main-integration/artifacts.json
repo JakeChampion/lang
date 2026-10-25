@@ -1,0 +1,271 @@
+{
+  "source_commit": "c3bfb4eb98787ace2a720ca97f273e38d7a91cd8",
+  "dependency_base": "b15d4e7e10ddaec58bba62c4d3d8d8c41c06e632",
+  "source_sha256": "fb249360192670ecf593694ff5c4f33cf4b1605f8c02668679abe7572f6ec548",
+  "native_sha256": "76e5bda0e8ad3330d4f52beb3a0f348612bb198775bc34e348c71ac7eb0492bf",
+  "tests": [
+    {
+      "file": "go-lsp-followup.jsonl",
+      "runs": 2440,
+      "packages": 4,
+      "skips": 0
+    },
+    {
+      "file": "native-lsp-followup.jsonl",
+      "runs": 50,
+      "packages": 1,
+      "skips": 0
+    },
+    {
+      "file": "private-float-table-final.jsonl",
+      "runs": 1,
+      "packages": 1,
+      "skips": 0
+    }
+  ],
+  "matrices": [
+    {
+      "file": "committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    }
+  ],
+  "shipped_commands": 5,
+  "trace_events": 434,
+  "package_declarations": {
+    "core/int": 3,
+    "core/map": 48,
+    "std/string": 2,
+    "std/f64": 3,
+    "std/io_buffered": 5,
+    "std/json": 13,
+    "std/pvec": 1
+  },
+  "binaries": {
+    "/workspace/scratch/lang-manifest-package/current-main-integration/oracle-lsp-followup": {
+      "bytes": 27834341,
+      "sha256": "1343e84b1928ea80646dd77c3dd53f3bc30207077a51d811ab80d80ead72ae04"
+    },
+    "/workspace/scratch/lang-manifest-package/current-main-integration/shipped-fern-final": {
+      "bytes": 20713168,
+      "sha256": "62c5ba78f23418d825a0e8beef9a784bd93a41b31d1d57a6216e4187f35714c1"
+    },
+    "/workspace/scratch/lang-manifest-package/current-main-integration/public-helpers-rctrace-final": {
+      "bytes": 84592,
+      "sha256": "1c93a0bc8579b31807ee88ab6c5ad44636e09021193c8997e5ef535350f03f18"
+    },
+    "/workspace/scratch/lang-manifest-package/current-main-integration/bootstrap-lsp-followup/stage1": {
+      "bytes": 14461808,
+      "sha256": "ecfaf2079fe462f510b7ccf5a36aec112bbec4ae1a7529f48481ffdf20651d3d"
+    },
+    "/workspace/scratch/lang-manifest-package/current-main-integration/bootstrap-lsp-followup/stage2": {
+      "bytes": 14461808,
+      "sha256": "76e5bda0e8ad3330d4f52beb3a0f348612bb198775bc34e348c71ac7eb0492bf"
+    },
+    "/workspace/scratch/lang-manifest-package/current-main-integration/bootstrap-lsp-followup/stage3": {
+      "bytes": 14461808,
+      "sha256": "76e5bda0e8ad3330d4f52beb3a0f348612bb198775bc34e348c71ac7eb0492bf"
+    }
+  },
+  "inputs": 46,
+  "patch_excludes": [
+    "docs/benchmarks"
+  ],
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78865,
+      "sha256": "9b109f2ee967a73f1a130c3d6dba1fb467da59df88b8e9723264ed14f266178a"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 25355,
+      "sha256": "a2b99608be17829fa2a1138d87a1202b50c1abd484d6e9b28c8f59d693f633ff"
+    },
+    {
+      "path": "bootstrap-lsp-followup-bootstrap.json.gz",
+      "bytes": 393,
+      "sha256": "af6f851d6f492a6c77f33211415c4818a6ba3e48432076be11ac20eadc4ee125"
+    },
+    {
+      "path": "bootstrap-lsp-followup-stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-lsp-followup-stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-lsp-followup-stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "go-lsp-followup.jsonl.gz",
+      "bytes": 146750,
+      "sha256": "3943a594b9fdb4b23a8a20ad013d34a426764a0998ab69ea392ca1e0909ca67c"
+    },
+    {
+      "path": "native-lsp-followup.jsonl.gz",
+      "bytes": 3758,
+      "sha256": "1ef9f56f5d499212bd40160457d1d3f75971f9ba92ff71e101977a01b5618b7d"
+    },
+    {
+      "path": "private-float-table-final.jsonl.gz",
+      "bytes": 327,
+      "sha256": "515b0fc229cbae7f239f1202c97088b9df59e4c764674901b89fb2b975259d6a"
+    },
+    {
+      "path": "committed-matrix-final.py.gz",
+      "bytes": 1477,
+      "sha256": "638fd5a9f3978943bb7fafdbc9d5eaaca325ca83d8b84d328ba226cab7d0ff29"
+    },
+    {
+      "path": "committed-matrix-final-results.json.gz",
+      "bytes": 4464,
+      "sha256": "d3777f7214fe55ed5a35c89a86a3993111848f69e4ca8273736492345988fe7b"
+    },
+    {
+      "path": "committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-project-matrix-final.py.gz",
+      "bytes": 1407,
+      "sha256": "8036dfcaec951186be514f913a54de406613d7b17e2e65b6c7a922bcb20b08a9"
+    },
+    {
+      "path": "package-project-matrix-final-results.json.gz",
+      "bytes": 1184,
+      "sha256": "74b75b30a194899e7643c2247266b46ed99336e36a00102062d02cfee0b44dcf"
+    },
+    {
+      "path": "package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "reexport-matrix-final.py.gz",
+      "bytes": 1462,
+      "sha256": "ca681d44aceca5e034de0085a4791e948d9b9f47a87e01b3d350db94f7cf08ae"
+    },
+    {
+      "path": "reexport-matrix-final-results.json.gz",
+      "bytes": 2195,
+      "sha256": "7dcd481a06ed948d4028da3c24927a6ee3cb05d154f4d6b08dff4aa92ddddb22"
+    },
+    {
+      "path": "reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    },
+    {
+      "path": "shipped-and-trace-final.py.gz",
+      "bytes": 1275,
+      "sha256": "1a605c526203b15fd622fda2717b2e12b6cf65da89225f4a3f5a1a31e1ac19c5"
+    },
+    {
+      "path": "shipped-final-results.json.gz",
+      "bytes": 624,
+      "sha256": "161b9cbc77a9e568826844d351f6e714f96703fd2ad87e0e97756ae3a1970243"
+    },
+    {
+      "path": "trace-final-results.json.gz",
+      "bytes": 422,
+      "sha256": "b8c883b227425e1b61009d2b138781ea28ba7bf635828ac9b1fc0b1bbc85e476"
+    },
+    {
+      "path": "trace-final.log.gz",
+      "bytes": 2218,
+      "sha256": "e98cabf1f55b81e84be2ed44c3663ab2ae19f74c588fda02a26b3d142383a5f5"
+    },
+    {
+      "path": "shipped-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "final-driver-sizes.txt.gz",
+      "bytes": 163,
+      "sha256": "6aeb691c20dac2754200b29d9faa725bf29c526c85bc332920059292a1379ffc"
+    },
+    {
+      "path": "final-driver-builds.json.gz",
+      "bytes": 1040,
+      "sha256": "5a274794d2c667d05eac840c632fdf559b83bbcc242c14d8ad7a98d3179b377b"
+    },
+    {
+      "path": "final-driver-gate.log.gz",
+      "bytes": 352,
+      "sha256": "3ecd3cbe28e139671c30dea363ac0e5888440c81bf20d2c269b4fb322d423a27"
+    },
+    {
+      "path": "check-sizes-final.py.gz",
+      "bytes": 906,
+      "sha256": "ae97774a38329f3b1c39404e4a15531e278dbce3cbf069b69b5bd2f5058a4915"
+    },
+    {
+      "path": "sizes-final.log.gz",
+      "bytes": 179,
+      "sha256": "e0285945dc6a5751c8247470120fcf7ff2a3d4ab007bef2dd909a89589d93fcf"
+    },
+    {
+      "path": "format-final.json.gz",
+      "bytes": 81,
+      "sha256": "c8b81ee773e65e6da338f19577449589971bbcd7b21d99d88edcec22f276e190"
+    },
+    {
+      "path": "format-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "oracle-lsp-followup-version.txt.gz",
+      "bytes": 389,
+      "sha256": "beafaf54913321862c508f0b11c3b31c0d3abaee6861418cd82a5ec58f42693a"
+    },
+    {
+      "path": "literate-library-identity.json.gz",
+      "bytes": 1245,
+      "sha256": "940bcdb03a0c2b520d209330a384f16d6f5143c8693a55200f7eb8ff1a716727"
+    },
+    {
+      "path": "record-final-proofs.py.gz",
+      "bytes": 2469,
+      "sha256": "967ac02becca2439568934c92f3ac53f2fc7f85b942910fc7ea569e2519749c3"
+    },
+    {
+      "path": "matrix-inputs.tar.gz",
+      "bytes": 3721,
+      "sha256": "748bdbd9e986177854015ee4cda0eabf8a6223d91cc9d5b653996340bcec4a9c"
+    },
+    {
+      "path": "docs-ste-final.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    }
+  ]
+}

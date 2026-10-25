@@ -1,0 +1,326 @@
+{
+  "source_commit": "489278fceebe29602589bddd221b4c8ae260ed2c",
+  "base": "1a85a71b03e5d800e155d4b43ac4fd54084678cf",
+  "native_sha256": "b72975f4d099ebec5b5354e0e48c0dabfe34c06e066d402085b63d437fd39a96",
+  "source_sha256": "5d5a8fa0bff7e7ecdea96b57ac8524d14df43686b2b14cae5a4e0d001c8d7043",
+  "tests": [
+    {
+      "file": "/workspace/scratch/lang-manifest-package/void-lambda-integration/go-regressions.jsonl",
+      "runs": 2443,
+      "packages": 4,
+      "skips": 0,
+      "source_commit": "195acfc467ca8a930ca08856a398dd820cd2b97e"
+    },
+    {
+      "file": "/workspace/scratch/lang-manifest-package/visibility-final-integration/native-focused.jsonl",
+      "runs": 50,
+      "packages": 1,
+      "skips": 0,
+      "source_commit": "489278fceebe29602589bddd221b4c8ae260ed2c"
+    },
+    {
+      "file": "/workspace/scratch/lang-manifest-package/visibility-final-integration/private-float-table-correct-package.jsonl",
+      "runs": 1,
+      "packages": 1,
+      "skips": 0,
+      "source_commit": "489278fceebe29602589bddd221b4c8ae260ed2c"
+    }
+  ],
+  "matrices": [
+    {
+      "file": "committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    }
+  ],
+  "shipped_commands": 5,
+  "trace_events": 434,
+  "package_declarations": 75,
+  "inputs": [
+    "committed-matrix-final/derive_from_json-Go/main.fern",
+    "committed-matrix-final/derive_from_json-self/main.fern",
+    "committed-matrix-final/derive_from_json_i64-Go/main.fern",
+    "committed-matrix-final/derive_from_json_i64-self/main.fern",
+    "committed-matrix-final/derive_from_json_shapes-Go/main.fern",
+    "committed-matrix-final/derive_from_json_shapes-self/main.fern",
+    "committed-matrix-final/for_over_collections-Go/main.fern",
+    "committed-matrix-final/for_over_collections-self/main.fern",
+    "committed-matrix-final/package_scoped_stdlib_helpers-Go/main.fern",
+    "committed-matrix-final/package_scoped_stdlib_helpers-Go/shared.fern",
+    "committed-matrix-final/package_scoped_stdlib_helpers-self/main.fern",
+    "committed-matrix-final/package_scoped_stdlib_helpers-self/shared.fern",
+    "package-project-final/main.fern",
+    "package-project-final/sub/lib.fern",
+    "reexport-matrix-final/bare-payload-variant/facade.fern",
+    "reexport-matrix-final/bare-payload-variant/lib.fern",
+    "reexport-matrix-final/bare-payload-variant/main.fern",
+    "reexport-matrix-final/enum-through-owner/facade.fern",
+    "reexport-matrix-final/enum-through-owner/lib.fern",
+    "reexport-matrix-final/enum-through-owner/main.fern",
+    "reexport-matrix-final/invalid-chain/facade.fern",
+    "reexport-matrix-final/invalid-chain/inner.fern",
+    "reexport-matrix-final/invalid-chain/lib.fern",
+    "reexport-matrix-final/invalid-chain/main.fern",
+    "reexport-matrix-final/package-function/facade.fern",
+    "reexport-matrix-final/package-function/lib.fern",
+    "reexport-matrix-final/package-function/main.fern",
+    "reexport-matrix-final/private-function/facade.fern",
+    "reexport-matrix-final/private-function/lib.fern",
+    "reexport-matrix-final/private-function/main.fern",
+    "reexport-matrix-final/public-declarations/facade.fern",
+    "reexport-matrix-final/public-declarations/lib.fern",
+    "reexport-matrix-final/public-declarations/main.fern",
+    "reexport-matrix-final/public-function-precedence/facade.fern",
+    "reexport-matrix-final/public-function-precedence/lib.fern",
+    "reexport-matrix-final/public-function-precedence/main.fern",
+    "reexport-matrix-final/unused-missing-name/facade.fern",
+    "reexport-matrix-final/unused-missing-name/lib.fern",
+    "reexport-matrix-final/unused-missing-name/main.fern",
+    "reexport-matrix-final/unused-unit-variant/facade.fern",
+    "reexport-matrix-final/unused-unit-variant/lib.fern",
+    "reexport-matrix-final/unused-unit-variant/main.fern",
+    "reexport-matrix-final/valid-chain/facade.fern",
+    "reexport-matrix-final/valid-chain/inner.fern",
+    "reexport-matrix-final/valid-chain/lib.fern",
+    "reexport-matrix-final/valid-chain/main.fern"
+  ],
+  "binaries": {
+    "/workspace/scratch/lang-manifest-package/visibility-final-integration/oracle": {
+      "bytes": 27852460,
+      "sha256": "095a10aaad003b92c21c2d8e3524d80411f9156f16033befac3eb056d60b8dff"
+    },
+    "/workspace/scratch/lang-manifest-package/visibility-final-integration/shipped-fern-final": {
+      "bytes": 20729744,
+      "sha256": "1f2ab9b4ff1218a1b5903785977fb4e3bcbefd4e16dd0317261f7dd693a7fc60"
+    },
+    "/workspace/scratch/lang-manifest-package/visibility-final-integration/public-helpers-rctrace-final": {
+      "bytes": 84592,
+      "sha256": "1c93a0bc8579b31807ee88ab6c5ad44636e09021193c8997e5ef535350f03f18"
+    },
+    "/workspace/scratch/lang-manifest-package/visibility-final-integration/bootstrap/stage2": {
+      "bytes": 14466048,
+      "sha256": "b72975f4d099ebec5b5354e0e48c0dabfe34c06e066d402085b63d437fd39a96"
+    },
+    "/workspace/scratch/lang-manifest-package/visibility-final-integration/bootstrap/stage3": {
+      "bytes": 14466048,
+      "sha256": "b72975f4d099ebec5b5354e0e48c0dabfe34c06e066d402085b63d437fd39a96"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 1483,
+      "sha256": "49fb4689eb063185cf5b1835dba262669fadf0b3663bb9f984a4c5e0efb32632"
+    },
+    {
+      "path": "source-files.json.gz",
+      "bytes": 25849,
+      "sha256": "15a88ca2d1c7b6ec6d0f965bc90e17529f1ff3fc9ca9f400bd71b720ac931da5"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 25527,
+      "sha256": "2b141f199f03b9508b8f8f415358828b2e905d89cc35279525430663cc48f08a"
+    },
+    {
+      "path": "scoped-go-regressions.jsonl.gz",
+      "bytes": 145280,
+      "sha256": "9d0cecbe70d563c8c1489cd32096351a66c38d4ba590437d169956a8bfffb5ad"
+    },
+    {
+      "path": "bootstrap--bootstrap.json.gz",
+      "bytes": 395,
+      "sha256": "939d81454d70079759e012e21a4aff06d673c20d4e16fc66addd049f3e4108fc"
+    },
+    {
+      "path": "bootstrap--stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap--stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap--stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "go-source-certificate.json.gz",
+      "bytes": 336,
+      "sha256": "3e800ab322d35a757dd250a20c9178a9b80388e7cd67b110386b44cb812e52bf"
+    },
+    {
+      "path": "native-focused.jsonl.gz",
+      "bytes": 3729,
+      "sha256": "a66bda00cadcfe158b0976e1eb978c6ea857857878a8b8e87b0d905f72f619d2"
+    },
+    {
+      "path": "private-float-table-correct-package.jsonl.gz",
+      "bytes": 337,
+      "sha256": "004f360f82aca4a79a6e391522d8a35a96eee9b11a92fae13e316c4e1245f194"
+    },
+    {
+      "path": "committed-matrix-final.py.gz",
+      "bytes": 1468,
+      "sha256": "3579db7520262cc7482cac46954acbfb6f2fd0d783994227fd5ac69b756d21ed"
+    },
+    {
+      "path": "committed-matrix-final-results.json.gz",
+      "bytes": 4459,
+      "sha256": "33e53c562f75cd036c2d2dfc42071dbc266ee22eba7b5ee9cd64eef80d62ea5c"
+    },
+    {
+      "path": "committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-project-matrix-final.py.gz",
+      "bytes": 1396,
+      "sha256": "f1033af0c3605b841b32da63c8f5140ac562f9a4dbd6d67adb080373596558cb"
+    },
+    {
+      "path": "package-project-matrix-final-results.json.gz",
+      "bytes": 1181,
+      "sha256": "b2d46ad685d6386b5b233058ffd05537978b0db35be769f63adc310dc97b966a"
+    },
+    {
+      "path": "package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "reexport-matrix-final.py.gz",
+      "bytes": 1453,
+      "sha256": "99ad0279a58a8838a29a72280c65627515165df685b8089e392989263399443b"
+    },
+    {
+      "path": "reexport-matrix-final-results.json.gz",
+      "bytes": 2190,
+      "sha256": "5566ab7d2e4313b444cdf9820a3ff1ae628b51b715bf0bfb52ab03b9e7d06049"
+    },
+    {
+      "path": "reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    },
+    {
+      "path": "shipped-and-trace-final.py.gz",
+      "bytes": 1268,
+      "sha256": "b476d05fd15c5b60e7e012919bfc9f6d2903d6a98aac113763463002e4e6a04b"
+    },
+    {
+      "path": "shipped-final-results.json.gz",
+      "bytes": 627,
+      "sha256": "f560c6c09926223d5ce153ae994f72427e2fefbdfc8c8e3d2c46631974107d6a"
+    },
+    {
+      "path": "trace-final-results.json.gz",
+      "bytes": 415,
+      "sha256": "dcc7f8128557b43b18ae0ec717bb5d53fbc0a5a968ea7ec268adf45580667596"
+    },
+    {
+      "path": "trace-final.log.gz",
+      "bytes": 2218,
+      "sha256": "e98cabf1f55b81e84be2ed44c3663ab2ae19f74c588fda02a26b3d142383a5f5"
+    },
+    {
+      "path": "trace-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "shipped-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "final-driver-sizes.txt.gz",
+      "bytes": 165,
+      "sha256": "b384ce9b6031a0f4d2b84a299bb4a23babc0ab8ce2a1a2ebfd77d20b1be24c6a"
+    },
+    {
+      "path": "final-driver-builds.json.gz",
+      "bytes": 1043,
+      "sha256": "b42da21731590126c07a7e0e9b484408a5e0e464be8073c5e4147983aa5a728e"
+    },
+    {
+      "path": "final-driver-gate.log.gz",
+      "bytes": 348,
+      "sha256": "170e8493cc3de1a5ca64e64229162b72597aa6706a8f7410002c65d56704d12c"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 898,
+      "sha256": "531cbee97ee3368283b12a7f7ea13a43d9d0acda9400196c0dc0698f001ed423"
+    },
+    {
+      "path": "sizes.log.gz",
+      "bytes": 181,
+      "sha256": "5fd433c48b4bd4dd3fd2d8efa3d76ea08ab5d784107216ed051278f57b809c28"
+    },
+    {
+      "path": "format-final.json.gz",
+      "bytes": 45,
+      "sha256": "6675c6cae84f676f6e4635f9e60045b3c54e851144657ac1587c26205e50698f"
+    },
+    {
+      "path": "format-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 378,
+      "sha256": "fda783fc8f09a481f8080d4c78688f6ee2350e89ae5a3f533c5f17f69a64d2d7"
+    },
+    {
+      "path": "library-visibility-identity.json.gz",
+      "bytes": 643,
+      "sha256": "c2c25323de3b4321bcda2bfccc715af93aa5e28cf02d0391fe9d6c035bc07a4b"
+    },
+    {
+      "path": "complexity-metrics.txt.gz",
+      "bytes": 104,
+      "sha256": "d2a0d5fffd2c9e1ca90d0c29f09fb5b33e4645b51e5e53512d26201d8a44487b"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "record-final-proofs.py.gz",
+      "bytes": 2673,
+      "sha256": "6c5de218d548d872301980b5ca8dd9f9486712e15ab6a086e8c88b519a11bd16"
+    },
+    {
+      "path": "matrix-inputs.tar.gz",
+      "bytes": 3721,
+      "sha256": "0c38ebb24940cffd0f6e0a826a1dd81d01177be2f64b8bccb62758de3ab17cc8"
+    }
+  ]
+}

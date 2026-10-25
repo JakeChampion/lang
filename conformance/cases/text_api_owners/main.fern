@@ -1,0 +1,135 @@
+import "std/string";
+import "std/utf8";
+import "std/unicode";
+import "std/array";
+import "std/i32";
+
+function main(): i32 {
+  if ("hello,world foo".whitespace_word_count() != 2) {
+    return 1;
+  }
+  if (unicode.word_count("hello,world foo") != 3) {
+    return 2;
+  }
+  if ("Straße".to_upper() != "STRASSE") {
+    return 3;
+  }
+  if ("ΟΣ".to_lower() != "ος") {
+    return 4;
+  }
+  if (!"Straße".eq_ignore_case("STRASSE")) {
+    return 5;
+  }
+  if ("aß".swap_case() != "Aß") {
+    return 6;
+  }
+  if ("éCOLE".capitalize() != "ÉCOLE") {
+    return 7;
+  }
+  if ("hello\tworld".title_case() != "Hello\tWorld") {
+    return 8;
+  }
+  if (!"Ελλάδα".is_letters() || "Ελλάδα".is_ascii_letters()) {
+    return 9;
+  }
+  if (!"٤٢".is_digits() || "٤٢".is_ascii_digits()) {
+    return 10;
+  }
+  if (!"É٤".is_alphanumeric() || "É٤".is_ascii_alphanumeric()) {
+    return 11;
+  }
+  if ("".is_letters() || "".is_digits() || "".is_alphanumeric()) {
+    return 12;
+  }
+  if (!'É'.is_letter() || !'٤'.is_digit() || !'٤'.is_alphanumeric()) {
+    return 13;
+  }
+  if (!(65 as u8).is_ascii_letter() || !(9 as u8).is_ascii_whitespace()) {
+    return 14;
+  }
+  if ("ababa".count("aba") != 1 || "aaaa".count("a") != 4) {
+    return 15;
+  }
+  if ("aaaa".replace_n("aa", "x", 1) != "xaa") {
+    return 16;
+  }
+  if ("aaaa".replace_n("aa", "xyz", 99) != "xyzxyz") {
+    return 17;
+  }
+  if ("ababa".replace_n("aba", "", 2) != "ba") {
+    return 18;
+  }
+  if ("abc".replace_n("", "x", 2) != "abc") {
+    return 19;
+  }
+  if ("aaa".replace_n("a", "x", 0) != "aaa") {
+    return 20;
+  }
+  if ("aaa".replace_n("a", "x", -1) != "aaa") {
+    return 21;
+  }
+  if ("aaa".replace("a", "xy") != "xyxyxy") {
+    return 22;
+  }
+  if ("aaa".replace_first("a", "xy") != "xyaa") {
+    return 23;
+  }
+  let cps: char[] = ['A', 'é', '€', '😀'];
+  let text: string = utf8.encode_all(cps);
+  if (text != "Aé€😀" || text.codepoint_count() != 4) {
+    return 24;
+  }
+  let decoded: char[] = text.chars();
+  if (decoded.len() != cps.len() || !utf8.is_valid(text)) {
+    return 25;
+  }
+  let c: i32 = 0;
+  while (c < cps.len()) {
+    if (decoded[c] != cps[c]) {
+      return 25;
+    }
+    c = c + 1;
+  }
+  if (utf8.encode('😀') != "😀") {
+    return 26;
+  }
+  let invalid: string = string_from_bytes_unchecked([240 as u8, 159 as u8, 65 as u8, 255 as u8]);
+  if (invalid.codepoint_count() != 3) {
+    return 27;
+  }
+  if (utf8.encode_all(invalid.chars()) != "�A�") {
+    return 28;
+  }
+  if (utf8.is_valid(invalid)) {
+    return 29;
+  }
+  let bulk: char[] = [];
+  let i: i32 = 0;
+  while (i < 1024) {
+    let scalar: i32 = i * 1079;
+    if (scalar >= 55296 && scalar <= 57343) {
+      scalar = scalar + 2048;
+    }
+    bulk = bulk.append(scalar as char);
+    i = i + 1;
+  }
+  let encoded: string = utf8.encode_all(bulk);
+  let roundtrip: char[] = encoded.chars();
+  if (roundtrip.len() != bulk.len() || encoded.codepoint_count() != bulk.len()) {
+    return 30;
+  }
+  let j: i32 = 0;
+  while (j < bulk.len()) {
+    if (roundtrip[j] != bulk[j]) {
+      return 30;
+    }
+    j = j + 1;
+  }
+  if (!utf8.is_valid(encoded)) {
+    return 31;
+  }
+  if (utf8.encode_all([]) != "") {
+    return 32;
+  }
+  return 0;
+}
