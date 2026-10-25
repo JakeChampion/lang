@@ -456,7 +456,7 @@ prioritised list — recording them so a future audit doesn't
 think they're free additions to make.
 
 - **Persistent collections** (#6794): `std/ordmap` / `std/ordset`
-  (weight-balanced tree, join-based set algebra, rank access),
+  (B+ tree with SIMD prefix search, join-based split, rank access),
   `std/pmap` / `std/pset` (32-way HAMT), `std/pvec` (32-way trie +
   tail). Structural sharing on the shared path, in-place update
   through the compiler's reuse pass on the unique path — the
