@@ -1,3 +1,9 @@
+# Re-pinned 2026-10-25 (semunique borrowed push chains) on seven `.text`
+# rows, measured by scripts/perf-bench (x86_64) and by `fern -target
+# arm64-linux` line counts (aarch64) on this branch. All seven were over
+# tolerance on main before it: x86_64 sort_strings, string_build and
+# string_scan measure the same here as on main, and the utf8_ingest rows
+# fall 94 (x86_64) and 111 (aarch64) instructions below what main emits.
 # Re-pinned 2026-10-25 (#13177) from Perf run 40168342835 on both arches. The
 # word-refill decoder and the hash-chain matcher cut deflate_decode.ir by 36-41%
 # and deflate_encode.ir by 40-42%. The map, ordmap and pvec rows are 1-6% faster.
@@ -116,9 +122,9 @@ x86_64/sort_inplace.text	1343
 x86_64/sort_inplace.ir	41788393
 x86_64/sort_ints.text	1819
 x86_64/sort_ints.ir	30644556
-x86_64/sort_strings.text	3064
+x86_64/sort_strings.text	3103
 x86_64/sort_strings.ir	105294698
-x86_64/string_build.text	1833
+x86_64/string_build.text	1856
 x86_64/string_build.ir	42429808
 x86_64/string_count_byte.text	1142
 x86_64/string_count_byte.ir	135589342
@@ -126,7 +132,7 @@ x86_64/string_find_byte.text	1548
 x86_64/string_find_byte.ir	43717394
 x86_64/string_rfind_byte.text	1633
 x86_64/string_rfind_byte.ir	43732300
-x86_64/string_scan.text	2079
+x86_64/string_scan.text	2100
 x86_64/string_scan.ir	52603745
 x86_64/string_slice.text	803
 x86_64/string_slice.ir	38700086
@@ -134,9 +140,9 @@ x86_64/struct_drop.text	2250
 x86_64/struct_drop.ir	191340574
 x86_64/tokenize.text	1104
 x86_64/tokenize.ir	37880086
-x86_64/utf8_ingest_unchecked.text	7334
+x86_64/utf8_ingest_unchecked.text	8109
 x86_64/utf8_ingest_unchecked.ir	2805309
-x86_64/utf8_ingest_validated.text	8607
+x86_64/utf8_ingest_validated.text	9382
 x86_64/utf8_ingest_validated.ir	5887911
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -410,9 +416,9 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	7802
+aarch64/utf8_ingest_unchecked.text	8631
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	9049
+aarch64/utf8_ingest_validated.text	9878
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

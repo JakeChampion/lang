@@ -100,17 +100,39 @@ function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
 
 // The check consumes its array. An array the function only borrows would
 // need a retain first, so the check would copy it although a push on a sole
-// borrowed array works in place. Only an owned parameter, a field of one, or
-// an array the function made is checked.
+// borrowed array works in place. A push or a concat on a borrowed array, or
+// a call lent one, may return that same buffer written in place, so the walk
+// follows them to their roots. Only an owned parameter, a field of one, or an
+// array the function made from owned arrays is checked.
 function owned_entry(f: ssasem.Func, modes: i32[], e: i32): boolean {
   let d: ssa.SInst = def_of(f, e);
-  while (d.kind_tag == ssasem.record_get() && d.args.len() > 0) {
-    d = def_of(f, d.args[0]);
+  if ((d.kind_tag == ssasem.record_get() || keeps_receiver(d)) && d.args.len() > 0) {
+    return owned_entry(f, modes, d.args[0]);
   }
   if (d.kind_tag == ssasem.param()) {
     return d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssasem.counted_mode();
   }
+  if (d.kind_tag == ssasem.call()) {
+    let c: i32 = ssasem.find_contract_in(f.calls, d.str);
+    for i in 0..d.args.len() {
+      let a: i32 = d.args[i];
+      if (c >= 0 && i < f.calls[c].modes.len() && f.calls[c].modes[i] == ssasem.borrow_mode() && is_array(f.values[a]) && !owned_entry(f, modes, a)) {
+        return false;
+      }
+    }
+  }
   return d.result >= 0 && d.kind_tag != 8 && d.kind_tag != ssasem.variant_get() && d.kind_tag != ssasem.tuple_get() && d.kind_tag != ssasem.array_get();
+}
+
+function keeps_receiver(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.arr_concat();
+}
+
+function is_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(_) = t {
+    return true;
+  }
+  return false;
 }
 
 function def_of(f: ssasem.Func, v: i32): ssa.SInst {
