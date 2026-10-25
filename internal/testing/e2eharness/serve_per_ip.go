@@ -24,7 +24,7 @@ function main(): i32 {
 
 func CheckPerIPCap(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	held := make([]net.Conn, 0, 2)
 	for n := 0; n < 2; n++ {
 		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)

@@ -58,7 +58,7 @@ func MeasureAcceptDistribution(t *testing.T, addr string, held int) map[string]i
 
 func CheckAcceptDistribution(t *testing.T, addr string, workers, held int) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	per := MeasureAcceptDistribution(t, addr, held)
 	counts := make([]int, 0, len(per))
 	for _, n := range per {

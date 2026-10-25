@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
@@ -131,7 +130,7 @@ function main(): i32 {
 
 func checkUploadServe(t *testing.T, addr string) {
 	t.Helper()
-	e2eharness.WaitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr)
 	file := make([]byte, 70000)
 	sum := 0
 	for i := range file {

@@ -54,7 +54,7 @@ func dialSmallWindow(t *testing.T, addr string) net.Conn {
 
 func CheckResponseRateCutsStalledReader(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn := dialSmallWindow(t, addr)
 	defer conn.Close()
 	time.Sleep(2 * time.Second)
@@ -72,7 +72,7 @@ func CheckResponseRateCutsStalledReader(t *testing.T, addr string) {
 
 func CheckResponseRateKeepsSteadyReader(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn := dialSmallWindow(t, addr)
 	defer conn.Close()
 	if err := conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
