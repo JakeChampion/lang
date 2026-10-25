@@ -160,6 +160,12 @@ jobs:
     uses: ./.github/workflows/playground-e2e.yml
     secrets: inherit
 
+  showcase:
+    name: Showcase
+    if: fromJSON(inputs.lanes)['showcase']
+    uses: ./.github/workflows/showcase.yml
+    secrets: inherit
+
   vscode-extension:
     name: VS Code Extension
     if: fromJSON(inputs.lanes)['vscode-extension']
@@ -350,6 +356,17 @@ jobs:
     uses: ./.github/workflows/cancel-on-failure.yml
     with:
       lane: Playground E2E
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-showcase:
+    needs: [showcase]
+    if: ${{ !cancelled() && needs.showcase.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Showcase
     permissions:
       actions: write
       contents: read

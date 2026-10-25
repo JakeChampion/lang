@@ -28,12 +28,7 @@ Build the compiler from the repository root:
 ```sh
 make build
 bin/fern -target x86-64-linux -O -o build/showcase examples/showcase/server.fern.md
-bin/fern -target wasm32-wasi -emit core-module -O -o examples/showcase/web/swarm/kernel.wasm examples/showcase/swarm.fern.md
-bin/fern -target wasm32-wasi -emit core-module -O -o examples/showcase/web/blockyard/kernel.wasm examples/showcase/voxel.fern.md
-for kernel in foundry patchbay prism circuit; do
-  bin/fern -target wasm32-wasi -emit core-module -O \
-    -o "examples/showcase/web/labs/$kernel.wasm" "examples/showcase/$kernel.fern.md"
-done
+examples/showcase/build-assets.sh bin/fern
 ./build/showcase examples
 ```
 
@@ -146,6 +141,13 @@ PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
   node examples/showcase/tests/interaction.browser.mjs http://localhost:8080
 ```
 
+The theme script checks every page in the light and the dark theme at three widths.
+It measures the text contrast against the rendered background, horizontal overflow, and the theme control.
+`internal/testing/sourcelint` keeps the palette equal to the documentation site's palette.
+
+`examples/showcase/tests/ci-browser.sh` builds the server and the kernels, serves them, and runs every browser script.
+The Showcase CI lane runs this script. Install its pinned Playwright with `npm install` in `examples/showcase/tests` first.
+
 ## Real-time latency
 
 Rally sends coalesced inputs every 16 milliseconds without a stop-and-wait exchange.
@@ -183,6 +185,7 @@ Each participant submits an eight-byte destination. Fern validates movement and 
 A shared clock creates ten snapshots per second. Every connection uses the same immutable packet.
 
 A slow participant cannot own or stop the clock. A blocked writer skips superseded snapshots.
+A visitor who has not joined watches the arena through `/gather/snapshot`. This request takes no seat.
 
 The browser predicts local motion and extrapolates other players for at most 150 milliseconds.
 Counts represent actual connections. The demo does not add simulated players to the arena.
@@ -272,6 +275,7 @@ A shared 10 Hz clock advances active factories. Delta snapshots carry changed ce
 Paused factories and projects without subscribers need no simulation timer.
 
 Foundry, Patchbay, and Circuit share 256 live subscription slots across at most 24 loaded projects.
+The homepage previews read `/{application}/preview`, a small window of the commons project, and take no slot.
 Each project retains 128 revision events. Reconnects receive a full snapshot if their cursor precedes this history.
 Browser edits appear immediately and remain in a bounded queue until the server confirms them.
 
