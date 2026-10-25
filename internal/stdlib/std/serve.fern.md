@@ -5575,25 +5575,65 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
 }
 
 function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: [u8], from: [u8], burst: __H3Burst, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
-  let Ok(h) = packet.parse(d, 0, c.quic.cfg.cid_len) else {
-    return (c, fls, burst);
-  };
-  let i: i32 = __h3_find(c.quic, h.dcid);
-  let cur: __Conns = c;
+  let found: (__Conns, i32) = __h3_route(c, d, from, opts, stop);
+  let cur: __Conns = found.0;
+  let i: i32 = found.1;
   if (i < 0) {
-    let made: (__Conns, i32) = __h3_accept(c, h, d, net.sender(from), opts, stop);
-    cur = made.0;
-    i = made.1;
-    if (i < 0) {
-      return (cur, fls, burst);
-    }
+    return (cur, fls, burst);
   }
   let q: __Quic = cur.quic;
   let serial: i32 = q.serials[i];
   cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].receive(d, monotonic_ns())) } };
-  let taken: (__Conns, __H3Req[]) = __h3_events(cur, i);
+  let taken: (__Conns, __H3Burst) = __h3_events(cur, i, burst);
   let more: (__Conns, __Flight[]) = __h3_more(drv, taken.0, fls, serial);
-  return (more.0, more.1, __h3_touched(__H3Burst { ...burst, reqs: burst.reqs.concat(taken.1) }, serial));
+  return (more.0, more.1, __h3_touched(taken.1, serial));
+}
+
+// __h3_route finds the connection a datagram is for, accepting a new one
+// for an Initial; a short header naming an ID this server issued is
+// matched without parsing the header.
+function __h3_route(c: __Conns, d: [u8], from: [u8], opts: Config, stop: __Stop): (__Conns, i32) {
+  let known: i32 = __h3_short_find(c.quic, d);
+  if (known >= 0) {
+    return (c, known);
+  }
+  let Ok(h) = packet.parse(d, 0, c.quic.cfg.cid_len) else {
+    return (c, 0 - 1);
+  };
+  let i: i32 = __h3_find(c.quic, h.dcid);
+  if (i >= 0) {
+    return (c, i);
+  }
+  return __h3_accept(c, h, d, net.sender(from), opts, stop);
+}
+
+function __h3_short_find(q: __Quic, d: [u8]): i32 {
+  let n: i32 = q.cfg.cid_len;
+  if (d.len() < 1 + n || (d[0] as i32 & 128) != 0) {
+    return 0 - 1;
+  }
+  let i: i32 = 0;
+  while (i < q.keys.len()) {
+    if (__names(q.keys[i], d, n)) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function __names(key: u8[], d: [u8], n: i32): boolean {
+  if (key.len() != n) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    if (key[i] != d[1 + i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 function __h3_find(q: __Quic, dcid: u8[]): i32 {
@@ -5654,16 +5694,16 @@ function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr
   return (__Conns { ...c, quic: grown }, grown.conns.len() - 1);
 }
 
-function __h3_events(c: __Conns, i: i32): (__Conns, __H3Req[]) {
+function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst) {
   let q: __Quic = c.quic;
   let evs: h3q.Event[] = q.conns[i].events;
   let producers: __H3Producer[] = q.producers;
-  let reqs: __H3Req[] = [];
+  let b: __H3Burst = burst;
   let serial: i32 = q.serials[i];
   for e in evs {
     match (e) {
       h3q.Requested(id, req) => {
-        reqs = reqs.append(__H3Req { serial: serial, id: id, req: req, peer: q.peers[i] });
+        b = __H3Burst { ...b, reqs: b.reqs.append(__H3Req { serial: serial, id: id, req: req, peer: q.peers[i] }) };
       },
       h3q.StreamDropped(id, _) => {
         producers = __h3_producer_dropped(producers, serial, id);
@@ -5671,7 +5711,7 @@ function __h3_events(c: __Conns, i: i32): (__Conns, __H3Req[]) {
       _ => {}
     }
   }
-  return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].events_taken()), producers: producers } }, reqs);
+  return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].events_taken()), producers: producers } }, b);
 }
 ```
 
@@ -5963,11 +6003,14 @@ function __h3_pass[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: C
     let q: __Quic = cur.quic;
     let d: i64 = q.conns[i].deadline();
     if (d > 0 && d <= now) {
+      let serial: i32 = q.serials[i];
       cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].tick(now)) } };
-      let taken: (__Conns, __H3Req[]) = __h3_events(cur, i);
-      cur = __h3_flush(taken.0, q.serials[i]);
-      if (taken.1.len() > 0) {
-        burst = __h3_touched(__H3Burst { ...burst, reqs: burst.reqs.concat(taken.1) }, q.serials[i]);
+      let before: i32 = burst.reqs.len();
+      let taken: (__Conns, __H3Burst) = __h3_events(cur, i, burst);
+      cur = __h3_flush(taken.0, serial);
+      burst = taken.1;
+      if (burst.reqs.len() > before) {
+        burst = __h3_touched(burst, serial);
       }
     }
     i = i + 1;
