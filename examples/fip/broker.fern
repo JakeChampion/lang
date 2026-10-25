@@ -174,27 +174,27 @@ function main(): i32 {
   let subscribers: i32 = 0;
   let occupancy: i32 = 0;
   let turns: i32 = 0;
-  match (argv[1].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[1])) {
+    Ok(n) => {
       subscribers = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }
-  match (argv[2].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[2])) {
+    Ok(n) => {
       occupancy = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }
-  match (argv[3].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[3])) {
+    Ok(n) => {
       turns = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }

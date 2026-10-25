@@ -1,0 +1,9 @@
+// Only the imported module displays values. The entry adds no display roots.
+import "./helper";
+
+function main(): i32 {
+  if (helper.label() != "7" || helper.nested() != "42") {
+    return 1;
+  }
+  return 0;
+}

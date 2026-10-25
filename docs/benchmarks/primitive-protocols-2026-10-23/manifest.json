@@ -1,0 +1,652 @@
+{
+  "base_commit": "671c1109abd94f82e590ddbcd5e07f726c127006",
+  "feature_commit": "578d51988b8d548490603a323ee0699cfaf5d8f7",
+  "compiler_source_commit": "f9a715b02f483e0b9177655a91b0b26cc3ce3a80",
+  "compiler_and_stdlib_source_sha256": "bba57fdbc445673f2e9dd4e8c9857d5a8bb64b7359536491566507fc32785513",
+  "go_frontend_validation_commit": "91d705e9c725bc4a18d1f31f90e067e517d86f32",
+  "issues": [
+    12704,
+    13081,
+    13082,
+    13083,
+    13084,
+    13085
+  ],
+  "bootstrap": {
+    "source_git": "f9a715b02f483e0b9177655a91b0b26cc3ce3a80",
+    "source_sha256": "bba57fdbc445673f2e9dd4e8c9857d5a8bb64b7359536491566507fc32785513",
+    "stages": [
+      {
+        "stage": "stage1",
+        "producer_sha256": "6c5cdeed770e5db0aadbdb663efe2d29e3304acacb76229b951ca549e951f6e2",
+        "seconds": 22.686225860990817,
+        "bytes": 14310752,
+        "sha256": "a828a27a778ce96ba4906b58427d80cce98c77ae7c0f50ea61bdc51f8dfa15ab"
+      },
+      {
+        "stage": "stage2",
+        "producer_sha256": "a828a27a778ce96ba4906b58427d80cce98c77ae7c0f50ea61bdc51f8dfa15ab",
+        "seconds": 21.4614667739952,
+        "bytes": 14310752,
+        "sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8"
+      },
+      {
+        "stage": "stage3",
+        "producer_sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8",
+        "seconds": 21.240689058002317,
+        "bytes": 14310752,
+        "sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8"
+      }
+    ],
+    "fixedpoint": true
+  },
+  "tests": {
+    "frontend-final-tests-2": {
+      "pass_rows": 2683,
+      "skipped_tests": [
+        "TestInterpHandlesEveryASTNode/EnumLit",
+        "TestInterpHandlesEveryASTNode/CaptureRef",
+        "TestInterpHandlesEveryASTNode/MakeClosure"
+      ],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/syntax/parser",
+          "seconds": 0.006
+        },
+        {
+          "package": "github.com/jakechampion/lang/internal/oracle/interp",
+          "seconds": 0.803
+        },
+        {
+          "package": "github.com/jakechampion/lang/internal/pkg/modload",
+          "seconds": 1.438
+        },
+        {
+          "package": "github.com/jakechampion/lang/internal/check/checker",
+          "seconds": 8.44
+        }
+      ],
+      "selected_cases": {
+        "TestArrowLambdaBracedBodyIsSpliced": 10,
+        "TestDeclTypeParamBoundIsP001": 3,
+        "TestDiscardsMayRepeatInOneScope": 6,
+        "TestFStringInterpolantPositions": 4,
+        "TestFStringTrailingTokensRejected": 5,
+        "TestLocalFunctionMustHaveBody": 3,
+        "TestLocalFunctionBodyRuleControls": 3,
+        "TestImplMethodBodyRuleControls": 3,
+        "TestDeepNestingIsADiagnosticNotACrash": 8,
+        "TestNestedBlockTail": 6,
+        "TestOwnBorrowInTypeNeedsResourceName": 13,
+        "TestForEachPatternHeaderParses": 4,
+        "TestStructLitTypeArgsParse": 9,
+        "TestStructFieldSubPatternParses": 5,
+        "TestTupleElemVariantIsRefutableAtBindingSites": 2,
+        "TestParseAtBindingOnLiteralAndRange": 5,
+        "TestPatternHeadAcceptedAtEverySite": 9,
+        "TestPatternHeadAtBindingGetsAHolder": 2,
+        "TestTrailingCommaAcceptedInEveryListPosition": 20,
+        "TestEmptyListsStillParse": 5,
+        "TestStrayCommasStillRejected": 6,
+        "TestParseDeterministic": 5,
+        "FuzzParse": 9,
+        "TestOwnedArrayLendsIntoViewParam": 5,
+        "TestArrayAppendValueSemantics": 9,
+        "TestOwnedArrayLendsIntoLocalView": 6,
+        "TestArrayViewLendIsOneWayAndNonConsuming": 5,
+        "TestLoadAttenuationDiamond": 2,
+        "TestUnresolvedImportIsPlacedAtTheImport": 2,
+        "TestBoundDefaultMethodTypeArguments": 5,
+        "TestCastSettlesPolymorphicOperandAtSignedI32": 7,
+        "TestArrayWithValueSemantics": 3,
+        "TestByteCellElementBoundary": 5,
+        "TestScalarArrayCellElementBoundary": 9,
+        "TestCharOrdering": 4,
+        "TestCharRejectsImplicitConversion": 6,
+        "TestCharExplicitCasts": 5,
+        "TestCharIsContextualNotReserved": 3,
+        "TestCharCastRejectsInvalidLiteral": 5,
+        "TestCharCastAcceptsValidLiteral": 7,
+        "TestCharAndByteLiteralsDoNotInterconvert": 12,
+        "TestCharAndByteLiteralsAccepted": 9,
+        "TestArrayWithModesDiffer": 2,
+        "TestArrayWithChainOuterReadSeesTheOldValue": 2,
+        "TestClosureBindingIdentity": 7,
+        "TestInterpHandlesEveryASTNode": 38,
+        "TestUndeclaredNameIsNotReportedAsUnexported": 5,
+        "TestUndeclaredNameSuggestsAnExportedNeighbour": 2,
+        "TestMethodIsNotOfferedAsAModuleFunction": 4,
+        "TestLoadDeterministic": 5,
+        "TestUnknownTypeReachesLambdaAnnotations": 8,
+        "TestPolymorphicComparisonWithBigLiteralSettlesAtI64": 5,
+        "TestReservedBuiltinNamesCannotBeShadowed": 9,
+        "TestUnknownFieldFixApplies": 2,
+        "TestInterpDeterministic": 7,
+        "TestBoolLiteralMatchTrueFalseCloses": 5,
+        "TestAmbiguousVariantHintIsSpellable": 2,
+        "TestVariantDiagnosticsNeverNameMangledEnums": 3,
+        "TestSynthesisedHandleMainFollowsTargetProcesses": 4,
+        "TestConfigGetFollowsTheTargetsEnvironment": 4,
+        "TestSynthesisedHandleMainTakesInitOptions": 6,
+        "TestInnerMulAddBuiltinArguments": 8,
+        "TestPutcharWritesOneByte": 6,
+        "TestInterpMapBasic": 8,
+        "TestInterpMatchLiteralNonEnum": 7,
+        "TestOuterMulBuiltinArguments": 5,
+        "TestWaitRestartingKeepsTheDeadline": 4,
+        "TestReaderBytesHostOutcomes": 8,
+        "TestReaderTextHostOutcomes": 12,
+        "TestStructPatternAtPayloadSlotBinds": 3,
+        "TestTupleMatchAcceptsWildcardOnlyArms": 6,
+        "TestUnaryNegationUsesCheckedWidth": 10,
+        "TestWriterBytesHostOutcomes": 10,
+        "TestReceiverTypeVarsIgnoreTypesTheModuleCannotSee": 3,
+        "TestSynthesisedHandleMainWiresShutdown": 4,
+        "TestResultHandlerIsAdapted": 4,
+        "TestHandlerInitStateMismatchIsRejected": 3,
+        "TestWasiHandleIsSynthesisedForHandlers": 3,
+        "TestObjectSafetyReachesNestedVarDecls": 2,
+        "TestStructFieldSubPatternChecks": 7,
+        "TestStructFieldSubPatternAcceptsWildcardFallback": 2,
+        "TestMergedArmGuardSeesSiblingSlots": 3,
+        "TestAssociatedTypesGenericImplBinding": 5,
+        "TestAssociatedTypesProjectionInParameter": 3,
+        "TestArrayLiteralElementsAreChecked": 8,
+        "TestDynTraitChecker": 9,
+        "TestDynGenericTraitChecker": 4,
+        "TestDynAssocTypeChecker": 2,
+        "TestDynMultiTraitChecker": 5,
+        "TestDowncastChecker": 3,
+        "TestResourceHandleChecker": 9,
+        "TestCellElemTypeE057": 21,
+        "TestCellElemTypeE057AnnotationPosition": 3,
+        "TestBoundedParamAssocFnCallNoPanic": 2,
+        "TestBoundedParamTraitCallsStillCheck": 2,
+        "TestDynMethodCallNoSelfParamIsRejected": 2,
+        "TestStrSliceTypesAsOptionStr": 2,
+        "TestBareNullaryVariantUnifiesWithGenericEnumInstantiation": 4,
+        "TestArglessBindingIsUpgradedByALaterArgument": 1,
+        "TestEmptyArrayArgumentLeavesTypeParameterOpen": 4,
+        "TestCastDoesNotRetargetPinnedGenericCall": 4,
+        "TestGenericArglessEnumArgInMethodReceiver": 7,
+        "TestCastOnUntypedOperandDoesNotCascade": 3,
+        "TestUnionMemberTypeArgArity": 3,
+        "TestCheckValueBindingShadowsGenericFunc": 4,
+        "TestOneErrorPerMistake": 2,
+        "TestUnknownVariantHintDistinguishesTypoFromCatchAll": 4,
+        "TestPayloadlessVariantNameAsPayloadBinderIsRejected": 11,
+        "TestPayloadlessVariantNameAsTupleElemIsRejected": 8,
+        "TestNestedTuplePatternChecks": 11,
+        "TestNestedTupleDestructureChecks": 10,
+        "TestTupleVariantPayloadSubPatternChecks": 12,
+        "TestTupleElemVariantPatternChecks": 10,
+        "TestBreakableLoopDoesNotDiverge": 5,
+        "TestNonBreakingLoopStillDiverges": 9,
+        "TestBreakInExpressionPositionDoesNotDiverge": 6,
+        "TestDeferTryOpRefused": 6,
+        "TestDemangleModuleSeparator": 8,
+        "TestDeriveHintsSpellWhatCompiles": 5,
+        "TestDeriveHintsForForeignTypesNameAWritableFix": 4,
+        "TestDiagnosticOrderDeterministic": 5,
+        "TestNestedBodyDiagnosticsNameTheirOwnModule": 2,
+        "TestExplicitDropCallRejected": 4,
+        "TestOrdinaryDropMethodAccepted": 3,
+        "TestDynIsInvariantInContainerArguments": 7,
+        "TestContainerElementAssignabilityStillWorks": 6,
+        "TestDirectDynRefusalHasNoContainerHint": 2,
+        "TestEnumConstructionContracts": 18,
+        "TestEnumNameShadowedByLocal": 5,
+        "TestFipAcceptsConstructorShape": 4,
+        "TestFloatLiteralBinaryIsNotSettledToInt": 6,
+        "TestFloatOrderingRequiresCompatibleWidths": 24,
+        "TestForEachNotIterableE083": 4,
+        "TestForEachOverIteratorChecks": 5,
+        "TestFStringDiagnosticPositions": 3,
+        "TestGenericErrorBoxingUsesBounds": 10,
+        "TestGenericFnValueInstantiatedFromExpectedType": 6,
+        "TestGenericFnValueErrors": 4,
+        "TestHandlerNeedsServeImport": 5,
+        "TestImportHintYieldsToTheMethodListOnceImported": 3,
+        "TestImportHintStillFiresWithoutTheImport": 3,
+        "TestBuiltinUnionMethodNamesItsModule": 2,
+        "TestResolvedArrayAppendIntrinsic": 4,
+        "TestArrowLambdaBlockBodyInfersReturnType": 9,
+        "TestLambdaDeclaredTypesResolve": 9,
+        "TestLiteralLocalTakesOneType": 21,
+        "TestMapKeyTypeIsCheckedWhereverItIsWritten": 23,
+        "TestMapKeyTypeIsReportedOnce": 3,
+        "TestMapLitEntriesMustMatchInferredTypes": 3,
+        "TestUnknownMethodDiagnostics": 6,
+        "TestUnknownMethodDiagnosticsLeaveNeighboursAlone": 2,
+        "TestCollectionMethodFixApplies": 4,
+        "TestMethodReceiverCheckedOnce": 8,
+        "TestModuleQualifiedVariant": 8,
+        "TestEntryValuesDoNotCaptureImportedVariants": 3,
+        "TestImportedModuleCannotCallEntryFunction": 2,
+        "TestBareVariantResolvesWithinTheReferringModule": 8,
+        "TestNarrowingCastDoesNotSettleItsOperand": 10,
+        "TestNestedPatternExhaustiveness": 16,
+        "TestNumericJoinKeepsUnconstrainedLiteralsPolymorphic": 4,
+        "TestPartialEnumPayloadInference": 27,
+        "TestPatternForEachArityDiagnostics": 3,
+        "TestFailedVarInitPoisonsTheBinding": 8,
+        "TestFailedDestructurePoisonsEveryName": 6,
+        "TestPrimitiveDisplayBuiltin": 11,
+        "TestConcreteReceiverDoesNotBindMethodTypeParam": 3,
+        "TestResultConstructorIntegerConversion": 25,
+        "TestScalarMethodImportHint": 4,
+        "TestSelfHostBuiltinStructsMatchChecker": 2,
+        "TestSelfHostReservedTypeNamesMatchBuiltins": 4,
+        "TestTraitParamErrors": 6,
+        "TestTryMarkerAccepted": 4,
+        "TestTryMarkerShapeErrors": 5,
+        "TestOtherWidthDispatchUnchanged": 4,
+        "TestUnitValueChecks": 6,
+        "TestVoidCallIsNotAValue": 2,
+        "TestAESGCMBuiltinSignatures": 7,
+        "TestClockBuiltinSignatures": 6,
+        "TestCtMarkBuiltinSignatures": 7,
+        "TestIoErrorOtherCarriesAnErrno": 6,
+        "TestIsattyIsTypedAsAPredicate": 4,
+        "TestSHAHWBuiltinSignatures": 12,
+        "TestSignalCatchSignatures": 15,
+        "TestTargetArchIsTypedAsAString": 5,
+        "TestTargetOSIsTypedAsAString": 5,
+        "FuzzCheck": 10
+      }
+    },
+    "library-regressions": {
+      "pass_rows": 170,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/e2e",
+          "seconds": 96.179
+        }
+      ],
+      "selected_cases": {}
+    },
+    "verified-self-regressions": {
+      "pass_rows": 4486,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "seconds": 112.182
+        }
+      ],
+      "selected_cases": {
+        "TestSelfHostCheckerCodesX86_64": 1940,
+        "TestSelfHostCheckerDifferentialX86_64": 428,
+        "TestSelfHostCheckerBundleDifferentialX86_64": 179,
+        "TestSelfHostCheckerVariantScopeDifferentialX86_64": 17,
+        "TestSelfHostDisplayArgGate": 10,
+        "TestSelfHostUtf8ValidityProperty": 3
+      }
+    },
+    "treeshake-regressions": {
+      "pass_rows": 11,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "seconds": 31.219
+        }
+      ],
+      "selected_cases": {
+        "TestSelfHostTreeshakeMethodKeptByReceiver": 4
+      }
+    },
+    "math-regressions": {
+      "pass_rows": 10,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/e2e",
+          "seconds": 58.908
+        }
+      ],
+      "selected_cases": {
+        "TestF64SinCosLargeArgument": 4
+      }
+    },
+    "feature-census-final": {
+      "pass_rows": 2,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "seconds": 0.611
+        }
+      ],
+      "selected_cases": {}
+    },
+    "official-fixtures": {
+      "pass_rows": 73,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/e2e",
+          "seconds": 82.417
+        }
+      ],
+      "selected_cases": {
+        "TestFernFixturesSelfHostWasm": 8,
+        "TestFernFixturesSelfHostX86_64": 8,
+        "TestFernFixturesSelfHostX86_64Quarantine": 8,
+        "TestFernFixturesSelfHostArm64": 8,
+        "TestFernFixturesSelfHostInterp": 8,
+        "TestFernFixturesSelfHostCheck": 3,
+        "TestFernFixtures": 11
+      }
+    },
+    "final-source-lint": {
+      "pass_rows": 196,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/sourcelint",
+          "seconds": 14.164
+        }
+      ],
+      "selected_cases": {
+        "TestCrossToolchainRequiresRequestedEmulator": 10,
+        "TestDisableChromeAptSources": 11,
+        "TestCoreutilsBenchHyperfineSchemas": 3,
+        "TestCheckDriverSizesReportsWhenItRanBlind": 2,
+        "TestRunnerRejectsACrash": 4,
+        "TestGofmtGateReadsGitsFileSetNotTheDirectory": 4,
+        "TestShardDenominatorMatchesMatrix": 2,
+        "TestClassifyVanishedShardsNestedNames": 4,
+        "TestCITestWeightsRefreshRejectsBadEvidence": 8,
+        "TestCITestWeightsReportsWhenItRanBlind": 2,
+        "TestCITestWeightsWritesJobSummary": 2
+      }
+    },
+    "staged-evidence-source-lint": {
+      "pass_rows": 196,
+      "skipped_tests": [],
+      "packages": [
+        {
+          "package": "github.com/jakechampion/lang/internal/testing/sourcelint",
+          "seconds": 0.002
+        }
+      ],
+      "selected_cases": {
+        "TestCrossToolchainRequiresRequestedEmulator": 10,
+        "TestDisableChromeAptSources": 11,
+        "TestCoreutilsBenchHyperfineSchemas": 3,
+        "TestCheckDriverSizesReportsWhenItRanBlind": 2,
+        "TestRunnerRejectsACrash": 4,
+        "TestGofmtGateReadsGitsFileSetNotTheDirectory": 4,
+        "TestShardDenominatorMatchesMatrix": 2,
+        "TestClassifyVanishedShardsNestedNames": 4,
+        "TestCITestWeightsRefreshRejectsBadEvidence": 8,
+        "TestCITestWeightsReportsWhenItRanBlind": 2,
+        "TestCITestWeightsWritesJobSummary": 2
+      }
+    }
+  },
+  "matrix_commands": 144,
+  "negative_commands": 6,
+  "embedded_commands": 26,
+  "official_selected_cases": 54,
+  "census_unpaired": 0,
+  "census_trace_events": 188,
+  "format": {
+    "count": 1182,
+    "exit": 0,
+    "seconds": 3.3130668840021826
+  },
+  "performance": {
+    "before": {
+      "instructions": 31197760,
+      "stdout": "321202\n142986\n",
+      "bytes": 29824,
+      "sha256": "806a1e9213a5192d58983300722b086d9eebdbe717ca9990a206e99a153292ef"
+    },
+    "after": {
+      "instructions": 30927965,
+      "stdout": "321202\n142986\n",
+      "bytes": 29824,
+      "sha256": "e8b97f85684b283489dcaa49ce3808e56f8535c1f33be912a147a800e7f44c68"
+    },
+    "instruction_ratio": 0.9913521034843528,
+    "verified": {
+      "instructions": 30927965,
+      "stdout": "321202\n142986\n",
+      "bytes": 29824,
+      "sha256": "add4679ddec4551d1f0c8fda7eab25833344f2e3df50c4cdbb9e4fa23baeb35b"
+    },
+    "verified_instruction_ratio": 0.9913521034843528
+  },
+  "binaries": {
+    "/workspace/scratch/lang-primitive-protocols/reachability-oracle": {
+      "bytes": 32470385,
+      "sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735"
+    },
+    "/workspace/scratch/lang-primitive-protocols/embedded-fern": {
+      "bytes": 21536448,
+      "sha256": "5eda57166c1a56b5f2b42f84d03f414242358303050453da8dbf79ad8a3d4b6b"
+    },
+    "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage1": {
+      "bytes": 14310752,
+      "sha256": "a828a27a778ce96ba4906b58427d80cce98c77ae7c0f50ea61bdc51f8dfa15ab"
+    },
+    "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage2": {
+      "bytes": 14310752,
+      "sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8"
+    },
+    "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3": {
+      "bytes": 14310752,
+      "sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8"
+    },
+    "/workspace/scratch/lang-primitive-protocols/kernel-cost-before": {
+      "bytes": 29824,
+      "sha256": "806a1e9213a5192d58983300722b086d9eebdbe717ca9990a206e99a153292ef"
+    },
+    "/workspace/scratch/lang-primitive-protocols/kernel-cost-verified": {
+      "bytes": 29824,
+      "sha256": "add4679ddec4551d1f0c8fda7eab25833344f2e3df50c4cdbb9e4fa23baeb35b"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 5321,
+      "sha256": "ab99f33218067583dd2255da9f8c1163106e44955af8fee07d1228757603eaae"
+    },
+    {
+      "path": "source-inventory.json",
+      "bytes": 77230,
+      "sha256": "4b3d71a96c238d4b2bb0b6d60e5b3d721e3ae1bf6cc5912ed72b10f298412770"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 70085,
+      "sha256": "cebc10402e6ff9a0fcd8665fbfc095cd1f5eeb244a3f5e096ac59c1076c06393"
+    },
+    {
+      "path": "toolchain-versions.json",
+      "bytes": 479,
+      "sha256": "6bff7097b9009c63ec30e048d709801f4d2470845c5dab158bd1784f3e822c94"
+    },
+    {
+      "path": "baseline-results.json",
+      "bytes": 15031,
+      "sha256": "67f169d750061fa7d0ccd6e91dd2641232979fabae6d5699e779e57f0e756136"
+    },
+    {
+      "path": "edge-baselines-and-fixes.json",
+      "bytes": 19027,
+      "sha256": "da8b0a4ce586cce4142f21cc2105c4d4cc3788f3e05273bb40c36fc0fb9fea96"
+    },
+    {
+      "path": "verified-matrix-results.json",
+      "bytes": 100131,
+      "sha256": "808003fd828669d0ec6f57f1255fb299441f8021fb3a0becd7c69d7671e7e44f"
+    },
+    {
+      "path": "verified-negative.json",
+      "bytes": 9408,
+      "sha256": "d612df9e68242e6b9d08cbbf3dfd4cf482d4b3862c4e2cc078b40308d2c38d5f"
+    },
+    {
+      "path": "verified-census-results.json",
+      "bytes": 18256,
+      "sha256": "53eedbbec26d5a557d4e0648cafdd5c56d1abc33749a2340ae1fae37026a060d"
+    },
+    {
+      "path": "embedded-results.json",
+      "bytes": 13633,
+      "sha256": "1f3e8da5655ca35e37d0015fa1ffd666fd374f3c0b0fe3017bcd6abfed203439"
+    },
+    {
+      "path": "source-fmt-final.json",
+      "bytes": 66,
+      "sha256": "6bf5163399b1326ea1fe7395aaf178ac72a938af74388835ce51a52edcbf106b"
+    },
+    {
+      "path": "kernel-cost-verified-results.json",
+      "bytes": 651,
+      "sha256": "70d6a37c327b5db8ad3a081d3d8c392e2bcabe2ce21e72d009389bd0d2d2b050"
+    },
+    {
+      "path": "kernel-cost.fern",
+      "bytes": 596,
+      "sha256": "17c2d765f9214cca509d8b6c13bf17fe43843b4c6b59961f0e1683fe56e090e3"
+    },
+    {
+      "path": "verified-matrix.py",
+      "bytes": 3464,
+      "sha256": "143f7caa2a260baca35c9cb78663777e3ebcea899e0f8f1ff1a3de934b4067a9"
+    },
+    {
+      "path": "verified-negative.py",
+      "bytes": 1244,
+      "sha256": "4123eb2d8d23ecaa81c0193c0fa346fc1fe628f63ec8e918afbe13b1544f8c0d"
+    },
+    {
+      "path": "measure-verified-census.py",
+      "bytes": 1908,
+      "sha256": "6e260bce5ce0fc59a94949a28216267c0cc14e9eca81ca11ae8bf76c741d75b7"
+    },
+    {
+      "path": "check-embedded.py",
+      "bytes": 2401,
+      "sha256": "a2e904542739855f5f0cc4dba253d95114f30443f9aa2280f496e2781116c12e"
+    },
+    {
+      "path": "bootstrap.json",
+      "bytes": 1016,
+      "sha256": "aa494964c5e819e7e90099707d6f1119dba5920cc05d273e39af1df1cee8aa96"
+    },
+    {
+      "path": "driver-builds.json",
+      "bytes": 7707,
+      "sha256": "55a19c290b10c6c9523fde413d45305bfbcb493dc4dd250cc051e99452ed84e6"
+    },
+    {
+      "path": "driver-sizes.txt",
+      "bytes": 357,
+      "sha256": "b26ece9603f3e66becf6a67e732ac6d39032a2100a8238c34f5b7fbde10fb717"
+    },
+    {
+      "path": "driver-gate.log",
+      "bytes": 896,
+      "sha256": "f397ad9d193457d298b88f7625d49850a1c2c91918472d47a6ab93e35fc6a3af"
+    },
+    {
+      "path": "kernel-cost-before.callgrind.log.gz",
+      "bytes": 313,
+      "sha256": "e4efc9f9b1995d9fefbde84d4a4856c3ca161e879ae078b80faeb22eba6d1765"
+    },
+    {
+      "path": "kernel-cost-verified.callgrind.log.gz",
+      "bytes": 315,
+      "sha256": "4a97d381e9e9c077c526b3389b70d2cdc7fa2da2910dab6ba9f05f8c5fe9b338"
+    },
+    {
+      "path": "frontend-final-tests-2.jsonl.gz",
+      "bytes": 159124,
+      "sha256": "f564668948c68b1f39db7434d0a57c03753016d62b65667c03f2188db4a469b1"
+    },
+    {
+      "path": "library-regressions.jsonl.gz",
+      "bytes": 10282,
+      "sha256": "1831b359edb4116ff40153f728e073ac683f72ea92b0a9893e7480ebab48485f"
+    },
+    {
+      "path": "verified-self-regressions.jsonl.gz",
+      "bytes": 259746,
+      "sha256": "c235c6547c22128c82f39d3d612a8ab1d4712f0014169a0a73529cbd39b5c734"
+    },
+    {
+      "path": "treeshake-regressions.jsonl.gz",
+      "bytes": 1005,
+      "sha256": "d6505e29605d1ac3767e93a429a418b823bb451c4da19eb6d3e8ac81bacbef5a"
+    },
+    {
+      "path": "math-regressions.jsonl.gz",
+      "bytes": 997,
+      "sha256": "ddf3754fe5a028f19499ff73fb398a76273d96a0cac119b52f6104be01d83cbd"
+    },
+    {
+      "path": "feature-census-final.jsonl.gz",
+      "bytes": 847,
+      "sha256": "c241e93a6078bf3b3a3cdb1f00b4fa58bff696c54801d4a557453d958e3a0b69"
+    },
+    {
+      "path": "official-fixtures.jsonl.gz",
+      "bytes": 4701,
+      "sha256": "cdcd6d74513dafe93f8abafe53dc91d7ccf34badc2acd291f2376c979ad42495"
+    },
+    {
+      "path": "final-source-lint.jsonl.gz",
+      "bytes": 13486,
+      "sha256": "d2c831e8f7dd1aac722dc2bb5887824a1ac519153941caba5ed92306822eaf35"
+    },
+    {
+      "path": "staged-evidence-source-lint.jsonl.gz",
+      "bytes": 12476,
+      "sha256": "bb67abf6cc79b98f1cb5989ad47f5d36ebae860d471ca11834800a857cdf83eb"
+    },
+    {
+      "path": "vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final-go-compiler-source-check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "source-fmt-final.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "kernel-cost-measured.fern.gz",
+      "bytes": 303,
+      "sha256": "b2e3030f4250080209b4650073b46944e72aed29fb35615cd4aaee6650c1134d"
+    },
+    {
+      "path": "source-fmt-canonical.json",
+      "bytes": 121,
+      "sha256": "0d11433da9c0e99d8df2eab5ee0ab9ae274bec023553beea6d5282e9679a8745"
+    }
+  ],
+  "format_correction": {
+    "measured_source_path": "kernel-cost-measured.fern.gz",
+    "measured_source_sha256": "9aed03fa67e5ea6b25cb75eeff98aa7a3f073969ffaf92b02ca7ebdd82762b28",
+    "formatted_source_sha256": "17c2d765f9214cca509d8b6c13bf17fe43843b4c6b59961f0e1683fe56e090e3",
+    "same_executable_sha256": "add4679ddec4551d1f0c8fda7eab25833344f2e3df50c4cdbb9e4fa23baeb35b",
+    "complete_source_format": {
+      "commit": "0bf6b889b683fd00654d5eefee0ee357f5af1ba9",
+      "files": 1183,
+      "exit": 0,
+      "seconds": 2.114860318999945
+    }
+  }
+}

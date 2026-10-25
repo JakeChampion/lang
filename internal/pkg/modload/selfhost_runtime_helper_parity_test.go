@@ -32,7 +32,7 @@ func selfHostHelperRows(t *testing.T) []string {
 
 func TestSelfHostRuntimeHelperRowsMatch(t *testing.T) {
 	got := selfHostHelperRows(t)
-	want := []string{"__map_", "map_new_impl"}
+	want := []string{"__map_", "__primitive_", "map_new_impl"}
 	if len(got) != len(want) {
 		t.Fatalf("self-host predicate names %v, want %v", got, want)
 	}
@@ -41,7 +41,9 @@ func TestSelfHostRuntimeHelperRowsMatch(t *testing.T) {
 			t.Fatalf("self-host predicate names %v, want %v", got, want)
 		}
 	}
-	for _, probe := range []string{"map_new_impl", "__map_set_impl"} {
+	// And each row is one this side exempts too, or the symbol the alias table
+	// names exists under only one compiler.
+	for _, probe := range []string{"map_new_impl", "__map_set_impl", "__primitive_i32_to_string"} {
 		if !isRuntimeHelperName(probe) {
 			t.Errorf("the self-host keeps %q bare and this side mangles it", probe)
 		}

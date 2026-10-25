@@ -17,18 +17,19 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-const zeroCopySource = `import "std/http";
+const zeroCopySource = `import "std/i32";
+import "std/http";
 import "std/platform";
 import "std/serve";
 import "core/int";
 
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   let n: i32 = 0;
-  match (int.parse_int_radix(req.path.drop(1), 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(req.path.drop(1), 10)) {
+    Ok(v) => {
       n = v;
     },
-    None => {}
+    Err(_) => {}
   }
   let body: u8[] = __alloc_u8(n);
   let i: i32 = 0;

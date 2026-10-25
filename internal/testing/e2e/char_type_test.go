@@ -83,9 +83,9 @@ function main(): i32 {
 
     // Classification.
     let a: char = 97 as char;
-    if (!a.is_letter() || !a.is_lower() || a.is_upper() || !a.is_alnum()) { return 7; }
+    if (!a.is_letter() || !a.is_lower() || a.is_upper() || !a.is_alphanumeric()) { return 7; }
     let zero: char = 48 as char;
-    if (!zero.is_digit() || !zero.is_alnum() || zero.is_letter()) { return 8; }
+    if (!zero.is_digit() || !zero.is_alphanumeric() || zero.is_letter()) { return 8; }
     // Nd is the DECIMAL class, so Arabic-Indic digits count.
     if (!((0x0669 as char).is_digit())) { return 9; }
     if (!((0xA0 as char).is_whitespace())) { return 10; }

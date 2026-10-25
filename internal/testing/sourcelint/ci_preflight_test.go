@@ -24,14 +24,17 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 	}
 	rootJobs := workflowJobs(t, ciFile)
 	allowed := map[string]bool{"changes": true, "lint": true, "preflight": true, "suite": true, "reap-lint": true, "reap-preflight": true}
-	var suite ciJob
+	var suite, preflight ciJob
 	for _, job := range rootJobs {
 		if !allowed[job.id] {
 			t.Errorf("unexpected root job %s bypasses the full-suite queue", job.id)
 		}
 		delete(allowed, job.id)
-		if job.id == "suite" {
+		switch job.id {
+		case "suite":
 			suite = job
+		case "preflight":
+			preflight = job
 		}
 	}
 	if len(allowed) != 0 {
@@ -42,6 +45,11 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 		suite.keys["if"] != "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')" ||
 		suite.with["lanes"] != "${{ needs.changes.outputs.lanes }}" {
 		t.Fatalf("full-suite caller must preserve lane selection, independent lint and secrets: %+v", suite)
+	}
+	// The suite holds every Preflight leg, so a run that takes the suite skips
+	// Preflight: the two conditions partition the events.
+	if preflight.keys["if"] != "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-full') && fromJSON(needs.changes.outputs.lanes)['preflight']" {
+		t.Errorf("preflight must run exactly where the suite does not: %q", preflight.keys["if"])
 	}
 	for scope, level := range permissionRequests(workflowSource(t, ciSuiteFile)) {
 		if suite.perms[scope] != level {

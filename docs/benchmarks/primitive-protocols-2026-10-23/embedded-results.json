@@ -1,0 +1,321 @@
+{
+  "source_commit": "f9a715b02f483e0b9177655a91b0b26cc3ce3a80",
+  "binary_sha256": "5eda57166c1a56b5f2b42f84d03f414242358303050453da8dbf79ad8a3d4b6b",
+  "binary_bytes": 21536448,
+  "cwd": "/tmp",
+  "commands": [
+    {
+      "name": "primitive_byte_receiver_identity",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_byte_receiver_identity/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_byte_receiver_identity/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_char_usize_associated_functions/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_char_usize_associated_functions/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_contextual_type_arguments/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_contextual_type_arguments/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_bad_arity",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:2:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:6:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:10:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:14:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:18:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:22:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:26:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:30:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:34:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:38:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_bad_arity/main.fern:42:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_custom_method/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_custom_method/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_direct_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_direct_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_in_imported_defaults/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_in_imported_defaults/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_in_imported_defaults/program",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_in_imported_defaults/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_in_imported_defaults/program"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_keeps_method_scope",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_keeps_method_scope/main.fern"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_keeps_method_scope/main.fern:3:12: error[E043]: field access on non-struct value of type i32\n      return 42.gcd(2);\n               ^\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_keeps_module_scope",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_keeps_module_scope/main.fern"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_keeps_module_scope/main.fern:3:19: error[E001]: cannot find \"cmp\" in this scope\n      let xs: i32[] = cmp.sort([2, 1]);\n                      ^~~\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_without_imports/program",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_display_without_imports/program"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_protocols_and_unsigned_num/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_protocols_and_unsigned_num/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_protocols_and_unsigned_num/program",
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_protocols_and_unsigned_num/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-project/primitive_protocols_and_unsigned_num/program"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/embedded-fern",
+        "-version"
+      ],
+      "exit": 0,
+      "stdout": "fern f9a715b02f48\nbuilt for x86-64-linux\n",
+      "stderr": "",
+      "pass_": true
+    }
+  ]
+}

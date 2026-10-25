@@ -1,0 +1,22 @@
+{
+  "before": {
+    "instructions": 31197760,
+    "stdout": "321202\n142986\n",
+    "bytes": 29824,
+    "sha256": "806a1e9213a5192d58983300722b086d9eebdbe717ca9990a206e99a153292ef"
+  },
+  "after": {
+    "instructions": 30927965,
+    "stdout": "321202\n142986\n",
+    "bytes": 29824,
+    "sha256": "e8b97f85684b283489dcaa49ce3808e56f8535c1f33be912a147a800e7f44c68"
+  },
+  "instruction_ratio": 0.9913521034843528,
+  "verified": {
+    "instructions": 30927965,
+    "stdout": "321202\n142986\n",
+    "bytes": 29824,
+    "sha256": "add4679ddec4551d1f0c8fda7eab25833344f2e3df50c4cdbb9e4fa23baeb35b"
+  },
+  "verified_instruction_ratio": 0.9913521034843528
+}

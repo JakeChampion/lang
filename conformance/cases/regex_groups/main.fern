@@ -1,17 +1,28 @@
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
-    let r: i32 = 0;
-    if (regex.regex_match("((a|b)c)+", "acbcac")) { r = r + 1; }
-    if (regex.regex_match("a(bc)?d", "ad")) { r = r + 2; }
-    if (regex.regex_match("a(bc)?d", "abcd")) { r = r + 4; }
-    if (regex.regex_match("^(a|ab)c$", "abc")) { r = r + 8; }
-    if (regex.regex_match("^(foo|bar)+$", "foobarbar")) { r = r + 16; }
-    if (regex.regex_match("gr(a|e)y", "gray")) { r = r + 32; }
-    if (!regex.regex_match("^(cat|dog)$", "fox")) { r = r + 64; }
-    return r;
+  let r: i32 = 0;
+  if ({ let __checked_regex_6: regex.Regex = match (regex.compile("((a|b)c)+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.is_match("acbcac") }) {  // nested group + quantifier
+    r = r + 1;
+  }
+  if ({ let __checked_regex_5: regex.Regex = match (regex.compile("a(bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.is_match("ad") }) {  // optional group absent
+    r = r + 2;
+  }
+  if ({ let __checked_regex_4: regex.Regex = match (regex.compile("a(bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.is_match("abcd") }) {  // optional group present
+    r = r + 4;
+  }
+  if ({ let __checked_regex_3: regex.Regex = match (regex.compile("^(a|ab)c$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.is_match("abc") }) {  // unequal-length alternatives (NFA tries both)
+    r = r + 8;
+  }
+  if ({ let __checked_regex_2: regex.Regex = match (regex.compile("^(foo|bar)+$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.is_match("foobarbar") }) {  // repeated alternation, anchored
+    r = r + 16;
+  }
+  if ({ let __checked_regex_1: regex.Regex = match (regex.compile("gr(a|e)y")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.is_match("gray") }) {  // group alternation, other branch
+    r = r + 32;
+  }
+  if (!{ let __checked_regex_0: regex.Regex = match (regex.compile("^(cat|dog)$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("fox") }) {  // non-match
+    r = r + 64;
+  }
+  return r;
 }

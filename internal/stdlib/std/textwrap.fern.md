@@ -65,7 +65,7 @@ function __tw_wrap_line(words: string[], width: i32): string {
   let i: i32 = 0;
   while (i < words.len()) {
     let w: string = words[i];
-    let ww: i32 = utf8.codepoint_count(w);
+    let ww: i32 = w.codepoint_count();
     if (curw == 0) {
       cur = w;
       curw = ww;

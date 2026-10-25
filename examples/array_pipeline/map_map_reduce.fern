@@ -1,3 +1,30 @@
+// examples/array_pipeline/map_map_reduce.fern — pipeline 1 of #9728.
+//
+// `xs.map(f).map(g).reduce(h)` against the hand-written `while` loop that
+// computes the same answer. Same cardinality at every stage and no control
+// flow, so this is producer/consumer fusion in its simplest form: whatever a
+// fusion pass would have to do here, it would have to do everywhere.
+//
+// Three variants, because "the pipeline allocates and the loop does not" does
+// not say which half of the pipeline costs what:
+//
+//   pipeline      xs.map(f).map(g).reduce(h)
+//   closure_loop  one loop, no intermediate arrays, but `f`/`g`/`h` still
+//                 reached through function values, one indirect call each
+//                 per element
+//   call_loop     one loop that CALLS the same element functions, so the
+//                 comparison isolates fusion from inlining
+//   loop          one loop with the arithmetic written inline
+//
+// pipeline - closure_loop is what the intermediate arrays cost; closure_loop -
+// loop is what the per-element indirect call costs. Reporting only the first
+// and last would leave the two summed and unattributable.
+//
+// All three print the same checksum. That agreement is the differential test:
+// a variant that fused away work it should have done cannot report a win for
+// computing something else.
+import "std/i32";
+import "std/result";
 import "core/cmp";
 import "std/bench";
 import "std/string";
@@ -137,11 +164,11 @@ function main(): i32 {
 
   let n: i32 = 4096;
   if (argv.len() > 2) {
-    n = argv[2].parse_int_or(4096);
+    n = i32.parse_i32(argv[2]).unwrap_or(4096);
   }
   let rounds: i32 = 200;
   if (argv.len() > 3) {
-    rounds = argv[3].parse_int_or(200);
+    rounds = i32.parse_i32(argv[3]).unwrap_or(200);
   }
 
   let sel: i32 = 0;

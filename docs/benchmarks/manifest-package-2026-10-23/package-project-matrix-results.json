@@ -1,0 +1,273 @@
+{
+  "core_commit": "0c800ea765e6db37b7fbd3c49f10e862649aea3e",
+  "compiler_sha256": "7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599",
+  "oracle_sha256": "d9e960df82354f5036c93484c1570960524b546de42590f917cf3a41d74681e2",
+  "environment": {
+    "FERN_STRICT_IR": "1",
+    "FERN_SANITIZE": "1",
+    "FERN_LEAKCHECK": "1"
+  },
+  "commands": [
+    {
+      "name": "go-same-manifest-check",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/final-oracle",
+        "-check",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "go-same-manifest-interp",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/final-oracle",
+        "-interp",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 42,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "self-same-manifest-check",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "self-same-manifest-interp",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 42,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "same-manifest-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-manifest-package/package-project-x86-64-linux",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "same-manifest-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/package-project-x86-64-linux"
+      ],
+      "exit": 42,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "same-manifest-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-manifest-package/package-project-arm64-linux",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "same-manifest-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-manifest-package/package-project-arm64-linux"
+      ],
+      "exit": 42,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "same-manifest-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-manifest-package/package-project-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "same-manifest-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-manifest-package/package-project-wasm32-wasi"
+      ],
+      "exit": 42,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "go-nested-same-name--check",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/final-oracle",
+        "-check",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n",
+      "pass_": true
+    },
+    {
+      "name": "go-nested-same-name--interp",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/final-oracle",
+        "-interp",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n",
+      "pass_": true
+    },
+    {
+      "name": "self-nested-same-name--check",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-manifest-package/package-project/main.fern:2:24: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:45: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:66: error[E087]: lib.VALUE is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                     ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:76: error[E087]: lib.Choice is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                               ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:104: error[E087]: lib.make is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:133: error[E087]: lib.Chosen is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                                                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "self-nested-same-name--interp",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-manifest-package/package-project/main.fern:2:24: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:45: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:66: error[E087]: lib.VALUE is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                     ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:76: error[E087]: lib.Choice is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                               ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:104: error[E087]: lib.make is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:133: error[E087]: lib.Chosen is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                                                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "nested-same-name-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-manifest-package/refused-package-x86-64-linux",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-manifest-package/package-project/main.fern:2:24: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:45: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:66: error[E087]: lib.VALUE is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                     ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:76: error[E087]: lib.Choice is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                               ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:104: error[E087]: lib.make is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:133: error[E087]: lib.Chosen is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                                                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "nested-same-name-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-manifest-package/refused-package-arm64-linux",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-manifest-package/package-project/main.fern:2:24: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:45: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:66: error[E087]: lib.VALUE is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                     ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:76: error[E087]: lib.Choice is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                               ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:104: error[E087]: lib.make is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:133: error[E087]: lib.Chosen is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                                                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "nested-same-name-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-manifest-package/refused-package-wasm32-wasi",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-manifest-package/package-project/main.fern:2:24: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:45: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:66: error[E087]: lib.VALUE is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                     ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:76: error[E087]: lib.Choice is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                               ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:104: error[E087]: lib.make is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:133: error[E087]: lib.Chosen is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                                                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "go-directory-fallback",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/final-oracle",
+        "-check",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n",
+      "pass_": true
+    },
+    {
+      "name": "self-directory-fallback",
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-manifest-package/package-project/main.fern",
+        "/workspace/lang-manifest-package-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-manifest-package/package-project/main.fern:2:24: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:45: error[E087]: lib.Item is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:66: error[E087]: lib.VALUE is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                     ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:76: error[E087]: lib.Choice is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                               ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:104: error[E087]: lib.make is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                           ^\n/workspace/scratch/lang-manifest-package/package-project/main.fern:2:133: error[E087]: lib.Chosen is `pub(package)` \u2014 only modules in the same package as lib may use it\n    function main(): i32 { let item: lib.Item = lib.Item { value: lib.VALUE }; let choice: lib.Choice = lib.make(item); match(choice) { lib.Chosen(got) => { return got.value; } } return 1; }\n                                                                                                                                        ^\n",
+      "pass_": true
+    }
+  ]
+}

@@ -52,7 +52,7 @@ pub function state(instance: string): State {
         hosts = values;
       },
       Err(reason) => {
-        error = "Invalid world directory: " + reason;
+        error = "Invalid world directory: " + reason.message();
       }
     }
   }

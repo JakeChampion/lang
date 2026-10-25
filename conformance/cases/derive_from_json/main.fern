@@ -1,28 +1,48 @@
-
-
-
-
 import "std/json";
-@derive(json.Json, json.FromJson) struct User { id: i32, name: string, admin: boolean }
+
+@derive(json.Json, json.FromJson)
+struct User { id: i32, name: string, admin: boolean }
+
 function main(): i32 {
-    let u: User = User { id: 7, name: "Gloin", admin: true };
-    let s: string = u.to_json();
-    let sum: i32 = 0;
-    match (User.from_json(s)) {
-        Ok(u2) => { if (u2.id == 7 && u2.name == "Gloin" && u2.admin) { sum = sum + 20; } },
-        Err(e) => { sum = sum + 1; },
+  let u: User = User { id: 7, name: "Gloin", admin: true };
+  let s: string = u.to_json();  // round-trip through to_json
+  let sum: i32 = 0;
+  match (User.from_json(s)) {
+    Ok(u2) => {
+      if (u2.id == 7 && u2.name == "Gloin" && u2.admin) {
+        sum = sum + 20;
+      }
+    },
+    Err(e) => {
+      sum = sum + 1;
     }
-    match (User.from_json("{\"admin\":false,\"name\":\"Bofur\",\"id\":9}")) {
-        Ok(u3) => { sum = sum + u3.id; },
-        Err(e) => { sum = sum + 100; },
+  }
+  match (User.from_json("{\"admin\":false,\"name\":\"Bofur\",\"id\":9}")) {
+    Ok(u3) => {
+      // field order independent
+      sum = sum + u3.id;  // +9
+    },
+    Err(e) => {
+      sum = sum + 100;
     }
-    match (User.from_json("{\"id\":1,\"name\":\"x\"}")) {
-        Ok(u4) => { sum = sum + 100; },
-        Err(e) => { sum = sum + 7; },
+  }
+  match (User.from_json("{\"id\":1,\"name\":\"x\"}")) {
+    Ok(u4) => {
+      // missing `admin`
+      sum = sum + 100;
+    },
+    Err(e) => {
+      sum = sum + 7;
     }
-    match (User.from_json("not json")) {
-        Ok(u5) => { sum = sum + 100; },
-        Err(e) => { sum = sum + 5; },
+  }
+  match (User.from_json("not json")) {
+    Ok(u5) => {
+      // invalid
+      sum = sum + 100;
+    },
+    Err(e) => {
+      sum = sum + 5;
     }
-    return sum;
+  }
+  return sum;  // 20 + 9 + 7 + 5 = 41
 }
