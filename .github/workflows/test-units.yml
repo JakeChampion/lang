@@ -29,6 +29,15 @@ name: Test units
 # stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
+    inputs:
+      hosts:
+        description: >
+          The hosts whose matrix legs run, as a space-separated list of
+          x86_64 and aarch64. The suite runs both; the Preflight tier runs
+          x86_64 alone.
+        required: false
+        type: string
+        default: x86_64 aarch64
   workflow_dispatch:
 
 env:
@@ -40,21 +49,23 @@ jobs:
   test:
     strategy:
       fail-fast: false
+      # Real dimensions, not an include list: `exclude` does not reach
+      # include-only combinations. The heavy group (the printer corpus) runs
+      # four shards in separate processes because printer checks share AST
+      # globals; rest runs one. The Preflight tier calls this lane with
+      # `hosts: x86_64`, and the suite with both hosts, where the host exclude
+      # matches nothing.
       matrix:
-        include:
-          # Corpus workers use separate processes because printer checks share AST globals.
-          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 0, nshard: 4 }
-          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 1, nshard: 4 }
-          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 2, nshard: 4 }
-          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 3, nshard: 4 }
-          - { runner: ubuntu-24.04,     host: x86_64,  group: rest,  shard: 0, nshard: 1 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 0, nshard: 4 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 1, nshard: 4 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 2, nshard: 4 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 3, nshard: 4 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, group: rest,  shard: 0, nshard: 1 }
+        host: [x86_64, aarch64]
+        group: [heavy, rest]
+        shard: [0, 1, 2, 3]
+        exclude:
+          - { group: rest, shard: 1 }
+          - { group: rest, shard: 2 }
+          - { group: rest, shard: 3 }
+          - host: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
     name: test-units-${{ matrix.host }}-${{ matrix.group }}${{ matrix.group == 'heavy' && format('-shard{0}', matrix.shard) || '' }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v7
       # THE REPO'S ONE Go-BUILD-CACHE PRODUCER. Every other job in every
@@ -140,7 +151,7 @@ jobs:
         # those two gates by design and must not be asked to require them.
         env:
           FERN_CI_UNIT_PACKAGE_GROUP: ${{ matrix.group }}
-          FERN_PRINTER_CORPUS_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
+          FERN_PRINTER_CORPUS_SHARD: "${{ matrix.shard }}/${{ matrix.group == 'heavy' && 4 || 1 }}"
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
           # internal/testing/tv's tests prove with z3, which setup-fern installs.

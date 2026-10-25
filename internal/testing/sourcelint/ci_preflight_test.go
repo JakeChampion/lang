@@ -38,7 +38,8 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 		t.Fatalf("missing preflight jobs: %v", allowed)
 	}
 	if suite.usesFile() != ciSuiteFile || suite.keys["name"] != "Full suite" ||
-		suite.keys["needs"] != "[changes]" || suite.keys["if"] != "" || suite.keys["secrets"] != "inherit" ||
+		suite.keys["needs"] != "[changes]" || suite.keys["secrets"] != "inherit" ||
+		suite.keys["if"] != "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')" ||
 		suite.with["lanes"] != "${{ needs.changes.outputs.lanes }}" {
 		t.Fatalf("full-suite caller must preserve lane selection, independent lint and secrets: %+v", suite)
 	}
