@@ -177,13 +177,7 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 
 const wasmRecvHelper = `function recv(c: i32, max: i32): string {
     let buf: u8[] = __alloc_u8(max);
-    let n: i32 = 0 - 6;
-    while (n == 0 - 6) {
-        let p: i32 = tcp_pollable(c);
-        wasm_block(p);
-        wasm_pollable_drop(p);
-        n = tcp_recv_into(c, buf);
-    }
+    let n: i32 = tcp_recv_into(c, buf);
     let out: u8[] = [];
     let i: i32 = 0;
     while (i < n) { out = out.append(buf[i]); i = i + 1; }

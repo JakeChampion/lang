@@ -50,12 +50,17 @@ Shared array updates can copy an entire image.
 
 The allocator does not expose a recoverable allocation error through this API.
 A per-image limit does not establish a process memory limit.
+See [native allocator observations](docs/memory-measurements.md) for measured update and row costs.
 
 ## Scope and status
 
-Thirty-two TAP cases pass across the essential, compression, pixel, color, resize, and PNG suites.
+Seventy-six TAP cases cover the essential, compression, pixel, color, resize, PNG, row-pipeline, region, cache, RSS parser, and fusion suites.
 The file I/O probe and pixel example also exit successfully.
-All ten executables report zero live bytes under the sanitizer.
+The native script checks twenty-one executables with the sanitizer.
+The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
+The Linux-only RSS workload records its own procfs observations and runs only in the native script.
+See [RSS observations](docs/rss-observations.md) for the parent-memory control and measurement limits.
+The separate [worker qualification](docs/worker-isolation.md) tests cgroup OOM, deadlines, cancellation, and fresh-process recovery.
 
 Three negative probes confirm compiler restrictions.
 The formatter regression also passes before and after the format check.
@@ -72,3 +77,9 @@ See [resize semantics](docs/resize.md) for coordinate and alpha rules.
 The [native compression audit](docs/compression-audit.md) verifies prerequisites for PNG.
 See [PNG compatibility](docs/png.md) before use.
 PNG requires the static-append compiler fix in PR #13208.
+
+The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor or bilinear chains on demand.
+It enforces logical row budgets and cooperative cancellation. It is not the complete M4 region engine.
+The [region interface](docs/regions.md) plans checked cropped tiles and direct dependency rows.
+The [row batch interface](docs/row-cache.md) adds per-call caching with payload and entry limits.
+The [nearest fusion](docs/nearest-fusion.md) optimization removes eligible intermediate rows and preserves coordinate and admission contracts.

@@ -540,13 +540,6 @@ function outgoing(c: Context, term: ssa.STerm): Outgoing {
       c = calc(c, 4, c.temp, c.state.path);
       targets = [term.t, term.f];
       paths = [yes, c.temp];
-      if (term.t == term.f) {
-        c = calc(c, 0, yes, c.temp);
-        let joined = c.temp;
-        c = equal(c, 1, joined, c.state.path, "converged reuse edge coverage mismatch");
-        targets = [term.t];
-        paths = [joined];
-      }
     }
   }
   return Outgoing { context: c, targets: targets, paths: paths };
@@ -604,7 +597,7 @@ function input_error(f: ssa.SFunc): string {
       }
       seen = seen.append(p);
     }
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
       return "invalid reuse terminator";
     }
     let targets: i32[] = [];

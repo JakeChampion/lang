@@ -88,6 +88,7 @@ array_rotate_module                                  0
 array_rotate_right_basic                             0
 array_rotate_wrap_and_negative                       0
 array_sort                                           0
+array_views_see_builtin_writes                       0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
 arrpush                                              0
@@ -1061,6 +1062,7 @@ target_os_named                                      0
 target_os_wasi                                       0
 tasks_agree_without_a_scheduler                      7
 tco_sum                                              0
+tcp_recv_waits_for_data                              0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0

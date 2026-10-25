@@ -1,5 +1,6 @@
 import "std/net";
 import "std/quic/conn";
+import "std/quic/streams";
 import "std/quic/packet";
 import "std/tls/identity";
 import "std/async";
@@ -18,18 +19,22 @@ function now(): i64 {
   return monotonic_ns();
 }
 
-function shown(evs: conn.Event[], c: conn.Conn): conn.Conn {
-  let cur: conn.Conn = c;
-  for e in evs {
+function shown(step: conn.Conn): conn.Conn {
+  for e in step.events {
     match (e) {
-      conn.StreamReadable(id) => {
-        cur = echo(cur, id);
-      },
       conn.Connected => {
-        print("fern server: connected alpn=" + c.alpn());
+        print("fern server: connected alpn=" + step.alpn());
       },
       conn.Closed(why) => {
         print("fern server: closed code=" + why.code.to_string() + " remote=" + why.remote.to_string() + " reason=" + why.reason);
+      }
+    }
+  }
+  let cur: conn.Conn = step.events_taken();
+  for n in step.stream_events() {
+    match (n) {
+      streams.Readable(id) => {
+        cur = echo(cur, id);
       },
       _ => {}
     }
@@ -89,7 +94,7 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
     return s;
   };
   let step: conn.Conn = c.receive(d, now());
-  return Server { ...s, current: Some(shown(step.events, step.events_taken())), peer: Some(from) };
+  return Server { ...s, current: Some(shown(step)), peer: Some(from) };
 }
 
 function received(s: Server, d: u8[], from: net.SocketAddr): Server {
@@ -97,7 +102,7 @@ function received(s: Server, d: u8[], from: net.SocketAddr): Server {
     return accepted(s, d, from);
   };
   let step: conn.Conn = c.receive(d, now());
-  return Server { ...s, current: Some(shown(step.events, step.events_taken())) };
+  return Server { ...s, current: Some(shown(step)) };
 }
 
 function drained(s: Server, buf: u8[]): Server {
@@ -115,7 +120,7 @@ function sent(s: Server, c: conn.Conn): Server {
   let cur: conn.Conn = c;
   if (cur.deadline() != 0 && now() >= cur.deadline()) {
     let step: conn.Conn = cur.tick(now());
-    cur = shown(step.events, step.events_taken());
+    cur = shown(step);
   }
   let next: conn.Conn = cur.transmit(now());
   let out: u8[][] = next.datagrams();

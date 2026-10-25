@@ -59,14 +59,14 @@ function env_abi(name: string): Abi {
   return abi([borrow_mode(), counted_mode()], false);
 }
 
-function byte_view_abi(name: string): Abi {
-  if (name == "__sem_byte_view_len" || name == "__sem_byte_view_data") {
+function view_abi(name: string): Abi {
+  if (name == "__sem_view_len" || name == "__sem_view_data") {
     return abi([borrow_mode()], false);
   }
-  if (name == "__sem_byte_view_slice") {
+  if (name == "__sem_byte_view_slice" || name == "__sem_view_slice" || name == "__sem_view_slice_wide") {
     return abi([borrow_mode(), value_mode(), value_mode()], true);
   }
-  if (name == "__sem_byte_view_release") {
+  if (name == "__sem_view_release") {
     return abi([counted_mode()], false);
   }
   return unknown_abi();
@@ -86,7 +86,7 @@ pub function (a: Abis) lookup(name: string): Abi {
   if (rcsigs.is_generated_release(name)) {
     return abi([counted_mode()], false);
   }
-  return byte_view_abi(name);
+  return view_abi(name);
 }
 
 function env_closure(name: string): boolean {
@@ -1052,6 +1052,9 @@ function three_words(w: Walk, insts: ssa.SInst[], c: i32): boolean {
 // The variants whose word at slot holds a unit. A callee's own first word
 // can read pair_second either way: it names every variant split_second does.
 function word_mask(a: Abi, slot: i32, split: boolean): i32 {
+  if (slot < 0) {
+    return 0;
+  }
   if (slot == 1) {
     return a.split_third;
   }

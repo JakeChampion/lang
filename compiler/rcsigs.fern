@@ -98,8 +98,8 @@ pub function table(): Table {
   rows = add(rows, ["__fern_str_own", "__fern_str_borrow", "__fern_arr_str_join", "__fern_bytes_owned", "__fern_bytes_range", "__fern_i32_to_string", "__fern_u32_to_string", "__fern_i64_to_string", "__fern_u64_to_string"], inert(result_fresh()));
   rows = add(rows, ["__fern_arr_concat"], sig(2, effect_unsure(), result_marked()));
   rows = add(rows, ["__fern_oob_abort", "__fern_slice_abort", "__fern_account_entry", "__fern_vdso_clock"], inert(result_none()));
-  rows = add(rows, ["__sem_byte_view_len", "__sem_byte_view_data"], inert(result_none()));
-  rows = add(rows, ["__sem_byte_view_slice"], inert(result_fresh()));
+  rows = add(rows, ["__sem_view_len", "__sem_view_data"], inert(result_none()));
+  rows = add(rows, ["__sem_byte_view_slice", "__sem_view_slice", "__sem_view_slice_wide"], inert(result_fresh()));
   rows = add(rows, ["map_new_impl", "__map_get_impl", "__map_get_keyed_impl", "__map_bool_column", "__map_u8_column", "__map_cell_column", "__map_string_column", "__map_box_column"], inert(result_fresh()));
   rows = add(rows, ["__map_cell", "__map_cell_free"], inert(result_none()));
   rows = add(rows, ["__map_set_impl", "__map_set_keyed_impl"], sig_also(0, effect_move(), result_fresh(), [2], [1]));
@@ -115,7 +115,7 @@ function release_helpers(): string[] {
   return [
     "__fern_rc_dec", "__fern_arr_dec", "__fern_arr_share_dec", "__fern_str_free", "__fern_str_dec", "__fern_str_rc_dec",
     "__fern_str_view_free", "__fern_box_free", "__fern_cell_free", "__fern_closure_drop", "__fern_drop_arr_ptr",
-    "__fern_drop_arr_str", "__free", "__sem_byte_view_release", "__fern_str_arr_free",
+    "__fern_drop_arr_str", "__free", "__sem_view_release", "__fern_str_arr_free",
     "__map_drop_impl", "__map_drop_keyed_impl",
     "__map_drop_boxes_impl", "__map_drop_strcols_impl", "__map_drop_values",
   ];

@@ -1,0 +1,11 @@
+send: 3
+received 3: buf 65 66 67
+byte view: 65 66 67 len 4
+view of a view: 66 67 len 2
+watch: 0
+send: 1
+reactor_wait: 1 fd true ready true
+i32 view: fd true ready true len 2
+whole view: fd true ready true len 4
+view in a field: fd true ready true
+close: 0 0 0 0

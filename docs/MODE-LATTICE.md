@@ -265,12 +265,16 @@ the two array namespaces is a method-surface decision, not an
 assignability one, and nothing declares a `[T]` receiver today.
 
 Self-host status: E063 and E065 are **ported** (`slc_walk`,
-`e065_stmts` in checker.fern). The self-host has no `{data,len}`
-view at runtime: a slice copies into an owned array, so `[T]` is
-a checker-only `view` flag on `typeinfo.TypeArray`, re-entered
-from the parser's erased spelling through `StmtVar.is_view`,
-`ParamDecl.is_view` and `FuncDecl.ret_slice`. (`str` needs no
-flag: its spelling reaches the checker unerased.) A slice and `.as_bytes()` are views; a view
+`e065_stmts` in checker.fern). `[T]` is a `view` flag on
+`typeinfo.TypeArray`, re-entered from the parser's erased spelling
+through `StmtVar.is_view`, `ParamDecl.is_view` and
+`FuncDecl.ret_slice`. (`str` needs no flag: its spelling reaches the
+checker unerased.) At runtime a slice of any element type is a view of
+its source's storage on every target and in both interpreters: a lent
+`T[]` box, or a `{data,len}` descriptor that points into the source
+(`ssabytes`, RC-DESIGN §1.5), so a write `reactor_wait` or
+`tcp_recv_into` makes into the array afterwards shows through it
+(#13188). A slice and `.as_bytes()` are views; a view
 and an owned `T[]` convert in neither direction (E003 / E002 /
 E043 / E038) except the owned-into-`[T]` argument lend, as in
 native (#9944). Still looser than native: method resolution does
