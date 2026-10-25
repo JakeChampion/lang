@@ -23,11 +23,6 @@ func TestSelfHostTimerFdIRArm64(t *testing.T) {
     let fds: i32[] = [fd];
     return poll(fds, 500);
 }`, 0, "bl __fn___fern_timer_fd"},
-		{"shims", `function main(): i32 {
-    let p: i32 = wasm_timer_pollable(0);
-    let d: i32 = wasm_pollable_drop(p);
-    return d - p;
-}`, 1, ""},
 	}
 
 	for _, tc := range cases {
@@ -38,11 +33,6 @@ func TestSelfHostTimerFdIRArm64(t *testing.T) {
 			}
 			if tc.asmNeedle != "" && !strings.Contains(string(asm), tc.asmNeedle) {
 				t.Errorf("%s: emitted arm64 asm missing %q (did not lower through the IR path)", tc.name, tc.asmNeedle)
-			}
-			for _, name := range []string{"wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll"} {
-				if strings.Contains(string(asm), "__fern_"+name) {
-					t.Errorf("native constant adapter %s still has a runtime helper", name)
-				}
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "tfd_"+tc.name+"_arm64", string(asm))
 			cmd := runArm64Bin(qemu, bin)

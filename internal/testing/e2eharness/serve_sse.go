@@ -87,7 +87,7 @@ func sseEvents(t *testing.T, addr, path string) (status string, data []string, c
 
 func CheckSSEOverlap(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	c := dialRaw(t, addr)
 	defer c.Close()
 	if _, err := fmt.Fprintf(c, "GET /events HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n"); err != nil {
@@ -112,7 +112,7 @@ func CheckSSEOverlap(t *testing.T, addr string) {
 
 func CheckSSESequential(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for _, path := range []string{"/events", "/plain"} {
 		status, data, _ := sseEvents(t, addr, path)
 		if status != "HTTP/1.1 200 OK" || strings.Join(data, ",") != "tick 0,tick 1,tick 2" {

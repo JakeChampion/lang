@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
@@ -67,7 +66,7 @@ func censusRun(t *testing.T, cli *selfHostCLI, mux bool, rounds int) map[censusS
 	if err != nil {
 		t.Fatal(err)
 	}
-	e2eharness.WaitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr)
 	args := []string{port, strconv.Itoa(rounds)}
 	if mux {
 		args = append(args, strconv.Itoa(ServeAllocsH3MuxConcurrency))

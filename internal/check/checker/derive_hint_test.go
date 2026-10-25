@@ -364,19 +364,20 @@ function main(): i32 {
 	}
 }
 
-func TestDemangleAllRewritesEveryPart(t *testing.T) {
+func TestDemangleNamedRewritesOnlyDeclaredNames(t *testing.T) {
+	mangled := map[string]bool{"regex__RMatch": true, "box__Box": true, "point__Point": true}
 	for in, want := range map[string]string{
 		"P":                          "P",
 		"regex__RMatch":              "regex.RMatch",
-		"(a__A, b__B)":               "(a.A, b.B)",
+		"(regex__RMatch, Foo__Bar)":  "(regex.RMatch, Foo__Bar)",
 		"box__Box[point__Point]":     "box.Box[point.Point]",
 		"regex__RMatch[]":            "regex.RMatch[]",
-		"Map[k__K, i32]":             "Map[k.K, i32]",
-		"__method_P_eq":              "__method_P_eq",
+		"Map[regex__RMatchX, i32]":   "Map[regex__RMatchX, i32]",
+		`variable "regex__RMatch_x"`: `variable "regex__RMatch_x"`,
 		"Map[string, __method_P_eq]": "Map[string, __method_P_eq]",
 	} {
-		if got := demangleAll(in); got != want {
-			t.Errorf("demangleAll(%q) = %q, want %q", in, got, want)
+		if got := demangleNamed(in, mangled); got != want {
+			t.Errorf("demangleNamed(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

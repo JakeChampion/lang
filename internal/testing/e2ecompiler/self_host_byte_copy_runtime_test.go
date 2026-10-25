@@ -40,6 +40,8 @@ func TestSelfHostByteCopyNativeRuntime(t *testing.T) {
 			for name, call := range map[string]string{
 				"source-bound": "__fern_bytes_append_range(a, src, 2, 2)",
 				"target-bound": "__fern_bytes_write_range(a, 2, src, 0, 2)",
+				"back-bound":   "__fern_bytes_append_back(a, 4, 2)",
+				"back-zero":    "__fern_bytes_append_back(a, 0, 2)",
 			} {
 				t.Run(fmt.Sprintf("%s/reuse=%t/%s", target, reuse, name), func(t *testing.T) {
 					program := byteCopyStandalone(string(generated) + byteCopyRuntimeData + "function main(): i32 { let a = packed_bytes(3); let src = bytes(3); let out = " + call + "; return out.len(); }")
@@ -105,6 +107,11 @@ const byteCopyRuntimeSuccess = `function main(): i32 {
   if (z.len() != 7) { return 5; }
   let unchanged = __fern_bytes_append_range(z, src, 0 - 2147483647, 0 - 1);
   if (unchanged.len() != 7) { return 6; }
+  let rep = __fern_bytes_append_back(packed_bytes(3), 2, 30);
+  if (rep.len() != 33) { return 7; }
+  let i: i32 = 3;
+  while (i < 33) { if (__raw_load8(__raw_arr_ptr(rep) + 8, i) != __raw_load8(__raw_arr_ptr(rep) + 8, i - 2)) { return 8; } i = i + 1; }
+  if (__fern_bytes_append_back(rep, 0 - 1, 0).len() != 33) { return 9; }
   return 0;
 }
 `

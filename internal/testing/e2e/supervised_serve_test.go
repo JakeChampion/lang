@@ -18,7 +18,7 @@ func TestSupervisedServeInterpFallback(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	addr, stderrPath := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", srcPath))
-	e2eharness.WaitServerReady(t, addr, 30*time.Second)
+	e2eharness.WaitServerReady(t, addr)
 
 	if resp := e2eharness.HTTPRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("interp fallback /ok: want 200, got\n%s", resp)

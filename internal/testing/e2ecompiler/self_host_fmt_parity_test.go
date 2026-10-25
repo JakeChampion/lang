@@ -22,6 +22,26 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"match-value-with-divergent-arm", `enum ProbeError { Missing }
+function probe(value: Option[i32]): Result[i32, ProbeError] {
+  let number: i32 = match (value) {
+    Some(n) => n,
+    None => { return Err(Missing); },
+  };
+  return Ok(number + 1);
+}
+function main(): i32 {
+  match (probe(Some(7))) {
+    Ok(n) => { if (n != 8) { return 1; } },
+    Err(_) => { return 2; },
+  }
+  match (probe(None)) {
+    Ok(_) => { return 3; },
+    Err(Missing()) => {},
+  }
+  return 0;
+}
+`},
 	{"nested-valueless-match-lambda", `function main(): i32 {
   let count = cell_new(0);
   let visit = (n: i32): void => {

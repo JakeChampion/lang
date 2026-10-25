@@ -1020,7 +1020,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__mismatch_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.SliceType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__mismatch_bytes_str"] = &ast.FuncType{
@@ -2749,6 +2749,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {
+		sourceNamed(prog, c.errors)
 		return c.info, diag.Errors(c.errors)
 	}
 
@@ -3576,33 +3577,6 @@ func deriveHint(tn, derive, trait string) string {
 	return fmt.Sprintf("add %s in module `%s`, which declares it and needs %s there%s", routes, mod, cmpImport, orphan)
 }
 
-func typeLabel(t ast.Type) string { return demangleAll(t.String()) }
-
-func demangleAll(s string) string {
-	identPart := func(b byte) bool {
-		return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		if !identPart(s[i]) || s[i] >= '0' && s[i] <= '9' {
-			b.WriteByte(s[i])
-			i++
-			continue
-		}
-		j := i
-		for j < len(s) && identPart(s[j]) {
-			j++
-		}
-		if word := s[i:j]; word[0] == '_' {
-			b.WriteString(word)
-		} else {
-			b.WriteString(demangle(word))
-		}
-		i = j
-	}
-	return b.String()
-}
-
 func deriveKind(name string) string {
 	switch simple := SimpleTraitName(name); simple {
 	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug":
@@ -3686,19 +3660,19 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 		if c.typeImplsEqAndHash(kt.Name) {
 			return ""
 		}
-		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash: %s", typeLabel(k), deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
+		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash: %s", k, deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
 	case ast.EnumType:
 		if c.typeImplsEqAndHash(kt.Name) {
 			return ""
 		}
-		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash: %s", typeLabel(k), deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
+		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash: %s", k, deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
 	case ast.TupleType, ast.ArrayType:
 		if ast.StructuralMapKey(k) {
 			return ""
 		}
-		return fmt.Sprintf("map key type %s is not supported — a tuple or array used as a key may hold only integers, booleans, chars, strings, and such tuples and arrays", typeLabel(k))
+		return fmt.Sprintf("map key type %s is not supported — a tuple or array used as a key may hold only integers, booleans, chars, strings, and such tuples and arrays", k)
 	}
-	return fmt.Sprintf("map key type %s is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires %s", typeLabel(k), cmpImport)
+	return fmt.Sprintf("map key type %s is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires %s", k, cmpImport)
 }
 
 type deriveConf struct {
@@ -6227,7 +6201,7 @@ func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType
 }
 
 func (c *checker) tryResidualMsg(srcEnum ast.EnumType, srcRes, retRes ast.Type) string {
-	sl, rl := typeLabel(srcRes), typeLabel(retRes)
+	sl, rl := srcRes.String(), retRes.String()
 	if dt, ok := retRes.(ast.DynTraitType); ok {
 		return fmt.Sprintf("`?` cannot box %s into %s: %s does not implement %s", sl, rl, sl, c.missingDynTraits(dt, srcRes))
 	}
@@ -12770,7 +12744,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					atn, _ := methodTypeName(at)
 					c.errfCode(n.Args[0].Pos(), "E038",
 						"argument 1 to %q: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or %s",
-						id.Name, typeLabel(at), typeLabel(at), deriveHint(atn, "cmp.Display", "cmp.Display"))
+						id.Name, at, at, deriveHint(atn, "cmp.Display", "cmp.Display"))
 					return ast.VoidType{}
 				}
 				arg := n.Args[0]
@@ -13630,7 +13604,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						n.CmpCall = cmpCall
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — %s, so ordering can use structural comparison", typeLabel(lt), n.Op, deriveHint(tn, "cmp.Ord", "cmp.Ord"))
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — %s, so ordering can use structural comparison", lt, n.Op, deriveHint(tn, "cmp.Ord", "cmp.Ord"))
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
@@ -13727,7 +13701,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						n.EqNegate = n.Op == "!="
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — %s, so `==` can use structural equality", typeLabel(lt), n.Op, deriveHint(tn, "cmp.Eq", "cmp.Eq"))
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — %s, so `==` can use structural equality", lt, n.Op, deriveHint(tn, "cmp.Eq", "cmp.Eq"))
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)
@@ -13896,7 +13870,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			case ast.VoidType:
 				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			case ast.LanesType:
-				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, typeLabel(t))
+				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, t)
 			default:
 				c.captureView(n.P, name, t)
 				captured[name] = t
@@ -15810,13 +15784,13 @@ func lanesSignature(params []ast.Param, result ast.Type) bool {
 
 func (c *checker) lanesContained(t ast.Type, pos ast.Position) {
 	if t != nil && lanesInside(t) {
-		c.errfCode(pos, "E085", "%s holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", typeLabel(t))
+		c.errfCode(pos, "E085", "%s holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", t)
 	}
 }
 
 func (c *checker) lanesHeld(t ast.Type, pos ast.Position) {
 	if t != nil && holdsLanes(t) {
-		c.errfCode(pos, "E085", "a field or payload of type %s holds a lane value; a lane value lives only in a local, a parameter or a result", typeLabel(t))
+		c.errfCode(pos, "E085", "a field or payload of type %s holds a lane value; a lane value lives only in a local, a parameter or a result", t)
 	}
 }
 

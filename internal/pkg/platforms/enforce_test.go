@@ -408,6 +408,7 @@ func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 		"args":   `function main(): i32 { let a: string[] = args(); return 0; }`,
 		"random": `function main(): i32 { return random_i32(); }`,
 		"fs":     `function main(): i32 { let r = read_file("/etc/x"); return 0; }`,
+		"poll":   `function main(): i32 { let none: i32[] = []; return poll(none, 10); }`,
 	}
 	for name, src := range srcs {
 		t.Run(name, func(t *testing.T) {
@@ -489,6 +490,30 @@ func TestViolationNamesTheEquivalent(t *testing.T) {
 		if got := strings.Contains(msg, "use `wasm_timer_pollable`, which this target provides"); got != want {
 			t.Errorf("%s: names the equivalent = %v, want %v: %s", target, got, want, msg)
 		}
+	}
+}
+
+func TestViolationNamesTheNativeEquivalent(t *testing.T) {
+	for target, want := range map[string]bool{"x86-64-linux": true, "arm64-darwin": true, "arm64-freestanding": false} {
+		msg := platforms.Violation{Builtin: "wasm_timer_pollable", Capability: "pollable", Target: target}.Message("")
+		if got := strings.Contains(msg, "use `timer_fd`, which this target provides"); got != want {
+			t.Errorf("%s: names the equivalent = %v, want %v: %s", target, got, want, msg)
+		}
+	}
+}
+
+func TestPollablesAreWasiOnly(t *testing.T) {
+	for _, b := range []string{"wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll"} {
+		if c, ok := platforms.GatedBuiltin(b); !ok || c != "pollable" {
+			t.Errorf("%s gated on %q (gated=%v), want pollable", b, c, ok)
+		}
+	}
+	want := "wasm32-wasi wasm32-wasi-http"
+	if got := strings.Join(platforms.TargetsProviding("pollable"), " "); got != want {
+		t.Errorf("pollable providers = %s, want %s", got, want)
+	}
+	if c, ok := platforms.GatedBuiltin("poll"); !ok || c != "now" {
+		t.Errorf("poll gated on %q (gated=%v), want now: its timeout is a clock-driven wakeup", c, ok)
 	}
 }
 

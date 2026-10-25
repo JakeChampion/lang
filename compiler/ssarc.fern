@@ -5655,7 +5655,7 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.op_mismatch()) };
   }
   if (ins.str == "__mismatch_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_mismatch_bytes())) };
+    return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.mismatch_name(), 5)) };
   }
   if (ins.str == "__mismatch_bytes_str") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_mismatch_bytes_str())) };
@@ -5869,6 +5869,16 @@ function set_return_words(own e: Emit, b: ssa.SBlock): Emit {
   return e;
 }
 
+// A block whose last instruction is the builtin exit has already left the
+// process, so its unreachable terminator needs no trap of its own.
+function ends_in_exit(f: ssasem.Func, b: ssa.SBlock): boolean {
+  if (b.insts.len() == 0) {
+    return false;
+  }
+  let last: ssa.SInst = b.insts[b.insts.len() - 1];
+  return last.kind_tag == ssasem.call() && last.str == "exit" && util.index_of_str(f.shadows, "exit") < 0;
+}
+
 function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
   let b: ssa.SBlock = f.graph.blocks[order[position]];
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
@@ -5878,7 +5888,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
     e = Emit { ...e, r: drops(e.r, ret, f, p, e.links) };
-    if (b.term.kind_tag == 4) {
+    if (b.term.kind_tag == 4 && !ends_in_exit(f, b)) {
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
     }

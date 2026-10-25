@@ -39,7 +39,7 @@ var BinaryBodyContent = []byte{0x00, 0xFF, 0x80, 0x0A, 0x41}
 
 func CheckBinaryBody(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for _, path := range []string{"/bytes", "/stream"} {
 		conn := rawRequest(t, addr, path, "Connection: close\r\n")
 		resp := readResponse(t, conn, path)

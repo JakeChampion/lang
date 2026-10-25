@@ -3296,22 +3296,34 @@ function type_head(obj: ast.Expr, s: State): string {
     if (lookup(s, id.name) >= 0) {
       return "";
     }
+    if (util.has_str(s.binding.names, id.name)) {
+      let actual = ssasem.substitute(typeinfo.TypeErased { name: id.name }, s.binding);
+      if (semtypes.concrete(actual, false)) {
+        return parser.receiver_base(typeinfo.spelling(actual));
+      }
+    }
     if (checker.variant_owner_of(s.scope, id.name).len() > 0) {
       return "";
     }
-    let sig: checker.StructSig = checker.struct_sig(s.scope, id.name);
-    if (sig.name.len() > 0) {
-      if (sig.enum_owner.len() > 0) {
-        return "";
-      }
-      return id.name;
+    return declared_type_head(id.name, s);
+  }
+  return "";
+}
+
+function declared_type_head(name: string, s: State): string {
+  let base = util.base_type_name(name);
+  if (base != name && (checker.struct_sig(s.scope, base).name.len() > 0 || union_variants(s, base).len() > 0 || builtin_union_layout(base) != 0)) {
+    return base;
+  }
+  let sig = checker.struct_sig(s.scope, name);
+  if (sig.name.len() > 0) {
+    if (sig.enum_owner.len() > 0) {
+      return "";
     }
-    if (union_variants(s, id.name).len() > 0 || builtin_union_layout(id.name) != 0) {
-      return id.name;
-    }
-    if (typeinfo.is_primitive_type_name(id.name)) {
-      return id.name;
-    }
+    return name;
+  }
+  if (union_variants(s, name).len() > 0 || builtin_union_layout(name) != 0 || typeinfo.is_primitive_type_name(name)) {
+    return name;
   }
   return "";
 }
@@ -3333,7 +3345,32 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
   if (at < 0) {
     return refused(s, "call target has no semantic contract: " + head + "." + name);
   }
-  return direct_call(c, s.contracts.list[at], s, statement, expected);
+  let contract = s.contracts.list[at];
+  let binding = qualified_binding(c, contract, head, name, s);
+  if (c.args.len() != contract.params.len()) {
+    return refused(s, "call arity");
+  }
+  if (is_void(contract.result) && !statement) {
+    return refused(s, "unsupported void call");
+  }
+  return invoke(c.args, contract, s, binding, destination_binding(contract, expected));
+}
+
+function qualified_binding(c: ast.ExprCall, contract: ssasem.Contract, head: string, name: string, s: State): ssasem.Binding {
+  let binding = written_binding(c, contract, s);
+  let sig = s.scope.lookup_assoc_sig(head, name);
+  if (sig.receiver.len() > 0) {
+    if let ast.ExprFieldAccess(field) = c.callee {
+      if let ast.ExprIdent(receiver) = field.obj {
+        let pattern = resolved(checker.signature_receiver(s.scope, sig), true, ssasem.unbound(), s.scope);
+        let actual = settled(resolved(checker.spelled_type(s.scope, receiver.name), s.template, s.binding, s.scope));
+        if (semtypes.concrete(actual, false)) {
+          binding = ssasem.bind_type(binding, pattern, actual);
+        }
+      }
+    }
+  }
+  return binding;
 }
 
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
@@ -3466,12 +3503,12 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     }
     bound = ssasem.bind_type(bound, contract.params[at], s.values[v.id]);
     if (!bound.ok) {
-      return refused(s, bound.why);
+      return refused(s, bound.why + ": " + contract.name + " parameter " + at.to_string() + " expects " + typeinfo.spelling(contract.params[at]) + ", received " + typeinfo.spelling(s.values[v.id]));
     }
     v = widen(v, ssasem.substitute(contract.params[at], bound));
     s = v.s;
     if (!semtypes.equal(ssasem.substitute(contract.params[at], bound), s.values[v.id])) {
-      return refused(s, "call argument type");
+      return refused(s, "call argument type: " + contract.name + " expects " + typeinfo.spelling(ssasem.substitute(contract.params[at], bound)) + ", received " + typeinfo.spelling(s.values[v.id]));
     }
     ids = ids.append(v.id);
     i = i + 1;
@@ -6903,6 +6940,7 @@ function byte_copy_contracts(): ssasem.Contract[] {
   return [
     ssasem.Contract { name: "__fern_bytes_append_range", params: [bytes, bytes, t_i32(), t_i32()], modes: [counted, borrow, value, value], result: bytes },
     ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, t_i32(), bytes, t_i32(), t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_append_back", params: [bytes, t_i32(), t_i32()], modes: [counted, value, value], result: bytes },
   ];
 }
 
@@ -7212,7 +7250,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__bsd_sum_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: true }, t_i32()], modes: [lent, value], result: t_i32() },
     ssasem.Contract { name: "__memchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__rmemchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
-    ssasem.Contract { name: "__mismatch_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, lent, value, value], result: t_i32() },
+    ssasem.Contract { name: "__mismatch_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: true }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: true }, t_i32(), t_i32()], modes: [lent, value, lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__mismatch_bytes_str", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_string(), t_i32(), t_i32()], modes: [lent, value, lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__rmemchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract {

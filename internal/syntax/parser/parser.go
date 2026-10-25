@@ -2088,10 +2088,10 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 }
 
 func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
-	p.parseBlockStmtsMode(block, tailValue, false)
+	p.parseBlockStmtsMode(block, tailValue, false, false)
 }
 
-func (p *parser) parseBlockStmtsMode(block *ast.Block, tailValue, discardTail bool) {
+func (p *parser) parseBlockStmtsMode(block *ast.Block, tailValue, discardTail, statementBranches bool) {
 	if err := p.enterUnits(blockNestUnits); err != nil {
 		p.errors = append(p.errors, err)
 		return
@@ -2099,7 +2099,7 @@ func (p *parser) parseBlockStmtsMode(block *ast.Block, tailValue, discardTail bo
 	defer p.leaveUnits(blockNestUnits)
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		before := p.i
-		if discardTail && (p.match(lexer.Keyword, "if") || p.match(lexer.Keyword, "match")) {
+		if (discardTail || statementBranches) && (p.match(lexer.Keyword, "if") || p.match(lexer.Keyword, "match")) {
 			nRefs, nTodo, nErr := len(p.typeRefs), len(p.todoSites), len(p.errors)
 			stmt, err := p.parseStmt()
 			if err == nil && len(p.errors) == nErr {
@@ -2180,13 +2180,13 @@ func (p *parser) parseBlockStmtsMode(block *ast.Block, tailValue, discardTail bo
 	}
 }
 
-func (p *parser) parseLambdaBody() (*ast.Block, error) {
+func (p *parser) parseLambdaBody(statementBranches bool) (*ast.Block, error) {
 	open, err := p.expect(lexer.Punct, "{")
 	if err != nil {
 		return nil, err
 	}
 	block := &ast.Block{P: open.Pos}
-	p.parseBlockStmts(block, true)
+	p.parseBlockStmtsMode(block, true, false, statementBranches)
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return block, err
 	}
@@ -2473,7 +2473,8 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	p.returnTypeStack = append(p.returnTypeStack, ret)
-	body, err := p.parseArrowBody(open.Pos)
+	_, voidResult := ret.(ast.VoidType)
+	body, err := p.parseArrowBody(open.Pos, !unannotated && voidResult)
 	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
 	if err != nil {
 		return nil, err
@@ -2482,9 +2483,9 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Body: body}, nil
 }
 
-func (p *parser) parseArrowBody(pos ast.Position) (*ast.Block, error) {
+func (p *parser) parseArrowBody(pos ast.Position, statementBranches bool) (*ast.Block, error) {
 	if p.match(lexer.Punct, "{") {
-		return p.parseLambdaBody()
+		return p.parseLambdaBody(statementBranches)
 	}
 	e, err := p.parseExpr()
 	if err != nil {
@@ -3242,7 +3243,7 @@ func (p *parser) parseMatchStmtBody() (*ast.Block, error) {
 	}
 	open := p.advance()
 	body := &ast.Block{P: open.Pos}
-	p.parseBlockStmtsMode(body, true, true)
+	p.parseBlockStmtsMode(body, true, true, false)
 	closeTok, err := p.expect(lexer.Punct, "}")
 	if err != nil {
 		return body, err

@@ -1396,7 +1396,11 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     });
     k = k + 1;
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: [], enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
+  let exports: parser.ExportBinding[] = [];
+  for binding in mod.exports {
+    exports = exports.append(parser.ExportBinding { ...binding, func_name: mangle_bare(binding.func_name, ctx) });
+  }
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, exports: exports, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: [], enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
 }
 
 function rewrite_trait_ref(spelling: string, ctx: RewriteCtx): string {

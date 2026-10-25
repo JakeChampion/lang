@@ -1602,12 +1602,7 @@ function __hash3(input: [u8], pos: i32): i32 {
 }
 
 function __common(input: [u8], from: i32, pos: i32): i32 {
-  let n: i32 = input.len();
-  let len: i32 = 0;
-  while (len < 258 && pos + len < n && input[from + len] == input[pos + len]) {
-    len = len + 1;
-  }
-  return len;
+  return __mismatch_bytes(input, from, input, pos, 258);
 }
 
 function __longest(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {

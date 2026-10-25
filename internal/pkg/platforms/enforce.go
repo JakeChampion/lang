@@ -42,16 +42,21 @@ var gatedBuiltins = map[string]string{
 	"write":   "stdout",
 	"putchar": "stdout",
 
-	"now_unix_ms":         "now",
-	"now_ns":              "now",
-	"monotonic_ns":        "now",
-	"clock_resolution":    "now",
-	"sleep_ms":            "now",
-	"sleep_ns":            "now",
-	"wasm_timer_pollable": "now",
-	"clock_set":           "now",
+	"now_unix_ms":      "now",
+	"now_ns":           "now",
+	"monotonic_ns":     "now",
+	"clock_resolution": "now",
+	"sleep_ms":         "now",
+	"sleep_ns":         "now",
+	"clock_set":        "now",
+	"poll":             "now",
 
 	"timer_fd": "pollfd",
+
+	"wasm_timer_pollable": "pollable",
+	"wasm_pollable_drop":  "pollable",
+	"wasm_block":          "pollable",
+	"wasm_poll":           "pollable",
 
 	"env":        "env",
 	"environ":    "env",
@@ -246,11 +251,6 @@ var coreBuiltins = map[string]bool{
 	"f64_bits":      true,
 	"f64_from_bits": true,
 
-	"poll":               true,
-	"wasm_block":         true,
-	"wasm_poll":          true,
-	"wasm_pollable_drop": true,
-
 	"string_from_bytes_range_unchecked": true,
 }
 
@@ -294,7 +294,7 @@ func (v Violation) Message(entryModule string) string {
 	return msg
 }
 
-var equivalents = map[string]string{"timer_fd": "wasm_timer_pollable"}
+var equivalents = map[string]string{"timer_fd": "wasm_timer_pollable", "wasm_timer_pollable": "timer_fd"}
 
 func Enforce(prog *ast.Program, target string) []Violation {
 	d := ForTarget(target)

@@ -18,10 +18,10 @@ function capability_profile(profile: string): string[] {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"];
   }
   if (profile == "wasi-cli") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable"];
   }
   if (profile == "wasi-proxy") {
-    return ["log", "now", "config", "random", "fetch"];
+    return ["log", "now", "config", "random", "fetch", "pollable"];
   }
   let empty: string[] = [];
   return empty;
@@ -208,9 +208,13 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "clock_resolution", capability: "now" },
     Gate { builtin: "sleep_ms", capability: "now" },
     Gate { builtin: "sleep_ns", capability: "now" },
-    Gate { builtin: "wasm_timer_pollable", capability: "now" },
     Gate { builtin: "clock_set", capability: "now" },
+    Gate { builtin: "poll", capability: "now" },
     Gate { builtin: "timer_fd", capability: "pollfd" },
+    Gate { builtin: "wasm_timer_pollable", capability: "pollable" },
+    Gate { builtin: "wasm_pollable_drop", capability: "pollable" },
+    Gate { builtin: "wasm_block", capability: "pollable" },
+    Gate { builtin: "wasm_poll", capability: "pollable" },
     Gate { builtin: "env", capability: "env" },
     Gate { builtin: "environ", capability: "env" },
     Gate { builtin: "args", capability: "args" },
@@ -367,7 +371,6 @@ pub function core_builtins(): string[] {
     "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",
     "buf_len", "buf_take", "buf_take_bytes", "buf_clear", "buf_free",
     "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
-    "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
   ];
 }
 
@@ -553,6 +556,9 @@ pub function violation_message(v: Violation): string {
 function equivalent(builtin: string): string {
   if (builtin == "timer_fd") {
     return "wasm_timer_pollable";
+  }
+  if (builtin == "wasm_timer_pollable") {
+    return "timer_fd";
   }
   return "";
 }
