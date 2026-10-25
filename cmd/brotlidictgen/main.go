@@ -2,10 +2,11 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -46,13 +47,16 @@ func generate(data []byte) (string, error) {
 //
 // Use `+"`go run ./cmd/brotlidictgen`"+` to regenerate this file.
 
-import "std/base64";
-import "std/codec";
-
 pub const SIZE: i32 = %d;
 
-pub function bytes(): Result[u8[], codec.DecodeError] {
-  return base64.decode("%s");
+pub const WORDS: u8[] = [%s];
+`, size, digest, size, byteList(data)), nil
 }
-`, size, digest, size, base64.StdEncoding.EncodeToString(data)), nil
+
+func byteList(data []byte) string {
+	parts := make([]string, len(data))
+	for i, b := range data {
+		parts[i] = strconv.Itoa(int(b))
+	}
+	return strings.Join(parts, ", ")
 }
