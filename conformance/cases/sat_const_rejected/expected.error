@@ -1,1 +1,1 @@
-operator `+|` not allowed in integer constant expressions
+main.fern:9:1: error[E093]: const K: operator `+|` not allowed in integer constant expressions

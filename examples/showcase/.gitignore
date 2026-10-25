@@ -1,5 +1,9 @@
-# The build compiles this module from swarm.fern.md.
+# The build compiles these modules from their Fern sources.
 /web/swarm/kernel.wasm
 /web/swarm/kernel.wasm.br
 /web/swarm/kernel.wasm.gz
 /web/swarm/kernel.wasm.zst
+/web/blockyard/kernel.wasm
+/web/blockyard/kernel.wasm.br
+/web/blockyard/kernel.wasm.gz
+/web/blockyard/kernel.wasm.zst

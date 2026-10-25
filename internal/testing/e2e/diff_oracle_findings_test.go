@@ -13,6 +13,7 @@ type selfHostFinding struct {
 	Seed  uint64 `json:"seed"`
 	Class string `json:"class"`
 	Pass  string `json:"pass"`
+	Repro string `json:"repro,omitempty"`
 }
 
 var findingsMu sync.Mutex
@@ -105,7 +106,7 @@ func TestFailureClass(t *testing.T) {
 func TestRecordFindingAppendsJSONLines(t *testing.T) {
 	path := t.TempDir() + "/findings.jsonl"
 	t.Setenv("FERN_FINDINGS", path)
-	recordFinding(t, selfHostFinding{Test: "TestDifferential_SelfHostX86_64", Seed: 3, Class: "refused: copy or phi type", Pass: "inline"})
+	recordFinding(t, selfHostFinding{Test: "TestDifferential_SelfHostX86_64", Seed: 3, Class: "refused: copy or phi type", Pass: "inline", Repro: "function main(): i32 { return 0; }"})
 	recordFinding(t, selfHostFinding{Test: "TestDifferential_SelfHostWasm", Seed: 9, Class: "self-host wasm exit", Pass: "none"})
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -116,7 +117,10 @@ func TestRecordFindingAppendsJSONLines(t *testing.T) {
 		t.Fatalf("got %d lines, want 2:\n%s", len(lines), data)
 	}
 	var f selfHostFinding
-	if err := json.Unmarshal([]byte(lines[0]), &f); err != nil || f.Seed != 3 || f.Pass != "inline" {
+	if err := json.Unmarshal([]byte(lines[0]), &f); err != nil || f.Seed != 3 || f.Pass != "inline" || f.Repro == "" {
 		t.Fatalf("first line %q decodes to %+v, %v", lines[0], f, err)
+	}
+	if strings.Contains(lines[1], "repro") {
+		t.Errorf("a finding with no repro writes one: %s", lines[1])
 	}
 }

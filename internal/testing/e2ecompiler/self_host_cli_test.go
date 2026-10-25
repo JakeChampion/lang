@@ -695,10 +695,10 @@ function main(): i32 {
 			if err := cmd.Run(); err != nil {
 				t.Errorf("-check %s: %v (stderr: %s)", c.arg, err, stderr.String())
 			}
-			want := c.name + ":3:3: warning: `todo` stub remaining\n" + c.name + ":5:21: warning: `todo` stub remaining\n"
+			want := c.name + ":3:3: warning[W001]: `todo` stub remaining\n" + c.name + ":5:21: warning[W001]: `todo` stub remaining\n"
 			if c.arg != "-" {
-				want = c.name + ":3:3: warning: `todo` stub remaining\n      todo;\n      ^\n" +
-					c.name + ":5:21: warning: `todo` stub remaining\n    function g(): i32 { todo(\"later\"); }\n                        ^\n"
+				want = c.name + ":3:3: warning[W001]: `todo` stub remaining\n      todo;\n      ^\n" +
+					c.name + ":5:21: warning[W001]: `todo` stub remaining\n    function g(): i32 { todo(\"later\"); }\n                        ^\n"
 			}
 			if stderr.String() != want {
 				t.Errorf("-check %s wrote %q, want %q", c.arg, stderr.String(), want)

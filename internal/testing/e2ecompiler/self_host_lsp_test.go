@@ -383,7 +383,7 @@ var lspCases = []struct {
 		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.hidden();\n}\n",
 		"lib.fern":  "function hidden(): i32 { return 1; }\n",
 	}, []placed{{span(2, 12, 2, 13), 1, "fern", "E087"}}},
-	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(1, 2, 1, 3), 2, "fern", ""}}},
+	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(1, 2, 1, 3), 2, "fern", "W001"}}},
 }
 
 func TestSelfHostLSPDiagnosticPlacementX86_64(t *testing.T) {
@@ -501,7 +501,7 @@ func TestSelfHostLSPFormattingLiterateX86_64(t *testing.T) {
 var (
 	checkLine          = regexp.MustCompile(`^(\d+):(\d+): (.*)$`)
 	checkLineElsewhere = regexp.MustCompile(`^\S+:\d+:\d+: `)
-	diagnosticCode     = regexp.MustCompile(`^[EP]\d{3}$`)
+	diagnosticCode     = regexp.MustCompile(`^[EPW]\d{3}$`)
 )
 
 func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
@@ -532,9 +532,13 @@ func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(rest, "warning: "):
+		case strings.HasPrefix(rest, "warning["):
 			d.Severity = 2
-			rest = strings.TrimPrefix(rest, "warning: ")
+			code, msg, _ := strings.Cut(strings.TrimPrefix(rest, "warning["), "]: ")
+			if diagnosticCode.MatchString(code) {
+				d.Code = code
+			}
+			rest = msg
 		case strings.HasPrefix(rest, "error["):
 			code, msg, _ := strings.Cut(strings.TrimPrefix(rest, "error["), "]: ")
 			if diagnosticCode.MatchString(code) {
