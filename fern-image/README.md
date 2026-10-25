@@ -6,7 +6,8 @@ It supports checked RGB8 and RGBA8 allocation and safe pixel access.
 The color module provides sRGB transfer functions, grayscale, channel operations, and alpha compositing.
 
 The resize module provides scalar nearest-neighbor and bilinear filters.
-It does not decode files, serve HTTP, or implement a CDN.
+A restricted native PNG codec decodes and encodes noninterlaced RGB8/RGBA8.
+HTTP and CDN services remain unimplemented.
 
 ## Build and test
 
@@ -52,9 +53,9 @@ A per-image limit does not establish a process memory limit.
 
 ## Scope and status
 
-Twenty-two TAP cases pass across the essential probe and pixel suite.
+Twenty-nine TAP cases pass across the essential probe and pixel suite.
 The file I/O probe and pixel example also exit successfully.
-All eight executables report zero live bytes under the sanitizer.
+All ten executables report zero live bytes under the sanitizer.
 
 Three negative probes confirm compiler restrictions.
 The formatter regression also passes before and after the format check.
@@ -69,4 +70,5 @@ See [color semantics](docs/color.md) for numerical contracts and test tolerances
 See [resize semantics](docs/resize.md) for coordinate and alpha rules.
 
 The [native compression audit](docs/compression-audit.md) verifies prerequisites for PNG.
-PNG decoding and encoding remain unimplemented.
+See [PNG compatibility](docs/png.md) before use.
+PNG requires the static-append compiler fix in PR #13208.
