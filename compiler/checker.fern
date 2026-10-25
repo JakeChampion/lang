@@ -8623,10 +8623,10 @@ function view_parts(e: ast.Expr, to: typeinfo.Type, s: Scope): ViewPart[] {
     },
     ast.ExprTuple(tl) => {
       if let typeinfo.TypeTuple(tt) = to {
-        let i: i32 = 0;
-        while (i < tl.elements.len() && i < tt.elements.len()) {
-          out = out.append(ViewPart { value: tl.elements[i], to: tt.elements[i] });
-          i = i + 1;
+        if (tl.elements.len() == tt.elements.len()) {
+          for i in 0..tl.elements.len() {
+            out = out.append(ViewPart { value: tl.elements[i], to: tt.elements[i] });
+          }
         }
       }
     },
@@ -8638,10 +8638,8 @@ function view_parts(e: ast.Expr, to: typeinfo.Type, s: Scope): ViewPart[] {
       }
     },
     ast.ExprCall(c) => {
-      let k: i32 = 0;
-      while (k < c.args.len()) {
+      for k in 0..c.args.len() {
         out = out.append(ViewPart { value: c.args[k], to: variant_pattern_payload_type(s, ctor_variant_name(c), to, k) });
-        k = k + 1;
       }
     },
     _ => {}
@@ -8653,13 +8651,11 @@ function struct_view_parts(sl: ast.ExprStructLit, to: typeinfo.Type, s: Scope): 
   let out: ViewPart[] = [];
   let ssig: StructSig = s.lookup_struct(sl.type_name);
   let args: typeinfo.Type[] = nominal_args(to);
-  let i: i32 = 0;
-  while (i < sl.field_names.len() && i < sl.field_values.len()) {
+  for i in 0..sl.field_values.len() {
     let fidx: i32 = field_index(ssig, sl.field_names[i]);
     if (fidx >= 0) {
       out = out.append(ViewPart { value: sl.field_values[i], to: lit_field_type(ssig, fidx, args, s) });
     }
-    i = i + 1;
   }
   if (sl.has_base) {
     out = out.append(ViewPart { value: sl.base, to: to });
@@ -8727,9 +8723,8 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
   let out: ViewRoots = no_view_roots();
   let callee: ViewCallee = view_callee(c, cur);
   let flags: boolean[] = view_sum_flags(sums, vix, callee.key);
-  let i: i32 = 0;
-  while (i < flags.len() && i < callee.args.len()) {
-    if (flags[i]) {
+  for i in 0..flags.len() {
+    if (flags[i] && i < callee.args.len()) {
       let at: typeinfo.Type = check_expr(callee.args[i], cur);
       if (holds_view_aggregate(at, cur)) {
         out = merge_view_roots(out, slc_agg_roots(callee.args[i], at, cur, params, localarr, tainted, held, sums, vix));
@@ -8737,7 +8732,6 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
         out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
       }
     }
-    i = i + 1;
   }
   return out;
 }
@@ -20496,9 +20490,8 @@ function e065_agg_call_roots(c: ast.ExprCall, params: string[], sbacked: string[
   let out: ViewRoots = no_view_roots();
   let callee: ViewCallee = view_callee(c, s);
   let flags: boolean[] = view_sum_flags(sums, vix, callee.key);
-  let i: i32 = 0;
-  while (i < flags.len() && i < callee.args.len()) {
-    if (flags[i]) {
+  for i in 0..flags.len() {
+    if (flags[i] && i < callee.args.len()) {
       let at: typeinfo.Type = check_expr(callee.args[i], s);
       if (holds_view_aggregate(at, s)) {
         out = merge_view_roots(out, e065_agg_roots(callee.args[i], at, params, sbacked, sums, vix, s));
@@ -20506,7 +20499,6 @@ function e065_agg_call_roots(c: ast.ExprCall, params: string[], sbacked: string[
         out = merge_view_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, vix, s));
       }
     }
-    i = i + 1;
   }
   return out;
 }
@@ -22428,15 +22420,13 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let e065_fns: parser.FuncDecl[] = [];
   let e065_scopes: Scope[] = [];
   let e065_sums: ViewSum[] = [];
-  let sfi: i32 = 0;
-  while (sfi < mod.funcs.len()) {
+  for sfi in 0..mod.funcs.len() {
     let sfn: parser.FuncDecl = mod.funcs[sfi];
     if (sfn.ret_type == "str" || sfn.ret_type == "string" || holds_view_aggregate(slc_scopes[sfi].ret_type, slc_scopes[sfi])) {
       e065_fns = e065_fns.append(sfn);
       e065_scopes = e065_scopes.append(slc_scopes[sfi]);
       e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
     }
-    sfi = sfi + 1;
   }
   let e065_ix: ViewIndex = view_index(e065_sums);
   let e065_changed: boolean = true;
