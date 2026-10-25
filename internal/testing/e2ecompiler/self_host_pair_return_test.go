@@ -247,12 +247,12 @@ struct Box2 { n: i32, s: string }
   return (n, s);
 }
 
-// Three elements stay boxed.
+// Three scalar elements return in scalar lanes.
 @noinline function triple(n: i32): (i32, i32, i32) {
   return (n, n + 1, n + 2);
 }
 
-// A second element wider than a word stays boxed.
+// A second element wider than a word returns in scalar lanes.
 @noinline function wide_second(n: i32): (i32, i64) {
   return (n, n as i64 * 4000000000 as i64);
 }

@@ -242,7 +242,7 @@ the second fits a word: the first element is its result, which may be as
 wide as any result (an i64, a u64, a float), and the second the word. A caller rebuilds the pair from the two, and split reads
 its projections off the construction, so the pair is never built; a return
 that is not a construction (a join of two, a parameter) is projected in the
-callee. A triple, or a pair whose second element is wider than a word, stays boxed. Wasm spells a paired function's result from its lowered body, not its declaration. `TestSelfHostPairReturn` covers both shapes on the three targets, a pair and a Result returned across a park among them.
+callee. A tuple of three or four scalars returns in scalar lanes, as a record of scalars does. A pair of scalars whose second element is wider than a word also returns in scalar lanes. A tuple of five or more elements stays boxed. A tuple of three or four that holds a reference also stays boxed. Wasm spells a paired function's result from its lowered body, not its declaration. `TestSelfHostPairReturn` covers both shapes on the three targets, a pair and a Result returned across a park among them.
 
 `sempair`, which `seminline` runs once nothing more is spliced, chooses the
 functions: nothing outside the bodies names one and every body that names
