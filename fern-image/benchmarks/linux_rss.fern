@@ -9,9 +9,13 @@ pub enum RssError { Unavailable, Malformed, Overflow }
 
 function bytes(value: string): Result[i64, RssError] {
   let fields = value.trim().split("kB");
-  if (fields.len() != 2 || fields[1].trim() != "") { return Err(Malformed); }
+  if (fields.len() != 2 || fields[1].trim() != "") {
+    return Err(Malformed);
+  }
   let number = match (i64.parse_i64(fields[0].trim())) { Ok(v) => v, Err(_) => { return Err(Malformed); } };
-  if (number < 0i64) { return Err(Malformed); }
+  if (number < 0i64) {
+    return Err(Malformed);
+  }
   return match (number *? 1024i64) { Some(v) => Ok(v), None => Err(Overflow) };
 }
 
@@ -26,14 +30,34 @@ pub function parse_status(status: string): Result[Snapshot, RssError] {
     let fields = line.split(":");
     if (fields.len() == 2) {
       match (fields[0]) {
-        "VmRSS" => { if (seen_rss) { return Err(Malformed); } rss = bytes(fields[1])?; seen_rss = true; },
-        "VmHWM" => { if (seen_hwm) { return Err(Malformed); } hwm = bytes(fields[1])?; seen_hwm = true; },
-        "VmSize" => { if (seen_virtual) { return Err(Malformed); } virtual = bytes(fields[1])?; seen_virtual = true; },
+        "VmRSS" => {
+          if (seen_rss) {
+            return Err(Malformed);
+          }
+          rss = bytes(fields[1])?;
+          seen_rss = true;
+        },
+        "VmHWM" => {
+          if (seen_hwm) {
+            return Err(Malformed);
+          }
+          hwm = bytes(fields[1])?;
+          seen_hwm = true;
+        },
+        "VmSize" => {
+          if (seen_virtual) {
+            return Err(Malformed);
+          }
+          virtual = bytes(fields[1])?;
+          seen_virtual = true;
+        },
         _ => {}
       }
     }
   }
-  if (!seen_rss || !seen_hwm || !seen_virtual || hwm < rss || virtual < rss) { return Err(Malformed); }
+  if (!seen_rss || !seen_hwm || !seen_virtual || hwm < rss || virtual < rss) {
+    return Err(Malformed);
+  }
   return Ok(Snapshot { rss_bytes: rss, hwm_bytes: hwm, virtual_bytes: virtual });
 }
 
