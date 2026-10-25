@@ -8,6 +8,10 @@ name: CI
 
 on:
   pull_request:
+    # labeled and unlabeled as well as the defaults: the ci-full label picks
+    # the suite over Preflight below, so a label change starts the run it
+    # selects and cancels the one it does not, through the group below.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
   workflow_call:
 
@@ -495,9 +499,9 @@ jobs:
   suite:
     name: Full suite
     # A pull request runs Preflight alone; the suite runs on main after the
-    # merge, on a dispatch, and on a pull request labelled ci-full. The label
-    # is read from the event, so it must be on the pull request before the
-    # push that should run the suite.
+    # merge, on a dispatch, and on a pull request labelled ci-full. Adding
+    # the label is a pull_request event of its own, so it starts the suite
+    # on the current head.
     needs: [changes]
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
     uses: ./.github/workflows/ci-suite.yml
