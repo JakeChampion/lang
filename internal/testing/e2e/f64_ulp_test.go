@@ -197,6 +197,34 @@ func taylorSinCos(r *big.Float) (sin, cos *big.Float) {
 	return sin, cos
 }
 
+var f64HypInputs = []float64{
+	1e-300, 1e-20, 1e-10, 1e-5, 0.1, 0.25, 0.34657359027997264, 0.5, 0.75, 1,
+	1.5, 2, 5, 10, 21.9, 22, 22.1, 50, 100, 500, 709, 709.78, 710, 710.4,
+	710.4758600739439,
+}
+
+// refHyp returns sinh, cosh and tanh of x at refPrecLnExp bits. Below 2^-30 the
+// exponentials cancel past the reference precision, so sinh is x + x^3/6 there.
+func refHyp(x float64) (sinh, cosh, tanh float64) {
+	bx := newRef().SetFloat64(x)
+	half := newRef().SetFloat64(0.5)
+	var bs, bc *big.Float
+	if math.Abs(x) < 0x1p-30 {
+		x3 := newRef().Mul(bx, newRef().Mul(bx, bx))
+		bs = newRef().Add(bx, newRef().Quo(x3, newRef().SetInt64(6)))
+		bc = newRef().Add(newRef().SetInt64(1), newRef().Mul(half, newRef().Mul(bx, bx)))
+	} else {
+		ex := bigExp(bx)
+		emx := newRef().Quo(newRef().SetInt64(1), ex)
+		bs = newRef().Mul(newRef().Sub(ex, emx), half)
+		bc = newRef().Mul(newRef().Add(ex, emx), half)
+	}
+	sinh, _ = bs.Float64()
+	cosh, _ = bc.Float64()
+	tanh, _ = newRef().Quo(bs, bc).Float64()
+	return sinh, cosh, tanh
+}
+
 type f64Case struct {
 	call string
 	want float64
@@ -244,6 +272,16 @@ func f64UlpCases() []f64Case {
 		{709.7827128933839, 0x7feffffffffffb2a},
 	} {
 		cs = append(cs, f64Case{fmt.Sprintf("fexp(%s)", lit(r.x)), math.Float64frombits(r.bits)})
+	}
+	for _, x := range f64HypInputs {
+		for _, v := range []float64{x, -x} {
+			rs, rc, rt := refHyp(v)
+			cs = append(cs,
+				f64Case{fmt.Sprintf("fsinh(%s)", lit(v)), rs},
+				f64Case{fmt.Sprintf("fcosh(%s)", lit(v)), rc},
+				f64Case{fmt.Sprintf("ftanh(%s)", lit(v)), rt},
+			)
+		}
 	}
 	for _, x := range append(f64UlpPosInputs, f64LogInputs()...) {
 		cs = append(cs, f64Case{fmt.Sprintf("flog(%s)", lit(x)), refLog(x)})
@@ -309,6 +347,21 @@ func f64SpecialCases() []f64Case {
 		{"fpow(0.0, (0.0 - 1.0))", math.Pow(0, -1)},
 		{fmt.Sprintf("fpow(1.0, %s)", fromBits(math.NaN())), math.Pow(1, math.NaN())},
 		{fmt.Sprintf("fpow(%s, 0.0)", fromBits(math.NaN())), math.Pow(math.NaN(), 0)},
+		{"fsinh(0.0)", 0},
+		{"fsinh((-0.0))", math.Copysign(0, -1)},
+		{"fsinh(710.5)", inf},
+		{"fsinh((0.0 - 710.5))", -inf},
+		{fmt.Sprintf("fsinh(%s)", fromBits(-inf)), -inf},
+		{fmt.Sprintf("fsinh(%s)", fromBits(math.NaN())), math.NaN()},
+		{"fcosh((-0.0))", 1},
+		{"fcosh((0.0 - 710.5))", inf},
+		{fmt.Sprintf("fcosh(%s)", fromBits(-inf)), inf},
+		{fmt.Sprintf("fcosh(%s)", fromBits(math.NaN())), math.NaN()},
+		{"ftanh(0.0)", 0},
+		{"ftanh((-0.0))", math.Copysign(0, -1)},
+		{fmt.Sprintf("ftanh(%s)", fromBits(inf)), 1},
+		{fmt.Sprintf("ftanh(%s)", fromBits(-inf)), -1},
+		{fmt.Sprintf("ftanh(%s)", fromBits(math.NaN())), math.NaN()},
 	}
 }
 
@@ -340,7 +393,7 @@ func f64UlpProg(cs []f64Case) string {
 	var b strings.Builder
 	b.WriteString("import \"std/i64\";\nimport \"std/f64\";\n")
 	b.WriteString("function emit(v: f64): i32 { print(f64_bits(v).to_string()); return 0; }\n")
-	for _, f := range []string{"sin", "cos", "exp", "log"} {
+	for _, f := range []string{"sin", "cos", "exp", "log", "sinh", "cosh", "tanh"} {
 		fmt.Fprintf(&b, "function f%s(x: f64): f64 { return x.%s(); }\n", f, f)
 	}
 	b.WriteString("function fpow(x: f64, y: f64): f64 { return x.pow(y); }\n")

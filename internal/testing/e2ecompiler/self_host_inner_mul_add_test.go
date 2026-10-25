@@ -101,8 +101,16 @@ func TestSelfHostInnerMulAddGeometry(t *testing.T) {
 
 func TestSelfHostInnerMulAddEmissionAndShadow(t *testing.T) {
 	gcc, runner, driver := buildModloadDriverX86(t)
-	asm, _ := compileSourceModload(t, runner, driver, innerMulAddSource())
-	body := emittedBody(t, asm, "__fn_array__inner_mul_add_f64")
+	// A @noinline wrapper keeps the kernel in a body of its own: the
+	// std/array wrapper itself is inlined into its caller.
+	const kernelSrc = `import "std/array";
+@noinline function kernel(a: f64[], b: f64[], rows: i32, extent: i32, columns: i32, init: f64): f64[] { return array.inner_mul_add_f64(a, b, rows, extent, columns, init); }
+function main(): i32 { return kernel([1.0, 2.0], [3.0, 4.0], 1, 2, 1, 0.0).len() - 1; }`
+	asm, _ := compileSourceModload(t, runner, driver, kernelSrc)
+	body := emittedBody(t, asm, "__fn_kernel")
+	if strings.Contains(body, "call __fn_array__inner_mul_add_f64") {
+		body = emittedBody(t, asm, "__fn_array__inner_mul_add_f64")
+	}
 	for _, op := range []string{"mulpd", "addpd", "mulsd", "addsd", "__fern_oob_abort"} {
 		if !strings.Contains(body, op) {
 			t.Fatalf("inner kernel missing %s:\n%s", op, body)

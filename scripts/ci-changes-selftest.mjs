@@ -37,6 +37,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const run = new AsyncFunction("github", "context", "core", script);
 
 const suiteYml = fs.readFileSync(path.join(root, ".github/workflows/ci-suite.yml"), "utf8");
+const ciYml = ci.join("\n");
 
 // One invocation of the script: `files` is what the API lists, `throwOn`
 // makes the listing fail, `lanes` replaces the real table. `proof` stubs what
@@ -78,7 +79,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
           data: (p.compare || {})[basehead] || { status: "diverged", files: [] },
         }),
         listPullRequestsAssociatedWithCommit: async () => ({ data: p.prs }),
-        getContent: async () => ({ data: { content: Buffer.from(suiteYml).toString("base64") } }),
+        getContent: async ({ path: p }) => ({ data: { content: Buffer.from(p.endsWith("/ci.yml") ? ciYml : suiteYml).toString("base64") } }),
       },
       git: {
         getCommit: async ({ commit_sha }) => {
@@ -164,10 +165,16 @@ for (const files of [["docs/x.md"], ["editors/vscode/x.ts"], []]) {
 }
 // A main push at a tree identical to the merged PR's head skips each lane
 // whose every job passed on that head's successful run; perf always runs.
-const display = Object.fromEntries([...suiteYml.matchAll(/^  ([a-z0-9_-]+):\n    name: (.+)$/gm)].map((m) => [m[1], m[2].trim()]));
+// A suite lane's jobs are named under "Full suite / "; a lane ci.yml runs
+// itself (Preflight) carries its own name alone.
 const laneKeys = Object.keys(JSON.parse(table));
-check("every lane has a Full suite name to prove it by", laneKeys.filter((l) => !display[l]), []);
-const jobsFor = (keys, conclusion = "success") => keys.map((l) => ({ name: `Full suite / ${display[l]} / job`, conclusion }));
+const names = (src) => [...src.matchAll(/^  ([a-z0-9_-]+):\n    name: (.+)$/gm)].map((m) => [m[1], m[2].trim()]);
+const display = Object.fromEntries([...names(suiteYml), ...names(ciYml).filter(([l]) => laneKeys.includes(l))]);
+const rootLanes = names(ciYml).map(([l]) => l).filter((l) => laneKeys.includes(l));
+check("every lane has a job name to prove it by", laneKeys.filter((l) => !display[l]), []);
+check("the Preflight lane runs from ci.yml, outside the suite", rootLanes, ["preflight"]);
+const jobPrefix = (l) => (rootLanes.includes(l) ? "" : "Full suite / ") + display[l] + " / ";
+const jobsFor = (keys, conclusion = "success") => keys.map((l) => ({ name: `${jobPrefix(l)}job`, conclusion }));
 const merged = (tree) => ({ number: 7, merged_at: "2026-09-23T00:00:00Z", base: { ref: "main" }, head: { sha: "h".repeat(40) }, tree });
 const proofOf = ({ tree = "t", headTree = "t", jobs = jobsFor(laneKeys), prs, status = "completed", poll } = {}) => ({
   tree, prs: prs || [merged(headTree)], runs: { ["h".repeat(40)]: [{ id: 99, status }] }, jobs: { 99: jobs }, poll,
@@ -227,7 +234,7 @@ check("a dispatch is never trimmed", all(r), true);
 
 // A main push skips each lane whose inputs did not change since the newest
 // main run that ran it passed it; a lane red or cancelled there runs.
-const mainJobs = (keys, conclusion = "success") => keys.map((l) => ({ name: `Validate / Full suite / ${display[l]} / job`, conclusion }));
+const mainJobs = (keys, conclusion = "success") => keys.map((l) => ({ name: `Validate / ${jobPrefix(l)}job`, conclusion }));
 const head = "c".repeat(40);
 const mainProof = ({ runs = [{ id: 50, head_sha: "m1" }], jobs = { 50: mainJobs(laneKeys) }, compare = {}, mainThrows = false } = {}) =>
   ({ tree: "t", prs: [], runs: {}, jobs, mainRuns: runs, compare, mainThrows });
