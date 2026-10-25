@@ -5276,6 +5276,7 @@ type checker struct {
 	litLocalOf        map[*ast.Var]*litLocal
 	litIdents         map[*ast.Ident]*litLocal
 	litCompositeOf    map[*ast.Var][]*litLocal
+	litNestedOf       map[*ast.Var][]*litLocal
 	litFields         map[*ast.FieldAccess]*litLocal
 	litCompositeReads map[*ast.Ident]*ast.Var
 	current           *ast.FuncDecl
@@ -10165,6 +10166,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if et, ok := n.Type.(ast.EnumType); ok && unannotated {
 			c.beginLitCompositeLocal(n, et.Args, s)
+		}
+		if unannotated {
+			c.beginLitNestedLocal(n, s)
 		}
 	case *ast.Destructure:
 		got := c.checkExpr(n.Init, s)
