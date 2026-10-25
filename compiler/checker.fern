@@ -10061,20 +10061,25 @@ function sugar_arm_bodies(sugar: ast.MatchSugar): ast.Stmt[][] {
   return out;
 }
 
-function block_exits(stmts: ast.Stmt[]): boolean {
-  return block_leaves(stmts, false);
+// exit_bound: a local named `exit` is in scope, so a call to `exit` is not the builtin.
+function block_exits(stmts: ast.Stmt[], exit_bound: boolean): boolean {
+  return block_leaves(stmts, false, exit_bound);
 }
 
-function block_diverges(stmts: ast.Stmt[]): boolean {
-  return block_leaves(stmts, true);
+function block_diverges(stmts: ast.Stmt[], exit_bound: boolean): boolean {
+  return block_leaves(stmts, true, exit_bound);
 }
 
-function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
+function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): boolean {
   if (stmts.len() == 0) {
     return false;
   }
   let last: ast.Stmt = stmts[stmts.len() - 1];
+  let bound: boolean = exit_bound || lets_bind_exit(stmts);
   match (last) {
+    ast.StmtExpr(x) => {
+      return !bound && parser.calls_exit(x.value);
+    },
     ast.StmtBreak(_) => {
       return jumps;
     },
@@ -10085,28 +10090,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
       return true;
     },
     ast.StmtIf(f) => {
-      let bodies: ast.Stmt[][] = sugar_arm_bodies(f.sugar);
-      if (bodies.len() > 0) {
-        if (f.sugar.origin == "let_else") {
-          return block_leaves(bodies[0], jumps);
-        }
-        for body in bodies {
-          if (!block_leaves(body, jumps)) {
-            return false;
-          }
-        }
-        return true;
-      }
-      match (f.cond) {
-        ast.ExprBool(b) => {
-          if (b.value) {
-            return block_leaves(f.then_body, jumps);
-          }
-          return block_leaves(f.else_body, jumps);
-        },
-        _ => {}
-      }
-      return block_leaves(f.then_body, jumps) && block_leaves(f.else_body, jumps);
+      return if_leaves(f, jumps, bound);
     },
     ast.StmtWhile(w) => {
       match (w.cond) {
@@ -10119,24 +10103,101 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
       }
     },
     ast.StmtMatch(m) => {
-      if (m.arms.len() == 0) {
-        return false;
-      }
-      if (m.origin == "let_else") {
-        return block_leaves(m.arms[0].body, jumps);
-      }
-      for arm in m.arms {
-        if (!block_leaves(arm.body, jumps)) {
-          return false;
-        }
-      }
-      return true;
+      return match_leaves(m, jumps, bound);
     },
     _ => {
       return false;
     }
   }
   return false;
+}
+
+function if_leaves(f: ast.StmtIf, jumps: boolean, bound: boolean): boolean {
+  let bodies: ast.Stmt[][] = sugar_arm_bodies(f.sugar);
+  if (bodies.len() > 0) {
+    return sugar_leaves(f.sugar, bodies, jumps, bound || util.has_str(sugar_binders(f.sugar), "exit"));
+  }
+  match (f.cond) {
+    ast.ExprBool(b) => {
+      if (b.value) {
+        return block_leaves(f.then_body, jumps, bound);
+      }
+      return block_leaves(f.else_body, jumps, bound);
+    },
+    _ => {}
+  }
+  return block_leaves(f.then_body, jumps, bound) && block_leaves(f.else_body, jumps, bound);
+}
+
+function sugar_leaves(sugar: ast.MatchSugar, bodies: ast.Stmt[][], jumps: boolean, bound: boolean): boolean {
+  if (sugar.origin == "let_else") {
+    return block_leaves(bodies[0], jumps, bound);
+  }
+  for body in bodies {
+    if (!block_leaves(body, jumps, bound)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function match_leaves(m: ast.StmtMatch, jumps: boolean, bound: boolean): boolean {
+  if (m.arms.len() == 0) {
+    return false;
+  }
+  if (m.origin == "let_else") {
+    return block_leaves(m.arms[0].body, jumps, bound || pattern_binds_exit(m.arms[0].pattern));
+  }
+  for arm in m.arms {
+    if (!block_leaves(arm.body, jumps, bound || pattern_binds_exit(arm.pattern))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function lets_bind_exit(stmts: ast.Stmt[]): boolean {
+  for st in stmts {
+    if let ast.StmtVar(v) = st {
+      if (util.has_str(astwalk.append_bound_name([], v.name), "exit")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function pattern_binds_exit(p: ast.Pattern): boolean {
+  return util.has_str(astwalk.pattern_binders(p, []), "exit");
+}
+
+function sugar_binders(sugar: ast.MatchSugar): string[] {
+  let out: string[] = [];
+  for arm in sugar.tup {
+    for b in arm.binds {
+      out = out.append(b);
+    }
+    out = out.append(arm.at_binding);
+    for p in arm.elem_pats {
+      out = astwalk.pattern_binders(p, out);
+    }
+  }
+  for arm in sugar.strct {
+    for b in arm.binds {
+      out = out.append(b);
+    }
+    out = out.append(arm.at_binding);
+    for p in arm.field_pats {
+      out = astwalk.pattern_binders(p, out);
+    }
+  }
+  for arm in sugar.lits {
+    out = out.append(arm.at_binding);
+  }
+  for arm in sugar.arms {
+    out = astwalk.pattern_binders(arm.pattern, out);
+  }
+  return out;
 }
 
 function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): boolean {
@@ -14881,8 +14942,8 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             out = out.append(dg_at("E022", kind_label + " source must be an enum value, got " + type_label(mst), expr_line(m.scrutinee), expr_col(m.scrutinee)));
           } else if (m.origin == "let_else" && src_is_enum && !src_unknown_enum) {
             let le_last: i32 = m.arms.len() - 1;
-            if (le_last >= 0 && !block_diverges(m.arms[le_last].body)) {
-              out = out.append(dg_at("E022", "let-else: else branch must diverge (return / break / continue)", m.line, m.col));
+            if (le_last >= 0 && !block_diverges(m.arms[le_last].body, cur.defines("exit"))) {
+              out = out.append(dg_at("E022", "let-else: else branch must diverge (return / break / continue / exit)", m.line, m.col));
             }
           }
         }
@@ -17442,8 +17503,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let rc: OwnWalk = ru_expr(f.cond, moved, ctx);
       let rt: OwnWalk = ow_stmts(f.then_body, rc.moved, ctx);
       let re: OwnWalk = ow_stmts(f.else_body, rc.moved, ctx);
-      let m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_diverges(f.then_body));
-      m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && block_diverges(f.else_body));
+      let m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_diverges(f.then_body, util.has_str(ctx.bound, "exit")));
+      m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && block_diverges(f.else_body, util.has_str(ctx.bound, "exit")));
       return OwnWalk { moved: m, diags: util.append_diags(util.append_diags(rc.diags, rt.diags), re.diags) };
     },
     ast.StmtWhile(w) => {
@@ -17482,7 +17543,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         }
         let ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
-        mv = ow_moved_join(mv, ra.moved, block_diverges(arm.body));
+        mv = ow_moved_join(mv, ra.moved, block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
       }
       return OwnWalk { moved: mv, diags: d };
     },
@@ -17528,6 +17589,10 @@ function ow_param_names(fn: parser.FuncDecl): string[] {
     out = out.append(p.name);
   }
   return out;
+}
+
+function ow_exit_bound(ctx: OwnCtx, pat: ast.Pattern): boolean {
+  return util.has_str(ctx.bound, "exit") || pattern_binds_exit(pat);
 }
 
 function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
@@ -21450,13 +21515,13 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         rty = typeinfo.TypeStruct { name: rname, args: [] };
       }
       function_diags = util.append_diags(function_diags, ret_diags(dbody, fsc, rty, unions));
-      if (mod.funcs[i].import_iface.len() == 0 && !block_exits(mod.funcs[i].body)) {
+      if (mod.funcs[i].import_iface.len() == 0 && !block_exits(mod.funcs[i].body, fsc.defines("exit"))) {
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
       }
     }
     if (mod.funcs[i].ret_type.len() == 0 && mod.funcs[i].receiver_type.len() == 0
       && mod.funcs[i].all_type_params.len() == 0 && !mod.funcs[i].is_const
-      && mod.funcs[i].import_iface.len() == 0 && !block_exits(dbody)) {
+      && mod.funcs[i].import_iface.len() == 0 && !block_exits(dbody, fsc.defines("exit"))) {
       let inferred: typeinfo.Type = exit_result(dbody, fsc);
       if (!is_unknown(inferred) && !is_void(inferred)) {
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + type_label(inferred) + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
@@ -23469,7 +23534,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtIf { ...f, cond: annotate_expr(f.cond, s), then_body: annotate_block(f.then_body, s), else_body: annotate_block(f.else_body, s) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtAssign(a) => {
       return ast.StmtAssign { target: a.target, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target)), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
