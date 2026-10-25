@@ -228,6 +228,18 @@ function string_binary(op: string, a: string, b: string): Value {
   if (op == "!=") {
     return logical(a != b);
   }
+  if (op == "<") {
+    return logical(a < b);
+  }
+  if (op == "<=") {
+    return logical(a <= b);
+  }
+  if (op == ">") {
+    return logical(a > b);
+  }
+  if (op == ">=") {
+    return logical(a >= b);
+  }
   return fail("operator `" + op + "` not allowed on strings in constant expressions");
 }
 
@@ -329,7 +341,11 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
   let width: string = scalar_width(ty);
   match (e) {
     ast.ExprNumber(n) => {
-      return literal_number(n);
+      let value = literal_number(n);
+      if ((width == "f32" || width == "f64") && n.suffix == "") {
+        return settle(value, width);
+      }
+      return value;
     },
     ast.ExprBool(b) => {
       return logical(b.value);
@@ -368,7 +384,7 @@ pub function settle(v: Value, ty: string): Value {
   }
   if let IntValue(n) = v.data {
     if (ty == "f32" || ty == "f64") {
-      return fail("declared type " + ty + " does not match initialiser type i32");
+      return floating(n.value as f64);
     }
     return number(n.value, ty);
   }

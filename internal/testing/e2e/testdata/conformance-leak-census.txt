@@ -172,6 +172,7 @@ const_shadowed_by_pattern_binder                     0
 const_struct_literal                                 0
 const_struct_negative_fields                         0
 const_without_a_type                                 0
+constant_scalar_ordering                             0
 consuming_method                                     0
 consuming_trait_method                               0
 contains_demo                                        0

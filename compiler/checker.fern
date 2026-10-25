@@ -1623,10 +1623,6 @@ function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
   return recv != "" && s.lookup_method("cmp", recv).name.len() > 0;
 }
 
-function (s: Scope) orders_alike(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  return type_eq(a, b) && s.has_ord_cmp(a);
-}
-
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
   return s.overload_ret(ast.operator_method(op), lt);
 }
@@ -6155,22 +6151,7 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
     return t_unknown("shift operands must both be integers");
   }
   if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-    if (is_integer(lt) && is_integer(rt)) {
-      return t_bool();
-    }
-    if (type_eq(lt, t_char()) && type_eq(rt, t_char())) {
-      return t_bool();
-    }
-    if (float_operands_agree(lt, rt)) {
-      return t_bool();
-    }
-    if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
-      return t_bool();
-    }
-    if (s.orders_alike(lt, rt)) {
-      return t_bool();
-    }
-    return t_unknown("comparison op `" + b.op + "` requires matching i32, f64, string or `Ord` operands");
+    return t_bool();
   }
   if (b.op == "==" || b.op == "!=") {
     if (float_operands_agree(lt, rt)) {
@@ -15632,7 +15613,7 @@ pub function build_gate_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
-  let cgd: util.Diag[] = const_init_diags(mod);
+  let cgd: util.Diag[] = const_init_diags(mod, [], true);
   if (cgd.len() > 0) {
     return cgd;
   }
@@ -15644,7 +15625,7 @@ pub function build_runtime_gate_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_runtime_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
-  let cgd: util.Diag[] = const_init_diags(mod);
+  let cgd: util.Diag[] = const_init_diags(mod, [], true);
   if (cgd.len() > 0) {
     return cgd;
   }
@@ -15901,7 +15882,7 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
   return "";
 }
 
-function const_init_diags(mod: parser.Module): util.Diag[] {
+function const_init_diags(mod: parser.Module, refused: string[], hard_only: boolean): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
   let evaluated_names: string[] = [];
@@ -15923,7 +15904,11 @@ function const_init_diags(mod: parser.Module): util.Diag[] {
             }
             let value: consteval.Value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
             if (value.error.len() > 0) {
-              out = out.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col));
+              let hard = value.error == "division by zero in constant expression" || value.error == "modulo by zero in constant expression";
+              let deferred = const_expr_err(r.value, evaluated_names).len() > 0;
+              if (hard || !hard_only && !deferred && !util.has_str(refused, fd.name)) {
+                out = out.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col));
+              }
             } else {
               evaluated_names = evaluated_names.append(fd.name);
               values = values.append(value);
@@ -16356,7 +16341,7 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = util.append_diags([], const_init_diags(mod));
+  let out: util.Diag[] = [];
   out = util.append_diags(out, handler_state_diags(mod));
   out = util.append_diags(out, e078_diags(mod));
   out = util.append_diags(out, e079_diags(mod));
@@ -21799,6 +21784,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     well_typed = false;
   }
   let body_diags: util.Diag[] = [];
+  let refused_consts: string[] = [];
   let ambig: string[] = ambiguous_variants(ut);
   let mc_on: boolean = mc_any_marked(mod.structs, mod.enums);
   let (derive_diags, derive_keys) = e021_derive_field_diags(mod);
@@ -21924,6 +21910,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     }
     if (ambig.len() > 0) {
       function_diags = util.append_diags(function_diags, vref_stmts(dbody, fsc, ambig));
+    }
+    if (mod.funcs[i].is_const && function_diags.len() > 0) {
+      refused_consts = refused_consts.append(mod.funcs[i].name);
     }
     body_diags = util.append_diags(body_diags, body_source_order(function_diags));
     i = i + 1;
@@ -22103,7 +22092,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     body_diags = util.append_diags(body_diags, e057_struct_diags(esd, mod.enums, fld_scope));
   }
   body_diags = util.append_diags(body_diags, e085_decl_diags(mod, focus, e064_tn));
-  let cgd: util.Diag[] = const_init_diags(mod);
+  let cgd: util.Diag[] = const_init_diags(mod, refused_consts, false);
   if (cgd.len() > 0) {
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
   }

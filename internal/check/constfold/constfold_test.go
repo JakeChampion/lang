@@ -141,13 +141,6 @@ const X: i32 = helper();`)
 	}
 }
 
-func TestFoldRejectsTypeMismatch(t *testing.T) {
-	got := foldErr(t, `const X: f32 = 5;`)
-	if !strings.Contains(got, "declared type") {
-		t.Errorf("error should mention declared type; got %v", got)
-	}
-}
-
 func TestFoldRejectsConstantDivByZero(t *testing.T) {
 	got := foldErr(t, `const X: i32 = 10 / 0;`)
 	if !strings.Contains(got, "division by zero") {

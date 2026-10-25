@@ -16,6 +16,9 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		want    string
 		withMsg bool
 	}{
+		{"ordering-variable-result", `function main(): i32 { let x: i32 = 1 < true; return 0; }`, "E003,E009", false},
+		{"ordering-return-result", `function main(): i32 { return 1 < true; }`, "E002,E009", false},
+		{"ordering-const-result", `const WRONG: i32 = 1 < true; function main(): i32 { return 0; }`, "E002,E009", false},
 		{"for-over-struct", "struct Box { k: i32 }\nfunction main(): i32 { let b: Box = Box { k: 1 }; for it in b { let k: i32 = it.k; } return 0; }\n", "E083(cannot iterate over a value of type Box: `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one)", true},
 		{"two-leaks", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { let a: Ticket = Ticket { id: 1 }; let b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067", false},
 		{"leak-in-each-of-two-fns", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { let a: Ticket = Ticket { id: 1 }; }\nfunction g(): void { let b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067", false},

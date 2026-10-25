@@ -52,7 +52,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		}
 		val, err := evalConstTyped(cd.Value, cd.Type, values, in.Assets)
 		if err == nil && cd.Type != nil {
-			err = settleConstLit(cd.Type, val)
+			val, err = settleConstLit(cd.Type, val)
 		}
 		var definite *Error
 		switch {
@@ -254,13 +254,46 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, asset
 			return cloneLit(v, n.P), nil
 		}
 	}
+	if ft, ok := want.(ast.FloatType); ok && untypedIntegerTree(e, values) {
+		return evalConstFloat(e, intWidth{}, ft.NormalWidth(), values, assets)
+	}
 	return evalConst(e, declaredWidth(want), values, assets)
 }
 
+func untypedIntegerTree(e ast.Expr, values map[string]ast.Expr) bool {
+	switch n := e.(type) {
+	case *ast.NumberLit:
+		return n.Width == 0
+	case *ast.Ident:
+		if v, ok := values[n.Name]; ok {
+			return untypedIntegerTree(v, values)
+		}
+	case *ast.Unary:
+		return n.Op == "-" && untypedIntegerTree(n.Operand, values)
+	case *ast.Binary:
+		switch n.Op {
+		case "+", "-", "*", "/":
+			return untypedIntegerTree(n.Left, values) && untypedIntegerTree(n.Right, values)
+		}
+	}
+	return false
+}
+
 func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, assets *embed.Set) (ast.Expr, error) {
+	return evalConstFloat(e, w, 0, values, assets)
+}
+
+func constFloatLiteral(e ast.Expr, width int) ast.Expr {
+	if n, ok := e.(*ast.NumberLit); ok && n.Width == 0 && width != 0 {
+		return &ast.FloatLit{P: n.P, Value: float64(n.Value), Width: width}
+	}
+	return e
+}
+
+func evalConstFloat(e ast.Expr, w intWidth, floatWidth int, values map[string]ast.Expr, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
-		return n, nil
+		return constFloatLiteral(n, floatWidth), nil
 	case *ast.Call:
 		if isAssetsCall(n) || (isAssetCall(n) && assetBytes(n)) {
 			return nil, &Error{Pos: n.P, Msg: fmt.Sprintf("%s() builds an array, which an operator cannot take in a constant expression", calleeName(n))}
@@ -271,16 +304,16 @@ func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, assets *embed
 		if !ok {
 			return nil, errDeferredOperand
 		}
-		return v, nil
+		return constFloatLiteral(v, floatWidth), nil
 	case *ast.Unary:
-		operand, err := evalConst(n.Operand, w, values, assets)
+		operand, err := evalConstFloat(n.Operand, w, floatWidth, values, assets)
 		if err != nil {
 			return nil, err
 		}
 		return foldUnary(n, w, operand)
 	case *ast.Binary:
-		left, lerr := evalConst(n.Left, w, values, assets)
-		right, rerr := evalConst(n.Right, w, values, assets)
+		left, lerr := evalConstFloat(n.Left, w, floatWidth, values, assets)
+		right, rerr := evalConstFloat(n.Right, w, floatWidth, values, assets)
 		if err := firstErr(lerr, rerr); err != nil {
 			return nil, err
 		}
@@ -322,8 +355,38 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 			return &ast.BoolLit{P: n.P, Value: ls.Value == rs.Value}, nil
 		case "!=":
 			return &ast.BoolLit{P: n.P, Value: ls.Value != rs.Value}, nil
+		case "<":
+			return &ast.BoolLit{P: n.P, Value: ls.Value < rs.Value}, nil
+		case "<=":
+			return &ast.BoolLit{P: n.P, Value: ls.Value <= rs.Value}, nil
+		case ">":
+			return &ast.BoolLit{P: n.P, Value: ls.Value > rs.Value}, nil
+		case ">=":
+			return &ast.BoolLit{P: n.P, Value: ls.Value >= rs.Value}, nil
 		}
 		return nil, fmt.Errorf("operator `%s` not allowed on strings in constant expressions", n.Op)
+	}
+
+	if lc, lok := left.(*ast.CharLit); lok {
+		rc, rok := right.(*ast.CharLit)
+		if !rok {
+			return nil, fmt.Errorf("binary `%s` requires two character operands", n.Op)
+		}
+		switch n.Op {
+		case "==":
+			return &ast.BoolLit{P: n.P, Value: lc.Value == rc.Value}, nil
+		case "!=":
+			return &ast.BoolLit{P: n.P, Value: lc.Value != rc.Value}, nil
+		case "<":
+			return &ast.BoolLit{P: n.P, Value: lc.Value < rc.Value}, nil
+		case "<=":
+			return &ast.BoolLit{P: n.P, Value: lc.Value <= rc.Value}, nil
+		case ">":
+			return &ast.BoolLit{P: n.P, Value: lc.Value > rc.Value}, nil
+		case ">=":
+			return &ast.BoolLit{P: n.P, Value: lc.Value >= rc.Value}, nil
+		}
+		return nil, fmt.Errorf("operator `%s` is not allowed on characters in constant expressions", n.Op)
 	}
 
 	if lb, lok := left.(*ast.BoolLit); lok {
@@ -549,7 +612,7 @@ func walkIntLits(e ast.Expr, negated, typed bool, visit func(lit *ast.NumberLit,
 	}
 }
 
-func settleConstLit(want ast.Type, val ast.Expr) error {
+func settleConstLit(want ast.Type, val ast.Expr) (ast.Expr, error) {
 	switch w := want.(type) {
 	case ast.NumberType:
 		lit, ok := val.(*ast.NumberLit)
@@ -558,46 +621,53 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 		}
 		lit.Width = w.NormalWidth()
 		lit.IsUnsigned = !w.IsSigned()
-		return nil
+		return val, nil
 	case ast.FloatType:
+		if lit, ok := val.(*ast.NumberLit); ok && lit.Width == 0 {
+			return &ast.FloatLit{P: lit.P, Value: float64(lit.Value), Width: w.NormalWidth()}, nil
+		}
 		lit, ok := val.(*ast.FloatLit)
 		if !ok {
 			break
 		}
 		lit.Width = w.NormalWidth()
-		return nil
+		return val, nil
 	case ast.ArrayType:
 		lit, ok := val.(*ast.ArrayLit)
 		if !ok {
 			break
 		}
-		for _, el := range lit.Elems {
-			if err := settleConstLit(w.Elem, el); err != nil {
-				return err
+		for i, el := range lit.Elems {
+			settled, err := settleConstLit(w.Elem, el)
+			if err != nil {
+				return nil, err
 			}
+			lit.Elems[i] = settled
 		}
 		lit.ElemType = w.Elem
-		return nil
+		return val, nil
 	case ast.TupleType:
 		lit, ok := val.(*ast.TupleLit)
 		if !ok || len(lit.Elems) != len(w.Elems) {
 			break
 		}
 		for i, el := range lit.Elems {
-			if err := settleConstLit(w.Elems[i], el); err != nil {
-				return err
+			settled, err := settleConstLit(w.Elems[i], el)
+			if err != nil {
+				return nil, err
 			}
+			lit.Elems[i] = settled
 		}
-		return nil
+		return val, nil
 	case ast.StructType:
 		if lit, ok := val.(*ast.StructLit); ok && lit.TypeName == w.Name {
-			return nil
+			return val, nil
 		}
 	}
 	if got := litType(val); !ast.Equal(want, got) {
-		return fmt.Errorf("declared type %s does not match initialiser type %s", want, got)
+		return nil, fmt.Errorf("declared type %s does not match initialiser type %s", want, got)
 	}
-	return nil
+	return val, nil
 }
 
 func litType(e ast.Expr) ast.Type {
