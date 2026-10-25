@@ -1,5 +1,5 @@
 {
-  "compiler_version": "fern 9414af3254eb\nbuilt for x86-64-linux",
+  "compiler_version": "fern 8c22550998a5\nbuilt for x86-64-linux",
   "sha256": {
     "fern-image/benchmarks/nearest_fusion.fern": "0ae07b96e37697071715cc29ba2df51e57b062be59199c6cc1066b49722483f2",
     "fern-image/packages/pipeline/pipeline.fern": "48842919967d6edaa07a7fa09b1ef25e2226ddc13d4522add87bf29f15e270a2",
@@ -172,17 +172,17 @@
     "workspace/internal/stdlib/std/zstd.fern.md": "d001cfeefb879f4524a26eed09a8085ea46c64bd4e769f6b0858bce9bd4d4926",
     "workspace/internal/stdlib/stdlib.go": "29a4d316ae63887a0865f8bd0797a3e70905c398db0980ad73f82c3e3c1dda8b",
     "workspace/internal/stdlib/stdlib_test.go": "c5b2ee1971d492e03868be77cb02e40e87f0819e17a12ed8e544312be14223bc",
-    "compiler": "dc2fbf8791daaa9239f5ecfb6a5743d4a8cb81a394d562500d4dfc3037ea956d",
+    "compiler": "256b9276ad58df20c1914d191fc75a469c15ee5bd5ea3880347d832af05aa46d",
     "collector": "db6faa6dcbfebb2b3d4b70415bb2ad42ae1216ec911de7e66cefc9464cdee712",
-    "baseline_binary": "347d01bdd8ea5df6629134cf6577b2e66b01dad42cd9b1e9bf46c9dec6fc49bd",
-    "candidate_binary": "782c189ef3cd84b8a763b070c6e1209d827f9dc4c0294d54d0fd791c217974f6",
-    "baseline_provenance": "15a19df6f04143ae47a7151ced179b58c133da91ec05154cbb3e9d3cc1813843"
+    "baseline_binary": "a439aca58f189a505d1121ff383a6f77cad4d8230e0b6ee582ee88051bcee1b2",
+    "candidate_binary": "b0201291de058ca8149b70f4c17e8e6d2400f42491d58c62d05c55f71c09162c",
+    "baseline_provenance": "045b92fe811d10b1b0891be878a6fcaacf5d0429d3b165265d3472709ce710ee"
   },
   "baseline_pipeline_sha256": "2ecaf8777bc2f4614512ba2f19b156ebaafcbb6f3dc67d619b9eb93cfeee2f33",
   "baseline_source_commit": "7f5fa78e09f49440a804b139107e0a1d58e95067",
   "baseline_build": {
     "source_commit": "7f5fa78e09f49440a804b139107e0a1d58e95067",
-    "compiler_version": "fern 9414af3254eb\nbuilt for x86-64-linux",
+    "compiler_version": "fern 8c22550998a5\nbuilt for x86-64-linux",
     "sha256": {
       "fern-image/benchmarks/nearest_fusion.fern": "0ae07b96e37697071715cc29ba2df51e57b062be59199c6cc1066b49722483f2",
       "fern-image/packages/pipeline/pipeline.fern": "2ecaf8777bc2f4614512ba2f19b156ebaafcbb6f3dc67d619b9eb93cfeee2f33",
@@ -355,8 +355,8 @@
       "workspace/internal/stdlib/std/zstd.fern.md": "d001cfeefb879f4524a26eed09a8085ea46c64bd4e769f6b0858bce9bd4d4926",
       "workspace/internal/stdlib/stdlib.go": "29a4d316ae63887a0865f8bd0797a3e70905c398db0980ad73f82c3e3c1dda8b",
       "workspace/internal/stdlib/stdlib_test.go": "c5b2ee1971d492e03868be77cb02e40e87f0819e17a12ed8e544312be14223bc",
-      "compiler": "dc2fbf8791daaa9239f5ecfb6a5743d4a8cb81a394d562500d4dfc3037ea956d",
-      "binary": "347d01bdd8ea5df6629134cf6577b2e66b01dad42cd9b1e9bf46c9dec6fc49bd"
+      "compiler": "256b9276ad58df20c1914d191fc75a469c15ee5bd5ea3880347d832af05aa46d",
+      "binary": "a439aca58f189a505d1121ff383a6f77cad4d8230e0b6ee582ee88051bcee1b2"
     }
   },
   "host": "Linux-6.18.55-x86_64-with-glibc2.41",

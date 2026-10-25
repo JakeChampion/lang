@@ -39,13 +39,13 @@ Source images and caller-retained rows remain isolated from later updates.
 
 Six cases verify independent coordinates, mixed-filter agreement, exact admission, upsample fallback, cancellation, depth, ownership, and cache statistics.
 They pass on native x86-64, ARM64/QEMU, and Wasmtime with zero final live bytes.
-The native and Wasm scripts include all 76 image TAP cases.
+All 76 image TAP cases pass through the native and Wasm scripts with compiler `8c22550998a5`.
 
 ## Allocator observations
 
 One compiler builds both implementations from the same workload and stdlib sources.
 The baseline pipeline comes from main `7f5fa78e09f4`.
-The allocator record uses compiler `9414af3254eb` for both implementations.
+The allocator record uses compiler `8c22550998a5` for both implementations.
 The workload creates a virtual 1024x8192 RGBA solid source and four nearest nodes.
 The final node has dimensions 128x24000 and returns 512-byte rows.
 The consumer discards each checked output row.
