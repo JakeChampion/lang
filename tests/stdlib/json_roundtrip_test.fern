@@ -1,5 +1,6 @@
 import "std/test";
 import "std/json" as json;
+import "std/i64";
 
 function doc(): string {
   return "{\"name\":\"fern\",\"age\":3,\"active\":true,\"tags\":[\"a\",\"b\"],\"meta\":null}";
@@ -406,6 +407,50 @@ function test_get_i64_overflow(): test.TestOutcome {
   }
 }
 
+function __i64_get(lit: string): string {
+  match (json.json_parse("{\"x\":" + lit + "}")) {
+    Some(v) => {
+      match (json.json_get_i64(v, "x")) {
+        Some(n) => {
+          return n.to_string();
+        },
+        None => {
+          return "<none>";
+        }
+      }
+    },
+    None => {
+      return "<parse>";
+    }
+  }
+}
+
+function __i64_decode(lit: string): string {
+  match (json.decode[i64](lit)) {
+    Ok(n) => {
+      return n.to_string();
+    },
+    Err(_) => {
+      return "<err>";
+    }
+  }
+}
+
+function test_i64_bounds(): test.TestOutcome {
+  let lits: string[] = ["0", "-0", "-42", "9223372036854775807", "-9223372036854775808", "9223372036854775808", "-9223372036854775809", "1.5"];
+  let got: string = "";
+  let dec: string = "";
+  for lit in lits {
+    got = got + __i64_get(lit) + " ";
+    dec = dec + __i64_decode(lit) + " ";
+  }
+  let want: string = "0 0 -42 9223372036854775807 -9223372036854775808 <none> <none> <none> ";
+  if (got != want) {
+    return test.assert_eq(got, want);
+  }
+  return test.assert_eq(dec, "0 0 -42 9223372036854775807 -9223372036854775808 <err> <err> <err> ");
+}
+
 function test_pretty_scalars_and_empties(): test.TestOutcome {
   if (json.json_encode_pretty(JNumber("42"), 2) != "42") {
     return test.fail("number");
@@ -515,6 +560,7 @@ function main(): i32 {
   r = r.it("get_f64 exp", test_get_f64_exp);
   r = r.it("get_i32 overflow", test_get_i32_overflow);
   r = r.it("get_i64 overflow", test_get_i64_overflow);
+  r = r.it("i64 bounds", test_i64_bounds);
   r = r.it("pretty scalars/empties", test_pretty_scalars_and_empties);
   r = r.it("pretty structure", test_pretty_structure);
   r = r.it("pretty roundtrip", test_pretty_roundtrip);
