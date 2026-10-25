@@ -256,7 +256,7 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
         let at: i32 = ix.find(ins.str);
         if (at >= 0 && ins.kind_tag == ssasem.call() && rewrite[j]) {
           calls = calls.with(at, calls[at] + 1);
-        } else if (at >= 0) {
+        } else if (at >= 0 && !names_data(ins.kind_tag)) {
           other = other.with(at, true);
         }
       }
@@ -264,6 +264,12 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
     j = j + 1;
   }
   return Refs { calls: calls, other: other };
+}
+
+// An instruction whose str is a string literal, a field or a variant, never
+// a function.
+function names_data(k: i32): boolean {
+  return k == 5 || reads_apart(k) || k == ssasem.record_new() || k == ssasem.variant_new();
 }
 
 function shaped(f: ssasem.Func): boolean {

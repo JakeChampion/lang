@@ -64,6 +64,15 @@ Of the x86-64 perf rows, only `deflate_decode` moves: `.text` from 12,108 to
 assembly on both builds and moves only with its hash seed. The aarch64 rows
 were not measured locally.
 
+## Found on the way
+
+`sempair.refs_of` counted every instruction whose `str` matched a function's
+name as a reference to that function. That included a field read, a variant,
+and a string literal. A function `next` in a program that reads a field
+`.next` was therefore never paired (#13191). Data-named instructions no longer
+count. The `split` program's `next` is named to collide: before the fix, its
+loop allocates 34 times.
+
 ## Next
 
 `record.Opened` has three fields, and `server.Step` / `handshake.ServerStep`

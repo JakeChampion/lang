@@ -747,7 +747,8 @@ enum Wrapped { Inner(Fault), Odd(string) }
   return Ok(Run { server: r.server, out: r.out });
 }
 
-@noinline function advance(n: i32, s: string, buf: u8[]): Step {
+// Named like Sealed's field, which must not count as a use of the function.
+@noinline function next(n: i32, s: string, buf: u8[]): Step {
   if (n % 3 == 0) {
     return Go(Run { server: s, out: buf });
   }
@@ -833,7 +834,7 @@ function main(): i32 {
         total = total + e.len();
       }
     }
-    match (advance(i, s, buf)) {
+    match (next(i, s, buf)) {
       Go(r) => {
         total = total + r.server.len() * 1000;
       },
