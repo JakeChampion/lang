@@ -884,9 +884,71 @@ function main(): i32 {
 }
 `
 
+// A wrapper that returns its split callee's payload whole is split too, so
+// neither builds the pair.
+const pairForwardProg = `import "std/bench";
+
+enum Fail { Bad(string), Short }
+
+@noinline function read(buf: u8[], at: i32): Result[(string, i32), Fail] {
+  if (at >= buf.len()) {
+    return Err(Short);
+  }
+  if (buf[at] == 0) {
+    return Err(Bad("zero"));
+  }
+  return Ok(("abc", at + buf[at] as i32));
+}
+
+// The wrapper hands the callee's payload on whole, as qpack.__sec_str does.
+@noinline function forward(buf: u8[], at: i32): Result[(string, i32), Fail] {
+  match (read(buf, at)) {
+    Ok(r) => {
+      return Ok(r);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+function main(): i32 {
+  let buf: u8[] = [1 as u8, 2 as u8, 0 as u8, 3 as u8];
+  let total: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  let i: i32 = 0;
+  while (i < 20) {
+    match (forward(buf, i % 5)) {
+      Ok(p) => {
+        total = total + p.0.len() + p.1;
+      },
+      Err(Bad(why)) => {
+        total = total + why.len() * 100;
+      },
+      Err(Short()) => {
+        total = total + 1000;
+      }
+    }
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 5676) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {

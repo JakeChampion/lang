@@ -107,7 +107,11 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
 // The values whose two-word variant payload is kept whole: read out and used
 // whole, or returned whole by a callee that hands it on in one word.
 function payloads_whole(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, pg: Pairing, paired: boolean, returns_whole: boolean): boolean[] {
-  let whole: boolean[] = through_joins(defs, seeded(f, defs, ix, pg.ok, pg.split, paired));
+  let returned: boolean[] = [];
+  if (paired && !returns_whole) {
+    returned = returned_constructions(f, defs);
+  }
+  let whole: boolean[] = through_joins(defs, seeded(f, defs, ix, pg.ok, pg.split, paired, returned));
   let inner: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -120,6 +124,19 @@ function payloads_whole(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, p
     }
   }
   return through_joins(defs, inner);
+}
+
+function returned_constructions(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+      let d: ssa.SInst = through_copies(defs, b.term.value);
+      if (d.kind_tag == ssasem.variant_new() && d.result >= 0 && semtypes.equal(f.values[d.result], f.result)) {
+        out = out.with(d.result, true);
+      }
+    }
+  }
+  return out;
 }
 
 function keeps_result(callee: ssasem.Func, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
@@ -140,16 +157,19 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
 pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
   let defs: ssa.SInst[] = defs_of(f.graph);
   let none: boolean[] = [];
-  return through_joins(defs, seeded(f, defs, ix, ok, none, paired));
+  return through_joins(defs, seeded(f, defs, ix, ok, none, paired, []));
 }
 
 // split names the callees whose payloads a caller rebuilds as constructions.
-function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[], paired: boolean): boolean[] {
+// returned marks the variants a split function returns: its return takes
+// their payloads apart, so they keep nothing whole.
+function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[], paired: boolean, returned: boolean[]): boolean[] {
   let g: ssa.SFunc = f.graph;
   let whole: boolean[] = __alloc_bool(g.nvals);
   for b in g.blocks {
     for ins in b.insts {
-      if (!reads_apart(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
+      let apart: boolean = reads_apart(ins.kind_tag) || ins.result >= 0 && ins.result < returned.len() && returned[ins.result];
+      if (!apart && ins.kind_tag != 7 && ins.kind_tag != 8) {
         whole = marked_all(whole, ins.args);
       }
       if (ins.kind_tag == 8 && !joins_apart(ins, defs, ix, ok, split)) {
