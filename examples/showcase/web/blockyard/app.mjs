@@ -46,7 +46,8 @@ let renderer,
   tickSpan = 1,
   received = 0,
   rtt = 0;
-let interest = -1;
+let interest = -1,
+  jumpUntil = 0;
 let animation = 0,
   lastDraw = 0,
   lastSend = 0,
@@ -126,6 +127,7 @@ for (const [material, name] of materials) {
   key.className = "key";
   key.textContent = material % 10;
   button.append(swatch, key);
+  button.onpointerdown = () => choose(material);
   button.onclick = () => choose(material);
   $("palette").append(button);
 }
@@ -149,7 +151,7 @@ function input() {
     up:
       (held.up || keys.has("Space") ? 1 : 0) -
       (held.down || keys.has("ShiftLeft") || keys.has("ShiftRight") ? 1 : 0),
-    jump: held.jump || keys.has("Space"),
+    jump: held.jump || keys.has("Space") || performance.now() < jumpUntil,
     fly,
     yaw,
     pitch,
@@ -603,6 +605,8 @@ for (const [name, field] of [
     e.preventDefault();
     button.setPointerCapture(e.pointerId);
     held[field] = true;
+    if (field === "jump") jumpUntil = performance.now() + 120;
+    sendControl();
   };
   button.onpointerup =
     button.onpointercancel =
@@ -698,6 +702,10 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
   }
   if (!e.repeat) {
+    if (e.code === "Space") {
+      jumpUntil = performance.now() + 120;
+      sendControl();
+    }
     if (e.code === "KeyF") setFly(!fly);
     if (e.code === "KeyE") changeBlock(1);
     if (e.code === "KeyQ") changeBlock(0);
@@ -706,6 +714,7 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
 addEventListener("blur", () => {
+  jumpUntil = 0;
   keys.clear();
   held.jump = held.up = held.down = false;
   joystick = { x: 0, y: 0 };

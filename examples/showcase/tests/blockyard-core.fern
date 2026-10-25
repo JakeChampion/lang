@@ -161,10 +161,31 @@ function storage_failure(): test.TestOutcome {
   return test.pass();
 }
 
+function jump_edge(): test.TestOutcome {
+  let world = memory_world();
+  let Ok(seat) = model.reserve(world, 0) else {
+    return test.fail("no seat");
+  };
+  let players = world.players.get();
+  world.players.set([] as model.Player[]);
+  world.players.set(players.with(0, model.Player { ...players[0], x: 256.5, y: 14, z: 256.5, grounded: true }));
+  world.updated.set(Some(0 as i64));
+  let pressed = model.control(world, seat, input(1, 1, 0, 0, 0), 1);
+  let released = model.control(world, seat, input(2, 0, 0, 0, 0), 2);
+  model.advance(world, 100000000);
+  let player = world.players.get()[0];
+  if (player.y <= 14.2 || (player.flags & 1) != 0) {
+    return test.fail("a quick jump disappeared or remained pending after its tick");
+  }
+  model.release(world, seat);
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.test_new("Blockyard authority");
   runner = runner.it("capacity, leases, speed, and spatial interest", seats_and_interest);
   runner = runner.it("ray visibility, collision, edit order, and commit", edit_authority);
   runner = runner.it("storage failure never confirms an edit", storage_failure);
+  runner = runner.it("a jump press survives release before the next tick", jump_edge);
   return runner.finish();
 }

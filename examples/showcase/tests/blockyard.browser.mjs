@@ -7,6 +7,7 @@ const browser = await chromium.launch({
   args: ["--no-sandbox", "--enable-unsafe-swiftshader"],
 });
 const base = process.argv[2] || "http://localhost:8080",
+  world = process.env.BLOCKYARD_TEST_WORLD || "harbor",
   errors = [],
   edits = [];
 try {
@@ -18,6 +19,12 @@ try {
   context.on("page", (p) => p.on("pageerror", (e) => errors.push(e.message)));
   const a = await context.newPage(),
     b = await context.newPage();
+  const messages = [];
+  a.on("websocket", (socket) =>
+    socket.on("framereceived", ({ payload }) => {
+      if (typeof payload === "string") messages.push(JSON.parse(payload));
+    }),
+  );
   b.on("websocket", (socket) =>
     socket.on("framereceived", ({ payload }) => {
       if (typeof payload === "string") {
@@ -27,7 +34,7 @@ try {
     }),
   );
   for (const p of [a, b]) {
-    await p.goto(base + "/blockyard/");
+    await p.goto(base + "/blockyard/?world=" + encodeURIComponent(world));
     await p.locator("#play").tap({ timeout: 30000 });
     await p.waitForFunction(() => document.querySelector("#welcome").hidden);
   }
@@ -58,6 +65,18 @@ try {
     });
   }
   await a.waitForTimeout(600);
+  await a.waitForFunction(
+    () =>
+      Math.abs(Number(document.querySelector("#view").dataset.y) - 14) < 0.02,
+  );
+  await a.locator("#jump").tap();
+  await a.waitForFunction(
+    () => Number(document.querySelector("#view").dataset.y) > 14.2,
+  );
+  await a.waitForFunction(
+    () =>
+      Math.abs(Number(document.querySelector("#view").dataset.y) - 14) < 0.02,
+  );
   const initial = Number(await a.locator("#view").getAttribute("data-x")),
     pad = await a.locator("#joystick").boundingBox();
   await drag(pad.x + pad.width / 2, pad.y + pad.height / 2, 28, 0, 600);
@@ -69,7 +88,11 @@ try {
   let r = await a.locator("#view").boundingBox();
   await drag(r.x + r.width * 0.5, r.y + r.height * 0.35, 0, 115);
   await a.locator('[data-material="7"]').tap();
-  await a.waitForTimeout(250);
+  assert.equal(
+    await a.locator('[data-material="7"]').getAttribute("aria-pressed"),
+    "true",
+    "touch palette selection was delayed",
+  );
   await a.locator("#place").tap();
   await b.waitForFunction(() =>
     document.querySelector("#render-stats").textContent.includes("chunks"),
@@ -79,7 +102,13 @@ try {
     await a.waitForTimeout(50);
   assert.ok(
     edits.some((c) => c.material === 7),
-    "second player did not receive the touch block placement",
+    "second player did not receive the touch block placement: " +
+      JSON.stringify({
+        messages,
+        edits,
+        position: await a.locator("#view").evaluate((e) => ({ ...e.dataset })),
+        toast: await a.locator(".toast").allTextContents(),
+      }),
   );
   await a.locator("#break").tap();
   const removed = Date.now() + 5000;

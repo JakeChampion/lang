@@ -141,6 +141,7 @@ function empty_player(): Player {
 
 Control packets have a fixed length and increasing sequence numbers. Movement vectors have a maximum magnitude of one.
 The server retains directions between inputs, so network timing cannot increase a player's speed.
+It retains a jump request until the next simulation step. A quick press cannot disappear between ticks.
 An inactive connection expires after sixty seconds.
 
 ```fern
@@ -222,7 +223,7 @@ pub function control(world: World, seat: Seat, bytes: u8[], now: i64): Result[i6
   let length = (mx * mx + mz * mz).sqrt().max(1.0);
   let players = world.players.get();
   world.players.set([] as Player[]);
-  world.players.set(players.with(seat.at, Player { ...old, seq: seq, mx: mx / length, mz: mz / length, up: (signed(bytes[4]) as f64 / 127.0).max(-1.0).min(1.0), flags: bytes[1] as i32, yaw: read16(bytes, 6), pitch: pitch, seen: now }));
+  world.players.set(players.with(seat.at, Player { ...old, seq: seq, mx: mx / length, mz: mz / length, up: (signed(bytes[4]) as f64 / 127.0).max(-1.0).min(1.0), flags: bytes[1] as i32 | old.flags & 1, yaw: read16(bytes, 6), pitch: pitch, seen: now }));
   world.inputs.set(world.inputs.get() + 1);
   return Ok(seq);
 }
@@ -318,7 +319,7 @@ pub function move(blocks: Map[i32, i32], own player: Player, seconds: f64): Play
       player = Player { ...player, vy: 0 };
     }
   }
-  return Player { ...player, applied: player.seq };
+  return Player { ...player, applied: player.seq, flags: player.flags & 2 };
 }
 ```
 
