@@ -1,0 +1,34 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+import "../packages/color/color";
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function reuse(): test.TestOutcome {
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 208, max_samples: 128 };
+  let graph = match (pipeline.solid(4, 2, pixels.RGBA8, color.rgb(17 as u8, 23 as u8, 99 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.bilinear(graph, 8, 8, limits)) { Ok(v) => v, Err(_) => { return test.fail("bilinear"); } };
+  let calls = cell_new(0);
+  let consume = (row: pixels.Image): Result[void, string] => {
+    let p = match (pixels.read_pixel(row, 7, 0)) { Ok(v) => v, Err(_) => { return Err("pixel"); } };
+    if (p.r != 17 as u8 || p.g != 23 as u8 || p.b != 99 as u8 || p.a != 255 as u8) {
+      return Err("bytes");
+    }
+    calls.set(calls.get() + 1);
+    return Ok(());
+  };
+  let uncached = match (pipeline.render_rows(graph, 0, 8, limits, 0, never_cancel, consume)) { Ok(v) => v, Err(_) => { return test.fail("uncached"); } };
+  let cached = match (pipeline.render_rows(graph, 0, 8, limits, 96, never_cancel, consume)) { Ok(v) => v, Err(_) => { return test.fail("cached"); } };
+  return test.assert_true(calls.get() == 16 && uncached.rows == 8 && uncached.hits == 0 && uncached.misses == 22
+    && cached.rows == 8 && cached.hits == 12 && cached.misses == 10
+    && cached.peak_cache_bytes == 96 && cached.peak_cache_entries == 4);
+}
+
+function main(): i32 {
+  let r = test.test_new("bounded row cache");
+  r = r.it("cache reuses parent rows without changes to output", reuse);
+  return r.finish();
+}
