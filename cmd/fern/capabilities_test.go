@@ -192,7 +192,7 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("ungoverned usage must not error (warn-and-allow), got: %v", err)
 	}
-	want := "warning: package \"helper\" reaches 'fs' (write_file) but no capabilities key governs it: save → write_file; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
+	want := filepath.Join(root, "helper", "lib.fern") + ":1:5: warning[W002]: package \"helper\" reaches 'fs' (write_file) but no capabilities key governs it: save → write_file; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
 	if warns != want {
 		t.Errorf("warnings:\ngot  %q\nwant %q", warns, want)
 	}
@@ -252,7 +252,7 @@ pub function fetch(s: string): void {
 	if strings.Contains(err.Error(), `package "b"`) {
 		t.Errorf("b is ungoverned (warn-and-allow) and must not be an error: %q", err.Error())
 	}
-	wantWarn := "warning: package \"b\" reaches 'net' (tcp_close) but no capabilities key governs it: send → tcp_close; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
+	wantWarn := filepath.Join(root, "b", "b.fern") + ":1:5: warning[W002]: package \"b\" reaches 'net' (tcp_close) but no capabilities key governs it: send → tcp_close; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
 	if warns != wantWarn {
 		t.Errorf("warnings:\ngot  %q\nwant %q", warns, wantWarn)
 	}

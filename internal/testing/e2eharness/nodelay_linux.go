@@ -116,7 +116,7 @@ function main(): i32 {
 
 func CheckServeNoDelay(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func CheckNetNoDelay(t *testing.T, cmd *exec.Cmd, out io.Reader) {
 
 func CheckServeCorksBurst(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)

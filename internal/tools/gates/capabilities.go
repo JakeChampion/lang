@@ -32,8 +32,13 @@ func Capabilities(entry string, prog *ast.Program) ([]Warning, error) {
 	}
 	var warns []Warning
 	for _, v := range warnsV {
-		v.Chain, _ = sourceChain(v.Chain, fns)
-		warns = append(warns, Warning{Msg: v.Message()})
+		var from *ast.FuncDecl
+		v.Chain, from = sourceChain(v.Chain, fns)
+		w := Warning{Code: "W002", Msg: v.Message()}
+		if from != nil {
+			w.Pos, w.Path = from.P, from.SourceFile
+		}
+		warns = append(warns, w)
 	}
 	if len(errsV) == 0 {
 		return warns, nil

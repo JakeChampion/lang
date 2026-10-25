@@ -70,7 +70,7 @@ func TestSelfHostPegExample(t *testing.T) {
 			}
 			output, err := cmd.CombinedOutput()
 			out := string(output)
-			if err != nil || !strings.Contains(out, "# pass 18") || !strings.Contains(out, "# fail 0") || !strings.Contains(out, "1..18") {
+			if err != nil || !strings.Contains(out, "# pass 19") || !strings.Contains(out, "# fail 0") || !strings.Contains(out, "1..19") {
 				t.Fatalf("existing PEG suite: %v\n%s", err, out)
 			}
 		})

@@ -1,7 +1,7 @@
 # Diagnostics
 
 Status: normative index. Every rejection the front-end can report has a
-stable code, an explanation (`fern -explain E0NN`, sourced from
+stable code, and every warning a `W` code, with an explanation (`fern -explain E0NN`, sourced from
 `internal/syntax/diag/explanations/`), and — where one exists — a conformance
 case that pins it.
 
@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**78 of 95** codes are pinned by a conformance case. The table
+**79 of 101** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -163,13 +163,19 @@ language does not have. It is deleted.
 | `E088` | a `fern.toml` the loader refuses | — |
 | `E089` | a const argument is not an integer literal or a const parameter | `diag_e089` |
 | `E090` | an argument has the wrong kind for its parameter | `diag_e090` |
-| `E091` | an assignment to a const parameter | `diag_e091` |
+| `E091` | an assignment to a const or a const parameter | `diag_e091` |
+| `E092` | a literate document does not tangle | — |
+| `E093` | a `const` initializer is not a constant expression | `const_initialiser_not_a_constant` |
+| `E094` | an embedded asset the compiler cannot resolve | — |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
 | `P004` | At most one `_` placeholder in a piped call | `diag_p004` |
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
 | `P006` | `function` in expression position | `diag_p006` |
+| `W001` | a `todo` stub remains | — |
+| `W002` | an ungoverned dependency reaches a capability | — |
+| `W003` | a literate chunk is defined but never used | — |
 
 For array fusion, map storage and ndarray kernel decisions, run
 `fern -array-report FILE.fern` or compile with `FERN_ARRAY_REPORT=1`. The report
@@ -177,7 +183,7 @@ names each stage and a closed reason tag, including guarded reuse and why R7
 declined a map. See [`ARRAY-ALGEBRA.md`](../docs/ARRAY-ALGEBRA.md) for the
 interface.
 
-## The 18 unpinned codes
+## The 22 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are
@@ -185,5 +191,8 @@ fragments that need a surrounding program the example does not supply,
 or they need a multi-module or capability-manifest setup a single
 `main.fern` cannot express (`E066`, `E070`). `E080` is reported by the
 drivers rather than the checker, so the self-host rejection gate, which
-reads the checker alone, cannot pin it. They are the remaining work, not a
-decision.
+reads the checker alone, cannot pin it. A compile-error case cannot pin a
+warning, which is reported only for a program that checks, `E092`, which
+needs a literate document rather than a `main.fern`, or `E094`, which needs
+`-embed DIR`. They are the remaining
+work, not a decision.

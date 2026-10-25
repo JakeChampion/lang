@@ -1,0 +1,92 @@
+import "../packages/pixels/pixels";
+import "std/test";
+
+function rejected(w: i32, h: i32, s: i32, f: pixels.Format, limits: pixels.Limits, expected: pixels.ImageError): boolean {
+  return match (pixels.create(w, h, s, f, limits)) { Ok(_) => false, Err(e) => e == expected };
+}
+
+function dimensions(): test.TestOutcome {
+  let l: pixels.Limits = pixels.default_limits();
+  return test.assert_true(rejected(0, 1, 3, pixels.RGB8, l, pixels.Dimensions)
+    && rejected(1, 0, 3, pixels.RGB8, l, pixels.Dimensions)
+    && rejected(0 - 1, 1, 3, pixels.RGB8, l, pixels.Dimensions)
+    && rejected(1, 1, 2, pixels.RGB8, l, pixels.Stride)
+    && rejected(1, 1, 0 - 1, pixels.RGBA8, l, pixels.Stride));
+}
+
+function overflow(): test.TestOutcome {
+  let l: pixels.Limits = pixels.default_limits();
+  return test.assert_true(rejected(2147483647, 1, 2147483647, pixels.RGBA8, l, pixels.Overflow)
+    && rejected(50000, 50000, 150000, pixels.RGB8, l, pixels.Overflow)
+    && rejected(1, 2, 2147483647, pixels.RGB8, l, pixels.Overflow));
+}
+
+function limits(): test.TestOutcome {
+  return test.assert_true(rejected(2, 2, 6, pixels.RGB8, pixels.Limits { max_pixels: 3, max_bytes: 100 }, pixels.Limit)
+    && rejected(2, 2, 8, pixels.RGB8, pixels.Limits { max_pixels: 4, max_bytes: 15 }, pixels.Limit)
+    && rejected(1, 1, 67108865, pixels.RGB8, pixels.Limits { max_pixels: 100, max_bytes: 2147483647 }, pixels.Limit)
+    && rejected(1, 1, 3, pixels.RGB8, pixels.Limits { max_pixels: 0, max_bytes: 100 }, pixels.Limit));
+}
+
+function roundtrip(format: pixels.Format): boolean {
+  let c: i32 = pixels.channels(format);
+  let image: pixels.Image = match (pixels.create(3, 2, c * 3 + 2, format, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  let alpha: u8 = 255;
+  if (c == 4) {
+    alpha = 17;
+  }
+  let p: pixels.Pixel = pixels.Pixel { r: 11, g: 22, b: 33, a: alpha };
+  let next: pixels.Image = match (pixels.write_pixel(image, 2, 1, p)) { Ok(v) => v, Err(_) => { return false; } };
+  let got: pixels.Pixel = match (pixels.read_pixel(next, 2, 1)) { Ok(v) => v, Err(_) => { return false; } };
+  let index: i32 = image.layout.stride + 2 * c;
+  return got.r == p.r && got.g == p.g && got.b == p.b && got.a == p.a
+    && image.data[index] == 0 as u8 && next.data[index] == 11 as u8
+    && next.data[index + 1] == 22 as u8 && next.data[index + 2] == 33 as u8
+    && next.data[c * 3] == 0 as u8 && next.data[next.data.len() - 1] == 0 as u8;
+}
+
+function layouts(): test.TestOutcome {
+  return test.assert_true(roundtrip(pixels.RGB8) && roundtrip(pixels.RGBA8));
+}
+
+function read_error(image: pixels.Image, x: i32, y: i32, expected: pixels.ImageError): boolean {
+  return match (pixels.read_pixel(image, x, y)) { Ok(_) => false, Err(e) => e == expected };
+}
+
+function bounds(): test.TestOutcome {
+  let image: pixels.Image = match (pixels.create(1, 1, 4, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("create"); } };
+  let p: pixels.Pixel = pixels.Pixel { r: 1, g: 2, b: 3, a: 0 };
+  let write_bad: boolean = match (pixels.write_pixel(image, 1, 0, p)) { Ok(_) => false, Err(e) => e == pixels.Bounds };
+  return test.assert_true(read_error(image, 0 - 1, 0, pixels.Bounds)
+    && read_error(image, 0, 0 - 1, pixels.Bounds) && read_error(image, 1, 0, pixels.Bounds)
+    && read_error(image, 0, 1, pixels.Bounds) && read_error(image, 2147483647, 2147483647, pixels.Bounds) && write_bad);
+}
+
+function invalid_storage(): test.TestOutcome {
+  let l: pixels.Layout = pixels.Layout { width: 1, height: 1, stride: 3, format: pixels.RGB8, bytes: 3 };
+  let short: pixels.Image = pixels.Image { layout: l, data: [0 as u8] };
+  let bad: pixels.Image = pixels.Image { layout: pixels.Layout { ...l, bytes: 2 }, data: [0 as u8, 0 as u8, 0 as u8] };
+  let negative: pixels.Image = pixels.Image { layout: pixels.Layout { ...l, width: 0 - 1 }, data: [] };
+  let p: pixels.Pixel = pixels.Pixel { r: 1, g: 2, b: 3, a: 255 };
+  let write_bad: boolean = match (pixels.write_pixel(short, 0, 0, p)) { Ok(_) => false, Err(e) => e == pixels.Storage };
+  return test.assert_true(read_error(short, 0, 0, pixels.Storage) && read_error(bad, 0, 0, pixels.Storage)
+    && read_error(negative, 0, 0, pixels.Dimensions) && write_bad);
+}
+
+function alpha(): test.TestOutcome {
+  let image: pixels.Image = match (pixels.create(1, 1, 3, pixels.RGB8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("create"); } };
+  let p: pixels.Pixel = pixels.Pixel { r: 255, g: 0, b: 0, a: 0 };
+  return test.assert_true(match (pixels.write_pixel(image, 0, 0, p)) { Ok(_) => false, Err(e) => e == pixels.Alpha });
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("pixels M0");
+  r = r.it("invalid dimensions and strides", dimensions);
+  r = r.it("row, pixel count and allocation overflow", overflow);
+  r = r.it("pixel, byte and hard allocation limits", limits);
+  r = r.it("RGB8/RGBA8 layout, padding and alias isolation", layouts);
+  r = r.it("read and write bounds", bounds);
+  r = r.it("untrusted public representation", invalid_storage);
+  r = r.it("RGB rejects nonopaque alpha", alpha);
+  return r.finish();
+}

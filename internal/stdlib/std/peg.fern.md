@@ -8,7 +8,7 @@ A grammar maps rule names to patterns and names a start rule. A match records it
 
 ## Contracts
 
-Grammar construction checks rule references before evaluation. A failed match records the furthest input position reached by the evaluator.
+Grammar construction checks rule references before evaluation. A missing rule is a `GrammarError` that names it. A failed match records the furthest input position reached by the evaluator.
 
 ## Module assembly
 
@@ -34,9 +34,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<9 function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: strin...>>
 
-<<10 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string>>
+<<10 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): Option[string]>>
 
-<<11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, string]>>
+<<11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]>>
 
 <<12 function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, PegError]>>
 
@@ -88,6 +88,8 @@ pub struct Grammar { rules: Map[string, Pattern], start: string }
 pub struct PegMatch { pos: i32, caps: Map[string, string] }
 
 pub struct PegError { furthest: i32 }
+
+pub struct GrammarError { rule: string }
 ```
 
 ### `4 pub function (e: PegError) to_string(): string`
@@ -106,6 +108,10 @@ pub function (e: PegError) to_string(): string {
 impl error.Error for PegError {}
 
 impl cmp.Display for PegError {}
+
+impl error.Error for GrammarError {}
+
+impl cmp.Display for GrammarError {}
 ```
 
 ### `6 pub function (e: PegError) message(): string`
@@ -114,6 +120,14 @@ impl cmp.Display for PegError {}
 <<6 pub function (e: PegError) message(): string>>=
 pub function (e: PegError) message(): string {
   return "peg: no match (reached byte " + int.int_to_string(e.furthest) + ")";
+}
+
+pub function (e: GrammarError) message(): string {
+  return "peg: unknown rule \"" + e.rule + "\"";
+}
+
+pub function (e: GrammarError) to_string(): string {
+  return e.message();
 }
 ```
 
@@ -322,33 +336,17 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
 }
 ```
 
-### `10 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string`
+### `10 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): Option[string]`
 
 ```fern
-<<10 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string>>=
-function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
+<<10 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): Option[string]>>=
+function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): Option[string] {
   match (p) {
     PSeq(ps) => {
-      let i: i32 = 0;
-      while (i < ps.len()) {
-        let bad: string = __peg_check_refs(ps[i], rules);
-        if (bad.len() > 0) {
-          return bad;
-        }
-        i = i + 1;
-      }
-      return "";
+      return __peg_check_all(ps, rules);
     },
     PChoice(ps) => {
-      let i: i32 = 0;
-      while (i < ps.len()) {
-        let bad: string = __peg_check_refs(ps[i], rules);
-        if (bad.len() > 0) {
-          return bad;
-        }
-        i = i + 1;
-      }
-      return "";
+      return __peg_check_all(ps, rules);
     },
     PStar(sub) => {
       return __peg_check_refs(sub, rules);
@@ -370,39 +368,44 @@ function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
     },
     PRef(name) => {
       if (rules.contains(name)) {
-        return "";
+        return None;
       }
-      return name;
+      return Some(name);
     },
     _ => {
-      return "";
+      return None;
     }
   }
-  return "";
+  return None;
+}
+
+function __peg_check_all(ps: Pattern[], rules: Map[string, Pattern]): Option[string] {
+  for p in ps {
+    let Some(bad) = __peg_check_refs(p, rules) else {
+      continue;
+    };
+    return Some(bad);
+  }
+  return None;
 }
 ```
 
-### `11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, string]`
+### `11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]`
 
 ```fern
-<<11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, string]>>=
-pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, string] {
+<<11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]>>=
+pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError] {
   if (!rules.contains(start)) {
-    return Err("unknown rule: " + start);
+    return Err(GrammarError { rule: start });
   }
-  let names: string[] = rules.keys();
-  let i: i32 = 0;
-  while (i < names.len()) {
-    match (rules.get(names[i])) {
-      Some(p) => {
-        let bad: string = __peg_check_refs(p, rules);
-        if (bad.len() > 0) {
-          return Err("unknown rule: " + bad);
-        }
-      },
-      None => {}
-    }
-    i = i + 1;
+  for name in rules.keys() {
+    let Some(p) = rules.get(name) else {
+      continue;
+    };
+    let Some(bad) = __peg_check_refs(p, rules) else {
+      continue;
+    };
+    return Err(GrammarError { rule: bad });
   }
   return Ok(Grammar { rules: rules, start: start });
 }
