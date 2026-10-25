@@ -100,6 +100,21 @@ The earlier `png-corpus` records retain their historical source and compiler has
 The campaign limits and qualification exclusions above apply to both sets of records.
 Full current-head CI remains a separate gate.
 
+## PNG provider campaign
+
+Issue #13414 adds fresh decoder sessions to the graph provider API.
+The same 964 inputs exercise the adapter after the sequential row refactor.
+Each accepted file passes two identity nearest nodes before graph row and cropped tile output.
+Legacy and fused execution must both match independent Pillow bytes.
+The crop starts at the middle row and column and contains at most two rows and two columns.
+Each negative input must preserve its eager codec error class through the provider.
+
+The collector records the full graph and crop hashes for both APIs.
+It retains outputs for comparison, outside the logical graph payload plan.
+The filtered frame remains eager. These checks do not qualify an incremental inflater or a process memory bound.
+The new raw records use the names `png-provider-native.json`, `png-provider-wasm.json`, and `png-provider-arm64.json`.
+Earlier corpus and row records retain their historical observations and hashes.
+
 ## Reproduce
 
 Use CPython 3.12 on Linux x86-64 for the pinned reference wheel.
