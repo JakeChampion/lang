@@ -284,6 +284,35 @@ variant from the declared result type (`rccertify.Abi.split_second`,
 `split_third`), and a call that captures two words reads the first word's
 mask from the split form.
 
+## A record or an Option passed as its parts
+
+A parameter that is a record of one to four scalar fields travels as its
+fields, and an Option of such a record, or of a scalar, as a Some flag
+followed by the payload's parts (`sempair.scalar_params`, run before the
+return pairing so the two compose). The rewrite happens on the semantic
+form, before any backend sees the function, so the three targets need
+nothing of their own: the body simply has more parameters, and each
+backend takes its parameter count and float slots from the lowered body.
+The IR verifier does the same (`irtables.fn_sig_index` reads the lowered
+count over the declaration's).
+
+A parameter is passed in parts when every reference to the function is a
+direct call, as for a paired return, and the body only reads it apart: a
+field read, a variant test, a payload read, or handing it on to another
+parameter passed in parts. Inside the body each read becomes a copy of the
+part (a payload record is rebuilt from its fields, which `split_constructions`
+then takes apart again). At a call, a record or a Some built for the call
+hands on its arguments and a None hands on a false flag and zeros. Any other
+record is read field by field before the call. Any other Option is taken
+apart on a branch on its flag: the call's block ends in a test, one arm reads
+the payload, the other makes zeros, and the call moves to the join with a
+phi per part. A parameter of the caller's own that is passed in parts is
+read apart the same way and the caller's own rewrite turns those reads into
+its parts, so a chain of wrappers passes the parts straight through.
+`TestSelfHostScalarParams` pins a `Duration`, an `Option[Duration]` and an
+`Option[i64]` crossing a module boundary, a method and a trait impl reached
+through a generic at no allocations on the three targets.
+
 ## What the lift admits, and what declines
 
 Everything the compiler uses. Measured on the compiler compiling itself

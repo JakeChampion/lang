@@ -1141,3 +1141,239 @@ function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
   }
   return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
+
+pub struct Scalarized { funcs: ssasem.Func[], modes: i32[][], changed: boolean[] }
+
+// Passes a record parameter of scalar fields as its fields when every call
+// names the callee directly and the callee only reads the record apart or
+// hands it on to another such parameter.
+pub function scalar_params(funcs: ssasem.Func[], names: string[], rewrite: boolean[], unnamed: boolean[], modes: i32[][]): Scalarized {
+  let ix: util.NameIndex = util.name_index(names);
+  let split: boolean[][] = param_candidates(funcs, names, ix, rewrite, unnamed, modes);
+  split = params_kept_apart(funcs, ix, split);
+  let out: ssasem.Func[] = [];
+  let out_modes: i32[][] = [];
+  let changed: boolean[] = [];
+  for i in 0..funcs.len() {
+    let f: ssasem.Func = funcs[i];
+    let m: i32[] = modes[i];
+    let c: boolean = false;
+    if (rewrite[i] && calls_split(f, ix, split)) {
+      f = split_calls(f, funcs, modes, ix, split, split[i]);
+      c = true;
+    }
+    let p: i32 = split[i].len() - 1;
+    while (p >= 0) {
+      if (split[i][p]) {
+        let parts: typeinfo.Type[] = semscalarreturn.param_parts(f, f.params[p]);
+        f = semscalarreturn.split_param(f, p, parts);
+        m = spliced_modes(m, p, parts.len());
+        c = true;
+      }
+      p = p - 1;
+    }
+    out = out.append(f);
+    out_modes = out_modes.append(m);
+    changed = changed.append(c);
+  }
+  return Scalarized { funcs: out, modes: out_modes, changed: changed };
+}
+
+function param_candidates(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[], modes: i32[][]): boolean[][] {
+  let refs: Refs = refs_of(funcs, ix, rewrite);
+  let anchored: util.NameIndex = util.name_index(anchored_callees(funcs));
+  let out: boolean[][] = [];
+  for i in 0..funcs.len() {
+    let f: ssasem.Func = funcs[i];
+    let ok: boolean = refs.calls[i] > 0 && !refs.other[i] && rewrite[i] && unnamed[i] && !anchored.has(names[i]) && modes[i].len() == f.params.len() && f.graph.nparams == f.params.len();
+    let row: boolean[] = [];
+    for t in f.params {
+      row = row.append(ok && semscalarreturn.param_parts(f, t).len() > 0);
+    }
+    out = out.append(row);
+  }
+  return out;
+}
+
+function anchored_callees(funcs: ssasem.Func[]): string[] {
+  let out: string[] = [];
+  for f in funcs {
+    for a in f.anchors {
+      out = out.append(a.name);
+    }
+  }
+  return out;
+}
+
+// Drops a candidate whose parameter some body uses whole, other than by
+// handing it on to a candidate parameter of the same type.
+function params_kept_apart(funcs: ssasem.Func[], ix: util.NameIndex, split0: boolean[][]): boolean[][] {
+  let split: boolean[][] = split0;
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for j in 0..funcs.len() {
+      let f: ssasem.Func = funcs[j];
+      for b in f.graph.blocks {
+        for ins in b.insts {
+          for pos in 0..ins.args.len() {
+            let a: i32 = ins.args[pos];
+            if (a >= 0 && a < split[j].len() && split[j][a] && !param_read_apart(funcs, ix, split, f, ins, pos)) {
+              split = split.with(j, split[j].with(a, false));
+              changed = true;
+            }
+          }
+        }
+        let t: ssa.STerm = b.term;
+        let used: i32 = 0 - 1;
+        if (t.kind_tag == 1) {
+          used = t.value;
+        }
+        if (t.kind_tag == 3) {
+          used = t.cond;
+        }
+        if (used >= 0 && used < split[j].len() && split[j][used]) {
+          split = split.with(j, split[j].with(used, false));
+          changed = true;
+        }
+      }
+    }
+  }
+  return split;
+}
+
+function param_read_apart(funcs: ssasem.Func[], ix: util.NameIndex, split: boolean[][], f: ssasem.Func, ins: ssa.SInst, pos: i32): boolean {
+  if (reads_apart(ins.kind_tag) && ins.args.len() == 1) {
+    return true;
+  }
+  if (ins.kind_tag != ssasem.call()) {
+    return false;
+  }
+  let at: i32 = ix.find(ins.str);
+  return at >= 0 && pos < split[at].len() && split[at][pos] && semtypes.equal(funcs[at].params[pos], f.params[ins.args[pos]]);
+}
+
+function calls_split(f: ssasem.Func, ix: util.NameIndex, split: boolean[][]): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (split_callee(ins, ix, split) >= 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function split_callee(ins: ssa.SInst, ix: util.NameIndex, split: boolean[][]): i32 {
+  if (ins.kind_tag != ssasem.call()) {
+    return 0 - 1;
+  }
+  let at: i32 = ix.find(ins.str);
+  if (at < 0) {
+    return 0 - 1;
+  }
+  for s in split[at] {
+    if (s) {
+      return at;
+    }
+  }
+  return 0 - 1;
+}
+
+// Rewrites each call to a callee taking parts. An Option argument that is
+// neither built for the call nor handed on is taken apart on a branch on
+// whether it is Some, which splits the call's block; `done` counts the
+// leading instructions of a block already rewritten.
+function split_calls(f0: ssasem.Func, funcs: ssasem.Func[], modes: i32[][], ix: util.NameIndex, split: boolean[][], own: boolean[]): ssasem.Func {
+  let f: ssasem.Func = f0;
+  let defs: ssa.SInst[] = defs_of(f.graph);
+  let done: i32[] = [];
+  for b in f.graph.blocks {
+    done = done.append(0);
+  }
+  let bi: i32 = 0;
+  while (bi < f.graph.blocks.len()) {
+    let b: ssa.SBlock = f.graph.blocks[bi];
+    let insts: ssa.SInst[] = [];
+    let k: i32 = 0;
+    while (k < done[bi]) {
+      insts = insts.append(b.insts[k]);
+      k = k + 1;
+    }
+    let branched: boolean = false;
+    while (k < b.insts.len() && !branched) {
+      let ins: ssa.SInst = b.insts[k];
+      let at: i32 = split_callee(ins, ix, split);
+      if (at < 0) {
+        insts = insts.append(ins);
+        k = k + 1;
+        continue;
+      }
+      let declared: ssasem.Contract = ssasem.Contract { name: ins.str, params: funcs[at].params, modes: modes[at], result: funcs[at].result };
+      let u: i32 = branch_position(f, defs, declared, split[at], ins, own);
+      if (u < 0) {
+        let sc: semscalarreturn.SplitCall = semscalarreturn.split_args(f, ins, declared, split[at], defs, 0 - 1, []);
+        f = sc.f;
+        insts = util.append_all(insts, sc.insts).append(sc.call);
+        k = k + 1;
+        continue;
+      }
+      let br: semscalarreturn.Branch = semscalarreturn.branch_parts(f, ins.args[u], declared.params[u]);
+      let sc: semscalarreturn.SplitCall = semscalarreturn.split_args(br.f, ins, declared, split[at], defs, u, br.parts);
+      f = branched_block(sc.f, bi, b, util.append_all(insts, br.head), br, util.append_all(br.joins, sc.insts).append(sc.call), k + 1);
+      done = done.append(0).append(0).append(br.joins.len() + sc.insts.len() + 1);
+      branched = true;
+    }
+    if (!branched) {
+      f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
+    }
+    bi = bi + 1;
+  }
+  return f;
+}
+
+function branch_position(f: ssasem.Func, defs: ssa.SInst[], declared: ssasem.Contract, split: boolean[], ins: ssa.SInst, own: boolean[]): i32 {
+  for pos in 0..ins.args.len() {
+    if (pos < split.len() && split[pos] && semscalarreturn.needs_branch(f, defs, declared.params[pos], ins.args[pos], own)) {
+      return pos;
+    }
+  }
+  return 0 - 1;
+}
+
+// Ends block `bi` with a branch on the Option's flag to a block reading its
+// payload and a block of zeros, both joining in a new block that holds the
+// call and the rest of the old block, and takes over its terminator.
+function branched_block(f0: ssasem.Func, bi: i32, b: ssa.SBlock, head: ssa.SInst[], branch: semscalarreturn.Branch, joined: ssa.SInst[], rest: i32): ssasem.Func {
+  let some_id: i32 = next_block_id(f0.graph);
+  let none_id: i32 = some_id + 1;
+  let join_id: i32 = some_id + 2;
+  let tail: ssa.SInst[] = joined;
+  let k: i32 = rest;
+  while (k < b.insts.len()) {
+    tail = tail.append(b.insts[k]);
+    k = k + 1;
+  }
+  let f: ssasem.Func = repointed(f0, term_targets(b.term), b.id, join_id);
+  let start: ssa.SBlock = ssa.SBlock { ...b, insts: head, term: ssa.STerm { kind_tag: 3, cond: branch.flag, target: 0, t: some_id, f: none_id, value: 0 } };
+  f = with_block(f, bi, start);
+  f = with_new_block(f, ssa.SBlock { id: some_id, insts: branch.some, term: br(join_id), preds: [b.id] });
+  f = with_new_block(f, ssa.SBlock { id: none_id, insts: branch.none, term: br(join_id), preds: [b.id] });
+  return with_new_block(f, ssa.SBlock { id: join_id, insts: tail, term: b.term, preds: [some_id, none_id] });
+}
+
+function spliced_modes(modes: i32[], at: i32, n: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..modes.len() {
+    if (i == at) {
+      let k: i32 = 0;
+      while (k < n) {
+        out = out.append(ssasem.value_mode());
+        k = k + 1;
+      }
+    } else {
+      out = out.append(modes[i]);
+    }
+  }
+  return out;
+}

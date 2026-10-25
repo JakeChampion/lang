@@ -7988,6 +7988,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   if (verify) {
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
+    table = split_contracts(table, inlined.all, names);
     all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
@@ -8059,6 +8060,35 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 
 struct Spliced { all: Produced[], spliced: boolean[] }
 
+// A callee that takes a record parameter as its fields declares the fields.
+function split_contracts(table: ssasem.Contracts, all: Produced[], names: string[]): ssasem.Contracts {
+  let list: ssasem.Contract[] = table.list;
+  let i: i32 = 0;
+  while (i < all.len() && i < names.len()) {
+    let p: Produced = all[i];
+    let at: i32 = table.names.find(names[i]);
+    if (p.ok && !p.template && !p.bodyless && at >= 0 && !same_types(list[at].params, p.func.params)) {
+      list = list.with(at, ssasem.Contract { ...list[at], params: p.func.params, modes: p.modes });
+    }
+    i = i + 1;
+  }
+  return ssasem.Contracts { ...table, list: list };
+}
+
+function same_types(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (!semtypes.equal(a[i], b[i])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 function unique_loops(all: Produced[]): Produced[] {
   let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
   let contract = ssasem.Contract { name: semunique.name(), params: [bytes], modes: [ssaunits.counted_mode()], result: bytes };
@@ -8124,7 +8154,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
-    let p: Produced = Produced { ...all[i], func: out.funcs[i] };
+    let p: Produced = Produced { ...all[i], func: out.funcs[i], modes: out.modes[i] };
     if (out.rewritten[i]) {
       p = Produced { ...p, func: ssabounds.proven_indices(p.func), analysis: None };
     }
