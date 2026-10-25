@@ -1016,6 +1016,7 @@ stdlib_errors_box_through_try                        0
 str_to_owned_into_own_param                          0
 strarrarr_struct_field                               0
 strconcat                                            0
+stream_fault_builtin_variants                        0
 stream_reader                                        0
 strength_reduction_mul                               0
 string_and_i64                                       0

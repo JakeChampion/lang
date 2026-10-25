@@ -35,8 +35,8 @@ function sum_body(req: HttpRequest): HttpResponse {
         }
         count = count + piece.len();
     }
-    if (s.fault() != 0) {
-        return http.text(s.fault(), "fault " + s.fault().to_string());
+    if let Some(why) = s.fault() {
+        return http.EndedEarly(why).to_response();
     }
     return http.ok("sum " + sum.to_string() + " len " + count.to_string());
 }

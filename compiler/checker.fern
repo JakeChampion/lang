@@ -2420,7 +2420,7 @@ function is_nopayload_builtin_variant(name: string): boolean {
   if (name == "Interrupted" || name == "Unsupported") {
     return true;
   }
-  return false;
+  return parser.builtin_enum_of(name) == "StreamFault";
 }
 
 function union_sig_of_variant(name: string, unions: UnionTable): UnionSig {
@@ -4109,16 +4109,6 @@ function same_element_type(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return type_eq(a, b) && !promotes_view(a, b) && !promotes_view(b, a);
 }
 
-// An owned array and a view are distinct at every depth: u8[][] is not a [u8][].
-function array_views_differ(from: typeinfo.Type, to: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(fa) = from {
-    if let typeinfo.TypeArray(ta) = to {
-      return fa.view != ta.view || array_views_differ(fa.elem, ta.elem);
-    }
-  }
-  return false;
-}
-
 function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean {
   if (from.len() != to.len()) {
     return false;
@@ -4149,7 +4139,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (promotes_view(from, to)) {
     return false;
   }
-  if (array_views_differ(from, to)) {
+  if (is_arr_view(from) && is_owned_array(to) || is_owned_array(from) && is_arr_view(to)) {
     return false;
   }
   if (nominal_args_clash(from, to, unions)) {
@@ -14287,7 +14277,7 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     ast.ExprArray(arr) => {
       for element in arr.elements {
         let ekt: typeinfo.Type = check_expr(element, s);
-        if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
+        if (!is_unknown(ekt) && reports_element(ekt, elem_ty) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
           out = out.append(dg_at("E034", "array element: expected " + type_label(elem_ty) + ", got " + type_label(ekt), expr_line(element), expr_col(element)));
         }
       }
@@ -14297,12 +14287,24 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
   return out;
 }
 
+// The destination's own check reports an array element of another element
+// type; only a view where an owned array is wanted, or the reverse, escapes it.
+function reports_element(got: typeinfo.Type, want: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(_) = want {
+    return type_eq(got, want) && !same_element_type(got, want);
+  }
+  return true;
+}
+
 function checks_array_element(ty: typeinfo.Type): boolean {
   match (ty) {
     typeinfo.TypeUnion(_) => {
       return true;
     },
     typeinfo.TypeStruct(_) => {
+      return true;
+    },
+    typeinfo.TypeArray(_) => {
       return true;
     },
     _ => {
@@ -14401,7 +14403,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return true;
     },
     typeinfo.TypeUnion(un) => {
-      let declared: boolean = un.name == "Option" || un.name == "Result" || un.name == "IoError" || un.name == "Body" || s.lookup_union(un.name).name.len() > 0;
+      let declared: boolean = un.name == "Option" || un.name == "Result" || un.name == "IoError" || un.name == "Body" || un.name == "StreamFault" || s.lookup_union(un.name).name.len() > 0;
       return declared && s.visible_method(field, un.name).name.len() == 0 && is_unknown(builtin_method_sig(un.name, field));
     },
     _ => {
@@ -23833,13 +23835,39 @@ function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr
         return ast.ExprIdent { ...id, ty: u.name };
       }
     }
+    return annotate_expr(c.callee, s);
   }
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c)) {
       return annotate_lambda_expr(lm, s, "", ct);
     }
   }
-  return annotate_expr(c.callee, s);
+  let typed = annotate_typed(c.callee, s);
+  if let typeinfo.TypeFunc(_) = typed.ty {
+    return annotate_callable_callee(typed.e, type_label(typed.ty));
+  }
+  return typed.e;
+}
+
+// The lift pass needs complete callback parameters on indirect callees.
+function annotate_callable_callee(e: ast.Expr, signature: string): ast.Expr {
+  if (signature.len() == 0) {
+    return e;
+  }
+  match (e) {
+    ast.ExprFieldAccess(fa) => {
+      return ast.ExprFieldAccess { ...fa, ty: signature };
+    },
+    ast.ExprIndex(ix) => {
+      return ast.ExprIndex { ...ix, ty: signature };
+    },
+    ast.ExprCall(c) => {
+      return ast.ExprCall { ...c, ty: signature };
+    },
+    _ => {
+      return e;
+    }
+  }
 }
 
 function unsettled(e: ast.Expr): Typed {

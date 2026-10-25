@@ -1646,6 +1646,42 @@ function lift_binding_param_is_fn(fd: parser.FuncDecl, vars: VarDecls, callee: s
   return binding_param_is_fn(fd, vars, callee, idx, mfuncs, 0);
 }
 
+function typed_callee_param_is_fn(callee: ast.Expr, idx: i32): boolean {
+  let tag = ast.expr_ty(callee);
+  if (tag.len() == 0 || tag == "fn") {
+    return false;
+  }
+  let signature = fn_param_from_spelling("", tag);
+  return signature.type_name == "fn" && spelled_param_is_fn(signature.fn_param_types, idx);
+}
+
+function named_argument_needs_box(call: ast.ExprCall, name: string, idx: i32, fd: parser.FuncDecl, vars: VarDecls, structs: irtables.StructTab, mfuncs: MFuncs): boolean {
+  let arg = call.args[idx];
+  if ((name == "Some" || name == "Ok" || name == "Err") && call.args.len() == 1 && lift_arg_is_fn_value(arg, mfuncs)) {
+    return true;
+  }
+  if (irtables.decl_is_struct(structs, name) && irtables.decl_field_type_at(structs, name, idx) == "fn" && lift_arg_is_fn_value(arg, mfuncs)) {
+    return true;
+  }
+  return lift_callee_param_is_fn(mfuncs, name, idx) || lift_binding_param_is_fn(fd, vars, name, idx, mfuncs)
+    || lift_callee_is_typevar_passthrough(mfuncs, name, idx) && lift_arg_is_fn_value(arg, mfuncs);
+}
+
+function call_argument_needs_box(call: ast.ExprCall, name: string, field: string, idx: i32, fd: parser.FuncDecl, vars: VarDecls, structs: irtables.StructTab, mfuncs: MFuncs): boolean {
+  if (name.len() > 8 && slice_unchecked(name, 0, 8) == "__mkclo$") {
+    return false;
+  }
+  if (typed_callee_param_is_fn(call.callee, idx)) {
+    return true;
+  }
+  if (name.len() > 0) {
+    return named_argument_needs_box(call, name, idx, fd, vars, structs, mfuncs);
+  }
+  return field.len() > 0 && (lift_callee_param_is_fn(mfuncs, field, idx)
+    || lift_method_arg_is_fn(call.args[idx], field, idx, mfuncs)
+    || lift_arr_store_arg_is_fn_name(call.args[idx], field, idx, fd, mfuncs));
+}
+
 function binding_param_is_fn(fd: parser.FuncDecl, vars: VarDecls, callee: string, idx: i32, mfuncs: MFuncs, depth: i32): boolean {
   for p in fd.params {
     if (p.name == callee) {
@@ -2304,43 +2340,16 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
         },
         _ => {}
       }
-      let is_mkclo: boolean = cnm.len() > 8 && slice_unchecked(cnm, 0, 8) == "__mkclo$";
-      let is_optvar: boolean = (cnm == "Some" || cnm == "Ok" || cnm == "Err") && call.args.len() == 1;
       let fs: parser.FuncDecl[] = acc.funcs;
       let ct: i32 = acc.counter;
       let nargs: ast.Expr[] = [];
       let ai: i32 = 0;
       while (ai < call.args.len()) {
-        if (is_optvar && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
-          let ofr: InlineCloRes = try_fn_field_value(call.args[ai], fd, vars, fs, ct, gfns, mfuncs, structs);
-          fs = ofr.funcs;
-          ct = ofr.counter;
-          nargs = nargs.append(ofr.expr);
-        } else if (!is_mkclo && cnm.len() > 0 && irtables.decl_is_struct(structs, cnm)
-          && irtables.decl_field_type_at(structs, cnm, ai) == "fn"
-          && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
-          let vfr: InlineCloRes = try_fn_field_value(call.args[ai], fd, vars, fs, ct, gfns, mfuncs, structs);
-          fs = vfr.funcs;
-          ct = vfr.counter;
-          nargs = nargs.append(vfr.expr);
-        } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_binding_param_is_fn(fd, vars, cnm, ai, mfuncs))) {
+        if (call_argument_needs_box(call, cnm, mfield, ai, fd, vars, structs, mfuncs)) {
           let fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, vars, fs, ct, gfns, mfuncs, structs);
           fs = fr.funcs;
           ct = fr.counter;
           nargs = nargs.append(fr.expr);
-        } else if (!is_mkclo && cnm.len() > 0 && lift_callee_is_typevar_passthrough(mfuncs, cnm, ai)
-          && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
-          let gr: InlineCloRes = try_fn_field_value(call.args[ai], fd, vars, fs, ct, gfns, mfuncs, structs);
-          fs = gr.funcs;
-          ct = gr.counter;
-          nargs = nargs.append(gr.expr);
-        } else if (mfield.len() > 0 && (lift_callee_param_is_fn(mfuncs, mfield, ai)
-          || lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs)
-          || lift_arr_store_arg_is_fn_name(call.args[ai], mfield, ai, fd, mfuncs))) {
-          let mr: InlineCloRes = try_fn_field_value(call.args[ai], fd, vars, fs, ct, gfns, mfuncs, structs);
-          fs = mr.funcs;
-          ct = mr.counter;
-          nargs = nargs.append(mr.expr);
         } else {
           let er: InlineCloRes = lift_inline_closures_expr(call.args[ai], fd, vars, fs, ct, gfns, structs, mfuncs);
           fs = er.funcs;
