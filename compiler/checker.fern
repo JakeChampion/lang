@@ -16026,41 +16026,59 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
   return "";
 }
 
+// The module's const initializers evaluated in order. `refused` is reported
+// before type checking; `deferred_errors[i]` is reported for the const named
+// `deferred[i]` only when its initializer type-checks.
+struct ConstEval { refused: util.Diag[], earlier: string[], names: string[], values: consteval.Value[], deferred: string[], deferred_errors: string[] }
+
 function const_init_diags(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = [];
-  let earlier: string[] = [];
-  let evaluated_names: string[] = [];
-  let values: consteval.Value[] = [];
+  return const_eval(mod).refused;
+}
+
+function const_eval(mod: parser.Module): ConstEval {
+  let ce: ConstEval = ConstEval { refused: [], earlier: [], names: [], values: [], deferred: [], deferred_errors: [] };
   for fd in mod.funcs {
     if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
-        match (stmt) {
-          ast.StmtReturn(r) => {
-            let msg: string = const_expr_err(r.value, earlier);
-            if (msg.len() > 0) {
-              out = out.append(dg_at("E093", "const " + fd.name + ": " + msg, fd.line, fd.col));
-              continue;
-            }
-            let ranges: util.Diag[] = util.append_diags(suffix_range_stmts(fd.body), int_range_diags(r.value, fd.ret_type, false));
-            if (ranges.len() > 0) {
-              out = util.append_diags(out, ranges);
-              continue;
-            }
-            let value: consteval.Value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
-            if (value.error.len() > 0) {
-              out = out.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col));
-            } else {
-              evaluated_names = evaluated_names.append(fd.name);
-              values = values.append(value);
-            }
-          },
-          _ => {}
+        if let ast.StmtReturn(r) = stmt {
+          ce = const_eval_init(ce, fd, r.value);
         }
       }
-      earlier = earlier.append(fd.name);
     }
   }
-  return out;
+  return ce;
+}
+
+function const_eval_init(ce: ConstEval, fd: parser.FuncDecl, init: ast.Expr): ConstEval {
+  let msg: string = const_expr_err(init, ce.earlier);
+  if (msg.len() > 0) {
+    return ConstEval { ...ce, refused: ce.refused.append(dg_at("E093", "const " + fd.name + ": " + msg, fd.line, fd.col)) };
+  }
+  let ranges: util.Diag[] = util.append_diags(suffix_range_stmts(fd.body), int_range_diags(init, fd.ret_type, false));
+  if (ranges.len() > 0) {
+    return ConstEval { ...ce, refused: util.append_diags(ce.refused, ranges) };
+  }
+  let value: consteval.Value = consteval.settle(consteval.evaluate(init, parser.parse_type_ref(fd.ret_type), ce.names, ce.values), fd.ret_type);
+  if (value.definite) {
+    return ConstEval { ...ce, refused: ce.refused.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col)) };
+  }
+  let next: ConstEval = ConstEval { ...ce, earlier: ce.earlier.append(fd.name) };
+  if (value.error.len() == 0) {
+    return ConstEval { ...next, names: ce.names.append(fd.name), values: ce.values.append(value) };
+  }
+  if (consteval.reads_deferred(value)) {
+    return next;
+  }
+  return ConstEval { ...next, deferred: ce.deferred.append(fd.name), deferred_errors: ce.deferred_errors.append("const " + fd.name + ": " + value.error) };
+}
+
+// The deferred evaluation error of a const whose initializer type-checked.
+function const_deferred_diags(ce: ConstEval, fd: parser.FuncDecl): util.Diag[] {
+  let i: i32 = util.index_of_str(ce.deferred, fd.name);
+  if (i < 0) {
+    return [];
+  }
+  return [dg_at("E093", ce.deferred_errors[i], fd.line, fd.col)];
 }
 
 function is_script(mod: parser.Module): boolean {
@@ -16481,8 +16499,7 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = util.append_diags([], const_init_diags(mod));
-  out = util.append_diags(out, handler_state_diags(mod));
+  let out: util.Diag[] = util.append_diags([], handler_state_diags(mod));
   out = util.append_diags(out, e078_diags(mod));
   out = util.append_diags(out, e079_diags(mod));
   for sd in mod.structs {
@@ -21923,6 +21940,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   if (!validate_union_sigs(unions, stt.index.names)) {
     well_typed = false;
   }
+  let cev: ConstEval = const_eval(mod);
   let body_diags: util.Diag[] = [];
   let ambig: string[] = ambiguous_variants(ut);
   let mc_on: boolean = mc_any_marked(mod.structs, mod.enums);
@@ -22049,6 +22067,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     }
     if (ambig.len() > 0) {
       function_diags = util.append_diags(function_diags, vref_stmts(dbody, fsc, ambig));
+    }
+    if (mod.funcs[i].is_const && function_diags.len() == 0) {
+      function_diags = const_deferred_diags(cev, mod.funcs[i]);
     }
     body_diags = util.append_diags(body_diags, body_source_order(function_diags));
     i = i + 1;
@@ -22228,9 +22249,8 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     body_diags = util.append_diags(body_diags, e057_struct_diags(esd, mod.enums, fld_scope));
   }
   body_diags = util.append_diags(body_diags, e085_decl_diags(mod, focus, e064_tn));
-  let cgd: util.Diag[] = const_init_diags(mod);
-  if (cgd.len() > 0) {
-    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
+  if (cev.refused.len() > 0) {
+    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cev.refused };
   }
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {

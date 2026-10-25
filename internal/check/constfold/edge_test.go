@@ -174,7 +174,7 @@ func TestIllTypedConstIsTheCheckersError(t *testing.T) {
 func TestWellTypedUnfoldableConstIsE093(t *testing.T) {
 	got := foldErr(t, `const X: i32 = 1 / 0 + (1 + true);`)
 	if !strings.Contains(got, "division by zero") {
-		t.Errorf("a zero divisor outranks a sibling's type error, as the self-host's eval_const does; got %v", got)
+		t.Errorf("a zero divisor outranks a sibling's type error, as the self-host's consteval does; got %v", got)
 	}
 	got = foldErr(t, `const X: f32 = 5;`)
 	if !strings.Contains(got, "1:1: const X: declared type f32") {

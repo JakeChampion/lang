@@ -31,11 +31,15 @@ func TestSelfHostConstEvaluationErrors(t *testing.T) {
 		{"nested-array", `const A: i32[][] = [[1], [2 / 0]];`, "division by zero", "E093"},
 		{"tuple", `const A: (i32, boolean) = (1 / 0, true);`, "division by zero", "E093"},
 		{"struct", `struct S { n: i32 } const A: S = S { n: 1 / 0 };`, "division by zero", "E093"},
-		{"mixed-operands", `const A: i32 = 1 + true;`, "operands aren't both numbers", "E093"},
-		{"string-subtract", `const A: string = "a" - "b";`, "not allowed on strings", "E093"},
-		{"bool-operator", `const A: boolean = true + false;`, "not allowed on bools", "E093"},
+		{"zero-divisor-outranks-type-error", `const A: i32 = (1 + true) + 1 / 0;`, "division by zero", "E093"},
+		{"mixed-operands", `const A: i32 = 1 + true;`, `operator "+" requires an integer type, got boolean`, "E009"},
+		{"reads-ill-typed", `const A: i32 = 1 + true; const B: i32 = A + 1;`, `operator "+" requires an integer type, got boolean`, "E009"},
+		{"string-subtract", `const A: string = "a" - "b";`, `operator "-" requires an integer type, got string`, "E009"},
+		{"bool-operator", `const A: boolean = true + false;`, `operator "+" requires an integer type, got boolean`, "E009"},
+		{"float-operator", `const A: f64 = 1.0 % 2.0;`, `operator "%" requires an integer type, got f64`, "E009"},
+		{"declared-type", `const A: i32 = 1.5;`, "const A: expected i32, got f64", "E002"},
 		{"string-operator", `const A: boolean = "a" < "b";`, "not allowed on strings", "E093"},
-		{"float-operator", `const A: f64 = 1.0 % 2.0;`, "not allowed in float", "E093"},
+		{"reads-unevaluated", `const A: boolean = "a" < "b"; const B: boolean = A && true;`, "not allowed on strings", "E093"},
 		{"numeric-family", `const A: f64 = 1 / 2;`, "declared type f64 does not match initialiser type i32", "E093"},
 		{"literal-priority", `const A: i32 = 2147483648 / 0;`, "literal 2147483648 does not fit in i32", "E047"},
 	} {
@@ -61,10 +65,8 @@ func TestSelfHostConstEvaluationErrors(t *testing.T) {
 						if !strings.Contains(string(out), "error["+tc.code+"]") {
 							t.Errorf("expected diagnostic %s\n%s", tc.code, out)
 						}
-						if tc.name == "mixed-operands" || tc.name == "string-subtract" {
-							if strings.Count(string(out), "error[E093]") != 1 || !strings.Contains(string(out), ":1:1: error[E093]") {
-								t.Errorf("want one constant diagnostic at its declaration:\n%s", out)
-							}
+						if strings.Count(string(out), "error[") != 1 {
+							t.Errorf("want one diagnostic, with no cascade or duplicate:\n%s", out)
 						}
 						if _, err := os.Stat(output); !os.IsNotExist(err) {
 							t.Errorf("refused program left an executable: %v", err)
