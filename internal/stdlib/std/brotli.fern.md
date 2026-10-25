@@ -94,7 +94,7 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
     if (!d.failed && d.out.len() + d.v > max_out) {
       return Err(BrotliTooLarge);
     }
-    d = __mb_body(d, input, window);
+    d = __mb_body(d, input, window, max_out);
   }
   if (d.failed) {
     return Err(__error(d, input));
@@ -134,12 +134,12 @@ function __past(pos: i32, cnt: i32, n: i32): boolean {
   return pos > n && (pos - n) * 8 > cnt;
 }
 
-function __mb_body(own d: __D, input: [u8], window: i32): __D {
+function __mb_body(own d: __D, input: [u8], window: i32, max_out: i32): __D {
   if (d.failed || d.v == 0) {
     return d;
   }
   let end: i32 = d.out.len() + d.v;
-  d = __reserve(d, end);
+  d = __reserve(d, end, max_out);
   if (d.raw) {
     return __raw(d, input);
   }
@@ -168,14 +168,14 @@ function __raw(own d: __D, input: [u8]): __D {
 }
 
 // Gives the output room for `n` bytes, so that the appends do not copy it.
-// The room at least doubles. Thus a stream of many small meta-blocks copies
-// the output a few times only. The copy of a match writes eight bytes at a
-// time, so the room has 16 bytes more.
-function __reserve(own d: __D, n: i32): __D {
-  if (n <= d.cap) {
+// The room at least doubles, up to `limit`. Thus a stream of many small
+// meta-blocks copies the output a few times only. The copy of a match
+// writes eight bytes at a time, so the room has 16 bytes more.
+function __reserve(own d: __D, n: i32, limit: i32): __D {
+  if (n + 16 <= d.cap) {
     return d;
   }
-  let want: i32 = cmp.max(n + 16, d.cap * 2);
+  let want: i32 = cmp.max(n, cmp.min(d.cap * 2, limit)) + 16;
   let room: u8[] = __alloc_u8(want);
   __arr_set_len(room, 0);
   let old: u8[] = d.out;
