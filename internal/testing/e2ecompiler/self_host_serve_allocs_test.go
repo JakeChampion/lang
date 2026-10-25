@@ -89,7 +89,7 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	e2eharness.CheckServeAllocsH2(t, addr, ServeAllocsH2Ceiling, e2eharness.ServeAllocsRounds)
 }
 
-const ServeAllocsTLSCeiling = 43
+const ServeAllocsTLSCeiling = 23
 
 func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	cli := buildSelfHostCLI(t)

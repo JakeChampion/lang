@@ -1138,10 +1138,7 @@ function zero_local(own r: irtables.LowerResult, slot: i32): irtables.LowerResul
   return emit(r, ir.op_store_local(slot));
 }
 
-function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, carried: boolean, k: KnownFields): irtables.LowerResult {
-  if (!carried) {
-    return reuse_token(r, f, donor, k);
-  }
+function slot_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_store_local(token_slot(f)));
   return zero_local(r, donor);
@@ -1291,9 +1288,9 @@ function drop_fields_except(own r: irtables.LowerResult, slot: i32, fields: semr
   return r;
 }
 
-function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: ssaunits.Keeps, at: i32): irtables.LowerResult {
+function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: ssaunits.Keeps, at: i32, token: i32): irtables.LowerResult {
   if (ins.kind_tag == ssasem.tuple_new()) {
-    return reuse_tuple(r, f, ins);
+    return reuse_tuple(r, f, ins, token);
   }
   let fields: semrecords.Field[] = [];
   let shape: string = ins.str;
@@ -1311,7 +1308,7 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
   }
-  r = emit(r, ir.op_load_local(token_slot(f)));
+  r = emit(r, ir.op_load_local(token));
   r = emit(r, ir.op_const_i32(fields.len() + 1));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
@@ -1373,9 +1370,9 @@ function field_store(own r: irtables.LowerResult, fields: semrecords.Field[], i:
   return emit(r, ir.op_struct_set(i, load_width(fields[i].ty)));
 }
 
-function reuse_tuple(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+function reuse_tuple(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, token: i32): irtables.LowerResult {
   let elems: typeinfo.Type[] = tuple_elements(f.values[ins.result]);
-  r = emit(r, ir.op_load_local(token_slot(f)));
+  r = emit(r, ir.op_load_local(token));
   r = emit(r, ir.op_const_i32(elems.len()));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
@@ -5770,13 +5767,23 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       }
       r = supplies(r, f, p, step, defer0, built_kept, late);
       r = bracket_take(r, f, held);
+      let token: i32 = token_slot(f);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos), known_fields(f, p, b, pairs.selfs[pos]));
+        if (!ssaunits.carry_held_for(carry, b.id, pos)) {
+          r = reuse_token(r, f, pairs.selfs[pos], known_fields(f, p, b, pairs.selfs[pos]));
+        } else if (ssaunits.token_slot_held(keeps, pos)) {
+          token = pairs.selfs[pos];
+        } else {
+          r = slot_token(r, f, pairs.selfs[pos]);
+        }
       } else if (pairs.builds[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.builds[pos], true, known_fields(f, p, b, pairs.builds[pos]));
+        r = slot_token(r, f, pairs.builds[pos]);
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
-        r = reuse_construct(r, f, ins, keeps, kb);
+        r = reuse_construct(r, f, ins, keeps, kb, token);
+        if (token != token_slot(f)) {
+          r = zero_local(r, token);
+        }
       } else if (ins.result >= 0 && maps[ins.result]) {
         r = map_in_place(r, f, ins);
         step = ssaunits.Step { ...step, drops: without(step.drops, ins.args[0]) };

@@ -3941,18 +3941,6 @@ function first_claim_of(f: ssasem.Func, p: Plan, b: ssa.SBlock, slots: i32): i32
   return 0 - 1;
 }
 
-function last_claim(f: ssasem.Func, p: Plan, b: ssa.SBlock): i32 {
-  let pos: i32 = b.insts.len() - 1;
-  while (pos >= 0) {
-    let ins: ssa.SInst = b.insts[pos];
-    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) >= 0) {
-      return pos;
-    }
-    pos = pos - 1;
-  }
-  return 0 - 1;
-}
-
 struct Routes { targets: i32[], ways: i32[][], nulls: i32[][] }
 
 struct RouteGraph { at: i32[], claims: i32[][], dies: i32[][], reads: VariantReads }
@@ -4078,13 +4066,16 @@ function null_edge(f: ssasem.Func, g: RouteGraph, sources: i32[], id: i32, slots
 
 struct Dying { at: i32[], values: i32[] }
 
-function dying_after_claims(p: Plan, idx: i32[][], links: i32[], b: ssa.SBlock, claim: i32): Dying {
+// The values dying in a block that no construction of their own slot count after them can take.
+function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr: VariantReads, b: ssa.SBlock): Dying {
+  let claims: Claims = block_claims(f, p, b);
   let out: Dying = Dying { at: [], values: [] };
-  let pos: i32 = claim + 1;
+  let pos: i32 = 0;
   while (pos < b.insts.len()) {
     if (b.insts[pos].kind_tag != 6 && b.insts[pos].kind_tag != 8) {
       for d in step_of(p, idx, b.id, pos, 0 - 1).drops {
-        if (d != b.insts[pos].result && (d >= links.len() || links[d] < 0) && !static_box(p, d)) {
+        if (d != b.insts[pos].result && (d >= links.len() || links[d] < 0) && !static_box(p, d)
+          && !claimed_from(claims, donor_slots(f, vr, b, d), pos)) {
           out = Dying { at: out.at.append(pos), values: out.values.append(d) };
         }
       }
@@ -4092,6 +4083,11 @@ function dying_after_claims(p: Plan, idx: i32[][], links: i32[], b: ssa.SBlock, 
     pos = pos + 1;
   }
   return out;
+}
+
+function claimed_from(c: Claims, slots: i32, pos: i32): boolean {
+  let at: i32 = util.index_of_i32(c.counts, slots);
+  return at >= 0 && c.last[at] >= pos;
 }
 
 struct Holds { blocks: i32[], at: i32[], slots: i32 }
@@ -4121,7 +4117,7 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
   let dying: Dying[] = [];
   let holding: boolean[] = [];
   for b in f.graph.blocks {
-    dying = dying.append(dying_after_claims(p, idx, links, b, last_claim(f, p, b)));
+    dying = dying.append(dying_unclaimed(f, p, idx, links, vr, b));
     holding = holding.append(false);
   }
   let g: RouteGraph = route_graph(f, p, dying, vr);
@@ -4475,11 +4471,13 @@ function held_read(p: Plan, ins: ssa.SInst): boolean {
     || ins.result < p.held.len() && p.held[ins.result];
 }
 
-function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): boolean {
+// A carried construction inside a keep's or a classified donor's span reads its token from the donor's own local
+// (ssarc.block_body), so it never needs the block's token slot.
+function token_busy(pairs: ReusePairs, carried: boolean[], from: i32, to: i32, own_build: i32): boolean {
   let pos: i32 = 0;
   while (pos < pairs.builds.len()) {
     if (pos != own_build) {
-      if (pairs.selfs[pos] >= 0 && pos >= from && pos <= to) {
+      if (pairs.selfs[pos] >= 0 && !carried[pos] && pos >= from && pos <= to) {
         return true;
       }
       if (pairs.builds[pos] >= 0 && pos >= from) {
@@ -4494,8 +4492,19 @@ function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): bool
   return false;
 }
 
+function carried_builds(c: Carry, b: ssa.SBlock): boolean[] {
+  let out: boolean[] = __alloc_bool(b.insts.len());
+  let pos: i32 = 0;
+  while (pos < b.insts.len()) {
+    out = out.with(pos, carry_held_for(c, b.id, pos));
+    pos = pos + 1;
+  }
+  return out;
+}
+
 function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], uses: ssasem.Uses): Keeps {
   let out: Keeps = no_keeps();
+  let carried: boolean[] = carried_builds(carry, b);
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     let donor: i32 = pairs.selfs[pos];
@@ -4506,7 +4515,7 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
     }
     if (donor >= 0 && taken >= 0) {
       let k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
-      if (k.donors.len() > 0 && !token_busy(pairs, k.start[0], pos, pos)) {
+      if (k.donors.len() > 0 && !token_busy(pairs, carried, k.start[0], pos, pos)) {
         out = Keeps {
           donors: out.donors.append(donor), slots: out.slots.append(k.slots[0]),
           values: out.values.append(k.values[0]), late: out.late.append(k.late[0]),
@@ -4521,6 +4530,7 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
 }
 
 function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
+  let carried: boolean[] = carried_builds(carry, b);
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     let dying: i32[] = step_of(p, idx, b.id, pos, 0 - 1).drops;
@@ -4533,7 +4543,7 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
     for d in dying {
       let start: i32 = first_classified_take(f, p, b, d, pos, links);
       if (start >= 0 && util.index_of_i32(out.donors, d) < 0 && util.index_of_i32(pairs.selfs, d) < 0
-        && !token_busy(pairs, start, pos, util.index_of_i32(pairs.builds, d)) && !keep_overlaps(out, start, pos)) {
+        && !token_busy(pairs, carried, start, pos, util.index_of_i32(pairs.builds, d)) && !keep_overlaps(out, start, pos)) {
         let moved: i32[] = [];
         let freed: boolean[] = [];
         let n: i32 = donor_fields(f, b.insts[start], d);
@@ -4627,6 +4637,11 @@ function keep_overlaps(k: Keeps, from: i32, to: i32): boolean {
     i = i + 1;
   }
   return false;
+}
+
+// Whether a keep or a classified donor holds the token slot across the construction at pos.
+pub function token_slot_held(k: Keeps, pos: i32): boolean {
+  return keep_overlaps(k, pos, pos);
 }
 
 pub function classified_at(k: Keeps, pos: i32): i32 {
@@ -4961,10 +4976,10 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: 
   if (held.len() > 0) {
     return "a token taken in a block is spent by no construction in it";
   }
-  return verify_keeps(pr, r.keeps[bi]);
+  return verify_keeps(pr, carried_builds(r.carry, b), r.keeps[bi]);
 }
 
-function verify_keeps(pr: ReusePairs, k: Keeps): string {
+function verify_keeps(pr: ReusePairs, carried: boolean[], k: Keeps): string {
   let i: i32 = 0;
   while (i < k.donors.len()) {
     let built: i32 = k.built[i];
@@ -4973,7 +4988,7 @@ function verify_keeps(pr: ReusePairs, k: Keeps): string {
       if (taken < 0 || taken >= pr.selfs.len() || k.start[i] < 0 || k.start[i] > taken) {
         return "a classified donor's positions are outside its block";
       }
-      if (token_busy(pr, k.start[i], taken, util.index_of_i32(pr.builds, k.donors[i]))) {
+      if (token_busy(pr, carried, k.start[i], taken, util.index_of_i32(pr.builds, k.donors[i]))) {
         return "a classified donor's token overlaps a pairing's";
       }
       i = i + 1;
@@ -4987,7 +5002,7 @@ function verify_keeps(pr: ReusePairs, k: Keeps): string {
     if (!own && !earlier) {
       return "a kept donor is not its construction's token";
     }
-    if (token_busy(pr, k.start[i], built, built)) {
+    if (token_busy(pr, carried, k.start[i], built, built)) {
       return "a kept donor's token overlaps another pairing's";
     }
     i = i + 1;
