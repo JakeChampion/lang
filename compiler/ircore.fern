@@ -370,7 +370,7 @@ pub function all_runtime_need_roots(): string[] {
     "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task", "vdso",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
     "str_repeat", "str_replace",
-    "str_split", "str_trim", "buf",
+    "str_split", "str_trim", "buf", "memcpy",
     "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
     "getxattr_bytes_u8", "lgetxattr_bytes_u8", "setxattr_bytes_u8", "lsetxattr_bytes_u8",

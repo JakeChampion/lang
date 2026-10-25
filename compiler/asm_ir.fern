@@ -2034,7 +2034,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
 }
 
 function emit_runtime_memcpy(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_memcpy:\n");
+  s = s.write("    .globl __fern_memcpy\n__fern_memcpy:\n");
   s = s.write("    movq %rdi, %rax\n");
   s = s.write("    cmpq $8, %rdx\n");
   s = s.write("    jb .Lmcp_lt8\n");
@@ -3158,7 +3158,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leave\n");
     s = s.write("    ret\n");
   }
-  if (s.has_need("buf")) {
+  if (s.has_need("memcpy")) {
     s = emit_runtime_memcpy(s);
   }
   if (s.has_need("buf")) {
@@ -7298,7 +7298,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
 }
 
 function ir_memcpy_asm(): string {
-  return "    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n";
+  return "    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_memcpy\n    pushq $0\n";
 }
 
 function ir_memset_asm(): string {
@@ -9302,7 +9302,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
   } else if (o.kind_tag == 441) {
     s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n").need("heap");
   } else if (o.kind_tag == 74) {
-    s = s.write(ir_memcpy_asm());
+    s = s.write(ir_memcpy_asm()).need("memcpy");
   } else if (o.kind_tag == 75) {
     s = s.write(ir_memset_asm());
   } else if (o.kind_tag == 78) {
