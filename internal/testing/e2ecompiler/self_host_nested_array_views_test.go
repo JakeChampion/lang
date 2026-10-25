@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -16,12 +17,15 @@ func TestSelfHostNestedArrayViewDiagnostics(t *testing.T) {
 		{"view-destination", "let all: [u8][] = [data[:1], data];"},
 		{"single-view", "let all: u8[][] = [data[:1]];"},
 		{"single-owned", "let all: [u8][] = [data];"},
+		{"owned-variable", "let owned: u8[][] = [data]; let all: [u8][] = owned;"},
+		{"stored-widening", "let narrow: i32[] = [1]; let all: i64[][] = [narrow];"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "function main(): i32 { let data: u8[] = [1u8, 2u8]; " + tc.decl + " return all.len(); }"
 			dir := t.TempDir()
-			if codes := goCheckerCodes(t, dir, src); len(codes) == 0 {
+			want := goCheckerCodes(t, dir, src)
+			if len(want) == 0 {
 				t.Fatal("Go checker accepted the invalid aggregate")
 			}
 			path := filepath.Join(dir, "main.fern")
@@ -30,13 +34,13 @@ func TestSelfHostNestedArrayViewDiagnostics(t *testing.T) {
 			}
 			cmd := runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib)
 			out, err := cmd.CombinedOutput()
-			if err == nil || !strings.Contains(string(out), "E034") {
-				t.Fatalf("check = %v, want E034\n%s", err, out)
+			if got := uniqueSortedCodes(codeRE.FindAllString(string(out), -1)); err == nil || !slices.Equal(got, want) {
+				t.Fatalf("check = %v, codes %v, want the Go checker's %v\n%s", err, got, want, out)
 			}
 			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
 				_, diags, err := cli.tryEmit(t, target, src)
-				if err == nil || !strings.Contains(diags, "E034") || strings.Contains(diags, "FERN_SEM_IR") {
-					t.Fatalf("%s = %v, want checker E034\n%s", target, err, diags)
+				if got := uniqueSortedCodes(codeRE.FindAllString(diags, -1)); err == nil || !slices.Equal(got, want) || strings.Contains(diags, "FERN_SEM_IR") {
+					t.Fatalf("%s = %v, codes %v, want checker %v\n%s", target, err, got, want, diags)
 				}
 			}
 		})
