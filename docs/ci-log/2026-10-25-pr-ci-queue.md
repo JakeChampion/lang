@@ -132,6 +132,23 @@ longest job of the suite is unchanged: the self-host shards at 10 to 13
 minutes. `TestSelfHostConstFuncGen2` is opt-in locally, so the shard job
 sets `RUN_CONST_FUNC_GEN2=1`.
 
+## Fewer helper runs
+
+At 12:04 UTC on 2026-10-25 the repository had 4 jobs running and 92 runs
+queued. Of those runs, 11 were `Check sources`, 11 `Cancel runs on conflict`,
+11 `Reap stale runs` for pushes, and 16 `Cancel superseded runs` and 15
+`Reap stale runs` for pull requests. Each is one job that waits in the same
+queue as the suite's jobs. In that hour the dispatcher started 4 to 8 jobs
+per five minutes. Every job in the queue therefore cost the same wait,
+whatever its length.
+
+A push to main now runs one job, `main-housekeeping.yml`, with the three
+steps the three workflows ran. A closed pull request runs one job,
+`cancel-on-merge.yml`, which now runs the stale-run sweep after its own
+cancel. The sweep is a composite action, `.github/actions/reap-stale-runs`,
+and `reap-stale-runs.yml` keeps only its cron, the quiet-hours floor. That
+is two jobs fewer per merge and one fewer per closed pull request.
+
 ## The catch-all lane, measured
 
 The lane's selection after the deletion, run through `cmd/ci-test-workers`
