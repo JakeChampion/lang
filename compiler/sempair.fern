@@ -74,27 +74,22 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
         j = j + 1;
         continue;
       }
-      let whole: boolean[] = [];
-      let scalar_whole: boolean[] = [];
-      let inner: boolean[] = [];
+      let c: Caller = Caller { whole: [], defs: [], inner: [], donated: [[], [], [], [], []] };
       let computed: boolean = false;
       for b in funcs[j].graph.blocks {
         for ins in b.insts {
           let at: i32 = paired_callee(ins, ix, ok);
           if (at >= 0 && !computed) {
             let defs: ssa.SInst[] = defs_of(funcs[j].graph);
-            whole = whole_values(funcs[j], ix, ok, ok[j]);
-            scalar_whole = semscalarreturn.donors(funcs[j], defs, whole);
-            inner = payloads_whole(funcs[j], defs, ix, Pairing { ok: ok, split: split }, ok[j], ok[j] && !split[j]);
+            c = Caller { ...c, defs: defs, whole: whole_values(funcs[j], ix, ok, ok[j]), inner: payloads_whole(funcs[j], defs, ix, Pairing { ok: ok, split: split }, ok[j], ok[j] && !split[j]) };
             computed = true;
           }
-          if (at >= 0 && keeps_result(funcs[at], ins.result, whole, scalar_whole)) {
-            ok = ok.with(at, false);
-            split = split.with(at, false);
-            changed = true;
-          } else if (at >= 0 && split[at] && inner[ins.result]) {
-            split = split.with(at, false);
-            changed = true;
+          if (at >= 0) {
+            let d: Demoted = demoted_at(funcs[j], funcs[at], at, ins.result, c, Pairing { ok: ok, split: split });
+            c = d.c;
+            ok = d.pg.ok;
+            split = d.pg.split;
+            changed = changed || d.changed;
           }
         }
       }
@@ -102,6 +97,31 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
     }
   }
   return Pairing { ok: ok, split: split };
+}
+
+// What one caller keeps whole. donated holds, per slot count, the values a
+// construction of that size kept whole could take the box of, made on first use.
+struct Caller { whole: boolean[], defs: ssa.SInst[], inner: boolean[], donated: boolean[][] }
+
+struct Demoted { c: Caller, pg: Pairing, changed: boolean }
+
+function demoted_at(f: ssasem.Func, callee: ssasem.Func, at: i32, value: i32, c0: Caller, pg: Pairing): Demoted {
+  let c: Caller = c0;
+  let scalar_whole: boolean[] = [];
+  if (semscalarreturn.eligible(callee, callee.result)) {
+    let n: i32 = semscalarreturn.slots(callee, callee.result);
+    if (c.donated[n].len() == 0) {
+      c = Caller { ...c, donated: c.donated.with(n, semscalarreturn.donors(f, c.defs, c.whole, n)) };
+    }
+    scalar_whole = c.donated[n];
+  }
+  if (keeps_result(callee, value, c.whole, scalar_whole)) {
+    return Demoted { c: c, pg: Pairing { ok: pg.ok.with(at, false), split: pg.split.with(at, false) }, changed: true };
+  }
+  if (pg.split[at] && c.inner[value]) {
+    return Demoted { c: c, pg: Pairing { ...pg, split: pg.split.with(at, false) }, changed: true };
+  }
+  return Demoted { c: c, pg: pg, changed: false };
 }
 
 // The values whose two-word variant payload is kept whole: read out and used

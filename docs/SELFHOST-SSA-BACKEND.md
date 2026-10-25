@@ -270,7 +270,11 @@ have to build the box the callee no longer builds, and where the callee built
 it in the box of a node it was consuming, as `std/pvec`'s path rebuild does,
 that box was free. Pairing `__pv_with_in` regardless took `pvec_with` from
 995 allocations to 1.1 million, every write copying the arrays on its path,
-and five times the instructions.
+and five times the instructions. A record returned in scalar lanes is also kept
+whole by a caller that builds a construction kept whole from its fields, since
+that construction could take its box (`semscalarreturn.donors`). Only a
+construction with the same number of slots counts: reuse matches slot counts,
+so a box cannot pass to a construction of another size.
 
 The same rule holds one level down. A function returns a payload in two words
 only while every caller takes the payload apart as well
