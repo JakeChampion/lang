@@ -1671,10 +1671,14 @@ function (c: Conn) __streams_out(space: i32, room: i32): Conn {
   let payload: u8[] = c.plan.payload;
   let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
   cur = Conn { ...cur, streams: cur.streams.fill(payload, room) };
-  payload = cur.streams.filled;
-  let resend: recovery.Resend[] = cur.streams.resend;
-  cur = Conn { ...cur, streams: cur.streams.fill_taken() };
-  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload, eliciting: cur.plan.eliciting || payload.len() > before, resend: cur.plan.resend.concat(resend) } };
+  return Conn { ...cur, plan: cur.plan.__filled(cur.streams.filled, cur.streams.resend, before), streams: cur.streams.fill_taken() };
+}
+
+function (p: Plan) __filled(payload: u8[], resend: recovery.Resend[], before: i32): Plan {
+  if (p.resend.len() == 0) {
+    return Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: resend };
+  }
+  return Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: p.resend.concat(resend) };
 }
 
 function (c: Conn) __probe_out(space: i32): Conn {
