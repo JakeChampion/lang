@@ -1764,29 +1764,7 @@ pub function (d: Document) as_i64(n: i32): Option[i64] {
   if (__json_t_kind(d.tape, n) != JSON_T_NUMBER || !__json_t_flag(d, n)) {
     return None;
   }
-  let i: i32 = __json_t_a(d, n);
-  let end: i32 = __json_t_b(d, n);
-  let neg: boolean = d.text[i] == 45;
-  if (neg) {
-    i = i + 1;
-  }
-  let acc: i64 = 0;
-  let floor: i64 = -922337203685477580;
-  while (i < end) {
-    let digit: i64 = (d.text[i] - 48) as i64;
-    if (acc < floor || acc == floor && digit > 8) {
-      return None;
-    }
-    acc = acc * 10 - digit;
-    i = i + 1;
-  }
-  if (neg) {
-    return Some(acc);
-  }
-  if (acc == -9223372036854775807 - 1) {
-    return None;
-  }
-  return Some(0 - acc);
+  return __json_range_i64(d.text, __json_t_a(d, n), __json_t_b(d, n));
 }
 
 pub function (d: Document) to_value(n: i32): JsonValue {
@@ -1968,34 +1946,40 @@ pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
 ```fern
 <<42 function __json_number_i64(s: string): Option[i64]>>=
 function __json_number_i64(s: string): Option[i64] {
-  let n: i64 = 0;
-  let i: i32 = 0;
-  let sign: i64 = 1;
-  let nlen: i32 = s.len();
-  let digits: i32 = 0;
-  if (nlen == 0) {
+  return __json_range_i64(s, 0, s.len());
+}
+
+// Accumulates negatively so that -2^63 fits.
+function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
+  let i: i32 = start;
+  let neg: boolean = i < end && s[i] == 45;
+  if (neg) {
+    i = i + 1;
+  }
+  if (i >= end) {
     return None;
   }
-  if (s[0] == 45) {
-    sign = 0 - 1;
-    i = 1;
-  }
-  if (i >= nlen) {
-    return None;
-  }
-  while (i < nlen) {
+  let acc: i64 = 0;
+  let floor: i64 = -922337203685477580;
+  while (i < end) {
     let b: i32 = s[i] as i32;
     if (b < 48 || b > 57) {
       return None;
     }
-    n = n * 10 + (b - 48) as i64;
-    digits = digits + 1;
-    if (n < 0 || digits > 19) {
+    let digit: i64 = (b - 48) as i64;
+    if (acc < floor || acc == floor && digit > 8) {
       return None;
     }
+    acc = acc * 10 - digit;
     i = i + 1;
   }
-  return Some(n * sign);
+  if (neg) {
+    return Some(acc);
+  }
+  if (acc == -9223372036854775807 - 1) {
+    return None;
+  }
+  return Some(0 - acc);
 }
 
 function __json_number_u64(s: string): Option[u64] {
