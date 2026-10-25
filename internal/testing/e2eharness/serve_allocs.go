@@ -61,7 +61,7 @@ func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 
 func KeepAliveGET(t *testing.T, addr string) func(path string) string {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func CheckServeFetchAllocs(t *testing.T, addr string, ceiling int64, rounds int)
 
 func CheckServeAllocsH2(t *testing.T, addr string, ceiling int64, rounds int) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	client, err := DialH2C(addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -472,7 +472,7 @@ function main(): i32 {
 
 func CheckServeAllocsH3(t *testing.T, addr string, client *exec.Cmd, ceiling int64, rounds int) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	out, err := client.CombinedOutput()
 	if err != nil {
 		t.Fatalf("h3 client: %v\n%s", err, out)
@@ -493,7 +493,7 @@ func CheckServeAllocsH3(t *testing.T, addr string, client *exec.Cmd, ceiling int
 
 func CheckServeAllocsH3Mux(t *testing.T, addr string, client *exec.Cmd, ceiling int64, rounds int, minPeak int) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	out, err := client.CombinedOutput()
 	if err != nil {
 		t.Fatalf("h3 mux client: %v\n%s", err, out)

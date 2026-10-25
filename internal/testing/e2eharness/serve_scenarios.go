@@ -88,7 +88,7 @@ function main(): i32 {
 
 func CheckThreadedState(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for want := 1; want <= 3; want++ {
 		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != fmt.Sprintf("/a=%d", want) {
 			t.Fatalf("request %d to /a: body %q, want %q (the state did not survive the request boundary)", want, got, fmt.Sprintf("/a=%d", want))
@@ -120,7 +120,7 @@ function main(): i32 {
 
 func CheckLargeResponse(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for i := 0; i < 2; i++ {
 		conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 		if err != nil {
@@ -165,7 +165,7 @@ function main(): i32 {
 
 func CheckRecvDeadline(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -191,7 +191,7 @@ func CheckRecvDeadline(t *testing.T, addr string) {
 
 func CheckIncompleteRequestAtEOF(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for _, tc := range []struct {
 		name, sent, want string
 	}{
@@ -257,7 +257,7 @@ func CheckOwnListenersSurviveHandlerTrap(t *testing.T, addr, stderrPath string) 
 
 func checkSurvivesHandlerTrap(t *testing.T, addr, stderrPath string, ownListeners bool) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("first /ok: want 200, got\n%s", resp)
 	}
@@ -266,7 +266,7 @@ func checkSurvivesHandlerTrap(t *testing.T, addr, stderrPath string, ownListener
 	}
 	WaitStderrContains(t, stderrPath, "worker died with exit code 134", 10*time.Second)
 	if ownListeners {
-		WaitServerReady(t, addr, 10*time.Second)
+		WaitServerReady(t, addr)
 	}
 	if resp := HTTPRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("post-crash /ok: want 200 (the service should have survived), got\n%s", resp)
@@ -297,7 +297,7 @@ var soReusePort = func() int {
 func CheckReusePortReachesListener(t *testing.T, port int) {
 	t.Helper()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func CheckDefaultBacklogHoldsBurst(t *testing.T, cmd *exec.Cmd, port int) {
 		}
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	group := -cmd.Process.Pid
 	if err := syscall.Kill(group, syscall.SIGSTOP); err != nil {
 		t.Fatal(err)
@@ -403,7 +403,7 @@ func StalledSurvivorServerSource() string {
 
 func CheckCrashLoopStopsSurvivor(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	stalled := rawRequest(t, addr, "/stall", "")
 	defer stalled.Close()
 	time.Sleep(200 * time.Millisecond)
@@ -412,7 +412,7 @@ func CheckCrashLoopStopsSurvivor(t *testing.T, cmd *exec.Cmd, addr, stderrPath s
 
 func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	deadline := time.Now().Add(90 * time.Second)
@@ -480,7 +480,7 @@ function main(): i32 {
 
 func CheckMaxConnectionsFloor(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for i := 0; i < 3; i++ {
 		if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !ContainsStatus200(resp) {
 			t.Fatalf("request %d under max_connections: 0: want 200, got\n%s", i+1, resp)
@@ -530,7 +530,7 @@ func ReusePortWorkersServerSource(port int) string {
 
 func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("first /ok: want 200, got\n%s", resp)
 	}
@@ -588,7 +588,7 @@ function main(): i32 {
 
 func CheckHandlersOverlap(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("first /ok: want 200, got\n%s", resp)
 	}
@@ -718,7 +718,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 
 func CheckInitState(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for want := 1; want <= 3; want++ {
 		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != fmt.Sprintf("/a=%d", want) {
 			t.Fatalf("request %d to /a: body %q, want %q (init's state did not reach the next request)", want, got, fmt.Sprintf("/a=%d", want))
@@ -731,7 +731,7 @@ func CheckInitState(t *testing.T, addr string) {
 
 func CheckHandleOnly(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/hello", 5*time.Second)); got != "path=/hello" {
 		t.Fatalf("/hello: body %q, want \"path=/hello\"", got)
 	}
@@ -788,7 +788,7 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
 
 func CheckDynErrorHandler(t *testing.T, addr, stderrPath string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/items/1", 5*time.Second)); got != "first" {
 		t.Fatalf("/items/1: body %q, want \"first\"", got)
 	}
@@ -836,7 +836,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
 
 func CheckResultHandler(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/items/1", 5*time.Second)); got != "first" {
 		t.Fatalf("/items/1: body %q, want \"first\"", got)
 	}
@@ -851,7 +851,7 @@ func CheckResultHandler(t *testing.T, addr string) {
 
 func CheckStatefulResultHandler(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != "/a=1" {
 		t.Fatalf("first /a: body %q, want \"/a=1\"", got)
 	}
@@ -895,7 +895,7 @@ func CheckShutdownHookOnSigint(t *testing.T, cmd *exec.Cmd, addr, stderrPath str
 
 func checkShutdownHookOn(t *testing.T, cmd *exec.Cmd, addr, stderrPath string, sig syscall.Signal, reason string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for i := 1; i <= 2; i++ {
 		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/", 5*time.Second)); got != fmt.Sprintf("hit %d", i) {
 			t.Fatalf("request %d: body %q, want \"hit %d\"", i, got, i)
@@ -918,7 +918,7 @@ func StallServerSource() string {
 
 func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	slow, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -1092,7 +1092,7 @@ function main(): i32 {
 
 func CheckServeLimits(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	ask := func(req string) string {
 		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 		if err != nil {

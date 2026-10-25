@@ -118,8 +118,17 @@ function main(): i32 {
   if (platforms.gated_capability("timer_fd") != "pollfd") {
     return 86;
   }
-  if (platforms.gated_capability("wasm_timer_pollable") != "now") {
+  if (platforms.gated_capability("wasm_timer_pollable") != "pollable" || platforms.gated_capability("wasm_block") != "pollable") {
     return 87;
+  }
+  if (!platforms.has_capability("wasm32-wasi", "pollable") || !platforms.has_capability("wasm32-wasi-http", "pollable")) {
+    return 90;
+  }
+  if (platforms.has_capability("x86-64-linux", "pollable") || platforms.has_capability("arm64-darwin", "pollable")) {
+    return 91;
+  }
+  if (platforms.gated_capability("poll") != "now") {
+    return 92;
   }
   if (platforms.gated_capability("write_file_exec") != "fsmode") {
     return 88;
