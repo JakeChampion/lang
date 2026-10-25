@@ -20,6 +20,12 @@ export async function instantiateCore(bytes) {
         console.error(`Fern ${fd}: ${text}`);
         return 0;
       },
+      random_get(at, length) {
+        crypto.getRandomValues(
+          new Uint8Array(instance.exports.memory.buffer, at, length),
+        );
+        return 0;
+      },
     },
   });
   instance = result instanceof WebAssembly.Instance ? result : result.instance;

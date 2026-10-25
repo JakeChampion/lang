@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Parse the same JSON with native Fern, Fern in WebAssembly, and your browser's JSON.parse." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>JSON lab · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/bench/style.css" />
+  </head>
+  <body class="app-page json-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/" aria-label="Fern, in action home"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/measure.fern.md">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow"><span>16</span>Measured parsing</div>
+          <h1>JSON <em>speed lab.</em></h1>
+          <p>Parse one document three ways: native Fern on the server, Fern compiled to WebAssembly in this page, and your browser's own JSON.parse.</p>
+          <div class="tech-chips"><span>std/json</span><span>Tree and tape parsers</span><span>Fern Wasm</span><span>Same bytes everywhere</span></div>
+        </section>
+        <div id="connection" class="status" role="status">Load the Fern kernel</div>
+      </div>
+      <form class="bench-controls" id="controls">
+        <label
+          >Corpus
+          <select id="corpus">
+            <option value="65536">Generated records · 64 KiB</option>
+            <option value="262144" selected>Generated records · 256 KiB</option>
+            <option value="1048576">Generated records · 1 MiB</option>
+            <option value="file">Your own file · this browser only</option>
+          </select></label
+        ><label
+          >Seed <input id="seed" type="number" min="0" max="1000000" value="1" /></label
+        ><label id="file-field" hidden
+          >File <input id="file" type="file" accept=".json,application/json" /></label
+        ><div class="button-group">
+          <button class="button primary" id="run" type="submit">Run the benchmark ▶</button>
+        </div>
+      </form>
+      <p class="bench-summary" id="summary" role="status">
+        Every engine reads the same bytes. The server and this page generate them from one Fern module.
+      </p>
+      <div class="table-scroll">
+        <table class="bench-table">
+          <thead>
+            <tr><th>Engine</th><th>Per parse</th><th class="rate">Throughput</th><th>Values</th></tr>
+          </thead>
+          <tbody id="results">
+            <tr><td colspan="4">Run the benchmark to measure each engine.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="bench-note">
+        The fastest JSON parsers, such as simdjson, use SIMD instructions to find structure 32 or 64 bytes at a time.
+        Fern's parser is scalar today. A SIMD kernel is the plan (#12105). This page measures the parser as it is.
+      </p>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          A deterministic generator in Fern produces the document from a seed and a size. The native server and the
+          Wasm kernel compile the same module, so both produce identical bytes, and a checksum confirms it. The tree
+          parser builds a value for each element. The tape parser records each element as two 64-bit words. Each
+          engine parses the document several times and reports the average. Every engine must count the same values.
+        </p>
+        <a href="/_src/showcase/measure.fern.md">Read the measured workloads ↗</a> · <a href="/_src/showcase/bench.fern.md">Read the endpoints ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

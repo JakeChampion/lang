@@ -4077,7 +4077,7 @@ function promotes_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
   match (from) {
     typeinfo.TypeArray(fa) => {
       if let typeinfo.TypeArray(ta) = to {
-        return promotes_view(fa.elem, ta.elem);
+        return fa.view && !ta.view || promotes_view(fa.elem, ta.elem);
       }
     },
     typeinfo.TypeTuple(ft) => {
@@ -13694,36 +13694,60 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
     if (type_contains_unknown(anchor)) {
       return out;
     }
-    let anchor_lit: i32 = numeric_literal_kind(a.elements[0]);
+    if let typeinfo.TypeArray(_) = anchor {
+      return nested_array_mix(a, anchor, s, out);
+    }
     if (is_primitive_type(anchor) || is_func_type(anchor) || is_tuple_type(anchor)) {
-      let k: i32 = 1;
-      let flagged: boolean = false;
-      while (k < a.elements.len() && !flagged) {
-        let etk: typeinfo.Type = check_expr(a.elements[k], s);
-        let scalar: typeinfo.Type = scalar_numeric_join(anchor, etk);
-        if (!is_unknown(scalar) && anchor_lit == 0 && lit_kind_settled(a.elements[k])) {
-          anchor = scalar;
-          anchor_lit = 0;
-          k = k + 1;
-          continue;
-        }
-        let lit: i32 = numeric_literal_kind(a.elements[k]);
-        if (!type_contains_unknown(etk) && !literal_gives_way(lit, anchor)) {
-          if (same_element_type(etk, anchor) || literal_gives_way(anchor_lit, etk)) {
-            anchor = etk;
-            anchor_lit = lit;
-          } else {
-            out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
-            flagged = true;
-          }
-        }
-        k = k + 1;
-      }
+      out = scalar_array_mix(a, anchor, s, out);
     } else if (concrete_instance(anchor)) {
       out = struct_instance_mix(a, anchor, s, out);
     }
   }
 
+  return out;
+}
+
+function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  let anchor_lit: i32 = numeric_literal_kind(a.elements[0]);
+  let k: i32 = 1;
+  while (k < a.elements.len()) {
+    let etk: typeinfo.Type = check_expr(a.elements[k], s);
+    let scalar: typeinfo.Type = scalar_numeric_join(anchor, etk);
+    if (!is_unknown(scalar) && anchor_lit == 0 && lit_kind_settled(a.elements[k])) {
+      anchor = scalar;
+      anchor_lit = 0;
+      k = k + 1;
+      continue;
+    }
+    let lit: i32 = numeric_literal_kind(a.elements[k]);
+    if (!type_contains_unknown(etk) && !literal_gives_way(lit, anchor)) {
+      if (same_element_type(etk, anchor) || literal_gives_way(anchor_lit, etk)) {
+        anchor = etk;
+        anchor_lit = lit;
+      } else {
+        return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
+      }
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+function nested_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  let first: ast.Expr = a.elements[0];
+  let k: i32 = 1;
+  while (k < a.elements.len()) {
+    let element: ast.Expr = a.elements[k];
+    let ty: typeinfo.Type = check_expr(element, s);
+    if (!type_contains_unknown(ty) && !same_element_type(ty, anchor) && !settles_to(element, anchor, s)) {
+      if (!settles_to(first, ty, s)) {
+        return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(ty), expr_line(element), expr_col(element)));
+      }
+      anchor = ty;
+      first = element;
+    }
+    k = k + 1;
+  }
   return out;
 }
 
@@ -14254,12 +14278,8 @@ function array_elem_type_of(t: typeinfo.Type): typeinfo.Type {
 
 function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (!is_dyn_slot(elem_ty) && !is_str_view(elem_ty)) {
-    if let typeinfo.TypeUnion(_) = elem_ty {} else {
-      if let typeinfo.TypeStruct(_) = elem_ty {} else {
-        return out;
-      }
-    }
+  if (!checks_array_element(elem_ty)) {
+    return out;
   }
   match (init) {
     ast.ExprArray(arr) => {
@@ -14273,6 +14293,24 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     _ => {}
   }
   return out;
+}
+
+function checks_array_element(ty: typeinfo.Type): boolean {
+  match (ty) {
+    typeinfo.TypeUnion(_) => {
+      return true;
+    },
+    typeinfo.TypeStruct(_) => {
+      return true;
+    },
+    typeinfo.TypeArray(_) => {
+      return true;
+    },
+    _ => {
+      return is_dyn_slot(ty) || is_str_view(ty);
+    }
+  }
+  return false;
 }
 
 function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scope): typeinfo.Type {
@@ -14321,7 +14359,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       let out: util.Diag[] = [];
-      if (is_func_type(elem) || is_tuple_type(elem)) {
+      if (is_func_type(elem) || is_tuple_or_array(elem)) {
         out = array_mix_diags(a, s, out);
       }
       for element in a.elements {
