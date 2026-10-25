@@ -7,6 +7,30 @@ import "core/cmp";
 @derive(cmp.Debug, cmp.Eq)
 pub enum PngError { Signature, Truncated, Length, Crc, Order, Unsupported, Dimensions, Limit, Compressed, Scanline }
 
+struct Prepared { layout: pixels.Layout, compressed: u8[], filtered_bytes: i32 }
+
+pub struct RowLimits { max_payload_bytes: i64, max_row_work: i64 }
+
+pub struct RowPlan {
+  layout: pixels.Layout,
+  first: i32,
+  count: i32,
+  filtered_bytes: i32,
+  row_scratch_bytes: i64,
+  payload_bytes: i64,
+  row_work: i64,
+}
+
+pub enum RowError[E] { RowCodec(PngError), RowBounds, RowBudget, RowCancelled, RowConsumer(E) }
+
+pub struct RowFold[S] { value: S, plan: RowPlan }
+
+enum UnfilterError { InvalidFilter, Interrupted }
+
+pub function default_row_limits(): RowLimits {
+  return RowLimits { max_payload_bytes: 134217728i64, max_row_work: 134217728i64 };
+}
+
 function be32(input: [u8], at: i32): u32 {
   return input[at] as u32 << 24 | input[at + 1] as u32 << 16 | input[at + 2] as u32 << 8 | input[at + 3] as u32;
 }
@@ -30,6 +54,10 @@ function paeth(a: i32, b: i32, c: i32): i32 {
     return b;
   }
   return c;
+}
+
+function predict(filter: i32, left: i32, above: i32, upper_left: i32): i32 {
+  return match (filter) { 1 => left, 2 => above, 3 => (left + above) / 2, 4 => paeth(left, above, upper_left), _ => 0 };
 }
 
 function reconstruct(filtered: [u8], layout: pixels.Layout): Result[pixels.Image, PngError] {
@@ -57,19 +85,7 @@ function reconstruct(filtered: [u8], layout: pixels.Layout): Result[pixels.Image
       if (y > 0 && x >= channels) {
         upper_left = bytes[at - layout.stride - channels] as i32;
       }
-      let prediction = 0;
-      if (filter == 1) {
-        prediction = left;
-      }
-      if (filter == 2) {
-        prediction = above;
-      }
-      if (filter == 3) {
-        prediction = (left + above) / 2;
-      }
-      if (filter == 4) {
-        prediction = paeth(left, above, upper_left);
-      }
+      let prediction = predict(filter, left, above, upper_left);
       bytes = bytes.with(at, (filtered[start + 1 + x] as i32 + prediction) as u8);
       x = x + 1;
     }
@@ -78,7 +94,7 @@ function reconstruct(filtered: [u8], layout: pixels.Layout): Result[pixels.Image
   return Ok(pixels.Image { layout: layout, data: bytes });
 }
 
-pub function decode(input: [u8], limits: pixels.Limits): Result[pixels.Image, PngError] {
+function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError] {
   if (input.len() > 16777216) {
     return Err(PngError.Limit);
   }
@@ -192,11 +208,109 @@ pub function decode(input: [u8], limits: pixels.Limits): Result[pixels.Image, Pn
   if (total > limits.max_bytes || total > 67108864) {
     return Err(PngError.Limit);
   }
-  let filtered = match (compression.decode(compressed, total)) { Ok(v) => v, Err(_) => { return Err(PngError.Compressed); } };
-  if (filtered.len() != total) {
+  return Ok(Prepared { layout: layout, compressed: compressed, filtered_bytes: total });
+}
+
+function inflate_prepared(prepared: Prepared): Result[u8[], PngError] {
+  let filtered = match (compression.decode(prepared.compressed, prepared.filtered_bytes)) { Ok(v) => v, Err(_) => { return Err(PngError.Compressed); } };
+  if (filtered.len() != prepared.filtered_bytes) {
     return Err(PngError.Scanline);
   }
+  return Ok(filtered);
+}
+
+pub function decode(input: [u8], limits: pixels.Limits): Result[pixels.Image, PngError] {
+  let prepared = prepare(input, limits)?;
+  let layout = prepared.layout;
+  let filtered = inflate_prepared(prepared)?;
   return reconstruct(filtered, layout);
+}
+
+function unfilter_row(filtered: [u8], layout: pixels.Layout, y: i32, previous: [u8], cancelled: () => boolean): Result[u8[], UnfilterError] {
+  let start = y * (layout.stride + 1);
+  let filter = filtered[start] as i32;
+  if (filter > 4) {
+    return Err(UnfilterError.InvalidFilter);
+  }
+  let bytes = __alloc_u8(layout.stride);
+  let channels = pixels.channels(layout.format);
+  let x = 0;
+  while (x < layout.stride) {
+    if (x % 256 == 0 && cancelled()) {
+      return Err(UnfilterError.Interrupted);
+    }
+    let left = 0;
+    let above = 0;
+    let upper_left = 0;
+    if (x >= channels) {
+      left = bytes[x - channels] as i32;
+    }
+    if (y > 0) {
+      above = previous[x] as i32;
+    }
+    if (y > 0 && x >= channels) {
+      upper_left = previous[x - channels] as i32;
+    }
+    let prediction = predict(filter, left, above, upper_left);
+    bytes = bytes.with(x, (filtered[start + 1 + x] as i32 + prediction) as u8);
+    x = x + 1;
+  }
+  return Ok(bytes);
+}
+
+pub function fold_rows[S, E](input: [u8], first: i32, count: i32, limits: pixels.Limits, row_limits: RowLimits, cancelled: () => boolean, value: S, consume: (S, pixels.Image) => Result[S, E]): Result[RowFold[S], RowError[E]] {
+  if (cancelled()) {
+    return Err(RowCancelled);
+  }
+  if (row_limits.max_payload_bytes <= 0i64 || row_limits.max_row_work <= 0i64
+    || 2i64 * (input.len() as i64) > row_limits.max_payload_bytes) {
+    return Err(RowBudget);
+  }
+  let prepared = match (prepare(input, limits)) { Ok(v) => v, Err(e) => { return Err(RowCodec(e)); } };
+  let layout = prepared.layout;
+  if (first < 0 || count <= 0 || first >= layout.height || count > layout.height - first) {
+    return Err(RowBounds);
+  }
+  let scratch = 2i64 * (layout.stride as i64);
+  let payload = 2i64 * (input.len() as i64) + prepared.filtered_bytes as i64 + scratch;
+  let work = layout.height as i64 + (first as i64 + count as i64) * (layout.stride as i64);
+  if (payload > row_limits.max_payload_bytes || work > row_limits.max_row_work) {
+    return Err(RowBudget);
+  }
+  let plan = RowPlan {
+    layout: layout, first: first, count: count, filtered_bytes: prepared.filtered_bytes,
+    row_scratch_bytes: scratch, payload_bytes: payload, row_work: work,
+  };
+  if (cancelled()) {
+    return Err(RowCancelled);
+  }
+  let filtered = match (inflate_prepared(prepared)) { Ok(v) => v, Err(e) => { return Err(RowCodec(e)); } };
+  let y = 0;
+  while (y < layout.height) {
+    if (y % 64 == 0 && cancelled()) {
+      return Err(RowCancelled);
+    }
+    if (filtered[y * (layout.stride + 1)] > 4 as u8) {
+      return Err(RowCodec(PngError.Scanline));
+    }
+    y = y + 1;
+  }
+  let previous: u8[] = [];
+  let value = value;
+  y = 0;
+  while (y < first + count) {
+    let bytes = match (unfilter_row(filtered, layout, y, previous, cancelled)) { Ok(v) => v, Err(UnfilterError.InvalidFilter()) => { return Err(RowCodec(PngError.Scanline)); }, Err(UnfilterError.Interrupted()) => { return Err(RowCancelled); } };
+    previous = bytes;
+    if (y >= first) {
+      let row = pixels.Image { layout: pixels.Layout { ...layout, height: 1, bytes: layout.stride }, data: bytes };
+      value = match (consume(value, row)) { Ok(v) => v, Err(e) => { return Err(RowConsumer(e)); } };
+      if (cancelled()) {
+        return Err(RowCancelled);
+      }
+    }
+    y = y + 1;
+  }
+  return Ok(RowFold[S] { value: value, plan: plan });
 }
 
 function append32(bytes: u8[], n: u32): u8[] {

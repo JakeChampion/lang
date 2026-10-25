@@ -117,33 +117,32 @@ jobs:
           if-no-files-found: warn
           overwrite: true
 
-  # The freshly built arm64 candidate compiling the whole compiler. `verify`
-  # above runs the PINNED stage0, and stage2-fixpoint-arm64 drives
-  # asm_load_run.fern rather than fern.fern, so without this the publish job is
-  # the first thing to run this shape — which is how #8430 sat undetected.
-  candidate-arm64:
-    if: github.event_name == 'pull_request' || !inputs.publish
-    name: candidate-arm64-linux
-    runs-on: ubuntu-24.04-arm
-    # 24 s to build the candidate, 47 s for it to compile the compiler, on this
-    # runner (measured 2026-09-05 from the publish job's own steps), then two
-    # more whole-compiler compiles for the fixed point.
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
+      # THE CANDIDATE CHAIN, on the arm64-linux leg only. The steps above run
+      # the PINNED stage0, and stage2-fixpoint-arm64 drives asm_load_run.fern
+      # rather than fern.fern. Without this, the publish job is the first
+      # thing to run this shape, which is how #8430 sat undetected. The chain
+      # is about three minutes on this runner: 24 s to build the candidate,
+      # 47 s for it to compile the compiler (measured 2026-09-05 from the
+      # publish job's own steps), then two more whole-compiler compiles for
+      # the fixed point. A job of its own paid a setup and a slot of the
+      # runner pool for those three minutes, so the chain rides this leg.
       - uses: ./.github/actions/setup-fern
+        if: matrix.host == 'arm64-linux'
 
       - name: the current pin builds the candidate (make selfhost-cli)
+        if: matrix.host == 'arm64-linux'
         run: |
           make selfhost-cli SELFHOST_TARGET=arm64-linux
           mkdir -p build
           cp bin/fern-selfhost build/candidate
 
       - name: the candidate compiles the current compiler, and that compiler works
+        if: matrix.host == 'arm64-linux'
         run: STAGE0=build/candidate make bootstrap
 
       # The same steps the publish job runs on this host, so a PR sees them.
       - name: the compiler it built reproduces itself (stage2 == stage3)
+        if: matrix.host == 'arm64-linux'
         run: STAGE0=build/candidate make distcheck
 
   publish:

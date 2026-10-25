@@ -465,6 +465,10 @@ aborts can be a leaf. `ssa.cold_positions` sorts the other call positions into
 four kinds:
 
 - An array push (`COLD_SLOW`) calls only on its slow path, to grow the array.
+  A back-reference copy (`__fern_bytes_append_back`, `ssa.back_copy_call`)
+  is also `COLD_SLOW`. Its inline copy runs for a unique array with room and a
+  dist of 8 or more, in the registers a cold call clobbers. Every other case
+  calls `__fern_bytes_append_back_slow`.
 - A call in a cold block (`COLD_BRANCH`) is inside a loop, in a block that
   does not dominate the loop's latch (`ssa.cold_blocks`). Some iterations
   do not run it: an error branch, a fallback.
