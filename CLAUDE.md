@@ -159,6 +159,15 @@ until green, then merge. Subscribe to PR activity (`subscribe_pr_activity`)
 without being asked — the user prefers that to manual CI polling. Pause only for
 a genuine fork (an ambiguous review comment, an architectural decision).
 
+**A pull request runs the fast tier, and main runs the full suite.** "Green" on a
+PR means Lint and Preflight: the fixture corpus on every target and the x86-64
+legs of the unit, e2e, wasm, differential and coreutils lanes, about ten
+minutes. The full suite (aarch64, the self-host shards, macOS, perf, bootstrap,
+and the rest) runs on main after the merge, and `main-red.yml` opens an issue
+per red lane. **A red main is the next task for whoever sees it**, ahead of new
+work. Label a PR `ci-full` before pushing when the change is deep compiler work
+that should take the full suite before it merges.
+
 **Open the PR EARLY.** CI is faster than this dev machine: this is a 4-core
 container where `internal/testing/e2e` runs 45+ minutes in one process, while CI shards
 the same work across machines. So the moment the *targeted* suites for what you
@@ -168,11 +177,10 @@ in flight — that is the honest report, and it beats a 45-minute stall before
 anyone can see the diff. This does not weaken the engineering bar; it says the PR
 is the place to wait, not your terminal.
 
-**PR CI is one run, and one PR at a time.** `ci.yml` calls every lane and holds
-one FIFO queue: a PR's lanes run in parallel, PRs wait their turn, and a push
-to a PR cancels its older run the moment it lands. Wait time is queue
-position, not runner scarcity. Lint and Preflight (the fixture corpus through
-the compiler) run outside the queue, and a red one cancels the queued suite.
+**The full suite is one run, and one at a time.** `ci-suite.yml` holds one
+FIFO queue for the full suite (main, dispatches, and `ci-full` pull requests);
+a push to a PR cancels its older run the moment it lands. The PR tier runs
+outside that queue.
 
 **Push as soon as a fix is ready.** Do not hold a validated commit back to let
 an in-flight run finish: the push cancels the older run, and that is accepted.
