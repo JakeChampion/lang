@@ -1,0 +1,16 @@
+import "core/map";
+
+struct Key { x: i32 }
+
+struct Handler { name: string, run: () => i32 }
+
+struct Holder {
+  count: i32,
+  missing: Nope,
+  index: Map[Key, i32],
+  hook: Cell[Handler],
+}
+
+function main(): i32 {
+  return 0;
+}

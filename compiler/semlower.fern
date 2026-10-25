@@ -417,7 +417,7 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
           names = names.append(name);
           let fields: parser.StructFieldDecl[] = [];
           for fl in rec.fields {
-            fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
+            fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
           }
           out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
         }
@@ -443,7 +443,7 @@ function instance_variants(built: semsource.Built): parser.StructDecl[] {
         names = names.append(name);
         let fields: parser.StructFieldDecl[] = [];
         for fl in v.fields {
-          fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
+          fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
         }
         out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
       }
@@ -556,7 +556,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     i = i + 1;
   }
   let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(extra_origins, kept.extra_indices) };
-  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records };
+  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records, refused: ircore.fip_claim_diags(mod.funcs, kept.result.bodies) };
 }
 
 function physical_contracts(built: semsource.Built): ssasem.Contract[] {

@@ -52,7 +52,7 @@ pub function hover(p: Program, line: i32, col: i32): Answer {
   if (text.len() == 0) {
     return no_answer();
   }
-  return Answer { found: true, text: util.show_type_vars(text), line: q.site.line, col: q.site.col, len: q.site.len };
+  return Answer { found: true, text: written(q.quals, util.show_type_vars(text)), line: q.site.line, col: q.site.col, len: q.site.len };
 }
 
 pub function hover_doc(p: Program, line: i32, col: i32): string {
@@ -806,6 +806,41 @@ function joined(xs: string[]): string {
     i = i + 1;
   }
   return out;
+}
+
+// written spells each bundle name in `label` as the module's source does:
+// through the import's alias, or bare for the module's own declarations.
+pub function written(q: flatten.Qualifiers, label: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < label.len()) {
+    let j: i32 = i;
+    while (j < label.len() && word_byte(label[j])) {
+      j = j + 1;
+    }
+    if (j == i) {
+      j = i + 1;
+    }
+    out = out + written_name(q, slice_unchecked(label, i, j) + "");
+    i = j;
+  }
+  return out;
+}
+
+function written_name(q: flatten.Qualifiers, name: string): string {
+  let k: i32 = 0;
+  while (k < q.prefixes.len()) {
+    let p: string = q.prefixes[k] + "__";
+    if (util.str_has_prefix(name, p)) {
+      return q.aliases[k] + "." + slice_unchecked(name, p.len(), name.len());
+    }
+    k = k + 1;
+  }
+  return unprefixed(name, q.own);
+}
+
+function word_byte(b: u8): boolean {
+  return b == b'_' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b >= b'0' && b <= b'9';
 }
 
 pub function unprefixed(name: string, prefix: string): string {

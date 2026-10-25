@@ -171,14 +171,34 @@ function joined(xs: string[], sep: string): string {
   return out;
 }
 
-function violations(m: ManifestAt, held: string[]): string[] {
-  let out: string[] = [];
+// Refusal is a dependency entry granting more than its package holds, at
+// line `line` of the fern.toml in `dir`.
+pub struct Refusal { dir: string, line: i32, message: string }
+
+function violations(m: ManifestAt, held: string[], own out: Refusal[]): Refusal[] {
   for dep in m.man.deps {
     if (dep.governed) {
-      for cap in dep.caps {
+      for cap in sorted_unique(dep.caps) {
         if (!util.has_str(held, cap)) {
-          out = out.append(m.dir + "/fern.toml: dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + joined(sorted_unique(held), ", ") + "] (attenuation: a dependency may grant at most what it holds)");
+          out = out.append(Refusal { dir: m.dir, line: dep.line, message: "dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + joined(sorted_unique(held), ", ") + "] (attenuation: a dependency may grant at most what it holds)" });
         }
+      }
+    }
+  }
+  return out;
+}
+
+function attenuation_refusals(mans: ManifestAt[], held: Holding[], root_dir: string): Refusal[] {
+  let dirs: string[] = [];
+  for m in mans {
+    dirs = dirs.append(m.dir);
+  }
+  let out: Refusal[] = [];
+  for dir in sorted_unique(dirs) {
+    let at: i32 = holding_index(held, dir);
+    for m in mans {
+      if (m.dir == dir && at >= 0 && dir != root_dir) {
+        out = violations(m, held[at].grants, out);
       }
     }
   }
@@ -187,7 +207,7 @@ function violations(m: ManifestAt, held: string[]): string[] {
 
 pub struct ModuleAt { dir: string, owner_dir: string, name: string, stdlib: boolean }
 
-pub struct Checked { pkgs: caps.Pkg[], err: string }
+pub struct Checked { pkgs: caps.Pkg[], refused: Refusal[] }
 
 function within(dir: string, parent: string): boolean {
   return dir == parent || dir.len() > parent.len() && slice_unchecked(dir, 0, parent.len()) == parent && dir[parent.len()] == b'/';
@@ -195,15 +215,6 @@ function within(dir: string, parent: string): boolean {
 
 pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {
   let held: Holding[] = holdings(mans, root.dir);
-  let errors: string[] = [];
-  for m in mans {
-    let at: i32 = holding_index(held, m.dir);
-    if (at >= 0 && m.dir != root.dir) {
-      for err in violations(m, held[at].grants) {
-        errors = errors.append(err);
-      }
-    }
-  }
   let pkgs: caps.Pkg[] = [root];
   let i: i32 = 0;
   while (i < modules.len()) {
@@ -213,7 +224,7 @@ pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], pr
     }
     i = i + 1;
   }
-  return Checked { pkgs: pkgs, err: joined(sorted_unique(errors), "\n") };
+  return Checked { pkgs: pkgs, refused: attenuation_refusals(mans, held, root.dir) };
 }
 
 function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holding[]): caps.Pkg {

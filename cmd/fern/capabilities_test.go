@@ -273,7 +273,7 @@ pub function one(): i32 { return b.one(); }`,
 	if err == nil {
 		t.Fatal("expected the amplifying grant to fail -check, got none")
 	}
-	want := `dependency "b" of "a" is granted 'net' but "a" itself holds only [fs] (attenuation: a dependency may grant at most what it holds)`
+	want := filepath.Join(root, "a", "fern.toml") + `:5:1: error[E088]: dependency "b" of "a" is granted 'net' but "a" itself holds only [fs] (attenuation: a dependency may grant at most what it holds)`
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error:\ngot  %q\nwant substring %q", err.Error(), want)
 	}

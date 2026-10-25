@@ -186,28 +186,19 @@ three bits are stamped by the parser (`fip`, `fbip`, and the graded
 allowance), the E053 walk applies native's constructor rule and its
 asymmetric call rule, and the IR-side budget check
 (`compiler/irfipverify.fern`, #6639 slice 3) runs on every
-emit — the whole-program CLI path and the per-unit and per-module
+compile — the whole-program CLI path and the per-unit and per-module
 builds alike.
 
-`ircore.check_fip_claims` is called from each backend's EMIT entry,
-over the window of declarations that emit covers and against the
-lowering it will use — the caller's, where one was kept, and a fresh
-one for a claimed function otherwise, which costs one lowering per
-CLAIM rather than per function. A function carrying neither
+`ircore.fip_claim_diags` runs once, in the typed lowering
+(`semlower.substitution`), over every declaration and the body that
+lowering produced for it, and the substitution carries the verdicts out
+as `Sub.refused`. The driver reports them as `FILE:LINE:COL:
+error[E068]` diagnostics, at the claimed function, before any backend
+runs. Every build (the whole-program CLI path, the per-unit and the
+per-module builds) emits from that substitution's bodies, so none skips
+the check, and the routing and eligibility probes that only gate a
+module never see a verdict (#9655). A function carrying neither
 annotation returns before one op is examined.
-
-The verdicts do not ride the gate's `""` refusal, because that
-refusal is turned into "module is not IR-eligible" by its caller,
-which is the wrong thing to say about a module that lowered fine and
-broke a promise (#9623). Nor does the check ride the gate
-itself, where it started: gating is also what the routing and
-eligibility probes do — `wasm_ir.ir_route_ok` and `wasm_eligible`
-gate a module only to return a boolean, and
-`asm_ir.module_runtime_needs` runs the whole per-function emit and
-throws the text away — so hooking the lowering made all three exit on
-a claim they were only asked about, and left the per-unit and
-per-module builds, which re-lower outside the gate, checking nothing
-(#9655).
 
 Until #9623 only the diagnostic drivers called it (`irlower_run
 -verifyfip`, `irverify_run`), so an un-paired construction compiled
