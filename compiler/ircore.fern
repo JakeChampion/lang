@@ -285,7 +285,7 @@ function scale_map_call(e: ast.Expr, trusted: util.NameIndex): ast.Expr {
         }
         return ast.ExprCall {
           ...c, type_args: [],
-          callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "" },
+          callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "", builtin: false },
           args: [c.args[0], got.k],
         };
       }

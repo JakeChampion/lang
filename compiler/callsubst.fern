@@ -105,11 +105,11 @@ function expr_at(e: ast.Expr, ctx: Context): (ast.Expr, Context, boolean) {
         args = args.append(expr(arg, ctx));
       }
       if let ast.ExprIdent(i) = c.callee {
-        if (i.name == ctx.fname) {
+        if (i.name == ctx.fname && !i.builtin) {
           for arg in ctx.args {
             args = args.append(arg);
           }
-          let target: ast.Expr = ast.ExprIdent { name: ctx.lname, line: i.line, col: i.col, ty: i.ty };
+          let target: ast.Expr = ast.ExprIdent { name: ctx.lname, line: i.line, col: i.col, ty: i.ty, builtin: false };
           return (ast.ExprCall { ...c, callee: target, args: args }, ctx, true);
         }
       }

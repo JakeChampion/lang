@@ -178,9 +178,6 @@ jobs:
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostX86_64$' ./internal/testing/e2e/
-      - name: name the failed tests as annotations
-        if: failure()
-        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
       # EMI mutants of the conformance cases over the same window. A seed
       # selects a case and the mutation, so the window gives each case a
       # new mutant each night.
@@ -192,12 +189,13 @@ jobs:
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
           SELFHOST_EMI_SEEDS: "${{ env.SEED_WINDOW }}"
+          GOTESTSUM_JSONFILE: /tmp/gotestsum-emi.jsonl
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostEMIX86_64$' ./internal/testing/e2e/
-      - name: name the failed EMI tests as annotations
+      - name: name the failed tests as annotations
         if: failure()
-        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE" /tmp/gotestsum-emi.jsonl
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

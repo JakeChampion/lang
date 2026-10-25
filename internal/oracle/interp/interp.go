@@ -7205,7 +7205,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
-		if v, ok := env.get(id.Name); ok {
+		if v, ok := env.get(id.Name); ok && !id.Builtin {
 			switch fv := v.(type) {
 			case Func:
 				return i.callFunc(fv.Decl, args)
