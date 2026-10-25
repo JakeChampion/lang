@@ -15,14 +15,41 @@ pub struct Aggregate {  }
 
 pub type Scalar = IntValue | FloatValue | BoolValue | StringValue | Aggregate;
 
-pub struct Value { data: Scalar, error: string }
+// A definite error is reported at once. Any other error waits for the type
+// check, because an ill-typed initializer is a type error.
+pub struct Value { data: Scalar, error: string, definite: boolean }
 
 function empty(): Value {
-  return Value { data: Aggregate {  }, error: "" };
+  return Value { data: Aggregate {  }, error: "", definite: false };
 }
 
 function fail(message: string): Value {
   return Value { ...empty(), error: message };
+}
+
+function refuse(message: string): Value {
+  return Value { ...empty(), error: message, definite: true };
+}
+
+const DEFERRED: string = "reads a const that did not fold";
+
+// The value later initializers read for a const: an error defers them as well.
+pub function held(v: Value): Value {
+  if (v.error.len() > 0) {
+    return fail(DEFERRED);
+  }
+  return v;
+}
+
+pub function reads_deferred(v: Value): boolean {
+  return v.error == DEFERRED;
+}
+
+function first_error(a: Value, b: Value): Value {
+  if (a.error.len() > 0 && (a.definite || !b.definite)) {
+    return a;
+  }
+  return b;
 }
 
 function number(v: i64, ty: string): Value {
@@ -36,15 +63,15 @@ function number(v: i64, ty: string): Value {
   if (ty == "u8") {
     n = (v as u8) as i64;
   }
-  return Value { data: IntValue { value: n }, error: "" };
+  return Value { data: IntValue { value: n }, error: "", definite: false };
 }
 
 function floating(v: f64): Value {
-  return Value { data: FloatValue { value: v }, error: "" };
+  return Value { data: FloatValue { value: v }, error: "", definite: false };
 }
 
 function logical(v: boolean): Value {
-  return Value { data: BoolValue { value: v }, error: "" };
+  return Value { data: BoolValue { value: v }, error: "", definite: false };
 }
 
 function unsigned(ty: string): boolean {
@@ -70,9 +97,9 @@ function integer_binary(op: string, a: i64, b: i64, ty: string): Value {
 function divide(op: string, a: i64, b: i64, ty: string): Value {
   if (b == 0) {
     if (op == "/") {
-      return fail("division by zero in constant expression");
+      return refuse("division by zero in constant expression");
     }
-    return fail("modulo by zero in constant expression");
+    return refuse("modulo by zero in constant expression");
   }
   if (unsigned(ty)) {
     if (op == "/") {
@@ -173,7 +200,7 @@ function float_binary(op: string, a: f64, b: f64): Value {
   }
   if (op == "/") {
     if (b == 0.0) {
-      return fail("division by zero in constant expression");
+      return refuse("division by zero in constant expression");
     }
     return floating(a / b);
   }
@@ -220,7 +247,7 @@ function bool_binary(op: string, a: boolean, b: boolean): Value {
 
 function string_binary(op: string, a: string, b: string): Value {
   if (op == "+") {
-    return Value { data: StringValue { value: a + b }, error: "" };
+    return Value { data: StringValue { value: a + b }, error: "", definite: false };
   }
   if (op == "==") {
     return logical(a == b);
@@ -244,11 +271,8 @@ function string_binary(op: string, a: string, b: string): Value {
 }
 
 function binary(op: string, a: Value, b: Value, ty: string): Value {
-  if (a.error.len() > 0) {
-    return a;
-  }
-  if (b.error.len() > 0) {
-    return b;
+  if (a.error.len() > 0 || b.error.len() > 0) {
+    return first_error(a, b);
   }
   return binary_values(op, a.data, b.data, ty);
 }
@@ -320,21 +344,18 @@ function element_type(ty: parser.TypeRef, tuple: boolean, i: i32): parser.TypeRe
 }
 
 function elements(elems: ast.Expr[], ty: parser.TypeRef, names: string[], values: Value[], tuple: boolean): Value {
+  let out: Value = empty();
   for i in 0..elems.len() {
-    let e: ast.Expr = elems[i];
     let elem: parser.TypeRef = element_type(ty, tuple, i);
-    let v: Value = evaluate(e, elem, names, values);
-    if (v.error.len() > 0) {
-      return v;
+    let v: Value = evaluate(elems[i], elem, names, values);
+    if (v.error.len() == 0 && elem.array_depth == 0 && !elem.is_tuple) {
+      v = settle(v, elem.base);
     }
-    if (elem.array_depth == 0 && !elem.is_tuple) {
-      let settled: Value = settle(v, elem.base);
-      if (settled.error.len() > 0) {
-        return settled;
-      }
+    if (v.error.len() > 0) {
+      out = first_error(out, v);
     }
   }
-  return empty();
+  return out;
 }
 
 pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: Value[]): Value {
@@ -347,7 +368,7 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
       return logical(b.value);
     },
     ast.ExprString(s) => {
-      return Value { data: StringValue { value: s.value }, error: "" };
+      return Value { data: StringValue { value: s.value }, error: "", definite: false };
     },
     ast.ExprIdent(id) => {
       return earlier_value(id.name, names, values);
@@ -421,13 +442,9 @@ function earlier_value(name: string, names: string[], values: Value[]): Value {
   if (i >= 0) {
     return values[i];
   }
-  return fail("\"" + name + "\" is not a constant (must reference an earlier `const` declaration)");
+  return refuse("\"" + name + "\" is not a constant (must reference an earlier `const` declaration)");
 }
 
 function evaluate_binary(b: ast.ExprBinary, ty: parser.TypeRef, names: string[], values: Value[]): Value {
-  let left: Value = evaluate(b.left, ty, names, values);
-  if (left.error.len() > 0) {
-    return left;
-  }
-  return binary(b.op, left, evaluate(b.right, ty, names, values), scalar_width(ty));
+  return binary(b.op, evaluate(b.left, ty, names, values), evaluate(b.right, ty, names, values), scalar_width(ty));
 }
