@@ -6,8 +6,9 @@
 // (internal/testing/e2e/diff_oracle_findings_test.go): the leg, the failure's
 // class, and the pass the decision bisect named. A fault that fails two
 // hundred seeds is one row with a count rather than two hundred failures, and
-// the same row on consecutive nights is the same bug. Reads every *.jsonl
-// under DIR; prints nothing when there are none.
+// the same row on consecutive nights is the same bug. Under the table, each
+// row's smallest shrunk program. Reads every *.jsonl under DIR; prints nothing
+// when there are none.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,8 +23,13 @@ export function summarize(lines) {
       continue;
     }
     const key = [f.test, f.class, f.pass].join("\u0000");
-    if (!groups.has(key)) groups.set(key, { test: f.test, cls: f.class, pass: f.pass, seeds: [] });
-    groups.get(key).seeds.push(f.seed);
+    if (!groups.has(key)) groups.set(key, { test: f.test, cls: f.class, pass: f.pass, seeds: [], repro: "" });
+    const g = groups.get(key);
+    g.seeds.push(f.seed);
+    if (f.repro && (!g.repro || f.repro.length < g.repro.length)) {
+      g.repro = f.repro;
+      g.reproSeed = f.seed;
+    }
   }
   if (groups.size === 0) return "";
   const rows = [...groups.values()].sort(
@@ -34,7 +40,20 @@ export function summarize(lines) {
     const first = g.seeds.sort((a, b) => a - b).slice(0, 3).join(", ");
     out.push(`| ${g.seeds.length} | ${cell(g.test)} | ${cell(g.cls)} | ${cell(g.pass)} | ${first} |`);
   }
+  for (const g of rows.filter((g) => g.repro)) {
+    out.push(
+      "",
+      `<details><summary>${html(g.test)}: ${html(g.cls)}, seed ${g.reproSeed} shrunk to ${g.repro.length} bytes</summary>`,
+      "",
+      `<pre>${html(g.repro)}</pre>`,
+      "</details>",
+    );
+  }
   return out.join("\n") + "\n";
+}
+
+function html(s) {
+  return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 // GitHub drops anything that reads as an HTML tag from a comment, so `<` is

@@ -17,26 +17,29 @@ pub function entry_source(src: string, target: string): string {
   return src + HTTP_ENTRY_STUB;
 }
 
-pub function http_entry_refused(entry: parser.Module, target: string, path: string): string {
+// http_entry_refused is why a wasm32-wasi-http entry cannot be built, or a
+// diagnostic with no message when it can.
+pub function http_entry_refused(entry: parser.Module, target: string): util.Diag {
+  let none: util.Diag = util.Diag { related: [], length: 0, code: "", message: "", line: 0, col: 0, fix: None };
   if (target != "wasm32-wasi-http") {
-    return "";
+    return none;
   }
   let i: i32 = 0;
   while (i < entry.funcs.len()) {
     let fd: parser.FuncDecl = entry.funcs[i];
     if (fd.name == "handle" && fd.receiver_type.len() == 0) {
-      let at: string = path + ":" + util.i32_to_string(fd.line) + ":" + util.i32_to_string(fd.col) + ": error[E075]: ";
+      let at: util.Diag = util.Diag { ...none, code: "E075", line: fd.line, col: fd.col };
       if (fd.params.len() == 3) {
-        return at + "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target";
+        return util.Diag { ...at, message: "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target" };
       }
       if (fd.params.len() != 2) {
-        return at + "a wasi:http handler takes `(req, plat)`; this `handle` takes " + util.i32_to_string(fd.params.len()) + " parameter(s)";
+        return util.Diag { ...at, message: "a wasi:http handler takes `(req, plat)`; this `handle` takes " + util.i32_to_string(fd.params.len()) + " parameter(s)" };
       }
-      return "";
+      return none;
     }
     i = i + 1;
   }
-  return "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse` for the host to call";
+  return util.Diag { ...none, message: "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse` for the host to call" };
 }
 
 pub function http_refused(why: string): string {

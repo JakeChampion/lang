@@ -8,12 +8,14 @@ import (
 	"testing"
 )
 
-var emittedCodeRE = regexp.MustCompile(`(?:err\w*Code\(|ErrCode:\s*|\bCode:\s*)[^"]*"([EP][0-9]{3})"`)
+var emittedCodeRE = regexp.MustCompile(`(?:err\w*Code\(|ErrCode:\s*|\bCode:\s*|Code\(\) string\s*\{\s*return\s*)[^"]*"([EPW][0-9]{3})"`)
 
-var fernEmittedCodeRE = regexp.MustCompile(`(?:\(|:)\s*"([EP][0-9]{3})"`)
+var fernEmittedCodeRE = regexp.MustCompile(`(?:\(|:)\s*"([EPW][0-9]{3})"`)
+
+var headerCodeRE = regexp.MustCompile(`(?:error|warning)\[([EPW][0-9]{3})\]`)
 
 func TestEmittedCodesHaveExplanations(t *testing.T) {
-	dirs := []string{"../../check/checker", "../parser", "../../pkg/modload", "../../pkg/platforms", "../../check/defaultargs", "../../../cmd/fern"}
+	dirs := []string{"../../check/checker", "../parser", "../../pkg/modload", "../../pkg/platforms", "../../check/defaultargs", "../../tools/gates", "../../tools/literate", "../../../cmd/fern"}
 	emitted := map[string]string{}
 	for _, d := range dirs {
 		files, err := filepath.Glob(filepath.Join(d, "*.go"))
@@ -28,9 +30,11 @@ func TestEmittedCodesHaveExplanations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read %s: %v", f, err)
 			}
-			for _, m := range emittedCodeRE.FindAllStringSubmatch(string(b), -1) {
-				if _, seen := emitted[m[1]]; !seen {
-					emitted[m[1]] = f
+			for _, re := range []*regexp.Regexp{emittedCodeRE, headerCodeRE} {
+				for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+					if _, seen := emitted[m[1]]; !seen {
+						emitted[m[1]] = f
+					}
 				}
 			}
 		}
@@ -44,9 +48,11 @@ func TestEmittedCodesHaveExplanations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}
-		for _, m := range fernEmittedCodeRE.FindAllStringSubmatch(string(b), -1) {
-			if _, seen := emitted[m[1]]; !seen {
-				emitted[m[1]] = f
+		for _, re := range []*regexp.Regexp{fernEmittedCodeRE, headerCodeRE} {
+			for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+				if _, seen := emitted[m[1]]; !seen {
+					emitted[m[1]] = f
+				}
 			}
 		}
 	}

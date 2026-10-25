@@ -208,7 +208,8 @@ stdlib and disk-relative imports against the document's directory; a
 
 - **Unused chunk** — a chunk defined but never reached from a tangle
   root (the `<<*>>` root, or any `file=` file-root) is reported as a
-  non-fatal warning on stderr (`chunk <<name>> is defined but never
+  non-fatal warning `W003` on stderr, at the chunk's first header
+  (`DOC:LINE:1: warning[W003]: chunk <<name>> is defined but never
   used`). Reachability-based, so an entire dead subtree surfaces — it
   most often means a typo in a `<<reference>>`. Compilation still
   proceeds.

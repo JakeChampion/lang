@@ -37,7 +37,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 
 	for _, cd := range prog.Consts {
 		if _, dup := values[cd.Name]; dup {
-			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", cd.Name)})
+			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", cd.Name), ErrCode: "E006"})
 			continue
 		}
 		if rangeErrs := checkLiteralRange(cd); len(rangeErrs) > 0 {
@@ -406,11 +406,14 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 }
 
 func constError(cd *ast.ConstDecl, err error) error {
-	msg := err.Error()
+	msg, code := err.Error(), "E093"
 	if e, ok := err.(*Error); ok {
 		msg = e.Msg
+		if e.ErrCode != "" {
+			code = e.ErrCode
+		}
 	}
-	return &Error{Pos: cd.P, Path: cd.SourceModule, Msg: "const " + cd.Name + ": " + msg}
+	return &Error{Pos: cd.P, Path: cd.SourceModule, Msg: "const " + cd.Name + ": " + msg, ErrCode: code}
 }
 
 func checkLiteralRange(cd *ast.ConstDecl) []error {
@@ -589,22 +592,22 @@ func calleeName(c *ast.Call) string {
 func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	fn := calleeName(c)
 	if len(c.Args) != 1 {
-		return nil, fmt.Errorf("%s: %s takes exactly one argument, got %d", c.P, fn, len(c.Args))
+		return nil, assetError(c.P, "%s takes exactly one argument, got %d", fn, len(c.Args))
 	}
 	lit, ok := c.Args[0].(*ast.StringLit)
 	if !ok {
-		return nil, fmt.Errorf("%s: %s needs a string literal — assets are resolved at compile time, so the name cannot be computed", c.P, fn)
+		return nil, assetError(c.P, "%s needs a string literal — assets are resolved at compile time, so the name cannot be computed", fn)
 	}
 	if assets == nil {
-		return nil, fmt.Errorf("%s: %s(%q) but no assets were embedded — pass -embed DIR to the compiler", c.P, fn, lit.Value)
+		return nil, assetError(c.P, "%s(%q) but no assets were embedded — pass -embed DIR to the compiler", fn, lit.Value)
 	}
 	data, ok := assets.Lookup(lit.Value)
 	if !ok {
-		msg := fmt.Sprintf("%s: no embedded asset %q under %s", c.P, lit.Value, assets.Root())
+		msg := fmt.Sprintf("no embedded asset %q under %s", lit.Value, assets.Root())
 		if did := assets.Suggest(lit.Value); did != "" {
-			return nil, fmt.Errorf("%s; did you mean %q?", msg, did)
+			return nil, assetError(c.P, "%s; did you mean %q?", msg, did)
 		}
-		return nil, fmt.Errorf("%s (%s)", msg, assets.FormatAvailable())
+		return nil, assetError(c.P, "%s (%s)", msg, assets.FormatAvailable())
 	}
 	if assetBytes(c) {
 		return bytesLit(c.P, data), nil
@@ -616,7 +619,18 @@ func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 }
 
 func notText(p ast.Position, fn string, assets *embed.Set, name string) error {
-	return fmt.Errorf("%s: %s: embedded asset %q under %s is not valid UTF-8 — read it as u8[] with %s_bytes", p, fn, name, assets.Root(), fn)
+	return assetError(p, "%s: embedded asset %q under %s is not valid UTF-8 — read it as u8[] with %s_bytes", fn, name, assets.Root(), fn)
+}
+
+func inModule(err error, module string) error {
+	if e, ok := err.(*Error); ok && e.Path == "" {
+		e.Path = module
+	}
+	return err
+}
+
+func assetError(p ast.Position, format string, args ...any) error {
+	return &Error{Pos: p, Msg: fmt.Sprintf(format, args...), ErrCode: "E094"}
 }
 
 var u8Type = ast.NumberType{Width: 8, Signed: false}
@@ -632,10 +646,10 @@ func bytesLit(p ast.Position, data string) *ast.ArrayLit {
 func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	fn := calleeName(c)
 	if len(c.Args) != 0 {
-		return nil, fmt.Errorf("%s: %s takes no arguments, got %d", c.P, fn, len(c.Args))
+		return nil, assetError(c.P, "%s takes no arguments, got %d", fn, len(c.Args))
 	}
 	if assets == nil {
-		return nil, fmt.Errorf("%s: %s() but no assets were embedded — pass -embed DIR to the compiler", c.P, fn)
+		return nil, assetError(c.P, "%s() but no assets were embedded — pass -embed DIR to the compiler", fn)
 	}
 	bytes := assetBytes(c)
 	var contentT ast.Type = ast.StringType{}
@@ -742,7 +756,7 @@ func (s *substituter) visit(slot *ast.Expr, w *ast.ScopeWalker) bool {
 		if isAssetCall(x) {
 			lit, err := resolveAsset(x, s.assets)
 			if err != nil {
-				s.errs = append(s.errs, err)
+				s.errs = append(s.errs, inModule(err, s.module))
 				return false
 			}
 			*slot = lit
@@ -751,7 +765,7 @@ func (s *substituter) visit(slot *ast.Expr, w *ast.ScopeWalker) bool {
 		if isAssetsCall(x) {
 			arr, err := resolveAssets(x, s.assets)
 			if err != nil {
-				s.errs = append(s.errs, err)
+				s.errs = append(s.errs, inModule(err, s.module))
 				return false
 			}
 			*slot = arr
@@ -760,7 +774,7 @@ func (s *substituter) visit(slot *ast.Expr, w *ast.ScopeWalker) bool {
 	case *ast.Assign:
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if _, isConst := s.values[id.Name]; isConst && !w.IsBound(id.Name) {
-				s.errs = append(s.errs, &Error{Pos: id.P, Path: s.module, Msg: "cannot assign to const " + id.Name})
+				s.errs = append(s.errs, &Error{Pos: id.P, Path: s.module, Msg: "cannot assign to const " + id.Name, ErrCode: "E091"})
 				w.WalkExpr(&x.Value)
 				return false
 			}

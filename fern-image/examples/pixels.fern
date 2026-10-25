@@ -1,0 +1,13 @@
+import "../packages/pixels/pixels";
+
+function main(): i32 {
+  let image: pixels.Image = match (pixels.create(2, 1, 8, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return 1; } };
+  let red: pixels.Pixel = pixels.Pixel { r: 255, g: 0, b: 0, a: 128 };
+  image = match (pixels.write_pixel(image, 1, 0, red)) { Ok(v) => v, Err(_) => { return 2; } };
+  let got: pixels.Pixel = match (pixels.read_pixel(image, 1, 0)) { Ok(v) => v, Err(_) => { return 3; } };
+  if (got.r != 255 as u8 || got.g != 0 as u8 || got.b != 0 as u8 || got.a != 128 as u8) {
+    return 4;
+  }
+  print("RGBA8 pixel round trip passed");
+  return 0;
+}

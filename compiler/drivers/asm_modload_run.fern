@@ -140,63 +140,6 @@ function merged_emitted(merged: parser.Module): parser.Module {
   return treeshake.treeshake(merged);
 }
 
-function emit_per_module_concat(entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], target: string, cache_dir: string): string {
-  let parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
-  let v: View = per_module_view(entry_mod, loaded, parts, target);
-  let needs: string[] = ircore.all_runtime_need_roots();
-  let keys: ircore.UnitKeys = view_keys(v, cache_dir);
-  let out: string = "";
-  let idx: i32 = 0;
-  while (idx < parts.len()) {
-    let extra: string[] = [];
-    if (parts[idx].is_entry) {
-      extra = needs;
-    }
-    let cachefile: string = "";
-    if (cache_dir.len() > 0) {
-      let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), entry_path, parts, idx);
-      let key: string = ircore.unit_cache_key(parts, v.u, keys, idx, src_hash, extra, 0, 0 - 1);
-      if (key.len() > 0) {
-        cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key + "|kept" + kept_names(v.u.mods[idx])) + ".s";
-      }
-    }
-    let served: boolean = false;
-    if (cachefile.len() > 0) {
-      match (read_file(cachefile)) {
-        Ok(cached) => {
-          eprint("cache-hit " + parts[idx].ns);
-          out = out + cached;
-          served = true;
-        },
-        Err(e_ch) => {}
-      }
-    }
-    if (!served) {
-      let unit: string = emit_unit(v, idx, parts[idx].is_entry, parts[idx].ns, extra, 0, 0 - 1, target);
-      if (cachefile.len() > 0) {
-        eprint("cache-miss " + parts[idx].ns);
-        match (write_file(cachefile, unit)) {
-          Err(cerr) => {
-            eprint("per-module concat: cache write failed for " + parts[idx].ns);
-          },
-          Ok(_) => {}
-        }
-      }
-      out = out + unit;
-    }
-    idx = idx + 1;
-  }
-  return asmcore.dedupe_weak_defs(out);
-}
-
-function kept_names(m: parser.Module): string {
-  let kept: string[] = [];
-  for f in m.funcs {
-    kept = kept.append(f.receiver_type + "." + f.name + ",");
-  }
-  return util.hash_key(util.str_join_chunks(kept));
-}
-
 function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
   if (cache_dir.len() == 0) {
     return ircore.no_unit_keys();
@@ -738,43 +681,20 @@ function main(): i32 {
         write(semlower.verdict_text(semlower.verdict(merged, target)));
         return 0;
       }
-      let single_process_max: i32 = 1500;
-      if (target == "arm64-linux") {
-        let anfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
-        if (anfuncs > 512 || force_spawned) {
-          if (anfuncs < single_process_max && !force_spawned) {
-            write(emit_per_module_concat(entry_path, entry, loaded, "arm64-linux", cache_dir));
-            return 0;
-          } else {
-            let asrc: i32 = emit_per_module_spawned(entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
-            if (asrc == 0) {
-              return 0;
-            }
-            if (asrc == 2) {
-              eprint("asm_modload_run: spawned per-module emit failed after writing output");
-              return 1;
-            }
-          }
+      if (force_spawned) {
+        let src: i32 = emit_per_module_spawned(entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
+        if (src == 0) {
+          return 0;
         }
+        if (src == 2) {
+          eprint("asm_modload_run: spawned per-module emit failed after writing output");
+          return 1;
+        }
+      }
+      if (target == "arm64-linux") {
         let d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
         write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
         return 0;
-      }
-      let nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
-      if (nfuncs > 512 || force_spawned) {
-        if (nfuncs < single_process_max && !force_spawned) {
-          write(emit_per_module_concat(entry_path, entry, loaded, "x86-64-linux", cache_dir));
-          return 0;
-        } else {
-          let src: i32 = emit_per_module_spawned(entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
-          if (src == 0) {
-            return 0;
-          }
-          if (src == 2) {
-            eprint("asm_modload_run: spawned per-module emit failed after writing output");
-            return 1;
-          }
-        }
       }
       let d: semlower.Driven = semlower.driven(merged_emitted(merged), target);
       write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));

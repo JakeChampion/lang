@@ -244,7 +244,9 @@ function handle(n: i32, req: HttpRequest, plat: platform.Platform): (i32, HttpRe
 			{"-check", "-target", "wasm32-wasi-http", prog, stdlib},
 			{"-target", "wasm32-wasi-http", "-o", filepath.Join(dir, "x.wasm"), prog, stdlib},
 		} {
-			out, err := exec.Command(cli, args...).CombinedOutput()
+			cmd := exec.Command(cli, args...)
+			cmd.Env = append(os.Environ(), "FERN_DIAG_FORMAT=terse")
+			out, err := cmd.CombinedOutput()
 			if err == nil {
 				t.Errorf("%v: accepted for wasm32-wasi-http", args)
 			}

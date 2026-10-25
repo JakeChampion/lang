@@ -1,0 +1,26 @@
+enum ProbeError { Missing }
+
+function probe(value: Option[i32]): Result[i32, ProbeError] {
+  let number: i32 = match (value) { Some(n) => n, None => { return Err(Missing); } };
+  return Ok(number + 1);
+}
+
+function main(): i32 {
+  match (probe(Some(7))) {
+    Ok(n) => {
+      if (n != 8) {
+        return 1;
+      }
+    },
+    Err(_) => {
+      return 2;
+    }
+  }
+  match (probe(None)) {
+    Ok(_) => {
+      return 3;
+    },
+    Err(Missing()) => {}
+  }
+  return 0;
+}

@@ -2,6 +2,14 @@ package literate
 
 import "sort"
 
+// ChunkLine is the line of chunk name's first `<<name>>=` header, or 0.
+func (doc *Document) ChunkLine(name string) int {
+	if cd := doc.chunks[name]; cd != nil {
+		return cd.firstLine
+	}
+	return 0
+}
+
 func (doc *Document) UnusedChunks() []string {
 	refs := map[string][]string{}
 	for name, cd := range doc.chunks {

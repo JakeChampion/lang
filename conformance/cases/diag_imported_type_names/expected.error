@@ -1,0 +1,4 @@
+main.fern:10:5: error[E002]: return value: expected i32, got iter.ArrayIter[i32]
+main.fern:14:5: error[E003]: variable "s": expected string, got iter.ArrayIter[i32]
+main.fern:15:5: error[E003]: variable "p": expected string, got Pair__Of
+main.fern:16:24: error[E038]: argument 1 to "take": expected i32, got iter.ArrayIter[i32]

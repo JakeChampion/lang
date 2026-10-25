@@ -149,23 +149,9 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
       return RParse { node: RChar(92), pos: i + 1, g: g };
     }
     let d: i32 = p[i + 1] as i32;
-    if (d == 100) {
-      return RParse { node: RClass("[0-9]"), pos: i + 2, g: g };
-    }
-    if (d == 68) {
-      return RParse { node: RClass("[^0-9]"), pos: i + 2, g: g };
-    }
-    if (d == 119) {
-      return RParse { node: RClass("[A-Za-z0-9_]"), pos: i + 2, g: g };
-    }
-    if (d == 87) {
-      return RParse { node: RClass("[^A-Za-z0-9_]"), pos: i + 2, g: g };
-    }
-    if (d == 115) {
-      return RParse { node: RClass("[ \t\n\r]"), pos: i + 2, g: g };
-    }
-    if (d == 83) {
-      return RParse { node: RClass("[^ \t\n\r]"), pos: i + 2, g: g };
+    let sh: string = __rx_shorthand(d);
+    if (sh.len() > 0) {
+      return RParse { node: RClass(sh), pos: i + 2, g: g };
     }
     if (d == 98) {
       return RParse { node: RBound(true), pos: i + 2, g: g };
@@ -173,16 +159,7 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
     if (d == 66) {
       return RParse { node: RBound(false), pos: i + 2, g: g };
     }
-    if (d == 110) {
-      return RParse { node: RChar(10), pos: i + 2, g: g };
-    }
-    if (d == 116) {
-      return RParse { node: RChar(9), pos: i + 2, g: g };
-    }
-    if (d == 114) {
-      return RParse { node: RChar(13), pos: i + 2, g: g };
-    }
-    return RParse { node: RChar(d), pos: i + 2, g: g };
+    return RParse { node: RChar(__rx_escape_char(d)), pos: i + 2, g: g };
   }
   if (c == 40) {
     if (i + 1 < p.len() && p[i + 1] == 63) {
@@ -220,20 +197,7 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
     return RParse { node: RGroup(RGroupData { idx: g, node: inner.node }), pos: pos, g: inner.g };
   }
   if (c == 91) {
-    let j: i32 = i + 1;
-    if (j < p.len() && p[j] == 94) {
-      j = j + 1;
-    }
-    if (j < p.len() && p[j] == 93) {
-      j = j + 1;
-    }
-    while (j < p.len() && p[j] != 93) {
-      j = j + 1;
-    }
-    let endb: i32 = j;
-    if (endb < p.len()) {
-      endb = endb + 1;
-    }
+    let endb: i32 = __rx_class_end(p, i);
     return RParse { node: RClass(slice_unchecked(p, i, endb) + ""), pos: endb, g: g };
   }
   if (c == 46) {
@@ -246,6 +210,64 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
     return RParse { node: REnd, pos: i + 1, g: g };
   }
   return RParse { node: RChar(c), pos: i + 1, g: g };
+}
+
+// The class token for the shorthand escape d (\d, \w, \s and their negations), or "".
+function __rx_shorthand(d: i32): string {
+  if (d == 100) {
+    return "[0-9]";
+  }
+  if (d == 68) {
+    return "[^0-9]";
+  }
+  if (d == 119) {
+    return "[A-Za-z0-9_]";
+  }
+  if (d == 87) {
+    return "[^A-Za-z0-9_]";
+  }
+  if (d == 115) {
+    return "[ \t\n\r]";
+  }
+  if (d == 83) {
+    return "[^ \t\n\r]";
+  }
+  return "";
+}
+
+function __rx_escape_char(d: i32): i32 {
+  if (d == 110) {
+    return 10;
+  }
+  if (d == 116) {
+    return 9;
+  }
+  if (d == 114) {
+    return 13;
+  }
+  return d;
+}
+
+// The index after the class that opens at p[i], or p.len() when it is not closed.
+function __rx_class_end(p: string, i: i32): i32 {
+  let n: i32 = p.len();
+  let j: i32 = i + 1;
+  if (j < n && p[j] == 94) {
+    j = j + 1;
+  }
+  if (j < n && p[j] == 93) {
+    j = j + 1;
+  }
+  while (j < n && p[j] != 93) {
+    if (p[j] == 92) {
+      j = j + 1;
+    }
+    j = j + 1;
+  }
+  if (j >= n) {
+    return n;
+  }
+  return j + 1;
 }
 
 function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
@@ -416,17 +438,7 @@ function __rx_group_names(pattern: string): string[] {
     if (c == 92) {
       i = i + 2;
     } else if (c == 91) {
-      let j: i32 = i + 1;
-      if (j < n && pattern[j] == 94) {
-        j = j + 1;
-      }
-      if (j < n && pattern[j] == 93) {
-        j = j + 1;
-      }
-      while (j < n && pattern[j] != 93) {
-        j = j + 1;
-      }
-      i = j + 1;
+      i = __rx_class_end(pattern, i);
     } else if (c == 40) {
       if (i + 1 < n && pattern[i + 1] == 63) {
         if (i + 3 < n && pattern[i + 2] == 60
@@ -476,22 +488,40 @@ function __rx_class(tok: string, c0: i32, ci: boolean): boolean {
   let found: boolean = false;
   let end: i32 = tok.len() - 1;
   while (j < end) {
-    if (tok[j + 1] == 45 && j + 2 < end) {
-      if (c >= __rx_fold(tok[j] as i32, ci) && c <= __rx_fold(tok[j + 2] as i32, ci)) {
-        found = true;
+    if (tok[j] == 92 && j + 1 < end) {
+      let sh: string = __rx_shorthand(tok[j + 1] as i32);
+      if (sh.len() > 0) {
+        if (__rx_class(sh, c0, ci)) {
+          found = true;
+        }
+        j = j + 2;
+        continue;
       }
-      j = j + 3;
-    } else {
-      if (c == __rx_fold(tok[j] as i32, ci)) {
-        found = true;
-      }
-      j = j + 1;
+    }
+    let (lo, k) = __rx_class_unit(tok, j, end);
+    let hi: i32 = lo;
+    j = k;
+    if (k + 1 < end && tok[k] == 45) {
+      let (top, k2) = __rx_class_unit(tok, k + 1, end);
+      hi = top;
+      j = k2;
+    }
+    if (c >= __rx_fold(lo, ci) && c <= __rx_fold(hi, ci)) {
+      found = true;
     }
   }
   if (neg) {
     return !found;
   }
   return found;
+}
+
+// The member at tok[j] and the index after it. A backslash escapes the next byte.
+function __rx_class_unit(tok: string, j: i32, end: i32): (i32, i32) {
+  if (tok[j] == 92 && j + 1 < end) {
+    return (__rx_escape_char(tok[j + 1] as i32), j + 2);
+  }
+  return (tok[j] as i32, j + 1);
 }
 
 function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci: boolean): i32[] {
