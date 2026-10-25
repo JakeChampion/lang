@@ -15241,16 +15241,21 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
   } else if (cur.is_const_param(a.target)) {
     out = out.append(dg_at("E091", "cannot assign to const parameter " + a.target + ": it is the constant its instance is made for", a.target_line, a.target_col));
   } else {
-    let tt: typeinfo.Type = cur.lookup(a.target);
-    let vt: typeinfo.Type = check_expr(a.value, cur);
-    out = util.append_diags(out, int_dest_range_diags(a.value, tt));
-    out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
-    let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
-    out = util.append_diags(out, abound);
-    let misfit: boolean = !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
-    if (!parser.is_iflet_value_local(a.target) && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
-      out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
-    }
+    out = assign_value_diags(a, cur, unions);
+  }
+  return out;
+}
+
+function assign_value_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  let tt: typeinfo.Type = cur.lookup(a.target);
+  let vt: typeinfo.Type = check_expr(a.value, cur);
+  let out: util.Diag[] = int_dest_range_diags(a.value, tt);
+  out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
+  let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
+  out = util.append_diags(out, abound);
+  let misfit: boolean = !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
+  if (!parser.is_iflet_value_local(a.target) && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
+    out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
   }
   return out;
 }

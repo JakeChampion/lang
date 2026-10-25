@@ -4493,58 +4493,62 @@ function parse_lambda_body(p: Par, void_branches: boolean): (ast.Stmt[], Par) {
   return (lb_body, p);
 }
 
+function parse_use_stmt(p: Par, body: ast.Stmt[]): (ast.Stmt[], Par) {
+  let uline: i32 = p.peek_line();
+  let ucol: i32 = p.peek_col();
+  p = p.advance();
+  let ubad: ast.Stmt[] = [];
+  let uname: string = p.peek_ident();
+  if (uname.len() > 0) {
+    p = p.advance();
+  } else {
+    ubad = [s_unknown(p, "expected a name, got " + tok_desc(p.peek()))];
+  }
+  let utype: string = "";
+  if (p.peek_punct() == ":") {
+    p = p.advance();
+    let (utn_name, utn_fn_ret, utn_p) = parse_type_name(p);
+    p = utn_p;
+    utype = utn_name;
+  }
+  if (p.peek_punct() == "<") {
+    p = p.advance();
+  } else if (ubad.len() == 0) {
+    ubad = [s_unknown(p, "expected \"<\", got " + tok_desc(p.peek()))];
+  }
+  if (p.peek_punct() == "-") {
+    p = p.advance();
+  } else if (ubad.len() == 0) {
+    ubad = [s_unknown(p, "expected \"-\", got " + tok_desc(p.peek()))];
+  }
+  let (usrc_expr, usrc_p) = parse_expr(p);
+  p = usrc_p;
+  p = p.end_of(usrc_expr);
+  let (rest_body, rest_p) = parse_block_body(p, false);
+  p = rest_p;
+  let cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" };
+  let cbparams: ast.ParamDecl[] = [cbparam];
+  let cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: uline, col: ucol, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+  if (ubad.len() > 0) {
+    return (body.append(ubad[0]), p);
+  }
+  match (usrc_expr) {
+    ast.ExprCall(c) => {
+      let newargs: ast.Expr[] = c.args.append(cb);
+      body = body.append(s_return_at(ast.ExprCall { ...c, args: newargs }, uline, ucol));
+    },
+    _ => {
+      body = body.append(s_unknown_at("use expression must be a function call (so the callback can be appended as the last arg)", uline, ucol));
+    }
+  }
+  return (body, p);
+}
+
 function parse_block_body_nested(p: Par, tail_value: boolean, discard_tail: boolean, void_branches: boolean): (ast.Stmt[], Par) {
   let body: ast.Stmt[] = [];
   while (p.peek_punct() != "}" && !p.at_end()) {
     if (p.peek_keyword() == "use") {
-      let uline: i32 = p.peek_line();
-      let ucol: i32 = p.peek_col();
-      p = p.advance();
-      let ubad: ast.Stmt[] = [];
-      let uname: string = p.peek_ident();
-      if (uname.len() > 0) {
-        p = p.advance();
-      } else {
-        ubad = [s_unknown(p, "expected a name, got " + tok_desc(p.peek()))];
-      }
-      let utype: string = "";
-      if (p.peek_punct() == ":") {
-        p = p.advance();
-        let (utn_name, utn_fn_ret, utn_p) = parse_type_name(p);
-        p = utn_p;
-        utype = utn_name;
-      }
-      if (p.peek_punct() == "<") {
-        p = p.advance();
-      } else if (ubad.len() == 0) {
-        ubad = [s_unknown(p, "expected \"<\", got " + tok_desc(p.peek()))];
-      }
-      if (p.peek_punct() == "-") {
-        p = p.advance();
-      } else if (ubad.len() == 0) {
-        ubad = [s_unknown(p, "expected \"-\", got " + tok_desc(p.peek()))];
-      }
-      let (usrc_expr, usrc_p) = parse_expr(p);
-      p = usrc_p;
-      p = p.end_of(usrc_expr);
-      let (rest_body, rest_p) = parse_block_body(p, false);
-      p = rest_p;
-      let cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" };
-      let cbparams: ast.ParamDecl[] = [cbparam];
-      let cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: uline, col: ucol, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
-      if (ubad.len() > 0) {
-        return (body.append(ubad[0]), p);
-      }
-      match (usrc_expr) {
-        ast.ExprCall(c) => {
-          let newargs: ast.Expr[] = c.args.append(cb);
-          body = body.append(s_return_at(ast.ExprCall { ...c, args: newargs }, uline, ucol));
-        },
-        _ => {
-          body = body.append(s_unknown_at("use expression must be a function call (so the callback can be appended as the last arg)", uline, ucol));
-        }
-      }
-      return (body, p);
+      return parse_use_stmt(p, body);
     }
     if ((discard_tail || void_branches) && (p.peek_keyword() == "if" || p.peek_keyword() == "match")) {
       let (stmt, next) = parse_stmt(p);
@@ -10419,14 +10423,9 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
       return "Cell[" + inner + "]";
     }
   }
-  if (c.type_args.len() > 0) {
-    let at: i32 = bg_find(funcs, name);
-    if (at >= 0) {
-      let key: string = explicit_inst_key(funcs.decls[at], c.type_args);
-      if (key.len() > 0) {
-        return subst_ty(funcs.decls[at].ret_type, funcs.decls[at].type_params, key_parts(funcs.decls[at], key));
-      }
-    }
+  let explicit: string = explicit_call_ret(c, name, funcs);
+  if (explicit.len() > 0) {
+    return explicit;
   }
   let result: string = call_ret_type(funcs, name, c.args, env);
   if (result.len() == 0) {
@@ -10439,6 +10438,21 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
     return stamped_type(c.ty);
   }
   return result;
+}
+
+function explicit_call_ret(c: ast.ExprCall, name: string, funcs: MFns): string {
+  if (c.type_args.len() == 0) {
+    return "";
+  }
+  let at: i32 = bg_find(funcs, name);
+  if (at < 0) {
+    return "";
+  }
+  let key: string = explicit_inst_key(funcs.decls[at], c.type_args);
+  if (key.len() == 0) {
+    return "";
+  }
+  return subst_ty(funcs.decls[at].ret_type, funcs.decls[at].type_params, key_parts(funcs.decls[at], key));
 }
 
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
@@ -15693,7 +15707,7 @@ function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
   }
   let refs: BgRefs = BgRefs { names: names, hit: [] };
   for fd in funcs {
-    if (is_genum_method(fd, enums) || fd.receiver_type.len() > 0 && type_str_vars(fd.receiver_type, fd.type_params).len() > 0) {
+    if (generic_receiver_method(fd, enums)) {
       refs = bg_refs_body(fd.body, refs);
     }
   }
@@ -15707,6 +15721,10 @@ function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
     i = i + 1;
   }
   return refs.hit;
+}
+
+function generic_receiver_method(fd: FuncDecl, enums: EnumDecl[]): boolean {
+  return is_genum_method(fd, enums) || fd.receiver_type.len() > 0 && type_str_vars(fd.receiver_type, fd.type_params).len() > 0;
 }
 
 function enum_bg_templates(funcs: FuncDecl[], refs: string[], keep: boolean): FuncDecl[] {
