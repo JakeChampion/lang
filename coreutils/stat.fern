@@ -1002,7 +1002,7 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
         }
       },
       RenderNumber(v) => {
-        io_buffered.buf_push_u64(w.handle(), v);
+        w = w.write_u64(v);
         w = gnu.settle(w);
       }
     }

@@ -1,3 +1,29 @@
+// fernload — an open-loop HTTP/1.1 load generator
+// (docs/NET-P5-FRAMEWORK-PLAN.md §8, #9859).
+//
+// Requests go out at a fixed rate over a set of kept connections, and each
+// request's latency is measured from the moment the rate said it was due,
+// not from when a connection came free: a server that stalls shows the
+// queueing a real client would have seen, where a closed-loop tool waits
+// for it and records nothing (wrk2's correction for coordinated omission).
+// The same latency from the send is reported beside it.
+//
+// Usage: fernload [--rate N] [--connections C] [--duration S] URL
+//
+//   --rate N         requests per second over all connections (default 100)
+//   --connections C  connections kept open (default 16)
+//   --duration S     how long to send, in seconds (default 10)
+//   URL              http://HOST:PORT/PATH; HOST an IP literal or localhost
+//
+// Output: `metric<TAB>value` rows, the format scripts/perf-history
+// records. load/sent is what the rate scheduled and the tool sent,
+// load/behind what it scheduled and could not send by the end (every
+// connection busy), load/requests the responses read, load/errors the
+// requests a reset, a close or a malformed response lost, load/rps the
+// responses per second of sending, load/p50_us through load/max_us the
+// corrected latency, load/raw_p99_us the latency from the send. Exits 1
+// when a request erred or the server could not be reached.
+import "std/i32";
 import "std/cli";
 import "std/http";
 import "std/net";
@@ -85,14 +111,14 @@ function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
 function option_i64(parsed: cli.CliArgs, name: string, fallback: i64): Result[i64, string] {
   match (parsed.value(name)) {
     Some(text) => {
-      match (int.parse_int_radix(text, 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(text, 10)) {
+        Ok(n) => {
           if (n <= 0) {
             return Err("--" + name + " must be positive: " + text);
           }
           return Ok(n as i64);
         },
-        None => {
+        Err(_) => {
           return Err("--" + name + " is not a number: " + text);
         }
       }

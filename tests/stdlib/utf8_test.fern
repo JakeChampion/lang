@@ -11,7 +11,7 @@ function mixed(): string {
 }
 
 function decode_cp(s: string, i: i32): i32 {
-  match (utf8.utf8_decode_at(s, i)) {
+  match (utf8.decode_at(s, i)) {
     Some(p) => {
       return p.0;
     },
@@ -22,7 +22,7 @@ function decode_cp(s: string, i: i32): i32 {
 }
 
 function decode_len(s: string, i: i32): i32 {
-  match (utf8.utf8_decode_at(s, i)) {
+  match (utf8.decode_at(s, i)) {
     Some(p) => {
       return p.1;
     },
@@ -77,17 +77,17 @@ function test_decode_surrogate(): test.TestOutcome {
 
 function test_encode_lengths(): test.TestOutcome {
   return test.assert_true(
-    utf8.utf8_encode(65 as char).len() == 1
-      && utf8.utf8_encode(233 as char).len() == 2
-      && utf8.utf8_encode(8364 as char).len() == 3
-      && utf8.utf8_encode(128512 as char).len() == 4,
+    utf8.encode(65 as char).len() == 1
+      && utf8.encode(233 as char).len() == 2
+      && utf8.encode(8364 as char).len() == 3
+      && utf8.encode(128512 as char).len() == 4,
   );
 }
 
 function test_encode_decode_roundtrip(): test.TestOutcome {
   return test.assert_true(
-    decode_cp(utf8.utf8_encode(8364 as char), 0) == 8364
-      && decode_cp(utf8.utf8_encode(128512 as char), 0) == 128512,
+    decode_cp(utf8.encode(8364 as char), 0) == 8364
+      && decode_cp(utf8.encode(128512 as char), 0) == 128512,
   );
 }
 
@@ -96,9 +96,9 @@ function test_encode_invalid_is_replacement(): test.TestOutcome {
   let surrogate: i32 = 55296;
   let too_big: i32 = 1114112;
   return test.assert_true(
-    decode_cp(utf8.utf8_encode(neg as char), 0) == 65533
-      && decode_cp(utf8.utf8_encode(surrogate as char), 0) == 65533
-      && decode_cp(utf8.utf8_encode(too_big as char), 0) == 65533,
+    decode_cp(utf8.encode(neg as char), 0) == 65533
+      && decode_cp(utf8.encode(surrogate as char), 0) == 65533
+      && decode_cp(utf8.encode(too_big as char), 0) == 65533,
   );
 }
 
@@ -113,11 +113,11 @@ function test_char_from_i32(): test.TestOutcome {
 }
 
 function test_codepoint_count(): test.TestOutcome {
-  return test.assert_true(mixed().len() == 10 && utf8.codepoint_count(mixed()) == 4);
+  return test.assert_true(mixed().len() == 10 && mixed().codepoint_count() == 4);
 }
 
 function test_codepoints_array(): test.TestOutcome {
-  let cps: char[] = utf8.codepoints(mixed());
+  let cps: char[] = mixed().chars();
   if (cps.len() != 4) {
     return test.fail("codepoint count");
   }
@@ -127,11 +127,11 @@ function test_codepoints_array(): test.TestOutcome {
 
 function test_is_valid(): test.TestOutcome {
   let bad: string = string_from_bytes_unchecked([65 as u8, 128 as u8]);
-  return test.assert_true(utf8.is_valid_utf8(mixed()) && !utf8.is_valid_utf8(bad));
+  return test.assert_true(utf8.is_valid(mixed()) && !utf8.is_valid(bad));
 }
 
 function test_encode_all_roundtrip(): test.TestOutcome {
-  return test.assert_eq(utf8.encode_all(utf8.codepoints(mixed())), mixed());
+  return test.assert_eq(utf8.encode_all(mixed().chars()), mixed());
 }
 
 function e_acute(): string {
@@ -315,20 +315,20 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
     let b: i32 = a;
     while (b <= 10) {
       let cut: str = slice_unchecked(s, utf8.floor_char_boundary(s, a), utf8.ceil_char_boundary(s, b));
-      if (!utf8.is_valid_utf8(cut.to_owned())) {
+      if (!utf8.is_valid(cut.to_owned())) {
         return test.fail("snapped slice is not valid UTF-8");
       }
       b = b + 1;
     }
     a = a + 1;
   }
-  return test.assert_true(!utf8.is_valid_utf8(slice_unchecked(s, 0, 2).to_owned()));
+  return test.assert_true(!utf8.is_valid(slice_unchecked(s, 0, 2).to_owned()));
 }
 
 function __lossy_len(b: u8[]): i32 {
   let s: string = string_from_bytes_unchecked(b);
-  let a: i32 = utf8.codepoint_count(s);
-  if (utf8.codepoints(s).len() != a) {
+  let a: i32 = s.codepoint_count();
+  if (s.chars().len() != a) {
     return 0 - 1;
   }
   if (s.codepoint_count() != a) {
@@ -374,7 +374,7 @@ function test_lossy_valid_neighbours(): test.TestOutcome {
 
 function test_lossy_indexing(): test.TestOutcome {
   let s: string = string_from_bytes_unchecked([97 as u8, 241 as u8, 128 as u8, 98 as u8]);
-  let fffd: string = utf8.utf8_encode(65533 as char);
+  let fffd: string = utf8.encode(65533 as char);
   match (utf8.char_at(s, 1)) {
     Some(c) => {
       if (c != fffd) {
@@ -399,7 +399,7 @@ function test_lossy_indexing(): test.TestOutcome {
 }
 
 function test_from_bytes_lossy(): test.TestOutcome {
-  let fffd: string = utf8.utf8_encode(65533 as char);
+  let fffd: string = utf8.encode(65533 as char);
   let m: string = mixed();
   if (utf8.from_bytes_lossy(m.bytes()) != m) {
     return test.fail("well-formed input changed");
@@ -416,7 +416,7 @@ function test_from_bytes_lossy(): test.TestOutcome {
   if (utf8.from_bytes_lossy([65 as u8, 255 as u8, 66 as u8]) != "A" + fffd + "B") {
     return test.fail("one bad byte");
   }
-  return test.assert_true(utf8.is_valid_utf8(utf8.from_bytes_lossy([237 as u8, 160 as u8, 128 as u8])));
+  return test.assert_true(utf8.is_valid(utf8.from_bytes_lossy([237 as u8, 160 as u8, 128 as u8])));
 }
 
 function main(): i32 {

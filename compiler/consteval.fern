@@ -1,0 +1,418 @@
+import "./ast";
+import "./parser";
+import "./util";
+
+// Values stay separate from the source AST so diagnostics retain literal positions.
+pub struct IntValue { value: i64 }
+
+pub struct FloatValue { value: f64 }
+
+pub struct BoolValue { value: boolean }
+
+pub struct StringValue { value: string }
+
+pub struct Aggregate {  }
+
+pub type Scalar = IntValue | FloatValue | BoolValue | StringValue | Aggregate;
+
+pub struct Value { data: Scalar, error: string }
+
+function empty(): Value {
+  return Value { data: Aggregate {  }, error: "" };
+}
+
+function fail(message: string): Value {
+  return Value { ...empty(), error: message };
+}
+
+function number(v: i64, ty: string): Value {
+  let n: i64 = v;
+  if (ty == "i32") {
+    n = (v as i32) as i64;
+  }
+  if (ty == "u32") {
+    n = (v as u32) as i64;
+  }
+  if (ty == "u8") {
+    n = (v as u8) as i64;
+  }
+  return Value { data: IntValue { value: n }, error: "" };
+}
+
+function floating(v: f64): Value {
+  return Value { data: FloatValue { value: v }, error: "" };
+}
+
+function logical(v: boolean): Value {
+  return Value { data: BoolValue { value: v }, error: "" };
+}
+
+function unsigned(ty: string): boolean {
+  return ty == "u8" || ty == "u32" || ty == "u64";
+}
+
+function integer_binary(op: string, a: i64, b: i64, ty: string): Value {
+  if (op == "+") {
+    return number(a + b, ty);
+  }
+  if (op == "-") {
+    return number(a - b, ty);
+  }
+  if (op == "*") {
+    return number(a * b, ty);
+  }
+  if (op == "/" || op == "%") {
+    return divide(op, a, b, ty);
+  }
+  return bitwise(op, a, b, ty);
+}
+
+function divide(op: string, a: i64, b: i64, ty: string): Value {
+  if (b == 0) {
+    if (op == "/") {
+      return fail("division by zero in constant expression");
+    }
+    return fail("modulo by zero in constant expression");
+  }
+  if (unsigned(ty)) {
+    if (op == "/") {
+      return number((a as u64 / (b as u64)) as i64, ty);
+    }
+    return number((a as u64 % (b as u64)) as i64, ty);
+  }
+  // Hardware signed division traps on MIN / -1; Fern constant arithmetic wraps.
+  if (a == 0 - 9223372036854775807i64 - 1i64 && b == -1i64) {
+    if (op == "/") {
+      return number(a, ty);
+    }
+    return number(0, ty);
+  }
+  if (op == "/") {
+    return number(a / b, ty);
+  }
+  return number(a % b, ty);
+}
+
+function bitwise(op: string, a: i64, b: i64, ty: string): Value {
+  if (op == "&") {
+    return number(a & b, ty);
+  }
+  if (op == "|") {
+    return number(a | b, ty);
+  }
+  if (op == "^") {
+    return number(a ^ b, ty);
+  }
+  let mask: i64 = 63;
+  if (ty == "i32" || ty == "u32" || ty == "u8") {
+    mask = 31;
+  }
+  let shift: i64 = b & mask;
+  if (op == "<<") {
+    return number(a << shift, ty);
+  }
+  if (op == ">>") {
+    if (unsigned(ty)) {
+      return number((a as u64 >> shift as u64) as i64, ty);
+    }
+    return number(a >> shift, ty);
+  }
+  return integer_compare(op, a, b, ty);
+}
+
+function integer_compare(op: string, a: i64, b: i64, ty: string): Value {
+  if (op == "==") {
+    return logical(a == b);
+  }
+  if (op == "!=") {
+    return logical(a != b);
+  }
+  if (unsigned(ty)) {
+    return unsigned_compare(op, a as u64, b as u64);
+  }
+  if (op == "<") {
+    return logical(a < b);
+  }
+  if (op == "<=") {
+    return logical(a <= b);
+  }
+  if (op == ">") {
+    return logical(a > b);
+  }
+  if (op == ">=") {
+    return logical(a >= b);
+  }
+  return fail("operator `" + op + "` not allowed in integer constant expressions");
+}
+
+function unsigned_compare(op: string, a: u64, b: u64): Value {
+  if (op == "<") {
+    return logical(a < b);
+  }
+  if (op == "<=") {
+    return logical(a <= b);
+  }
+  if (op == ">") {
+    return logical(a > b);
+  }
+  if (op == ">=") {
+    return logical(a >= b);
+  }
+  return fail("operator `" + op + "` not allowed in integer constant expressions");
+}
+
+function float_binary(op: string, a: f64, b: f64): Value {
+  if (op == "+") {
+    return floating(a + b);
+  }
+  if (op == "-") {
+    return floating(a - b);
+  }
+  if (op == "*") {
+    return floating(a * b);
+  }
+  if (op == "/") {
+    if (b == 0.0) {
+      return fail("division by zero in constant expression");
+    }
+    return floating(a / b);
+  }
+  return float_compare(op, a, b);
+}
+
+function float_compare(op: string, a: f64, b: f64): Value {
+  if (op == "==") {
+    return logical(a == b);
+  }
+  if (op == "!=") {
+    return logical(a != b);
+  }
+  if (op == "<") {
+    return logical(a < b);
+  }
+  if (op == "<=") {
+    return logical(a <= b);
+  }
+  if (op == ">") {
+    return logical(a > b);
+  }
+  if (op == ">=") {
+    return logical(a >= b);
+  }
+  return fail("operator `" + op + "` not allowed in float constant expressions");
+}
+
+function bool_binary(op: string, a: boolean, b: boolean): Value {
+  if (op == "&&") {
+    return logical(a && b);
+  }
+  if (op == "||") {
+    return logical(a || b);
+  }
+  if (op == "==") {
+    return logical(a == b);
+  }
+  if (op == "!=") {
+    return logical(a != b);
+  }
+  return fail("operator `" + op + "` not allowed on bools in constant expressions");
+}
+
+function string_binary(op: string, a: string, b: string): Value {
+  if (op == "+") {
+    return Value { data: StringValue { value: a + b }, error: "" };
+  }
+  if (op == "==") {
+    return logical(a == b);
+  }
+  if (op == "!=") {
+    return logical(a != b);
+  }
+  return fail("operator `" + op + "` not allowed on strings in constant expressions");
+}
+
+function binary(op: string, a: Value, b: Value, ty: string): Value {
+  if (a.error.len() > 0) {
+    return a;
+  }
+  if (b.error.len() > 0) {
+    return b;
+  }
+  return binary_values(op, a.data, b.data, ty);
+}
+
+function binary_values(op: string, left: Scalar, right: Scalar, ty: string): Value {
+  match (left) {
+    StringValue(s) => {
+      if let StringValue(t) = right {
+        return string_binary(op, s.value, t.value);
+      }
+      return fail("binary `" + op + "` between string and non-string is not a constant expression");
+    },
+    BoolValue(s) => {
+      if let BoolValue(t) = right {
+        return bool_binary(op, s.value, t.value);
+      }
+      return fail("binary `" + op + "` between bool and non-bool is not a constant expression");
+    },
+    FloatValue(s) => {
+      if let FloatValue(t) = right {
+        return float_binary(op, s.value, t.value);
+      }
+      return fail("binary `" + op + "` mixes float with non-float; conversions must be explicit even in constants");
+    },
+    IntValue(s) => {
+      if let IntValue(t) = right {
+        return integer_binary(op, s.value, t.value, ty);
+      }
+      return fail("binary `" + op + "` operands aren't both numbers");
+    },
+    Aggregate(_) => {
+      return fail("binary `" + op + "` operands aren't both numbers");
+    }
+  }
+  return empty();
+}
+
+function unary(op: string, v: Value, ty: string): Value {
+  if (v.error.len() > 0) {
+    return v;
+  }
+  if (op == "-") {
+    if let IntValue(n) = v.data {
+      return number(0 - n.value, ty);
+    }
+    if let FloatValue(n) = v.data {
+      return floating(0.0 - n.value);
+    }
+    return fail("unary `-` requires a number or float operand");
+  }
+  if (op == "!") {
+    if let BoolValue(b) = v.data {
+      return logical(!b.value);
+    }
+    return fail("unary `!` requires a boolean operand");
+  }
+  return fail("unary operator \"" + op + "\" is not allowed in constant expressions");
+}
+
+function element_type(ty: parser.TypeRef, tuple: boolean, i: i32): parser.TypeRef {
+  let elem: parser.TypeRef = parser.parse_type_ref("");
+  if (tuple && ty.is_tuple && i < ty.args.len()) {
+    elem = ty.args[i];
+  }
+  if (!tuple && ty.array_depth > 0) {
+    elem = parser.TypeRef { ...ty, array_depth: ty.array_depth - 1 };
+  }
+  return elem;
+}
+
+function elements(elems: ast.Expr[], ty: parser.TypeRef, names: string[], values: Value[], tuple: boolean): Value {
+  for i in 0..elems.len() {
+    let e: ast.Expr = elems[i];
+    let elem: parser.TypeRef = element_type(ty, tuple, i);
+    let v: Value = evaluate(e, elem, names, values);
+    if (v.error.len() > 0) {
+      return v;
+    }
+    if (elem.array_depth == 0 && !elem.is_tuple) {
+      let settled: Value = settle(v, elem.base);
+      if (settled.error.len() > 0) {
+        return settled;
+      }
+    }
+  }
+  return empty();
+}
+
+pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: Value[]): Value {
+  let width: string = scalar_width(ty);
+  match (e) {
+    ast.ExprNumber(n) => {
+      return literal_number(n);
+    },
+    ast.ExprBool(b) => {
+      return logical(b.value);
+    },
+    ast.ExprString(s) => {
+      return Value { data: StringValue { value: s.value }, error: "" };
+    },
+    ast.ExprIdent(id) => {
+      return earlier_value(id.name, names, values);
+    },
+    ast.ExprUnary(u) => {
+      return unary(u.op, evaluate(u.operand, ty, names, values), width);
+    },
+    ast.ExprBinary(b) => {
+      return evaluate_binary(b, ty, names, values);
+    },
+    ast.ExprArray(a) => {
+      return elements(a.elements, ty, names, values, false);
+    },
+    ast.ExprTuple(t) => {
+      return elements(t.elements, ty, names, values, true);
+    },
+    ast.ExprStructLit(s) => {
+      return elements(s.field_values, parser.parse_type_ref(""), names, values, false);
+    },
+    _ => {
+      return empty();
+    }
+  }
+  return empty();
+}
+
+pub function settle(v: Value, ty: string): Value {
+  if (v.error.len() > 0) {
+    return v;
+  }
+  if let IntValue(n) = v.data {
+    if (ty == "f32" || ty == "f64") {
+      return fail("declared type " + ty + " does not match initialiser type i32");
+    }
+    return number(n.value, ty);
+  }
+  if let FloatValue(n) = v.data {
+    if (integer_type(ty)) {
+      return fail("declared type " + ty + " does not match initialiser type f64");
+    }
+  }
+  return v;
+}
+
+function integer_type(ty: string): boolean {
+  return ty == "i32" || ty == "i64" || ty == "u8" || ty == "u32" || ty == "u64" || ty == "usize";
+}
+
+function scalar_width(ty: parser.TypeRef): string {
+  let width: string = "";
+  if (ty.array_depth == 0 && !ty.is_tuple) {
+    width = ty.base;
+  }
+  return width;
+}
+
+function literal_number(n: ast.ExprNumber): Value {
+  if (n.is_float && !parser.float_settled_int(n)) {
+    // The oracle retains f64 precision while it evaluates constant expressions.
+    return floating(f64_from_bits(util.parse_f64_bits(n.text)));
+  }
+  // Literal truncation occurs at operators, matching the Go constant folder.
+  return number(util.lit_to_i64(n.text), "");
+}
+
+function earlier_value(name: string, names: string[], values: Value[]): Value {
+  let i: i32 = util.index_of_str(names, name);
+  if (i >= 0) {
+    return values[i];
+  }
+  return fail("\"" + name + "\" is not a constant (must reference an earlier `const` declaration)");
+}
+
+function evaluate_binary(b: ast.ExprBinary, ty: parser.TypeRef, names: string[], values: Value[]): Value {
+  let left: Value = evaluate(b.left, ty, names, values);
+  if (left.error.len() > 0) {
+    return left;
+  }
+  return binary(b.op, left, evaluate(b.right, ty, names, values), scalar_width(ty));
+}

@@ -79,21 +79,22 @@ function main(): i32 {
 }
 
 func TestSelfHostFractalLibraries(t *testing.T) {
-	src := `import "std/parse";
+	src := `import "std/i64";
+import "std/number_parse";
 import "std/binary";
 import "std/png";
 import "std/result";
 function main(): i32 {
-  if (parse.int64("9223372036854775807").unwrap_or(0) != 9223372036854775807) { return 1; }
-  if (parse.int64("-9223372036854775808").unwrap_or(0) != -9223372036854775807 - 1) { return 2; }
-  if (parse.int64("+17").unwrap_or(0) != 17 || parse.int64("-0").unwrap_or(1) != 0) { return 3; }
+  if (i64.parse_i64("9223372036854775807").unwrap_or(0) != 9223372036854775807) { return 1; }
+  if (i64.parse_i64("-9223372036854775808").unwrap_or(0) != -9223372036854775807 - 1) { return 2; }
+  if (i64.parse_i64("+17").unwrap_or(0) != 17 || i64.parse_i64("-0").unwrap_or(1) != 0) { return 3; }
   for text in ["", "-", "+", "9223372036854775808", "-9223372036854775809", "99999999999999999999", " 1", "1 ", "1x", "1.0"] {
-    if (parse.int64(text).is_ok()) { return 4; }
+    if (i64.parse_i64(text).is_ok()) { return 4; }
   }
-  match (parse.int64("123x")) { Err(InvalidDigit(3)) => {}, _ => { return 13; }, }
-  match (parse.int64("-")) { Err(Empty) => {}, _ => { return 14; }, }
-  match (parse.int64("9223372036854775808")) { Err(Overflow) => {}, _ => { return 15; }, }
-  if (parse.IntError.Overflow.message() != "decimal integer is outside the signed 64-bit range") { return 16; }
+  match (i64.parse_i64("123x")) { Err(InvalidDigit(3)) => {}, _ => { return 13; }, }
+  match (i64.parse_i64("-")) { Err(InvalidDigit(1)) => {}, _ => { return 14; }, }
+  match (i64.parse_i64("9223372036854775808")) { Err(OutOfRange) => {}, _ => { return 15; }, }
+  if (number_parse.ParseNumberError.OutOfRange.message() != "number is out of range") { return 16; }
   let bytes: u8[] = binary.append_u64_be([], 0xfedcba9876543210 as u64);
   if (binary.read_u64_be(bytes, 0).unwrap_or(0 as u64) != 0xfedcba9876543210 as u64) { return 5; }
   if (binary.read_u32_be(bytes, 1).unwrap_or(0 as u32) != 0xdcba9876 as u32) { return 6; }

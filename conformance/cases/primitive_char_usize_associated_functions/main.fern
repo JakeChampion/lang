@@ -1,0 +1,30 @@
+// #13081: these primitive namespaces also work after generic substitution.
+trait Fresh {
+  function fresh(): Self;
+}
+
+impl Fresh for usize {
+  function fresh(): usize {
+    return 42 as usize;
+  }
+}
+
+impl Fresh for char {
+  function fresh(): char {
+    return 'é';
+  }
+}
+
+function make[T: Fresh](): T {
+  return T.fresh();
+}
+
+function main(): i32 {
+  let n: usize = usize.fresh();
+  let c: char = char.fresh();
+  if (n != 42 as usize || c != 'é' || make[usize]() != n || make[char]() != c) {
+    return 1;
+  }
+  print("associated primitives ok");
+  return 0;
+}

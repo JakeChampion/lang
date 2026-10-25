@@ -498,7 +498,7 @@ function saved_project(state: State, app: string, name: string, initial: Project
   let Some(value) = store.load(state.directory, app + "-" + name).map_err((e: string): http.HttpError => http.fail(503, e))? else {
     return Ok(initial);
   };
-  let saved = json.decode[SavedProject](value).map_err((e: string): http.HttpError => http.fail(503, e))?;
+  let saved = json.decode[SavedProject](value).map_err((e: json.JsonError): http.HttpError => http.fail(503, e.message()))?;
   if (saved.version != 1 || saved.program.len() != 16 || saved.application != app || saved.revision < 0 || saved.cells.len() != initial.cells.len() || saved.factory.cargo.len() != initial.factory.cargo.len() || saved.factory.powered.len() != initial.factory.powered.len()) {
     return Err(http.fail(503, "The saved project has an unsupported schema."));
   }

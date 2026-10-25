@@ -1,0 +1,1 @@
+main.fern:3:1: error[E002]: const A: expected string, got i32

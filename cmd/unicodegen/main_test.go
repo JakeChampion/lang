@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode"
@@ -84,11 +85,15 @@ func TestGenerateIsDeterministic(t *testing.T) {
 
 func TestTablesAreStringsNotArrays(t *testing.T) {
 	src, _ := generate()
-	if strings.Contains(src, "i32[]") {
-		t.Error("generated module declares an i32[]; tables must be string literals")
+	if regexp.MustCompile(`(?m)^(?:pub(?:\(package\))? )?const \w+:[^\n;]*\[\]`).MatchString(src) {
+		t.Error("generated module declares an array table; tables must be string literals")
 	}
-	for _, name := range []string{"_case_table", "_letter_ranges", "_digit_ranges",
-		"_space_ranges", "_upper_ranges", "_lower_ranges"} {
+	tables := regexp.MustCompile(`(?m)^function (_\w+(?:_table|_ranges))\(\)`).FindAllStringSubmatch(src, -1)
+	if len(tables) != 20 {
+		t.Fatalf("generated %d table functions, want 20", len(tables))
+	}
+	for _, table := range tables {
+		name := table[1]
 		decl := "function " + name + "(): string {\n  return \""
 		if !strings.Contains(src, decl) {
 			t.Errorf("%s is not a string-literal-returning table", name)

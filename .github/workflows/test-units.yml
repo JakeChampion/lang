@@ -51,18 +51,16 @@ jobs:
       fail-fast: false
       # Real dimensions, not an include list: `exclude` does not reach
       # include-only combinations. The heavy group (the printer corpus) runs
-      # four shards in separate processes because printer checks share AST
+      # two shards in separate processes because printer checks share AST
       # globals; rest runs one. The Preflight tier calls this lane with
       # `hosts: x86_64`, and the suite with both hosts, where the host exclude
       # matches nothing.
       matrix:
         host: [x86_64, aarch64]
         group: [heavy, rest]
-        shard: [0, 1, 2, 3]
+        shard: [0, 1]
         exclude:
           - { group: rest, shard: 1 }
-          - { group: rest, shard: 2 }
-          - { group: rest, shard: 3 }
           - host: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
     name: test-units-${{ matrix.host }}-${{ matrix.group }}${{ matrix.group == 'heavy' && format('-shard{0}', matrix.shard) || '' }}
     runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
@@ -151,7 +149,7 @@ jobs:
         # those two gates by design and must not be asked to require them.
         env:
           FERN_CI_UNIT_PACKAGE_GROUP: ${{ matrix.group }}
-          FERN_PRINTER_CORPUS_SHARD: "${{ matrix.shard }}/${{ matrix.group == 'heavy' && 4 || 1 }}"
+          FERN_PRINTER_CORPUS_SHARD: "${{ matrix.shard }}/${{ matrix.group == 'heavy' && 2 || 1 }}"
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
           # internal/testing/tv's tests prove with z3, which setup-fern installs.
@@ -184,7 +182,7 @@ jobs:
         # default: a binary that default kills reports whichever cases were in
         # flight as failures with no output and an unknown elapsed, so the lane
         # names tests that did not fail and never names the wall it hit. The
-        # printer corpus is partitioned across four workers on each host.
+        # printer corpus is partitioned across two workers on each host.
         run: |
           # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- -timeout 25m \

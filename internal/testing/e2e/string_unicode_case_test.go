@@ -2,7 +2,8 @@ package e2e
 
 import "testing"
 
-const stringUnicodeCaseProg = `
+const stringUnicodeCaseProg = `import "std/unicode";
+
 import "std/string";
 
 function main(): i32 {
@@ -110,19 +111,19 @@ function main(): i32 {
 
     // Whole-string class predicates: Unicode under the plain name, byte
     // check under is_ascii_*. Same split, one more time.
-    if (!"Ελλάδα".is_alpha_only()) { return 60; }
-    if ("Ελλάδα".is_ascii_alpha_only()) { return 61; }
-    if (!"hello".is_alpha_only()) { return 62; }
-    if (!"hello".is_ascii_alpha_only()) { return 63; }
+    if (!"Ελλάδα".is_letters()) { return 60; }
+    if ("Ελλάδα".is_ascii_letters()) { return 61; }
+    if (!"hello".is_letters()) { return 62; }
+    if (!"hello".is_ascii_letters()) { return 63; }
     // Arabic-Indic digits are Nd, so Unicode says numeric and ASCII does not.
-    if (!"٤٢".is_numeric()) { return 64; }
-    if ("٤٢".is_ascii_numeric()) { return 65; }
-    if (!"42".is_numeric()) { return 66; }
-    if (!"élan9".is_alnum_only()) { return 67; }
-    if ("élan 9".is_alnum_only()) { return 68; }   // space breaks it
+    if (!"٤٢".is_digits()) { return 64; }
+    if ("٤٢".is_ascii_digits()) { return 65; }
+    if (!"42".is_digits()) { return 66; }
+    if (!"élan9".is_alphanumeric()) { return 67; }
+    if ("élan 9".is_alphanumeric()) { return 68; }   // space breaks it
     // Empty is false for the class predicates, matching Python.
-    if ("".is_alpha_only()) { return 69; }
-    if ("".is_numeric()) { return 70; }
+    if ("".is_letters()) { return 69; }
+    if ("".is_digits()) { return 70; }
     // is_ascii_only has no Unicode counterpart and keeps its meaning.
     if (!"abc".is_ascii_only()) { return 71; }
     if ("é".is_ascii_only()) { return 72; }

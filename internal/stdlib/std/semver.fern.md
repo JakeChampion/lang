@@ -49,6 +49,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module implements the `Semantic Versioning 2.0.0` rules.
+import "std/result";
 import "std/string";
 import "std/error";
 import "core/cmp";
@@ -154,11 +155,11 @@ function __sv_num(s: string, offset: i32): Result[i32, ParseError] {
   if (s.len() > 1 && s[0] == 48) {
     return Err(__sv_error(offset, ParseErrorKind.LeadingZero));
   }
-  match (s.parse_int()) {
-    Some(number) => {
+  match (i32.parse_i32(s)) {
+    Ok(number) => {
       return Ok(number);
     },
-    None => {
+    Err(_) => {
       return Err(__sv_error(offset, ParseErrorKind.NumberOutOfRange));
     }
   }

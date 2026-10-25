@@ -70,6 +70,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module reads, writes, and stores HTTP cookies.
+
+import "std/i32";
+import "std/unicode";
+// This module reads, writes, and stores HTTP cookies.
 ```
 
 ### `dependencies 2`
@@ -651,14 +655,14 @@ function __max_age(v: string): Option[i32] {
   if (v.starts_with("-")) {
     digits = v.slice_snap(1, v.len());
   }
-  if (!digits.is_ascii_numeric()) {
+  if (!digits.is_ascii_digits()) {
     return None;
   }
-  match (v.parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(v)) {
+    Ok(n) => {
       return Some(n);
     },
-    None => {
+    Err(_) => {
       if (v.starts_with("-")) {
         return Some(0 - 1);
       }
@@ -993,7 +997,7 @@ function __is_ip(host: string): boolean {
     return true;
   }
   let labels: string[] = host.split(".");
-  return labels[labels.len() - 1].is_ascii_numeric();
+  return labels[labels.len() - 1].is_ascii_digits();
 }
 
 function __default_path(u: Url): string {

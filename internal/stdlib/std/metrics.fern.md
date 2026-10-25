@@ -515,11 +515,11 @@ function __merge_sample(m: __Merged, key: string, value: string): __Merged {
     return __Merged { ...m, ints: m.ints.with(at, m.ints[at] + __int_of(value)) };
   }
   let f: f64 = 0.0;
-  match (value.parse_float()) {
-    Some(x) => {
+  match (f64.parse_f64(value)) {
+    Ok(x) => {
       f = x;
     },
-    None => {
+    Err(_) => {
       return m;
     }
   }

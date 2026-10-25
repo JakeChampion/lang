@@ -1,0 +1,5 @@
+function main(): i32 {
+  print(f"{42}");
+  let xs: i32[] = cmp.sort([2, 1]);
+  return 0;
+}

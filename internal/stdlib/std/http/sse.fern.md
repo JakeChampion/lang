@@ -55,6 +55,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "std/http";
 import "std/time";
 import "std/utf8";
@@ -278,12 +279,12 @@ function __field(d: Decoder, field: string, value: string): Decoder {
     }
     return Decoder { ...d, last_id: value };
   }
-  if (field == "retry" && value.is_ascii_numeric()) {
-    match (value.parse_int()) {
-      Some(ms) => {
+  if (field == "retry" && value.is_ascii_digits()) {
+    match (i32.parse_i32(value)) {
+      Ok(ms) => {
         return Decoder { ...d, retry: ms };
       },
-      None => {
+      Err(_) => {
         return d;
       }
     }

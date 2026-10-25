@@ -1,0 +1,134 @@
+import "../pixels/pixels";
+import "std/f64";
+
+// These channels contain premultiplied encoded sRGB bytes.
+pub struct Premultiplied { r: u8, g: u8, b: u8, a: u8 }
+
+function unit(x: f64): f64 {
+  if (x != x || x < 0.0) {
+    return 0.0;
+  }
+  if (x > 1.0) {
+    return 1.0;
+  }
+  return x;
+}
+
+function byte(x: f64): u8 {
+  return (unit(x) * 255.0 + 0.5) as u8;
+}
+
+pub function srgb_to_linear(encoded: f64): f64 {
+  let x: f64 = unit(encoded);
+  if (x <= 0.04045) {
+    return x / 12.92;
+  }
+  return ((x + 0.055) / 1.055).pow(2.4);
+}
+
+pub function linear_to_srgb(linear: f64): f64 {
+  let x: f64 = unit(linear);
+  if (x <= 0.0031308) {
+    return x * 12.92;
+  }
+  return 1.055 * x.pow(1.0 / 2.4) - 0.055;
+}
+
+pub function rgb(r: u8, g: u8, b: u8): pixels.Pixel {
+  return pixels.Pixel { r: r, g: g, b: b, a: 255 };
+}
+
+pub function rgba(r: u8, g: u8, b: u8, a: u8): pixels.Pixel {
+  return pixels.Pixel { r: r, g: g, b: b, a: a };
+}
+
+pub function with_alpha(p: pixels.Pixel, alpha: u8): pixels.Pixel {
+  return pixels.Pixel { ...p, a: alpha };
+}
+
+pub function swap_rb(p: pixels.Pixel): pixels.Pixel {
+  return pixels.Pixel { r: p.b, g: p.g, b: p.r, a: p.a };
+}
+
+pub function grayscale(p: pixels.Pixel): pixels.Pixel {
+  let y: f64 = 0.2126 * srgb_to_linear(p.r as f64 / 255.0)
+    + 0.7152 * srgb_to_linear(p.g as f64 / 255.0)
+    + 0.0722 * srgb_to_linear(p.b as f64 / 255.0);
+  let channel: u8 = byte(linear_to_srgb(y));
+  return pixels.Pixel { r: channel, g: channel, b: channel, a: p.a };
+}
+
+function multiply(channel: u8, alpha: u8): u8 {
+  return ((channel as i32 * (alpha as i32) + 127) / 255) as u8;
+}
+
+pub function premultiply(p: pixels.Pixel): Premultiplied {
+  return Premultiplied { r: multiply(p.r, p.a), g: multiply(p.g, p.a), b: multiply(p.b, p.a), a: p.a };
+}
+
+function divide(channel: u8, alpha: u8): u8 {
+  if (alpha == 0 as u8) {
+    return 0 as u8;
+  }
+  let n: i32 = (channel as i32 * 255 + alpha as i32 / 2) / (alpha as i32);
+  if (n > 255) {
+    return 255 as u8;
+  }
+  return n as u8;
+}
+
+pub function unpremultiply(p: Premultiplied): pixels.Pixel {
+  return pixels.Pixel { r: divide(p.r, p.a), g: divide(p.g, p.a), b: divide(p.b, p.a), a: p.a };
+}
+
+function over_channel(source: u8, background: u8, sa: f64, ba: f64, out_alpha: f64): u8 {
+  let linear: f64 = (srgb_to_linear(source as f64 / 255.0) * sa
+    + srgb_to_linear(background as f64 / 255.0) * ba * (1.0 - sa)) / out_alpha;
+  return byte(linear_to_srgb(linear));
+}
+
+// Composite straight pixels in linear light. Return straight encoded sRGB.
+pub function source_over(source: pixels.Pixel, background: pixels.Pixel): pixels.Pixel {
+  let sa: f64 = source.a as f64 / 255.0;
+  let ba: f64 = background.a as f64 / 255.0;
+  let alpha: f64 = sa + ba * (1.0 - sa);
+  if (alpha == 0.0) {
+    return rgba(0 as u8, 0 as u8, 0 as u8, 0 as u8);
+  }
+  return pixels.Pixel {
+    r: over_channel(source.r, background.r, sa, ba, alpha),
+    g: over_channel(source.g, background.g, sa, ba, alpha),
+    b: over_channel(source.b, background.b, sa, ba, alpha), a: byte(alpha),
+  };
+}
+
+function convert_image(source: pixels.Image, format: pixels.Format, background: pixels.Pixel, limits: pixels.Limits): Result[pixels.Image, pixels.ImageError] {
+  pixels.read_pixel(source, 0, 0)?;
+  let stride = match (source.layout.width *? pixels.channels(format)) { Some(n) => n, None => { return Err(pixels.Overflow); } };
+  let output = pixels.create(source.layout.width, source.layout.height, stride, format, limits)?;
+  let y = 0;
+  while (y < source.layout.height) {
+    let x = 0;
+    while (x < source.layout.width) {
+      let pixel = pixels.read_pixel(source, x, y)?;
+      if (pixels.channels(format) == 3) {
+        pixel = source_over(pixel, background);
+      }
+      output = pixels.write_pixel(output, x, y, pixel)?;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(output);
+}
+
+pub function to_rgba(source: pixels.Image, limits: pixels.Limits): Result[pixels.Image, pixels.ImageError] {
+  return convert_image(source, pixels.RGBA8, rgb(0 as u8, 0 as u8, 0 as u8), limits);
+}
+
+pub function flatten_rgb(source: pixels.Image, background: pixels.Pixel, limits: pixels.Limits): Result[pixels.Image, pixels.ImageError] {
+  if (background.a != 255 as u8) {
+    return Err(pixels.Alpha);
+  }
+  return convert_image(source, pixels.RGB8, background, limits);
+}

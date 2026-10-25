@@ -125,7 +125,7 @@ function test_decode_reads_text_directly(): test.TestOutcome {
       }
     },
     Err(why) => {
-      return test.fail(why);
+      return test.fail(why.to_string());
     }
   }
   match (Note.from_json("{}")) {
@@ -140,7 +140,7 @@ function test_decode_reads_text_directly(): test.TestOutcome {
       }
     },
     Err(why) => {
-      return test.fail(why);
+      return test.fail(why.to_string());
     }
   }
   return test.fail("unreachable");

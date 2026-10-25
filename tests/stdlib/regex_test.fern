@@ -2,122 +2,127 @@ import "std/test";
 import "std/regex" as regex;
 
 function test_match_anywhere(): test.TestOutcome {
-  return test.assert_true(regex.regex_match("b", "abc") && !regex.regex_match("z", "abc"));
+  return test.assert_true({ let __checked_regex_30: regex.Regex = match (regex.compile("b")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_30.is_match("abc") } && !{ let __checked_regex_29: regex.Regex = match (regex.compile("z")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_29.is_match("abc") });
 }
 
 function test_anchors(): test.TestOutcome {
-  return test.assert_true(regex.regex_match("^ab", "abc") && regex.regex_match("bc$", "abc") && !regex.regex_match("^bc", "abc"));
+  return test.assert_true({ let __checked_regex_28: regex.Regex = match (regex.compile("^ab")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_28.is_match("abc") } && { let __checked_regex_27: regex.Regex = match (regex.compile("bc$")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_27.is_match("abc") } && !{ let __checked_regex_26: regex.Regex = match (regex.compile("^bc")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_26.is_match("abc") });
 }
 
 function test_classes_and_quantifiers(): test.TestOutcome {
-  return test.assert_true(regex.regex_match("[abc]+", "cab") && regex.regex_match("\\d{2,4}", "x123y") && regex.regex_match("(ab)+c", "ababc"));
+  return test.assert_true({ let __checked_regex_25: regex.Regex = match (regex.compile("[abc]+")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_25.is_match("cab") } && { let __checked_regex_24: regex.Regex = match (regex.compile("\\d{2,4}")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_24.is_match("x123y") } && { let __checked_regex_23: regex.Regex = match (regex.compile("(ab)+c")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_23.is_match("ababc") });
 }
 
 function test_alternation(): test.TestOutcome {
-  return test.assert_true(regex.regex_match("^(cat|dog)$", "dog") && !regex.regex_match("^(cat|dog)$", "fox"));
+  return test.assert_true({ let __checked_regex_22: regex.Regex = match (regex.compile("^(cat|dog)$")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_22.is_match("dog") } && !{ let __checked_regex_21: regex.Regex = match (regex.compile("^(cat|dog)$")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_21.is_match("fox") });
 }
 
 function test_search_span(): test.TestOutcome {
-  let Some(m) = regex.regex_search("\\d+", "order 123 shipped") else {
+  let Some(m) = { let __checked_regex_20: regex.Regex = match (regex.compile("\\d+")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_20.find("order 123 shipped") } else {
     return test.fail("no match");
   };
   return test.assert_true(m.start == 6 && m.end == 9);
 }
 
 function test_find_index(): test.TestOutcome {
-  return test.assert_is_some_eq_i32(regex.regex_find("world", "hello world"), 6);
+  return test.assert_is_some_eq_i32({ let __checked_regex_19: regex.Regex = match (regex.compile("world")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_19.index_of("hello world") }, 6);
 }
 
 function test_case_insensitive_flag(): test.TestOutcome {
-  return test.assert_true(regex.regex_match("(?i)hel+o", "say HELLO"));
+  return test.assert_true({ let __checked_regex_18: regex.Regex = match (regex.compile("(?i)hel+o")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_18.is_match("say HELLO") });
 }
 
 function test_count(): test.TestOutcome {
-  return test.assert_eq(regex.regex_count("\\d+", "a1 b22 c333"), 3);
+  return test.assert_eq({ let __checked_regex_17: regex.Regex = match (regex.compile("\\d+")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_17.count("a1 b22 c333") }, 3);
 }
 
 function test_find_all(): test.TestOutcome {
-  let all: regex.RMatch[] = regex.regex_find_all("\\d+", "a1 b22");
+  let all: regex.Match[] = { let __checked_regex_16: regex.Regex = match (regex.compile("\\d+")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_16.find_all("a1 b22") };
   return test.assert_true(all.len() == 2 && all[0].start == 1 && all[1].start == 4);
 }
 
 function test_replace_all(): test.TestOutcome {
-  return test.assert_eq(require_regex_text(regex.regex_replace_all("\\d+", "a1b22c", "#")), "a#b#c");
+  return test.assert_eq(require_regex_text(match ({ let __checked_regex_15: regex.Regex = match (regex.compile("\\d+")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_15.replace_all("a1b22c", "#") }) { Ok(__text) => Some(__text), Err(__error) => { return test.fail(__error.to_string()); } }), "a#b#c");
 }
 
 function test_replace_first(): test.TestOutcome {
-  return test.assert_eq(require_regex_text(regex.regex_replace("\\d", "1 2 3", "#")), "# 2 3");
+  return test.assert_eq(require_regex_text(match ({ let __checked_regex_14: regex.Regex = match (regex.compile("\\d")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_14.replace("1 2 3", "#") }) { Ok(__text) => Some(__text), Err(__error) => { return test.fail(__error.to_string()); } }), "# 2 3");
 }
 
 function test_split(): test.TestOutcome {
-  let parts: string[] = require_regex_parts(regex.regex_split("a,b;c", "[,;]"));
+  let parts: string[] = require_regex_parts(match ({ let __checked_regex_13: regex.Regex = match (regex.compile("[,;]")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_13.split("a,b;c") }) { Ok(__text) => Some(__text), Err(__error) => { return test.fail(__error.to_string()); } });
   return test.assert_true(parts.len() == 3 && parts[0] == "a" && parts[1] == "b" && parts[2] == "c");
 }
 
 function test_full_match(): test.TestOutcome {
-  return test.assert_true(regex.regex_full_match("a|aa", "aa") && !regex.regex_full_match("a", "aa"));
+  return test.assert_true({ let __checked_regex_12: regex.Regex = match (regex.compile("a|aa")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_12.is_full_match("aa") } && !{ let __checked_regex_11: regex.Regex = match (regex.compile("a")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_11.is_full_match("aa") });
 }
 
 function test_captures_positional(): test.TestOutcome {
-  let Some(m) = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x") else {
+  let Some(m) = { let __checked_regex_10: regex.Regex = match (regex.compile("(\\d+)-(\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_10.captures("id 12-34 x") } else {
     return test.fail("no match");
   };
-  return test.assert_true(m.group_count() == 2 && require_regex_text(m.group(0)) == "12-34" && require_regex_text(m.group(1)) == "12" && require_regex_text(m.group(2)) == "34" && at(m.group_start(1), 3) && at(m.group_end(1), 5));
+  return test.assert_true(m.group_count() == 2 && require_regex_text(match (m.group(0)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "12-34" && require_regex_text(match (m.group(1)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "12" && require_regex_text(match (m.group(2)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "34" && at(m.group_start(1), 3) && at(m.group_end(1), 5));
 }
 
 function test_captures_optional_group(): test.TestOutcome {
-  let Some(absent) = regex.regex_captures("a(bc)?d", "ad") else {
+  let Some(absent) = { let __checked_regex_9: regex.Regex = match (regex.compile("a(bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_9.captures("ad") } else {
     return test.fail("no match on ad");
   };
-  let Some(present) = regex.regex_captures("a(bc)?d", "abcd") else {
+  let Some(present) = { let __checked_regex_8: regex.Regex = match (regex.compile("a(bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_8.captures("abcd") } else {
     return test.fail("no match on abcd");
   };
-  return test.assert_true(!absent.has_group(1) && require_regex_text(absent.group(1)) == "" && present.has_group(1) && require_regex_text(present.group(1)) == "bc");
+  return test.assert_true(!absent.has_group(1) && match (absent.group(1)) { Ok(None()) => true, _ => false } && present.has_group(1) && require_regex_text(match (present.group(1)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "bc");
 }
 
 function test_captures_all(): test.TestOutcome {
-  let all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
-  return test.assert_true(all.len() == 2 && require_regex_text(all[0].group(1)) == "a" && require_regex_text(all[1].group(2)) == "d");
+  let all: regex.Captures[] = { let __checked_regex_7: regex.Regex = match (regex.compile("(\\w+)@(\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_7.captures_all("a@b c@d") };
+  return test.assert_true(all.len() == 2 && require_regex_text(match (all[0].group(1)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "a" && require_regex_text(match (all[1].group(2)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "d");
 }
 
 function test_captures_quantified_last_iteration(): test.TestOutcome {
-  let Some(m) = regex.regex_captures("(a|b)+", "ab") else {
+  // a group under `+` reports its LAST iteration's span
+  let Some(m) = { let __checked_regex_6: regex.Regex = match (regex.compile("(a|b)+")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_6.captures("ab") } else {
     return test.fail("no match");
   };
-  return test.assert_eq(require_regex_text(m.group(1)), "b");
+  return test.assert_eq(require_regex_text(match (m.group(1)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }), "b");
 }
 
 function test_named_groups(): test.TestOutcome {
-  let Some(m) = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07") else {
+  let Some(m) = { let __checked_regex_5: regex.Regex = match (regex.compile("(?<year>\\d{4})-(?<mon>\\d{2})")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_5.captures("date 2026-07") } else {
     return test.fail("no match");
   };
-  return test.assert_true(require_regex_text(m.group_named("year")) == "2026" && require_regex_text(m.group_named("mon")) == "07" && at(m.group_index("year"), 1) && at(m.group_index("mon"), 2) && require_regex_text(m.group(1)) == "2026");
+  return test.assert_true(require_regex_text(match (m.group_named("year")) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "2026" && require_regex_text(match (m.group_named("mon")) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "07" && at(m.group_index("year"), 1) && at(m.group_index("mon"), 2) && require_regex_text(match (m.group(1)) { Ok(__value) => __value, Err(__error) => { return test.fail(__error.to_string()); } }) == "2026");
 }
 
 function test_named_group_unknown(): test.TestOutcome {
-  let Some(m) = regex.regex_captures("(?<w>\\w+)", "hi") else {
+  let Some(m) = { let __checked_regex_4: regex.Regex = match (regex.compile("(?<w>\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_4.captures("hi") } else {
     return test.fail("no match");
   };
-  if (require_regex_text(m.group_named("nope")) != "" || !m.has_group_named("w") || m.has_group_named("nope")) {
+  if (!match (m.group_named("nope")) { Ok(None()) => true, _ => false } || !m.has_group_named("w") || m.has_group_named("nope")) {
     return test.fail("named accessors");
   }
   return test.assert_is_none_i32(m.group_index("nope"));
 }
 
 function test_replace_groups_numeric(): test.TestOutcome {
-  return test.assert_eq(require_regex_text(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1")), "b@a d@c");
+  return test.assert_eq(require_regex_text(match ({ let __checked_regex_3: regex.Regex = match (regex.compile("(\\w+)@(\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_3.replace_all_groups("a@b c@d", "$2@$1") }) { Ok(__text) => Some(__text), Err(__error) => { return test.fail(__error.to_string()); } }), "b@a d@c");
 }
 
 function test_replace_groups_named(): test.TestOutcome {
-  return test.assert_eq(require_regex_text(regex.regex_replace_all_groups("(?<k>\\w+)=(?<v>\\d+)", "a=1 b=22", "${v}:${k}")), "1:a 22:b");
+  return test.assert_eq(require_regex_text(match ({ let __checked_regex_2: regex.Regex = match (regex.compile("(?<k>\\w+)=(?<v>\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_2.replace_all_groups("a=1 b=22", "${v}:${k}") }) { Ok(__text) => Some(__text), Err(__error) => { return test.fail(__error.to_string()); } }), "1:a 22:b");
 }
 
 function test_replace_groups_escape(): test.TestOutcome {
-  return test.assert_true(require_regex_text(regex.regex_replace_all_groups("(\\d+)", "x5", "$$$1")) == "x$5" && require_regex_text(regex.regex_replace_groups("(\\d)", "1 2", "[$0]")) == "[1] 2");
+  // $$ → literal $, $0 → whole match, first-match-only
+  return test.assert_true(require_regex_text(match ({ let __checked_regex_1: regex.Regex = match (regex.compile("(\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_1.replace_all_groups("x5", "$$$1") }) { Ok(__text) => Some(__text), Err(__error) => { return test.fail(__error.to_string()); } }) == "x$5" && require_regex_text(match ({ let __checked_regex_0: regex.Regex = match (regex.compile("(\\d)")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_0.replace_groups("1 2", "[$0]") }) { Ok(__text) => Some(__text), Err(__error) => { return test.fail(__error.to_string()); } }) == "[1] 2");
 }
 
 function class_row(pattern: string, text: string): string {
-  if (regex.regex_full_match(pattern, text)) {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return "invalid regex";
+  };
+  if (compiled.is_full_match(text)) {
     return "1";
   }
   return "0";
@@ -134,10 +139,16 @@ function test_class_escapes(): test.TestOutcome {
 }
 
 function test_class_escape_group_numbering(): test.TestOutcome {
-  let Some(m) = regex.regex_captures("[\\](](?<n>b)", "(b") else {
+  let Ok(compiled) = regex.compile("[\\](](?<n>b)") else {
+    return test.fail("invalid regex");
+  };
+  let Some(m) = compiled.captures("(b") else {
     return test.fail("no match");
   };
-  return test.assert_true(m.group_count() == 1 && require_regex_text(m.group_named("n")) == "b" && at(m.group_index("n"), 1));
+  let Ok(group) = m.group_named("n") else {
+    return test.fail("invalid UTF-8");
+  };
+  return test.assert_true(m.group_count() == 1 && require_regex_text(group) == "b" && at(m.group_index("n"), 1));
 }
 
 function main(): i32 {

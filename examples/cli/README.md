@@ -79,8 +79,8 @@ $ wasmtime run --dir=. wc.wasm file.txt
   (`examples/wasm/wc.fern` shows the alternative streaming
   `io_buffered.LineReader` loop.)
 - **Number flags.** Integer operands (`head -n N`, `seq STEP`,
-  `fold -w N`, …) parse with `s.parse_int_or(fallback)` from
-  `std/string` — `parse_int` with a default baked in.
+  `fold -w N`, …) parse with `i32.parse_i32(s).unwrap_or(fallback)`.
+  Import `std/i32` and `std/result` for the parser and fallback method.
 - **Output.** `print(s)` adds a newline; `write(s)` does not (used when
   a tool must control its own line endings, e.g. `cat`/`head -c`,
   `tr`). Diagnostics go to `eprint`.
