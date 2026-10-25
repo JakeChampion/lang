@@ -1524,7 +1524,7 @@ function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
   }
   let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, space: space } };
   if (s.ack_wanted) {
-    cur = cur.__planned(frames.AckFrame(__ack_of(s, space, now)), false);
+    cur = cur.__ack_planned(space, now);
   }
   let window: boolean = cur.recovery.window() >= cur.config.max_datagram as i64 || cur.probes.contains(space);
   if (!window) {
@@ -1544,8 +1544,28 @@ function (c: Conn) __planned(f: frames.Frame, again: boolean): Conn {
 function (c: Conn) __pushed(f: frames.Frame): Conn {
   let payload: u8[] = c.plan.payload;
   let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
-  payload = frames.put(payload, f);
+  payload = frames.put(__started(payload, cur.config.max_datagram), f);
   return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload } };
+}
+
+function (c: Conn) __ack_planned(space: i32, now: i64): Conn {
+  let delay: i64 = __ack_delay(c.spaces[space], space, now);
+  let ranges: frames.AckRange[] = c.spaces[space].ranges;
+  let room: i32 = c.config.max_datagram;
+  let payload: u8[] = c.plan.payload;
+  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
+  payload = frames.put_ack(__started(payload, room), delay, ranges);
+  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload } };
+}
+
+// __started gives a plan's first frame a buffer the whole datagram fits in.
+function __started(own payload: u8[], room: i32): u8[] {
+  if (payload.len() > 0) {
+    return payload;
+  }
+  let out: u8[] = __alloc_u8(room);
+  __arr_set_len(out, 0);
+  return out;
 }
 
 function (c: Conn) __acked_out(space: i32): Conn {
@@ -1559,12 +1579,11 @@ function (c: Conn) __acked_out(space: i32): Conn {
   return Conn { ...c, key_unacked: unacked, spaces: c.spaces.with(space, Space { ...c.spaces[space], ack_wanted: false }) };
 }
 
-function __ack_of(s: Space, space: i32, now: i64): frames.Ack {
-  let delay: i64 = 0;
+function __ack_delay(s: Space, space: i32, now: i64): i64 {
   if (space == recovery.APPLICATION) {
-    delay = (now - s.largest_recv_at) / 1000 >> 3;
+    return (now - s.largest_recv_at) / 1000 >> 3;
   }
-  return frames.Ack { delay: delay, ranges: s.ranges, ecn: None };
+  return 0 as i64;
 }
 ```
 
