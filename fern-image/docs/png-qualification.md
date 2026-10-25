@@ -115,6 +115,17 @@ The filtered frame remains eager. These checks do not qualify an incremental inf
 The new raw records use the names `png-provider-native.json`, `png-provider-wasm.json`, and `png-provider-arm64.json`.
 Earlier corpus and row records retain their historical observations and hashes.
 
+All three provider campaigns pass 964 inputs across 61 fresh batches each.
+Each target accepts 142 inputs and rejects 822 inputs. All 183 batches report zero final live bytes.
+Case outcomes and pixel hashes agree exactly across the three targets.
+
+The source commit is `20b4a7ae11311f0df811092f7b30cb2a977711f5`. The compiler reports `6964c5998912`.
+The records hash all 163 workspace stdlib sources, package sources, the collector, reference libraries, compiler, and worker.
+Wasm and ARM64 records also hash the runner. The collector verifies all hashes again after each campaign.
+
+The complete 118 image TAP cases pass on native Linux, Wasm, and ARM64/QEMU with this compiler.
+Full current-head CI remains a separate gate.
+
 ## Reproduce
 
 Use CPython 3.12 on Linux x86-64 for the pinned reference wheel.

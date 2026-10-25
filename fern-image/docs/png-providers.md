@@ -87,3 +87,12 @@ The [PNG qualification record](png-qualification.md) describes the finite indepe
 The provider campaign also compares full graph rows and middle cropped tiles through legacy and fused execution.
 Historical corpus records retain their original compiler and source hashes.
 Generated gradients and seeded noise do not qualify photographs, broad codec compatibility, visual quality, or performance parity.
+
+All 118 current-source image TAP cases pass on these three targets.
+The native and Wasm scripts also pass the allocator/cache smoke modes.
+The native script also passes the compiler restriction probes.
+The portable ARM64 campaign covers nineteen executables and excludes Linux process RSS workloads.
+
+The compiler reports `6964c5998912`. Its compiler and stdlib sources match integrated main `f28bb6945`.
+Its SHA-256 is `3267853c7e9b38599ebbc1bb11fe7c07ccf86eae0b61d0b8411ebffb44453bd9`.
+Full current-head GitHub CI remains unverified.
