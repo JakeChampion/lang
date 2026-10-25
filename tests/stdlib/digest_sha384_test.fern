@@ -1,5 +1,6 @@
 import "std/test";
 import "std/crypto" as crypto;
+import "std/hex";
 import "std/string";
 
 function __pseudo(): u8[] {
@@ -23,22 +24,22 @@ function __thousand_a(): string {
 }
 
 function test_empty(): test.TestOutcome {
-  return test.assert_eq(crypto.sha384_new().final_hex(), "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b");
+  return test.assert_eq(hex.encode(crypto.sha384_new().finish()), "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b");
 }
 
 function test_abc(): test.TestOutcome {
-  return test.assert_eq(crypto.sha384_new().update("abc".as_bytes()).final_hex(), "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
+  return test.assert_eq(hex.encode(crypto.sha384_new().update("abc".as_bytes()).finish()), "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
 }
 
 function test_multiblock(): test.TestOutcome {
   return test.assert_eq(
-    crypto.sha384_new().update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu".as_bytes()).final_hex(),
+    hex.encode(crypto.sha384_new().update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu".as_bytes()).finish()),
     "09330c33f71147e83d192fc782cd1b4753111b173b3b05d22fa08086e3b0f712fcc7c71a557e2db966c3e9fa91746039",
   );
 }
 
 function test_bytes_len(): test.TestOutcome {
-  return test.assert_eq(crypto.sha384_new().update("abc".as_bytes()).final_bytes().len(), 48);
+  return test.assert_eq(crypto.sha384_new().update("abc".as_bytes()).finish().len(), 48);
 }
 
 function test_million_a_chunked(): test.TestOutcome {
@@ -49,7 +50,7 @@ function test_million_a_chunked(): test.TestOutcome {
     h = h.update(chunk.as_bytes());
     i = i + 1;
   }
-  return test.assert_eq(h.final_hex(), "9d0e1809716474cb086e834e310a4a1ced149e9c00f248527972cec5704c2a5b07b8b3dc38ecc4ebae97ddd87f3d8985");
+  return test.assert_eq(hex.encode(h.finish()), "9d0e1809716474cb086e834e310a4a1ced149e9c00f248527972cec5704c2a5b07b8b3dc38ecc4ebae97ddd87f3d8985");
 }
 
 function test_seven_byte_updates(): test.TestOutcome {
@@ -61,8 +62,8 @@ function test_seven_byte_updates(): test.TestOutcome {
     i = i + 7;
   }
   h = h.update(msg[i:10003]);
-  let chunked: string = h.final_hex();
-  let whole: string = crypto.sha384_new().update(msg).final_hex();
+  let chunked: string = hex.encode(h.finish());
+  let whole: string = hex.encode(crypto.sha384_new().update(msg).finish());
   if (chunked != "99f4ec4dd05d8d83aa70975a71c0485c3c5f2b213ef32aa599a7446e7a12c3ee7f7e9e4f33764515b7d9fb68eec19d87") {
     return test.fail("chunked: " + chunked);
   }
@@ -70,8 +71,8 @@ function test_seven_byte_updates(): test.TestOutcome {
 }
 
 function test_update_bytes_and_oneshot(): test.TestOutcome {
-  let via_bytes: string = crypto.sha384_new().update("abc".bytes()).final_hex();
-  if (via_bytes != crypto.sha384_hex("abc".as_bytes())) {
+  let via_bytes: string = hex.encode(crypto.sha384_new().update("abc".bytes()).finish());
+  if (via_bytes != hex.encode(crypto.sha384("abc".as_bytes()))) {
     return test.fail("one-shot differs: " + via_bytes);
   }
   return test.assert_eq(via_bytes, "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
@@ -82,7 +83,7 @@ function main(): i32 {
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);
-  r = r.it("final_bytes len", test_bytes_len);
+  r = r.it("finish len", test_bytes_len);
   r = r.it("million a, 1000x1000", test_million_a_chunked);
   r = r.it("7-byte updates", test_seven_byte_updates);
   r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);

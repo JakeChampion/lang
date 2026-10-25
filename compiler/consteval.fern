@@ -319,7 +319,7 @@ function unary(op: string, v: Value, ty: string): Value {
       return number(0 - n.value, ty);
     }
     if let FloatValue(n) = v.data {
-      return floating(0.0 - n.value);
+      return floating(-n.value);
     }
     return fail("unary `-` requires a number or float operand");
   }
@@ -362,11 +362,7 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
   let width: string = scalar_width(ty);
   match (e) {
     ast.ExprNumber(n) => {
-      let value = literal_number(n);
-      if ((width == "f32" || width == "f64") && n.suffix == "") {
-        return settle(value, width);
-      }
-      return value;
+      return literal_number(n);
     },
     ast.ExprBool(b) => {
       return logical(b.value);
@@ -405,7 +401,7 @@ pub function settle(v: Value, ty: string): Value {
   }
   if let IntValue(n) = v.data {
     if (ty == "f32" || ty == "f64") {
-      return floating(n.value as f64);
+      return fail("declared type " + ty + " does not match initialiser type i32");
     }
     return number(n.value, ty);
   }
@@ -430,7 +426,10 @@ function scalar_width(ty: parser.TypeRef): string {
 }
 
 function literal_number(n: ast.ExprNumber): Value {
-  if (n.is_float && !parser.float_settled_int(n)) {
+  if (parser.float_settled_int(n)) {
+    return floating((util.lit_to_i64(n.text) as u64) as f64);
+  }
+  if (n.is_float) {
     // The oracle retains f64 precision while it evaluates constant expressions.
     return floating(f64_from_bits(util.parse_f64_bits(n.text)));
   }

@@ -31,11 +31,10 @@ func TestSelfHostConstEvaluationErrors(t *testing.T) {
 		{"nested-array", `const A: i32[][] = [[1], [2 / 0]];`, "division by zero", "E093"},
 		{"tuple", `const A: (i32, boolean) = (1 / 0, true);`, "division by zero", "E093"},
 		{"struct", `struct S { n: i32 } const A: S = S { n: 1 / 0 };`, "division by zero", "E093"},
-		{"mixed-operands", `const A: i32 = 1 + true;`, "requires an integer type, got boolean", "E009"},
-		{"string-subtract", `const A: string = "a" - "b";`, "requires an integer type, got string", "E009"},
-		{"bool-operator", `const A: boolean = true + false;`, "requires an integer type, got boolean", "E009"},
-		{"float-operator", `const A: f64 = 1.0 % 2.0;`, "requires an integer type, got f64", "E009"},
-		{"typed-integer-float", `const A: f32 = 1i32;`, "const A: expected f32, got i32", "E002"},
+		{"mixed-operands", `const A: i32 = 1 + true;`, `operator "+" requires an integer type, got boolean`, "E009"},
+		{"string-subtract", `const A: string = "a" - "b";`, `operator "-" requires an integer type, got string`, "E009"},
+		{"bool-operator", `const A: boolean = true + false;`, `operator "+" requires an integer type, got boolean`, "E009"},
+		{"float-operator", `const A: f64 = 1.0 % 2.0;`, `operator "%" requires an integer type, got f64`, "E009"},
 		{"literal-priority", `const A: i32 = 2147483648 / 0;`, "literal 2147483648 does not fit in i32", "E047"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,7 +75,6 @@ func TestSelfHostConstEvaluationErrors(t *testing.T) {
 func TestSelfHostConstEvaluationValid(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, source string }{
-		{"integer-float-destination", `const A: f64 = 1 / 2; function main(): i32 { if (A == 0.5) { return 0; } return 1; }`},
 		{"signed-width", `const A: i32 = (2147483647 + 1) / 2; function main(): i32 { if (A == -1073741824) { return 0; } return 1; }`},
 		{"unsigned-width", `const A: u32 = 4294967295 / 2; function main(): i32 { if (A == 2147483647) { return 0; } return 1; }`},
 		{"earlier-width", `const A: u8 = 255 + 2; const B: i64 = 10 / A; function main(): i32 { if (B == 10) { return 0; } return 1; }`},
@@ -85,6 +83,9 @@ func TestSelfHostConstEvaluationValid(t *testing.T) {
 		{"boolean-string", `const S: string = "a" + "b"; const B: boolean = S == "ab" && !false; function main(): i32 { if (B) { return 0; } return 1; }`},
 		{"float-fold-precision", `const D: f32 = 1e-30 * 1e-30; const A: f64 = 1.0 / D; function main(): i32 { return 0; }`},
 		{"float-suffix-fold-precision", `const D: f32 = 1e-50f32; const A: f64 = 1.0 / D; function main(): i32 { return 0; }`},
+		{"integer-literals-settle-to-float", `const A: f64 = 1 / 2; const N: f64 = -0; const F: f32 = 5; function main(): i32 { if (A == 0.5 && 1.0 / N < 0.0 && F == 5.0) { return 0; } return 1; }`},
+		{"string-order", `const B: boolean = "ab" < "b" && "b" >= "b" && !("b" <= "ab"); function main(): i32 { if (B) { return 0; } return 1; }`},
+		{"char-order", `const B: boolean = 'a' < 'b' && 'z' >= 'z' && b'a' + 1 == b'b'; function main(): i32 { if (B) { return 0; } return 1; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

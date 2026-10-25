@@ -1,6 +1,7 @@
 package constfold
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -138,6 +139,59 @@ func TestFoldRejectsRuntimeExpression(t *testing.T) {
 const X: i32 = helper();`)
 	if !strings.Contains(got, "not a constant") {
 		t.Errorf("error should explain non-constant; got %v", got)
+	}
+}
+
+func TestFoldRejectsTypeMismatch(t *testing.T) {
+	got := foldErr(t, `const X: f32 = 7 % 2;`)
+	if !strings.Contains(got, "expected f32, got i32") {
+		t.Errorf("error should name both types; got %v", got)
+	}
+}
+
+func TestFoldSettlesIntegerLiteralsToFloat(t *testing.T) {
+	for src, want := range map[string]float64{
+		`const X: f32 = 5;`:      5,
+		`const X: f64 = 1 / 2;`:  0.5,
+		`const X: f64 = -3 * 2;`: -6,
+	} {
+		prog := fold(t, src+"\nfunction main(): f64 { return X; }")
+		lit, ok := returnLit(t, prog).(*ast.FloatLit)
+		if !ok {
+			t.Fatalf("%s: return value should be FloatLit, got %T", src, returnLit(t, prog))
+		}
+		if lit.Value != want {
+			t.Errorf("%s: got %v, want %v", src, lit.Value, want)
+		}
+	}
+	prog := fold(t, "const Z: f64 = -0;\nfunction main(): f64 { return Z; }")
+	if lit, ok := returnLit(t, prog).(*ast.FloatLit); !ok || !math.Signbit(lit.Value) {
+		t.Errorf("-0 should fold to negative zero, got %#v", returnLit(t, prog))
+	}
+}
+
+func TestFoldComparesStringsAndChars(t *testing.T) {
+	for src, want := range map[string]bool{
+		`const X: boolean = "a" < "b";`:   true,
+		`const X: boolean = "ab" >= "b";`: false,
+		`const X: boolean = "" <= "a";`:   true,
+		`const X: boolean = 'a' < 'b';`:   true,
+		`const X: boolean = 'z' <= 'b';`:  false,
+		`const X: boolean = 'a' == 'a';`:  true,
+		`const X: boolean = b'a' < b'b';`: true,
+	} {
+		prog := fold(t, src+"\nfunction main(): boolean { return X; }")
+		lit, ok := returnLit(t, prog).(*ast.BoolLit)
+		if !ok {
+			t.Fatalf("%s: return value should be BoolLit, got %T", src, returnLit(t, prog))
+		}
+		if lit.Value != want {
+			t.Errorf("%s: got %v, want %v", src, lit.Value, want)
+		}
+	}
+	prog := fold(t, "const X: u8 = b'a' + 1;\nfunction main(): u8 { return X; }")
+	if lit, ok := returnLit(t, prog).(*ast.NumberLit); !ok || lit.Value != 98 {
+		t.Errorf("b'a' + 1 should fold to 98, got %#v", returnLit(t, prog))
 	}
 }
 

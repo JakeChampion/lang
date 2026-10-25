@@ -1003,9 +1003,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
-	c.info.FuncSigs["__crc32_cksum_array"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.SliceType{Elem: ast.NumberType{Width: 8}}},
-		Result: ast.NumberType{Width: 32, Signed: true},
+	for _, name := range []string{"__crc32_cksum_array", "__crc32_ieee_array"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.SliceType{Elem: ast.NumberType{Width: 8}}},
+			Result: ast.NumberType{Width: 32, Signed: true},
+		}
 	}
 	c.info.FuncSigs["__bsd_sum_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
@@ -7971,7 +7973,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
 	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
-	"__crc32_cksum": true, "__crc32_cksum_array": true,
+	"__crc32_cksum": true, "__crc32_cksum_array": true, "__crc32_ieee_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,

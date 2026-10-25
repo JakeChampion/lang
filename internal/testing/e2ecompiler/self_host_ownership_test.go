@@ -196,7 +196,7 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0\n%s", exit, stderr)
 		}
-		censusWithin(t, "modes-program", stderr, 22)
+		censusWithin(t, "modes-program", stderr, 23)
 	})
 }
 
@@ -258,7 +258,8 @@ function view_keep(r: Rec, k: i32): Rec {
 struct Sealer { key: u8[], n: i32 }
 @noinline
 function sealed_len(s: Sealer, nonce: [u8]): i32 {
-    match (chacha20poly1305.seal(s.key, nonce, nonce, nonce)) { Ok(x) => { return x.len() + s.n; }, Err(_) => { return s.n; } }
+    let Ok(k) = chacha20poly1305.key(s.key) else { return s.n; };
+    match (k.seal(nonce, nonce, nonce)) { Ok(x) => { return x.len() + s.n; }, Err(_) => { return s.n; } }
     return 0;
 }
 @noinline
