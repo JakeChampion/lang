@@ -4,6 +4,7 @@ import "std/http/cors";
 import "std/http/router";
 import "std/platform";
 import "std/option";
+import "std/time";
 
 function header(resp: HttpResponse, name: string): string {
   return resp.headers.get(name).unwrap_or("-");
@@ -22,7 +23,7 @@ function failing_next(req: HttpRequest): Result[HttpResponse, dyn http.ToRespons
 }
 
 function app(): cors.Policy {
-  return cors.policy(["https://app.example.com", "https://*.preview.example.com"]).with_methods(["GET", "DELETE"]).with_headers(["X-Token"]).with_exposed(["X-Total"]).with_max_age(600 as i64);
+  return cors.policy(["https://app.example.com", "https://*.preview.example.com"]).with_methods(["GET", "DELETE"]).with_headers(["X-Token"]).with_exposed(["X-Total"]).with_max_age(time.duration_seconds(600));
 }
 
 function summary(resp: HttpResponse): string {

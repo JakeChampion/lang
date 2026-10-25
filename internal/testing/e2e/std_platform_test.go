@@ -12,12 +12,12 @@ function main(): i32 {
     // Wall clock: some time after 2020-09-13, which is the last moment
     // this assertion could have been written to fail.
     let floor: i64 = 1600000000000;
-    if (plat.now_ms() < floor) { return 2; }
+    if (plat.now().unix_millis() < floor) { return 2; }
 
     // Monotonic clock: non-decreasing between two readings.
-    let t0: i64 = plat.elapsed_ns();
-    let t1: i64 = plat.elapsed_ns();
-    if (t1 < t0) { return 3; }
+    let t0: Instant = plat.instant();
+    let t1: Instant = plat.instant();
+    if (t1.cmp(t0) < 0) { return 3; }
 
     // A variable nothing sets reads as None rather than "".
     match (plat.env("FERN_STD_PLATFORM_UNSET")) {

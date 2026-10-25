@@ -57,6 +57,18 @@ function test_timestamp_arithmetic(): test.TestOutcome {
   return test.assert_true(cmp.max(t, later).eq(later));
 }
 
+function test_timestamp_millis(): test.TestOutcome {
+  let t: time.Timestamp = time.timestamp_from_unix_millis(1700000000123);
+  if (t.sec != 1700000000 || t.nsec != 123000000 || t.unix_millis() != 1700000000123) {
+    return test.fail("positive millis");
+  }
+  let before: time.Timestamp = time.timestamp_from_unix_millis(0 - 1);
+  if (before.sec != 0 - 1 || before.nsec != 999000000) {
+    return test.fail("negative millis");
+  }
+  return test.assert_eq(before.unix_millis(), 0 - 1 as i64);
+}
+
 function main(): i32 {
   let t: test.TestRunner = test.test_new("time instant");
   t = t.it("now is monotonic", test_now_is_monotonic);
@@ -64,5 +76,6 @@ function main(): i32 {
   t = t.it("compare", test_compare);
   t = t.it("arithmetic saturates", test_arithmetic_saturates);
   t = t.it("timestamp arithmetic", test_timestamp_arithmetic);
+  t = t.it("timestamp millis", test_timestamp_millis);
   return t.finish();
 }

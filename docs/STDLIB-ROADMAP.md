@@ -711,7 +711,7 @@ think they're free additions to make.
   on no-match instead of `Option[None]`.
 - **`uuid.is_valid(s)`**: shape check for canonical 8-4-4-4-12
   hex UUID. Doesn't validate version / variant nibbles.
-- **`format_duration_ms(ms)`**: human-readable durations
+- **`format_duration(d)`**: human-readable durations
   like `"1h 23m 45s"` / `"500ms"`. Components only emitted
   when non-zero; `0` returns `"0ms"`.
 - **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`, each `Option[i32]`,

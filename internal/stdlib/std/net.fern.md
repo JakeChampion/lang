@@ -1367,18 +1367,18 @@ pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
 ```fern
 <<34 pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError]>>=
 pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError] {
-  return read_watched(sock, max, deadline.as_millis(), 1);
+  return read_watched(sock, max, deadline, 1);
 }
 
-pub function read_watched(sock: i32, max: i32, ms: i64, interest: i32): Result[Recv, NetError] {
-  let until: i64 = monotonic_ns() + ms * 1000000i64;
+pub function read_watched(sock: i32, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
+  let until: i64 = monotonic_ns() + wait.as_nanos();
   let set: i32[] = [sock, interest];
   while (true) {
     let wait_ms: i32 = ((until - monotonic_ns()) / 1000000i64) as i32;
     if (wait_ms < 1) {
       wait_ms = 1;
     }
-    let woke: i32 = async.wait_any(set, wait_ms);
+    let woke: i32 = async.wait_any(set, time.millis_timeout(wait_ms));
     if (woke == async.cancelled()) {
       return Ok(Abandoned);
     }

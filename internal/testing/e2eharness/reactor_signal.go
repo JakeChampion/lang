@@ -20,7 +20,7 @@ func ReactorSignalProbe(mode string) string {
 function watcher(port: i32): i32 {
     let d: async.RealDriver = async.real_driver();
     if (d.watch_parent() != 0) { return 1; }
-    let got: i32[] = d.wait(2, 10000);
+    let got: i32[] = d.wait(2, Some(time.duration_millis(10000)));
     if (got.len() < 2 || got[0] != 0 - 15 || got[1] != 1) { return 2; }
     match (net.connect(net.socket_addr(net.ipv4_loopback(), port))) { Ok(fd) => { tcp_close(fd); return 0; }, Err(e) => { return 3; } }
     return 3;
@@ -38,7 +38,7 @@ function parent_exit(drv: async.RealDriver): i32 {
     }
     if (child < 0 || proc_waitpid(child) != 0) { return 2; }
     if (drv.watch(ln, 1) != 0) { return 3; }
-    let got: i32[] = drv.wait(2, 15000);
+    let got: i32[] = drv.wait(2, Some(time.duration_millis(15000)));
     if (got.len() < 2 || got[0] != ln) { return 4; }
     match (net.accept(ln)) { Ok(fd) => { tcp_close(fd); }, Err(e) => { return 5; } }
     drv.unwatch(ln);
@@ -51,13 +51,13 @@ function parent_exit(drv: async.RealDriver): i32 {
 		deliver = ""
 	}
 	body := `    if (drv.watch_signal(sigusr1()) != 0) { return fail(2); }
-    if (drv.wait(2, 20).len() != 0) { return fail(3); }
+    if (drv.wait(2, Some(time.duration_millis(20))).len() != 0) { return fail(3); }
     if (deliver() != 0) { return fail(4); }
-    let got: i32[] = drv.wait(2, 2000);
+    let got: i32[] = drv.wait(2, Some(time.duration_millis(2000)));
     if (got.len() < 2 || got[0] != 0 - sigusr1() || got[1] != 1) { return fail(5); }
-    if (drv.wait(2, 20).len() != 0) { return fail(6); }
+    if (drv.wait(2, Some(time.duration_millis(20))).len() != 0) { return fail(6); }
     if (deliver() != 0) { return fail(4); }
-    got = drv.wait(2, 2000);
+    got = drv.wait(2, Some(time.duration_millis(2000)));
     if (got.len() < 2 || got[0] != 0 - sigusr1()) { return fail(7); }
     if (drv.unwatch_signal(sigusr1()) != 0) { return fail(8); }
     if (drv.watch_signal(sigusr1()) != 0) { return fail(9); }
@@ -65,6 +65,7 @@ function parent_exit(drv: async.RealDriver): i32 {
 `
 	imports := `import "core/int";
 import "std/async";
+import "std/time";
 `
 	switch mode {
 	case "native":

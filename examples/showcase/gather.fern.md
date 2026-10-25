@@ -26,6 +26,7 @@ State updates contain no suspension point. An update detaches its array from the
 
 ```fern
 <<State and seats>>=
+import "std/time";
 import "std/http";
 import "std/http/websocket";
 import "std/async";
@@ -439,7 +440,7 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
   match (websocket.accept_with_push(request, options, handlers, (connection: websocket.Conn): void => {
     while (alive.get() && !async.task_cancelled()) {
       if (!opened.get()) {
-        let waited = async.wait_any([] as i32[], 1);
+        let waited = async.wait_any([] as i32[], Some(time.duration_millis(1)));
         continue;
       }
       let now = monotonic_ns();
@@ -461,7 +462,7 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
         }
       }
       let delay = ((state.updated.get().unwrap_or(now) + PERIOD - monotonic_ns() + 999999) / 1000000).max(1).min(100) as i32;
-      let waited = async.wait_any([] as i32[], delay);
+      let waited = async.wait_any([] as i32[], Some(time.duration_millis(delay)));
     }
     alive.set(false);
     release(state, seat);

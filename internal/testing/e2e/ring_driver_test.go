@@ -8,10 +8,11 @@ import (
 )
 
 const ringDriverProbe = `import "std/async";
+import "std/time";
 import "std/i32";
 
 function pairs(d: async.RealDriver, ms: i32): i32[] {
-  return d.wait(64, ms);
+  return d.wait(64, Some(time.duration_millis(ms)));
 }
 
 function main(): i32 {
@@ -168,10 +169,11 @@ func TestRingDriverArm64(t *testing.T) {
 }
 
 const ringRecvProbe = `import "std/async";
+import "std/time";
 import "std/i32";
 
 function pairs(d: async.RealDriver, ms: i32): i32[] {
-  return d.wait(64, ms);
+  return d.wait(64, Some(time.duration_millis(ms)));
 }
 
 function text(buf: u8[], n: i32): string {
@@ -363,6 +365,7 @@ func TestRingRecvInterp(t *testing.T) { runRingRecvProbe(t, "interp") }
 func TestRingRecvArm64(t *testing.T)  { runRingRecvProbe(t, "arm64-linux") }
 
 const ringZcProbe = `import "std/async";
+import "std/time";
 import "std/i32";
 
 function pattern(n: i32): u8[] {
@@ -401,13 +404,13 @@ function send(d: async.RealDriver, a: i32, c: i32, data: u8[], from: i32): strin
   if (s < 0) {
     return "refused " + s.to_string();
   }
-  let ev: i32[] = d.wait(64, 2000);
+  let ev: i32[] = d.wait(64, Some(time.duration_millis(2000)));
   let reported: boolean = ev.len() == 2 && ev[0] == a && (ev[1] & 2) == 2;
   let r: i32 = d.zc_result(s);
   let ok: boolean = read_back(c, r, from);
   let tries: i32 = 0;
   while (!d.zc_notified(s) && tries < 50) {
-    d.wait(64, 100);
+    d.wait(64, Some(time.duration_millis(100)));
     tries = tries + 1;
   }
   return "reported " + reported.to_string() + " wrote " + r.to_string() + " read " + ok.to_string() + " notified " + d.zc_notified(s).to_string() + " released " + d.zc_release(s).to_string();

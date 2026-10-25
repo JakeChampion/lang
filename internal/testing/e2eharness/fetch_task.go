@@ -3,7 +3,8 @@ package e2eharness
 import "fmt"
 
 func FetchTaskProgram(port int) string {
-	return fmt.Sprintf(`import "std/async";
+	return fmt.Sprintf(`import "std/time";
+import "std/async";
 import "std/fetch";
 import "std/http";
 import "std/i32";
@@ -46,7 +47,7 @@ function main(): i32 {
         if (parks == 1) {
           plain_first = status(fetch.send(fetch.get(base() + "/plain"))) == 200;
         }
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, woke);
       },
       Cancelled => { out = 0 - 2; going = false; }

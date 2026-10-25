@@ -15,13 +15,13 @@ import "std/time";
 function nap(label: string, ms: i32, v: i32): i32 {
   defer print("done " + label);
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, ms);
+  let r: i32 = async.wait_any(none, Some(time.duration_millis(ms)));
   return v;
 }
 
 function quiet(ms: i32, v: i32): i32 {
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, ms);
+  let r: i32 = async.wait_any(none, Some(time.duration_millis(ms)));
   return v;
 }
 
@@ -38,7 +38,7 @@ function show_opt(o: Option[i32]): string {
 
 function leaf(n: i32): i32 {
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, 1);
+  let r: i32 = async.wait_any(none, Some(time.duration_millis(1)));
   return r + n;
 }
 
@@ -75,7 +75,7 @@ function held(): i32 {
         going = false;
       },
       Suspended(w) => {
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, woke);
       },
       Cancelled => {
