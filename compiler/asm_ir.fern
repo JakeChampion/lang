@@ -6017,7 +6017,7 @@ function ssa_bits_asm(what: string, d: string): string {
     return "    bswapq " + d + "\n";
   }
   if (what == "bswap:32") {
-    return "    bswapl " + ssa_r32(d) + "\n";
+    return "    bswapl " + ssa_r32(d) + "\n    movslq " + ssa_r32(d) + ", " + d + "\n";
   }
   return "";
 }

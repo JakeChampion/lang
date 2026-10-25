@@ -2295,7 +2295,7 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
     return "    rev " + d + ", " + src + "\n";
   }
   if (what == "bswap:32") {
-    return "    rev " + w + ", " + ws + "\n";
+    return "    rev " + w + ", " + ws + "\n    sxtw " + d + ", " + w + "\n";
   }
   if (what == "clz:32") {
     return "    clz " + w + ", " + ws + "\n";
@@ -2333,7 +2333,7 @@ function ssa_bits_asm(what: string, d: string): string {
     return "    rev " + d + ", " + d + "\n";
   }
   if (what == "bswap:32") {
-    return "    rev " + w + ", " + w + "\n";
+    return "    rev " + w + ", " + w + "\n    sxtw " + d + ", " + w + "\n";
   }
   return "";
 }
