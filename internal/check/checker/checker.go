@@ -7431,6 +7431,10 @@ func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[strin
 	if c.unifyType(want, got, sub) {
 		return true
 	}
+	// A parameter whose type parameters are all bound takes what a parameter written with that type takes.
+	if bound := substituteType(want, sub); !containsParamType(bound) && c.argAssignable(bound, got, own) {
+		return true
+	}
 	if own {
 		return false
 	}
