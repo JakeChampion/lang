@@ -21,6 +21,7 @@ export function shell(
   document.title = `${name} · Fern, in action`;
   document.body.className = `app-page labs-page ${slug}-page`;
   document.body.innerHTML = `<a class="skip-link" href="#main">Skip to application</a><header class="app-nav"><a class="brand" href="/" aria-label="Fern, in action home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Fern</span><span class="brand-suffix">in action</span></a><nav><a href="/">All examples</a><a href="${source}">View source ↗</a></nav></header><main id="main"><div class="app-heading"><section class="app-intro"><div class="eyebrow"><span>${index}</span>${eyebrow}</div><h1>${name}</h1><p>${description}</p></section></div><div class="lab"><div class="toolbar"><div id="actions"></div><div id="fullscreen"></div><span id="connection" class="status" role="status">Ready</span></div><aside class="sidebar">${controls}<details><summary>How this works</summary><p id="lesson" class="hint"></p><a href="${source}">Open the source lesson</a></details></aside><section class="stage" id="stage">${stage}</section><output class="readout" id="metrics" aria-live="off">Start an experiment to measure it.</output></div></main><footer class="app-footer"><span>Built with Fern.</span><a href="/_src/">Read the source ↗</a></footer>`;
+  window.fernTheme?.mount(document.querySelector(".app-nav nav"));
   mountFullscreen(document.querySelector(".lab"), {
     container: $("fullscreen"),
   });
@@ -150,8 +151,6 @@ export function checkpoint(app) {
     },
     "checkpoint",
   );
-  button.disabled = true;
-  button.title =
-    "Checkpoint storage requires a persistent server volume. Export works in every mode.";
+  button.hidden = true;
   return button;
 }

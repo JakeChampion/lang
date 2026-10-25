@@ -46,7 +46,7 @@ function test_fake_imports(): test.TestOutcome {
 function test_escape_html(): test.TestOutcome {
   let html: string = source.render("<title>&", "// </code></pre><script>alert('x')</script>\nlet text: string = \"<&>\";\n");
   return test.assert_true(
-    !html.contains("<script>") && html.contains("&lt;script&gt;") && html.contains("&lt;title&gt;&amp;")
+    !html.contains("<script>alert(") && html.contains("&lt;script&gt;alert(") && html.contains("&lt;title&gt;&amp;")
       && html.contains("&lt;&amp;&gt;"),
   );
 }

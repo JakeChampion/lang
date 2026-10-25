@@ -161,6 +161,23 @@ jobs:
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml"
               ] },
+              "showcase": { "paths": [
+                "examples/showcase/**",
+                "examples/fractal/**",
+                "site/src/styles/**",
+                "site/src/assets/fonts/**",
+                "cmd/fern/**",
+                "compiler/**",
+                "internal/**",
+                "Makefile",
+                "mise.toml",
+                "mise.lock",
+                "go.mod",
+                ".github/workflows/showcase.yml",
+                ".github/workflows/ci-suite.yml",
+                ".github/workflows/ci-main.yml",
+                ".github/workflows/ci.yml"
+              ] },
               "vscode-extension": { "paths": [
                 "editors/vscode/**",
                 ".github/workflows/vscode-extension.yml",

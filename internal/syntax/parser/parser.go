@@ -4550,6 +4550,13 @@ func (p *parser) parseCast() (ast.Expr, error) {
 	return expr, nil
 }
 
+func (p *parser) parseDelimitedExpr() (ast.Expr, error) {
+	previous := p.noStructLit
+	p.noStructLit = false
+	defer func() { p.noStructLit = previous }()
+	return p.parseExpr()
+}
+
 func (p *parser) parseCallArgs() ([]ast.Expr, []string, error) {
 	var args []ast.Expr
 	var names []string
@@ -4566,7 +4573,7 @@ func (p *parser) parseCallArgs() ([]ast.Expr, []string, error) {
 			p.advance()
 			anyNamed = true
 		}
-		a, err := p.parseExpr()
+		a, err := p.parseDelimitedExpr()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -4641,7 +4648,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			if _, ok := p.accept(lexer.Punct, ":"); ok {
 				var high ast.Expr
 				if !p.match(lexer.Punct, "]") {
-					h, err := p.parseExpr()
+					h, err := p.parseDelimitedExpr()
 					if err != nil {
 						return nil, err
 					}
@@ -4653,14 +4660,14 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				expr = &ast.SliceExpr{P: open.Pos, Source: expr, High: high}
 				continue
 			}
-			first, err := p.parseExpr()
+			first, err := p.parseDelimitedExpr()
 			if err != nil {
 				return nil, err
 			}
 			if _, ok := p.accept(lexer.Punct, ":"); ok {
 				var high ast.Expr
 				if !p.match(lexer.Punct, "]") {
-					h, err := p.parseExpr()
+					h, err := p.parseDelimitedExpr()
 					if err != nil {
 						return nil, err
 					}
@@ -5123,7 +5130,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			if _, ok := p.accept(lexer.Punct, ")"); ok {
 				return &ast.UnitLit{P: open.Pos}, nil
 			}
-			first, err := p.parseExpr()
+			first, err := p.parseDelimitedExpr()
 			if err != nil {
 				return nil, err
 			}
@@ -5138,7 +5145,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 				if p.match(lexer.Punct, ")") {
 					break
 				}
-				e, err := p.parseExpr()
+				e, err := p.parseDelimitedExpr()
 				if err != nil {
 					return nil, err
 				}
@@ -5155,7 +5162,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			open := p.advance()
 			var elems []ast.Expr
 			for !p.match(lexer.Punct, "]") {
-				e, err := p.parseExpr()
+				e, err := p.parseDelimitedExpr()
 				if err != nil {
 					return nil, err
 				}

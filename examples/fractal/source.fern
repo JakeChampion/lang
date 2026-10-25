@@ -79,7 +79,7 @@ pub function render_files(name: string, text: string, files: string[]): string {
         html = html.replace(weave.highlight_fern(line), highlight_from(line, name, files));
       }
     }
-    return html.replace_first("</head>", "<style>" + theme() + lesson_styles() + "</style></head>").replace_first("<body>", "<body>" + header());
+    return html.replace_first("</head>", stored_theme() + "<style>" + theme() + lesson_styles() + "</style></head>").replace_first("<body>", "<body>" + header());
   }
   let body: string = "<h1>" + weave.html_escape(name) + "</h1>" + navigation(name, files) + "<pre class=\"code\"><code>";
   let lines: string[] = text.split("\n");
@@ -215,7 +215,7 @@ function navigation(current: string, files: string[]): string {
 
 function layout(title: string, body: string): string {
   return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    + "<title>" + weave.html_escape(title) + " · Fern source</title><style>" + theme() + styles() + "</style></head><body>"
+    + "<title>" + weave.html_escape(title) + " · Fern source</title>" + stored_theme() + "<style>" + theme() + styles() + "</style></head><body>"
     + header() + "<main>" + body + "</main></body></html>";
 }
 
@@ -225,13 +225,19 @@ function header(): string {
 }
 
 // The palette and fonts of the Fern documentation site, shared with the showcase.
+// Applies the theme the visitor chose in the showcase navigation.
+function stored_theme(): string {
+  return "<script>try{var t=localStorage.getItem('fern-theme');if(t=='light'||t=='dark')document.documentElement.dataset.theme=t}catch(e){}</script>";
+}
+
 function theme(): string {
   return "@font-face{font-family:'Fraunces';font-weight:400 700;font-display:swap;src:url(/assets/fonts/fraunces-400-700-latin.woff2) format('woff2')}"
     + "@font-face{font-family:'IBM Plex Mono';font-weight:400;font-display:swap;src:url(/assets/fonts/ibm-plex-mono-400-latin.woff2) format('woff2')}"
-    + ":root{color-scheme:dark;--bg:#101a15;--nav:#141f19;--raised:#131e18;--line:#2c3d33;--text:#b9c8be;--strong:#f2f7f3;--muted:#8ba394;--accent:#9ddcbc;--accent-low:#12291f;--spore:#b08331;"
-    + "--kw:#d9b169;--ty:#9ddcbc;--st:#c3d99a;--nu:#e0a387;--display:'Fraunces',Georgia,serif;--mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace}"
-    + "@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#faf7f0;--nav:#f6f2e9;--raised:#f5f1e7;--line:#ddd8c9;--text:#3b4d43;--strong:#16241d;--muted:#5d6f64;--accent:#2b6a4d;--accent-low:#d8f3dc;--spore:#8a6520;"
-    + "--kw:#8a6520;--ty:#2b6a4d;--st:#5b6b1f;--nu:#a4472d}}"
+    + ":root{color-scheme:light dark;--bg:light-dark(#faf7f0,#101a15);--nav:light-dark(#f6f2e9,#141f19);--raised:light-dark(#f5f1e7,#131e18);--line:light-dark(#ddd8c9,#2c3d33);"
+    + "--text:light-dark(#3b4d43,#b9c8be);--strong:light-dark(#16241d,#f2f7f3);--muted:light-dark(#5d6f64,#8ba394);--accent:light-dark(#2b6a4d,#9ddcbc);--accent-low:light-dark(#d8f3dc,#12291f);"
+    + "--spore:light-dark(#8a6520,#b08331);--kw:light-dark(#8a6520,#d9b169);--ty:light-dark(#2b6a4d,#9ddcbc);--st:light-dark(#5b6b1f,#c3d99a);--nu:light-dark(#a4472d,#e0a387);"
+    + "--display:'Fraunces',Georgia,serif;--mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace}"
+    + ":root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}"
     + "*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}"
     + "a{color:var(--accent);text-underline-offset:.22em}a:focus-visible{outline:2px solid var(--spore);outline-offset:2px}"
     + "h1,h2,h3{color:var(--strong);font-family:var(--display);font-weight:600;font-variation-settings:'SOFT' 30,'WONK' 1;letter-spacing:-.01em}"

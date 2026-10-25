@@ -1,0 +1,20 @@
+watch on both: 0 0
+send: 2
+close the older reactor: 0
+close the socket: 0
+newer reactor idle: 0
+close it: 0
+watch on both: 0 0
+close the newer reactor: 0
+close the socket: 0
+older reactor idle: 0
+close it: 0
+watch on the outer two: 0 0
+send: 1
+close the middle reactor: 0
+close the socket: 0
+idle: 0 0
+watch a new socket: 0
+send: 1
+reactor_wait: 1 fd true readable true
+close: 0 0 0 0 0 0

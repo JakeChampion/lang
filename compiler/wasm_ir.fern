@@ -675,7 +675,7 @@ pub function module_uses_scale_f64(cache: irtables.LowerResult[]): boolean {
 
 pub function module_uses_aes_gcm(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "aes_expand_key") || module_emits_op_cached(cache, "aes_ctr32") || module_emits_op_cached(cache, "ghash")
-    || module_emits_op_cached(cache, "aes_gcm_seal") || module_emits_op_cached(cache, "aes_gcm_open");
+    || module_emits_op_cached(cache, "aes_gcm_seal_into") || module_emits_op_cached(cache, "aes_gcm_open_into");
 }
 
 pub function module_uses_sha_hw_blocks(cache: irtables.LowerResult[]): boolean {
@@ -3238,10 +3238,11 @@ pub function tcp_accept_func(): string {
   o = o + "  (func $__fern_tcp_accept (param $l i32) (result i32)\n";
   o = o + "    (local $sock i32) (local $p i32) (local $ret i32) (local $st i32) (local $e i32)\n";
   o = o + "    (local.set $sock (i32.load (local.get $l)))\n";
-  o = o + "    (if (i32.eqz (i32.load offset=16 (local.get $l))) (then\n";
-  o = o + "      (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
-  o = o + "      (call $__fern_wasi_pollable_block (local.get $p))\n";
-  o = o + "      (call $__fern_wasi_pollable_drop (local.get $p))))\n";
+  o = o + "    (if (i32.eqz (i32.load offset=12 (local.get $l))) (then\n";
+  o = o + "      (if (i32.eqz (i32.load offset=16 (local.get $l))) (then\n";
+  o = o + "        (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
+  o = o + "        (call $__fern_wasi_pollable_block (local.get $p))\n";
+  o = o + "        (call $__fern_wasi_pollable_drop (local.get $p))))))\n";
   o = o + "    (local.set $ret (call $__fern_alloc (i32.const 20)))\n";
   o = o + "    (call $__fern_wasi_tcp_accept (local.get $sock) (local.get $ret))\n";
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
@@ -3360,7 +3361,7 @@ pub function reactor_new_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_reactor_new (result i32)\n";
   o = o + "    (local $hdr i32)\n";
-  o = o + "    (local.set $hdr (call $__fern_alloc (i32.const 28)))\n";
+  o = o + "    (local.set $hdr (call $__fern_alloc (i32.const 32)))\n";
   o = o + "    (i32.store (local.get $hdr) (i32.const 0))\n";
   o = o + "    (i32.store offset=4 (local.get $hdr) (i32.const 16))\n";
   o = o + "    (i32.store offset=8 (local.get $hdr) (call $__fern_alloc (i32.const 256)))\n";
@@ -3368,6 +3369,8 @@ pub function reactor_new_func(): string {
   o = o + "    (i32.store offset=16 (local.get $hdr) (call $__fern_alloc (i32.const 264)))\n";
   o = o + "    (i32.store offset=20 (local.get $hdr) (i32.const 33))\n";
   o = o + "    (i32.store offset=24 (local.get $hdr) (call $__fern_alloc (i32.const 132)))\n";
+  o = o + "    (i32.store offset=28 (local.get $hdr) (global.get $__fern_reactors))\n";
+  o = o + "    (global.set $__fern_reactors (local.get $hdr))\n";
   o = o + "    (local.get $hdr))\n";
   return o;
 }
@@ -3387,10 +3390,27 @@ function reactor_subscribe(kind: i32, read_sub: string, write_sub: string, read_
   return o;
 }
 
+pub function reactor_list_global(): string {
+  return "  (global $__fern_reactors (mut i32) (i32.const 0))\n";
+}
+
+pub function reactor_forget_func(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_reactor_forget (param $fd i32)\n";
+  o = o + "    (local $r i32)\n";
+  o = o + "    (local.set $r (global.get $__fern_reactors))\n";
+  o = o + "    (block $done (loop $each\n";
+  o = o + "      (br_if $done (i32.eqz (local.get $r)))\n";
+  o = o + "      (drop (call $__fern_reactor_ctl (local.get $r) (i32.const 2) (local.get $fd) (i32.const 0)))\n";
+  o = o + "      (local.set $r (i32.load offset=28 (local.get $r)))\n";
+  o = o + "      (br $each))))\n";
+  return o;
+}
+
 pub function reactor_ctl_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_reactor_ctl (param $r i32) (param $op i32) (param $fd i32) (param $arg i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $ents i32) (local $i i32) (local $e i32) (local $interest i32) (local $kind i32) (local $cap i32) (local $grown i32)\n";
+  o = o + "    (local $n i32) (local $ents i32) (local $i i32) (local $e i32) (local $interest i32) (local $kind i32) (local $cap i32) (local $grown i32) (local $prev i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $r)))\n";
   o = o + "    (local.set $cap (i32.load offset=4 (local.get $r)))\n";
   o = o + "    (local.set $ents (i32.load offset=8 (local.get $r)))\n";
@@ -3406,7 +3426,18 @@ pub function reactor_ctl_func(): string {
   o = o + "      (call $__fern_raw_free (i32.load offset=12 (local.get $r)) (i32.mul (i32.load offset=20 (local.get $r)) (i32.const 4)))\n";
   o = o + "      (call $__fern_raw_free (i32.load offset=16 (local.get $r)) (i32.mul (i32.load offset=20 (local.get $r)) (i32.const 8)))\n";
   o = o + "      (call $__fern_raw_free (i32.load offset=24 (local.get $r)) (i32.mul (i32.load offset=20 (local.get $r)) (i32.const 4)))\n";
-  o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 28))\n";
+  o = o + "      (if (i32.eq (global.get $__fern_reactors) (local.get $r))\n";
+  o = o + "        (then (global.set $__fern_reactors (i32.load offset=28 (local.get $r))))\n";
+  o = o + "        (else\n";
+  o = o + "          (local.set $prev (global.get $__fern_reactors))\n";
+  o = o + "          (block $unlinked (loop $walk\n";
+  o = o + "            (br_if $unlinked (i32.eqz (local.get $prev)))\n";
+  o = o + "            (if (i32.eq (i32.load offset=28 (local.get $prev)) (local.get $r)) (then\n";
+  o = o + "              (i32.store offset=28 (local.get $prev) (i32.load offset=28 (local.get $r)))\n";
+  o = o + "              (br $unlinked)))\n";
+  o = o + "            (local.set $prev (i32.load offset=28 (local.get $prev)))\n";
+  o = o + "            (br $walk)))))\n";
+  o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 32))\n";
   o = o + "      (return (i32.const 0))))\n";
   o = o + "    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 4)) (i32.const 3)) (then (return (i32.const -58))))\n";
   o = o + "    (if (i32.ge_u (i32.sub (local.get $op) (i32.const 1)) (i32.const 2)) (then (return (i32.const -28))))\n";
@@ -3811,9 +3842,12 @@ pub function tcp_send_buf_func(): string {
 
 // With sends linked, a connection's output stream is flushed before it is
 // dropped: wasmtime cancels a write still in flight when its stream drops.
-pub function tcp_close_func(udp: boolean, sends: boolean): string {
+pub function tcp_close_func(udp: boolean, watched: boolean, sends: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
+  if (watched) {
+    o = o + "    (call $__fern_reactor_forget (local.get $c))\n";
+  }
   if (udp) {
     o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (call $__fern_udp_close (local.get $c)))))\n";
   }
@@ -9902,7 +9936,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(pollable_drop_func());
   }
   if (need(needs, "tcp_close")) {
-    parts = parts.append(tcp_close_func(need_udp_socket(needs), need_tcp_send(needs)));
+    parts = parts.append(tcp_close_func(need_udp_socket(needs), need(needs, "reactor_ctl"), need_tcp_send(needs)));
   }
   if (need_tcp_send(needs)) {
     parts = parts.append(tcp_send_helpers());
@@ -9955,11 +9989,15 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "udp_recvfrom")) {
     parts = parts.append(udp_recvfrom_func());
   }
+  if (need_any(needs, ["reactor_new", "reactor_ctl"])) {
+    parts = parts.append(reactor_list_global());
+  }
   if (need(needs, "reactor_new")) {
     parts = parts.append(reactor_new_func());
   }
   if (need(needs, "reactor_ctl")) {
     parts = parts.append(reactor_ctl_func());
+    parts = parts.append(reactor_forget_func());
   }
   if (need(needs, "reactor_wait")) {
     parts = parts.append(reactor_wait_func());
@@ -10242,6 +10280,11 @@ pub function extern_array_param_supported(t: string): boolean {
   }
   let k: str = slice_unchecked(t, 0, t.len() - 2);
   return k == "i32" || k == "u32" || k == "i64" || k == "u64" || k == "f32" || k == "f64";
+}
+
+// The list types an @export function takes and returns through the canonical ABI.
+pub function extern_export_list(t: string): boolean {
+  return extern_array_param_supported(t) || t == "u8[]";
 }
 
 pub function extern_byte_array_param(t: string): boolean {
@@ -11442,7 +11485,7 @@ pub function export_has_string_param(params: ast.ParamDecl[]): boolean {
 pub function export_has_numeric_array_param(params: ast.ParamDecl[]): boolean {
   let i: i32 = 0;
   while (i < params.len()) {
-    if (extern_array_param_supported(params[i].type_name)) {
+    if (extern_export_list(params[i].type_name)) {
       return true;
     }
     i = i + 1;
@@ -11466,7 +11509,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
   let nblk: i32 = 0;
   let j: i32 = 0;
   while (j < params.len()) {
-    if (params[j].type_name == "string" || extern_array_param_supported(params[j].type_name)) {
+    if (params[j].type_name == "string" || extern_export_list(params[j].type_name)) {
       w_slots = w_slots + 2;
       nblk = nblk + 1;
     } else {
@@ -11475,7 +11518,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     j = j + 1;
   }
   let str_result: boolean = ret == "string";
-  let arr_result: boolean = extern_array_param_supported(ret);
+  let arr_result: boolean = extern_export_list(ret);
   let sum_result: boolean = extern_sum_param_supported(ret);
   let tup_result: boolean = extern_tuple_param_supported(ret);
   let i_local: i32 = w_slots + nblk;
@@ -11493,7 +11536,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
   let head: string = "  (func $__xwrap_" + fname;
   j = 0;
   while (j < params.len()) {
-    if (params[j].type_name == "string" || extern_array_param_supported(params[j].type_name)) {
+    if (params[j].type_name == "string" || extern_export_list(params[j].type_name)) {
       head = head + " (param i32) (param i32)";
     } else {
       head = head + " (param " + wat_extern_valtype(params[j].type_name) + ")";
@@ -11552,6 +11595,16 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       callargs = callargs + " (local.get " + blkS + ")";
       blk = blk + 1;
       wp = wp + 2;
+    } else if (params[j].type_name == "u8[]") {
+      let bblkS: string = util.i32_to_string(blk);
+      let blenS: string = util.i32_to_string(wp + 1);
+      body = body + "    (local.set " + bblkS + " (call $__fern_arr_elems (local.get " + blenS + ") (i32.const 1)))\n";
+      body = body + "    (i32.store (local.get " + bblkS + ") (local.get " + blenS + "))\n";
+      body = body + "    (i32.store offset=4 (local.get " + bblkS + ") (local.get " + blenS + "))\n";
+      body = body + "    (memory.copy (i32.add (local.get " + bblkS + ") (i32.const 8)) (local.get " + util.i32_to_string(wp) + ") (local.get " + blenS + "))\n";
+      callargs = callargs + " (local.get " + bblkS + ")";
+      blk = blk + 1;
+      wp = wp + 2;
     } else if (extern_array_param_supported(params[j].type_name)) {
       let akind: str = slice_unchecked(params[j].type_name, 0, params[j].type_name.len() - 2);
       let assz: string = util.i32_to_string(elem_slot_size(akind));
@@ -11587,6 +11640,15 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     body = body + "    (i32.store (local.get " + raS + ") (i32.add (local.get " + sS + ") (i32.const 4)))\n";
     body = body + "    (i32.store (i32.add (local.get " + raS + ") (i32.const 4)) (i32.load (local.get " + sS + ")))\n";
     body = body + "    (local.get " + raS + "))\n";
+  } else if (ret == "u8[]") {
+    let aS: string = util.i32_to_string(arr_arr);
+    let raS2: string = util.i32_to_string(arr_ra);
+    body = body + "    (local.set " + aS + " (call $" + fname + callargs + "))\n";
+    body = body + byte_view_decode(aS, util.i32_to_string(arr_buf), util.i32_to_string(arr_alen));
+    body = body + "    (local.set " + raS2 + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
+    body = body + "    (i32.store (local.get " + raS2 + ") (local.get " + util.i32_to_string(arr_buf) + "))\n";
+    body = body + "    (i32.store (i32.add (local.get " + raS2 + ") (i32.const 4)) (local.get " + util.i32_to_string(arr_alen) + "))\n";
+    body = body + "    (local.get " + raS2 + "))\n";
   } else if (arr_result) {
     let rk: str = slice_unchecked(ret, 0, ret.len() - 2);
     let ss: string = util.i32_to_string(elem_slot_size(rk));
@@ -11648,7 +11710,7 @@ pub function export_needs_heap(mod: parser.Module): boolean {
   while (i < mod.exports.len()) {
     let nm: string = mod.exports[i].func_name;
     let params: ast.ParamDecl[] = export_func_params(mod, nm);
-    if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_array_param_supported(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
+    if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_export_list(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
       return true;
     }
     i = i + 1;
@@ -11675,7 +11737,7 @@ pub function extern_exports(mod: parser.Module): string {
     let x: parser.ExportBinding = mod.exports[i];
     let ret: string = export_func_ret(mod, x.func_name);
     let params: ast.ParamDecl[] = export_func_params(mod, x.func_name);
-    if (ret == "string" || export_has_string_param(params) || extern_array_param_supported(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
+    if (ret == "string" || export_has_string_param(params) || extern_export_list(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
       parts = parts.append(build_export_wrapper(x.func_name, params, ret));
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n");
     } else {
