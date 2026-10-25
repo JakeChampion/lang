@@ -132,7 +132,7 @@ def load_word(i, bpw, big_endian, ty, width):
 
 def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False):
     """Everything but the block function's round body: struct, constructors,
-    absorb, update, final and the one-shot wrappers. `ivs` maps a constructor
+    absorb, update, finish and the one-shot wrappers. `ivs` maps a constructor
     name to (iv words, output length). With `hw`, __{tag}_blocks takes the
     target's instructions through __{tag}_hw_blocks where __{tag}_hw says it
     has them, and the rounds are __{tag}_soft_blocks."""
@@ -195,7 +195,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("}")
     p("")
     emit_update(p, struct, tag)
-    p(f"pub function (h: {struct}) final_bytes(): u8[] {{")
+    p(f"pub function (h: {struct}) finish(): u8[] {{")
     p("    let bl: i32 = h.buf_len;")
     p(f"    let plen: i32 = {block};")
     p(f"    if (bl >= {block - len_bytes}) {{ plen = {2 * block}; }}")
@@ -219,19 +219,11 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("    return out;")
     p("}")
     p("")
-    p(f"pub function (h: {struct}) final_hex(): string {{")
-    p("    return __bytes_to_hex(h.final_bytes());")
-    p("}")
-    p("")
     for name in ivs:
         base = name[: -len("_new")]
-        p(f"// {base}_bytes and {base}_hex calculate the digest of `s`.")
-        p(f"pub function {base}_bytes(s: [u8]): u8[] {{")
-        p(f"    return {name}().update(s).final_bytes();")
-        p("}")
-        p("")
-        p(f"pub function {base}_hex(s: [u8]): string {{")
-        p(f"    return __bytes_to_hex({name}().update(s).final_bytes());")
+        p(f"// {base} calculates the digest of `s`.")
+        p(f"pub function {base}(s: [u8]): u8[] {{")
+        p(f"    return {name}().update(s).finish();")
         p("}")
         p("")
 
@@ -527,7 +519,7 @@ def emit_blake2b(p):
     p("}")
     p("")
     emit_update(p, "Blake2b", "blake2b")
-    p("pub function (h: Blake2b) final_bytes(): u8[] {")
+    p("pub function (h: Blake2b) finish(): u8[] {")
     p("    let bl: i32 = h.buf_len;")
     p("    let pad: u8[] = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);")
     p("    let st: Blake2b = __blake2b_blocks(h, pad, 0, 1, h.total + (bl as u64), true);")
@@ -538,17 +530,9 @@ def emit_blake2b(p):
     p("    return __bytes_into(__alloc_u8(st.out_len), 0, full, 0, st.out_len);")
     p("}")
     p("")
-    p("pub function (h: Blake2b) final_hex(): string {")
-    p("    return __bytes_to_hex(h.final_bytes());")
-    p("}")
-    p("")
-    p("// blake2b_bytes and blake2b_hex calculate an `out_len`-byte digest of `s`.")
-    p("pub function blake2b_bytes(s: [u8], out_len: i32): u8[] {")
-    p("    return blake2b_new(out_len).update(s).final_bytes();")
-    p("}")
-    p("")
-    p("pub function blake2b_hex(s: [u8], out_len: i32): string {")
-    p("    return __bytes_to_hex(blake2b_new(out_len).update(s).final_bytes());")
+    p("// blake2b calculates an `out_len`-byte digest of `s`.")
+    p("pub function blake2b(s: [u8], out_len: i32): u8[] {")
+    p("    return blake2b_new(out_len).update(s).finish();")
     p("}")
     p("")
 

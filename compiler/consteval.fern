@@ -255,6 +255,18 @@ function string_binary(op: string, a: string, b: string): Value {
   if (op == "!=") {
     return logical(a != b);
   }
+  if (op == "<") {
+    return logical(a < b);
+  }
+  if (op == "<=") {
+    return logical(a <= b);
+  }
+  if (op == ">") {
+    return logical(a > b);
+  }
+  if (op == ">=") {
+    return logical(a >= b);
+  }
   return fail("operator `" + op + "` not allowed on strings in constant expressions");
 }
 
@@ -307,7 +319,7 @@ function unary(op: string, v: Value, ty: string): Value {
       return number(0 - n.value, ty);
     }
     if let FloatValue(n) = v.data {
-      return floating(0.0 - n.value);
+      return floating(-n.value);
     }
     return fail("unary `-` requires a number or float operand");
   }
@@ -414,7 +426,10 @@ function scalar_width(ty: parser.TypeRef): string {
 }
 
 function literal_number(n: ast.ExprNumber): Value {
-  if (n.is_float && !parser.float_settled_int(n)) {
+  if (parser.float_settled_int(n)) {
+    return floating((util.lit_to_i64(n.text) as u64) as f64);
+  }
+  if (n.is_float) {
     // The oracle retains f64 precision while it evaluates constant expressions.
     return floating(f64_from_bits(util.parse_f64_bits(n.text)));
   }

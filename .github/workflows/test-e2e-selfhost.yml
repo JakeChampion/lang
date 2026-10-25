@@ -350,6 +350,7 @@ jobs:
         run: |
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostSanitizeX86_64$' -v -timeout 43m
+          go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostEMISanitizeX86_64$' -v -timeout 20m
       - name: arm64
         if: matrix.target == 'arm64'
         env:
@@ -530,4 +531,20 @@ jobs:
         run: |
           echo "::group::measured durations (name, seconds: the slowest observation of each test; save as RUN_DIR/run.timings for scripts/ci-test-weights refresh)"
           scripts/ci-test-weights merge shard-outcomes
+          echo "::endgroup::"
+      # The compact view, last so the log's tail holds it: the per-shard sums
+      # of top-level durations, which the budget is measured against, and the
+      # forty slowest tests, which decide whether a shard count or a test is
+      # the lever.
+      - name: per-shard totals and the slowest tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          echo "::group::per-shard totals (seconds of top-level test time)"
+          for f in shard-outcomes/*.timings; do
+            printf '%s\t%d\n' "$(basename "$f" .timings)" "$(awk '{ s += $2 } END { printf "%d", s }' "$f")"
+          done | sort -t "$(printf '\t')" -k2 -nr
+          echo "::endgroup::"
+          echo "::group::slowest 40 tests (name, seconds)"
+          scripts/ci-test-weights merge shard-outcomes | sort -t "$(printf '\t')" -k2 -nr | head -40
           echo "::endgroup::"

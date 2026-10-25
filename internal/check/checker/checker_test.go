@@ -2143,6 +2143,34 @@ func TestNestedFieldAssignmentRejected(t *testing.T) {
 	}
 }
 
+// A compound assignment checks its place twice, as target and as the
+// operator's left operand; each finding about the place is reported once.
+func TestCompoundAssignPlaceDiagnosticReportedOnce(t *testing.T) {
+	for _, tc := range []struct{ name, stmt, code, fix string }{
+		{"unknown field", "s.zz += 1;", "E043", ""},
+		{"unknown field with suggestion", "s.pp += 1;", "E043", "p"},
+		{"method on a scalar", "n.f += 1;", "E043", ""},
+		{"undefined name", "zz += 1;", "E001", ""},
+		{"undefined name with suggestion", "nn += 1;", "E001", "n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "struct S { p: i32 }\nfunction main(): i32 { let s: S = S { p: 1 }; let n: i32 = 0; " + tc.stmt + " return 0; }"
+			var got []*Error
+			for _, e := range checkErrors(t, src) {
+				if e.ErrCode == tc.code {
+					got = append(got, e)
+				}
+			}
+			if len(got) != 1 {
+				t.Fatalf("%s: got %d %s diagnostics, want 1: %v", tc.stmt, len(got), tc.code, got)
+			}
+			if tc.fix != "" && (got[0].Fix == nil || got[0].Fix.Replacement != tc.fix) {
+				t.Errorf("%s: fix = %+v, want replacement %q", tc.stmt, got[0].Fix, tc.fix)
+			}
+		})
+	}
+}
+
 func TestPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
 		let name: string = "a";

@@ -11,11 +11,14 @@ import (
 )
 
 func TestCRC32Array(t *testing.T) {
+	for name, source := range map[string]func(bool) string{"cksum": e2eharness.CRC32ArraySource, "ieee": e2eharness.CRC32IEEEArraySource} {
+		t.Run(name, func(t *testing.T) { runCRC32Array(t, source) })
+	}
+}
+
+func runCRC32Array(t *testing.T, source func(compiled bool) string) {
 	fern := buildLangBinForInterp(t)
 	src := filepath.Join(t.TempDir(), "scan.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.CRC32ArraySource(true)), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	for _, target := range []string{"interp", "arm64-darwin", "x86-64-linux", "arm64-linux", "wasm32-wasi", "wasm32-preview2"} {
 		t.Run(target, func(t *testing.T) {
 			var runner []string
@@ -40,12 +43,12 @@ func TestCRC32Array(t *testing.T) {
 			}
 			var argv []string
 			if actual == "interp" {
-				if err := os.WriteFile(src, []byte(e2eharness.CRC32ArraySource(false)), 0o644); err != nil {
+				if err := os.WriteFile(src, []byte(source(false)), 0o644); err != nil {
 					t.Fatal(err)
 				}
 				argv = []string{fern, "-interp", src}
 			} else {
-				if err := os.WriteFile(src, []byte(e2eharness.CRC32ArraySource(true)), 0o644); err != nil {
+				if err := os.WriteFile(src, []byte(source(true)), 0o644); err != nil {
 					t.Fatal(err)
 				}
 				bin := filepath.Join(t.TempDir(), "scan")
