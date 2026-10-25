@@ -1,0 +1,153 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+import "../packages/color/color";
+import "../packages/resize/resize";
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function source_image(width: i32, height: i32, format: pixels.Format): Result[pixels.Image, pixels.ImageError] {
+  let image = pixels.create(width, height, pixels.channels(format) * width + 2, format, pixels.default_limits())?;
+  let y = 0;
+  while (y < height) {
+    let x = 0;
+    while (x < width) {
+      let alpha: u8 = 255;
+      if (pixels.channels(format) == 4) {
+        alpha = (x * 80 + y * 10) as u8;
+      }
+      image = pixels.write_pixel(image, x, y, color.rgba((x * 70) as u8, (y * 60) as u8, ((x + y) * 30) as u8, alpha))?;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(image);
+}
+
+function agrees(width: i32, height: i32, format: pixels.Format): boolean {
+  let source = match (source_image(width, height, format)) { Ok(v) => v, Err(_) => { return false; } };
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.from_image(source, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  graph = match (pipeline.bilinear(graph, 5, 7, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  graph = match (pipeline.nearest(graph, 2, 3, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  graph = match (pipeline.bilinear(graph, 4, 5, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let eager = match (resize.resize(source, 5, 7, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  eager = match (resize.resize(eager, 2, 3, resize.Nearest, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  eager = match (resize.resize(eager, 4, 5, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  let y = 0;
+  while (y < 5) {
+    let row = match (pipeline.render_row(graph, y, limits, never_cancel)) { Ok(v) => v, Err(_) => { return false; } };
+    let x = 0;
+    while (x < 4) {
+      let a = match (pixels.read_pixel(row, x, 0)) { Ok(v) => v, Err(_) => { return false; } };
+      let b = match (pixels.read_pixel(eager, x, y)) { Ok(v) => v, Err(_) => { return false; } };
+      if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+        return false;
+      }
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return true;
+}
+
+function eager_agreement(): test.TestOutcome {
+  let good = true;
+  for width in [1, 3] {
+    for height in [1, 3] {
+      good = good && agrees(width, height, pixels.RGB8) && agrees(width, height, pixels.RGBA8);
+    }
+  }
+  return test.assert_true(good);
+}
+
+function mixed_alpha(): test.TestOutcome {
+  let image = pixels.Image {
+    layout: pixels.Layout { width: 2, height: 2, stride: 8, bytes: 16, format: pixels.RGBA8 },
+    data: [255 as u8, 0 as u8, 0 as u8, 255 as u8, 0 as u8, 255 as u8, 0 as u8, 0 as u8,
+      0 as u8, 0 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 128 as u8]
+  };
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.from_image(image, limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.bilinear(graph, 1, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("bilinear"); } };
+  let row = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("row"); } };
+  return test.assert_true(row.data.len() == 4 && row.data[0] == 203 as u8 && row.data[1] == 124 as u8
+    && row.data[2] == 203 as u8 && row.data[3] == 160 as u8);
+}
+
+function rejected(graph: pipeline.Graph, limits: pipeline.Limits, error: pipeline.PipelineError): boolean {
+  return match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(_) => false, Err(e) => e == error };
+}
+
+function budgets(): test.TestOutcome {
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.solid(4, 4, pixels.RGBA8, color.rgb(1 as u8, 2 as u8, 3 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.bilinear(graph, 2, 2, limits)) { Ok(v) => v, Err(_) => { return test.fail("first node"); } };
+  graph = match (pipeline.bilinear(graph, 3, 3, limits)) { Ok(v) => v, Err(_) => { return test.fail("second node"); } };
+  let scratch = match (pipeline.required_scratch(graph, limits)) { Ok(v) => v == 96, Err(_) => false };
+  let exact = pipeline.Limits { ...limits, max_scratch_bytes: 96, max_samples: 23 };
+  let row = match (pipeline.render_row(graph, 1, exact, never_cancel)) { Ok(v) => v.data.len() == 12, Err(_) => false };
+  let work = rejected(graph, pipeline.Limits { ...exact, max_samples: 22 }, pipeline.Budget);
+  let memory = rejected(graph, pipeline.Limits { ...exact, max_scratch_bytes: 95 }, pipeline.Budget);
+  let deep_limits = pipeline.Limits { ...limits, max_nodes: 64, max_samples: 2147483647 };
+  let deep = match (pipeline.solid(1, 1, pixels.RGBA8, color.rgb(1 as u8, 2 as u8, 3 as u8), deep_limits)) { Ok(v) => v, Err(_) => { return test.fail("deep source"); } };
+  let count = 1;
+  while (count < 31) {
+    deep = match (pipeline.bilinear(deep, 1, 1, deep_limits)) { Ok(v) => v, Err(_) => { return test.fail("deep graph"); } };
+    count = count + 1;
+  }
+  let overflow = match (pipeline.bilinear(deep, 1, 1, deep_limits)) { Err(e) => e == pipeline.Budget, Ok(_) => false };
+  return test.assert_true(scratch && row && work && memory && overflow);
+}
+
+function cancellation(): test.TestOutcome {
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.solid(256, 2, pixels.RGBA8, color.rgb(1 as u8, 2 as u8, 3 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.bilinear(graph, 128, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("bilinear"); } };
+  let good = true;
+  for stop in [8, 14] {
+    let calls = cell_new(0);
+    let cancelled = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() >= stop;
+    };
+    let during = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled()) => true, _ => false };
+    good = good && during && calls.get() == stop;
+  }
+  let after = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v.data.len() == 512, Err(_) => false };
+  return test.assert_true(good && after);
+}
+
+function validation(): test.TestOutcome {
+  let same = match (resize.bilinear_axis(2147483646, 2147483647, 2147483647)) {
+    Ok(v) => v.first == 2147483646 && v.second == 2147483646 && v.weight == 0.0, Err(_) => false
+  };
+  let middle = match (resize.bilinear_axis(0, 2147483647, 1)) {
+    Ok(v) => v.first == 1073741823 && v.second == 1073741824 && v.weight == 0.0, Err(_) => false
+  };
+  let low = match (resize.bilinear_axis(0, 1, 9)) { Ok(v) => v.first == 0 && v.second == 0 && v.weight == 0.0, Err(_) => false };
+  let bounds = match (resize.bilinear_axis(1, 1, 1)) { Err(e) => e == pixels.Bounds, Ok(_) => false };
+  let dimensions = match (resize.bilinear_axis(0, 0, 1)) { Err(e) => e == pixels.Dimensions, Ok(_) => false };
+  let p = color.rgb(0 as u8, 0 as u8, 0 as u8);
+  let weights = match (resize.interpolate(p, p, p, p, 1.1, 0.0)) { Err(e) => e == pixels.Bounds, Ok(_) => false };
+  let nan: f64 = 0.0 / 0.0;
+  let invalid_weight = match (resize.interpolate(p, p, p, p, 0.0, nan)) { Err(e) => e == pixels.Bounds, Ok(_) => false };
+  let node = pipeline.Node { width: 1, height: 1, format: pixels.RGBA8, operation: pipeline.BilinearSource(0) };
+  let cycle = rejected(pipeline.Graph { nodes: [node] }, pipeline.default_limits(), pipeline.InvalidGraph);
+  let source = pipeline.Node { ...node, operation: pipeline.SolidSource(p) };
+  let mismatch = pipeline.Node { ...node, format: pixels.RGB8 };
+  let format = rejected(pipeline.Graph { nodes: [source, mismatch] }, pipeline.default_limits(), pipeline.InvalidGraph);
+  return test.assert_true(same && middle && low && bounds && dimensions && weights && invalid_weight && cycle && format);
+}
+
+function main(): i32 {
+  let r = test.test_new("bilinear row pipeline");
+  r = r.it("padded RGB/RGBA mixed-filter chains agree with eager output", eager_agreement);
+  r = r.it("two-dimensional mixed-alpha golden", mixed_alpha);
+  r = r.it("two-row scratch and recursive sample budgets", budgets);
+  r = r.it("cancellation releases retained and partial rows", cancellation);
+  r = r.it("coordinate boundaries, weights, topology, and formats", validation);
+  return r.finish();
+}
