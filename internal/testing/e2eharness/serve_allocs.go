@@ -210,15 +210,17 @@ import "std/http/h3q";
 import "std/tls/verify";
 import "std/headers";
 import "std/async";
+import "std/clock";
 import "std/option";
 import "std/string";
 import "std/hex";
 import "std/i64";
-` + serveAllocsH3Identity + `import "std/i32";
+` + serveAllocsH3Identity + `import "std/time";
+import "std/i32";
 import "std/result";
 
-function now(): i64 {
-  return monotonic_ns();
+function now(): Instant {
+  return clock.instant();
 }
 
 function request(path: string): HttpRequest {
@@ -235,7 +237,7 @@ function pump(k: Cli, ms: i32): Cli {
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(k.sock, d, k.peer);
   }
-  let woke: i32 = async.wait_any([k.sock, 1], ms);
+  let woke: i32 = async.wait_any([k.sock, 1], Some(time.duration_millis(ms)));
   let going: boolean = true;
   while (going) {
     match (net.recv_from(k.sock, k.buf)) {
@@ -247,8 +249,10 @@ function pump(k: Cli, ms: i32): Cli {
       }
     }
   }
-  if (c.deadline() != 0 && now() >= c.deadline()) {
-    c = c.tick(now());
+  if let Some(at) = c.deadline() {
+    if (now().cmp(at) >= 0) {
+      c = c.tick(now());
+    }
   }
   return Cli { ...k, c: c };
 }
@@ -260,8 +264,8 @@ function get(k0: Cli, path: string): (Cli, string) {
   };
   let k: Cli = Cli { ...k0, c: sent.0 };
   let id: i64 = sent.1;
-  let started: i64 = now();
-  while (now() - started < 30000000000) {
+  let started: Instant = now();
+  while (clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
     let evs: h3q.Event[] = k.c.events;
     let c: h3q.Conn = k.c.events_taken();
@@ -302,7 +306,7 @@ function main(): i32 {
   };
   let Ok(root) = hex.decode(ROOT) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([root])));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
@@ -313,8 +317,8 @@ function main(): i32 {
   };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
   let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, peer: peer, buf: __alloc_u8(65536) };
-  let started: i64 = now();
-  while (!k.c.ready() && now() - started < 30000000000) {
+  let started: Instant = now();
+  while (!k.c.ready() && clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
   }
   if (!k.c.ready()) {
@@ -334,7 +338,7 @@ function main(): i32 {
   let (k1, c0) = count(k);
   let (k2, c1) = count(k1);
   k = k2;
-  let t0: i64 = now();
+  let t0: Instant = now();
   i = 0;
   while (i < rounds) {
     let r: (Cli, string) = get(k, "/");
@@ -345,7 +349,7 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  let seconds: i64 = (now() - t0) / 1000000000 + 2;
+  let seconds: i64 = clock.elapsed(t0).as_seconds() + 2;
   let (k3, c2) = count(k);
   k = k3;
   if (c0 < 0 || c1 < 0 || c2 < 0) {
@@ -381,7 +385,7 @@ function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32, i32) {
   let completed: i32 = 0;
   let inflight: i32 = 0;
   let peak: i32 = 0;
-  let last: i64 = now();
+  let last: Instant = now();
   while (completed < rounds) {
     let topping: boolean = true;
     while (topping) {
@@ -415,7 +419,7 @@ function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32, i32) {
         _ => {}
       }
     }
-    if (now() - last > 30000000000) {
+    if (clock.elapsed(last).cmp(time.duration_seconds(30)) > 0) {
       return (k, peak, completed);
     }
   }
@@ -435,7 +439,7 @@ function main(): i32 {
   };
   let Ok(root) = hex.decode(ROOT) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([root])));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
@@ -447,8 +451,8 @@ function main(): i32 {
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
   let warm: i32 = ` + strconv.Itoa(serveAllocsWarm) + `;
   let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, peer: peer, buf: __alloc_u8(65536) };
-  let started: i64 = now();
-  while (!k.c.ready() && now() - started < 30000000000) {
+  let started: Instant = now();
+  while (!k.c.ready() && clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
   }
   if (!k.c.ready()) {
@@ -464,7 +468,7 @@ function main(): i32 {
   let (k1, c0) = count(k);
   let (k2, c1) = count(k1);
   k = k2;
-  let t0: i64 = now();
+  let t0: Instant = now();
   let d: (Cli, i32, i32) = drive(k, rounds, m);
   k = d.0;
   let peak: i32 = d.1;
@@ -472,7 +476,7 @@ function main(): i32 {
     print("stalled: " + d.2.to_string() + " of " + rounds.to_string() + " requests answered");
     return 1;
   }
-  let seconds: i64 = (now() - t0) / 1000000000 + 2;
+  let seconds: i64 = clock.elapsed(t0).as_seconds() + 2;
   let (k3, c2) = count(k);
   k = k3;
   if (c0 < 0 || c1 < 0 || c2 < 0) {

@@ -96,7 +96,7 @@ problem-details body:
 | `NotUtf8` | 400 | The body is not UTF-8 |
 | `MalformedJson` | 400 | Not JSON; the detail names line and column |
 | `WrongShape` | 422 | JSON, but not an `Item` |
-| `EndedEarly` | 413 / 408 / 400 | A streamed body was cut off (too large, too slow, malformed) |
+| `EndedEarly` | 413 / 431 / 408 / 400 / 500 | A streamed body was cut off: its `StreamFault` says why (too large, framing too large, too slow, malformed or cut short, cancelled) |
 
 An `Option` field is `None` when the key is missing or `null`. For
 untyped JSON, `json.json_parse` gives a `json.JsonValue` to walk.
@@ -210,6 +210,7 @@ import "std/http";
 import "std/serve";
 import "std/http/cookie";
 import "std/platform";
+import "std/time";
 
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, cookie.CookieError] {
     match (req.cookie("sid")) {
@@ -219,7 +220,7 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
     let c: cookie.SetCookie = cookie.SetCookie {
         ...cookie.new("sid", "abc123"),
         secure: true,
-        max_age: 3600,
+        max_age: Some(time.duration_hours(1)),
         same_site: cookie.Strict,
     };
     return http.plain("hello\n").with_cookie(c);

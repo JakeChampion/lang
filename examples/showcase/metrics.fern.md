@@ -271,13 +271,13 @@ The Prometheus endpoint exposes gauges only when measurements exist. Counters re
 pub function events(state: State): HttpResponse {
   return sse.respond_with(time.duration_seconds(15), (index: i32): Option[sse.Event] => {
     if (index > 0) {
-      let ready: i32 = async.wait_any([], 1000);
+      let ready: i32 = async.wait_any([], Some(time.duration_millis(1000)));
     }
     if (async.task_cancelled()) {
       return None;
     }
     let value: Snapshot = snapshot(state);
-    return Some(sse.event(value.to_json()).with_name("metrics").with_id(value.at_ms.to_string()).with_retry(1500));
+    return Some(sse.event(value.to_json()).with_name("metrics").with_id(value.at_ms.to_string()).with_retry(time.duration_millis(1500)));
   }).with_header("X-Accel-Buffering", "no");
 }
 

@@ -9,6 +9,7 @@ The Platform trait groups operations that a handler obtains from its environment
 ## Contracts
 
 Host configuration carries optional peer, deadline, cookie, access, and trace values. Tests can supply another trait implementation instead of host effects.
+`now` reads the wall clock as a `time.Timestamp`. `instant` reads the monotonic clock, and a deadline is an `Instant` on that clock.
 
 ## Module assembly
 
@@ -42,6 +43,7 @@ import "std/fetch";
 import "std/http/cookie";
 import "std/async";
 import "std/time";
+import "std/clock";
 import "std/net";
 import "std/http/trace";
 ```
@@ -53,9 +55,9 @@ import "std/http/trace";
 pub trait Platform {
   function log(self: Self, msg: string): void;
 
-  function now_ms(self: Self): i64;
+  function now(self: Self): time.Timestamp;
 
-  function elapsed_ns(self: Self): i64;
+  function instant(self: Self): Instant;
 
   function env(self: Self, name: string): Option[string];
 
@@ -73,14 +75,14 @@ pub trait Platform {
 
   function peer(self: Self): Option[net.SocketAddr];
 
-  function deadline(self: Self): Option[i64];
+  function deadline(self: Self): Option[Instant];
 
   function cancelled(self: Self): boolean;
 
   function trace(self: Self): Option[trace.Context];
 }
 
-pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[i64], trace: Option[trace.Context] }
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[Instant], trace: Option[trace.Context] }
 ```
 
 ### `4 pub function host(): Host`
@@ -111,7 +113,7 @@ pub function (h: Host) with_allow(a: fetch.Allow): Host {
   return Host { ...h, allow: Some(a) };
 }
 
-pub function (h: Host) with_deadline(at: i64): Host {
+pub function (h: Host) with_deadline(at: Instant): Host {
   return Host { ...h, deadline: Some(at) };
 }
 
@@ -134,10 +136,10 @@ pub function traced(req: fetch.Request, span: Option[trace.Context], random: () 
   return req;
 }
 
-pub function passed(deadline: Option[i64], now: i64): boolean {
+pub function passed(deadline: Option[Instant], now: Instant): boolean {
   match (deadline) {
     Some(at) => {
-      return now >= at;
+      return now.cmp(at) >= 0;
     },
     None => {
       return false;
@@ -156,12 +158,12 @@ impl Platform for Host {
     eprint(msg);
   }
 
-  function now_ms(self: Host): i64 {
-    return now_unix_ms();
+  function now(self: Host): time.Timestamp {
+    return clock.now();
   }
 
-  function elapsed_ns(self: Host): i64 {
-    return monotonic_ns();
+  function instant(self: Host): Instant {
+    return clock.instant();
   }
 
   function env(self: Host, name: string): Option[string] {
@@ -182,7 +184,7 @@ impl Platform for Host {
 
   function sleep(self: Host, d: Duration): void {
     let none: i32[] = [];
-    let woke: i32 = async.wait_any(none, d.as_millis() as i32);
+    let woke: i32 = async.wait_any(none, Some(d));
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
@@ -197,12 +199,12 @@ impl Platform for Host {
     return self.peer;
   }
 
-  function deadline(self: Host): Option[i64] {
+  function deadline(self: Host): Option[Instant] {
     return self.deadline;
   }
 
   function cancelled(self: Host): boolean {
-    return async.task_cancelled() || passed(self.deadline, monotonic_ns());
+    return async.task_cancelled() || passed(self.deadline, clock.instant());
   }
 
   function trace(self: Host): Option[trace.Context] {

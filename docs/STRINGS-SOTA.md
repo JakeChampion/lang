@@ -1174,8 +1174,9 @@ is recorded in [the stdin report](string-log/2026-10-02-stdin-utf8.md).
 `ByteLineReader` keeps buffered chunks and returned records in `u8[]`.
 It scans for a byte delimiter, includes that delimiter when present, and
 returns a final unterminated record. Records crossing chunk boundaries use
-bulk builder appends. The cursor retains an I/O error separately from any
-partial final record, so callers must check `error()` after iteration.
+bulk builder appends. Each read answers a `Result`: `Ok` with `None` at end
+of input, `Err` when the read failed. A failure that arrives behind a partial
+final record is held, so the record is answered first and the error next.
 Whole-input byte reads use the same bulk append operation.
 
 `shuf` now uses bytes for input, reservoir records and random-source buffers;
@@ -1193,8 +1194,9 @@ and all lint gates pass.
 `ByteLineReader` keeps buffered chunks and returned records in `u8[]`.
 It scans for a byte delimiter, includes that delimiter when present, and
 returns a final unterminated record. Records crossing chunk boundaries use
-bulk builder appends. The cursor retains an I/O error separately from any
-partial final record, so callers must check `error()` after iteration.
+bulk builder appends. Each read answers a `Result`: `Ok` with `None` at end
+of input, `Err` when the read failed. A failure that arrives behind a partial
+final record is held, so the record is answered first and the error next.
 Whole-input byte reads use the same bulk append operation.
 
 `shuf` now uses bytes for input, reservoir records and random-source buffers;

@@ -70,12 +70,13 @@ func TestPollableWrappersBuildEverywhere(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	prog := `import "std/async";
+	prog := `import "std/time";
+import "std/async";
 function main(): i32 {
     let d: async.RealDriver = async.real_driver();
-    let timer: i32 = d.timer(1000000i64);
+    let timer: i32 = d.timer(time.duration_millis(1));
     let dropped: i32 = d.drop_token(timer);
-    let ready: i32 = async.wait_any([0, 1], 0);
+    let ready: i32 = async.wait_any([0, 1], Some(time.duration_millis(0)));
     if (target_os() == "wasi") {
         return 0;
     }

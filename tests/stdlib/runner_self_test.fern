@@ -1,5 +1,7 @@
 import "std/test";
 import "std/http";
+import "std/time";
+import "std/clock";
 
 function expect_pass(o: test.TestOutcome): test.TestOutcome {
   match (o) {
@@ -211,6 +213,28 @@ function test_in_range_i64_fail(): test.TestOutcome {
   return expect_fail_containing(
     test.assert_in_range_i64(0 as i64 - 1 as i64, 0 as i64, 10 as i64),
     "assert_in_range_i64: -1 < lower bound 0",
+  );
+}
+
+function test_elapsed_lt_pass(): test.TestOutcome {
+  return expect_pass(test.assert_elapsed_lt(clock.instant(), time.duration_hours(1)));
+}
+
+function test_elapsed_lt_fail(): test.TestOutcome {
+  return expect_fail_containing(
+    test.assert_elapsed_lt(clock.instant().sub(time.duration_seconds(10)), time.duration_seconds(1)),
+    "us elapsed, expected < 1000000us",
+  );
+}
+
+function test_close_to_now_pass(): test.TestOutcome {
+  return expect_pass(test.assert_close_to_now(clock.now(), time.duration_hours(1)));
+}
+
+function test_close_to_now_fail(): test.TestOutcome {
+  return expect_fail_containing(
+    test.assert_close_to_now(clock.now().sub(time.duration_hours(1)), time.duration_seconds(1)),
+    "ms exceeds bound 1000ms",
   );
 }
 
@@ -508,6 +532,10 @@ function main(): i32 {
   r = r.it("assert_in_range_i32 fail", test_in_range_i32_fail);
   r = r.it("assert_in_range_i64 pass", test_in_range_i64_pass);
   r = r.it("assert_in_range_i64 fail", test_in_range_i64_fail);
+  r = r.it("assert_elapsed_lt pass", test_elapsed_lt_pass);
+  r = r.it("assert_elapsed_lt fail", test_elapsed_lt_fail);
+  r = r.it("assert_close_to_now pass", test_close_to_now_pass);
+  r = r.it("assert_close_to_now fail", test_close_to_now_fail);
   r = r.it("assert_in_range_f64 pass", test_in_range_f64_pass);
   r = r.it("assert_in_range_f64 fail", test_in_range_f64_fail);
   r = r.it("assert_in_range_f64 fails on NaN value or bound", test_in_range_f64_nan_fails);

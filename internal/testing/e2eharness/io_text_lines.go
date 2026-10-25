@@ -14,11 +14,10 @@ import (
 const ioTextLineProgram = `import "std/io_buffered" as io;
 import "std/utf8";
 import "std/i32";
-function error_kind(lr: io.LineReader): i32 {
-    match (lr.error()) {
-        None => { return 0; },
-        Some(InvalidUtf8(path)) => { if (path != "") { return 3; } return 1; },
-        Some(_) => { return 2; }
+function error_kind(e: IoError): i32 {
+    match (e) {
+        InvalidUtf8(path) => { if (path != "") { return 3; } return 1; },
+        _ => { return 2; }
     }
     return 3;
 }
@@ -27,10 +26,16 @@ function main(): i32 {
     let lr: io.LineReader = io.line_reader_new(r, TERM, CHUNK);
     let held: string[] = [];
     let step: i32 = 0;
+    let status: i32 = 0;
     while (true) {
+        let read: Result[(Option[string], io.LineReader), IoError] = Ok((None, lr));
+        if (MODE == 0 || (MODE == 2 && step % 2 == 0)) { read = lr.next_line(); }
+        else { read = lr.next_chunk(); }
         let next: (Option[string], io.LineReader) = (None, lr);
-        if (MODE == 0 || (MODE == 2 && step % 2 == 0)) { next = lr.next_line(); }
-        else { next = lr.next_chunk(); }
+        match (read) {
+            Ok(got) => { next = got; },
+            Err(e) => { status = error_kind(e); break; }
+        }
         lr = next.1;
         match (next.0) {
             None => { break; },
@@ -41,12 +46,18 @@ function main(): i32 {
         }
         step = step + 1;
     }
-    let status: i32 = error_kind(lr);
-    let (line, after_line) = lr.next_line();
-    match (line) { Some(_) => { return 5; }, None => {} }
-    let (chunk, after_chunk) = after_line.next_chunk();
-    match (chunk) { Some(_) => { return 6; }, None => {} }
-    if (error_kind(after_chunk) != status) { return 7; }
+    if (status == 0) {
+        match (lr.next_line()) {
+            Ok(after_line) => {
+                match (after_line.0) { Some(_) => { return 5; }, None => {} }
+                match (after_line.1.next_chunk()) {
+                    Ok(after_chunk) => { match (after_chunk.0) { Some(_) => { return 6; }, None => {} } },
+                    Err(_) => { return 7; }
+                }
+            },
+            Err(_) => { return 7; }
+        }
+    }
     match (r.close()) { Err(_) => { return 8; }, Ok(_) => {} }
     write(status.to_string() + ":");
     let pass: i32 = 0;

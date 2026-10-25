@@ -715,7 +715,7 @@ function run(files: string[], s: Settings): i32 {
     }
 
     if (buf_len(h) >= block_size()) {
-      o = o.flush();
+      o = gnu.flush(o);
     }
   }
 

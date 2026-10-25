@@ -1,3 +1,4 @@
+import "std/time";
 import "std/test";
 import "std/format" as format;
 import "core/cmp";
@@ -172,40 +173,40 @@ function test_bytes_tib(): test.TestOutcome {
 }
 
 function test_duration_zero(): test.TestOutcome {
-  return test.assert_eq(format.format_duration_ms(0), "0ms");
+  return test.assert_eq(format.format_duration(time.duration_millis(0)), "0ms");
 }
 
 function test_duration_sub_second(): test.TestOutcome {
-  return test.assert_eq(format.format_duration_ms(500), "500ms");
+  return test.assert_eq(format.format_duration(time.duration_millis(500)), "500ms");
 }
 
 function test_duration_seconds_and_ms(): test.TestOutcome {
-  return test.assert_eq(format.format_duration_ms(1500), "1s 500ms");
+  return test.assert_eq(format.format_duration(time.duration_millis(1500)), "1s 500ms");
 }
 
 function test_duration_minutes(): test.TestOutcome {
-  return test.assert_eq(format.format_duration_ms(65000), "1m 5s");
+  return test.assert_eq(format.format_duration(time.duration_millis(65000)), "1m 5s");
 }
 
 function test_duration_full(): test.TestOutcome {
-  return test.assert_eq(format.format_duration_ms(3661001), "1h 1m 1s 1ms");
+  return test.assert_eq(format.format_duration(time.duration_millis(3661001)), "1h 1m 1s 1ms");
 }
 
 function test_duration_past_i32(): test.TestOutcome {
-  return test.assert_eq(format.format_duration_ms(2592000001 as i64), "720h 1ms");
+  return test.assert_eq(format.format_duration(time.duration_millis(2592000001)), "720h 1ms");
 }
 
 function test_duration_negative(): test.TestOutcome {
-  return test.assert_eq(format.format_duration_ms(0 - 1500), "-1s 500ms");
+  return test.assert_eq(format.format_duration(time.duration_millis(0 - 1500)), "-1s 500ms");
 }
 
 function test_duration_round_trips_parse(): test.TestOutcome {
-  match (format.parse_duration_ms("30d 1s")) {
-    Some(ms) => {
-      return test.assert_eq(format.format_duration_ms(ms), "720h 1s");
+  match (format.parse_duration("30d 1s")) {
+    Some(d) => {
+      return test.assert_eq(format.format_duration(d), "720h 1s");
     },
     None => {
-      return test.fail("parse_duration_ms(\"30d 1s\") answered None");
+      return test.fail("parse_duration(\"30d 1s\") answered None");
     }
   }
 }

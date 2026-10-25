@@ -55,9 +55,9 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-Ninety-two TAP cases cover the essential, compression, pixel, color, resize, PNG, sequential PNG rows, row-pipeline, region, cache, RSS parser, and fusion suites.
+The 111 TAP cases cover essential, compression, pixel, color, resize, PNG, sequential rows, providers, pipeline, region, cache, RSS parser, and fusion behavior.
 The file I/O probe and pixel example also exit successfully.
-The native script checks twenty-four executables with the sanitizer.
+The native script checks twenty-seven executables with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
 The Linux-only RSS workload records its own procfs observations and runs only in the native script.
 See [RSS observations](docs/rss-observations.md) for the parent-memory control and measurement limits.
@@ -81,6 +81,7 @@ The separate [PNG corpus](docs/png-qualification.md) compares 964 generated case
 PNG requires the static-append compiler fix in PR #13208.
 
 The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor or bilinear chains on demand.
+The [provider contract](docs/providers.md) adds fresh execution sessions, access restrictions, and declared source costs.
 It enforces logical row budgets and cooperative cancellation. It is not the complete M4 region engine.
 The [region interface](docs/regions.md) plans checked cropped tiles and direct dependency rows.
 The [row batch interface](docs/row-cache.md) adds per-call caching with payload and entry limits.

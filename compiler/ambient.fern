@@ -177,10 +177,10 @@ pub function bag_method(builtin: string): string {
     return "log";
   }
   if (builtin == "now_unix_ms") {
-    return "now_ms";
+    return "now";
   }
   if (builtin == "monotonic_ns") {
-    return "elapsed_ns";
+    return "instant";
   }
   if (builtin == "env") {
     return "env";
