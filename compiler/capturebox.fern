@@ -8,12 +8,12 @@ pub function cell_name(name: string): string {
 }
 
 function cell_read(name: string, line: i32, col: i32): ast.Expr {
-  let cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "" };
+  let cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "", builtin: false };
   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "", const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
 }
 
 pub function cell_decl(name: string, ty: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
-  let cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "" }, args: [init], line: line, col: col, type_args: [], ty: "" };
+  let cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "", builtin: false }, args: [init], line: line, col: col, type_args: [], ty: "" };
   return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "" };
 }
 
@@ -162,7 +162,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
     },
     ast.StmtAssign(a) => {
       if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
-        let recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "" };
+        let recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "", builtin: false };
         let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "", const_read: false }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
         return ast.StmtExpr { value: scall, line: a.line };
       }

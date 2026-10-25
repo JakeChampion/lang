@@ -51,7 +51,7 @@ plants = [
     ('  let bk: i32 = 0;\n  while (bk < lam.body.len()) {\n    bd = bd.append(lam.body[bk]);',
      '  if (caps.len() >= 1 && lam.params.len() >= 1 && ctys[0] == lam.params[0].type_name) {\n'
      '    ps = ps.with(1, ast.ParamDecl { ...lam.params[0], name: caps[0] });\n'
-     '    bd = bd.with(0, ast.StmtVar { name: lam.params[0].name, type_name: ctys[0], init: ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, index: ast.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" });\n'
+     '    bd = bd.with(0, ast.StmtVar { name: lam.params[0].name, type_name: ctys[0], init: ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false }, index: ast.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" });\n'
      '  }\n'),
 ]
 for anchor, plant in plants:
