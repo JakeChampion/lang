@@ -1339,6 +1339,23 @@ pub function listen_at(addr: SocketAddr, opts: ListenOptions): Result[i32, NetEr
   return __socket_count(tcp_listen_with(addr.ip.bytes(), addr.port, opts.backlog, opts.reuse_port));
 }
 
+// listen_any listens on every local address: one dual-stack socket where the host has IPv6, IPv4 alone elsewhere and on wasi.
+pub function listen_any(port: i32, opts: ListenOptions): Result[i32, NetError] {
+  if (target_os() != "wasi") {
+    match (listen_at(socket_addr(ipv6_unspecified(), port), opts)) {
+      Ok(fd) => {
+        return Ok(fd);
+      },
+      Err(e) => {
+        if (!e.ipv6_unavailable()) {
+          return Err(e);
+        }
+      }
+    }
+  }
+  return listen_at(socket_addr(ipv4_unspecified(), port), opts);
+}
+
 pub function read(sock: i32, buf: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_recv_into(sock, buf));
 }

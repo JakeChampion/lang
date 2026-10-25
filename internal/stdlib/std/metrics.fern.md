@@ -74,8 +74,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<22 pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.NetError]>>
 
-<<23 function __listen_any(port: i32): i32>>
-
 <<24 pub function (e: Exporter) port(): i32>>
 
 <<25 function __index_of_i32(xs: i32[], x: i32): i32>>
@@ -647,10 +645,7 @@ pub struct Exporter { listener: i32, scrapes: i32[], heads: string[], unsent: u8
 ```fern
 <<22 pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.NetError]>>=
 pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.NetError] {
-  let fd: i32 = __listen_any(port);
-  if (fd < 0) {
-    return Err(net.error_from_host(fd));
-  }
+  let fd: i32 = net.listen_any(port, net.ListenOptions { backlog: 16, reuse_port: false })?;
   tcp_socket_ctl(fd, 3, 1);
   let watched: i32 = drv.watch(fd, 1);
   if (watched < 0) {
@@ -658,21 +653,6 @@ pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.Ne
     return Err(net.error_from_host(watched));
   }
   return Ok(Exporter { listener: fd, scrapes: [], heads: [], unsent: [] });
-}
-```
-
-### `23 function __listen_any(port: i32): i32`
-
-```fern
-<<23 function __listen_any(port: i32): i32>>=
-function __listen_any(port: i32): i32 {
-  let v6: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
-  let both: i32 = tcp_listen_with(v6, port, 16, false);
-  if (both >= 0 || !net.error_from_host(both).ipv6_unavailable()) {
-    return both;
-  }
-  let v4: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8];
-  return tcp_listen_with(v4, port, 16, false);
 }
 ```
 
