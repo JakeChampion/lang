@@ -5282,7 +5282,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
     if (!tuple_covers && has_fall) {
       tarms = tarms.append(ast.TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: e_bool(true), has_guard: false, body: fall, line: gp_line, col: gp_col, alt_cont: false });
     }
-    let tmatch: ast.Stmt = with_sugar_origin(build_tuple_match(e_ident(tmp), tarms, gp_line, gp_col), ORIGIN_PATTERN_PROBE);
+    let tmatch: ast.Stmt = with_sugar_origin(build_tuple_match(e_ident(tmp), tarms, gp_line, gp_col), ORIGIN_PATTERN_PROBE, false);
     let t_no_extra: string[] = [];
     let t_no_nested: ast.Pattern[] = [];
     let t_nk: i32[] = [];
