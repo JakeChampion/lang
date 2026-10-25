@@ -352,7 +352,7 @@ import "../api";
 
 function main(): i32 {
   let d: sim.Sim = sim.new(7);
-  let n: sim_fetch.Net = sim_fetch.net(d).host("directory.internal", ["93.184.216.34"]).listen("93.184.216.34", 80, time.duration_millis(5)).route("93.184.216.34", 80, "/users/7", [sim_fetch.reset(), sim_fetch.reset(), sim_fetch.reply(200, "{\"id\":7}")]);
+  let n: sim_fetch.Net = sim_fetch.new(d).host("directory.internal", ["93.184.216.34"]).listen("93.184.216.34", 80, time.duration_millis(5)).route("93.184.216.34", 80, "/users/7", [sim_fetch.reset(), sim_fetch.reset(), sim_fetch.reply(200, "{\"id\":7}")]);
   let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
   if let Ok(r) = api.routes[sim_platform.SimPlatform]() {
     let first: i32 = r.handle(http.request("GET", "/users/7"), plat).status;
