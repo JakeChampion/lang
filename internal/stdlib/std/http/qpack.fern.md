@@ -48,7 +48,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 pub function (d: Decoder) decode(stream: i64, section: [u8]): Decoder>>
 
-<<17 function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder>>
+<<17 function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder>>
 
 <<18 pub function (d: Decoder) cancel(stream: i64): Decoder>>
 
@@ -60,7 +60,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<22 pub function encoder(): Encoder>>
 
-<<23 function (e: Encoder) __put_field(out: u8[], f: Field): u8[]>>
+<<23 function (e: Encoder) __put_field(own out: u8[], f: Field): u8[]>>
 
 <<24 pub function (e: Encoder) on_decoder_stream(bytes: [u8]): Result[Encoder, QpackError]>>
 
@@ -105,23 +105,6 @@ pub function field(name: string, value: string): Field {
 pub function sensitive(name: string, value: string): Field {
   return Field { name: name, value: value, sensitive: true };
 }
-
-// status is the :status field for code, the static table's own entry
-// when the table has one.
-pub function status(code: i32): Field {
-  let i: i32 = 0;
-  while (i < STATUS_CODES.len()) {
-    if (STATUS_CODES[i] == code) {
-      return STATIC[STATUS_AT[i]];
-    }
-    i = i + 1;
-  }
-  return field(":status", int.int_to_string(code));
-}
-
-const STATUS_CODES: i32[] = [200, 204, 304, 404, 103, 503, 100, 206, 302, 400, 403, 421, 425, 500];
-
-const STATUS_AT: i32[] = [25, 64, 26, 27, 24, 28, 63, 65, 66, 67, 68, 69, 70, 71];
 ```
 
 ### `5 pub enum QpackError`
@@ -523,48 +506,35 @@ function __enc_insert(t: Table, name: string, value: string): Result[Table, Opti
 <<16 pub function (d: Decoder) decode(stream: i64, section: [u8]): Decoder>>=
 pub function (d: Decoder) decode(stream: i64, section: [u8]): Decoder {
   let cur: Decoder = Decoder { ...d, fields: [], waiting: false, failed: None };
-  let prefix: Result[(i64, i64, i32), QpackError] = cur.__prefix(section);
-  let Ok(p) = prefix else {
-    return cur.__failed_prefix(prefix);
-  };
-  let (required, base, at) = p;
-  if (required > cur.table.__inserted()) {
-    return cur.__blocked_on(stream);
-  }
-  let lines: Result[Field[], QpackError] = cur.__lines(section, at, required, base);
-  let Ok(fields) = lines else {
-    return cur.__failed_lines(lines);
-  };
-  cur = Decoder { ...cur, blocked: __without(cur.blocked, stream), fields: fields };
-  if (required > 0) {
-    cur = Decoder { ...cur, out: __put_int(cur.out, 128, 7, stream), reported: __max(cur.reported, required) };
-  }
-  return cur;
-}
-```
-
-### `17 function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder`
-
-```fern
-<<17 function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder>>=
-function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder {
-  match (r) {
-    Err(e) => {
-      return Decoder { ...d, failed: Some(e) };
+  match (cur.__prefix(section)) {
+    Ok(p) => {
+      return cur.__decoded(stream, section, p.0, p.1, p.2);
     },
-    Ok(_) => {
-      return d;
+    Err(e) => {
+      return Decoder { ...cur, failed: Some(e) };
     }
   }
 }
+```
 
-function (d: Decoder) __failed_lines(r: Result[Field[], QpackError]): Decoder {
-  match (r) {
+### `17 function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder`
+
+```fern
+<<17 function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder>>=
+function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder {
+  if (required > d.table.__inserted()) {
+    return d.__blocked_on(stream);
+  }
+  match (d.__lines(section, at, required, base)) {
+    Ok(fields) => {
+      let cur: Decoder = Decoder { ...d, blocked: __without(d.blocked, stream), fields: fields };
+      if (required > 0) {
+        cur = Decoder { ...cur, out: __put_int(cur.out, 128, 7, stream), reported: __max(cur.reported, required) };
+      }
+      return cur;
+    },
     Err(e) => {
       return Decoder { ...d, failed: Some(e) };
-    },
-    Ok(_) => {
-      return d;
     }
   }
 }
@@ -752,32 +722,101 @@ pub function (e: Encoder) without_huffman(): Encoder {
 }
 
 pub function (e: Encoder) encode(fields: Field[]): u8[] {
-  let out: u8[] = [0 as u8, 0 as u8];
+  let room: i32 = 0;
+  for f in fields {
+    room = room + f.name.len() + f.value.len() + 4;
+  }
+  let out: u8[] = e.section(room);
   for f in fields {
     out = e.__put_field(out, f);
   }
   return out;
 }
+
+// section starts a field section that references no dynamic entry, with
+// room for about n bytes of field lines after its prefix.
+pub function (e: Encoder) section(n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n + 2);
+  __arr_set_len(out, 0);
+  return out.append(0 as u8).append(0 as u8);
+}
+
+// put appends the field line for name and value.
+pub function (e: Encoder) put(own out: u8[], name: string, value: string): u8[] {
+  return e.__put_line(out, name, value, false);
+}
+
+// put_status appends the :status line for code, the static table's own
+// entry when the table has one.
+pub function (e: Encoder) put_status(own out: u8[], code: i32): u8[] {
+  for i in 0..STATUS_CODES.len() {
+    if (STATUS_CODES[i] == code) {
+      return __put_int(out, 192, 6, STATUS_AT[i] as i64);
+    }
+  }
+  return e.__put_line(out, ":status", int.int_to_string(code), false);
+}
+
+// put_length appends the content-length line for n >= 0, spelling n's
+// digits straight into out.
+pub function (e: Encoder) put_length(own out: u8[], n: i64): u8[] {
+  if (n == 0) {
+    return __put_int(out, 192, 6, CONTENT_LENGTH as i64);
+  }
+  let o: u8[] = __put_int(out, 80, 4, CONTENT_LENGTH as i64);
+  let digits: i32 = 0;
+  let rest: i64 = n;
+  while (rest > 0) {
+    digits = digits + 1;
+    rest = rest / 10;
+  }
+  if (e.huffman) {
+    let coded: i32 = huffman.encoded_len_digits(n);
+    if (coded < digits) {
+      return huffman.encode_digits(__put_int(o, 128, 7, coded as i64), n);
+    }
+  }
+  o = __put_int(o, 0, 7, digits as i64);
+  let p: i64 = 1;
+  for _ in 1..digits {
+    p = p * 10;
+  }
+  while (p > 0) {
+    o = o.append((48 as i64 + n / p % 10) as u8);
+    p = p / 10;
+  }
+  return o;
+}
+
+const STATUS_CODES: i32[] = [200, 204, 304, 404, 103, 503, 100, 206, 302, 400, 403, 421, 425, 500];
+
+const STATUS_AT: i32[] = [25, 64, 26, 27, 24, 28, 63, 65, 66, 67, 68, 69, 70, 71];
+
+const CONTENT_LENGTH: i32 = 4;
 ```
 
-### `23 function (e: Encoder) __put_field(out: u8[], f: Field): u8[]`
+### `23 function (e: Encoder) __put_field(own out: u8[], f: Field): u8[]`
 
 ```fern
-<<23 function (e: Encoder) __put_field(out: u8[], f: Field): u8[]>>=
-function (e: Encoder) __put_field(out: u8[], f: Field): u8[] {
-  let (exact, named) = __find_static(f.name, f.value);
-  if (exact >= 0 && !f.sensitive) {
+<<23 function (e: Encoder) __put_field(own out: u8[], f: Field): u8[]>>=
+function (e: Encoder) __put_field(own out: u8[], f: Field): u8[] {
+  return e.__put_line(out, f.name, f.value, f.sensitive);
+}
+
+function (e: Encoder) __put_line(own out: u8[], name: string, value: string, sensitive: boolean): u8[] {
+  let (exact, named) = __find_static(name, value);
+  if (exact >= 0 && !sensitive) {
     return __put_int(out, 192, 6, exact as i64);
   }
   let never: i32 = 0;
-  if (f.sensitive) {
+  if (sensitive) {
     never = 32;
   }
   if (named >= 0) {
-    return e.__put_str(__put_int(out, 80 | never, 4, named as i64), 0, 7, f.value);
+    return e.__put_str(__put_int(out, 80 | never, 4, named as i64), 0, 7, value);
   }
-  let o: u8[] = e.__put_str(out, 32 | never / 2, 3, f.name);
-  return e.__put_str(o, 0, 7, f.value);
+  let o: u8[] = e.__put_str(out, 32 | never / 2, 3, name);
+  return e.__put_str(o, 0, 7, value);
 }
 ```
 
@@ -858,14 +897,18 @@ function __put_int(out: u8[], pattern: i32, prefix: i32, value: i64): u8[] {
 }
 
 function (e: Encoder) __put_str(out: u8[], pattern: i32, prefix: i32, s: string): u8[] {
-  let bytes: u8[] = s.bytes();
+  let bytes: [u8] = s.as_bytes();
   if (e.huffman) {
     let coded: i32 = huffman.encoded_len(bytes);
     if (coded < bytes.len()) {
       return huffman.encode(__put_int(out, pattern | 1 << prefix, prefix, coded as i64), bytes);
     }
   }
-  return __put_int(out, pattern, prefix, bytes.len() as i64).concat(bytes);
+  let o: u8[] = __put_int(out, pattern, prefix, bytes.len() as i64);
+  for b in bytes {
+    o = o.append(b);
+  }
+  return o;
 }
 
 function __without(xs: i64[], x: i64): i64[] {
