@@ -1298,7 +1298,7 @@ function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
   if (out.len() == 0) {
     return __slice_range(src, from, to);
   }
-  return out.concat(__slice_range(src, from, to));
+  return out.concat(src[from:to]);
 }
 
 function __slice_range(src: u8[], from: i32, to: i32): u8[] {
