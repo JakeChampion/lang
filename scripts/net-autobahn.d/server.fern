@@ -43,5 +43,5 @@ function port(): i32 {
 
 function main(): i32 {
   let opts: serve.Config = serve.Config { ...serve.config(), workers: 1 };
-  return serve.supervise(port(), opts, handle);
+  return serve.exit_code(serve.supervise(port(), opts, handle));
 }

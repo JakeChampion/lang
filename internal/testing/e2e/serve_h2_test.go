@@ -152,7 +152,7 @@ function main(): i32 {
     },
     None => {}
   }
-  return serve.run(0, cfg, handle);
+  return serve.exit_code(serve.run(0, cfg, handle));
 }
 `
 
@@ -167,7 +167,7 @@ function handle(n: i32, req: HttpRequest, plat: platform.Host): (i32, HttpRespon
 }
 
 function main(): i32 {
-  return serve.run_with(0, serve.Config { ...serve.config().with_h2(), recv_deadline: time.duration_seconds(60 as i64) }, 0, handle);
+  return serve.exit_code(serve.run_with(0, serve.Config { ...serve.config().with_h2(), recv_deadline: time.duration_seconds(60 as i64) }, 0, handle));
 }
 `
 
