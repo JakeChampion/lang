@@ -5605,6 +5605,83 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
   return call_method_targs(recv, name, args, [], funcs, aliases, type_decls);
 }
 
+// .len, .bytes and .as_bytes on a string; None for any other method.
+function string_method(sv: VString, name: string, args: Value[]): Option[Value] {
+  if (name == "len") {
+    if (args.len() != 0) {
+      return Some(v_err("string.len: takes no arguments"));
+    }
+    return Some(v_int(sv.v.len()));
+  }
+  if (name == "bytes" || name == "as_bytes") {
+    if (args.len() != 0) {
+      return Some(v_err("string." + name + ": takes no arguments"));
+    }
+    let bs: Value[] = [];
+    let bi: i32 = 0;
+    while (bi < sv.v.len()) {
+      bs = bs.append(v_int(sv.v[bi] as i32));
+      bi = bi + 1;
+    }
+    if (name == "as_bytes") {
+      return Some(v_view_of(bs, "u8"));
+    }
+    return Some(v_arr_of(bs, "u8"));
+  }
+  return None;
+}
+
+function array_with(av: VArr, args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("array.with: need 2 args");
+  }
+  if (!is_i32_arg(args[0])) {
+    return v_err("array.with: index must be an integer");
+  }
+  let wi: i32 = vint_bits(args[0]);
+  if (wi < 0 || wi >= arr_len(av)) {
+    return index_abort(aborts.arr_oob(), util.i32_to_string(wi), arr_len(av));
+  }
+  let wout: Value[] = [];
+  let wj: i32 = 0;
+  while (wj < arr_len(av)) {
+    if (wj == wi) {
+      wout = wout.append(args[1]);
+    } else {
+      wout = wout.append(arr_at(av, wj));
+    }
+    wj = wj + 1;
+  }
+  return v_arr(wout);
+}
+
+// .len, .with and .append on an array; None for any other method.
+function array_method(av: VArr, name: string, args: Value[]): Option[Value] {
+  if (name == "len") {
+    if (args.len() != 0) {
+      return Some(v_err("array.len: takes no arguments"));
+    }
+    return Some(v_int(arr_len(av)));
+  }
+  if (name == "with" && !av.view) {
+    return Some(array_with(av, args));
+  }
+  if (name == "append" && !av.view) {
+    if (args.len() != 1) {
+      return Some(v_err("array.append: need 1 arg"));
+    }
+    let out: Value[] = [];
+    let ai: i32 = 0;
+    while (ai < arr_len(av)) {
+      out = out.append(arr_at(av, ai));
+      ai = ai + 1;
+    }
+    out = out.append(args[0]);
+    return Some(v_arr(out));
+  }
+  return None;
+}
+
 function call_method_targs(recv: Value, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   match (recv) {
     VType(tv) => {
@@ -5622,70 +5699,13 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
   }
   match (recv) {
     VString(sv) => {
-      if (name == "len") {
-        if (args.len() != 0) {
-          return v_err("string.len: takes no arguments");
-        }
-        return v_int(sv.v.len());
-      }
-      if (name == "bytes" || name == "as_bytes") {
-        if (args.len() != 0) {
-          return v_err("string." + name + ": takes no arguments");
-        }
-        let bs: Value[] = [];
-        let bi: i32 = 0;
-        while (bi < sv.v.len()) {
-          bs = bs.append(v_int(sv.v[bi] as i32));
-          bi = bi + 1;
-        }
-        if (name == "as_bytes") {
-          return v_view_of(bs, "u8");
-        }
-        return v_arr_of(bs, "u8");
+      if let Some(r) = string_method(sv, name, args) {
+        return r;
       }
     },
     VArr(av) => {
-      if (name == "len") {
-        if (args.len() != 0) {
-          return v_err("array.len: takes no arguments");
-        }
-        return v_int(arr_len(av));
-      }
-      if (name == "with" && !av.view) {
-        if (args.len() != 2) {
-          return v_err("array.with: need 2 args");
-        }
-        if (!is_i32_arg(args[0])) {
-          return v_err("array.with: index must be an integer");
-        }
-        let wi: i32 = vint_bits(args[0]);
-        if (wi < 0 || wi >= arr_len(av)) {
-          return index_abort(aborts.arr_oob(), util.i32_to_string(wi), arr_len(av));
-        }
-        let wout: Value[] = [];
-        let wj: i32 = 0;
-        while (wj < arr_len(av)) {
-          if (wj == wi) {
-            wout = wout.append(args[1]);
-          } else {
-            wout = wout.append(arr_at(av, wj));
-          }
-          wj = wj + 1;
-        }
-        return v_arr(wout);
-      }
-      if (name == "append" && !av.view) {
-        if (args.len() != 1) {
-          return v_err("array.append: need 1 arg");
-        }
-        let out: Value[] = [];
-        let ai: i32 = 0;
-        while (ai < arr_len(av)) {
-          out = out.append(arr_at(av, ai));
-          ai = ai + 1;
-        }
-        out = out.append(args[0]);
-        return v_arr(out);
+      if let Some(r) = array_method(av, name, args) {
+        return r;
       }
     },
     VMap(m) => {
