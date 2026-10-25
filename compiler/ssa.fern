@@ -1022,24 +1022,29 @@ function still_holds(ev: i32, hi: i32[], now: i32): boolean {
   return hi[ev] >= now;
 }
 
-function block_loop_weights(f: SFunc): i32[] {
+// A loop is a header and the blocks up to its last back edge, so a header
+// with two back edges counts once.
+pub function block_loop_weights(f: SFunc): i32[] {
   let at: i32[] = block_positions(f);
-  let depth: i32[] = __alloc_i32(f.blocks.len());
-  let bi: i32 = 0;
-  while (bi < f.blocks.len()) {
-    let which: i32 = 0;
-    while (which < 2) {
+  let latch: i32[] = __alloc_i32(f.blocks.len());
+  for bi in 0..f.blocks.len() {
+    latch = latch.with(bi, 0 - 1);
+  }
+  for bi in 0..f.blocks.len() {
+    for which in 0..2 {
       let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
-      if (tgt >= 0 && tgt <= bi) {
-        let k: i32 = tgt;
-        while (k <= bi) {
-          depth = depth.with(k, depth[k] + 1);
-          k = k + 1;
-        }
+      if (tgt >= 0 && tgt <= bi && bi > latch[tgt]) {
+        latch = latch.with(tgt, bi);
       }
-      which = which + 1;
     }
-    bi = bi + 1;
+  }
+  let depth: i32[] = __alloc_i32(f.blocks.len());
+  for h in 0..f.blocks.len() {
+    let k: i32 = h;
+    while (k <= latch[h]) {
+      depth = depth.with(k, depth[k] + 1);
+      k = k + 1;
+    }
   }
   let out: i32[] = [];
   for d in depth {
@@ -3921,7 +3926,8 @@ pub function register_form(f: SFunc): Formed {
   let merged: Formed = merge_duplicates(folded.f);
   let shared: Formed = share_shape_loads(merged.f);
   let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(double_lanes(shared.f))));
-  let g: SFunc = unwrapped.f;
+  let extended: Formed = fold_extensions(unwrapped.f);
+  let g: SFunc = extended.f;
   let bytes: Formed = fold_byte_access(g);
   if (bytes.repl.len() > 0) {
     g = prune_dead(bytes.f);
@@ -3935,7 +3941,7 @@ pub function register_form(f: SFunc): Formed {
   if (fw.changed) {
     g = prune_dead(g);
   }
-  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), shared.repl), unwrapped.repl), bytes.repl) };
+  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl) };
 }
 
 pub function double_lanes(f: SFunc): SFunc {
@@ -4195,8 +4201,6 @@ pub function fold_byte_access(f: SFunc): Formed {
     }
     bi = bi + 1;
   }
-  let byte: boolean[] = __alloc_bool(f.nvals);
-  let repl: i32[] = [];
   let uses: i32[] = use_counts(f);
   let changed: boolean = false;
   let nblocks: SBlock[] = [];
@@ -4204,30 +4208,6 @@ pub function fold_byte_access(f: SFunc): Formed {
     let ninsts: SInst[] = [];
     for ins0 in blk.insts {
       let ins: SInst = ins0;
-      if (repl.len() > 0) {
-        let nargs: i32[] = [];
-        for a in ins.args {
-          nargs = nargs.append(resolve_repl(repl, a));
-        }
-        ins = SInst { ...ins, args: nargs };
-      }
-      let r: i32 = ins.result;
-      if (r >= 0 && r < f.nvals && byte_extension(ins) && ins.args[0] >= 0 && ins.args[0] < f.nvals && byte[ins.args[0]]) {
-        if (repl.len() == 0) {
-          i = 0;
-          while (i < f.nvals) {
-            repl = repl.append(i);
-            i = i + 1;
-          }
-        }
-        repl = repl.with(r, ins.args[0]);
-        byte = byte.with(r, true);
-        changed = true;
-        continue;
-      }
-      if (r >= 0 && r < f.nvals && byte_source(f, def_b, def_k, ins)) {
-        byte = byte.with(r, true);
-      }
       if ((ins.kind_tag == 54 || ins.kind_tag == 55) && const_zero(f, def_b, def_k, ins.args[1])) {
         let base: i32 = ins.args[0];
         let d: SInst = def_at(f, def_b, def_k, base);
@@ -4242,35 +4222,238 @@ pub function fold_byte_access(f: SFunc): Formed {
       }
       ninsts = ninsts.append(ins);
     }
-    let t: STerm = blk.term;
-    if (repl.len() > 0) {
-      if (t.kind_tag == 1) {
-        t = STerm { ...t, value: resolve_repl(repl, t.value) };
-      } else if (t.kind_tag == 3) {
-        t = STerm { ...t, cond: resolve_repl(repl, t.cond) };
-      }
-    }
-    nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: t });
+    nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
   }
   if (!changed) {
     return Formed { f: f, repl: [] };
   }
-  if (repl.len() == 0) {
-    repl = identity_repl(f.nvals);
-  }
-  return formed_by(SFunc { ...f, blocks: nblocks }, repl);
+  return Formed { f: SFunc { ...f, blocks: nblocks }, repl: identity_repl(f.nvals) };
 }
 
 function has_byte_access(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      let k: i32 = ins.kind_tag;
-      if (k == 54 || k == 55 || k == 44 || k == 42 && ins.str == "u8" || k == 9 && ins.str == "and") {
+      if (ins.kind_tag == 54 || ins.kind_tag == 55) {
         return true;
       }
     }
   }
   return false;
+}
+
+// What a register is known to hold: a sign-extended i32, a zero-extended u32,
+// or a byte, which is both.
+const EXT_I32: i32 = 1;
+
+const EXT_U32: i32 = 2;
+
+const EXT_BYTE: i32 = 7;
+
+// Replaces a wrap, extension or narrowing cast by its operand when the
+// operand's register already holds the result. A phi or a select holds what
+// all its operands hold. The facts start full and only shrink, so a loop
+// phi keeps what its back edge keeps.
+pub function fold_extensions(f: SFunc): Formed {
+  if (!has_extension(f)) {
+    return Formed { f: f, repl: [] };
+  }
+  let def_b: i32[] = __alloc_i32(f.nvals);
+  let def_k: i32[] = __alloc_i32(f.nvals);
+  let facts: i32[] = __alloc_i32(f.nvals);
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    def_b = def_b.with(i, 0 - 1);
+    def_k = def_k.with(i, 0 - 1);
+    i = i + 1;
+  }
+  for bi in 0..f.blocks.len() {
+    for k in 0..f.blocks[bi].insts.len() {
+      let r: i32 = f.blocks[bi].insts[k].result;
+      if (r >= 0 && r < f.nvals) {
+        def_b = def_b.with(r, bi);
+        def_k = def_k.with(r, k);
+        facts = facts.with(r, EXT_BYTE);
+      }
+    }
+  }
+  let changed: boolean = true;
+  let rounds: i32 = 0;
+  while (changed && rounds < 64) {
+    changed = false;
+    for blk in f.blocks {
+      for ins in blk.insts {
+        let r: i32 = ins.result;
+        if (r >= 0 && r < f.nvals) {
+          let x: i32 = ext_transfer(f, def_b, def_k, facts, ins) & facts[r];
+          if (x != facts[r]) {
+            facts = facts.with(r, x);
+            changed = true;
+          }
+        }
+      }
+    }
+    rounds = rounds + 1;
+  }
+  if (changed) {
+    return Formed { f: f, repl: [] };
+  }
+  let repl: i32[] = identity_repl(f.nvals);
+  let dropped: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < f.nvals && holds_result(ins, facts[ins.args[0]])) {
+        repl = repl.with(ins.result, ins.args[0]);
+        dropped = true;
+      }
+    }
+  }
+  if (!dropped) {
+    return Formed { f: f, repl: [] };
+  }
+  let flat: Formed = formed_by(f, repl);
+  return Formed { f: rewrite_through(f, flat.repl), repl: flat.repl };
+}
+
+function has_extension(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == 10 && ins.str == "int_cast:u8") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function signed_extension(ins: SInst): boolean {
+  return ins.kind_tag == 10 && ins.args.len() == 1 && ins.imm == 0 && (ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "int_cast:i32");
+}
+
+function unsigned_extension(ins: SInst): boolean {
+  if (ins.kind_tag != 10 || ins.args.len() != 1) {
+    return false;
+  }
+  return ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.imm != 0 && (ins.str == "int_wrap" || ins.str == "int_extend");
+}
+
+function holds_result(ins: SInst, held: i32): boolean {
+  if (signed_extension(ins)) {
+    return (held & EXT_I32) != 0;
+  }
+  if (unsigned_extension(ins)) {
+    return (held & EXT_U32) != 0;
+  }
+  return ins.kind_tag == 10 && ins.str == "int_cast:u8" && held == EXT_BYTE;
+}
+
+function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: SInst): i32 {
+  let k: i32 = ins.kind_tag;
+  if (k == 1) {
+    return const_facts(ins.imm as i64);
+  }
+  if (k == 2) {
+    return EXT_BYTE;
+  }
+  if (k == 3) {
+    return const_facts(util.lit_to_i64(ins.str));
+  }
+  if (k == 7 || k == 8) {
+    return shared_facts(facts, ins.args, 0);
+  }
+  if (k == 36) {
+    return shared_facts(facts, ins.args, 1);
+  }
+  if (byte_source(f, def_b, def_k, ins)) {
+    return EXT_BYTE;
+  }
+  if (k == 9) {
+    return binary_facts(f, def_b, def_k, facts, ins);
+  }
+  if (k == 10 && ins.args.len() == 1) {
+    return unary_facts(ins, fact_of(facts, ins.args[0]));
+  }
+  return 0;
+}
+
+function const_facts(c: i64): i32 {
+  if (c >= 0i64 && c <= 255i64) {
+    return EXT_BYTE;
+  }
+  let out: i32 = 0;
+  if (c >= 0 - 2147483648i64 && c <= 2147483647i64) {
+    out = EXT_I32;
+  }
+  if (c >= 0i64 && c <= 4294967295i64) {
+    out = out | EXT_U32;
+  }
+  return out;
+}
+
+function fact_of(facts: i32[], v: i32): i32 {
+  if (v < 0 || v >= facts.len()) {
+    return 0;
+  }
+  return facts[v];
+}
+
+function shared_facts(facts: i32[], args: i32[], from: i32): i32 {
+  let out: i32 = EXT_BYTE;
+  for i in from..args.len() {
+    out = out & fact_of(facts, args[i]);
+  }
+  return out;
+}
+
+function binary_facts(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: SInst): i32 {
+  if (ins.args.len() != 2) {
+    return 0;
+  }
+  let op: string = ins.str;
+  if (op == "eq" || op == "ne" || util.str_has_prefix(op, "lt_") || util.str_has_prefix(op, "le_") || util.str_has_prefix(op, "gt_") || util.str_has_prefix(op, "ge_")) {
+    return EXT_BYTE;
+  }
+  if (op == "and") {
+    let a: i32 = fact_of(facts, ins.args[0]) | fact_of(facts, ins.args[1]);
+    if (a == EXT_BYTE) {
+      return EXT_BYTE;
+    }
+    if ((fact_of(facts, ins.args[0]) & 3) == 3 || (fact_of(facts, ins.args[1]) & 3) == 3) {
+      return 3;
+    }
+    return a & EXT_U32;
+  }
+  if (op == "shr_u" && ins.imm == 64 && const_in(f, def_b, def_k, ins.args[1], 56i64, 63i64)) {
+    return EXT_BYTE;
+  }
+  if (op == "shr_u" && ins.imm == 64 && const_in(f, def_b, def_k, ins.args[1], 33i64, 63i64)) {
+    return 3;
+  }
+  if (op == "shr_u" && ins.imm == 64 && const_in(f, def_b, def_k, ins.args[1], 32i64, 63i64)) {
+    return EXT_U32;
+  }
+  return 0;
+}
+
+function unary_facts(ins: SInst, held: i32): i32 {
+  if (ins.str == "load_i32") {
+    return EXT_I32;
+  }
+  if (signed_extension(ins)) {
+    if ((held & EXT_I32) != 0) {
+      return held;
+    }
+    return EXT_I32;
+  }
+  if (unsigned_extension(ins)) {
+    if ((held & EXT_U32) != 0) {
+      return held;
+    }
+    return EXT_U32;
+  }
+  if (ins.str == "int_cast:u8" || util.str_has_prefix(ins.str, "ctz:") || util.str_has_prefix(ins.str, "clz:") || util.str_has_prefix(ins.str, "popcount:")) {
+    return EXT_BYTE;
+  }
+  return 0;
 }
 
 function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean {
@@ -4284,14 +4467,6 @@ function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean 
     return const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64);
   }
   return false;
-}
-
-function byte_extension(ins: SInst): boolean {
-  if (ins.kind_tag != 10 || ins.args.len() != 1) {
-    return false;
-  }
-  return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "u32_wrap"
-    || ins.str == "int_cast:u8" || ins.str == "int_cast:i32" || ins.str == "int_cast:u32";
 }
 
 function const_zero(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {

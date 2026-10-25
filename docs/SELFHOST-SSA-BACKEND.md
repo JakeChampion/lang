@@ -51,12 +51,15 @@ lowered function it:
    after each 32-bit op stays only where the value reaches a comparison, a
    division, a right shift, a call, a store, a branch or a return; a loop
    counter's `i + 1` loses its wrap even there, when it runs only after the
-   loop's own `i < n` test, since it cannot pass INT32_MAX), replaces an
-   extension, wrap or widening cast of a byte by its operand and gives a
+   loop's own `i < n` test, since it cannot pass INT32_MAX), replaces a
+   wrap, extension or narrowing cast by its operand when the operand's
+   register already holds the result (`ssa.fold_extensions`: a wrap or a
+   32-bit load leaves a sign-extended i32, a u32 wrap a zero-extended u32,
+   and a byte load, a u8 element, a string byte, a compare, a bit count and
+   an `and` with a byte all leave 0..255; a phi or a select holds what all
+   its operands hold, found by a fixed point that starts full), gives a
    byte load or store at `add(a, b) + 0` the address `a + b` when the
-   full-width sum is read nowhere else (`ssa.fold_byte_access`: a byte
-   load, a u8 element, a string byte and an `and` with a mask under 256 all
-   leave 0..255 in the whole register, which none of those changes), then
+   full-width sum is read nowhere else (`ssa.fold_byte_access`), then
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
