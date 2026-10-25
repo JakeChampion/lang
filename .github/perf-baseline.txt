@@ -1,3 +1,4 @@
+# 2026-10-25: the x86_64 perceus_rbtree rows re-pinned from a local perf-bench for the carried-token change (ssaunits.dying_unclaimed).
 # Re-pinned 2026-10-25 (#13143) from Perf run 40108312430. The LZ77 copy helper
 # and the byte-view mismatch cut deflate_decode.ir by 19-23% and deflate_encode.ir
 # by 9-11%. The new runtime helper adds 2-6% `.text` to deflate_decode,
@@ -416,10 +417,10 @@ x86_64/perceus_deriv.text	2580
 x86_64/perceus_deriv.ir	66902002
 x86_64/perceus_nqueens.text	1460
 x86_64/perceus_nqueens.ir	93164076
-x86_64/perceus_rbtree.text	2765
-x86_64/perceus_rbtree.ir	56730015
-x86_64/perceus_rbtree_ck.text	2981
-x86_64/perceus_rbtree_ck.ir	55908895
+x86_64/perceus_rbtree.text	2769
+x86_64/perceus_rbtree.ir	56477535
+x86_64/perceus_rbtree_ck.text	3009
+x86_64/perceus_rbtree_ck.ir	55981855
 aarch64/perceus_cfold.text	2042
 aarch64/perceus_cfold.ir	61163127
 aarch64/perceus_deriv.text	2872
