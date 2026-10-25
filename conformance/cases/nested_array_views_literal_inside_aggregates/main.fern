@@ -1,0 +1,23 @@
+// An array literal settles into a view only at the top of a destination.
+enum E { A([u8]), B }
+
+function takes(xs: [u8][]): i32 {
+  return xs.len();
+}
+
+function top(): i32 {
+  let view: [u8] = [1u8];
+  return view.len();
+}
+
+function nested(): i32 {
+  let all: [u8][] = [[1u8]];
+  let t: ([u8], i32) = ([1u8], 1);
+  let o: Option[[u8]] = Some([1u8]);
+  let e: E = A([1u8]);
+  return takes([[1u8]]);
+}
+
+function main(): i32 {
+  return top() + nested();
+}

@@ -1,0 +1,2 @@
+main.fern:11:5: error[E065]: returning a `str` view of a function-local string: the backing string is reclaimed when "label" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead
+main.fern:17:5: error[E065]: returning a `str` view of a function-local string: the backing string is reclaimed when "maybe_label" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead

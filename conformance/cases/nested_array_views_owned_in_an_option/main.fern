@@ -1,0 +1,7 @@
+// An owned array inside an Option does not become a view.
+function main(): i32 {
+  let data: u8[] = [1u8, 2u8];
+  let p: Option[u8[][]] = Some([data]);
+  let q: Option[[u8][]] = p;
+  return 0;
+}
