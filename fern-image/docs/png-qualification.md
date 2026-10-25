@@ -52,6 +52,19 @@ Wasm enables the leak census without the native use-after-free detectors.
 The ARM64 record uses QEMU on an x86-64 host.
 It does not qualify native ARM hardware performance.
 
+All three recorded campaigns pass 964 cases across 61 fresh batches each.
+Each target accepts 142 files and rejects 822 files.
+Every batch reports zero final live bytes.
+Accepted pixel bytes and error classes agree across the three targets.
+The separate existing 76 image TAP cases also pass natively and in Wasm with this compiler.
+
+The recorded compiler reports `b54ed262ae03-dirty` after integration of upstream main `407ba9a0d3de11b4d76e123ec414815fb3a55bad`.
+The collector was the only modified file during that build.
+Compiler and stdlib sources did not change between that integration and recorded source commit `dce2906c7ef4170f763d9868d8ce9c0fb780ed10`.
+Each record hashes all 162 workspace stdlib sources, including literate modules.
+The raw hashes identify the exact compiler binary and test executable.
+Full current-head GitHub CI remains a separate gate.
+
 The record includes each case name, input hash, expected outcome, observed error, and accepted output hashes.
 It also records compiler, executable, collector, source, stdlib, Python, Pillow, and reference-library hashes.
 Wasm and ARM64 records include their runner hash and version.
