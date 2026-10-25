@@ -82,10 +82,10 @@ function near(a: f64, b: f64): boolean { let d: f64 = a - b; return d >= -0.0000
 function same(a: f64[], b: f64[]): boolean { if (a.len() != b.len()) { return false; } let i: i32 = 0; while (i < a.len()) { if (!near(a[i], b[i])) { return false; } i = i + 1; } return true; }
 function main(): i32 {
 ` + declarations.String() + fmt.Sprintf("match (dsp_core.new_graph(%d, %d)) { None => { return 1; }, Some(g) => { let mark: i64 = __heap_alloc_count();\n", tc.block, tc.delay) + checks.String() + fmt.Sprintf(`
-let saved: dsp_core.Graph = g;
+let saved: dsp_core.Graph = dsp_core.Graph { ...g };
 g = dsp_fip.process(g, input0, %d);
 if (!same(saved.output, output4) || !same(saved.delay, ring4) || saved.samples != %di64) { return 13; }
-let before: dsp_core.Graph = g;
+let before: dsp_core.Graph = dsp_core.Graph { ...g };
 g = dsp_fip.process(g, input0, -1);
 if (!g.refused || g.output_count != 0 || !same(g.delay, before.delay) || !same(g.output, before.output) || g.samples != before.samples || g.cursor != before.cursor || !near(g.previous, before.previous) || !near(g.previous2, before.previous2)) { return 14; }
 return 0; } } }
