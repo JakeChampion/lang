@@ -48,7 +48,8 @@ acceptable.
 **A1. `todo` statement builtin.** [status: shipped]
 Shipped as designed, with two refinements over the sketch below:
 the stub **diverges** for E052 missing-return and `let else`,
-because its desugar ends in a call to the builtin `exit`, which
+because its desugar ends in a call to the builtin `exit` (marked
+as the builtin, so a local named `exit` cannot capture it), which
 both checkers treat as a terminator — so `todo;` can be a whole
 non-void function body — and the formatter round-trips the sugar
 via `IsTodo`/`TodoMsg` on `ast.Block` (the self-host parser tags

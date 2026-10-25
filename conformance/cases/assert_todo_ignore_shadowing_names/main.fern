@@ -1,0 +1,85 @@
+import "std/i32";
+
+// assert and todo call the builtins eprint and exit whatever names are in
+// scope. A parameter, let, closure capture or pattern binding named exit or
+// eprint is an ordinary binding: the passing asserts below do not call it,
+// a condition or message that names it still reads it, and a todo still
+// diverges, so the bodies that end in one need no return.
+
+enum Slot { Named(i32), Empty }
+
+function by_params(exit: (i32) => void, eprint: (string) => void, n: i32): i32 {
+  assert(n > 0, "n must be positive");
+  exit(n);
+  eprint("param");
+  return n;
+}
+
+function by_values(exit: i32, eprint: string): i32 {
+  assert(exit > 0);
+  assert(eprint.len() > 0, eprint);
+  return exit + eprint.len();
+}
+
+function by_lets(n: i32): i32 {
+  let exit: (i32) => void = (c: i32): void => { print(f"let exit {c}"); };
+  let eprint: i32 = 7;
+  assert(n < eprint, "n too large");
+  exit(n);
+  return eprint;
+}
+
+function by_pattern(s: Slot): i32 {
+  match (s) {
+    Named(exit) => {
+      assert(exit != 0, "zero");
+      return exit;
+    },
+    Empty => {
+      return 0;
+    }
+  }
+}
+
+function in_closure(exit: i32): i32 {
+  let check: (i32) => i32 = (k: i32): i32 => {
+    assert(k + exit > 0, "negative");
+    return k + exit;
+  };
+  return check(1);
+}
+
+function later_param(exit: (i32) => void): i32 {
+  todo("later");
+}
+
+function later_let(n: i32): string {
+  let eprint: (string) => void = (s: string): void => { print(s); };
+  let exit: i32 = n;
+  todo;
+}
+
+function later_pattern(s: Slot): i32 {
+  match (s) {
+    Named(exit) => {
+      return exit;
+    },
+    Empty => {
+      todo("empty slot");
+    }
+  }
+}
+
+function main(): i32 {
+  let a: i32 = by_params((c: i32): void => { print(f"param exit {c}"); }, (s: string): void => { print(s); }, 2);
+  let b: i32 = by_values(3, "four");
+  let c: i32 = by_lets(5);
+  let d: i32 = by_pattern(Named(6)) + in_closure(7);
+  let e: i32 = later_pattern(Named(1));
+  print(f"{a} {b} {c} {d} {e}");
+  if (e < 0) {
+    later_param((c: i32): void => {});
+    print(later_let(e));
+  }
+  return 0;
+}
