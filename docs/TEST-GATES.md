@@ -16,6 +16,15 @@ single filter both events read (`TestGateLanesRunOnMain`,
 rebase-merged: each commit lands on a main its own CI never saw, so a coupling
 between two individually-green PRs exists only in the combination.
 
+Three checks run outside that queue, as soon as a pull request is pushed:
+`Lint`, the `changes` job that picks the lanes, and `Preflight`
+(`.github/workflows/preflight.yml`). Preflight runs the fixture corpus through
+the self-host compiler, one leg per target plus the front-end leg. Preflight is the broadest
+cheap probe of a compiler change, a few minutes on one runner per leg. A red
+leg cancels the run through `reap-preflight`, queued suite included. A broken
+compiler is therefore reported in minutes, and its suite slot goes to the next
+pull request.
+
 Pull requests take two queues (`pr-ci-even` / `pr-ci-odd`, `queue: max`, first
 in first out, chosen by the parity of the PR number): at most two PRs' suites
 run at a time and each one's lanes run in parallel inside its run. Two rather

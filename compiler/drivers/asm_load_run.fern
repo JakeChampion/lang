@@ -28,24 +28,6 @@ function lowered(typed: parser.Module, target: string, shaken: boolean): semlowe
   return semlower.driven_annotated(typed, target);
 }
 
-function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.LoadedModule[], target: string, d: semlower.Driven): string {
-  let parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
-  let needs: string[] = ircore.all_runtime_need_roots();
-  let out: string = "";
-  let g: ircore.Gated = semlower.program(d);
-  let u: ircore.Units = ircore.split_units(g, part_mods(parts), entry_index(parts));
-  let ti: i32 = 0;
-  while (ti < parts.len()) {
-    let textra: string[] = [];
-    if (parts[ti].is_entry) {
-      textra = needs;
-    }
-    out = out + asm_ir.emit_module_ir_unit_flat(u.mods[ti], parts[ti].is_entry, true, parts[ti].ns, textra, g.im.funcs, g.stab, 0, 0 - 1, u.caches[ti], u.physical[ti], d.sub.rt_lower, 0 as usize, asmcore.env_switches());
-    ti = ti + 1;
-  }
-  return asmcore.dedupe_weak_defs(out);
-}
-
 function part_mods(parts: flatten.PerModule[]): parser.Module[] {
   let out: parser.Module[] = [];
   for pt in parts {
@@ -252,11 +234,6 @@ function main(): i32 {
     return 0;
   }
   let d: semlower.Driven = lowered(merged, target, prune);
-  let nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
-  if (nfuncs > 512 && nfuncs < 1500) {
-    write(emit_per_module_concat(entry_mod, loaded, target, d));
-    return 0;
-  }
   write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
   return 0;
 }

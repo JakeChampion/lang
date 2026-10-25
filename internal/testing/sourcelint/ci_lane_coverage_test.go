@@ -25,6 +25,7 @@ var selectorLanes = map[string][]laneFile{
 		"test-e2e-wasm.yml",
 		"test-e2e-differential.yml",
 		"test-e2e-selfhost.yml",
+		"preflight.yml",
 		"macos.yml",
 	},
 	"internal/testing/e2ecompiler": {

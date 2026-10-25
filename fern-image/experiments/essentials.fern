@@ -1,0 +1,17 @@
+import "std/test";
+
+function essentials(): test.TestOutcome {
+  let n: i32 = 2147483647;
+  let overflow: boolean = match (n *? 4) { Some(_) => false, None => true };
+  let bytes: u8[] = __alloc_u8(8);
+  let alias: u8[] = bytes;
+  bytes = bytes.with(3, 255 as u8);
+  let view: [u8] = bytes[2:5];
+  return test.assert_true(overflow && n + 1 == 0 - 2147483647 - 1 && alias[3] == 0 as u8 && bytes[3] == 255 as u8 && view[1] == 255 as u8);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("image essentials");
+  r = r.it("checked arithmetic, zero bytes, copy-on-write and slices", essentials);
+  return r.finish();
+}
