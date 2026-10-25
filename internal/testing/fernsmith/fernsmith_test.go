@@ -1071,6 +1071,45 @@ func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 	}
 }
 
+func TestMainBytesReplaysTheSeed(t *testing.T) {
+	for seed := uint64(0); seed < sweepN(t, 2048); seed++ {
+		data, err := fernsmith.MainBytes(seed)
+		if err != nil {
+			t.Fatalf("seed %d: %v", seed, err)
+		}
+		if got, want := fernsmith.GenMainBytes(data), fernsmith.GenMain(seed); got != want {
+			t.Fatalf("seed %d: the recorded corpus generates another program:\n%s\nwant:\n%s", seed, got, want)
+		}
+	}
+	// A seed's corpus shrinks like any other: 122230 keeps its generic enum.
+	data, err := fernsmith.MainBytes(122230)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fails := func(d []byte) bool { return strings.Contains(fernsmith.GenMainBytes(d), "enum GO0") }
+	shrunk := fernsmith.ShrinkMainBytes(data, fails)
+	if src := fernsmith.GenMainBytes(shrunk); !fails(shrunk) || len(src) >= len(fernsmith.GenMain(122230)) {
+		t.Errorf("seed 122230 did not shrink to a smaller program that keeps its generic enum:\n%s", src)
+	}
+}
+
+func TestShrinkSourceDeletesLinesAndStatements(t *testing.T) {
+	src := "struct A { x: i32 }\nstruct B { y: i32 }\nfunction f(): i32 { return 1; }\n" +
+		"function main(): i32 { let a: i32 = 1; let b: i32 = f(); let c: i32 = 3; return b; }"
+	keeps := []string{"let b: i32 = f()", "return 1", "return b"}
+	got := fernsmith.ShrinkSource(src, func(s string) bool {
+		for _, k := range keeps {
+			if !strings.Contains(s, k) {
+				return false
+			}
+		}
+		return true
+	})
+	if want := "function f(): i32 { return 1; }\nfunction main(): i32 { let b: i32 = f(); return b; }"; got != want {
+		t.Errorf("ShrinkSource =\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestGenReachesOwnershipShapes(t *testing.T) {
 	const seeds = 1024
 	landmarks := []struct {

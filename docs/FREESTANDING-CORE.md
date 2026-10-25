@@ -35,9 +35,10 @@ Two clarifications that decide most cases:
 - **An allocator is not a host.** `map_new` needs memory, not a kernel. Whoever seeds
   the heap region decides where the bytes come from — see #6511, where the 512 MiB
   `mmap` reservation becomes an embedder-supplied region. Allocation is core.
-- **Authority lives on the constructor, not the consumer.** `poll` waits on a pollable
-  someone else built. Gating both the constructor and the wait double-counts one
-  authority and produces two diagnostics for one cause.
+- **Authority lives on the constructor, not the consumer.** `poll` waits on tokens
+  someone else built — a socket's from `tcp_pollable`, a timer's from `timer_fd` —
+  so it is gated for what the wait itself needs, a clock for its timeout, and not
+  again for each token's authority.
 
 When a new builtin is genuinely ambiguous, gate it. A capability that turns out to be
 universal costs one line per descriptor; a host dependency that slips into the core
@@ -52,8 +53,9 @@ costs a silent failure on the first target that lacks it.
 | `log` | `print`, `eprint` | somewhere to put a line of diagnostics |
 | `stdout` | `stdout`, `stderr`, `write`, `putchar` | an actual stdout stream |
 | `stdin` | `stdin` | a blocking input stream |
-| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `clock_resolution`, `clock_set`, `sleep_ms`, `sleep_ns`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
+| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `clock_resolution`, `clock_set`, `sleep_ms`, `sleep_ns`, `poll` | a clock, and wakeups driven by one |
 | `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
+| `pollable` | `wasm_timer_pollable`, `wasm_pollable_drop`, `wasm_block`, `wasm_poll` | wasi:io pollables, the handles a wasi wait blocks on. Granted by the two wasi profiles alone; std/async reaches them under a `target_os()` branch |
 | `env` | `env` | envp, captured at process start |
 | `config` | `config_get` | deploy-time configuration: the environment where the target has one, wasi:config/store on the proxy world |
 | `args` | `args` | argv, which exists only because something exec'd you |
@@ -93,7 +95,6 @@ costs a silent failure on the first target that lacks it.
   `target_os` and `target_arch` are purer still: each is a string literal by the
   time anything runs, folded from a half of the target's own name
   (see `docs/BACKEND-PARITY.md`).
-- **Readiness** — `poll`, `wasm_block`, `wasm_poll`, `wasm_pollable_drop`.
 - **`exit`** and **`isatty`** — see below.
 
 ## The judgement calls
@@ -507,7 +508,9 @@ than an `unknown callee` out of the emitter:
 - `timer_fd` hands back a **file descriptor** to poll. Wasm's readiness surface is
   wasi:io/poll pollables — values, not numbers in a per-process table — so the fd is
   what is missing, not the clock. `wasm_timer_pollable` is the same wakeup expressed
-  the way wasm can express it, and stays on `now`.
+  the way wasm can express it, and is `pollable`, which only wasm grants: a native
+  has no pollable to hand back, and a stub answering "no timer" would compile a
+  wait that never wakes.
 - `write_file_exec` needs a **permission bit**. Preview1's `path_open` takes no mode
   argument and the component-model filesystem has no permission bits at all, so a
   host can offer files and still not answer this (#6133). `fs` is the filesystem;

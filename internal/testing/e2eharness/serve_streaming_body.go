@@ -53,7 +53,7 @@ const StreamingBodyChunks = "chunk 0\nchunk 1\nchunk 2\nchunk 3\nchunk 4\n"
 
 func CheckStreamingBody(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn := rawRequest(t, addr, "/big", "")
 	defer conn.Close()
 	reader := bufio.NewReader(conn)

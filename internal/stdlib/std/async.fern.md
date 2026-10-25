@@ -75,6 +75,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<29 pub function gather_tasks[T](entries: (()>>
 
 <<30 function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32>>
+
+<<31 function __timer_pollable(ns: i64): i32>>
 ```
 
 ### `module introduction`
@@ -353,10 +355,10 @@ impl Driver for RealDriver {
     return monotonic_ns();
   }
   function timer(self: RealDriver, ns: i64): i32 {
-    return wasm_timer_pollable(ns);
+    return __timer_pollable(ns);
   }
   function drop_token(self: RealDriver, tok: i32): i32 {
-    return wasm_pollable_drop(tok);
+    return drop_pollable(tok);
   }
   function watch(self: RealDriver, fd: i32, interest: i32): i32 {
     return __real_ctl(self, 1, fd, interest);
@@ -1179,17 +1181,17 @@ function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32 {
   }
   let timer: i32 = 0 - 1;
   if (timeout_ms >= 0) {
-    timer = wasm_timer_pollable(timeout_ms as i64 * 1000000i64);
+    timer = __timer_pollable(timeout_ms as i64 * 1000000i64);
     toks = toks.append(timer);
   }
   let ready: i32 = poll(toks, timeout_ms);
   i = 0;
   while (i < n) {
-    let dropped: i32 = wasm_pollable_drop(toks[i]);
+    let dropped: i32 = drop_pollable(toks[i]);
     i = i + 1;
   }
   if (timer >= 0) {
-    let dtimer: i32 = wasm_pollable_drop(timer);
+    let dtimer: i32 = drop_pollable(timer);
   }
   if (ready >= 0 && ready < n) {
     return ready;
@@ -1224,5 +1226,29 @@ function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
     k = k + 2;
   }
   return hit;
+}
+```
+
+### `31 function __timer_pollable(ns: i64): i32`
+
+A readiness token is a wasi:io pollable on the two wasi worlds and a
+descriptor everywhere else. Off wasi a deadline is the wait's own timeout and
+a token has no lifetime to end, so these answer as no timer and a drop that
+had nothing to do, and the pollable builtins are not in the program.
+
+```fern
+<<31 function __timer_pollable(ns: i64): i32>>=
+function __timer_pollable(ns: i64): i32 {
+  if (target_os() == "wasi" || target_os() == "wasi-http") {
+    return wasm_timer_pollable(ns);
+  }
+  return 0 - 1;
+}
+
+pub(package) function drop_pollable(tok: i32): i32 {
+  if (target_os() == "wasi" || target_os() == "wasi-http") {
+    return wasm_pollable_drop(tok);
+  }
+  return 0;
 }
 ```

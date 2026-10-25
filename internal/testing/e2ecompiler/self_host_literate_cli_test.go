@@ -60,7 +60,7 @@ func TestSelfHostTangle(t *testing.T) {
 
 	t.Run("refusal-shows-the-line", func(t *testing.T) {
 		_, _, errOut, code := literateRun(t, "```fern\n<<*>>=\n  <<nope>>\n```\n", "-tangle")
-		want := "DOC:3:3: error: literate: reference to undefined chunk \"<<nope>>\"\n      <<nope>>\n      ^\n"
+		want := "DOC:3:3: error[E092]: literate: reference to undefined chunk \"<<nope>>\"\n      <<nope>>\n      ^\n"
 		if code != 1 || errOut != want {
 			t.Errorf("exit %d, stderr\n%q\nwant\n%q", code, errOut, want)
 		}
@@ -68,7 +68,7 @@ func TestSelfHostTangle(t *testing.T) {
 
 	t.Run("unused-chunk-warning", func(t *testing.T) {
 		_, out, errOut, code := literateRun(t, "```fern\n<<*>>=\nx\n```\n```fern\n<<spare>>=\ny\n```\n", "-tangle")
-		if code != 0 || out != "x\n" || errOut != "DOC: warning: chunk <<spare>> is defined but never used\n" {
+		if code != 0 || out != "x\n" || errOut != "DOC:6:1: warning[W003]: chunk <<spare>> is defined but never used\n" {
 			t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
 		}
 	})
@@ -129,7 +129,7 @@ func TestSelfHostWeave(t *testing.T) {
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			_, out, errOut, code := literateRun(t, doc, c.args...)
-			if code != 0 || errOut != "DOC: warning: chunk <<café>> is defined but never used\n" {
+			if code != 0 || errOut != "DOC:51:1: warning[W003]: chunk <<café>> is defined but never used\n" {
 				t.Fatalf("exit %d, stderr %q", code, errOut)
 			}
 			if want := weaveGolden(t, c.golden); out != want {
@@ -217,7 +217,7 @@ func TestSelfHostDoctest(t *testing.T) {
 	})
 
 	t.Run("undefined-chunk", func(t *testing.T) {
-		if _, out, errOut, code := literateRun(t, "```fern test\n<<nope>>\n```\n", "-doctest"); code != 1 || out != "" || !strings.HasPrefix(errOut, "DOC:2:1: error: literate: reference to undefined chunk \"<<nope>>\"\n") {
+		if _, out, errOut, code := literateRun(t, "```fern test\n<<nope>>\n```\n", "-doctest"); code != 1 || out != "" || !strings.HasPrefix(errOut, "DOC:2:1: error[E092]: literate: reference to undefined chunk \"<<nope>>\"\n") {
 			t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
 		}
 	})

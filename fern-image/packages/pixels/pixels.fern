@@ -1,0 +1,86 @@
+import "core/cmp";
+
+pub enum Format { RGB8, RGBA8 }
+
+@derive(cmp.Eq)
+pub enum ImageError { Dimensions, Overflow, Stride, Limit, Storage, Bounds, Alpha }
+
+pub struct Limits { max_pixels: i32, max_bytes: i32 }
+
+pub struct Layout { width: i32, height: i32, stride: i32, format: Format, bytes: i32 }
+
+pub struct Image { layout: Layout, data: u8[] }
+
+pub struct Pixel { r: u8, g: u8, b: u8, a: u8 }
+
+pub function default_limits(): Limits {
+  return Limits { max_pixels: 16777216, max_bytes: 67108864 };
+}
+
+pub function channels(format: Format): i32 {
+  return match (format) { RGB8 => 3, RGBA8 => 4 };
+}
+
+pub function checked_layout(width: i32, height: i32, stride: i32, format: Format, limits: Limits): Result[Layout, ImageError] {
+  if (width <= 0 || height <= 0) {
+    return Err(Dimensions);
+  }
+  let row: i32 = match (width *? channels(format)) { Some(n) => n, None => { return Err(Overflow); } };
+  if (stride < row) {
+    return Err(Stride);
+  }
+  let count: i32 = match (width *? height) { Some(n) => n, None => { return Err(Overflow); } };
+  let bytes: i32 = match (stride *? height) { Some(n) => n, None => { return Err(Overflow); } };
+  let last_row: i32 = match ((height - 1) *? stride) { Some(n) => n, None => { return Err(Overflow); } };
+  let extent: i32 = match (last_row +? row) { Some(n) => n, None => { return Err(Overflow); } };
+  if (extent > bytes) {
+    return Err(Storage);
+  }
+  if (limits.max_pixels <= 0 || limits.max_bytes <= 0 || count > limits.max_pixels || bytes > limits.max_bytes || bytes > 67108864) {
+    return Err(Limit);
+  }
+  return Ok(Layout { width: width, height: height, stride: stride, format: format, bytes: bytes });
+}
+
+pub function create(width: i32, height: i32, stride: i32, format: Format, limits: Limits): Result[Image, ImageError] {
+  let layout: Layout = checked_layout(width, height, stride, format, limits)?;
+  return Ok(Image { layout: layout, data: __alloc_u8(layout.bytes) });
+}
+
+// Public structs can be constructed outside this module. Validate before indexing.
+function offset(image: Image, x: i32, y: i32): Result[i32, ImageError] {
+  let l: Layout = image.layout;
+  let valid: Layout = checked_layout(l.width, l.height, l.stride, l.format, Limits { max_pixels: 2147483647, max_bytes: 67108864 })?;
+  if (l.bytes != valid.bytes || image.data.len() != valid.bytes) {
+    return Err(Storage);
+  }
+  if (x < 0 || y < 0 || x >= l.width || y >= l.height) {
+    return Err(Bounds);
+  }
+  let row: i32 = match (y *? l.stride) { Some(n) => n, None => { return Err(Overflow); } };
+  let col: i32 = match (x *? channels(l.format)) { Some(n) => n, None => { return Err(Overflow); } };
+  return match (row +? col) { Some(n) => Ok(n), None => Err(Overflow) };
+}
+
+pub function read_pixel(image: Image, x: i32, y: i32): Result[Pixel, ImageError] {
+  let i: i32 = offset(image, x, y)?;
+  let alpha: u8 = 255;
+  if (channels(image.layout.format) == 4) {
+    alpha = image.data[i + 3];
+  }
+  return Ok(Pixel { r: image.data[i], g: image.data[i + 1], b: image.data[i + 2], a: alpha });
+}
+
+pub function write_pixel(image: Image, x: i32, y: i32, pixel: Pixel): Result[Image, ImageError] {
+  let i: i32 = offset(image, x, y)?;
+  let n: i32 = channels(image.layout.format);
+  if (n == 3 && pixel.a != 255 as u8) {
+    return Err(Alpha);
+  }
+  let data: u8[] = image.data;
+  data = data.with(i, pixel.r).with(i + 1, pixel.g).with(i + 2, pixel.b);
+  if (n == 4) {
+    data = data.with(i + 3, pixel.a);
+  }
+  return Ok(Image { layout: image.layout, data: data });
+}

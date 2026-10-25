@@ -101,7 +101,11 @@ function var_init_of(mod: parser.Module): ast.Expr {
 function folded_init(src: string, a: embed.Assets): (ast.Expr, string[]) {
   let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
   let folded: embed.Folded = embed.fold_assets(mod, a);
-  return (var_init_of(folded.module), folded.errs);
+  let msgs: string[] = [];
+  for d in folded.errs {
+    msgs = msgs.append(d.code + " " + util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": " + d.message);
+  }
+  return (var_init_of(folded.module), msgs);
 }
 
 function str_of(e: ast.Expr): string {
@@ -239,7 +243,7 @@ function main(): i32 {
   if (err3.len() != 1) {
     return 50;
   }
-  if (!util.contains(err3[0], "no assets were embedded")) {
+  if (!util.str_has_prefix(err3[0], "E094 1:") || !util.contains(err3[0], "no assets were embedded")) {
     return 51;
   }
 

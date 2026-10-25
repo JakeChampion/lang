@@ -29,7 +29,7 @@ function main(): i32 {
 
 func CheckWorkersPerCPU(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	want := runtime.NumCPU()
 	pid := cmd.Process.Pid
 	limit := time.Now().Add(10 * time.Second)
@@ -71,7 +71,7 @@ function main(): i32 {
 
 func CheckShutdownAfterBurst(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	for i := 0; i < 64; i++ {
 		conn := rawRequest(t, addr, "/ok", "Connection: close\r\n")
 		resp := readResponse(t, conn, fmt.Sprintf("/ok, connection %d", i))
@@ -102,7 +102,7 @@ function main(): i32 {
 
 func CheckWorkersStopWithSupervisor(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	pid := cmd.Process.Pid
 	var workers []string
 	for limit := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
