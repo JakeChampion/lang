@@ -472,10 +472,22 @@ pub function (s: Streams) read(id: i64): Streams {
   if (st.recv.reset >= 0) {
     return s.__refuse("the peer reset the stream");
   }
-  let (data, bytes) = st.recv.data.take();
-  let fin: boolean = st.recv.final_size >= 0 && data.taken == st.recv.final_size;
-  let cur: Streams = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64, refused: "", read_data: bytes, read_fin: fin }.__put(i, Stream { ...st, recv: Recv { ...st.recv, data: data, fin_read: fin } });
+  let bytes: u8[] = st.recv.data.ready;
+  let fin: boolean = st.recv.final_size >= 0 && st.recv.data.delivered() == st.recv.final_size;
+  let cur: Streams = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64, refused: "", read_data: bytes, read_fin: fin, list: s.list.with(i, s.list[i].__read_out(fin)) };
   return cur.__retire_done(i);
+}
+
+function (st: Stream) __read_out(fin: boolean): Stream {
+  return Stream { ...st, recv: st.recv.__read_out(fin) };
+}
+
+function (r: Recv) __read_out(fin: boolean): Recv {
+  return Recv { ...r, data: r.data.__emptied(), fin_read: fin };
+}
+
+function (r: Reassembly) __emptied(): Reassembly {
+  return Reassembly { ...r, taken: r.delivered(), ready: [] };
 }
 
 pub function (s: Streams) reset(id: i64, code: i64): Streams {
@@ -633,20 +645,36 @@ function (s: Streams) __on_stream(d: frames.StreamData): Streams {
   if let Some(e) = cur.__credit_error(st.recv, end, frames.STREAM) {
     return cur.__fail(e);
   }
-  let r: Recv = __with_final(st.recv, end, d.fin);
-  let more: i64 = __max(0 as i64, end - r.highest);
+  let more: i64 = __max(0 as i64, end - st.recv.highest);
   let next: Streams = Streams { ...cur, recv_highest: cur.recv_highest + more };
-  if (r.reset >= 0 || r.stop >= 0) {
-    return next.__put(i, Stream { ...st, recv: Recv { ...r, highest: r.highest + more } });
+  if (st.recv.reset >= 0 || st.recv.stop >= 0) {
+    return Streams { ...next, list: next.list.with(i, next.list[i].__received(d, end, more, false)) };
   }
-  let before: i64 = r.data.delivered();
-  let data: Reassembly = r.data.add(d.offset, d.data);
-  let readable: boolean = data.delivered() > before || d.fin && !r.fin_read && data.delivered() == r.final_size;
-  let events: Event[] = next.events;
-  if (readable) {
-    events = events.append(Readable(d.stream));
+  let before: i64 = st.recv.data.delivered();
+  let fin_read: boolean = st.recv.fin_read;
+  next = Streams { ...next, list: next.list.with(i, next.list[i].__received(d, end, more, true)) };
+  let r: Recv = next.list[i].recv;
+  if (r.data.delivered() > before || d.fin && !fin_read && r.data.delivered() == r.final_size) {
+    return Streams { ...next, events: next.events.append(Readable(d.stream)) };
   }
-  return Streams { ...next, events: events }.__put(i, Stream { ...st, recv: Recv { ...r, data: data, highest: r.highest + more } });
+  return next;
+}
+
+function (st: Stream) __received(d: frames.StreamData, end: i64, more: i64, keep: boolean): Stream {
+  return Stream { ...st, recv: st.recv.__received(d, end, more, keep) };
+}
+
+// __received takes a STREAM frame's data into the reassembly when keep,
+// and otherwise only its final size and extent.
+function (r: Recv) __received(d: frames.StreamData, end: i64, more: i64, keep: boolean): Recv {
+  let final: i64 = r.final_size;
+  if (d.fin) {
+    final = end;
+  }
+  if (!keep) {
+    return Recv { ...r, final_size: final, highest: r.highest + more };
+  }
+  return Recv { ...r, final_size: final, highest: r.highest + more, data: r.data.add(d.offset, d.data) };
 }
 
 function __final_error(r: Recv, end: i64, fin: boolean, kind: i64): Option[frames.FrameError] {
@@ -1157,6 +1185,10 @@ function (s: Streams) __initial_streams(t: i32): i64 {
   return s.local.initial_max_streams_uni;
 }
 
+function (st: Stream) __closed(): Stream {
+  return Stream { ...st, closed: true };
+}
+
 function (s: Streams) __retire_done(i: i32): Streams {
   let st: Stream = s.list[i];
   if (st.closed || !__done(st)) {
@@ -1174,7 +1206,7 @@ function (s: Streams) __retire_done(i: i32): Streams {
       cur = Streams { ...cur, limits: cur.limits.with(t, target), limits_dirty: cur.limits_dirty.with(t, true) };
     }
   }
-  cur = cur.__put(i, Stream { ...st, closed: true });
+  cur = Streams { ...cur, list: cur.list.with(i, cur.list[i].__closed()) };
   if (cur.retired >= 32 && cur.retired * 2 >= cur.list.len()) {
     return cur.__sweep();
   }
