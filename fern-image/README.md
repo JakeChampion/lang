@@ -52,7 +52,7 @@ A per-image limit does not establish a process memory limit.
 
 ## Scope and status
 
-Twenty-four TAP cases pass across the essential, compression, pixel, color, and resize suites.
+Twenty-five TAP cases pass across the essential, compression, pixel, color, and resize suites.
 The file I/O probe and pixel example also exit successfully.
 All eight executables report zero live bytes under the sanitizer.
 

@@ -61,6 +61,17 @@ function transparency(): test.TestOutcome {
   return test.assert_true(mid.r == 0 as u8 && mid.b == 255 as u8 && mid.a == 128 as u8);
 }
 
+function mixed_alpha_grid(): test.TestOutcome {
+  let source = match (pixels.create(2, 2, 8, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  source = match (pixels.write_pixel(source, 0, 0, color.rgba(255 as u8, 0 as u8, 0 as u8, 255 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 1, 0, color.rgba(0 as u8, 255 as u8, 0 as u8, 0 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 0, 1, color.rgba(0 as u8, 0 as u8, 255 as u8, 255 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 1, 1, color.rgba(255 as u8, 255 as u8, 255 as u8, 128 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  let output = match (resize.resize(source, 1, 1, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
+  let p = match (pixels.read_pixel(output, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(p.r == 203 as u8 && p.g == 124 as u8 && p.b == 203 as u8 && p.a == 160 as u8);
+}
+
 function nearest(): test.TestOutcome {
   let output = match (golden(255 as u8, resize.Nearest)) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
   let first = match (pixels.read_pixel(output, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
@@ -101,6 +112,7 @@ function main(): i32 {
   r = r.it("solid images, odd dimensions, single rows and columns", edges);
   r = r.it("linear-light golden interpolation", interpolation);
   r = r.it("transparent color does not bleed", transparency);
+  r = r.it("two-dimensional mixed-alpha golden", mixed_alpha_grid);
   r = r.it("nearest center map", nearest);
   r = r.it("aspect ratio and extreme dimensions", aspect);
   r = r.it("unsafe output and source rejection", rejection);

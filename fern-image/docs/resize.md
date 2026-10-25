@@ -34,10 +34,10 @@ Cancellation, no-upscale, cover, crop, rotation, and SIMD remain future work.
 
 ## Verification
 
-Seven native cases check solid colors, single rows, single columns, odd dimensions, and extreme aspect ratios.
-Golden outputs check nearest selection, two-dimensional RGB interpolation, and transparent color isolation.
+Eight native cases check solid colors, single rows, single columns, odd dimensions, and extreme aspect ratios.
+Golden outputs check nearest selection, two-dimensional RGB and mixed-alpha interpolation, and transparent color isolation.
 Rejection cases cover invalid dimensions, multiplication overflow, caller budgets, and malformed source storage.
-All seven cases pass with the heap sanitizer and zero live bytes.
+All eight cases pass with the heap sanitizer and zero live bytes.
 
 A synthetic benchmark creates a 32x32 RGBA gradient and performs ten 16x16 bilinear resizes.
 Its five process samples include startup and source construction.
