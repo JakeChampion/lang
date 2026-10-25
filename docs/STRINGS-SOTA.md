@@ -39,7 +39,6 @@ record; a closed epic alone is not validation evidence.
 | `Reader.read_chunk` | one physical read | `Err(InvalidUtf8(""))`; the consumed bytes are not retried or carried into the next call; `read_chunk_bytes` is raw |
 | `buf_take` | a byte builder | U+FFFD per maximal invalid subpart; drains the builder and retains its capacity; `buf_take_bytes` is raw |
 | PEG captures | committed byte ranges | `ok=false` with no captures if a nonempty range splits a scalar; matching and ordered choice remain byte-oriented |
-| `sim.Net.fetch_future` | scheduled parts of a valid body | retains the complete body until the last scheduled resumption, without constructing partial strings |
 | `sim_fetch.Net.sent` | transport writes | owned `u8[]` snapshots, including binary bodies; its shared journal uses explicit ASCII hex |
 | HTTP stream buffers | pending input, chunk-decoder storage and pipelined leftovers | shared `Cell[u8[]]` storage, with immutable snapshots |
 | Coreutils time formats | OS-supplied format bytes | compiled formats retain `u8[]`; text rendering repairs invalid UTF-8, and byte rendering preserves raw output |
@@ -1260,13 +1259,9 @@ The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end: `send(req)`
 and `plat.http(req)` answer `Result[HttpResponse, FetchError]` with the
 body as `BodyBytes`, `(resp).body_text()` is the checked decode that
-answers `None` for bytes that are not UTF-8, `(resp).body_bytes()` the
-body as it came, and `fetch_future` an `async.Future[u8[]]`. An
-upstream serves whatever bytes it likes, so a text-typed response was a
-`string` this decision forbids. `std/sim`'s scripted `Net.fetch_future`
-deliberately stays `Future[string]` — its bodies are program values,
-well-formed by construction, and what it exists to pin is the
-combinator timing.
+answers `None` for bytes that are not UTF-8, and `(resp).body_bytes()`
+the body as it came. An upstream serves whatever bytes it likes, so a
+text-typed response was a `string` this decision forbids.
 
 The HTTP MESSAGE layer followed. A serve loop holds its buffer as
 `u8[]` and parses it with `http_parse_request_bytes`; `HttpRequest.body`

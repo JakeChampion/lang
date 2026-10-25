@@ -154,7 +154,7 @@ function main(): i32 {
   }
   match (identity.from_pem(cert, key)) {
     Ok(id) => {
-      let cfg: serve.Config = serve.config().with_tls(server.config(id));
+      let cfg: serve.Config = serve.config().with_tls(server.config(id, random_bytes(32)));
       match (env("SERVE_STREAM")) {
         Some(_) => {
           cfg = serve.Config { ...cfg, stream_bodies: true };

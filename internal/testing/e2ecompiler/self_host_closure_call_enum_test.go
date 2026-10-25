@@ -238,12 +238,12 @@ function round(i: i32): i32 {
 ` + closureCallEnumMain
 
 const closureCallEnumNamedLocalSrc = `enum S { Done(i32), Next(i32, string) }
-function mk(n: i32): S {
+@noinline function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
     let e: S = Next(n, "ab" + "c");
     return e;
 }
-function size(s: S): i32 {
+@noinline function size(s: S): i32 {
     match (s) {
         Done(v) => { return v; },
         Next(w, t) => { return w + t.len(); }
