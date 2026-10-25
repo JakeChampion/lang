@@ -558,6 +558,7 @@ param_strarr_elem_shared                             0
 path_join                                            0
 pipe_hole_named_argument                             0
 prim_recv_array_method                               0
+primitive_associated_items_on_char_and_usize         0
 print                                                0
 prop_codec_roundtrip                                 0
 prop_sort_i32                                        0

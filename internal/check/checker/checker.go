@@ -14338,7 +14338,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "f64x2", "f32x4", "string", "boolean":
+	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
 		return true
 	}
 	return false

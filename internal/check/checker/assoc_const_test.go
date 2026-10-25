@@ -37,6 +37,41 @@ function main(): i32 {
 	}
 }
 
+func TestPrimitiveAssociatedItemsOnCharAndUsize(t *testing.T) {
+	src := `trait Fresh {
+    const FIRST: Self;
+    function fresh(): Self;
+}
+impl Fresh for usize {
+    const FIRST: usize = 1 as usize;
+    function fresh(): usize { return 42 as usize; }
+}
+impl Fresh for char {
+    const FIRST: char = 'a';
+    function fresh(): char { return 'b'; }
+}
+function like[T: Fresh](witness: T): T { return T.fresh(); }
+function main(): i32 {
+    let n: usize = usize.fresh() + usize.FIRST + like(7 as usize);
+    let c: char = char.fresh();
+    let d: char = char.FIRST;
+    let e: char = like('z');
+    return n as i32 + c as i32 + d as i32 + e as i32;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	shadowed := `struct Box { v: i32 }
+function (b: Box) get(): i32 { return b.v; }
+function main(): i32 {
+    let char: Box = Box { v: 3 };
+    return char.get();
+}`
+	if err := checkSource(t, shadowed); err != nil {
+		t.Fatalf("a value named char must shadow the type: %v", err)
+	}
+}
+
 func TestAssociatedConstsErrors(t *testing.T) {
 	const decl = `trait Lanes { const LANES: i32; function lanes(): i32; }
 struct V2 { a: f64 }
