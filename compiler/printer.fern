@@ -278,15 +278,6 @@ function print_if_value_branch(body: ast.Stmt[], dead: boolean, depth: i32): str
   if (body.len() == 0) {
     return "";
   }
-  if (body.len() == 1) {
-    if let ast.StmtIf(nested) = body[0] {
-      let value = print_if_value(nested, depth);
-      if (value == "") {
-        return "";
-      }
-      return "{ " + value + " }";
-    }
-  }
   let last: ast.Stmt = body[body.len() - 1];
   if (print_return_only([last], depth) == "") {
     return "";
@@ -301,11 +292,28 @@ function print_if_value(f: ast.StmtIf, depth: i32): string {
   let then_dead = f.origin == parser.ORIGIN_IF_DEAD_THEN || f.origin == parser.ORIGIN_IF_DEAD_BOTH;
   let else_dead = f.origin == parser.ORIGIN_IF_DEAD_ELSE || f.origin == parser.ORIGIN_IF_DEAD_BOTH;
   let tv = print_if_value_branch(f.then_body, then_dead, depth);
-  let ev = print_if_value_branch(f.else_body, else_dead, depth);
+  let ev = print_if_value_else(f, else_dead, depth);
   if (tv == "" || ev == "") {
     return "";
   }
   return "if (" + print_expr(f.cond, depth) + ") " + tv + " else " + ev;
+}
+
+function print_if_value_else(f: ast.StmtIf, dead: boolean, depth: i32): string {
+  if (f.else_chained && f.else_body.len() == 1) {
+    match (f.else_body[0]) {
+      ast.StmtIf(nested) => {
+        return print_if_value(nested, depth);
+      },
+      ast.StmtReturn(r) => {
+        return print_expr(r.value, depth);
+      },
+      _ => {
+        return "";
+      }
+    }
+  }
+  return print_if_value_branch(f.else_body, dead, depth);
 }
 
 function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32): string {
@@ -529,7 +537,11 @@ function print_sugared_match_expr(sg: ast.MatchSugar, v: string, depth: i32): st
     if (yes.len() == 0 || no.len() == 0) {
       return "";
     }
-    return "if let " + head + " = " + print_expr(sg.scrut, depth) + " " + value_branch_text(yes) + " else " + value_branch_text(no);
+    let else_text: string = value_branch_text(no);
+    if (sg.else_chained) {
+      else_text = no;
+    }
+    return "if let " + head + " = " + print_expr(sg.scrut, depth) + " " + value_branch_text(yes) + " else " + else_text;
   }
   let out: string = "match (" + print_expr(sg.scrut, depth) + ") { ";
   let i: i32 = 0;

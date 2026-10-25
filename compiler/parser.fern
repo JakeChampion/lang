@@ -4005,10 +4005,14 @@ function parse_if_chain(p: Par): IfChain {
   let rt: string = thenb_rt;
   let else_body: ast.Stmt[] = [];
   let else_dead = false;
-  if (p.peek_keyword() == "if" && else_written) {
+  let chained: boolean = p.peek_keyword() == "if" && else_written;
+  if (chained) {
     let nested: IfChain = parse_if_chain(p);
-    p = nested.par;
     else_body = [nested.stmt];
+    if (nested.value_local.len() > 0) {
+      else_body = [s_return(value_chain_expr(nested, ORIGIN_IF_EXPR, p.peek_line(), p.peek_col()))];
+    }
+    p = nested.par;
   } else if (else_written || p.peek_punct() == "{") {
     let (elseb_body, elseb_rt, elseb_dead, elseb_p) = parse_branch_body_written(p);
     p = elseb_p;
@@ -4024,7 +4028,8 @@ function parse_if_chain(p: Par): IfChain {
   } else if (else_dead) {
     origin = ORIGIN_IF_DEAD_ELSE;
   }
-  return IfChain { par: p, stmt: s_if_origin(condr_expr, then_body, else_body, origin), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
+  let stmt: ast.Stmt = ast.StmtIf { cond: condr_expr, then_body: then_body, else_body: else_body, line: 0, else_chained: chained, sugar: no_match_sugar(), origin: origin };
+  return IfChain { par: p, stmt: stmt, rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
 }
 
 function parse_match_expr(p: Par): IfChain {
@@ -5918,7 +5923,8 @@ function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: str
   p = next.expect("else");
   let no: ast.Stmt[] = [];
   let no_rt: string = "i32";
-  if (p.peek_keyword() == "if") {
+  let chained: boolean = p.peek_keyword() == "if";
+  if (chained) {
     let chain: IfChain = parse_if_chain(p);
     let expr: ast.Expr = value_chain_expr(chain, ORIGIN_IF_EXPR, p.peek_line(), p.peek_col());
     no = [s_return(expr)];
@@ -5930,7 +5936,7 @@ function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: str
     no_rt = rt;
     p = after;
   }
-  return PatternIfBranches { par: p, yes: value_arm_body(yes, value_local), no: value_arm_body(no, value_local), rt: wider_rt(yes_rt, no_rt), else_chained: false };
+  return PatternIfBranches { par: p, yes: value_arm_body(yes, value_local), no: value_arm_body(no, value_local), rt: wider_rt(yes_rt, no_rt), else_chained: chained };
 }
 
 function pattern_if_chain(stmt: ast.Stmt, p: Par, rt: string, value_form: boolean, value_local: string): IfChain {
