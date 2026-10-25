@@ -110,7 +110,7 @@ struct __D { pos: i32, buf: u64, cnt: i32, v: i32, failed: boolean, what: string
 function __start(): __D {
   let none: u8[] = [];
   let c: __Cat = __Cat { n: 1, types: 0, lens: 0, left: 0 };
-  let m: __Mb = __Mb { lit: c, cmd: c, dist: c, btab: [], postfix: 0, direct: 0, modes: [], lmap: [], dmap: [], ltab: [], ctab: [], coff: [], dtab: [], dcodes: [] };
+  let m: __Mb = __Mb { lit: c, cmd: c, dist: c, btab: [], postfix: 0, direct: 0, modes: [], fixed: [], lmap: [], dmap: [], ltab: [], ctab: [], coff: [], dtab: [], dcodes: [] };
   return __D { pos: 0, buf: 0u64, cnt: 0, v: 0, failed: false, what: "", last: false, raw: false, lens: [], tab: [], offs: [], cat: c, m: m, out: none, cap: 0, r0: 4, r1: 11, r2: 15, r3: 16 };
 }
 
@@ -204,10 +204,11 @@ The refill functions are inline, and the compiler keeps their result in register
 struct __Fill { pos: i32, buf: u64, cnt: i32 }
 
 // Refills the bit buffer. `fast` is the last position that has eight input
-// bytes after it.
+// bytes after it. The test of `pos >= 0` lets the compiler drop the bounds
+// check of the eight-byte read.
 @inline
 function __refill(data: [u8], pos: i32, buf: u64, cnt: i32, fast: i32): __Fill {
-  if (pos <= fast) {
+  if (pos >= 0 && pos <= fast) {
     return __Fill { pos: pos + (63 - cnt >> 3), buf: buf | __le64(data, pos) << cnt as u64, cnt: cnt | 56 };
   }
   let t: __Fill = __tail(data, pos, buf, cnt);
@@ -684,7 +685,7 @@ The codes of one category share one table. A context map entry holds the offset 
 <<Read the meta-block codes>>=
 struct __Cat { n: i32, types: i32, lens: i32, left: i32 }
 
-struct __Mb { lit: __Cat, cmd: __Cat, dist: __Cat, btab: i32[], postfix: i32, direct: i32, modes: i32[], lmap: i32[], dmap: i32[], ltab: i32[], ctab: i32[], coff: i32[], dtab: i32[], dcodes: i64[] }
+struct __Mb { lit: __Cat, cmd: __Cat, dist: __Cat, btab: i32[], postfix: i32, direct: i32, modes: i32[], fixed: i32[], lmap: i32[], dmap: i32[], ltab: i32[], ctab: i32[], coff: i32[], dtab: i32[], dcodes: i64[] }
 
 function __mb_codes(own d: __D, data: [u8]): __D {
   d = __D { ...d, tab: [] };
@@ -724,7 +725,7 @@ function __mb_codes(own d: __D, data: [u8]): __D {
   }
   lmap = __mapped(lmap, loff);
   dmap = __mapped(dmap, d.offs);
-  let m: __Mb = __Mb { lit: lit, cmd: cmd, dist: dist, btab: btab, postfix: postfix, direct: direct, modes: modes, lmap: lmap, dmap: dmap, ltab: ltab, ctab: ctab, coff: coff, dtab: dtab, dcodes: __dist_codes(direct, postfix, dsize) };
+  let m: __Mb = __Mb { lit: lit, cmd: cmd, dist: dist, btab: btab, postfix: postfix, direct: direct, modes: modes, fixed: __fixed_trees(lmap, lit.n), lmap: lmap, dmap: dmap, ltab: ltab, ctab: ctab, coff: coff, dtab: dtab, dcodes: __dist_codes(direct, postfix, dsize) };
   return __D { ...d, lens: [], tab: [], offs: [], m: m };
 }
 
@@ -816,6 +817,26 @@ function __cmap(own d: __D, data: [u8], size: i32): __D {
   return __D { ...d, lens: map, v: trees };
 }
 
+// For each literal block type, the code of all its contexts, or -1 when
+// the contexts use more than one code.
+function __fixed_trees(lmap: i32[], n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let t: i32 = 0;
+  while (t < n) {
+    let code: i32 = lmap[t << 6];
+    let i: i32 = 1;
+    while (i < 64 && lmap[(t << 6) + i] == code) {
+      i = i + 1;
+    }
+    if (i < 64) {
+      code = 0 - 1;
+    }
+    out = out.with(t, code);
+    t = t + 1;
+  }
+  return out;
+}
+
 function __mapped(own map: i32[], offs: i32[]): i32[] {
   let i: i32 = 0;
   while (i < map.len()) {
@@ -884,6 +905,7 @@ function __commands(own d: __D, data: [u8], m: __Mb, end: i32, window: i32): __D
   let ll: i32 = m.lit.left;
   let lbase: i32 = 0;
   let lmode: i32 = m.modes[0];
+  let lfix: i32 = m.fixed[0];
   let ct: i32 = 0;
   let cp: i32 = 1;
   let cl: i32 = m.cmd.left;
@@ -929,10 +951,10 @@ function __commands(own d: __D, data: [u8], m: __Mb, end: i32, window: i32): __D
         ll = ls.left;
         lbase = lt << 6;
         lmode = m.modes[lt];
+        lfix = m.fixed[lt];
       }
       ll = ll - 1;
-      let ctx: i32 = CONTEXT[lmode + p1] as i32 | CONTEXT[lmode + 256 + p2] as i32;
-      let le: i32 = __entry(ltab, lmap[lbase + ctx], f.buf);
+      let le: i32 = __entry(ltab, __literal_code(lfix, lmap, lbase, lmode, p1, p2), f.buf);
       pos = f.pos;
       buf = f.buf >> (le & 15) as u64;
       cnt = f.cnt - (le & 15);
@@ -1008,6 +1030,16 @@ function __ended(own d: __D, bad: i32): __D {
     return d;
   }
   return __fail(d, ["", "command past the meta-block", "distance", "dictionary word length", "dictionary transform"][bad]);
+}
+
+// The offset of the code of the next literal. A block type whose contexts
+// all use one code needs no context.
+@inline
+function __literal_code(fixed: i32, lmap: i32[], lbase: i32, lmode: i32, p1: i32, p2: i32): i32 {
+  if (fixed >= 0) {
+    return fixed;
+  }
+  return lmap[lbase + (CONTEXT[lmode + p1] as i32 | CONTEXT[lmode + 256 + p2] as i32)];
 }
 
 @inline
