@@ -570,7 +570,7 @@ function help_line(st: DiagStyle, d: util.Diag): string {
 function finding_header(st: DiagStyle, f: Finding, entry: string, files: string[], d: util.Diag): string {
   let tag: string = "";
   if (f.warning) {
-    tag = paint(st, "1;33", "warning") + ": ";
+    tag = paint(st, "1;33", "warning[" + f.diag.code + "]") + ": ";
   } else if (f.diag.code.len() > 0) {
     tag = paint(st, "1;31", "error[" + f.diag.code + "]") + ": ";
   } else if (d.line > 0) {
@@ -2443,7 +2443,7 @@ function add_generated(s: Sources, doc: string, f: literate.FileResult): Sources
 }
 
 function tangle_error(path: string, line: i32, col: i32, msg: string): string {
-  return path + ":" + util.i32_to_string(line) + ":" + util.i32_to_string(col) + ": error: " + msg;
+  return path + ":" + util.i32_to_string(line) + ":" + util.i32_to_string(col) + ": error[E092]: " + msg;
 }
 
 function eprint_tangle_error(path: string, line: i32, col: i32, msg: string): void {
@@ -2513,9 +2513,9 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   if (gov.man.err.len() > 0) {
     return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, gov.dir, gov.man);
   }
-  let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
-  if (missing.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing, err_code: "", err_line: 0, err_col: 0 };
+  let missing: util.Diag = emitforms.http_entry_refused(entry_mod, target);
+  if (missing.message.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing.message, err_code: missing.code, err_line: missing.line, err_col: missing.col };
   }
 
   let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], lines: [], cols: [], stdlibs: [], unrooted: "" }, entry_mod, dir_slash, root, deps, false);
@@ -2625,7 +2625,6 @@ function parse_findings(mod: parser.Module): Finding[] {
 }
 
 function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[]) {
-  let errs: Finding[] = [];
   let assets: embed.Assets = embed.no_assets();
   if (embed_dir.len() > 0) {
     let lr: embed.LoadResult = embed.load(embed_dir);
@@ -2635,9 +2634,7 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[])
     assets = lr.assets;
   }
   let folded: embed.Folded = embed.fold_assets(b.merged, assets);
-  for msg in folded.errs {
-    errs = errs.append(refusal("fern: " + msg));
-  }
+  let errs: Finding[] = errors_of(folded.errs);
   if (errs.len() > 0) {
     return (b, errs);
   }
@@ -2725,7 +2722,7 @@ function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] 
   let name: string = entry_display(entry_path);
   let out: Finding[] = [];
   for site in sites {
-    out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "", message: "`todo` stub remaining", line: site.line, col: site.col, fix: None }, warning: true, path: name });
+    out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "W001", message: "`todo` stub remaining", line: site.line, col: site.col, fix: None }, warning: true, path: name });
   }
   return out;
 }
@@ -2959,8 +2956,9 @@ function read_document(path: string): (string, boolean) {
 }
 
 function warn_unused_chunks(path: string, src: string): void {
+  let d: literate.Doc = literate.parse(src);
   for name in literate.unused_chunks(src) {
-    eprint(path + ": warning: chunk <<" + name + ">> is defined but never used");
+    eprint(path + ":" + util.i32_to_string(literate.chunk_line(d, name)) + ":1: warning[W003]: chunk <<" + name + ">> is defined but never used");
   }
 }
 
@@ -3936,8 +3934,7 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
   for v in vs {
     if (!v.governed) {
-      let shown: caps.Violation = caps.Violation { ...v, chain: caps.source_chain(merged, v.chain) };
-      out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "", message: caps.violation_message(shown), line: 0, col: 0, fix: None }, warning: true, path: "" });
+      out = out.append(Finding { diag: util.Diag { ...violation_diag(merged, v), code: "W002" }, warning: true, path: "" });
     }
   }
   for v in vs {

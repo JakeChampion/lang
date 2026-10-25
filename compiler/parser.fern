@@ -1900,7 +1900,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
   }
   let body: ast.Stmt[] = [];
   if (p.peek_punct() == "{") {
-    let (lb_body, lb_p) = parse_lambda_body(p);
+    let (lb_body, lb_p) = parse_lambda_body(p, ret_type == "void");
     p = lb_p;
     body = lb_body;
   } else {
@@ -4469,23 +4469,23 @@ function parse_block(p: Par): (ast.Stmt[], Par) {
 }
 
 function parse_block_body(p: Par, tail_value: boolean): (ast.Stmt[], Par) {
-  return parse_block_body_mode(p, tail_value, false);
+  return parse_block_body_mode(p, tail_value, false, false);
 }
 
-function parse_block_body_mode(p: Par, tail_value: boolean, discard_tail: boolean): (ast.Stmt[], Par) {
+function parse_block_body_mode(p: Par, tail_value: boolean, discard_tail: boolean, void_branches: boolean): (ast.Stmt[], Par) {
   if (p.too_deep_by(BLOCK_NEST_UNITS)) {
     return ([s_unknown_at("nest:too-deep", p.peek_line(), p.peek_col())], p.bail());
   }
-  let (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + BLOCK_NEST_UNITS), tail_value, discard_tail);
+  let (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + BLOCK_NEST_UNITS), tail_value, discard_tail, void_branches);
   return (g0, gq.with_depth(p.depth));
 }
 
-function parse_lambda_body(p: Par): (ast.Stmt[], Par) {
+function parse_lambda_body(p: Par, void_branches: boolean): (ast.Stmt[], Par) {
   if (p.peek_punct() != "{") {
     return ([s_unknown(p, "missing { in lambda body")], p);
   }
   p = p.advance();
-  let (lb_body, lb_p) = parse_block_body(p, true);
+  let (lb_body, lb_p) = parse_block_body_mode(p, true, false, void_branches);
   p = lb_p;
   if (p.peek_punct() == "}") {
     p = p.advance();
@@ -4493,7 +4493,7 @@ function parse_lambda_body(p: Par): (ast.Stmt[], Par) {
   return (lb_body, p);
 }
 
-function parse_block_body_nested(p: Par, tail_value: boolean, discard_tail: boolean): (ast.Stmt[], Par) {
+function parse_block_body_nested(p: Par, tail_value: boolean, discard_tail: boolean, void_branches: boolean): (ast.Stmt[], Par) {
   let body: ast.Stmt[] = [];
   while (p.peek_punct() != "}" && !p.at_end()) {
     if (p.peek_keyword() == "use") {
@@ -4546,7 +4546,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean, discard_tail: bool
       }
       return (body, p);
     }
-    if (discard_tail && (p.peek_keyword() == "if" || p.peek_keyword() == "match")) {
+    if ((discard_tail || void_branches) && (p.peek_keyword() == "if" || p.peek_keyword() == "match")) {
       let (stmt, next) = parse_stmt(p);
       if (next.type_errs.len() == p.type_errs.len() && !stmts_have_parse_error([stmt])) {
         body = body.append(stmt);
@@ -5301,7 +5301,7 @@ function parse_match_stmt_body(p: Par): (ast.Stmt[], Par) {
     let (expr, next) = parse_expr(p);
     return ([s_expr(expr)], next);
   }
-  let (body, next) = parse_block_body_mode(p.advance(), true, true);
+  let (body, next) = parse_block_body_mode(p.advance(), true, true, false);
   return (body, next.expect("}"));
 }
 
@@ -7947,6 +7947,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
   p = p.advance();
   while (p.peek_punct() != "}" && !p.at_end()) {
     let vline: i32 = p.peek_line();
+    let vcol: i32 = p.peek_col();
     let vname: string = p.peek_ident();
     if (vname.len() == 0) {
       break;
@@ -8005,7 +8006,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
         p = p.advance();
       }
     }
-    out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: name, must_consume: false, variant_field_names: vfnames, is_pub: true, is_package: false, opaque: false, module: "" });
+    out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: vline, col: vcol, enum_owner: name, must_consume: false, variant_field_names: vfnames, is_pub: true, is_package: false, opaque: false, module: "" });
     vlines = vlines.append(vline);
     if (p.peek_punct() == ",") {
       p = p.advance();
@@ -10400,6 +10401,46 @@ function stamped_type(tag: string): string {
   return "";
 }
 
+function mono_cell_get_type(field: ast.ExprFieldAccess, argc: i32, env: MEnv, funcs: MFns): string {
+  if (field.field != "get" || argc != 0) {
+    return "";
+  }
+  let receiver = parse_type_ref(mono_infer(field.obj, env, funcs));
+  if (receiver.base == "Cell" && receiver.args.len() == 1) {
+    return render_type_ref(receiver.args[0]);
+  }
+  return "";
+}
+
+function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: MFns): string {
+  if (name == "cell_new" && c.args.len() == 1) {
+    let inner = mono_infer(c.args[0], env, funcs);
+    if (inner.len() > 0) {
+      return "Cell[" + inner + "]";
+    }
+  }
+  if (c.type_args.len() > 0) {
+    let at: i32 = bg_find(funcs, name);
+    if (at >= 0) {
+      let key: string = explicit_inst_key(funcs.decls[at], c.type_args);
+      if (key.len() > 0) {
+        return subst_ty(funcs.decls[at].ret_type, funcs.decls[at].type_params, key_parts(funcs.decls[at], key));
+      }
+    }
+  }
+  let result: string = call_ret_type(funcs, name, c.args, env);
+  if (result.len() == 0) {
+    result = func_ret_of(funcs.decls, name);
+  }
+  if (result.len() == 0) {
+    result = fn_spelling_ret(env.elook(name));
+  }
+  if (result.len() == 0 || hides_bare_var(result, funcs)) {
+    return stamped_type(c.ty);
+  }
+  return result;
+}
+
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
   match (e) {
     ast.ExprNumber(n) => {
@@ -10513,28 +10554,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          if (c.type_args.len() > 0) {
-            let xbi: i32 = bg_find(funcs, cid.name);
-            if (xbi >= 0) {
-              let xkey: string = explicit_inst_key(funcs.decls[xbi], c.type_args);
-              if (xkey.len() > 0) {
-                return subst_ty(funcs.decls[xbi].ret_type, funcs.decls[xbi].type_params, key_parts(funcs.decls[xbi], xkey));
-              }
-            }
-          }
-          let crt: string = call_ret_type(funcs, cid.name, c.args, env);
-          if (crt.len() == 0) {
-            crt = func_ret_of(funcs.decls, cid.name);
-          }
-          if (crt.len() == 0) {
-            crt = fn_spelling_ret(env.elook(cid.name));
-          }
-          if (crt.len() == 0 || hides_bare_var(crt, funcs)) {
-            return stamped_type(c.ty);
-          }
-          return crt;
+          return mono_named_call_type(c, cid.name, env, funcs);
         },
         ast.ExprFieldAccess(cfa) => {
+          let cell_type = mono_cell_get_type(cfa, c.args.len(), env, funcs);
+          if (cell_type.len() > 0) {
+            return cell_type;
+          }
           if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) {
             return "string";
           }
@@ -15667,7 +15693,7 @@ function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
   }
   let refs: BgRefs = BgRefs { names: names, hit: [] };
   for fd in funcs {
-    if (is_genum_method(fd, enums)) {
+    if (is_genum_method(fd, enums) || fd.receiver_type.len() > 0 && type_str_vars(fd.receiver_type, fd.type_params).len() > 0) {
       refs = bg_refs_body(fd.body, refs);
     }
   }

@@ -42,7 +42,7 @@ path = sys.argv[1]
 src = open(path).read()
 plants = [
     # try_lift_binding: the lifted function's parameter list.
-    ('  let lname: string = "__lam_" + util.i32_to_string(acc.counter);\n',
+    ('  let lname: string = prefix + util.i32_to_string(acc.counter);\n',
      '  if (lam.params.len() >= 1 && caps.len() >= 1 && lparams[0].type_name == lparams[lam.params.len()].type_name) {\n'
      '    let first: ast.ParamDecl = lparams[0];\n'
      '    lparams = lparams.with(0, lparams[lam.params.len()]).with(lam.params.len(), first);\n'

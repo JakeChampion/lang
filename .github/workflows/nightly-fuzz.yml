@@ -634,7 +634,7 @@ jobs:
             ]
             const findings = require('fs').readFileSync(process.env.FINDINGS, 'utf8')
             if (findings) {
-              lines.push(``, `Failed seeds by signature (leg, failure, the pass the decision bisect named):`, ``, findings)
+              lines.push(``, `Failed seeds by signature (leg, failure, the pass the decision bisect named), then each signature's smallest shrunk program:`, ``, findings)
             }
             const body = lines.join('\n')
             const open = await github.paginate(github.rest.issues.listForRepo, {

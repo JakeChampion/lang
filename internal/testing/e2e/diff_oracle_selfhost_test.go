@@ -73,6 +73,11 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	known := loadKnownDivergences(t, knownFile)
+	leg := diffLeg{fernBin: fernBin, stdlibRoot: stdlibRoot, target: "x86-64-linux", flags: flags,
+		run: func(t *testing.T, src string, env []string) (*selfHostRun, string) {
+			return runSelfHostSeed(t, fernBin, stdlibRoot, src, flags, env, func(string, ...any) {})
+		},
+		agrees: seedRunAgrees}
 
 	var sampled, ran int64
 	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
@@ -100,18 +105,11 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
 			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, flags, env, failf)
-			bisect := func(class string) {
-				report, pass := bisectSelfHostSeed(t, fernBin, stdlibRoot, "x86-64-linux", src, flags, env, func(env []string) bool {
-					r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, flags, env, func(string, ...any) {})
-					return seedRunAgrees(r, gap, want, src)
-				})
-				t.Log(report)
-				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
-			}
+			triage := func(class string) { leg.triage(t, seed, src, want, env, class) }
 			if gap != "" {
 				if compilerRefused(gap) {
 					t.Errorf("the compiler refused this seed:\n%s", gap)
-					bisect(refusalClass(gap))
+					triage(refusalClass(gap))
 					return
 				}
 				if !isKnown {
@@ -129,7 +127,7 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 					failf("the sanitizer reported on the self-host-compiled binary:\n%s\nsrc:\n%s", r.stderr, src)
 				}
 				if class != "" {
-					bisect(class)
+					triage(class)
 				}
 			}
 			if isKnown && !diverged {
