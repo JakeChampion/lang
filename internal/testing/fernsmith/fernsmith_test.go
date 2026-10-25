@@ -1081,15 +1081,37 @@ func TestMainBytesReplaysTheSeed(t *testing.T) {
 			t.Fatalf("seed %d: the recorded corpus generates another program:\n%s\nwant:\n%s", seed, got, want)
 		}
 	}
-	// A seed's corpus shrinks like any other: 122230 keeps its generic enum.
-	data, err := fernsmith.MainBytes(122230)
+	// A seed's corpus shrinks like any other: the first seed with a generic
+	// enum keeps it.
+	fails := func(d []byte) bool { return strings.Contains(fernsmith.GenMainBytes(d), "enum GO0") }
+	seed := uint64(0)
+	for !strings.Contains(fernsmith.GenMain(seed), "enum GO0") {
+		seed++
+	}
+	data, err := fernsmith.MainBytes(seed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fails := func(d []byte) bool { return strings.Contains(fernsmith.GenMainBytes(d), "enum GO0") }
 	shrunk := fernsmith.ShrinkMainBytes(data, fails)
-	if src := fernsmith.GenMainBytes(shrunk); !fails(shrunk) || len(src) >= len(fernsmith.GenMain(122230)) {
-		t.Errorf("seed 122230 did not shrink to a smaller program that keeps its generic enum:\n%s", src)
+	if src := fernsmith.GenMainBytes(shrunk); !fails(shrunk) || len(src) >= len(fernsmith.GenMain(seed)) {
+		t.Errorf("seed %d did not shrink to a smaller program that keeps its generic enum:\n%s", seed, src)
+	}
+}
+
+func TestGenStringLiteralsReachEachEscape(t *testing.T) {
+	kinds := map[string]int{`\n`: 0, `\0`: 0, `\\`: 0, `\"`: 0, `\x`: 0, `\u{`: 0}
+	for seed := uint64(0); seed < sweepN(t, 512); seed++ {
+		src := fernsmith.GenMain(seed)
+		for k := range kinds {
+			if strings.Contains(src, k) {
+				kinds[k]++
+			}
+		}
+	}
+	for k, n := range kinds {
+		if n == 0 {
+			t.Errorf("no generated program has the escape %s", k)
+		}
 	}
 }
 

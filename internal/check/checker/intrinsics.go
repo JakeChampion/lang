@@ -7,6 +7,7 @@ type IntrinsicKind uint8
 const (
 	IntrinsicNone IntrinsicKind = iota
 	IntrinsicArrayAppend
+	IntrinsicExit
 )
 
 type IntrinsicCall struct {
