@@ -350,6 +350,7 @@ jobs:
         run: |
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostSanitizeX86_64$' -v -timeout 43m
+          go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostEMISanitizeX86_64$' -v -timeout 20m
       - name: arm64
         if: matrix.target == 'arm64'
         env:

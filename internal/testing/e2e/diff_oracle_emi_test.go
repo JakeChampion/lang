@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -65,6 +66,17 @@ func emiCases(t *testing.T) []*fixtureSpec {
 // with the self-host compiler (fernsmith.EMI). A mutant must print and return
 // what its case expects, on the interpreter first and then on x86-64.
 func TestDifferential_SelfHostEMIX86_64(t *testing.T) {
+	selfHostEMISweep(t, nil)
+}
+
+// TestDifferential_SelfHostEMISanitizeX86_64 builds the same mutants under
+// -sanitize, so wrong memory with a right answer fails too.
+func TestDifferential_SelfHostEMISanitizeX86_64(t *testing.T) {
+	selfHostEMISweep(t, []string{"-sanitize"})
+}
+
+func selfHostEMISweep(t *testing.T, flags []string) {
+	t.Helper()
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -117,12 +129,15 @@ func TestDifferential_SelfHostEMIX86_64(t *testing.T) {
 				return
 			}
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := fixtureCompile(fernBin, "-target", "x86-64-linux", "-o", binPath, m.mainPath, stdlibRoot)
+			args := append(append([]string{"-target", "x86-64-linux"}, flags...), "-o", binPath, m.mainPath, stdlibRoot)
+			cmd := fixtureCompile(fernBin, args...)
 			cmd.Env = append([]string{e2eharness.SelfHostVerify}, os.Environ()...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				failf("self-host compile failed: %v\n%s", err, out)
+			} else if r := runSelfHostBin(exec.Command(binPath), m.stdin); strings.Contains(r.stderr, "fern-sanitizer:") {
+				failf("the sanitizer reported a finding:\n%s", r.stderr)
 			} else {
-				checkSelfHostNativeRun(t, &m, runSelfHostBin(exec.Command(binPath), m.stdin), failf)
+				checkSelfHostNativeRun(t, &m, r, failf)
 			}
 			if failed {
 				t.Logf("mutant of %s (%d steps):\n%s", f.name, kept, src)
