@@ -38,6 +38,8 @@ import "./mosaic";
 import "./rally";
 import "./gather";
 import "./blockyard";
+import "./studio";
+import "./labs";
 import "../fractal/server" as fractal;
 
 @derive(json.Json)
@@ -75,6 +77,10 @@ pub struct Snapshot {
   game_rooms: i32,
   canvas_rooms: i32,
   strokes: i64,
+  studio_connections: i32,
+  studio_projects: i32,
+  factory_units: i64,
+  factory_refined: i64,
   websocket_messages: i64,
   websocket_connections: i64,
   rendered_tiles: i64,
@@ -95,6 +101,8 @@ pub struct State {
   games: rally.State,
   arena: gather.State,
   voxels: blockyard.State,
+  studios: studio.State,
+  labs: labs.State,
   fractal: fractal.Stats,
 }
 ```
@@ -106,10 +114,10 @@ Handler time ends when a handler returns a response. It does not include the lif
 
 ```fern
 <<Record HTTP requests>>=
-pub function state(canvases: mosaic.State, games: rally.State, fractals: fractal.Stats, arena: gather.State, voxels: blockyard.State): State {
+pub function state(canvases: mosaic.State, games: rally.State, fractals: fractal.Stats, arena: gather.State, voxels: blockyard.State, studios: studio.State, lab_state: labs.State): State {
   return State {
     instance: fractals.instance, started: now_ns(), requests: cell_new(0 as i64), client_errors: cell_new(0 as i64), server_errors: cell_new(0 as i64),
-    recent: cell_new([] as Request[]), sampled: cell_new(0 as i64), ticks: cell_new(None as Option[i64]), memory: cell_new(None as Option[Memory]), canvases: canvases, games: games, fractal: fractals, arena: arena, voxels: voxels,
+    recent: cell_new([] as Request[]), sampled: cell_new(0 as i64), ticks: cell_new(None as Option[i64]), memory: cell_new(None as Option[Memory]), canvases: canvases, games: games, fractal: fractals, arena: arena, voxels: voxels, studios: studios, labs: lab_state,
   };
 }
 
@@ -232,15 +240,22 @@ RSS includes resident process pages and can differ from both runtime counters.
 <<Expose application counters>>=
 pub function snapshot(state: State): Snapshot {
   let strokes: i64 = 0;
-  let peers: i64 = blockyard.participants(state.voxels) as i64 + state.arena.count.get() as i64 + state.fractal.sockets.get() + state.games.live.listeners.get().len() as i64 + state.canvases.live.listeners.get().len() as i64;
+  let peers: i64 = state.labs.connections.get() as i64 + state.studios.live.listeners.get().len() as i64 + blockyard.participants(state.voxels) as i64 + state.arena.count.get() as i64 + state.fractal.sockets.get() + state.games.live.listeners.get().len() as i64 + state.canvases.live.listeners.get().len() as i64;
   for board in state.canvases.rooms.get() {
     strokes = strokes + board.revision;
   }
+  let units = 0i64;
+  let refined = 0i64;
+  for project in state.studios.projects.get() {
+    units = units + project.factory.consumed;
+    refined = refined + project.factory.refined;
+  }
   return Snapshot {
+    studio_connections: state.studios.live.listeners.get().len(), studio_projects: state.studios.projects.get().len(), factory_units: units, factory_refined: refined,
     instance: state.instance, at_ms: now_unix_ms(), uptime_ms: (now_ns() - state.started) / 1000000,
     requests: state.requests.get(), client_errors: state.client_errors.get(), server_errors: state.server_errors.get(),
     allocations_total: __heap_alloc_count(), arena_bytes: __heap_bump_bytes(), memory: measure(state), recent: state.recent.get(),
-    arena_players: state.arena.count.get(), voxel_players: blockyard.participants(state.voxels), voxel_blocks: blockyard.edited_blocks(state.voxels), game_rooms: state.games.rooms.get().len(), canvas_rooms: state.canvases.rooms.get().len(), strokes: strokes, websocket_messages: state.games.messages.get() + state.arena.inputs.get() + blockyard.inputs(state.voxels), websocket_connections: peers, rendered_tiles: state.fractal.tiles.get(), active_renders: state.fractal.active.get(),
+    arena_players: state.arena.count.get(), voxel_players: blockyard.participants(state.voxels), voxel_blocks: blockyard.edited_blocks(state.voxels), game_rooms: state.games.rooms.get().len(), canvas_rooms: state.canvases.rooms.get().len(), strokes: strokes, websocket_messages: state.labs.inputs.get() + state.studios.inputs.get() + state.games.messages.get() + state.arena.inputs.get() + blockyard.inputs(state.voxels), websocket_connections: peers, rendered_tiles: state.fractal.tiles.get(), active_renders: state.fractal.active.get(),
   };
 }
 ```
@@ -287,7 +302,11 @@ pub function prometheus(state: State): HttpResponse {
     + gauge("fern_container_memory_limit_bytes", "Memory limit of this cgroup", value.memory.container_limit)
     + gauge("fern_gather_participants", "Active participants in the shared arena", Some(value.arena_players as i64))
     + gauge("fern_blockyard_participants", "Active participants in voxel worlds", Some(value.voxel_players as i64))
-    + gauge("fern_blockyard_edited_blocks", "Stored differences from procedural terrain", Some(value.voxel_blocks as i64));
+    + gauge("fern_blockyard_edited_blocks", "Stored differences from procedural terrain", Some(value.voxel_blocks as i64))
+    + gauge("fern_studio_connections", "Connected studio participants", Some(value.studio_connections as i64))
+    + gauge("fern_studio_projects", "Loaded shared studio projects", Some(value.studio_projects as i64))
+    + gauge("fern_factory_delivered_units", "Ore-equivalent units delivered in current factory states", Some(value.factory_units))
+    + gauge("fern_factory_refined_ingots", "Ingots produced in current factory states", Some(value.factory_refined));
   return http.text(200, text).with_content_type("text/plain; version=0.0.4; charset=utf-8").with_header("Cache-Control", "no-store");
 }
 ```

@@ -320,7 +320,7 @@ pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], lits: Li
 
 pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32, else_chained: boolean, sugar: MatchSugar, origin: string }
 
-pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32, is_loop: boolean, todo: boolean }
+pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32, is_loop: boolean }
 
 pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target_line: i32, target_col: i32 }
 
