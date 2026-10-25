@@ -336,9 +336,11 @@ function main(): i32 {
 
 ## Dates and elapsed time
 
-`Date`, `Instant` and `Duration` are separate built-in types, so a
-calendar day and a point in time cannot be mixed up. `std/time` holds
-the functions that make and convert them.
+`Date`, `time.Timestamp`, `Instant` and `Duration` are separate types,
+so a calendar day, a wall-clock time and a monotonic clock reading
+cannot be mixed up. A `Timestamp` is a point in UTC; an `Instant` only
+measures elapsed time and deadlines. `std/time` holds the functions
+that make and convert them.
 
 ```fern
 import "std/time";
@@ -349,13 +351,16 @@ function main(): i32 {
     print(d.add_days(3).format_iso());                // 2028-03-01
     print(d.weekday_name());                          // Sunday
     print(time.days_in_month(2028, 2).to_string());   // 29
-    print(time.instant_now().format_rfc3339());       // the current UTC time
-    print("took " + time.instant_now().duration_since(start).to_string());
+    print(time.timestamp_now().format_rfc3339());     // the current UTC time
+    print("took " + start.elapsed().to_string());
+    let budget: Duration = time.duration_millis(1500).mul(2);
+    print(budget.to_string());                        // 3s
     return 0;
 }
 ```
 
-`std/tz` adds real time zones with their daylight-saving transitions.
+`std/tz` adds real time zones with their daylight-saving transitions:
+`zone.at(timestamp)` is the local time there.
 
 ## Run another program
 

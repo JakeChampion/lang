@@ -172,7 +172,7 @@ function two(v: i32): string {
 }
 
 function time_string(z: tz.Zone, sec: i64): string {
-  let dt: DateTime = z.civil(sec);
+  let dt: DateTime = z.at(time.timestamp_from_unix(sec)).to_datetime();
   let name: string = time.month_name(dt.date.month);
   return slice_unchecked(name, 0, 3) + " " + pad_left(dt.date.day.to_string(), 2) + " " + two(dt.time.hour) + ":" + two(dt.time.minute);
 }

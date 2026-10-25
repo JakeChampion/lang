@@ -170,7 +170,7 @@ function describe(r: Result[Outcome, tls.TlsError], resumption: boolean): string
 }
 
 function millis_since(started: Instant): string {
-  return time.instant_now().duration_since(started).as_millis().to_string();
+  return started.elapsed().as_millis().to_string();
 }
 
 function bulk(base: string): string {

@@ -358,10 +358,10 @@ import "std/time";
 import "std/platform";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    let now: Instant = time.instant_from_unix(plat.now_ms() / 1000 as i64);
+    let now: time.Timestamp = time.timestamp_from_unix(plat.now_ms() / 1000 as i64);
     let v: cache.Validators = cache.Validators {
         etag: Some(cache.strong("v42")),
-        last_modified: Some(time.instant_from_unix(1760000000 as i64)),
+        last_modified: Some(time.timestamp_from_unix(1760000000 as i64)),
     };
     let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_age: Some(60 as i64) };
     return cache.respond(req, v, now, http.html("<p>the page</p>")).with_cache_control(cc);

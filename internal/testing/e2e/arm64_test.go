@@ -8392,12 +8392,12 @@ func TestArm64TcpListen(t *testing.T) {
 	}
 }
 
-func TestArm64InstantNow(t *testing.T) {
+func TestArm64TimestampNow(t *testing.T) {
 	_, code := compileAndRunArm64(t, `
 import "std/time";
 import "std/platform";
 function main(): i32 {
-    let ts: Instant = time.instant_now();
+    let ts: time.Timestamp = time.timestamp_now();
     if (ts.sec < (1700000000 as i64)) { return 1; }
     if (ts.sec > (253402300800 as i64)) { return 2; }
     return 0;

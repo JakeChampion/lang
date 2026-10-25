@@ -23,7 +23,7 @@ function main(): i32 {
 		{"now_unix_ms", "last = now_unix_ms();"},
 		{"now_ns", "last = now_ns();"},
 		{"monotonic_ns", "last = monotonic_ns();"},
-		{"instant_now_formatted", "s = time.instant_now().format_http_date();"},
+		{"timestamp_now_formatted", "s = time.timestamp_now().format_http_date();"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			component := buildLeakCheckCLIComponent(t, loop(tc.call), false)
