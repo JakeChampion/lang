@@ -1,0 +1,31 @@
+// char and str are contextual type names, so f[char] and f[str] are generic calls.
+// A value named char is still an index.
+import "std/i32";
+
+struct Box[T] { v: T }
+
+function identity[T](x: T): T {
+  return x;
+}
+
+function boxed[T](x: T): Box[T] {
+  return Box { v: x };
+}
+
+function pick(): i32 {
+  let char: i32 = 1;
+  let fs: ((i32) => i32)[] = [(x: i32) => x, (x: i32) => x + 1];
+  return fs[char](3);
+}
+
+function main(): i32 {
+  let c: char = identity[char]('é');
+  let b: Box[Box[char]] = boxed[Box[char]](Box { v: 'z' });
+  let raw: str = "abc";
+  let s: str = identity[str](raw);
+  print((c as i32).to_string());
+  print((b.v.v as i32).to_string());
+  print(s.len().to_string());
+  print(pick().to_string());
+  return 0;
+}

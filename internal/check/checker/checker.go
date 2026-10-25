@@ -12049,6 +12049,12 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if _, bound := c.identValueBinding(x.Name, s); bound {
 			return nil, false
 		}
+		switch x.Name {
+		case "char":
+			return ast.CharType{}, true
+		case "str":
+			return ast.StrType{}, true
+		}
 		_, isStruct := c.info.Structs[x.Name]
 		_, isEnum := c.info.Enums[x.Name]
 		_, isResource := c.info.Resources[x.Name]
@@ -12065,7 +12071,10 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if !ok {
 			return nil, false
 		}
-		st := head.(ast.StructType)
+		st, ok := head.(ast.StructType)
+		if !ok {
+			return nil, false
+		}
 		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
 	}
 	return nil, false

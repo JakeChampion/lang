@@ -245,6 +245,7 @@ exit                                                 0
 exit_42                                              0
 exit_code                                            0
 exit_max                                             0
+explicit_char_and_str_type_arguments                 0
 f32_array_element                                    0
 f32_array_param                                      0
 f64_elements                                         0

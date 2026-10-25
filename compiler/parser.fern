@@ -19459,7 +19459,7 @@ pub function fill_default_args_with_diags(raw: Module): (Module, util.Diag[]) {
 
 function retag_type_arg_indexes(mod: Module): Module {
   let generics: string[] = [];
-  let types: string[] = [];
+  let types: string[] = ["char", "str"];
   for fd in mod.funcs {
     if (fd.all_type_params.len() > 0 && fd.receiver_type.len() == 0) {
       generics = generics.append(fd.name);
