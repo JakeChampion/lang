@@ -246,10 +246,11 @@ jobs:
 
               // A main push whose tree is byte-identical to the head of the
               // pull request it merged re-tests what that PR's run tested, or
-              // is still testing: the ruleset keeps a branch level with main,
-              // so the merge pushes the PR head's own tree, and pull requests
-              // here are merged with their run in flight more often than
-              // after it. The PR's newest run at that head is read lane by
+              // is still testing: a branch merged while level with main lands
+              // its head's own tree, and pull requests here are merged with
+              // their run in flight more often than after it. A tree that
+              // differs runs every lane, less the unchanged ones below.
+              // The PR's newest run at that head is read lane by
               // lane. A lane whose every job succeeded is skipped, whatever
               // the run as a whole concluded; one that failed, was cancelled
               // or did not run runs here, so main stays the backstop for the

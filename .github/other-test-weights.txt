@@ -8,24 +8,75 @@
 # weight. A stale weight costs an unevenly filled shard, nothing more.
 #
 # The lane's tests are mostly sub-second. The TestRunner*ExamplePasses suites
-# run a tests/stdlib file under the Go interpreter; the ones whose suite the
-# self-host stdtest lane also runs (selfHostStdTestCases) were deleted on
-# 2026-10-25, which removed the TLS, QUIC, compression and public-key suites
-# that took minutes each. Every remaining suite at 10 s or more is listed.
-# Measured 2026-10-18 on the 4-core dev container; the CI runner reads lower,
-# and the ratio between rows is what the partition uses.
-TestRunnerAnsiExamplePasses 13
-TestRunnerBenchExamplePasses 15
-TestRunnerCoreutilsLongDoubleExamplePasses 84
-TestRunnerCoreutilsResolvExamplePasses 11
-TestRunnerFormatDurationParseExamplePasses 11
-TestRunnerNdarrayExamplePasses 11
-TestRunnerPegExamplePasses 10
-TestRunnerRegexExamplePasses 11
-TestRunnerSetExamplePasses 12
-TestRunnerSimFetchExamplePasses 11
-TestRunnerStringSnapHelpersExamplePasses 10
-TestRunnerTableExamplePasses 13
-TestRunnerTextwrapExamplePasses 11
-TestRunnerU32ExamplePasses 18
-TestRunnerUintRangeExamplePasses 17
+# whose tests/stdlib file the self-host stdtest lane also runs
+# (selfHostStdTestCases) were deleted on 2026-10-25, which removed the TLS,
+# QUIC, compression and public-key interpreter runs that took minutes each.
+#
+# Measured 2026-10-25 on the 4-core dev container with other work beside it:
+# the lane's selection through cmd/ci-test-workers with two workers, 1655
+# tests in 41.7 minutes. Every test at 10 s or more is listed. The CI runner
+# reads lower, and the ratio between rows is what the partition uses.
+TestAccessLogServeX86_64 11
+TestBackgroundShutdownX86_64 11
+TestBufByteRange 42
+TestBuilderText 40
+TestBumpPerRequest 22
+TestCompressServeInterp 40
+TestCompressServeX86_64 10
+TestConformanceLeakCensusX86_64 66
+TestDircolorsRawBytes 23
+TestExamplesNoCrashX86_64 438
+TestF64TranscendentalUlpSelfHostX86_64 51
+TestFeatureDifferential 71
+TestFeatureDifferentialInterpArrayCOW 51
+TestFernFixtures 284
+TestFernloadX86_64 16
+TestFetchAccumulatorStaysLinear 15
+TestFetchClient 23
+TestHTTPAllowServeX86_64 13
+TestHTTPCorpus 11
+TestHTTPHandlerCensus 17
+TestHTTPKeepAlive 26
+TestHandlerDeadlineServeX86_64 11
+TestHandlerKindsMatchWhatTheCompilerAccepts 42
+TestIOByteLines 33
+TestIOText 27
+TestIOTextLines 574
+TestInterpScriptHttpRequestHeaders 10
+TestInterpScriptHttpResponseHeaders 15
+TestInterpScriptMockPlatform 19
+TestMonomorphNeverBlamesTheCompilerOverTheCorpus 143
+TestNativeSyscallFloor 73
+TestNumericProperty_Differential 46
+TestNumericProperty_FloatMathExact 192
+TestNumericProperty_Regressions 19
+TestPersistentCollectionsInterp 31
+TestProxyProtocolServeInterp 14
+TestRouterServeX86_64 11
+TestRunnerCoreutilsLongDoubleExamplePasses 19
+TestRunnerSimdExamplePasses 13
+TestServeH2Interp 38
+TestServeH2X86_64 34
+TestServeH3FileArm64 24
+TestServeH3FileInterp 42
+TestServeH3FileX86_64 28
+TestServeH3Interp 26
+TestServeH3PeerLimitX86_64 53
+TestServeH3SocketX86_64 34
+TestServeH3X86_64 14
+TestServeListenFailure 15
+TestServeTLSAgainstGoInterp 72
+TestServeTLSAgainstGoX86_64 29
+TestSimProperty 19
+TestStaticPreconditionsMatchGo 72
+TestStaticServeX86_64 11
+TestStdlibModulesImportStandalone 65
+TestStringTwoWaySearchInterp 14
+TestTLSClientAgainstGo 18
+TestTLSClientAgainstGoInterp 282
+TestTLSServerAgainstGo 22
+TestTLSServerAgainstGoInterp 238
+TestUploadServeInterp 18
+TestUploadServeX86_64 16
+TestVCLProxyRejectsABadPolicyAtLoadTime 14
+TestVCLProxyServesAndCaches 17
