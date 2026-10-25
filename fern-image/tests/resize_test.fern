@@ -126,7 +126,7 @@ function checkerboard(): test.TestOutcome {
   while (y < 16) {
     let x = 0;
     while (x < 16) {
-      let value = (((x + y) % 2) * 255) as u8;
+      let value = ((x + y) % 2 * 255) as u8;
       source = match (pixels.write_pixel(source, x, y, color.rgb(value, value, value))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
       x = x + 1;
     }

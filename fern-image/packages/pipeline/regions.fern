@@ -30,7 +30,9 @@ pub function dependency_rows(graph: pipeline.Graph, at: i32, y: i32, limits: pip
       let axis = match (resize.bilinear_axis(y, graph.nodes[parent].height, node.height)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
       return Ok(Some(InputRows { node: parent, first: axis.first, last: axis.second }));
     },
-    _ => { return Ok(None); }
+    _ => {
+      return Ok(None);
+    }
   }
 }
 
@@ -53,11 +55,7 @@ pub function cached_plan(graph: pipeline.Graph, region: Region, limits: pipeline
   }
   let stride = match (region.width *? pixels.channels(metadata.format)) { Some(v) => v, None => { return Err(pipeline.Pixel(pixels.Overflow)); } };
   let output_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes };
-  let layout = match (pixels.checked_layout(region.width, region.height, stride, metadata.format, output_limits)) {
-    Ok(v) => v,
-    Err(pixels.Limit()) => { return Err(pipeline.Budget); },
-    Err(e) => { return Err(pipeline.Pixel(e)); }
-  };
+  let layout = match (pixels.checked_layout(region.width, region.height, stride, metadata.format, output_limits)) { Ok(v) => v, Err(pixels.Limit()) => { return Err(pipeline.Budget); }, Err(e) => { return Err(pipeline.Pixel(e)); } };
   let row_scratch = pipeline.required_scratch(graph, limits)?;
   let row_samples = pipeline.required_samples(graph, limits)?;
   let scratch: i64 = row_scratch as i64 + layout.bytes as i64 * 2 + cache_bytes as i64;
@@ -76,8 +74,10 @@ pub function render_tile(graph: pipeline.Graph, region: Region, limits: pipeline
   if (cancelled()) {
     return Err(pipeline.Cancelled);
   }
-  let tile = match (pixels.create(request.layout.width, request.layout.height, request.layout.stride, request.layout.format,
-    pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes })) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+  let tile = match (pixels.create(
+    request.layout.width, request.layout.height, request.layout.stride, request.layout.format,
+    pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes },
+  )) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
   let y = 0;
   while (y < region.height) {
     let row = pipeline.render_row(graph, region.y + y, limits, cancelled)?;
@@ -95,8 +95,7 @@ pub function render_tile(graph: pipeline.Graph, region: Region, limits: pipeline
   return Ok(tile);
 }
 
-pub function render_cached_tile(graph: pipeline.Graph, region: Region, limits: pipeline.Limits, cache_bytes: i32,
-  cancelled: () => boolean): Result[CachedTile, pipeline.PipelineError] {
+pub function render_cached_tile(graph: pipeline.Graph, region: Region, limits: pipeline.Limits, cache_bytes: i32, cancelled: () => boolean): Result[CachedTile, pipeline.PipelineError] {
   if (cancelled()) {
     return Err(pipeline.Cancelled);
   }
@@ -104,8 +103,10 @@ pub function render_cached_tile(graph: pipeline.Graph, region: Region, limits: p
   if (cancelled()) {
     return Err(pipeline.Cancelled);
   }
-  let tile = match (pixels.create(request.layout.width, request.layout.height, request.layout.stride, request.layout.format,
-    pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes })) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+  let tile = match (pixels.create(
+    request.layout.width, request.layout.height, request.layout.stride, request.layout.format,
+    pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes },
+  )) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
   let consume = (state: TileState, row: pixels.Image): Result[TileState, pipeline.PipelineError] => {
     let tile = state.image;
     let x = 0;
@@ -119,11 +120,9 @@ pub function render_cached_tile(graph: pipeline.Graph, region: Region, limits: p
     }
     return Ok(TileState { image: tile, row: state.row + 1 });
   };
-  let result = match (pipeline.fold_rows(graph, region.y, region.height, limits, cache_bytes, cancelled,
-    TileState { image: tile, row: 0 }, consume)) {
-    Ok(v) => v,
-    Err(pipeline.GraphFailure(e)) => { return Err(e); },
-    Err(pipeline.ConsumerFailure(e)) => { return Err(e); }
-  };
+  let result = match (pipeline.fold_rows(
+    graph, region.y, region.height, limits, cache_bytes, cancelled,
+    TileState { image: tile, row: 0 }, consume,
+  )) { Ok(v) => v, Err(pipeline.GraphFailure(e)) => { return Err(e); }, Err(pipeline.ConsumerFailure(e)) => { return Err(e); } };
   return Ok(CachedTile { image: result.value.image, stats: result.stats });
 }
