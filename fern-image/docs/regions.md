@@ -11,6 +11,12 @@ The `dependency_rows` query returns inclusive parent row indices after full grap
 Sources return `None` because they have no graph parent.
 This access contract does not imply arbitrary access for future decoder sources.
 
+Nonpositive dimensions return `Dimensions`. Invalid rectangles, node indices, and row indices return `Bounds`.
+Invalid graph structure returns `InvalidGraph`.
+
+Logical budget violations return `Budget`. `Pixel` wraps pixel storage and arithmetic errors.
+Cooperative cancellation returns `Cancelled`.
+
 ## Planning and logical budgets
 
 `plan` validates graph metadata, public source storage, region bounds, output dimensions, and output storage arithmetic.
