@@ -1393,6 +1393,9 @@ function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarD
             return (s, a, true);
           }
         }
+        if (iife_return_holds_fn_value(r.value, fd, structs, mfuncs)) {
+          return (s, a, true);
+        }
         let vr: InlineCloRes = lift_inline_closures_expr(r.value, fd, vars, a.funcs, a.counter, gfns, structs, mfuncs);
         return (ast.StmtReturn { value: vr.expr, line: r.line, col: r.col }, InlineCloAcc { funcs: vr.funcs, counter: vr.counter }, true);
       },
@@ -2381,8 +2384,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
               ncallee = ast.ExprLambda { ...ielam, body: icrs };
             }
           }
-          if (call.args.len() == 0 && ielam.params.len() == 0
-            && !iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
+          if (call.args.len() == 0 && ielam.params.len() == 0) {
             let avbody: ast.Stmt[] = ielam.body;
             if let ast.ExprLambda(nl2) = ncallee {
               avbody = nl2.body;
