@@ -103,10 +103,14 @@ pub function wake(subscription: Subscription): void {
 }
 
 pub function wait(subscription: Subscription): boolean {
+  return wait_for(subscription, -1);
+}
+
+pub function wait_for(subscription: Subscription, timeout: i32): boolean {
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
-  let ready: i32 = async.wait_any([subscription.listener.fd, 1], -1);
+  let ready: i32 = async.wait_any([subscription.listener.fd, 1], timeout);
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
