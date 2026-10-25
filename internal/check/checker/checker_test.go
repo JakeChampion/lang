@@ -6918,6 +6918,30 @@ function main(): i32 { return describe(Circle { r: 5 }); }`,
 	}
 }
 
+func TestCompositeViewEscapeRejected(t *testing.T) {
+	const decls = "struct H { xs: [i32] }\nstruct N { s: str }\n"
+	for src, code := range map[string]string{
+		`function f(): H { let v: [i32] = [1, 2]; return H { xs: v }; }`:                    "E063",
+		`function f(): (i32, [i32]) { let v: [i32] = [1]; return (1, v); }`:                 "E063",
+		`function f(): H { let v: [i32] = [1]; let h: H = H { xs: v }; return h; }`:         "E063",
+		`function f(): N { let s: string = "a" + "b"; let v: str = s; return N { s: v }; }`: "E065",
+	} {
+		err := checkSource(t, decls+src)
+		if err == nil || !hasCode(err, code) || !strings.Contains(err.Error(), "cannot be kept alive") {
+			t.Errorf("%q: want %s, got %v", src, code, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(xs: [i32]): H { return H { xs: xs }; }`,
+		`function f(): i32 { let v: [i32] = [1]; let h: H = H { xs: v }; return h.xs.len() as i32; }`,
+		`function f(): N { return N { s: "lit" }; }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
 func TestSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,

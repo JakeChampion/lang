@@ -150,6 +150,8 @@ char_cast_receiver                                   0
 char_eq_ord_hash                                     0
 char_ordering                                        0
 checked_int_conversion                               0
+closing_a_socket_two_reactors_watch                  0
+closing_a_watched_socket                             0
 closure_adder                                        0
 closure_capture_rebind_enum_variant                  0
 closure_capture_shared_cell                          0

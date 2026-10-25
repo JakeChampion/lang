@@ -537,6 +537,129 @@ function f(): i32 {
 }`)
 }
 
+func TestOwnGuardAllowsSelfReassignMoveThroughTry(t *testing.T) {
+	wantOK(t, "self-reassign-through-try", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): Result[B, string] { return Ok(B { items: b.items.append(x) }); }
+function (k: B) into(own b: B): Result[B, string] { return Ok(b); }
+function f(k: B): Result[i32, string] {
+    let a = B { items: [] };
+    a = grow(a, 1)?;
+    a = k.into(a)?;
+    return Ok(a.items.len());
+}`)
+}
+
+func TestOwnGuardRejectsSelfReassignThroughTrySecondRead(t *testing.T) {
+	wantE051(t, "self-reassign-through-try-second-read", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): Result[B, string] { return Ok(B { items: b.items.append(x) }); }
+function f(): Result[i32, string] {
+    let a = B { items: [7] };
+    a = grow(a, a.items[0])?;
+    return Ok(a.items.len());
+}`)
+}
+
+func TestOwnGuardAllowsATryResult(t *testing.T) {
+	wantOK(t, "try-result-into-own", ownConsumer+`
+function make(n: i32): Result[i32[], string] { return Ok([n]); }
+function f(): Result[i32, string] {
+    let a: i32 = consume(make(1)?);
+    let xs: i32[] = make(2)?;
+    return Ok(a + consume(xs));
+}`)
+}
+
+func TestOwnGuardAllowsAPayloadBoundInALoop(t *testing.T) {
+	wantOK(t, "payload-bound-in-loop", ownConsumer+`
+enum Next { Part(i32[]), Done }
+function step(n: i32): Next { return Part([n]); }
+function f(): i32 {
+    let n: i32 = 0;
+    while (n < 3) {
+        match (step(n)) {
+            Part(r1) => {
+                n = n + consume(r1);
+            },
+            Done => {
+                return n;
+            }
+        }
+    }
+    return n;
+}`)
+}
+
+func TestOwnGuardAllowsATryPayloadBoundInALoop(t *testing.T) {
+	wantOK(t, "try-payload-bound-in-loop", ownConsumer+`
+enum Next { Part(i32[]), Done }
+function step(n: i32): Result[Next, string] { return Ok(Part([n])); }
+function f(): Result[i32, string] {
+    let n: i32 = 0;
+    while (n < 3) {
+        match (step(n)?) {
+            Part(r1) => {
+                n = n + consume(r1);
+            },
+            Done => {
+                return Ok(n);
+            }
+        }
+    }
+    return Ok(n);
+}`)
+}
+
+func TestOwnGuardRejectsATryPayloadBoundBeforeALoop(t *testing.T) {
+	wantE050(t, "try-payload-bound-before-loop", ownConsumer+`
+enum Next { Part(i32[]), Done }
+function step(n: i32): Result[Next, string] { return Ok(Part([n])); }
+function f(): Result[i32, string] {
+    match (step(1)?) {
+        Part(r1) => {
+            let n: i32 = 0;
+            while (n < 3) {
+                n = n + consume(r1);
+            }
+            return Ok(n);
+        },
+        Done => {
+            return Ok(0);
+        }
+    }
+    return Ok(0);
+}`)
+}
+
+func TestOwnGuardAllowsAFieldUnpackedFromAnOwnParam(t *testing.T) {
+	wantOK(t, "own-param-field-unpack", ownConsumer+`
+function f(own p: Pair): i32 {
+    let n: i32 = p.n;
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k + n;
+}`)
+}
+
+func TestOwnGuardRejectsAFieldOfAnOwnParamReadTwice(t *testing.T) {
+	wantE051(t, "own-param-field-read-twice", ownConsumer+`
+function f(own p: Pair): i32 {
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k + p.items.len();
+}`)
+}
+
+func TestOwnGuardRejectsAFieldOfABorrowedParam(t *testing.T) {
+	wantE051(t, "borrowed-param-field-unpack", ownConsumer+`
+function f(p: Pair): i32 {
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k;
+}`)
+}
+
 func TestOwnGuardAllowsSelfReassignMoveInLambda(t *testing.T) {
 	wantOK(t, "self-reassign-in-lambda", ownConsumer+`
 struct B { items: i32[] }

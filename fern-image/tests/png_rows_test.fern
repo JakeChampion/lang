@@ -1,0 +1,206 @@
+import "../packages/codecs/png/png";
+import "../packages/pixels/pixels";
+import "./fixtures/png" as fixtures;
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function collect(data: [u8], first: i32, count: i32): Result[png.RowFold[pixels.Image[]], png.RowError[string]] {
+  let seed: pixels.Image[] = [];
+  let consume = (rows: pixels.Image[], row: pixels.Image): Result[pixels.Image[], string] => Ok(rows.append(row));
+  return png.fold_rows(data, first, count, pixels.default_limits(), png.default_row_limits(), never_cancel, seed, consume);
+}
+
+function agrees(data: [u8], expected: [u8], channels: i32): boolean {
+  let result = match (collect(data, 0, 2)) { Ok(v) => v, Err(_) => { return false; } };
+  if (result.value.len() != 2 || result.plan.layout.width != 2 || result.plan.layout.height != 2) {
+    return false;
+  }
+  let y = 0;
+  while (y < 2) {
+    let row = result.value[y];
+    if (row.layout.width != 2 || row.layout.height != 1 || row.layout.stride != channels * 2 || row.data.len() != channels * 2) {
+      return false;
+    }
+    let x = 0;
+    while (x < row.data.len()) {
+      if (row.data[x] != expected[y * row.data.len() + x]) {
+        return false;
+      }
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return true;
+}
+
+function filters(): test.TestOutcome {
+  let rgb = fixtures.rgb_bytes();
+  let rgba = fixtures.rgba_bytes();
+  return test.assert_true(agrees(fixtures.rgb0(), rgb, 3) && agrees(fixtures.rgb1(), rgb, 3)
+    && agrees(fixtures.rgb2(), rgb, 3) && agrees(fixtures.rgb3(), rgb, 3) && agrees(fixtures.rgb4(), rgb, 3)
+    && agrees(fixtures.rgba0(), rgba, 4) && agrees(fixtures.rgba1(), rgba, 4) && agrees(fixtures.rgba2(), rgba, 4)
+    && agrees(fixtures.rgba3(), rgba, 4) && agrees(fixtures.rgba4(), rgba, 4));
+}
+
+function selected(): test.TestOutcome {
+  let data = fixtures.rgba4();
+  let padded: u8[] = [3 as u8, 7 as u8];
+  for byte in data {
+    padded = padded.append(byte);
+  }
+  padded = padded.append(9 as u8);
+  let result = match (collect(padded[2:padded.len() - 1], 1, 1)) { Ok(v) => v, Err(_) => { return test.fail("row selection"); } };
+  let expected = fixtures.rgba_bytes();
+  if (result.value.len() != 1 || result.plan.first != 1 || result.plan.count != 1 || result.plan.row_work != 18i64) {
+    return test.fail("selection plan");
+  }
+  let i = 0;
+  while (i < 8) {
+    if (result.value[0].data[i] != expected[8 + i]) {
+      return test.fail("prefix dependency");
+    }
+    i = i + 1;
+  }
+  return test.assert_true(true);
+}
+
+function ownership(): test.TestOutcome {
+  let data = fixtures.rgba4();
+  let seed: pixels.Image[] = [];
+  let consume = (rows: pixels.Image[], row: pixels.Image): Result[pixels.Image[], string] => {
+    let row = row;
+    if (rows.len() == 0) {
+      row = match (pixels.write_pixel(row, 0, 0, pixels.Pixel { r: 31, g: 37, b: 41, a: 255 })) { Ok(v) => v, Err(_) => { return Err("mutation"); } };
+    }
+    return Ok(rows.append(row));
+  };
+  let result = match (png.fold_rows(data, 0, 2, pixels.default_limits(), png.default_row_limits(), never_cancel, seed, consume)) { Ok(v) => v, Err(_) => { return test.fail("fold"); } };
+  let expected = fixtures.rgba_bytes();
+  let good = result.value.len() == 2 && result.value[0].data[0] == 31 as u8 && result.value[0].data[3] == 255 as u8;
+  let i = 0;
+  while (i < 8) {
+    good = good && result.value[1].data[i] == expected[8 + i];
+    i = i + 1;
+  }
+  return test.assert_true(good && seed.len() == 0 && agrees(data, expected, 4));
+}
+
+function admission(): test.TestOutcome {
+  let data = fixtures.rgb0();
+  let calls = cell_new(0);
+  let consume = (value: i32, _row: pixels.Image): Result[i32, string] => {
+    calls.set(calls.get() + 1);
+    return Ok(value + 1);
+  };
+  let limits = png.RowLimits { max_payload_bytes: 184i64, max_row_work: 14i64 };
+  let result = match (png.fold_rows(data, 1, 1, pixels.default_limits(), limits, never_cancel, 0, consume)) { Ok(v) => v, Err(_) => { return test.fail("exact admission"); } };
+  let good = result.value == 1 && result.plan.filtered_bytes == 14 && result.plan.row_scratch_bytes == 12i64
+    && result.plan.payload_bytes == 184i64 && result.plan.row_work == 14i64 && calls.get() == 1;
+  calls.set(0);
+  for budget in [
+    png.RowLimits { max_payload_bytes: 183i64, max_row_work: 14i64 }, png.RowLimits { max_payload_bytes: 184i64, max_row_work: 13i64 },
+    png.RowLimits { max_payload_bytes: 0i64, max_row_work: 14i64 }, png.RowLimits { max_payload_bytes: 184i64, max_row_work: 0 - 1i64 },
+  ] {
+    let rejected = match (png.fold_rows(data, 1, 1, pixels.default_limits(), budget, never_cancel, 0, consume)) { Err(png.RowBudget()) => true, _ => false };
+    if (!rejected) {
+      return test.fail("budget rejection");
+    }
+  }
+  for first in [0 - 1, 2, 2147483647] {
+    let rejected = match (png.fold_rows(data, first, 1, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds()) => true, _ => false };
+    if (!rejected) {
+      return test.fail("first row");
+    }
+  }
+  for count in [0 - 1, 0, 3, 2147483647] {
+    let rejected = match (png.fold_rows(data, 0, count, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds()) => true, _ => false };
+    if (!rejected) {
+      return test.fail("row count");
+    }
+  }
+  return test.assert_true(good && calls.get() == 0);
+}
+
+function consumer_failure(): test.TestOutcome {
+  let seed: pixels.Image[] = [];
+  let calls = cell_new(0);
+  let consume = (rows: pixels.Image[], row: pixels.Image): Result[pixels.Image[], string] => {
+    calls.set(calls.get() + 1);
+    if (rows.len() == 1) {
+      return Err("consumer owns first row");
+    }
+    return Ok(rows.append(row));
+  };
+  let rejected = match (png.fold_rows(fixtures.rgba4(), 0, 2, pixels.default_limits(), png.default_row_limits(), never_cancel, seed, consume)) { Err(png.RowConsumer(error)) => error == "consumer owns first row", _ => false };
+  return test.assert_true(rejected && calls.get() == 2 && seed.len() == 0);
+}
+
+function cancellation(): test.TestOutcome {
+  let source = match (pixels.create(300, 3, 1200, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let data = match (png.encode(source, 10000)) { Ok(v) => v, Err(_) => { return test.fail("encode"); } };
+  let polls = cell_new(0);
+  let cancelled = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let consume = (value: i32, _row: pixels.Image): Result[i32, string] => Ok(value + 1);
+  let control = match (png.fold_rows(data, 0, 3, pixels.default_limits(), png.default_row_limits(), cancelled, 0, consume)) { Ok(v) => v.value == 3, _ => false };
+  let total = polls.get();
+  let stop = 1;
+  while (stop <= total) {
+    polls.set(0);
+    let cancel_at = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() >= stop;
+    };
+    let rejected = match (png.fold_rows(data, 0, 3, pixels.default_limits(), png.default_row_limits(), cancel_at, 0, consume)) { Err(png.RowCancelled()) => true, _ => false };
+    if (!rejected || polls.get() != stop) {
+      return test.fail("cancellation phase");
+    }
+    stop = stop + 1;
+  }
+  return test.assert_true(control && total > 10);
+}
+
+function malformed(): test.TestOutcome {
+  let calls = cell_new(0);
+  let consume = (value: i32, _row: pixels.Image): Result[i32, string] => {
+    calls.set(calls.get() + 1);
+    return Ok(value);
+  };
+  for data in [fixtures.rgb0().with(33, 1 as u8), fixtures.short_scanline(), fixtures.unsupported()] {
+    let rejected = match (png.fold_rows(data, 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(_)) => true, _ => false };
+    if (!rejected) {
+      return test.fail("codec error");
+    }
+  }
+  let input = fixtures.rgb0();
+  let truncated = match (png.fold_rows(input[:7], 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(_)) => true, _ => false };
+  return test.assert_true(truncated && calls.get() == 0);
+}
+
+function final_filter(): test.TestOutcome {
+  let calls = cell_new(0);
+  let consume = (value: i32, _row: pixels.Image): Result[i32, string] => {
+    calls.set(calls.get() + 1);
+    return Ok(value + 1);
+  };
+  let rejected = match (png.fold_rows(fixtures.bad_final_filter(), 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(png.Scanline())) => true, _ => false };
+  return test.assert_true(rejected && calls.get() == 0);
+}
+
+function main(): i32 {
+  let r = test.test_new("sequential PNG rows");
+  r = r.it("independent RGB/RGBA goldens for every filter", filters);
+  r = r.it("selected rows preserve prefix dependencies through lent windows", selected);
+  r = r.it("consumer mutation preserves predecessor rows and input", ownership);
+  r = r.it("exact payload and work admission with checked row bounds", admission);
+  r = r.it("consumer errors release retained rows and owned state", consumer_failure);
+  r = r.it("cancellation before decode and across partial row output", cancellation);
+  r = r.it("malformed and unsupported data never reaches the consumer", malformed);
+  r = r.it("a bad final filter rejects an earlier row selection before callbacks", final_filter);
+  return r.finish();
+}

@@ -104,6 +104,86 @@ addEventListener("blur", () => {
   keys.clear();
   if (local) target = { ...local };
 });
+const invitation = {
+  title: $("arena-message").querySelector("strong").textContent,
+  detail: $("arena-message").querySelector("span").textContent,
+};
+function applySnapshot(value, now) {
+  if (frame && value.tick <= frame.tick) return;
+  tickSpan = frame ? value.tick - frame.tick : 1;
+  previous = new Map(
+    (frame?.players || value.players).map((p) => [p.id, p]),
+  );
+  frame = value;
+  received = now;
+  snapshots++;
+  const own = frame.players.find((p) => p.id === id);
+  if (own) {
+    if (!local) {
+      local = { x: own.x, y: own.y };
+      target = { ...local };
+    } else
+      local = frame.paused
+        ? { x: own.x, y: own.y }
+        : reconcile(own, history);
+    if (frame.paused) history.length = 0;
+    while (history.length && history[0].seq <= own.seq) history.shift();
+    $("personal").textContent = own.score;
+  }
+  $("players").textContent = `${frame.players.length} / 512`;
+  $("score").textContent = `${frame.score} / ${frame.goal}`;
+  $("round").textContent = frame.paused
+    ? "NEXT ROUND"
+    : frame.round
+      ? `ROUND ${frame.round}`
+      : "WAITING";
+  $("arena-message").hidden = !frame.paused && frame.players.length > 0;
+  if (!frame.paused && !frame.players.length) {
+    $("arena-message").querySelector("strong").textContent = invitation.title;
+    $("arena-message").querySelector("span").textContent = invitation.detail;
+  }
+  if (frame.paused) {
+    $("arena-message").querySelector("strong").textContent =
+      frame.score >= frame.goal ? "Team goal reached." : "Round complete.";
+    $("arena-message").querySelector("span").textContent =
+      `The team collected ${frame.score} seeds. The next round starts in ten seconds.`;
+  }
+  const leaders = [...frame.players]
+    .sort((a, b) => b.score - a.score || a.id - b.id)
+    .slice(0, 5);
+  $("leaders").replaceChildren(
+    ...leaders.map((player) => {
+      const li = document.createElement("li"),
+        name = document.createElement("span"),
+        score = document.createElement("b");
+      name.textContent =
+        player.id === id ? `You · player ${id}` : `Player ${player.id}`;
+      score.textContent = player.score;
+      li.append(name, score);
+      return li;
+    }),
+  );
+  if (now - measured >= 1000) {
+    $("rate").textContent = ((snapshots * 1000) / (now - measured)).toFixed(
+      1,
+    );
+    snapshots = 0;
+    measured = now;
+  }
+}
+// Before a visitor joins, the page watches the shared snapshot without a seat.
+async function spectate() {
+  if (id || socket?.readyState === WebSocket.OPEN || document.hidden) return;
+  try {
+    const response = await fetch("/gather/snapshot", { cache: "no-store" });
+    if (!response.ok || id || socket?.readyState === WebSocket.OPEN) return;
+    const value = decode(await response.arrayBuffer());
+    if (value.kind === "ack") return;
+    applySnapshot(value, performance.now());
+    requestDraw();
+  } catch {}
+}
+setInterval(spectate, 500);
 function connect() {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.close();
@@ -145,61 +225,7 @@ function connect() {
         }
         return;
       }
-      if (frame && value.tick <= frame.tick) return;
-      tickSpan = frame ? value.tick - frame.tick : 1;
-      previous = new Map(
-        (frame?.players || value.players).map((p) => [p.id, p]),
-      );
-      frame = value;
-      received = now;
-      snapshots++;
-      const own = frame.players.find((p) => p.id === id);
-      if (own) {
-        if (!local) {
-          local = { x: own.x, y: own.y };
-          target = { ...local };
-        } else
-          local = frame.paused
-            ? { x: own.x, y: own.y }
-            : reconcile(own, history);
-        if (frame.paused) history.length = 0;
-        while (history.length && history[0].seq <= own.seq) history.shift();
-        $("personal").textContent = own.score;
-      }
-      $("players").textContent = `${frame.players.length} / 512`;
-      $("score").textContent = `${frame.score} / ${frame.goal}`;
-      $("round").textContent = frame.paused
-        ? "NEXT ROUND"
-        : `ROUND ${frame.round}`;
-      $("arena-message").hidden = !frame.paused;
-      if (frame.paused) {
-        $("arena-message").querySelector("strong").textContent =
-          frame.score >= frame.goal ? "Team goal reached." : "Round complete.";
-        $("arena-message").querySelector("span").textContent =
-          `The team collected ${frame.score} seeds. The next round starts in ten seconds.`;
-      }
-      const leaders = [...frame.players]
-        .sort((a, b) => b.score - a.score || a.id - b.id)
-        .slice(0, 5);
-      $("leaders").replaceChildren(
-        ...leaders.map((player) => {
-          const li = document.createElement("li"),
-            name = document.createElement("span"),
-            score = document.createElement("b");
-          name.textContent =
-            player.id === id ? `You · player ${id}` : `Player ${player.id}`;
-          score.textContent = player.score;
-          li.append(name, score);
-          return li;
-        }),
-      );
-      if (now - measured >= 1000) {
-        $("rate").textContent = ((snapshots * 1000) / (now - measured)).toFixed(
-          1,
-        );
-        snapshots = 0;
-        measured = now;
-      }
+      applySnapshot(value, now);
     } catch (error) {
       toast(error.message);
       current.close(1002, "invalid arena response");

@@ -969,13 +969,30 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let sig: checker.StructSig = checker.instantiated_variant(checker.variant_sig(s.scope, name, union_name(whole)), s.scope, whole);
+  let sig: checker.StructSig = checker.instantiated_variant(checker.variant_sig(s.scope, literal_variant_name(s, whole, name), union_name(whole)), s.scope, whole);
   return Payloads { found: sig.name.len() > 0, types: resolved_types(sig.field_types, s.scope), unit: false };
+}
+
+function literal_variant_name(s: State, whole: typeinfo.Type, name: string): string {
+  let sig: checker.UnionSig = checker.union_sig(s.scope, union_name(whole));
+  if (sig.instance == "" || util.index_of_str(sig.variants, name) >= 0) {
+    return name;
+  }
+  // Enum instances preserve the declaration order of their variants.
+  let origin: checker.UnionSig = checker.union_sig(s.scope, union_name(enum_origin(whole, s)));
+  let at: i32 = util.index_of_str(origin.variants, name);
+  if (at >= 0 && origin.variants.len() == sig.variants.len()) {
+    return sig.variants[at];
+  }
+  return name;
 }
 
 function literal_union(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
   let ty: typeinfo.Type = checked(e, s);
   if (union_name(expected) != union_name(ty)) {
+    if (completes_enum(enum_origin(ty, s), enum_origin(expected, s))) {
+      return expected;
+    }
     return ty;
   }
   if (builtin_union_layout(union_name(ty)) != 0 || union_unsettled(ty) || semtypes.concrete(expected, false)) {
@@ -1532,6 +1549,7 @@ function record_type(name: string, s: State): typeinfo.Type {
 }
 
 function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: State): Value {
+  name = literal_variant_name(s, whole, name);
   let layout: i32 = union_layout(s, union_name(whole));
   if (layout != semrecords.layout_variant() && layout != semrecords.layout_option()) {
     return refused(s, "unsupported variant literal");
@@ -3352,9 +3370,13 @@ function declared_type_head(name: string, s: State): string {
   return "";
 }
 
+function literal_owner(s: State, whole: typeinfo.Type, head: string): boolean {
+  return union_name(whole) == head || union_name(enum_origin(whole, s)) == head;
+}
+
 function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Expr[], s: State, expected: typeinfo.Type): Value {
   let whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, args, s);
-  if (union_name(whole) != head || !names_variant(s, whole, name)) {
+  if (!literal_owner(s, whole, head) || !names_variant(s, whole, name)) {
     return refused(s, "unsupported qualified path: " + head + "." + name);
   }
   return variant(name, whole, args, s);
@@ -3362,7 +3384,7 @@ function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Ex
 
 function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
   let whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, c.args, s);
-  if (union_name(whole) == head && names_variant(s, whole, name)) {
+  if (literal_owner(s, whole, head) && names_variant(s, whole, name)) {
     return variant(name, whole, c.args, s);
   }
   let at: i32 = ssasem.find_contract(s.contracts, head + "." + name);
@@ -7242,13 +7264,24 @@ function aes_gcm_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__aes_expand_key", params: [view], modes: [b], result: bytes },
     ssasem.Contract { name: "__aes_ctr32", params: [view, view, view], modes: [b, b, b], result: bytes },
     ssasem.Contract { name: "__ghash", params: [view, view, view], modes: [b, b, b], result: bytes },
-    ssasem.Contract { name: "__aes_gcm_seal", params: [view, view, view, view, view], modes: [b, b, b, b, b], result: bytes },
-    ssasem.Contract { name: "__aes_gcm_open", params: [view, view, view, view, view], modes: [b, b, b, b, b], result: bytes },
+    ssasem.Contract { name: "__aes_gcm_seal_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
+    ssasem.Contract { name: "__aes_gcm_open_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
     ssasem.Contract { name: "__sha256_hw", params: [], modes: [], result: t_bool() },
     ssasem.Contract { name: "__sha256_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
     ssasem.Contract { name: "__sha1_hw", params: [], modes: [], result: t_bool() },
     ssasem.Contract { name: "__sha1_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
   ];
+}
+
+function aes_gcm_into_params(): typeinfo.Type[] {
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
+  return [view, view, view, t_u64(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32(), t_i32(), t_i32()];
+}
+
+function aes_gcm_into_modes(): i32[] {
+  let b: i32 = ssaunits.borrow_mode();
+  let v: i32 = ssaunits.value_mode();
+  return [b, b, b, v, ssaunits.counted_mode(), v, v, v, v];
 }
 
 function byte_scan_contracts(): ssasem.Contract[] {
