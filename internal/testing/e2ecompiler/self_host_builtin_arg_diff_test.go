@@ -58,7 +58,7 @@ func builtinMistypedCalls(t *testing.T) []struct{ name, src string } {
 		}
 		args := make([]string, 0, len(sig.Params))
 		for _, p := range sig.Params {
-			args = append(args, mistypedFor(p))
+			args = append(args, mistypedFor(name, p))
 		}
 		if len(args) == 0 {
 			args = append(args, `"x"`)
@@ -83,7 +83,12 @@ func hasTypeParamParam(sig *ast.FuncType) bool {
 	return false
 }
 
-func mistypedFor(p ast.Type) string {
+// print, write and eprint take any Display value, so an integer is not
+// mistyped for them. An array implements no Display.
+func mistypedFor(name string, p ast.Type) string {
+	if name == "print" || name == "write" || name == "eprint" {
+		return "[1, 2]"
+	}
 	if _, isStr := p.(ast.StringType); isStr {
 		return "1"
 	}
