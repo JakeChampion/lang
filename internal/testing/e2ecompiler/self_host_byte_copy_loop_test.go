@@ -114,7 +114,7 @@ func TestSelfHostByteCopyLoops(t *testing.T) {
 					if !strings.Contains(string(assembly), name) {
 						t.Errorf("loop did not reach %s", name)
 					}
-					call := regexp.MustCompile(`(?m)^\s+(?:call|bl|jmp|b) L?__fn_` + name + `\.r\s*$`)
+					call := regexp.MustCompile(`(?m)^\s+(?:call|bl|jmp|b) L?__fn_` + name + `(?:_slow)?\.r\s*$`)
 					if target != "wasm32-wasi" && !call.MatchString(string(assembly)) {
 						t.Errorf("call to %s does not use its register entry", name)
 					}
@@ -134,6 +134,51 @@ func TestSelfHostByteCopyLoops(t *testing.T) {
 				assertBalancedCensus(t, stderr)
 			})
 		}
+	}
+}
+
+// The native backends copy a back-reference inline when the array is unique,
+// has room and dist is 8 or more, and call the slow helper otherwise.
+func TestSelfHostByteCopyBackInline(t *testing.T) {
+	const program = byteCopyLoopFunctions + `
+function main(): i32 {
+  let lens: i32[] = [8, 9, 15, 16, 17, 24, 31, 32, 33, 40, 64];
+  let dists: i32[] = [8, 9, 16, 23];
+  for len in lens {
+    for n in 1..=48 {
+      for d in dists.append(len) {
+        if (d <= len && !same(back(bytes(len), n, d), repeat(bytes(len), n, d))) { return 1; }
+      }
+    }
+  }
+  let a = back(bytes(40), 1, 8);
+  let kept = a;
+  let b = back(a, 8, 8);
+  if (kept.len() != 41 || b.len() != 49 || !same(b, repeat(kept, 8, 8))) { return 2; }
+  return 0;
+}`
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("inline back copy: exit %d, want 0\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			src := filepath.Join(t.TempDir(), "back.fern")
+			if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assembly, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			slow := regexp.MustCompile(`(?m)^\s+(?:call|bl) __fn___fern_bytes_append_back_slow\.r\s*$`)
+			whole := regexp.MustCompile(`(?m)^\s+(?:call|bl) __fn___fern_bytes_append_back(?:\.r)?\s*$`)
+			if !slow.MatchString(string(assembly)) || whole.MatchString(string(assembly)) {
+				t.Errorf("back copy does not run inline with a slow call")
+			}
+		})
 	}
 }
 

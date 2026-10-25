@@ -449,6 +449,11 @@ pub function cold_call(ins: SInst): boolean {
   return ins.kind_tag == 50 && ins.result >= 0 && util.str_has_prefix(ins.str, "arr_push");
 }
 
+// A back-reference copy calls only when its inline copy cannot run.
+pub function back_copy_call(ins: SInst): boolean {
+  return ins.kind_tag == 11 && ins.result >= 0 && ins.str == "__fern_bytes_append_back";
+}
+
 pub const COLD_NONE: i32 = 0;
 
 pub const COLD_SLOW: i32 = 1;
@@ -465,7 +470,7 @@ pub function cold_positions(f: SFunc, size: boolean): i32[] {
     for k in 0..blk.insts.len() {
       let ins: SInst = blk.insts[k];
       let kind: i32 = COLD_NONE;
-      if (cold_call(ins)) {
+      if (cold_call(ins) || !size && back_copy_call(ins)) {
         kind = COLD_SLOW;
       } else if (rc_inlined(ins)) {
         if (!size) {
