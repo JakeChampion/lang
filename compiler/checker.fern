@@ -4109,6 +4109,16 @@ function same_element_type(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return type_eq(a, b) && !promotes_view(a, b) && !promotes_view(b, a);
 }
 
+// An owned array and a view are distinct at every depth: u8[][] is not a [u8][].
+function array_views_differ(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(fa) = from {
+    if let typeinfo.TypeArray(ta) = to {
+      return fa.view != ta.view || array_views_differ(fa.elem, ta.elem);
+    }
+  }
+  return false;
+}
+
 function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean {
   if (from.len() != to.len()) {
     return false;
@@ -4139,7 +4149,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (promotes_view(from, to)) {
     return false;
   }
-  if (is_arr_view(from) && is_owned_array(to) || is_owned_array(from) && is_arr_view(to)) {
+  if (array_views_differ(from, to)) {
     return false;
   }
   if (nominal_args_clash(from, to, unions)) {
@@ -14301,9 +14311,6 @@ function checks_array_element(ty: typeinfo.Type): boolean {
       return true;
     },
     typeinfo.TypeStruct(_) => {
-      return true;
-    },
-    typeinfo.TypeArray(_) => {
       return true;
     },
     _ => {
