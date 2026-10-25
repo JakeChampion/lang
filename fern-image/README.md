@@ -52,9 +52,9 @@ A per-image limit does not establish a process memory limit.
 
 ## Scope and status
 
-Nineteen TAP cases pass across the essential probe and pixel suite.
+Twenty-two TAP cases pass across the essential probe and pixel suite.
 The file I/O probe and pixel example also exit successfully.
-All seven executables report zero live bytes under the sanitizer.
+All eight executables report zero live bytes under the sanitizer.
 
 Three negative probes confirm compiler restrictions.
 The formatter regression also passes before and after the format check.
@@ -67,3 +67,6 @@ This package does not assign a new license to that repository.
 See [color semantics](docs/color.md) for numerical contracts and test tolerances.
 
 See [resize semantics](docs/resize.md) for coordinate and alpha rules.
+
+The [native compression audit](docs/compression-audit.md) verifies prerequisites for PNG.
+PNG decoding and encoding remain unimplemented.
