@@ -4681,8 +4681,8 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   if (ssa_direct_bin(tag)) {
     return 0;
   }
-  if (ssa_shift_tag(tag) && imm.is_imm[ins.args[1]]) {
-    return 0;
+  if (ssa_shift_tag(tag)) {
+    return if (imm.is_imm[ins.args[1]]) { 0 } else { 4 };
   }
   return 0 - 1;
 }
@@ -6548,13 +6548,42 @@ function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-// A shift by a register count works in its result's home: the fixed table
-// keeps that home off rcx, and the count is in rcx before the home is written.
-function ssa_shift_home(ins: ssa.SInst, reg_of: i32[]): string {
-  if (ssa_shift_tag(ir.kind_id(ins.str)) && ssa_in_x(reg_of, ins.result) && ssa_reg(reg_of[ins.result]) != "%rcx") {
-    return ssa_reg(reg_of[ins.result]);
+function ssa_shift(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  if (fr.imm.is_imm[ins.args[1]]) {
+    return ssa_bin_in_place(ins, reg_of, fr, s);
   }
-  return ssa_bin_work(ins.str);
+  return ssa_shiftx(ins, reg_of, s);
+}
+
+// A shift by a register count is one BMI2 shlx, shrx or sarx, which reads
+// the count from any register and the source from a register or a slot. A
+// 32-bit shift masks its count to 31 in r11, as the 64-bit shift needs.
+function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let count: string = ssa_src(reg_of, ins.args[1], "%r11");
+  if (ins.imm != 64) {
+    s = ssa_load(reg_of, ins.args[1], "%r11", s).write("    andl $31, %r11d\n");
+    count = "%r11";
+  } else {
+    s = ssa_load(reg_of, ins.args[1], count, s);
+  }
+  s = ssa_x0_forget(s);
+  let src: string = ssa_src(reg_of, ins.args[0], "");
+  if (src == "") {
+    src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
+  }
+  let d: string = ssa_dst(reg_of, ins.result);
+  s = s.write("    " + ssa_shiftx_mnem(ir.kind_id(ins.str)) + " " + count + ", " + src + ", " + d + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+function ssa_shiftx_mnem(tag: i32): string {
+  if (tag == 31) {
+    return "shlxq";
+  }
+  if (tag == 32) {
+    return "sarxq";
+  }
+  return "shrxq";
 }
 
 function ssa_bin_work(op: string): string {
@@ -8062,10 +8091,10 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
   } else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) {
-    return ssa_bin_in_place(ins, reg_of, fr, s);
+  } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str))) {
+    return ssa_shift(ins, reg_of, fr, s);
   } else if (k == 9) {
-    d = ssa_shift_home(ins, reg_of);
+    d = ssa_bin_work(ins.str);
     if (!fr.imm.is_imm[ins.args[1]]) {
       s = ssa_load(reg_of, ins.args[1], "%rcx", s);
     }
