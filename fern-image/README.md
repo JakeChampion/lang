@@ -9,7 +9,7 @@ It does not decode files, resize images, serve HTTP, or implement a CDN.
 ## Build and test
 
 Use Linux x86-64 with the Fern CPU baseline: x86-64-v3 plus AES-NI.
-The scripts require Bash, make, curl, tar, gzip, sha256sum, and ripgrep.
+The scripts require Bash, make, curl, tar, gzip, sha256sum, and grep.
 Run these commands from this directory:
 
 ```sh

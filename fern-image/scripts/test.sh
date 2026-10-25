@@ -18,7 +18,7 @@ for spec in immutable-array:E056 immutable-field:E048 usize-checked:E009; do
     echo "Expected compiler rejection: $name" >&2
     exit 1
   fi
-  rg -q "$code" "build/$name.log"
+  grep -qF "$code" "build/$name.log"
   echo "Expected compiler rejection passed: $name ($code)"
 done
 
