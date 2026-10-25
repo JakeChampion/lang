@@ -1,0 +1,361 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pipeline/regions";
+import "../packages/pixels/pixels";
+import "../packages/resize/resize";
+import "./fixtures/provider" as fixtures;
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function graph(format: pixels.Format, access: pipeline.SourceAccess, mode: i32, counts: fixtures.Counters): Result[pipeline.Graph, pipeline.PipelineError] {
+  return pipeline.from_provider(4, 4, format, fixtures.spec(4, 4, format, access, mode, [0 as u8], counts), pipeline.default_limits());
+}
+
+function collect(input: pipeline.Graph, count: i32, limits: pipeline.Limits, cache: i32, fused: boolean): Result[pipeline.RowFold[pixels.Image[]], pipeline.RowFailure[string]] {
+  let seed: pixels.Image[] = [];
+  let consume = (rows: pixels.Image[], row: pixels.Image): Result[pixels.Image[], string] => Ok(rows.append(row));
+  if (fused) {
+    return pipeline.fold_rows_fused(input, 0, count, limits, cache, never_cancel, seed, consume);
+  }
+  return pipeline.fold_rows(input, 0, count, limits, cache, never_cancel, seed, consume);
+}
+
+function fresh_sessions(): test.TestOutcome {
+  let counts = fixtures.counters();
+  let input = match (graph(pixels.RGBA8, pipeline.RandomRows, 0, counts)) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
+  let alias = input;
+  if (counts.opens.get() != 0 || counts.reads.get() != 0) {
+    return test.fail("eager factory");
+  }
+  let last = match (pipeline.render_row(input, 3, pipeline.default_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("last"); } };
+  let first = match (pipeline.render_row(alias, 0, pipeline.default_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("first"); } };
+  let again = match (collect(input, 2, pipeline.default_limits(), 0, false)) { Ok(v) => v, Err(_) => { return test.fail("batch"); } };
+  return test.assert_true(last.data[0] == 22 as u8 && first.data[0] == 10 as u8 && again.value[1].data[0] == 14 as u8
+    && counts.opens.get() == 3 && counts.reads.get() == 4 && counts.backwards.get() == 0);
+}
+
+function golden(format: pixels.Format, fused: boolean): boolean {
+  let counts = fixtures.counters();
+  let limits = pipeline.default_limits();
+  let input = match (graph(format, pipeline.ForwardRows, 0, counts)) { Ok(v) => v, Err(_) => { return false; } };
+  input = match (pipeline.nearest(input, 3, 3, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  input = match (pipeline.nearest(input, 2, 2, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let cache = match (pipeline.required_cache(input, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let output = match (collect(input, 2, limits, cache, fused)) { Ok(v) => v.value, Err(_) => { return false; } };
+  let reds: u8[] = [10, 100, 22, 112];
+  let greens: u8[] = [40, 52, 130, 142];
+  let blues: u8[] = [100, 103, 103, 106];
+  let alphas: u8[] = [0, 90, 90, 180];
+  let y = 0;
+  while (y < 2) {
+    let x = 0;
+    while (x < 2) {
+      let p = match (pixels.read_pixel(output[y], x, 0)) { Ok(v) => v, Err(_) => { return false; } };
+      let i = y * 2 + x;
+      let alpha: u8 = 255;
+      if (pixels.channels(format) == 4) {
+        alpha = alphas[i];
+      }
+      if (p.r != reds[i] || p.g != greens[i] || p.b != blues[i] || p.a != alpha) {
+        return false;
+      }
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return counts.opens.get() == 1 && counts.backwards.get() == 0;
+}
+
+function coordinates(): test.TestOutcome {
+  return test.assert_true(golden(pixels.RGB8, false) && golden(pixels.RGBA8, false) && golden(pixels.RGB8, true) && golden(pixels.RGBA8, true));
+}
+
+function mixed_format(format: pixels.Format, fused: boolean): boolean {
+  let counts = fixtures.counters();
+  let limits = pipeline.default_limits();
+  let input = match (graph(format, pipeline.ForwardRows, 0, counts)) { Ok(v) => v, Err(_) => { return false; } };
+  let eager = match (fixtures.image(4, 4, format)) { Ok(v) => v, Err(_) => { return false; } };
+  let widths: i32[] = [3, 5, 4, 2];
+  let heights: i32[] = [3, 7, 6, 4];
+  let i = 0;
+  while (i < widths.len()) {
+    let filter = resize.Nearest;
+    if (i == 1) {
+      filter = resize.Bilinear;
+      input = match (pipeline.bilinear(input, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    } else {
+      input = match (pipeline.nearest(input, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    }
+    eager = match (resize.resize(eager, widths[i], heights[i], filter, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+    i = i + 1;
+  }
+  let cache = match (pipeline.required_cache(input, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let region = regions.Region { x: 1, y: 1, width: 1, height: 2 };
+  let tile = if (fused) { regions.render_cached_tile_fused(input, region, limits, cache, never_cancel) } else { regions.render_cached_tile(input, region, limits, cache, never_cancel) };
+  let image = match (tile) { Ok(v) => v.image, Err(_) => { return false; } };
+  let y = 0;
+  while (y < 2) {
+    let a = match (pixels.read_pixel(image, 0, y)) { Ok(v) => v, Err(_) => { return false; } };
+    let b = match (pixels.read_pixel(eager, 1, y + 1)) { Ok(v) => v, Err(_) => { return false; } };
+    if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+      return false;
+    }
+    y = y + 1;
+  }
+  let all = match (collect(input, 4, limits, cache, fused)) { Ok(v) => v.value.len() == 4, _ => false };
+  return all && counts.opens.get() == 2 && counts.backwards.get() == 0;
+}
+
+function forward_dependencies(): test.TestOutcome {
+  return test.assert_true(mixed_format(pixels.RGB8, false) && mixed_format(pixels.RGBA8, false)
+    && mixed_format(pixels.RGB8, true) && mixed_format(pixels.RGBA8, true));
+}
+
+function admission(): test.TestOutcome {
+  let counts = fixtures.counters();
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 96, max_samples: 20 };
+  let spec = fixtures.spec(4, 4, pixels.RGBA8, pipeline.RandomRows, 0, [0 as u8], counts);
+  let input = match (pipeline.from_provider(4, 4, pixels.RGBA8, spec, limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  input = match (pipeline.nearest(input, 2, 8, limits)) { Ok(v) => v, Err(_) => { return test.fail("nearest"); } };
+  let scratch = match (pipeline.required_scratch(input, limits)) { Ok(v) => v == 96, _ => false };
+  let setup = match (pipeline.required_setup_samples(input, limits)) { Ok(v) => v == 8, _ => false };
+  let work = match (pipeline.required_samples(input, limits)) { Ok(v) => v == 6, _ => false };
+  let budget = match (collect(input, 2, pipeline.Limits { ...limits, max_samples: 19 }, 0, true)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let memory = match (collect(input, 2, pipeline.Limits { ...limits, max_scratch_bytes: 95 }, 0, true)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  if (counts.opens.get() != 0 || counts.reads.get() != 0) {
+    return test.fail("late admission");
+  }
+  let exact = match (collect(input, 2, limits, 0, true)) { Ok(v) => v.value.len() == 2, _ => false };
+  let tile_limits = pipeline.Limits { ...limits, max_scratch_bytes: 112, max_samples: 22 };
+  let region = regions.Region { x: 0, y: 0, width: 1, height: 2 };
+  let plan = match (regions.cached_plan(input, region, tile_limits, 0)) { Ok(v) => v.scratch_bytes == 112 && v.samples == 22, _ => false };
+  let tile = match (regions.render_cached_tile_fused(input, region, tile_limits, 0, never_cancel)) { Ok(_) => true, _ => false };
+  let before_uncached = counts.opens.get();
+  let uncached_budget = match (regions.render_tile(input, region, pipeline.Limits { ...tile_limits, max_samples: 29 }, never_cancel)) { Err(pipeline.Budget()) => true, _ => false };
+  if (counts.opens.get() != before_uncached) {
+    return test.fail("uncached setup admission");
+  }
+  let uncached_limits = pipeline.Limits { ...tile_limits, max_samples: 30 };
+  let uncached_plan = match (regions.plan(input, region, uncached_limits)) { Ok(v) => v.samples == 30, _ => false };
+  let uncached_tile = match (regions.render_tile(input, region, uncached_limits, never_cancel)) { Ok(v) => v.data.len() == 8, _ => false };
+  let fresh_rows = counts.opens.get() == before_uncached + 2;
+  let forward_counts = fixtures.counters();
+  let forward = match (graph(pixels.RGBA8, pipeline.ForwardRows, 0, forward_counts)) { Ok(v) => v, Err(_) => { return test.fail("forward"); } };
+  let unsupported = match (pipeline.render_row(forward, 0, pipeline.default_limits(), never_cancel)) { Err(pipeline.AccessPattern()) => true, _ => false };
+  let insufficient = match (collect(forward, 2, pipeline.default_limits(), 31, false)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  return test.assert_true(scratch && setup && work && budget && memory && exact && plan && tile
+    && uncached_budget && uncached_plan && uncached_tile && fresh_rows && unsupported && insufficient && forward_counts.opens.get() == 0);
+}
+
+function malformed_rows(): test.TestOutcome {
+  let mode = 1;
+  while (mode <= 8) {
+    let counts = fixtures.counters();
+    let input = match (graph(pixels.RGBA8, pipeline.RandomRows, mode, counts)) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
+    let expected = pipeline.InvalidGraph;
+    if (mode >= 5) {
+      expected = pipeline.Pixel(pixels.Storage);
+    }
+    let rejected = match (pipeline.render_row(input, 0, pipeline.default_limits(), never_cancel)) { Err(e) => e == expected, _ => false };
+    if (!rejected || counts.opens.get() != 1 || counts.reads.get() != 1) {
+      return test.fail("malformed provider row");
+    }
+    mode = mode + 1;
+  }
+  let counts = fixtures.counters();
+  let base = fixtures.spec(4, 4, pixels.RGBA8, pipeline.RandomRows, 0, [0 as u8], counts);
+  for bad in [
+    pipeline.ProviderSpec { ...base, storage_bytes: 0 - 1 }, pipeline.ProviderSpec { ...base, scratch_bytes: 0 - 1 },
+    pipeline.ProviderSpec { ...base, samples_per_row: 3 }, pipeline.ProviderSpec { ...base, setup_samples: 0 - 1 },
+    pipeline.ProviderSpec { ...base, storage_bytes: 2147483647 },
+  ] {
+    let rejected = match (pipeline.from_provider(4, 4, pixels.RGBA8, bad, pipeline.default_limits())) { Err(pipeline.Budget()) => true, _ => false };
+    if (!rejected) {
+      return test.fail("source declaration admission");
+    }
+  }
+  return test.assert_true(counts.opens.get() == 0 && counts.reads.get() == 0);
+}
+
+function failures(): test.TestOutcome {
+  let expected_open = args()[0] + ": open failure";
+  let expected_read = args()[0] + ": read failure";
+  let opens = fixtures.counters();
+  let open_input = match (graph(pixels.RGBA8, pipeline.RandomRows, 9, opens)) { Ok(v) => v, Err(_) => { return test.fail("open graph"); } };
+  let open_error = match (collect(open_input, 2, pipeline.default_limits(), 0, false)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => e == expected_open, _ => false };
+  let reads = fixtures.counters();
+  let read_input = match (graph(pixels.RGBA8, pipeline.RandomRows, 10, reads)) { Ok(v) => v, Err(_) => { return test.fail("read graph"); } };
+  let read_error = match (collect(read_input, 2, pipeline.default_limits(), 0, true)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => e == expected_read, _ => false };
+  let counts = fixtures.counters();
+  let valid = match (graph(pixels.RGBA8, pipeline.RandomRows, 0, counts)) { Ok(v) => v, Err(_) => { return test.fail("valid"); } };
+  let seed = args()[0] + ": consumer failure";
+  let consume = (state: string, _row: pixels.Image): Result[string, string] => Err(state);
+  let consumer_error = match (pipeline.fold_rows_fused(valid, 0, 2, pipeline.default_limits(), 32, never_cancel, seed, consume)) { Err(pipeline.ConsumerFailure(e)) => e == seed, _ => false };
+  let after = match (collect(valid, 1, pipeline.default_limits(), 0, false)) { Ok(v) => v.value.len() == 1, _ => false };
+  return test.assert_true(open_error && opens.opens.get() == 1 && opens.reads.get() == 0
+    && read_error && reads.opens.get() == 1 && reads.reads.get() == 1
+    && consumer_error && after && counts.opens.get() == 2 && counts.reads.get() == 2);
+}
+
+function cancellation(): test.TestOutcome {
+  let counts = fixtures.counters();
+  let limits = pipeline.default_limits();
+  let source = fixtures.spec(128, 4, pixels.RGBA8, pipeline.ForwardRows, 0, [0 as u8], counts);
+  let input = match (pipeline.from_provider(128, 4, pixels.RGBA8, source, limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  input = match (pipeline.nearest(input, 96, 6, limits)) { Ok(v) => v, Err(_) => { return test.fail("middle"); } };
+  input = match (pipeline.nearest(input, 64, 8, limits)) { Ok(v) => v, Err(_) => { return test.fail("output"); } };
+  let cache = match (pipeline.required_cache(input, limits)) { Ok(v) => v, Err(_) => { return test.fail("cache"); } };
+  let polls = cell_new(0);
+  let control_cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let consume = (n: i32, _row: pixels.Image): Result[i32, string] => Ok(n + 1);
+  let control = match (pipeline.fold_rows_fused(input, 0, 3, limits, cache, control_cancel, 0, consume)) { Ok(v) => v.value == 3, _ => false };
+  let total = polls.get();
+  let stop = 1;
+  while (stop <= total) {
+    polls.set(0);
+    let cancel = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() >= stop;
+    };
+    let result = match (pipeline.fold_rows_fused(input, 0, 3, limits, cache, cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Cancelled())) => true, _ => false };
+    if (!result || polls.get() != stop) {
+      return test.fail("provider cancellation phase");
+    }
+    stop = stop + 1;
+  }
+  let after = match (collect(input, 3, limits, cache, true)) { Ok(v) => v.value.len() == 3, _ => false };
+  return test.assert_true(control && total > 20 && after && counts.backwards.get() == 0);
+}
+
+function ownership(): test.TestOutcome {
+  let counts = fixtures.counters();
+  let bytes: u8[] = [0];
+  bytes = bytes.append(args()[0].len() as u8);
+  let source = fixtures.spec(4, 4, pixels.RGBA8, pipeline.RandomRows, 0, bytes, counts);
+  let input = match (pipeline.from_provider(4, 4, pixels.RGBA8, source, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  bytes = bytes.with(0, 200 as u8);
+  let output = match (collect(input, 2, pipeline.default_limits(), 32, true)) { Ok(v) => v.value, Err(_) => { return test.fail("fold"); } };
+  let kept = output[0];
+  let changed = match (pixels.write_pixel(output[0], 0, 0, pixels.Pixel { r: 255 as u8, g: 0 as u8, b: 0 as u8, a: 255 as u8 })) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  let after = match (pipeline.render_row(input, 0, pipeline.default_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("after"); } };
+  return test.assert_true(bytes[0] == 200 as u8 && kept.data[0] == 10 as u8 && kept.data[3] == 0 as u8
+    && changed.data[0] == 255 as u8 && changed.data[3] == 255 as u8 && output[1].data[0] == 14 as u8
+    && after.data[0] == 10 as u8 && counts.opens.get() == 2 && counts.reads.get() == 3);
+}
+
+function depth(): test.TestOutcome {
+  let counts = fixtures.counters();
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_nodes: 64, max_scratch_bytes: 8192, max_samples: 1024 };
+  let source = fixtures.spec(4, 4, pixels.RGBA8, pipeline.ForwardRows, 0, [0 as u8], counts);
+  let input = match (pipeline.from_provider(4, 4, pixels.RGBA8, source, limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let i = 1;
+  while (i < 64) {
+    input = match (pipeline.nearest(input, 4, 4, limits)) { Ok(v) => v, Err(_) => { return test.fail("depth"); } };
+    i = i + 1;
+  }
+  let cache = match (pipeline.required_cache(input, limits)) { Ok(v) => v, Err(_) => { return test.fail("cache"); } };
+  let output = match (collect(input, 2, limits, cache, true)) { Ok(v) => v, Err(_) => { return test.fail("fold"); } };
+  let invalid = pipeline.Graph { nodes: input.nodes.append(pipeline.Node { ...input.nodes[63], operation: pipeline.NearestSource(63) }) };
+  let rejected = match (collect(invalid, 2, limits, cache, true)) { Err(pipeline.GraphFailure(pipeline.InvalidGraph())) => true, _ => false };
+  return test.assert_true(cache == 2048 && output.stats.rows == 2 && output.stats.misses == 4
+    && output.value[0].data[0] == 10 as u8 && output.value[1].data[0] == 14 as u8
+    && rejected && counts.opens.get() == 1 && counts.backwards.get() == 0);
+}
+
+function unused(): test.TestOutcome {
+  let counts = fixtures.counters();
+  let source = fixtures.spec(4, 4, pixels.RGBA8, pipeline.RandomRows, 9, [0 as u8], counts);
+  let input = pipeline.Graph { nodes: [
+    pipeline.Node { width: 4, height: 4, format: pixels.RGBA8, operation: pipeline.ProviderSource(source) },
+    pipeline.Node { width: 4, height: 4, format: pixels.RGBA8, operation: pipeline.SolidSource(pixels.Pixel { r: 17 as u8, g: 23 as u8, b: 99 as u8, a: 128 as u8 }) },
+  ] };
+  input = match (pipeline.nearest(input, 2, 2, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("nearest"); } };
+  let output = match (collect(input, 2, pipeline.default_limits(), 0, true)) { Ok(v) => v, Err(_) => { return test.fail("fold"); } };
+  let dependency = match (regions.dependency_rows(input, 0, 0, pipeline.default_limits())) { Ok(None()) => true, _ => false };
+  let min_cache = match (pipeline.required_cache(input, pipeline.default_limits())) { Ok(v) => v == 0, _ => false };
+  let setup = match (pipeline.required_setup_samples(input, pipeline.default_limits())) { Ok(v) => v == 0, _ => false };
+  return test.assert_true(output.value[0].data[0] == 17 as u8 && output.stats.rows == 2
+    && dependency && min_cache && setup && counts.opens.get() == 0 && counts.reads.get() == 0);
+}
+
+function schedule_case(mask: i32, format: pixels.Format, fused: boolean): boolean {
+  let counts = fixtures.counters();
+  let limits = pipeline.default_limits();
+  let input = match (graph(format, pipeline.ForwardRows, 0, counts)) { Ok(v) => v, Err(_) => { return false; } };
+  let eager = match (fixtures.image(4, 4, format)) { Ok(v) => v, Err(_) => { return false; } };
+  let widths: i32[] = [7, 3, 5, 2];
+  let heights: i32[] = [5, 7, 3, 5];
+  let i = 0;
+  while (i < 4) {
+    let filter = resize.Nearest;
+    if ((mask >> i & 1) == 1) {
+      filter = resize.Bilinear;
+      input = match (pipeline.bilinear(input, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    } else {
+      input = match (pipeline.nearest(input, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    }
+    eager = match (resize.resize(eager, widths[i], heights[i], filter, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+    i = i + 1;
+  }
+  let cache = match (pipeline.required_cache(input, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let rows = match (collect(input, 5, limits, cache, fused)) { Ok(v) => v.value, Err(_) => { return false; } };
+  let y = 0;
+  while (y < 5) {
+    let x = 0;
+    while (x < 2) {
+      let a = match (pixels.read_pixel(rows[y], x, 0)) { Ok(v) => v, Err(_) => { return false; } };
+      let b = match (pixels.read_pixel(eager, x, y)) { Ok(v) => v, Err(_) => { return false; } };
+      if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+        return false;
+      }
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  let region = regions.Region { x: 1, y: 1, width: 1, height: 3 };
+  let tile = if (fused) { regions.render_cached_tile_fused(input, region, limits, cache, never_cancel) } else { regions.render_cached_tile(input, region, limits, cache, never_cancel) };
+  let image = match (tile) { Ok(v) => v.image, Err(_) => { return false; } };
+  y = 0;
+  while (y < 3) {
+    let a = match (pixels.read_pixel(image, 0, y)) { Ok(v) => v, Err(_) => { return false; } };
+    let b = match (pixels.read_pixel(eager, 1, y + 1)) { Ok(v) => v, Err(_) => { return false; } };
+    if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+      return false;
+    }
+    y = y + 1;
+  }
+  return counts.opens.get() == 2 && counts.backwards.get() == 0;
+}
+
+function schedules(): test.TestOutcome {
+  let mask = 0;
+  while (mask < 16) {
+    if (!schedule_case(mask, pixels.RGB8, false) || !schedule_case(mask, pixels.RGBA8, false)
+      || !schedule_case(mask, pixels.RGB8, true) || !schedule_case(mask, pixels.RGBA8, true)) {
+      return test.fail("forward schedule matrix");
+    }
+    mask = mask + 1;
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let r = test.test_new("execution row providers");
+  r = r.it("factory sessions are private across graph copies and executions", fresh_sessions);
+  r = r.it("provider RGB/RGBA coordinates preserve every nearest step", coordinates);
+  r = r.it("forward providers retain repeated bilinear dependencies in rows and tiles", forward_dependencies);
+  r = r.it("source storage, setup work, and forward cache admit before factories", admission);
+  r = r.it("row index, metadata, stride, and exact storage validate before reads", malformed_rows);
+  r = r.it("factory, provider, and consumer heap errors release sessions", failures);
+  r = r.it("every cancellation poll releases factories, rows, and private state", cancellation);
+  r = r.it("captured source bytes and returned rows preserve owned values", ownership);
+  r = r.it("64-node provider graphs retain bounds and conservative admission", depth);
+  r = r.it("unreachable provider factories remain unopened", unused);
+  r = r.it("64 mixed-filter format and fusion combinations preserve forward access", schedules);
+  return r.finish();
+}

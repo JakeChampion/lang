@@ -315,12 +315,12 @@ function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
 }
 
 function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i64, display: string): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = o.write_string(blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t");
+  let w: io_buffered.BufWriter = gnu.put(o, blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t");
   if (c.time_kind != time_none()) {
-    w = w.write_bytes(timefmt.format_bytes(c.time_format, c.zone, tsec, tnsec));
-    w = w.write_string("\t");
+    w = gnu.put_bytes(w, timefmt.format_bytes(c.time_format, c.zone, tsec, tnsec));
+    w = gnu.put(w, "\t");
   }
-  return w.write_string(display + c.terminator);
+  return gnu.put(w, display + c.terminator);
 }
 
 struct Frame { path: string, display: string, dir: Option[Dir], names: string[], idx: i32, depth: i32, dev: i64, ino: i64, full: u64, shown: u64, ftime: i64, fnsec: i64, stime: i64, snsec: i64 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // hostBuildSlots bounds the cold driver builds that run at once on one host.
@@ -40,17 +41,21 @@ func acquireHostBuildSlot() func() {
 			f.Close()
 		}
 	}
-	for _, f := range slots {
-		if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
-			return release
-		}
-	}
-	// Every slot is held: wait on the one this process hashes to.
-	f := slots[os.Getpid()%len(slots)]
+	// Every slot may be held: take whichever frees first rather than blocking
+	// on one, which would wait out a long build while another slot sits free.
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-		if err == nil || !errors.Is(err, syscall.EINTR) {
-			return release
+		for _, f := range slots {
+			err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			if err == nil {
+				return release
+			}
+			if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
+				return release
+			}
 		}
+		time.Sleep(slotPoll)
 	}
 }
+
+// slotPoll is how often a waiting build retries the held slots.
+const slotPoll = 50 * time.Millisecond
