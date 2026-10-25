@@ -364,6 +364,16 @@ pub function parse_pieces(src: string): Piece[] {
   return pieces_of(parse(src));
 }
 
+// chunk_line is the line of chunk `name`'s first `<<name>>=` header, or 0.
+pub function chunk_line(d: Doc, name: string): i32 {
+  for b in d.blocks {
+    if (b.kind == CHUNK && b.name == name) {
+      return b.first;
+    }
+  }
+  return 0;
+}
+
 pub function defined_chunks(d: Doc): string[] {
   let names: string[] = [];
   for b in d.blocks {

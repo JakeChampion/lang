@@ -2,6 +2,7 @@ package e2eharness
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -104,20 +105,47 @@ func fileTail(path string, max int) string {
 	return string(b)
 }
 
-func WaitServerReady(t *testing.T, addr string, within time.Duration) {
+// serverStartBudget bounds a server's startup. It only decides how long a hung
+// server takes to fail: an interpreted server on a loaded machine takes 20 s.
+const serverStartBudget = 60 * time.Second
+
+// WaitServerReady returns once the server has accepted a connection and
+// closed it in answer to the client's half-close. A dial alone is not enough:
+// an inherited listener (StartInheritedServer) completes the handshake from
+// its backlog before the server process has started running.
+func WaitServerReady(t *testing.T, addr string) {
 	t.Helper()
+	within := serverStartBudget
 	limit := time.Now().Add(within)
 	var last error
 	for time.Now().Before(limit) {
 		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {
-			c.Close()
-			return
+			err = awaitServerClose(c.(*net.TCPConn), limit)
+			if err == nil {
+				return
+			}
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				t.Fatalf("server on %s never closed a half-closed connection within %v", addr, within)
+			}
 		}
 		last = err
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("server never bound on %s within %v; last dial: %v", addr, within, last)
+	t.Fatalf("server never served on %s within %v; last attempt: %v", addr, within, last)
+}
+
+func awaitServerClose(c *net.TCPConn, limit time.Time) error {
+	defer c.Close()
+	if err := c.CloseWrite(); err != nil {
+		return err
+	}
+	if err := c.SetReadDeadline(limit); err != nil {
+		return err
+	}
+	_, err := io.Copy(io.Discard, c)
+	return err
 }
 
 func rawRequest(t *testing.T, addr, path, connection string) net.Conn {
@@ -207,7 +235,7 @@ func sigterm(t *testing.T, cmd *exec.Cmd) {
 
 func CheckShutdownDrains(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	idle := rawRequest(t, addr, "/ok", "")
 	defer idle.Close()
 	if resp := readResponse(t, idle, "idle /ok"); resp.StatusCode != 200 || resp.Close {
@@ -236,7 +264,7 @@ func CheckShutdownDrains(t *testing.T, cmd *exec.Cmd, addr string) {
 
 func CheckShutdownAbortsAtDrainDeadline(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	partial, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +290,7 @@ func CheckShutdownAbortsAtDrainDeadline(t *testing.T, cmd *exec.Cmd, addr string
 
 func CheckShutdownWaitsForBackground(t *testing.T, cmd *exec.Cmd, addr, stderrPath, path, logged string, within time.Duration) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn := rawRequest(t, addr, path, "")
 	defer conn.Close()
 	if resp := readResponse(t, conn, path); resp.StatusCode != 200 {
@@ -284,7 +312,7 @@ func CheckShutdownWaitsForBackground(t *testing.T, cmd *exec.Cmd, addr, stderrPa
 
 func CheckSupervisedShutdown(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	slow := rawRequest(t, addr, "/slow", "")
 	defer slow.Close()
 	time.Sleep(100 * time.Millisecond)

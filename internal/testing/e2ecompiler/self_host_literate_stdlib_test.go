@@ -65,10 +65,19 @@ function main(): i32 {
 
 func TestSelfHostLiterateStandardLibrary(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	for _, module := range []struct{ name, documentation string }{
-		{"option", "unwrap_or returns the value, or the supplied default for None."},
-		{"result", "map_err transforms the error inside Err and retains Ok."},
-		{"csv", "parse_line decodes one record, with one empty field for empty input."},
+	for _, module := range []struct {
+		name          string
+		documentation []string
+	}{
+		{"option", []string{
+			"There is no `unwrap` or `expect`, here or on `Result`.",
+			"unwrap_or returns the value, or the supplied default for None.",
+		}},
+		{"result", []string{
+			"There is no `unwrap` or `expect`; std/option's header says why.",
+			"map_err transforms the error inside Err and retains Ok.",
+		}},
+		{"csv", []string{"parse_line decodes one record, with one empty field for empty input."}},
 	} {
 		t.Run(module.name, func(t *testing.T) {
 			document := filepath.Join(cli.stdlib, "std", module.name+".fern.md")
@@ -77,8 +86,14 @@ func TestSelfHostLiterateStandardLibrary(t *testing.T) {
 				t.Fatalf("doctests: %v\n%s", err, output)
 			}
 			cmd = runX86_64Bin(cli.runner, cli.bin, "-doc", document)
-			if output, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(output), "title: std/"+module.name+"\n") || !strings.Contains(string(output), module.documentation) {
+			output, err := cmd.CombinedOutput()
+			if err != nil || !strings.Contains(string(output), "title: std/"+module.name+"\n") {
 				t.Fatalf("API documentation: %v\n%s", err, output)
+			}
+			for _, want := range module.documentation {
+				if !strings.Contains(string(output), want) {
+					t.Fatalf("API documentation lacks %q:\n%s", want, output)
+				}
 			}
 		})
 	}

@@ -17,16 +17,24 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
+// Warning is a finding that does not refuse the program. Path is the file Pos
+// is in when that is not the entry.
 type Warning struct {
-	Pos ast.Position
-	Msg string
+	Pos  ast.Position
+	Path string
+	Code string
+	Msg  string
 }
 
 func (w Warning) Format(name string) string {
+	head := "warning[" + w.Code + "]: " + w.Msg
 	if w.Pos.Line == 0 {
-		return "warning: " + w.Msg
+		return head
 	}
-	return fmt.Sprintf("%s:%d:%d: warning: %s", name, w.Pos.Line, w.Pos.Col, w.Msg)
+	if w.Path != "" {
+		name = w.Path
+	}
+	return fmt.Sprintf("%s:%d:%d: %s", name, w.Pos.Line, w.Pos.Col, head)
 }
 
 func Check(entry string, prog *ast.Program, target string, assets *embed.Set) ([]Warning, error) {
@@ -57,7 +65,7 @@ func Check(entry string, prog *ast.Program, target string, assets *embed.Set) ([
 		return warns, err
 	}
 	for _, site := range prog.TodoSites {
-		warns = append(warns, Warning{Pos: site, Msg: "`todo` stub remaining"})
+		warns = append(warns, Warning{Pos: site, Code: "W001", Msg: "`todo` stub remaining"})
 	}
 	if target != "" {
 		if errs := Target(entry, prog, info, target, false, ""); errs != nil {

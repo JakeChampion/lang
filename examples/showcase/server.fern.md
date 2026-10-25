@@ -1,4 +1,4 @@
-# One native server, eight web applications
+# One native server, nine web applications
 
 This is the entry point for the Fern web showcase. It mounts each application under a separate URL prefix.
 The homepage and browser modules are static files. Fern owns the live state, protocols, images, audio, and HTML forms.
@@ -19,7 +19,8 @@ The HTML source view links each section and each local import.
 ## Imports and state
 
 The router receives one explicit state record. Each application owns bounded process-local state.
-Multiple server instances require process affinity for shared rooms. This demo does not claim durable or distributed storage.
+Multiple server instances require process affinity for shared rooms. Blockyard can retain block edits on a persistent volume.
+Its world directory assigns separate worlds to separate server processes.
 
 ```fern
 <<Imports and state>>=
@@ -41,13 +42,14 @@ import "../fractal/source";
 import "./common";
 import "./rally";
 import "./gather";
+import "./blockyard";
 import "./mosaic";
 import "./wave";
 import "./notes";
 import "./metrics";
 import "./encoding";
 
-pub struct State { arena: gather.State, games: rally.State, canvases: mosaic.State, guestbook: notes.State, metrics: metrics.State, fractal: fractal.Stats }
+pub struct State { voxels: blockyard.State, arena: gather.State, games: rally.State, canvases: mosaic.State, guestbook: notes.State, metrics: metrics.State, fractal: fractal.Stats }
 
 @derive(json.Json)
 struct Meta { apps: i32, instance: string, binary_bytes: i64, uptime_ms: i64, requests: i64 }
@@ -57,9 +59,10 @@ pub function state(binary_bytes: i64, version: string): State {
   let canvases: mosaic.State = mosaic.state();
   let renderer: fractal.Stats = fractal.stats(common.token().take(8), now_unix_ms(), binary_bytes, version);
   let arena = gather.state(renderer.instance);
-  let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena);
+  let voxels = blockyard.state(renderer.instance);
+  let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels);
   return State {
-    arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
+    voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
     fractal: renderer,
   };
 }
@@ -76,8 +79,9 @@ pub function files(): string[] {
   return [
     "fractal/server.fern.md", "fractal/fractal.fern", "fractal/kernel.fern", "fractal/linear.fern", "fractal/series.fern", "fractal/source.fern",
     "fractal/web/app.js", "fractal/web/delivery.mjs", "fractal/web/fullscreen.mjs", "fractal/web/style.css", "fractal/web/index.html",
-    "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md", "showcase/live.fern.md", "showcase/swarm.fern.md", "showcase/gather.fern.md",
-    "showcase/web/index.html", "showcase/web/home.mjs", "showcase/web/shared/showcase.css", "showcase/web/shared/ui.mjs",
+    "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md", "showcase/live.fern.md", "showcase/swarm.fern.md", "showcase/gather.fern.md", "showcase/voxel.fern.md", "showcase/blockyard.fern.md", "showcase/blockyard_world.fern.md", "showcase/blockyard_store.fern.md",
+    "showcase/web/index.html", "showcase/web/home.mjs", "showcase/web/shared/showcase.css", "showcase/web/shared/ui.mjs", "showcase/web/shared/wasm.mjs",
+    "showcase/web/blockyard/index.html", "showcase/web/blockyard/style.css", "showcase/web/blockyard/app.mjs", "showcase/web/blockyard/protocol.mjs", "showcase/web/blockyard/mesh.mjs", "showcase/web/blockyard/mesh-worker.mjs", "showcase/web/blockyard/renderer.mjs",
     "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/rally/prediction.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",
     "showcase/web/gather/index.html", "showcase/web/gather/app.mjs", "showcase/web/gather/protocol.mjs", "showcase/web/gather/style.css",
     "showcase/web/swarm/index.html", "showcase/web/swarm/app.mjs", "showcase/web/swarm/kernel.mjs", "showcase/web/swarm/audio-worker.mjs", "showcase/web/swarm/style.css",
@@ -113,10 +117,27 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     return Ok(response);
   });
   app = app.get("/api/meta", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let meta: Meta = Meta { apps: 8, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
+    let meta: Meta = Meta { apps: 9, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
     return Ok(http.json_of(meta).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
+  app = app.get("/blockyard", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
+    let name = common.query(req, "world", "commons");
+    if (!common.room_name(name)) {
+      return Err(http.fail(400, "Invalid world name."));
+    }
+    return Ok(http.redirect("/blockyard/?world=" + name));
+  });
+  app = app.get("/blockyard/{$}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
+    if let Some(target) = blockyard.destination(state.voxels, req)? {
+      return Ok(http.redirect(target));
+    }
+    return Ok(static.serve(HttpRequest { ...req, path: "/blockyard/index.html" }, static.dir(root + "/showcase/web"), plat));
+  });
+  app = app.get("/blockyard/worlds", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(blockyard.directory(state.voxels)));
+  app = app.get("/blockyard/status", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(blockyard.status(state.voxels, req)?));
+  app = app.get("/blockyard/chunk", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(blockyard.chunk(state.voxels, req)?));
+  app = app.get("/blockyard/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => blockyard.socket(state.voxels, req));
   app = app.get("/gather/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => gather.socket(state.arena, req));
   app = app.get("/gather/status", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(gather.status(state.arena)));
   app = app.get("/rally/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => rally.socket(state.games, req));
@@ -203,7 +224,7 @@ function identity(): (i64, string) {
 ## Start the server
 
 Load source pages before the server accepts requests. A missing lesson fails startup with an explicit error.
-Check route conflicts before the server starts. Limit request bodies to 16 KiB and simultaneous connections to 2048.
+Check route conflicts before the server starts. Limit request bodies to 16 KiB and simultaneous connections to 8192.
 `serve.run_shutdown` supports the inherited listener used by container functions and the HTTP test harness.
 
 ```fern
@@ -231,7 +252,7 @@ function main(): i32 {
       match (app.check()) {
         Ok(_) => {
           let config: serve.Config = serve.config();
-          config = serve.Config { ...config, limits: http.HttpLimits { ...config.limits, body: 16384 }, max_connections: 2048, max_connections_per_ip: 2048, max_in_flight: 4096, background_deadline: time.duration_seconds(0) };
+          config = serve.Config { ...config, limits: http.HttpLimits { ...config.limits, body: 16384 }, max_connections: 8192, max_connections_per_ip: 8192, max_in_flight: 16384, background_deadline: time.duration_seconds(0) };
           return serve.run_shutdown(8080, config, app.handler(), (reason: string): void => eprint("showcase: " + reason));
         },
         Err(error) => {

@@ -116,6 +116,30 @@ function test_replace_groups_escape(): test.TestOutcome {
   return test.assert_true(require_regex_text(regex.regex_replace_all_groups("(\\d+)", "x5", "$$$1")) == "x$5" && require_regex_text(regex.regex_replace_groups("(\\d)", "1 2", "[$0]")) == "[1] 2");
 }
 
+function class_row(pattern: string, text: string): string {
+  if (regex.regex_full_match(pattern, text)) {
+    return "1";
+  }
+  return "0";
+}
+
+function test_class_escapes(): test.TestOutcome {
+  let got: string = class_row("[\\]]", "]") + class_row("[\\]]", "\\") + class_row("[\\\\]", "\\")
+    + " " + class_row("[a\\-z]", "-") + class_row("[a\\-z]", "b")
+    + " " + class_row("[\\n]", "\n") + class_row("[\\n]", "n") + class_row("[\\t-\\r]", "\n")
+    + " " + class_row("[\\^a]", "^") + class_row("[^\\]]", "]") + class_row("[^\\]]", "x")
+    + " " + class_row("[\\d_]", "7") + class_row("[\\d_]", "_") + class_row("[\\d_]", "d")
+    + " " + class_row("[]a]", "]") + class_row("[a-c\\]]+", "ab]c");
+  return test.assert_eq(got, "101 10 101 101 110 11");
+}
+
+function test_class_escape_group_numbering(): test.TestOutcome {
+  let Some(m) = regex.regex_captures("[\\](](?<n>b)", "(b") else {
+    return test.fail("no match");
+  };
+  return test.assert_true(m.group_count() == 1 && require_regex_text(m.group_named("n")) == "b" && at(m.group_index("n"), 1));
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/regex");
   r = r.it("match anywhere", test_match_anywhere);
@@ -140,6 +164,8 @@ function main(): i32 {
   r = r.it("replace_groups numeric $1", test_replace_groups_numeric);
   r = r.it("replace_groups named ${name}", test_replace_groups_named);
   r = r.it("replace_groups $$ escape", test_replace_groups_escape);
+  r = r.it("class escapes", test_class_escapes);
+  r = r.it("class escape group numbering", test_class_escape_group_numbering);
   return r.finish();
 }
 

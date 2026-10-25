@@ -4725,10 +4725,6 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-  let pollable: string = asmcore.native_pollable_result(o.kind_tag);
-  if (pollable != "") {
-    return s.write("    mov x0, #" + pollable + "\n    str x0, [sp]\n");
-  }
   if (o.kind_tag == 112) {
     return s;
   }
@@ -5253,15 +5249,10 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
   let kind: i32 = r.ops[ins.imm].kind_tag;
-  let pollable: string = asmcore.native_pollable_result(kind);
-  if (kind == 112 || pollable != "") {
+  if (kind == 112) {
     s = ssa_x0_forget(s);
     let d: string = ssa_dst(reg_of, ins.result);
-    if (kind == 112) {
-      s = ssa_load(reg_of, ins.args[0], d, s);
-    } else {
-      s = ssa_const_reg(pollable, d, s);
-    }
+    s = ssa_load(reg_of, ins.args[0], d, s);
     return ssa_store(reg_of, ins.result, d, s);
   }
 
@@ -6005,8 +5996,9 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 }
 
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.has_need("byte_append") || s.has_need("byte_write")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_byte_copy(s.has_need("byte_append"), s.has_need("byte_write")), s);
+  let byte_copy = s.byte_copy_runtime();
+  if (byte_copy != "") {
+    s = emit_ir_runtime_fern_fn(byte_copy, s);
   }
   if (s.has_need("arr_str_join")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);

@@ -113,7 +113,7 @@ func TestRunnerRegexExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/regex", "# pass 22", "# fail 0", "1..22"} {
+	for _, w := range []string{"# Suite: std/regex", "# pass 24", "# fail 0", "1..24"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3630,8 +3630,8 @@ func TestRunnerPegExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 18") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 18 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 19") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 19 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 

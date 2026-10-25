@@ -21,6 +21,7 @@ type Error struct {
 
 func (e *Error) Error() string          { return e.Msg }
 func (e *Error) Position() ast.Position { return e.Pos }
+func (e *Error) Code() string           { return "E092" }
 
 type piece struct {
 	body []bodyLine

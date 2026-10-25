@@ -51,6 +51,11 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	known := loadKnownDivergences(t, knownFile)
+	leg := diffLeg{fernBin: fernBin, stdlibRoot: stdlibRoot, target: "wasm32-wasi", flags: flags,
+		run: func(t *testing.T, src string, env []string) (*selfHostRun, string) {
+			return runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env, func(string, ...any) {})
+		},
+		agrees: func(r *selfHostRun, gap string, want int, _ string) bool { return wasmRunAgrees(r, gap, want) }}
 
 	var sampled, compared, clamped int64
 	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
@@ -80,18 +85,11 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
 			r, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env, failf)
-			bisect := func(class string) {
-				report, pass := bisectSelfHostSeed(t, fernBin, stdlibRoot, "wasm32-wasi", src, flags, env, func(env []string) bool {
-					r, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env, func(string, ...any) {})
-					return wasmRunAgrees(r, gap, want)
-				})
-				t.Log(report)
-				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
-			}
+			triage := func(class string) { leg.triage(t, seed, src, want, env, class) }
 			if gap != "" {
 				if compilerRefused(gap) {
 					t.Errorf("the compiler refused this seed:\n%s", gap)
-					bisect(refusalClass(gap))
+					triage(refusalClass(gap))
 					return
 				}
 				if !isKnown {
@@ -107,7 +105,7 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 			}
 			defer func() {
 				if class != "" {
-					bisect(class)
+					triage(class)
 				}
 			}()
 			out, exit := r.stdout+r.stderr, r.exit

@@ -1,10 +1,12 @@
 # Values and errors
 
 This module provides methods for `Result` values.
+There is no `unwrap` or `expect`; std/option's header says why.
 
 ```fern
 <<*>>=
 // This module provides methods for `Result` values.
+// There is no `unwrap` or `expect`; std/option's header says why.
 
 import "core/cmp";
 

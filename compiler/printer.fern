@@ -361,37 +361,7 @@ function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32): string 
       }
       match (lm.body[0]) {
         ast.StmtMatch(m) => {
-          let marms: ast.MatchArm[] = m.arms;
-          if (m.sugar.len() > 0) {
-            marms = m.sugar;
-          }
-          if (marms.len() == 0) {
-            return "";
-          }
-          let out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
-          let i: i32 = 0;
-          while (i < marms.len()) {
-            let av: string = arm_expr_value(marms[i].body, "", depth);
-            if (av.len() == 0) {
-              return "";
-            }
-            if (i > 0) {
-              out = out + ", ";
-            }
-            let head: string = print_pattern(marms[i].pattern);
-            let guarded: ast.MatchArm = marms[i];
-            while (i + 1 < marms.len() && marms[i + 1].alt_cont) {
-              i = i + 1;
-              head = head + " | " + print_pattern(marms[i].pattern);
-            }
-            out = out + head;
-            if (guarded.has_guard) {
-              out = out + " when " + print_expr(guarded.guard, depth);
-            }
-            out = out + " => " + av;
-            i = i + 1;
-          }
-          return out + " }";
+          return print_match_expr_arms(m, "", depth);
         },
         ast.StmtIf(f) => {
           if (f.sugar.lits.len() > 0) {

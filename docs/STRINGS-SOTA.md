@@ -1100,8 +1100,10 @@ allocating or constructing strings. Each offset clamps to its array's bounds;
 the count clamps to zero and the smaller remaining length. It returns the
 first differing offset within those ranges, or the clamped count. Packed
 native arrays share the string range-comparison vector kernels; unpacked
-arrays use bounded slot reads. Tests cover every mismatch position around
-vector boundaries, all byte values, extreme bounds, aliases and allocations.
+arrays use bounded slot reads. Either range can also be a `[u8]` view. A view
+of string bytes uses the string kernel, and a view of an array uses the array
+kernel. Tests cover every mismatch position around vector boundaries, all
+byte values, extreme bounds, views, aliases and allocations.
 `__mismatch_bytes_str(a, ao, s, bo, n)` is the same comparison between a byte
 array and a string, with the same clamps and the same kernels, for a parser
 matching wire bytes against a string it already holds (std/http's

@@ -24,7 +24,7 @@ func TestLiterateUnusedChunkWarning(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("-check should succeed (warning is non-fatal): %v\nstderr: %s", err, errb.String())
 	}
-	if !strings.Contains(errb.String(), "chunk <<orphan>> is defined but never used") {
+	if !strings.Contains(errb.String(), src+":6:1: warning[W003]: chunk <<orphan>> is defined but never used\n") {
 		t.Errorf("expected unused-chunk warning, got stderr:\n%s", errb.String())
 	}
 }

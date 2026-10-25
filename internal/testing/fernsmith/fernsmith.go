@@ -2,6 +2,7 @@ package fernsmith
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"sort"
 	"strings"
@@ -48,8 +49,24 @@ func GenPrintableMainBytes(data []byte) string {
 }
 
 func newRandGen(seed uint64, cfg Config) *Generator {
-	rng := rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))
-	return &Generator{ch: &randChooser{rng: rng}, cfg: cfg}
+	return &Generator{ch: &randChooser{rng: seedRNG(seed)}, cfg: cfg}
+}
+
+func seedRNG(seed uint64) *rand.Rand {
+	return rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))
+}
+
+// MainBytes is the corpus GenMainBytes turns into GenMain(seed)'s program, so
+// a failing seed can be shrunk with ShrinkMainBytes.
+func MainBytes(seed uint64) ([]byte, error) {
+	c := &recordChooser{rng: seedRNG(seed)}
+	(&Generator{ch: c, cfg: DefaultConfig()}).MainProgram()
+	if c.err != nil {
+		return nil, c.err
+	}
+	// The trailing byte keeps byteChooser from reporting itself exhausted
+	// after the last choice, which randChooser never does.
+	return append(c.out, 0), nil
 }
 
 func newByteGen(data []byte, cfg Config) *Generator {
@@ -67,6 +84,43 @@ type randChooser struct{ rng *rand.Rand }
 func (c *randChooser) intN(n int) int      { return c.rng.IntN(n) }
 func (c *randChooser) flip(p float64) bool { return c.rng.Float64() < p }
 func (c *randChooser) exhausted() bool     { return false }
+
+// recordChooser makes randChooser's choices and writes each as the bytes
+// byteChooser reads back as the same choice.
+type recordChooser struct {
+	rng *rand.Rand
+	out []byte
+	err error
+}
+
+func (c *recordChooser) intN(n int) int {
+	v := c.rng.IntN(n)
+	switch {
+	case n <= 1:
+	case n <= 256:
+		c.out = append(c.out, byte(v))
+	case n <= 1<<16:
+		c.out = append(c.out, byte(v>>8), byte(v))
+	case c.err == nil:
+		c.err = fmt.Errorf("intN(%d) has no byte encoding", n)
+	}
+	return v
+}
+
+func (c *recordChooser) flip(p float64) bool {
+	v := c.rng.Float64() < p
+	b := 0.0
+	if !v {
+		b = math.Ceil(p * 256)
+	}
+	if b > 255 && c.err == nil {
+		c.err = fmt.Errorf("flip(%v) false has no byte encoding", p)
+	}
+	c.out = append(c.out, byte(b))
+	return v
+}
+
+func (c *recordChooser) exhausted() bool { return false }
 
 type byteChooser struct {
 	data []byte
@@ -92,7 +146,13 @@ func (c *byteChooser) intN(n int) int {
 	if !ok {
 		return 0
 	}
-	return int(b) % n
+	v := int(b)
+	if n > 256 {
+		if lo, ok := c.next(); ok {
+			v = v<<8 | int(lo)
+		}
+	}
+	return v % n
 }
 
 func (c *byteChooser) flip(p float64) bool {
