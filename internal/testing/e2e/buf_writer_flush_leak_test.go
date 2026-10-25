@@ -3,15 +3,22 @@ package e2e
 import "testing"
 
 const bufWriterFlushSrc = `import "std/io_buffered";
-function main(): i32 {
+function run(): Result[i32, IoError] {
     let b: io_buffered.BufWriter = io_buffered.buf_writer_new(stdout(), 64);
     let i: i32 = 0;
     while (i < 200) {
-        b = b.write_string("x");
-        b = b.flush();
+        b = b.write_string("x")?;
+        b = b.flush()?;
         i = i + 1;
     }
-    return 0;
+    return Ok(0);
+}
+
+function main(): i32 {
+  match (run()) {
+    Ok(code) => { return code; },
+    Err(_) => { return 99; }
+  }
 }`
 
 func checkBufWriterFlush(t *testing.T, stderr string, exit int) {

@@ -1,0 +1,106 @@
+import "../../packages/pipeline/pipeline";
+import "../../packages/pixels/pixels";
+
+pub struct Counters { opens: Cell[i32], reads: Cell[i32], backwards: Cell[i32] }
+
+pub function counters(): Counters {
+  return Counters { opens: cell_new(0), reads: cell_new(0), backwards: cell_new(0) };
+}
+
+pub function pixel(x: i32, y: i32, format: pixels.Format, bias: u8): pixels.Pixel {
+  let alpha: u8 = 255;
+  if (pixels.channels(format) == 4) {
+    alpha = ((x + y) * 30) as u8;
+  }
+  return pixels.Pixel {
+    r: (10 + x * 30 + y * 4 + bias as i32) as u8,
+    g: (40 + x * 4 + y * 30) as u8, b: (100 + x + y) as u8, a: alpha,
+  };
+}
+
+pub function image(width: i32, height: i32, format: pixels.Format): Result[pixels.Image, pixels.ImageError] {
+  let image = pixels.create(width, height, width * pixels.channels(format) + 3, format, pixels.default_limits())?;
+  let y = 0;
+  while (y < height) {
+    let x = 0;
+    while (x < width) {
+      image = pixels.write_pixel(image, x, y, pixel(x, y, format, 0 as u8))?;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(image);
+}
+
+pub function spec(width: i32, height: i32, format: pixels.Format, access: pipeline.SourceAccess, mode: i32, bytes: u8[], counts: Counters): pipeline.ProviderSpec {
+  let open = (cancelled: () => boolean): Result[pipeline.RowProvider, pipeline.PipelineError] => {
+    if (cancelled()) {
+      return Err(pipeline.Cancelled);
+    }
+    counts.opens.set(counts.opens.get() + 1);
+    if (mode == 9) {
+      return Err(pipeline.ProviderFailure(args()[0] + ": open failure"));
+    }
+    let last = cell_new(0 - 1);
+    let read = (y: i32, cancel: () => boolean): Result[pipeline.SourceRow, pipeline.PipelineError] => {
+      if (cancel()) {
+        return Err(pipeline.Cancelled);
+      }
+      if (y < 0 || y >= height) {
+        return Err(pipeline.PipelineError.Bounds);
+      }
+      if let pipeline.ForwardRows = access {
+        if (y < last.get()) {
+          counts.backwards.set(counts.backwards.get() + 1);
+          return Err(pipeline.AccessPattern);
+        }
+      }
+      counts.reads.set(counts.reads.get() + 1);
+      if (mode == 10) {
+        return Err(pipeline.ProviderFailure(args()[0] + ": read failure"));
+      }
+      let row = match (pixels.create(width, 1, width * pixels.channels(format), format, pixels.default_limits())) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+      let x = 0;
+      while (x < width) {
+        if (x % 32 == 0 && cancel()) {
+          return Err(pipeline.Cancelled);
+        }
+        row = match (pixels.write_pixel(row, x, 0, pixel(x, y, format, bytes[0]))) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+        x = x + 1;
+      }
+      last.set(y);
+      let index = y;
+      if (mode == 1) {
+        index = y + 1;
+      }
+      if (mode == 2) {
+        row = pixels.Image { ...row, layout: pixels.Layout { ...row.layout, width: width + 1 } };
+      }
+      if (mode == 3) {
+        row = pixels.Image { ...row, layout: pixels.Layout { ...row.layout, height: 2 } };
+      }
+      if (mode == 4) {
+        let other = pixels.RGB8;
+        if (pixels.channels(format) == 3) {
+          other = pixels.RGBA8;
+        }
+        row = pixels.Image { ...row, layout: pixels.Layout { ...row.layout, format: other } };
+      }
+      if (mode == 5) {
+        row = pixels.Image { ...row, layout: pixels.Layout { ...row.layout, stride: row.layout.stride + 1 } };
+      }
+      if (mode == 6) {
+        row = pixels.Image { ...row, layout: pixels.Layout { ...row.layout, bytes: row.layout.bytes + 1 } };
+      }
+      if (mode == 7) {
+        row = pixels.Image { ...row, data: [] };
+      }
+      if (mode == 8) {
+        row = pixels.Image { ...row, data: row.data.append(0 as u8) };
+      }
+      return Ok(pipeline.SourceRow { index: index, image: row });
+    };
+    return Ok(pipeline.RowProvider { read: read });
+  };
+  return pipeline.ProviderSpec { access: access, storage_bytes: 32, scratch_bytes: 16, samples_per_row: width, setup_samples: 8, open: open };
+}
