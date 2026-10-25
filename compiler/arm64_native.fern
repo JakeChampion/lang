@@ -4662,6 +4662,10 @@ function arm64_fam_lse(): i32 {
   return 49;
 }
 
+function arm64_fam_crc(): i32 {
+  return 50;
+}
+
 // arm64_gas_family returns the mnemonic family index, or -1 for an unknown mnemonic.
 function arm64_gas_family(mnem: string): i32 {
   let n: i32 = mnem.len();
@@ -5750,6 +5754,9 @@ function arm64_gas_family_len5_u_um(mnem: string): i32 {
 
 function arm64_gas_family_len6(mnem: string): i32 {
   let c: u8 = mnem[0];
+  if (c == b'c') {
+    return arm64_gas_family_len6_c(mnem);
+  }
   if (c == b'f') {
     return arm64_gas_family_len6_f(mnem);
   }
@@ -5761,6 +5768,22 @@ function arm64_gas_family_len6(mnem: string): i32 {
   }
   if (c == b'u') {
     return arm64_gas_family_len6_u(mnem);
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len6_c(mnem: string): i32 {
+  if (mnem == "crc32b") {
+    return arm64_fam_crc();
+  }
+  if (mnem == "crc32h") {
+    return arm64_fam_crc();
+  }
+  if (mnem == "crc32w") {
+    return arm64_fam_crc();
+  }
+  if (mnem == "crc32x") {
+    return arm64_fam_crc();
   }
   return 0 - 1;
 }
@@ -6264,6 +6287,27 @@ function arm64_gas_shll_kind(mnem: string): i32 {
   }
 }
 
+// arm64_crc_base returns the base word with zero register fields, or -1 for an unknown mnemonic.
+function arm64_crc_base(mnem: string): i64 {
+  match (mnem) {
+    "crc32b" => {
+      return 0x1ac04000;
+    },
+    "crc32h" => {
+      return 0x1ac04400;
+    },
+    "crc32w" => {
+      return 0x1ac04800;
+    },
+    "crc32x" => {
+      return 0x9ac04c00;
+    },
+    _ => {
+      return 0 - 1;
+    }
+  }
+}
+
 function arm64_gas_known(mnem: string): boolean {
   if (arm64_gas_family(mnem) >= 0) {
     return true;
@@ -6317,6 +6361,10 @@ function arm64_gas_bad_ext_alu(fam: i32, mnem: string, ops: string[]): string {
   if (fam == arm64_fam_condsel()) {
     return arm64_gas_bad_condsel(mnem, ops);
   }
+  return arm64_gas_bad_ext_alu_rest(fam, mnem, ops);
+}
+
+function arm64_gas_bad_ext_alu_rest(fam: i32, mnem: string, ops: string[]): string {
   if (fam == arm64_fam_bitops()) {
     return arm64_gas_bad_rev(mnem, ops);
   }
@@ -6325,6 +6373,29 @@ function arm64_gas_bad_ext_alu(fam: i32, mnem: string, ops: string[]): string {
   }
   if (fam == arm64_fam_neg()) {
     return arm64_gas_bad_neg(ops);
+  }
+  if (fam == arm64_fam_crc()) {
+    return arm64_gas_bad_crc(mnem, ops);
+  }
+  return "";
+}
+
+// Only crc32x takes an X register, and only as the data operand.
+function arm64_gas_bad_crc(mnem: string, ops: string[]): string {
+  if (ops.len() != 3) {
+    return "arity";
+  }
+  let i: i32 = 0;
+  while (i < 3) {
+    let want: u8 = b'w';
+    if (i == 2 && mnem == "crc32x") {
+      want = b'x';
+    }
+    let t: string = arm64_gas_trim(ops[i]);
+    if (t.len() < 2 || t[0] != want || arm64_gas_reg(t) < 0) {
+      return t;
+    }
+    i = i + 1;
   }
   return "";
 }
@@ -7268,6 +7339,13 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
   }
   if (fam == arm64_fam_mulwide()) {
     return arm64_gas_emit_mulwide(a, mnem, ops);
+  }
+  if (fam == arm64_fam_crc()) {
+    if (ops.len() < 3) {
+      return a;
+    }
+    arm64_push_arr(a.code, arm64_rrr([], arm64_crc_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), false));
+    return a;
   }
   if (fam == arm64_fam_logical2()) {
     return arm64_gas_emit_logical2(a, mnem, ops);

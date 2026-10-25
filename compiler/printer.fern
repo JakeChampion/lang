@@ -1918,13 +1918,8 @@ function assign_parts(st: ast.Stmt): AssignParts {
     ast.StmtExpr(x) => {
       if let ast.ExprCall(c) = x.value {
         if let ast.ExprIdent(callee) = c.callee {
-          if (c.args.len() == 3 && callee.name == "__set_index") {
-            return AssignParts { place: ast.ExprIndex { array: c.args[0], index: c.args[1], unchecked: false, ty: "", line: 0, col: 0 }, value: c.args[2], ok: true };
-          }
-          if (c.args.len() == 3 && callee.name == "__set_field") {
-            if let ast.ExprString(field) = c.args[1] {
-              return AssignParts { place: ast.ExprFieldAccess { obj: c.args[0], field: field.value, line: 0, col: 0, ty: "", const_read: false }, value: c.args[2], ok: true };
-            }
+          if (c.args.len() == 2 && (callee.name == "__set_index" || callee.name == "__set_field")) {
+            return AssignParts { place: c.args[0], value: c.args[1], ok: true };
           }
         }
       }

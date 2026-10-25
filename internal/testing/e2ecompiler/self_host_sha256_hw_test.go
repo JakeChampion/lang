@@ -62,8 +62,8 @@ function main(): i32 {
   let n: i32 = 0;
   while (n <= 200) {
     let p: u8[] = pattern(n);
-    print(crypto.sha256_new().update(p).final_hex());
-    print(crypto.sha224_new().update(p).final_hex());
+    print(hex(crypto.sha256_new().update(p).finish()));
+    print(hex(crypto.sha224_new().update(p).finish()));
     n = n + 1;
   }
   let big: u8[] = pattern(1000);
@@ -78,9 +78,9 @@ function main(): i32 {
       h = h.update(big[at:end]);
       at = end;
     }
-    print(h.final_hex());
+    print(hex(h.finish()));
   }
-  print(crypto.sha256_new().update(pattern(1048576)).final_hex());
+  print(hex(crypto.sha256_new().update(pattern(1048576)).finish()));
   let st: u8[] = iv();
   print("k=" + hex(__sha256_hw_blocks(st, big[3:205])));
   print("k=" + hex(__sha256_hw_blocks(st, big[0:63])));

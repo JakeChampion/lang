@@ -18,6 +18,8 @@
 # times the measurement), after x86_64 shard 9 timed out on the stale ones.
 # Seven rows added on 2026-10-25 for the whole-compiler proofs that left
 # OWN_JOB_TESTS for the shards: ceil of 1.5 times run 40179239803's measurement.
+# Ten rows raised on 2026-10-25 from run 40186968181's audit (ceil of 1.5 times
+# the measurement) after x86_64 shard 0 ran into its 28-minute budget.
 
 TestSelfHostASCIIByteText 2
 TestSelfHostAbortBacktraceOffArm64 2
@@ -257,7 +259,7 @@ TestSelfHostByteViewRuntime 4
 TestSelfHostBytesWriterIR 7
 TestSelfHostBytesWriterUTF8 2
 TestSelfHostCCallFPShimsReturnInTheResultRegister 2
-TestSelfHostCLIBuildsForEveryNativeTarget 37
+TestSelfHostCLIBuildsForEveryNativeTarget 111
 TestSelfHostCLIByteViewEscape 4
 TestSelfHostCLIPrunesStdlibImportClosureX86_64 2
 TestSelfHostCLIStage2X86_64 73
@@ -282,8 +284,8 @@ TestSelfHostCellWasmIR 2
 TestSelfHostChainedFnArgCallIRArm64 2
 TestSelfHostCharMethodsArm64 3
 TestSelfHostCharMethodsX86_64 3
-TestSelfHostCheckAcceptsEveryStdlibImport 84
-TestSelfHostCheckAgreesWithGoOnConformance 90
+TestSelfHostCheckAcceptsEveryStdlibImport 263
+TestSelfHostCheckAgreesWithGoOnConformance 344
 TestSelfHostCheckAgreesWithGoOnExamples 90
 TestSelfHostCheckAgreesWithGoOnStdlibTests 650
 TestSelfHostCheckAgreesWithGoOnTests 170
@@ -300,7 +302,7 @@ TestSelfHostCheckerDifferentialX86_64 14
 TestSelfHostCheckerDriverArm64 14
 TestSelfHostCheckerDriverX86_64 13
 TestSelfHostCheckerFallbackHint 2
-TestSelfHostCheckerHintTextDifferential 50
+TestSelfHostCheckerHintTextDifferential 194
 TestSelfHostCheckerSignalCatch 13
 TestSelfHostCheckerX86_64 4
 TestSelfHostChecksItsOwnSources 8
@@ -560,7 +562,7 @@ TestSelfHostFmtCorpusParityX86_64 6
 TestSelfHostFmtDiffCorpusParityX86_64 6
 TestSelfHostFmtNativeParityX86_64 6
 TestSelfHostFmtWriteAndDiffViaInterp 40
-TestSelfHostFmtWrittenFormViaInterp 52
+TestSelfHostFmtWrittenFormViaInterp 174
 TestSelfHostFnArgInCondIRX86_64 2
 TestSelfHostFnPayloadVariantIR 2
 TestSelfHostFnRetIR 2
@@ -629,7 +631,7 @@ TestSelfHostGuardBoundsArm64 2
 TestSelfHostGuardBoundsWasm 2
 TestSelfHostGuardBoundsX86_64 2
 TestSelfHostGuardedCreditAlgebra 2
-TestSelfHostGuardedPhysicalExtraction 41
+TestSelfHostGuardedPhysicalExtraction 147
 TestSelfHostGuardedPhysicalPhi 39
 TestSelfHostGuardedPhysicalReuse 38
 TestSelfHostHTTPByteSerialization 29
@@ -1030,7 +1032,7 @@ TestSelfHostPackageCapabilityDifferentialX86_64 2
 TestSelfHostPackedBytes 6
 TestSelfHostPairReturn 4
 TestSelfHostParamAppendReclaimIR 2
-TestSelfHostParseErrorPositions 7
+TestSelfHostParseErrorPositions 266
 TestSelfHostParseUnknownDiagSequence 17
 TestSelfHostParserArm64 2
 TestSelfHostParserX86_64 3
@@ -1225,7 +1227,7 @@ TestSelfHostSemanticAllocationCounts 2
 TestSelfHostSemanticFileHandles 2
 TestSelfHostSemanticInferredCycle 5
 TestSelfHostSemanticInlineGrownLeafOff 15
-TestSelfHostSemanticProduction 97
+TestSelfHostSemanticProduction 303
 TestSelfHostSemanticReuseDifferentialX86_64 3
 TestSelfHostSemanticSourceCensusLoadsTheStdlib 103
 TestSelfHostSemanticSourcePrint 7
@@ -1281,6 +1283,8 @@ TestSelfHostShadowedCalleeGetsNoDefaults 2
 TestSelfHostSharedCEntry 2
 TestSelfHostSharedConstructions 12
 TestSelfHostSharedConstructionsOff 14
+TestSelfHostShippedFernFlagSpellings 104
+TestSelfHostShippedFernHelpHasNoStdlibPositional 105
 TestSelfHostShortCircuitIRWasm 2
 TestSelfHostShredBytes 4
 TestSelfHostShredPatternBytes 2

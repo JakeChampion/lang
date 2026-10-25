@@ -613,10 +613,12 @@ function (c: Conn) __tick(now: i64): Conn {
   if (t == 0 || now < t) {
     return c.__stepped();
   }
-  let o: recovery.Outcome = c.recovery.on_timeout(now);
-  let after: Conn = Conn { ...c, recovery: o.recovery }.__requeue(o.lost);
-  if (o.probe >= 0) {
-    after = Conn { ...after, probes: after.probes.append(o.probe) };
+  let cur: Conn = Conn { ...c, recovery: c.recovery.on_timeout(now) };
+  let lost: recovery.Sent[] = cur.recovery.lost;
+  let probe: i32 = cur.recovery.probe;
+  let after: Conn = Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__requeue(lost);
+  if (probe >= 0) {
+    after = Conn { ...after, probes: after.probes.append(probe) };
   }
   return after.__stepped();
 }
@@ -1072,18 +1074,18 @@ function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
     exponent = p.ack_delay_exponent;
   }
   let delay: i64 = (a.delay << exponent) * 1000;
-  match (c.recovery.on_ack(space, a, delay, now, c.spaces[space].next_pn - 1)) {
-    Ok(o) => {
-      let r: recovery.Recovery = o.recovery;
-      if (!c.server && space == recovery.HANDSHAKE) {
-        r = r.validated();
-      }
-      return Conn { ...c, recovery: r }.__delivered(o.acked).__requeue(o.lost);
-    },
-    Err(code) => {
-      return c.__fail(code, frames.ACK, "an ACK of a packet never sent", now);
-    }
+  let cur: Conn = Conn { ...c, recovery: c.recovery.on_ack(space, a, delay, now, c.spaces[space].next_pn - 1) };
+  let refused: i64 = cur.recovery.refused;
+  if (refused != 0) {
+    return Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__fail(refused, frames.ACK, "an ACK of a packet never sent", now);
   }
+  let acked: recovery.Sent[] = cur.recovery.acked;
+  let lost: recovery.Sent[] = cur.recovery.lost;
+  cur = Conn { ...cur, recovery: cur.recovery.outcome_taken() };
+  if (!cur.server && space == recovery.HANDSHAKE) {
+    cur = Conn { ...cur, recovery: cur.recovery.validated() };
+  }
+  return cur.__delivered(acked).__requeue(lost);
 }
 
 function (c: Conn) __delivered(acked: recovery.Sent[]): Conn {
@@ -1522,7 +1524,7 @@ function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
   }
   let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, space: space } };
   if (s.ack_wanted) {
-    cur = cur.__planned(frames.AckFrame(__ack_of(s, space, now)), false);
+    cur = cur.__ack_planned(space, now);
   }
   let window: boolean = cur.recovery.window() >= cur.config.max_datagram as i64 || cur.probes.contains(space);
   if (!window) {
@@ -1542,8 +1544,28 @@ function (c: Conn) __planned(f: frames.Frame, again: boolean): Conn {
 function (c: Conn) __pushed(f: frames.Frame): Conn {
   let payload: u8[] = c.plan.payload;
   let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
-  payload = frames.put(payload, f);
+  payload = frames.put(__started(payload, cur.config.max_datagram), f);
   return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload } };
+}
+
+function (c: Conn) __ack_planned(space: i32, now: i64): Conn {
+  let delay: i64 = __ack_delay(c.spaces[space], space, now);
+  let ranges: frames.AckRange[] = c.spaces[space].ranges;
+  let room: i32 = c.config.max_datagram;
+  let payload: u8[] = c.plan.payload;
+  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
+  payload = frames.put_ack(__started(payload, room), delay, ranges);
+  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload } };
+}
+
+// __started gives a plan's first frame a buffer the whole datagram fits in.
+function __started(own payload: u8[], room: i32): u8[] {
+  if (payload.len() > 0) {
+    return payload;
+  }
+  let out: u8[] = __alloc_u8(room);
+  __arr_set_len(out, 0);
+  return out;
 }
 
 function (c: Conn) __acked_out(space: i32): Conn {
@@ -1557,12 +1579,11 @@ function (c: Conn) __acked_out(space: i32): Conn {
   return Conn { ...c, key_unacked: unacked, spaces: c.spaces.with(space, Space { ...c.spaces[space], ack_wanted: false }) };
 }
 
-function __ack_of(s: Space, space: i32, now: i64): frames.Ack {
-  let delay: i64 = 0;
+function __ack_delay(s: Space, space: i32, now: i64): i64 {
   if (space == recovery.APPLICATION) {
-    delay = (now - s.largest_recv_at) / 1000 >> 3;
+    return (now - s.largest_recv_at) / 1000 >> 3;
   }
-  return frames.Ack { delay: delay, ranges: s.ranges, ecn: None };
+  return 0 as i64;
 }
 ```
 
@@ -1650,10 +1671,14 @@ function (c: Conn) __streams_out(space: i32, room: i32): Conn {
   let payload: u8[] = c.plan.payload;
   let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
   cur = Conn { ...cur, streams: cur.streams.fill(payload, room) };
-  payload = cur.streams.filled;
-  let resend: recovery.Resend[] = cur.streams.resend;
-  cur = Conn { ...cur, streams: cur.streams.fill_taken() };
-  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload, eliciting: cur.plan.eliciting || payload.len() > before, resend: cur.plan.resend.concat(resend) } };
+  return Conn { ...cur, plan: cur.plan.__filled(cur.streams.filled, cur.streams.resend, before), streams: cur.streams.fill_taken() };
+}
+
+function (p: Plan) __filled(payload: u8[], resend: recovery.Resend[], before: i32): Plan {
+  if (p.resend.len() == 0) {
+    return Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: resend };
+  }
+  return Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: p.resend.concat(resend) };
 }
 
 function (c: Conn) __probe_out(space: i32): Conn {

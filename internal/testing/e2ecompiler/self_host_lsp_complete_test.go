@@ -265,7 +265,7 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 		completeAt("member-being-written", "members.fern", 8, 18, pointMembers),
 		completeAt("module-exports", "members.fern", 8, 30, exactItems(
 			lspItem{"Kind", 13, "enum Kind"}, lspItem{"MAX", 21, "(const) i32"}, lspItem{"Point", 22, "struct Point"},
-			lspItem{"Text", 20, "(variant of util__Kind) Text"}, lspItem{"foo", 3, "function foo(i32): i32"})),
+			lspItem{"Text", 20, "(variant of util.Kind) Text"}, lspItem{"foo", 3, "function foo(i32): i32"})),
 		completeAt("enum-variants", "members.fern", 9, 23, exactItems(
 			lspItem{"Circle", 20, "(variant of Shape) Circle(f64)"}, lspItem{"Square", 20, "(variant of Shape) Square(i32)"})),
 		completeAt("array-members", "members.fern", 11, 16, someItems(lspItem{"len", 2, "function len(): i32"})),
