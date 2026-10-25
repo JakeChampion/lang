@@ -32,6 +32,13 @@ function cold_only(): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks };
 }
 
+function aborting(name: string): ssa.SFunc {
+  let f: ssa.SFunc = looped();
+  let join: ssa.SInst[] = [inst(11, 7, [], name), inst(9, 6, [1, 1], "add")];
+  let blocks: ssa.SBlock[] = f.blocks.with(4, ssa.SBlock { ...f.blocks[4], insts: join });
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
 function check(ok: boolean, what: string, failures: i32): i32 {
   if (ok) {
     return failures;
@@ -52,11 +59,21 @@ function main(): i32 {
   failures = check(kinds[11] == ssa.COLD_INLINE, "an inline rc primitive is COLD_INLINE", failures);
   let sized: i32[] = ssa.cold_positions(f, true);
   failures = check(sized[11] == ssa.COLD_NONE, "a size-mode rc helper remains a call", failures);
-  let inside: ssafixed.Table = ssafixed.table_inside(0, 1, [0, 1, 0, 0]);
+  let inside: ssafixed.Table = ssafixed.with_clobbers(ssafixed.none(), 0, 1, [0, 1, 0, 0]);
   let plain: ssafixed.Table = ssafixed.table(0, 1, [0, 1, 0, 0]);
-  failures = check(ssafixed.allows(inside, 0, 0, 1) && ssafixed.allows(inside, 0, 1, 3), "table_inside admits endpoints", failures);
-  failures = check(!ssafixed.allows(inside, 0, 0, 2), "table_inside refuses a span", failures);
+  failures = check(ssafixed.allows(inside, 0, 0, 1) && ssafixed.allows(inside, 0, 1, 3), "a clobber admits endpoints", failures);
+  failures = check(!ssafixed.allows(inside, 0, 0, 2), "a clobber refuses a span", failures);
   failures = check(!ssafixed.allows(plain, 0, 0, 1), "table refuses an endpoint", failures);
+  let both: ssafixed.Table = ssafixed.with_clobbers(ssafixed.table(0, 1, [0, 0, 1, 0]), 1, 1, [0, 1, 0, 0]);
+  failures = check(!ssafixed.allows(both, 0, 2, 3) && ssafixed.allows(both, 0, 0, 1), "a joined table keeps its fixed rows", failures);
+  failures = check(!ssafixed.allows(both, 1, 0, 2) && ssafixed.allows(both, 1, 1, 3), "a joined table keeps its clobbers", failures);
+  let ab: ssa.SFunc = aborting("__fern_oob_abort");
+  let ret: ssa.SFunc = aborting("every");
+  let aborts: ssa.Alloc = ssa.regalloc_linear_fixed(ab, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ab, false));
+  let returns: ssa.Alloc = ssa.regalloc_linear_fixed(ret, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ret, false));
+  failures = check(aborts.reg_of[1] >= 0, "an abort leaves the hot phi a register", failures);
+  failures = check(returns.reg_of[1] < 0, "a call that returns spills the hot phi", failures);
+  failures = check(!ssa.calls(inst(11, 7, [], "__fern_oob_abort")), "an abort is not a call", failures);
   let g: ssa.SFunc = cold_only();
   let kept: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false));
   let spilled: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), []);

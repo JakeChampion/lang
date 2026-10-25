@@ -204,10 +204,10 @@ function echo(c: server.Connection): string {
 }
 
 function main(): i32 {
-  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) });
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, random_bytes(32));
   match (identity_of()) {
     Ok(id) => {
-      cfg = server.config(id).with_alpn(["fern-echo", "h2"]);
+      cfg = server.config(id, random_bytes(32)).with_alpn(["fern-echo", "h2"]);
     },
     Err(e) => {
       print("identity: " + e);

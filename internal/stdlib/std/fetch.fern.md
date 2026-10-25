@@ -151,10 +151,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<67 struct __Proxy>>
 
 <<68 function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError]>>
-
-<<69 pub function fetch_future(addr: net.SocketAddr, path: string): async.Future[u8[]]>>
-
-<<70 function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]]>>
 ```
 
 ### `module introduction`
@@ -657,6 +653,7 @@ function __asks_codings(req: Request): boolean {
 pub trait Transport {
   function now_ns(self: Self): i64;
   function wall_ms(self: Self): i64;
+  function random_bytes(self: Self, n: i32): u8[];
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: u8[]): i32;
@@ -1448,6 +1445,9 @@ impl Transport for Sockets {
   }
   function wall_ms(self: Sockets): i64 {
     return now_unix_ms();
+  }
+  function random_bytes(self: Sockets, n: i32): u8[] {
+    return random_bytes(n);
   }
   function lookup(self: Sockets, host: string, checked: boolean): Result[Lookup, dns.DnsError] {
     let none: net.IpAddr[] = [];
@@ -2399,7 +2399,8 @@ function __tunnel_status(head: string): Result[void, FetchError] {
 
 function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
   let roots: verify.Roots = __roots(given)?;
-  let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]), tr.wall_ms()))?;
+  let cfg: client.Config = client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]);
+  let step: client.Step = __tls(client.start(cfg, tr.random_bytes(client.entropy(cfg)), tr.wall_ms()))?;
   __write_all(tr, fd, step.output)?;
   let s: client.Session = step.session;
   while (!s.connected()) {
@@ -3483,104 +3484,5 @@ function __proxy_auth(full: string): string {
     userinfo = userinfo + ":";
   }
   return "Basic " + base64.encode(userinfo.bytes());
-}
-
-function __join_bytes(chunks: u8[][]): u8[] {
-  let total: i32 = 0;
-  let k: i32 = 0;
-  while (k < chunks.len()) {
-    total = total + chunks[k].len();
-    k = k + 1;
-  }
-  let out: u8[] = __alloc_u8(total);
-  let w: i32 = 0;
-  let j: i32 = 0;
-  while (j < chunks.len()) {
-    let i: i32 = 0;
-    let n: i32 = chunks[j].len();
-    while (i < n) {
-      out = out.with(w, chunks[j][i]);
-      w = w + 1;
-      i = i + 1;
-    }
-    j = j + 1;
-  }
-  return out;
-}
-```
-
-### `69 pub function fetch_future(addr: net.SocketAddr, path: string): async.Future[u8[]]`
-
-```fern
-<<69 pub function fetch_future(addr: net.SocketAddr, path: string): async.Future[u8[]]>>=
-pub function fetch_future(addr: net.SocketAddr, path: string): async.Future[u8[]] {
-  let empty: u8[] = [];
-  if (!http.http_target_ok(path)) {
-    return Ready(empty);
-  }
-  let request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-  match (net.connect(addr)) {
-    Ok(c) => {
-      match (net.write(c, request.bytes())) {
-        Ok(_) => {
-          let no_chunks: u8[][] = [];
-          return __fetch_drain(c, no_chunks);
-        },
-        Err(_) => {
-          tcp_close(c);
-        }
-      }
-    },
-    Err(_) => {}
-  }
-  return Ready(empty);
-}
-```
-
-### `70 function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]]`
-
-```fern
-<<70 function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]]>>=
-function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
-  function resume(woken: i32): async.Future[u8[]] {
-    if (woken == async.cancelled()) {
-      tcp_close(c);
-      let none: u8[] = [];
-      return Ready(none);
-    }
-    let dropped: i32 = async.drop_pollable(woken);
-    match (net.read_up_to(c, 4096)) {
-      Ok(got) => {
-        if (got.len() == 0) {
-          tcp_close(c);
-          return Ready(__body_of(__join_bytes(chunks)));
-        }
-        return __fetch_drain(c, chunks.append(got));
-      },
-      Err(e) => {
-        if (e.eq(net.WouldBlock)) {
-          return __fetch_drain(c, chunks);
-        }
-      }
-    }
-    tcp_close(c);
-    let none: u8[] = [];
-    return Ready(none);
-  }
-  return Pending(tcp_pollable(c), resume);
-}
-
-function __body_of(raw: u8[]): u8[] {
-  match (http.http_parse_response_framed(raw, "GET", true, http.http_limits())) {
-    Complete(framed) => {
-      return framed.response.body_bytes();
-    },
-    _ => {
-      let empty: u8[] = [];
-      return empty;
-    }
-  }
-  let none: u8[] = [];
-  return none;
 }
 ```

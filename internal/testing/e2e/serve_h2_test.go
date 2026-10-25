@@ -142,7 +142,7 @@ function main(): i32 {
       }
       match (identity.from_pem(cert, key)) {
         Ok(id) => {
-          cfg = cfg.with_tls(server.config(id));
+          cfg = cfg.with_tls(server.config(id, random_bytes(32)));
         },
         Err(e) => {
           eprint(e.message());
