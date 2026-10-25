@@ -2,7 +2,22 @@ import "../pixels/pixels";
 import "../resize/resize";
 import "core/cmp";
 
-pub enum Operation { ImageSource(pixels.Image), SolidSource(pixels.Pixel), NearestSource(i32), BilinearSource(i32) }
+pub enum Operation { ImageSource(pixels.Image), SolidSource(pixels.Pixel), NearestSource(i32), BilinearSource(i32), ProviderSource(ProviderSpec) }
+
+pub enum SourceAccess { RandomRows, ForwardRows }
+
+pub struct SourceRow { index: i32, image: pixels.Image }
+
+pub struct RowProvider { read: (i32, () => boolean) => Result[SourceRow, PipelineError] }
+
+pub struct ProviderSpec {
+  access: SourceAccess,
+  storage_bytes: i32,
+  scratch_bytes: i32,
+  samples_per_row: i32,
+  setup_samples: i32,
+  open: (() => boolean) => Result[RowProvider, PipelineError],
+}
 
 pub struct Node { width: i32, height: i32, format: pixels.Format, operation: Operation }
 
@@ -13,9 +28,11 @@ pub struct Metadata { width: i32, height: i32, format: pixels.Format }
 pub struct Limits { max_pixels: i32, max_row_bytes: i32, max_scratch_bytes: i32, max_nodes: i32, max_samples: i32 }
 
 @derive(cmp.Eq)
-pub enum PipelineError { InvalidGraph, Dimensions, Bounds, Budget, Pixel(pixels.ImageError), Cancelled }
+pub enum PipelineError { InvalidGraph, Dimensions, Bounds, Budget, Pixel(pixels.ImageError), Cancelled, ProviderFailure(string), AccessPattern }
 
-struct Cost { scratch: i64, samples: i64 }
+struct Cost { scratch: i64, samples: i64, setup_samples: i64, min_cache: i64, providers: i32 }
+
+struct ProviderSession { node: i32, provider: RowProvider, last: Cell[i32] }
 
 struct NearestChain { root: i32, depth: i32, width_sum: i64 }
 
@@ -54,7 +71,7 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
     if (pixels_count > limits.max_pixels as i64 || row_bytes > limits.max_row_bytes as i64) {
       return Err(Budget);
     }
-    let cost = Cost { scratch: row_bytes * 2, samples: node.width as i64 };
+    let cost = Cost { scratch: row_bytes * 2, samples: node.width as i64, setup_samples: 0, min_cache: 0, providers: 0 };
     match (node.operation) {
       ImageSource(image) => {
         if (image.layout.width != node.width || image.layout.height != node.height
@@ -73,6 +90,19 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
           return Err(Pixel(pixels.Alpha));
         }
       },
+      ProviderSource(spec) => {
+        if (spec.storage_bytes < 0 || spec.scratch_bytes < 0 || spec.samples_per_row < node.width || spec.setup_samples < 0) {
+          return Err(Budget);
+        }
+        let min_cache = 0i64;
+        if let ForwardRows = spec.access {
+          min_cache = row_bytes * 2;
+        }
+        cost = Cost {
+          scratch: cost.scratch + spec.storage_bytes as i64 + spec.scratch_bytes as i64,
+          samples: spec.samples_per_row as i64, setup_samples: spec.setup_samples as i64, min_cache: min_cache, providers: 1,
+        };
+      },
       NearestSource(parent) => {
         if (parent < 0 || parent >= i) {
           return Err(InvalidGraph);
@@ -80,7 +110,15 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
         if (pixels.channels(node.format) != pixels.channels(graph.nodes[parent].format)) {
           return Err(InvalidGraph);
         }
-        cost = Cost { scratch: cost.scratch + costs[parent].scratch, samples: cost.samples + costs[parent].samples };
+        let prior = costs[parent];
+        let min_cache = prior.min_cache;
+        if (min_cache > 0i64) {
+          min_cache = min_cache + row_bytes * 2;
+        }
+        cost = Cost {
+          scratch: cost.scratch + prior.scratch, samples: cost.samples + prior.samples,
+          setup_samples: prior.setup_samples, min_cache: min_cache, providers: prior.providers,
+        };
       },
       BilinearSource(parent) => {
         if (parent < 0 || parent >= i) {
@@ -91,13 +129,19 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
           return Err(InvalidGraph);
         }
         let input_bytes: i64 = input.width as i64 * (pixels.channels(input.format) as i64);
+        let prior = costs[parent];
+        let min_cache = prior.min_cache;
+        if (min_cache > 0i64) {
+          min_cache = min_cache + row_bytes * 2;
+        }
         cost = Cost {
-          scratch: cost.scratch + input_bytes + costs[parent].scratch,
-          samples: cost.samples + costs[parent].samples * 2,
+          scratch: cost.scratch + input_bytes + prior.scratch,
+          samples: cost.samples + prior.samples * 2,
+          setup_samples: prior.setup_samples, min_cache: min_cache, providers: prior.providers,
         };
       }
     }
-    if (cost.scratch > limits.max_scratch_bytes as i64 || cost.samples > limits.max_samples as i64) {
+    if (cost.scratch > limits.max_scratch_bytes as i64 || cost.samples + cost.setup_samples > limits.max_samples as i64) {
       return Err(Budget);
     }
     costs = costs.append(cost);
@@ -114,6 +158,12 @@ pub function solid(width: i32, height: i32, format: pixels.Format, pixel: pixels
 
 pub function from_image(image: pixels.Image, limits: Limits): Result[Graph, PipelineError] {
   let graph = Graph { nodes: [Node { width: image.layout.width, height: image.layout.height, format: image.layout.format, operation: ImageSource(image) }] };
+  analyze(graph, limits)?;
+  return Ok(graph);
+}
+
+pub function from_provider(width: i32, height: i32, format: pixels.Format, provider: ProviderSpec, limits: Limits): Result[Graph, PipelineError] {
+  let graph = Graph { nodes: [Node { width: width, height: height, format: format, operation: ProviderSource(provider) }] };
   analyze(graph, limits)?;
   return Ok(graph);
 }
@@ -152,6 +202,16 @@ pub function required_samples(graph: Graph, limits: Limits): Result[i32, Pipelin
   return Ok(cost.samples as i32);
 }
 
+pub function required_setup_samples(graph: Graph, limits: Limits): Result[i32, PipelineError] {
+  let cost = analyze(graph, limits)?;
+  return Ok(cost.setup_samples as i32);
+}
+
+pub function required_cache(graph: Graph, limits: Limits): Result[i32, PipelineError] {
+  let cost = analyze(graph, limits)?;
+  return Ok(cost.min_cache as i32);
+}
+
 function fill_row(node: Node, limits: Limits, cancelled: () => boolean, sample: (i32) => Result[pixels.Pixel, PipelineError]): Result[pixels.Image, PipelineError] {
   let row_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_row_bytes };
   let row = match (pixels.create(node.width, 1, node.width * pixels.channels(node.format), node.format, row_limits)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
@@ -171,13 +231,13 @@ function read(image: pixels.Image, x: i32, y: i32): Result[pixels.Pixel, Pipelin
   return match (pixels.read_pixel(image, x, y)) { Ok(v) => Ok(v), Err(e) => Err(Pixel(e)) };
 }
 
-function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: Limits, providers: ProviderSession[], cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   let input = graph.nodes[parent];
   let axis = match (resize.bilinear_axis(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
-  let first = render_node(graph, parent, axis.first, limits, cache, cancelled)?;
+  let first = render_node(graph, parent, axis.first, limits, providers, cache, cancelled)?;
   let second = first;
   if (axis.second != axis.first) {
-    second = render_node(graph, parent, axis.second, limits, cache, cancelled)?;
+    second = render_node(graph, parent, axis.second, limits, providers, cache, cancelled)?;
   }
   let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
     let horizontal = match (resize.bilinear_axis(x, input.width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
@@ -229,9 +289,9 @@ function nearest_coordinate(graph: Graph, at: i32, root: i32, index: i32, vertic
   return Ok(mapped);
 }
 
-function render_nearest_chain(graph: Graph, at: i32, chain: NearestChain, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+function render_nearest_chain(graph: Graph, at: i32, chain: NearestChain, y: i32, limits: Limits, providers: ProviderSession[], cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   let source_y = nearest_coordinate(graph, at, chain.root, y, true, cancelled)?;
-  let row = render_node(graph, chain.root, source_y, limits, cache, cancelled)?;
+  let row = render_node(graph, chain.root, source_y, limits, providers, cache, cancelled)?;
   let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
     let source_x = nearest_coordinate(graph, at, chain.root, x, false, cancelled)?;
     return read(row, source_x, 0);
@@ -243,7 +303,7 @@ function fusion_enabled(cache: Option[Cell[RowCache]]): boolean {
   return match (cache) { None => true, Some(cell) => cell.get().fused };
 }
 
-function render_uncached(graph: Graph, at: i32, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+function render_uncached(graph: Graph, at: i32, y: i32, limits: Limits, providers: ProviderSession[], cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   let node = graph.nodes[at];
   match (node.operation) {
     ImageSource(image) => {
@@ -252,18 +312,21 @@ function render_uncached(graph: Graph, at: i32, y: i32, limits: Limits, cache: O
     SolidSource(value) => {
       return fill_row(node, limits, cancelled, (_x: i32): Result[pixels.Pixel, PipelineError] => Ok(value));
     },
+    ProviderSource(spec) => {
+      return render_provider(providers, node, at, y, spec.access, cancelled);
+    },
     NearestSource(parent) => {
       let input = graph.nodes[parent];
       if (fusion_enabled(cache)) {
         if let NearestSource(_) = input.operation {
           let chain = nearest_chain(graph, at);
           if (node.width as i64 * (chain.depth as i64) <= chain.width_sum) {
-            return render_nearest_chain(graph, at, chain, y, limits, cache, cancelled);
+            return render_nearest_chain(graph, at, chain, y, limits, providers, cache, cancelled);
           }
         }
       }
       let source_y = match (resize.nearest_index(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
-      let row = render_node(graph, parent, source_y, limits, cache, cancelled)?;
+      let row = render_node(graph, parent, source_y, limits, providers, cache, cancelled)?;
       let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
         let source_x = match (resize.nearest_index(x, input.width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
         return read(row, source_x, 0);
@@ -271,7 +334,7 @@ function render_uncached(graph: Graph, at: i32, y: i32, limits: Limits, cache: O
       return fill_row(node, limits, cancelled, sample);
     },
     BilinearSource(parent) => {
-      return render_bilinear(graph, node, parent, y, limits, cache, cancelled);
+      return render_bilinear(graph, node, parent, y, limits, providers, cache, cancelled);
     }
   }
 }
@@ -343,14 +406,86 @@ function cache_put(cache: Option[Cell[RowCache]], at: i32, y: i32, row: pixels.I
   }
 }
 
-function render_node(graph: Graph, at: i32, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+function provider_sessions(graph: Graph, cancelled: () => boolean): Result[ProviderSession[], PipelineError] {
+  let cursor = graph.nodes.len() - 1;
+  while (true) {
+    if (cancelled()) {
+      return Err(Cancelled);
+    }
+    match (graph.nodes[cursor].operation) {
+      NearestSource(parent) => {
+        cursor = parent;
+      },
+      BilinearSource(parent) => {
+        cursor = parent;
+      },
+      ProviderSource(spec) => {
+        let provider = spec.open(cancelled)?;
+        if (cancelled()) {
+          return Err(Cancelled);
+        }
+        return Ok([ProviderSession { node: cursor, provider: provider, last: cell_new(0 - 1) }]);
+      },
+      _ => {
+        return Ok([]);
+      }
+    }
+  }
+}
+
+function provider_row(row: SourceRow, node: Node, y: i32): Result[pixels.Image, PipelineError] {
+  let image = row.image;
+  if (row.index != y || image.layout.width != node.width || image.layout.height != 1
+    || pixels.channels(image.layout.format) != pixels.channels(node.format)) {
+    return Err(InvalidGraph);
+  }
+  let bytes = node.width * pixels.channels(node.format);
+  if (image.layout.stride != bytes || image.layout.bytes != bytes || image.data.len() != bytes) {
+    return Err(Pixel(pixels.Storage));
+  }
+  match (pixels.read_pixel(image, 0, 0)) {
+    Ok(_) => {},
+    Err(e) => {
+      return Err(Pixel(e));
+    }
+  }
+  return Ok(image);
+}
+
+function render_provider(providers: ProviderSession[], node: Node, at: i32, y: i32, access: SourceAccess, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+  if (y < 0 || y >= node.height) {
+    return Err(PipelineError.Bounds);
+  }
+  for session in providers {
+    if (session.node == at) {
+      if let ForwardRows = access {
+        if (y < session.last.get()) {
+          return Err(AccessPattern);
+        }
+      }
+      if (cancelled()) {
+        return Err(Cancelled);
+      }
+      let row = session.provider.read(y, cancelled)?;
+      if (cancelled()) {
+        return Err(Cancelled);
+      }
+      let image = provider_row(row, node, y)?;
+      session.last.set(y);
+      return Ok(image);
+    }
+  }
+  return Err(InvalidGraph);
+}
+
+function render_node(graph: Graph, at: i32, y: i32, limits: Limits, providers: ProviderSession[], cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   if (cancelled()) {
     return Err(Cancelled);
   }
   if let Some(row) = cache_get(cache, at, y) {
     return Ok(row);
   }
-  let row = render_uncached(graph, at, y, limits, cache, cancelled)?;
+  let row = render_uncached(graph, at, y, limits, providers, cache, cancelled)?;
   cache_put(cache, at, y, row);
   return Ok(row);
 }
@@ -359,12 +494,19 @@ pub function render_row(graph: Graph, y: i32, limits: Limits, cancelled: () => b
   if (cancelled()) {
     return Err(Cancelled);
   }
-  analyze(graph, limits)?;
+  let cost = analyze(graph, limits)?;
   let output = graph.nodes.len() - 1;
   if (y < 0 || y >= graph.nodes[output].height) {
     return Err(PipelineError.Bounds);
   }
-  return render_node(graph, output, y, limits, None, cancelled);
+  if (cost.min_cache > 0i64) {
+    return Err(AccessPattern);
+  }
+  let providers: ProviderSession[] = [];
+  if (cost.providers > 0) {
+    providers = provider_sessions(graph, cancelled)?;
+  }
+  return render_node(graph, output, y, limits, providers, None, cancelled);
 }
 
 pub function render_rows[E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean, consume: (pixels.Image) => Result[void, E]): Result[RowStats, RowFailure[E]] {
@@ -398,16 +540,20 @@ function fold_rows_mode[S, E](graph: Graph, first: i32, count: i32, limits: Limi
   if (first < 0 || first as i64 + count as i64 > graph.nodes[output].height as i64) {
     return Err(GraphFailure(PipelineError.Bounds));
   }
-  if (cache_bytes < 0 || cost.scratch + cache_bytes as i64 > limits.max_scratch_bytes as i64
-    || cost.samples * (count as i64) > limits.max_samples as i64) {
+  if (cache_bytes < 0 || cache_bytes as i64 < cost.min_cache || cost.scratch + cache_bytes as i64 > limits.max_scratch_bytes as i64
+    || cost.setup_samples + cost.samples * (count as i64) > limits.max_samples as i64) {
     return Err(GraphFailure(Budget));
   }
   let stats = RowStats { rows: 0, hits: 0, misses: 0, peak_cache_bytes: 0, peak_cache_entries: 0 };
   let cache = cell_new(RowCache { entries: [], bytes: 0, limit: cache_bytes, max_entries: graph.nodes.len() * 2, stats: stats, fused: fused });
+  let providers: ProviderSession[] = [];
+  if (cost.providers > 0) {
+    providers = match (provider_sessions(graph, cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
+  }
   let value = value;
   let i = 0;
   while (i < count) {
-    let row = match (render_node(graph, output, first + i, limits, Some(cache), cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
+    let row = match (render_node(graph, output, first + i, limits, providers, Some(cache), cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
     value = match (consume(value, row)) { Ok(next) => next, Err(e) => { return Err(ConsumerFailure(e)); } };
     let state = cache.get();
     cache.set(RowCache { ...state, stats: RowStats { ...state.stats, rows: state.stats.rows + 1 } });

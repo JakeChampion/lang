@@ -45,16 +45,19 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         }
         total = total + got.0.len();
     }
-    if (s.fault() != 0) {
-        return http.text(s.fault(), "the body did not arrive\n");
+    if let Some(why) = s.fault() {
+        return http.EndedEarly(why).to_response();
     }
     return http.plain(total.to_string() + " bytes, " + lines.to_string() + " lines\n");
 }
 ```
 
-A body that ends early says why in `s.fault()`: `413` past the body
-limit, `408` when it trickled in below `min_data_rate`, `400` when its
-framing was malformed. The body limit still applies when streaming, which
+A body that ends early says why in `s.fault()`, a `StreamFault`:
+`StreamTooLarge` past the body limit, `StreamTimeout` when it trickled in
+below `min_data_rate`, `StreamMalformed` when its framing was malformed,
+`StreamCutShort` when the peer stopped sending, and `None` when the body
+arrived whole. `http.EndedEarly(why)` answers it with the matching status
+(413, 408, 400). The body limit still applies when streaming, which
 is why the example raises it to 1 GiB; memory stays at one chunk however
 large the upload. `read_some()` returns whatever has arrived, `read_line()` a line
 at a time, and `req.body_string()` or `body_bytes()` still read the whole
