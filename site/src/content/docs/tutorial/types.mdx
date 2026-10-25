@@ -116,13 +116,13 @@ to the caller; on an `Option` it does the same with `Some` and `None`.
 <FernPlayground
   code={`import "std/i32";
 import "std/string";
-import "std/number_parse";
+import "std/option";
 import "std/result";
 
 // ? unwraps an Ok, or returns the Err from this function.
 function area(w: string, h: string): Result[i32, string] {
-    let width: i32 = i32.parse_i32(w).map_err((e: number_parse.ParseNumberError): string => "width is not a number")?;
-    let height: i32 = i32.parse_i32(h).map_err((e: number_parse.ParseNumberError): string => "height is not a number")?;
+    let width: i32 = i32.parse_i32(w).ok().ok_or("width is not a number")?;
+    let height: i32 = i32.parse_i32(h).ok().ok_or("height is not a number")?;
     return Ok(width * height);
 }
 
@@ -140,7 +140,8 @@ function main(): i32 {
 />
 
 `i32.parse_i32` returns a `Result[i32, number_parse.ParseNumberError]`.
-`map_err` converts the parse error to the message for each input. [Error handling](../../reference/error-handling/)
+`ok` converts the result to an `Option[i32]`.
+`ok_or` converts `None` to an `Err` with the message for that input. [Error handling](../../reference/error-handling/)
 lists the combinators on both types; `let … else` and `defer` /
 `errdefer` are in [Language features](../../reference/language-features/).
 

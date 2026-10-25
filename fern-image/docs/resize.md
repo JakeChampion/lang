@@ -34,12 +34,19 @@ Cancellation, no-upscale, cover, crop, rotation, and SIMD remain future work.
 
 ## Verification
 
-Eight native cases check solid colors, single rows, single columns, odd dimensions, and extreme aspect ratios.
+`bilinear_axis` exposes the checked center map for row providers.
+`interpolate` combines four pixels with finite weights in the inclusive range from zero to one.
+Invalid dimensions, indices, or weights return an explicit error.
+Both eager and row execution use these helpers.
+
+Ten native cases check solid colors, single rows, single columns, odd dimensions, and extreme aspect ratios.
 Golden outputs check nearest selection, two-dimensional RGB and mixed-alpha interpolation, and transparent color isolation.
 Rejection cases cover invalid dimensions, multiplication overflow, caller budgets, and malformed source storage.
-All eight cases pass with the heap sanitizer and zero live bytes.
+Independent goldens cover a four-level gradient and a 16x16 checkerboard downscale.
+All ten cases pass with the heap sanitizer and zero live bytes.
 
 A synthetic benchmark creates a 32x32 RGBA gradient and performs ten 16x16 bilinear resizes.
 Its five process samples include startup and source construction.
 See `benchmarks/results/resize-m2.json` for raw measurements and compiler identification.
 No libvips comparison or real-image quality result follows from this small baseline.
+See [allocator observations](memory-measurements.md) for repeated eager resize and output retention costs.
