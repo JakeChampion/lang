@@ -96,6 +96,7 @@ Blockyard can retain block edits through `FERN_BLOCKYARD_DATA`.
 The six new applications use `FERN_LABS_DATA` for optional persistent checkpoints.
 Fernbase and Lantern synchronize each successful mutation before publication.
 Foundry, Patchbay, and Circuit retain a project when you select Save checkpoint.
+
 Their checkpoints include factory cargo, power, pause state, and processor programs.
 Recovery validates a version and checksum. A storage error blocks further writes until recovery succeeds.
 
