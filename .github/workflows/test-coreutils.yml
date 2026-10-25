@@ -13,15 +13,13 @@ name: Test coreutils
 # packages: a package with a workflow of its own comes off the units lane's
 # derived list, and the list stays derived.
 #
-# FOUR SHARDS. A measured partition balances to within a second of even
-# across four, and the sum is ~13.7 minutes of test time, so each shard is
-# ~3.5 minutes against a ~15s fixed cost per test process. Six shards were
-# measured too and reach only 3.85 against four's 4.38 in weight units — a
-# 12% gain for 50% more runner slots, on a pool the PR queue is already
-# sized against (docs/ci-log/2026-09-15-performance.md). The floor is TestPrintfParity,
-# 2m48s in one top-level test with a 40.6s subtest inside it; going below
-# four shards' balance means splitting that test's own subtests, which is
-# not worth the selector complexity yet.
+# TWO SHARDS per host. The sum is about 14 minutes of test time, so each
+# shard runs about 7 minutes of tests after its setup, inside the 10 to 13
+# minutes of the suite's longest jobs. Four shards ran about 3.5 minutes of
+# tests each after the same setup, and the pool queued jobs for 20 minutes
+# or more, so the slots cost more than the minutes they saved
+# (docs/ci-log/2026-10-25-pr-ci-queue.md). The weighted partition
+# (.github/coreutils-test-weights.txt) balances the two to within seconds.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -53,7 +51,7 @@ jobs:
       fail-fast: false
       matrix:
         host: [x86_64, aarch64]
-        shard: [0, 1, 2, 3]
+        shard: [0, 1]
         # The Preflight tier calls this lane with `hosts: x86_64`; the suite
         # calls it with both hosts and this excludes nothing. The runner is
         # derived from the host below: an `include` that adds it would become
@@ -64,7 +62,7 @@ jobs:
     runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     env:
       GNU_COREUTILS_VERSION: "9.12"
-      NSHARD: "4"
+      NSHARD: "2"
     steps:
       - uses: actions/checkout@v7
       - name: Cache day stamp
@@ -193,7 +191,7 @@ jobs:
               sed "s|^$GIANT/||"
           )
           # An empty half means the list or the partition is wrong, not that
-          # this shard has no work: with 4 shards over 252 tests and 106
+          # this shard has no work: with 2 shards over 252 tests and 106
           # utilities, neither can legitimately come back empty.
           if [ ${#TOPS[@]} -eq 0 ] || [ ${#UTILS[@]} -eq 0 ]; then
             echo "::error::shard ${{ matrix.shard }}/$NSHARD got ${#TOPS[@]} tests and ${#UTILS[@]} utilities; the list or the filter is wrong" >&2
