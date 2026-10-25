@@ -1,0 +1,68 @@
+import "std/i32";
+
+// A call to the builtin exit never returns, so it ends a path the way
+// return does: a value-returning body may end in one (no E052), a let-else
+// else branch may end in one (no E022), and a value branch may end in one.
+// None of the exits below is reached, so main returns normally.
+
+enum Opt { Has(i32), Nil }
+
+function fail(msg: string): i32 {
+  eprint(msg);
+  exit(2);
+}
+
+function pick(n: i32): i32 {
+  if (n > 0) {
+    return n;
+  } else {
+    eprint("negative");
+    exit(3);
+  }
+}
+
+function classify(o: Opt): i32 {
+  match (o) {
+    Has(v) => {
+      return v;
+    },
+    Nil => {
+      exit(4);
+    }
+  }
+}
+
+function unwrap(o: Opt): i32 {
+  let Has(v) = o else {
+    eprint("absent");
+    exit(5);
+  };
+  return v;
+}
+
+function value_arm(o: Opt): i32 {
+  let v: i32 = match (o) { Has(x) => x, Nil => { exit(6); } };
+  return v * 10;
+}
+
+function shout(c: boolean, s: string): string {
+  let v: string = if (c) { s + "!" } else { eprint("quiet"); exit(7); };
+  return v;
+}
+
+function stub(): i32 {
+  todo("not reached");
+}
+
+function main(): i32 {
+  let total: i32 = pick(1) + classify(Has(2)) + unwrap(Has(3)) + value_arm(Has(4));
+  print(f"{total}");
+  print(shout(true, "done"));
+  if (total != 46) {
+    return fail("wrong total");
+  }
+  if (total < 0) {
+    return stub();
+  }
+  return 0;
+}

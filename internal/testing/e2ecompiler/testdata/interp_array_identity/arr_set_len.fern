@@ -1,0 +1,31 @@
+import "std/i32";
+import "std/string";
+import "core/cmp";
+
+function main(): i32 {
+  let buf: u8[] = [1u8, 2u8, 3u8, 4u8];
+  let view: [u8] = buf[0:4];
+  __arr_set_len(buf, 2);
+  print(f"shrunk: {buf.len()} view keeps {view.len()} {view[3]}");
+  __arr_set_len(buf, 4);
+  print(f"regrown: {buf.len()} {buf[2]} {buf[3]}");
+
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: i32 = tcp_accept(ls);
+  let room: u8[] = __alloc_u8(6);
+  let seen: [u8] = room[0:6];
+  print(f"send: {tcp_send_bytes(c, "abcdef".bytes())}");
+  let n: i32 = tcp_recv_into(s, room);
+  __arr_set_len(room, 1);
+  print(f"send: {tcp_send_bytes(c, "Z".bytes())}");
+  n = tcp_recv_into(s, room);
+  print(f"one byte into a shortened array: {n} len {room.len()} {room[0]} view {seen[0]} {seen[1]}");
+  __arr_set_len(room, 6);
+  print(f"regrown after the receive: {room[0]} {room[1]} {room[5]}");
+  let copy: u8[] = room;
+  print(f"a later copy: {copy.len()} {copy[5]}");
+  print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)}");
+  return 0;
+}

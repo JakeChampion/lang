@@ -51,12 +51,12 @@ func TestReaderBytesHostOutcomes(t *testing.T) {
 					t.Fatalf("result = %#v", res)
 				}
 				bs := res.Payloads[0].(Array)
-				if len(bs.E) != len(tc.data) {
-					t.Fatalf("length = %d, want %d", len(bs.E), len(tc.data))
+				if len(bs.Elems()) != len(tc.data) {
+					t.Fatalf("length = %d, want %d", len(bs.Elems()), len(tc.data))
 				}
 				for n, b := range tc.data {
-					if bs.E[n] != Number(b) {
-						t.Fatalf("byte %d = %v, want %d", n, bs.E[n], b)
+					if bs.Elems()[n] != Number(b) {
+						t.Fatalf("byte %d = %v, want %d", n, bs.Elems()[n], b)
 					}
 				}
 			} else if res.VariantName != "Err" || res.Payloads[0].(*Enum).VariantName != tc.variant {

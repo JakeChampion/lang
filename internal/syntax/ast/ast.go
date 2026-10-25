@@ -1380,10 +1380,12 @@ type Stmt interface {
 }
 
 type Block struct {
-	P     Position
-	End   Position
-	Stmts []Stmt
-	Sugar *ForEach
+	P       Position
+	End     Position
+	Stmts   []Stmt
+	Sugar   *ForEach
+	IsTodo  bool
+	TodoMsg Expr
 }
 type If struct {
 	P        Position
@@ -1401,11 +1403,9 @@ type While struct {
 }
 
 type Loop struct {
-	P       Position
-	Body    Stmt
-	Label   string
-	IsTodo  bool
-	TodoMsg Expr
+	P     Position
+	Body  Stmt
+	Label string
 }
 
 type For struct {

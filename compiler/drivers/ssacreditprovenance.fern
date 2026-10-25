@@ -103,7 +103,7 @@ function pruned(): void {
   check_prune(absent, bodies, extra, [0, 1, 2, 3, 4]);
   check_prune(absent, [], [], []);
   check_prune(mod, bodies, [], []);
-  let exported = parser.Module { ...mod, exports: [parser.ExportBinding { func_name: "ndarray__inner_kernel", iface: "", wit: "", c_abi: true }] };
+  let exported = parser.Module { ...mod, exports: [parser.ExportBinding { func_name: "ndarray__inner_kernel", iface: "", wit: "", c_abi: true, method: false }] };
   check_prune(exported, bodies, extra, [0, 1, 2, 3, 4]);
 }
 
