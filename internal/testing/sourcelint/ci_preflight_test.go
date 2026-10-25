@@ -23,7 +23,7 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 		t.Errorf("root CI must not queue lint behind a full compiler suite; the suite FIFO belongs to %s", ciSuiteFile)
 	}
 	rootJobs := workflowJobs(t, ciFile)
-	allowed := map[string]bool{"changes": true, "lint": true, "suite": true, "reap-lint": true}
+	allowed := map[string]bool{"changes": true, "lint": true, "preflight": true, "suite": true, "reap-lint": true, "reap-preflight": true}
 	var suite ciJob
 	for _, job := range rootJobs {
 		if !allowed[job.id] {

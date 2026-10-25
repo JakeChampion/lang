@@ -166,6 +166,12 @@ jobs:
     uses: ./.github/workflows/vscode-extension.yml
     secrets: inherit
 
+  fern-image:
+    name: Fern image
+    if: fromJSON(inputs.lanes)['fern-image']
+    uses: ./.github/workflows/fern-image.yml
+    secrets: inherit
+
   # One reaper per lane, so the run is cancelled the moment ANY lane concludes
   # failure rather than when all of them have. `!cancelled()` is load-bearing:
   # without a status function in the condition, `success()` is implied and a
@@ -355,6 +361,17 @@ jobs:
     uses: ./.github/workflows/cancel-on-failure.yml
     with:
       lane: VS Code Extension
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-fern-image:
+    needs: [fern-image]
+    if: ${{ !cancelled() && needs.fern-image.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Fern image
     permissions:
       actions: write
       contents: read

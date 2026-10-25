@@ -50,6 +50,9 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 				ic := exec.Command(interpBin, "-interp", tc.src)
 				wantOut, _ := stdTestOutput(ic)
 				wantExit := ic.ProcessState.ExitCode()
+				if wantFail := tc.name == "synthetic_fail"; (wantExit != 0) != wantFail {
+					t.Fatalf("interp exit = %d for %s\n%s", wantExit, tc.name, wantOut)
+				}
 
 				asm, err := stdTestOutput(runX86_64Bin(runner, mmc, tc.src, stdlibRoot))
 				if err != nil {
@@ -111,6 +114,9 @@ func runSelfHostStdTestArm64(t *testing.T, tls bool) {
 				ic := exec.Command(interpBin, "-interp", tc.src)
 				wantOut, _ := stdTestOutput(ic)
 				wantExit := ic.ProcessState.ExitCode()
+				if wantFail := tc.name == "synthetic_fail"; (wantExit != 0) != wantFail {
+					t.Fatalf("interp exit = %d for %s\n%s", wantExit, tc.name, wantOut)
+				}
 
 				asm, err := stdTestOutput(runX86_64Bin(x86runner, mmc, tc.src, stdlibRoot, "-target", "arm64-linux"))
 				if err != nil {
