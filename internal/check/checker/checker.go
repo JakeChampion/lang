@@ -582,10 +582,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	{
 		var inject []*ast.EnumDecl
 		for _, ed := range builtinEnumDecls() {
-			if existing, dup := userEnums[ed.Name]; dup && existing.P == (ast.Position{}) {
+			if shadow(ed.Name) {
 				continue
 			}
-			if shadow(ed.Name) {
+			if existing, dup := userEnums[ed.Name]; dup && existing.P == (ast.Position{}) {
 				continue
 			}
 			inject = append(inject, ed)
@@ -597,10 +597,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	{
 		var inject []*ast.StructDecl
 		for _, sd := range builtinStructDecls() {
-			if existing, dup := userStructs[sd.Name]; dup && existing.P == (ast.Position{}) {
+			if shadow(sd.Name) {
 				continue
 			}
-			if shadow(sd.Name) {
+			if existing, dup := userStructs[sd.Name]; dup && existing.P == (ast.Position{}) {
 				continue
 			}
 			inject = append(inject, sd)
@@ -641,22 +641,23 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		},
 		variantOf:            map[string][]variantRef{},
 		shadowedGenericCalls: map[*ast.Call]bool{},
-		reservedShadows:      map[string]bool{},
 	}
 	if prog.LoadedStdlibPaths != nil && !prog.LoadedStdlibPaths["stdlib://core/map.fern"] {
 		c.requireMapImport = true
 	}
-	for _, fe := range defaultargs.Fill(prog) {
-		c.errfCode(fe.Pos, fe.Code, "%s", fe.Msg)
-	}
-
 	for _, ed := range shadowedEnums {
 		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
-		c.reservedShadows[ed.Name] = true
 	}
 	for _, sd := range shadowedStructs {
 		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
-		c.reservedShadows[sd.Name] = true
+	}
+	// Reserved names invalidate the namespace before signature resolution.
+	if len(shadowedEnums)+len(shadowedStructs) > 0 {
+		sourceNamed(prog, c.errors)
+		return c.info, diag.Errors(c.errors)
+	}
+	for _, fe := range defaultargs.Fill(prog) {
+		c.errfCode(fe.Pos, fe.Code, "%s", fe.Msg)
 	}
 
 	for _, sd := range prog.Structs {
@@ -5292,8 +5293,6 @@ type checker struct {
 
 	shadowedGenericCalls map[*ast.Call]bool
 
-	reservedShadows map[string]bool
-
 	elemHint ast.Type
 
 	typedRecv     ast.Expr
@@ -5712,7 +5711,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			c.resolveType(&args[i], params, pos)
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
-			if len(sd.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
+			if len(sd.TypeParams) != len(args) {
 				c.errfCode(sd.P, "E019", "%s", arityMsg("struct "+t.Name, len(sd.TypeParams), len(args), "type argument"))
 			}
 			if t.Name == "Cell" && len(args) == 1 {
@@ -5726,7 +5725,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			return
 		}
 		if ed, ok := c.info.Enums[t.Name]; ok && len(args) > 0 {
-			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
+			if len(ed.TypeParams) != len(args) {
 				c.errfCode(ed.P, "E019", "%s", arityMsg("enum "+t.Name, len(ed.TypeParams), len(args), "type argument"))
 			}
 		}
