@@ -102,3 +102,16 @@ Both formats and both fusion modes produce 64 combinations, each checked against
 The synthetic providers also reject backward reads independently of the engine guard.
 
 These checks do not qualify a codec, hostile provider code, hardware threading, or production service behavior.
+
+## Integrated validation
+
+Source `96923f511099` includes main `3cd4363213b2` and the three main CI repairs.
+All 111 image TAP cases pass on native Linux, Wasm, and ARM64/QEMU with compiler `2505df503dc4`.
+The compiler binary has SHA-256 `a837990c908f873362601964ccdd2bb5eb77dde78e984876f21f528346b4cff0`.
+Its compiler and stdlib sources match that main snapshot.
+Each completed test executable reports zero final live bytes.
+The native script checks 27 executables, compiler rejection probes, and formatter behavior.
+
+Native execution uses heap sanitization. Wasm provides the leak census without native heap fault detectors.
+All 1288 repository source format checks pass.
+These local results do not establish full GitHub CI success or any production gate.
