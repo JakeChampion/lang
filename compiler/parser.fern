@@ -4527,58 +4527,62 @@ function parse_lambda_body(p: Par, void_branches: boolean): (ast.Stmt[], Par) {
   return (lb_body, p);
 }
 
+function parse_use_stmt(p: Par, body: ast.Stmt[]): (ast.Stmt[], Par) {
+  let uline: i32 = p.peek_line();
+  let ucol: i32 = p.peek_col();
+  p = p.advance();
+  let ubad: ast.Stmt[] = [];
+  let uname: string = p.peek_ident();
+  if (uname.len() > 0) {
+    p = p.advance();
+  } else {
+    ubad = [s_unknown(p, "expected a name, got " + tok_desc(p.peek()))];
+  }
+  let utype: string = "";
+  if (p.peek_punct() == ":") {
+    p = p.advance();
+    let (utn_name, utn_fn_ret, utn_p) = parse_type_name(p);
+    p = utn_p;
+    utype = utn_name;
+  }
+  if (p.peek_punct() == "<") {
+    p = p.advance();
+  } else if (ubad.len() == 0) {
+    ubad = [s_unknown(p, "expected \"<\", got " + tok_desc(p.peek()))];
+  }
+  if (p.peek_punct() == "-") {
+    p = p.advance();
+  } else if (ubad.len() == 0) {
+    ubad = [s_unknown(p, "expected \"-\", got " + tok_desc(p.peek()))];
+  }
+  let (usrc_expr, usrc_p) = parse_expr(p);
+  p = usrc_p;
+  p = p.end_of(usrc_expr);
+  let (rest_body, rest_p) = parse_block_body(p, false);
+  p = rest_p;
+  let cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" };
+  let cbparams: ast.ParamDecl[] = [cbparam];
+  let cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: uline, col: ucol, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+  if (ubad.len() > 0) {
+    return (body.append(ubad[0]), p);
+  }
+  match (usrc_expr) {
+    ast.ExprCall(c) => {
+      let newargs: ast.Expr[] = c.args.append(cb);
+      body = body.append(s_return_at(ast.ExprCall { ...c, args: newargs }, uline, ucol));
+    },
+    _ => {
+      body = body.append(s_unknown_at("use expression must be a function call (so the callback can be appended as the last arg)", uline, ucol));
+    }
+  }
+  return (body, p);
+}
+
 function parse_block_body_nested(p: Par, tail_value: boolean, discard_tail: boolean, void_branches: boolean): (ast.Stmt[], Par) {
   let body: ast.Stmt[] = [];
   while (p.peek_punct() != "}" && !p.at_end()) {
     if (p.peek_keyword() == "use") {
-      let uline: i32 = p.peek_line();
-      let ucol: i32 = p.peek_col();
-      p = p.advance();
-      let ubad: ast.Stmt[] = [];
-      let uname: string = p.peek_ident();
-      if (uname.len() > 0) {
-        p = p.advance();
-      } else {
-        ubad = [s_unknown(p, "expected a name, got " + tok_desc(p.peek()))];
-      }
-      let utype: string = "";
-      if (p.peek_punct() == ":") {
-        p = p.advance();
-        let (utn_name, utn_fn_ret, utn_p) = parse_type_name(p);
-        p = utn_p;
-        utype = utn_name;
-      }
-      if (p.peek_punct() == "<") {
-        p = p.advance();
-      } else if (ubad.len() == 0) {
-        ubad = [s_unknown(p, "expected \"<\", got " + tok_desc(p.peek()))];
-      }
-      if (p.peek_punct() == "-") {
-        p = p.advance();
-      } else if (ubad.len() == 0) {
-        ubad = [s_unknown(p, "expected \"-\", got " + tok_desc(p.peek()))];
-      }
-      let (usrc_expr, usrc_p) = parse_expr(p);
-      p = usrc_p;
-      p = p.end_of(usrc_expr);
-      let (rest_body, rest_p) = parse_block_body(p, false);
-      p = rest_p;
-      let cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" };
-      let cbparams: ast.ParamDecl[] = [cbparam];
-      let cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: uline, col: ucol, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
-      if (ubad.len() > 0) {
-        return (body.append(ubad[0]), p);
-      }
-      match (usrc_expr) {
-        ast.ExprCall(c) => {
-          let newargs: ast.Expr[] = c.args.append(cb);
-          body = body.append(s_return_at(ast.ExprCall { ...c, args: newargs }, uline, ucol));
-        },
-        _ => {
-          body = body.append(s_unknown_at("use expression must be a function call (so the callback can be appended as the last arg)", uline, ucol));
-        }
-      }
-      return (body, p);
+      return parse_use_stmt(p, body);
     }
     if ((discard_tail || void_branches) && (p.peek_keyword() == "if" || p.peek_keyword() == "match")) {
       let (stmt, next) = parse_stmt(p);
@@ -10443,14 +10447,9 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
       return "Cell[" + inner + "]";
     }
   }
-  if (c.type_args.len() > 0) {
-    let at: i32 = bg_find(funcs, name);
-    if (at >= 0) {
-      let key: string = explicit_inst_key(funcs.decls[at], c.type_args);
-      if (key.len() > 0) {
-        return subst_ty(funcs.decls[at].ret_type, funcs.decls[at].type_params, key_parts(funcs.decls[at], key));
-      }
-    }
+  let explicit: string = explicit_call_ret(c, name, funcs);
+  if (explicit.len() > 0) {
+    return explicit;
   }
   let result: string = call_ret_type(funcs, name, c.args, env);
   if (result.len() == 0) {
@@ -10463,6 +10462,21 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
     return stamped_type(c.ty);
   }
   return result;
+}
+
+function explicit_call_ret(c: ast.ExprCall, name: string, funcs: MFns): string {
+  if (c.type_args.len() == 0) {
+    return "";
+  }
+  let at: i32 = bg_find(funcs, name);
+  if (at < 0) {
+    return "";
+  }
+  let key: string = explicit_inst_key(funcs.decls[at], c.type_args);
+  if (key.len() == 0) {
+    return "";
+  }
+  return subst_ty(funcs.decls[at].ret_type, funcs.decls[at].type_params, key_parts(funcs.decls[at], key));
 }
 
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
@@ -15717,7 +15731,7 @@ function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
   }
   let refs: BgRefs = BgRefs { names: names, hit: [] };
   for fd in funcs {
-    if (is_genum_method(fd, enums) || fd.receiver_type.len() > 0 && type_str_vars(fd.receiver_type, fd.type_params).len() > 0) {
+    if (generic_receiver_method(fd, enums)) {
       refs = bg_refs_body(fd.body, refs);
     }
   }
@@ -15731,6 +15745,10 @@ function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
     i = i + 1;
   }
   return refs.hit;
+}
+
+function generic_receiver_method(fd: FuncDecl, enums: EnumDecl[]): boolean {
+  return is_genum_method(fd, enums) || fd.receiver_type.len() > 0 && type_str_vars(fd.receiver_type, fd.type_params).len() > 0;
 }
 
 function enum_bg_templates(funcs: FuncDecl[], refs: string[], keep: boolean): FuncDecl[] {
@@ -21947,7 +21965,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
   }
   let body: ast.Stmt[] = [s_return(expr)];
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: derived_self_type(sd), own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "eq", receiver_name: "self", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Eq", dyn_traits: [], streams: [] };
 }
 
@@ -21970,7 +21988,7 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
   }
   stmts = stmts.append(s_return(e_number("0", "", false)));
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: derived_self_type(sd), own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "cmp", receiver_name: "self", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Ord", dyn_traits: [], streams: [] };
 }
 
@@ -22082,7 +22100,7 @@ function synth_from_json_value(json_alias: string, sd: StructDecl): FuncDecl {
   }
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: fj_value_name(json_alias), type_name: json_alias + ".JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
-  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", " + json_alias + ".JsonError]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
+  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + derived_self_type(sd) + ", " + json_alias + ".JsonError]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
 }
 
 function derived_self_type(sd: StructDecl): string {
@@ -22146,7 +22164,7 @@ function synth_enum_from_json_value(json_alias: string, ename: string, self_ty: 
   let body: ast.Stmt[] = [s_match(fj_call(json_alias, "from_json_variant", [e_ident(fj_value_name(json_alias))]), arms), s_return(e_call(e_ident("Err"), [fj_call(json_alias, "error", [e_string("")])]))];
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: fj_value_name(json_alias), type_name: json_alias + ".JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
-  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "from_json_value", receiver_name: "", receiver_type: ename, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + ename + ", " + json_alias + ".JsonError]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
+  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "from_json_value", receiver_name: "", receiver_type: ename, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + self_ty + ", " + json_alias + ".JsonError]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
 }
 
 function enum_from_json_variant(json_alias: string, v: StructDecl, self_ty: string): ast.Stmt[] {
@@ -22260,7 +22278,7 @@ function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
   return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "to_debug", receiver_name: "self", receiver_type: ename, receiver_own: false, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Debug", dyn_traits: [], streams: [] };
 }
 
-function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
+function synth_enum_eq(ename: string, self_ty: string, variants: StructDecl[]): FuncDecl {
   let arms: ast.MatchArm[] = [];
   let i: i32 = 0;
   while (i < variants.len()) {
@@ -22285,11 +22303,11 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
   }
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: self_ty, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "eq", receiver_name: "self", receiver_type: ename, receiver_own: false, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Eq", dyn_traits: [], streams: [] };
 }
 
-function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
+function synth_enum_ord(ename: string, self_ty: string, variants: StructDecl[]): FuncDecl {
   let arms: ast.MatchArm[] = [];
   let i: i32 = 0;
   while (i < variants.len()) {
@@ -22336,7 +22354,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
   }
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: self_ty, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "cmp", receiver_name: "self", receiver_type: ename, receiver_own: false, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Ord", dyn_traits: [], streams: [] };
 }
 
@@ -22429,7 +22447,7 @@ function enum_default_derivable(variants: StructDecl[]): boolean {
   return true;
 }
 
-function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
+function synth_enum_default(ename: string, type_params: string[], variants: StructDecl[]): FuncDecl {
   let v0: StructDecl = variants[0];
   let value: ast.Expr = e_ident(v0.name);
   if (v0.fields.len() > 0) {
@@ -22444,7 +22462,7 @@ function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_return(value)];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "default", receiver_name: "", receiver_type: ename, receiver_own: false, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Default", dyn_traits: [], streams: [] };
+  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "default", receiver_name: "", receiver_type: ename, receiver_own: false, type_params: notp, params: noparams, ret_type: applied_type(ename, type_params), body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Default", dyn_traits: [], streams: [] };
 }
 
 function synth_enum_derives(ename: string, type_params: string[], declared: StructDecl[], derives: string[], funcs: FuncDecl[], json_alias: string): FuncDecl[] {
@@ -22462,10 +22480,10 @@ function synth_enum_derives(ename: string, type_params: string[], declared: Stru
       funcs = funcs.append(synth_enum_debug(ename, variants));
     }
     if (kind == "Eq") {
-      funcs = funcs.append(synth_enum_eq(ename, variants));
+      funcs = funcs.append(synth_enum_eq(ename, applied_type(ename, type_params), variants));
     }
     if (kind == "Ord") {
-      funcs = funcs.append(synth_enum_ord(ename, variants));
+      funcs = funcs.append(synth_enum_ord(ename, applied_type(ename, type_params), variants));
     }
     if (kind == "Hash") {
       funcs = funcs.append(synth_enum_hash(ename, variants));
@@ -22473,7 +22491,7 @@ function synth_enum_derives(ename: string, type_params: string[], declared: Stru
     funcs = synth_enum_json_derive(kind, ename, type_params, variants, funcs, json_alias);
     if (kind == "Default") {
       if (enum_default_derivable(declared)) {
-        funcs = funcs.append(synth_enum_default(ename, variants));
+        funcs = funcs.append(synth_enum_default(ename, type_params, variants));
       }
     }
     di = di + 1;
@@ -22621,7 +22639,7 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
   let body: ast.Stmt[] = [s_return(lit)];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "default", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Default", dyn_traits: [], streams: [] };
+  return FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "default", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: noparams, ret_type: derived_self_type(sd), body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Default", dyn_traits: [], streams: [] };
 }
 
 function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[], json_alias: string): FuncDecl[] {

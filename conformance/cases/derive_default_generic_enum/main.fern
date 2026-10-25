@@ -1,0 +1,26 @@
+// A derived default() on a generic enum returns the enum applied to its own
+// parameters, so each instance gets its first variant with that instance's
+// payload defaults.
+
+import "core/cmp";
+
+@derive(cmp.Default) enum Slot[T] { Held(T, i32), Vacant }
+
+function weight(s: Slot[i64]): i64 {
+    match (s) {
+        Held(v, n) => { return v + (n as i64) + 5; },
+        Vacant => { return 100; }
+    }
+    return 0;
+}
+
+function main(): i32 {
+    let a: Slot[i64] = Slot.default();
+    let b: Slot[string] = Slot.default();
+    let r: i32 = weight(a) as i32;
+    match (b) {
+        Held(s, n) => { r = r + s.len() + n + 2; },
+        Vacant => { r = r + 50; }
+    }
+    return r;
+}
