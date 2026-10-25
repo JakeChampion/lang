@@ -1,10 +1,9 @@
 # Benchmark status
 
 A small M2 synthetic process baseline appears below.
-Kernel performance on real images: not measured.
-Image quality: not measured.
-Comparison with libvips: not measured.
 
+Real-image kernel performance remains unmeasured.
+Image quality and libvips comparisons remain unmeasured.
 
 The test suite proves selected functional properties only.
 No throughput or parity claim follows from its results.
