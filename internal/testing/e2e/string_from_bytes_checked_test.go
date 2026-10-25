@@ -55,7 +55,7 @@ function main(): i32 {
         while (q < 256) {
             let pair: u8[] = [p as u8, q as u8];
             let accepted: boolean = !rejects(pair);
-            let valid: boolean = utf8.is_valid_utf8(string_from_bytes_unchecked(pair));
+            let valid: boolean = utf8.is_valid(string_from_bytes_unchecked(pair));
             if (accepted != valid) { return 16; }
             q = q + 1;
         }
@@ -64,13 +64,13 @@ function main(): i32 {
 
     // from_bytes_lossy: well-formed input untouched, one U+FFFD per
     // maximal subpart, and the result is always well-formed.
-    let fffd: string = utf8.utf8_encode(65533 as char);
+    let fffd: string = utf8.encode(65533 as char);
     if (utf8.from_bytes_lossy(mixed) != s) { return 17; }
     if (utf8.from_bytes_lossy([226 as u8, 130 as u8, 65 as u8]) != fffd + "A") { return 18; } // truncated 3-byte, then A
     if (utf8.from_bytes_lossy([240 as u8, 128 as u8]) != fffd + fffd) { return 19; }           // F0 cannot take 80: two units
     if (utf8.from_bytes_lossy([255 as u8]) != fffd) { return 20; }
     if (utf8.from_bytes_lossy([]).len() != 0) { return 21; }
-    if (!utf8.is_valid_utf8(utf8.from_bytes_lossy([65 as u8, 255 as u8, 66 as u8]))) { return 22; }
+    if (!utf8.is_valid(utf8.from_bytes_lossy([65 as u8, 255 as u8, 66 as u8]))) { return 22; }
     return 0;
 }
 `

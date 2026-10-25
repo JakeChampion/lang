@@ -246,7 +246,7 @@ function plain_number(h: usize, v: i64, negative: boolean, sign_always: boolean,
     buf_push_byte(h, fill);
     k = k - 1;
   }
-  io_buffered.buf_push_u64(h, v as u64);
+  gnu.push_decimal(h, v as u64);
 }
 
 struct Spec { pad: i32, width: i32, up: boolean, low: boolean, change: boolean, modifier: i32, c: i32, at: i32, end: i32 }

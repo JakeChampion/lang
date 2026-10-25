@@ -1,0 +1,1901 @@
+{
+  "core_commit": "f9a715b02f483e0b9177655a91b0b26cc3ce3a80",
+  "environment": {
+    "FERN_SANITIZE": "1",
+    "FERN_LEAKCHECK": "1",
+    "FERN_STRICT_IR": "1"
+  },
+  "binaries": {
+    "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3": {
+      "bytes": 14310752,
+      "sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8"
+    },
+    "/workspace/scratch/lang-primitive-protocols/reachability-oracle": {
+      "bytes": 32470385,
+      "sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735"
+    }
+  },
+  "commands": [
+    {
+      "name": "primitive_byte_receiver_identity-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13082: bytes retain their namespace beside an i32 method of the same name.\nimport \"std/string\";\n\ntrait Kind {\n  function kind(self: Self): string;\n}\n\nimpl Kind for i32 {\n  function kind(self: i32): string {\n    return \"i32\";\n  }\n}\n\nimpl Kind for u8 {\n  function kind(self: u8): string {\n    return \"u8\";\n  }\n}\n\nfunction identify[T: Kind](x: T): string {\n  return x.kind();\n}\n\nfunction first[T: Kind](xs: T[]): string {\n  return identify(xs[0]);\n}\n\nfunction main(): i32 {\n  let b: u8 = 42;\n  if (b.kind() != \"u8\" || (42 as u8).kind() != \"u8\" || identify(b) != \"u8\") {\n    return 1;\n  }\n  let bs: u8[] = [42];\n  let view: [u8] = bs;\n  if (bs[0].kind() != \"u8\" || view[0].kind() != \"u8\" || first(bs) != \"u8\") {\n    return 2;\n  }\n  if (\"abc\"[0].kind() != \"u8\" || \"abc\".bytes()[0].kind() != \"u8\") {\n    return 3;\n  }\n  for byte in bs {\n    if (byte.kind() != \"u8\") {\n      return 4;\n    }\n  }\n  for byte in \"abc\" {\n    if (byte.kind() != \"u8\") {\n      return 5;\n    }\n  }\n  let next = (): string => {\n    b = (b + 1) as u8;\n    return b.kind();\n  };\n  if (next() != \"u8\" || b.kind() != \"u8\") {\n    return 6;\n  }\n  let c: Cell[u8] = cell_new(41 as u8);\n  c.set(42 as u8);\n  if (c.get().kind() != \"u8\") {\n    return 7;\n  }\n  let pair: Cell[(u8, i32)] = cell_new((42 as u8, 42));\n  let restored = pair.get();\n  if (restored.0.kind() != \"u8\" || restored.1.kind() != \"i32\") {\n    return 8;\n  }\n  print(\"byte receivers ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13082: bytes retain their namespace beside an i32 method of the same name.\nimport \"std/string\";\n\ntrait Kind {\n  function kind(self: Self): string;\n}\n\nimpl Kind for i32 {\n  function kind(self: i32): string {\n    return \"i32\";\n  }\n}\n\nimpl Kind for u8 {\n  function kind(self: u8): string {\n    return \"u8\";\n  }\n}\n\nfunction identify[T: Kind](x: T): string {\n  return x.kind();\n}\n\nfunction first[T: Kind](xs: T[]): string {\n  return identify(xs[0]);\n}\n\nfunction main(): i32 {\n  let b: u8 = 42;\n  if (b.kind() != \"u8\" || (42 as u8).kind() != \"u8\" || identify(b) != \"u8\") {\n    return 1;\n  }\n  let bs: u8[] = [42];\n  let view: [u8] = bs;\n  if (bs[0].kind() != \"u8\" || view[0].kind() != \"u8\" || first(bs) != \"u8\") {\n    return 2;\n  }\n  if (\"abc\"[0].kind() != \"u8\" || \"abc\".bytes()[0].kind() != \"u8\") {\n    return 3;\n  }\n  for byte in bs {\n    if (byte.kind() != \"u8\") {\n      return 4;\n    }\n  }\n  for byte in \"abc\" {\n    if (byte.kind() != \"u8\") {\n      return 5;\n    }\n  }\n  let next = (): string => {\n    b = (b + 1) as u8;\n    return b.kind();\n  };\n  if (next() != \"u8\" || b.kind() != \"u8\") {\n    return 6;\n  }\n  let c: Cell[u8] = cell_new(41 as u8);\n  c.set(42 as u8);\n  if (c.get().kind() != \"u8\") {\n    return 7;\n  }\n  let pair: Cell[(u8, i32)] = cell_new((42 as u8, 42));\n  let restored = pair.get();\n  if (restored.0.kind() != \"u8\" || restored.1.kind() != \"i32\") {\n    return 8;\n  }\n  print(\"byte receivers ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13082: bytes retain their namespace beside an i32 method of the same name.\nimport \"std/string\";\n\ntrait Kind {\n  function kind(self: Self): string;\n}\n\nimpl Kind for i32 {\n  function kind(self: i32): string {\n    return \"i32\";\n  }\n}\n\nimpl Kind for u8 {\n  function kind(self: u8): string {\n    return \"u8\";\n  }\n}\n\nfunction identify[T: Kind](x: T): string {\n  return x.kind();\n}\n\nfunction first[T: Kind](xs: T[]): string {\n  return identify(xs[0]);\n}\n\nfunction main(): i32 {\n  let b: u8 = 42;\n  if (b.kind() != \"u8\" || (42 as u8).kind() != \"u8\" || identify(b) != \"u8\") {\n    return 1;\n  }\n  let bs: u8[] = [42];\n  let view: [u8] = bs;\n  if (bs[0].kind() != \"u8\" || view[0].kind() != \"u8\" || first(bs) != \"u8\") {\n    return 2;\n  }\n  if (\"abc\"[0].kind() != \"u8\" || \"abc\".bytes()[0].kind() != \"u8\") {\n    return 3;\n  }\n  for byte in bs {\n    if (byte.kind() != \"u8\") {\n      return 4;\n    }\n  }\n  for byte in \"abc\" {\n    if (byte.kind() != \"u8\") {\n      return 5;\n    }\n  }\n  let next = (): string => {\n    b = (b + 1) as u8;\n    return b.kind();\n  };\n  if (next() != \"u8\" || b.kind() != \"u8\") {\n    return 6;\n  }\n  let c: Cell[u8] = cell_new(41 as u8);\n  c.set(42 as u8);\n  if (c.get().kind() != \"u8\") {\n    return 7;\n  }\n  let pair: Cell[(u8, i32)] = cell_new((42 as u8, 42));\n  let restored = pair.get();\n  if (restored.0.kind() != \"u8\" || restored.1.kind() != \"i32\") {\n    return 8;\n  }\n  print(\"byte receivers ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13082: bytes retain their namespace beside an i32 method of the same name.\nimport \"std/string\";\n\ntrait Kind {\n  function kind(self: Self): string;\n}\n\nimpl Kind for i32 {\n  function kind(self: i32): string {\n    return \"i32\";\n  }\n}\n\nimpl Kind for u8 {\n  function kind(self: u8): string {\n    return \"u8\";\n  }\n}\n\nfunction identify[T: Kind](x: T): string {\n  return x.kind();\n}\n\nfunction first[T: Kind](xs: T[]): string {\n  return identify(xs[0]);\n}\n\nfunction main(): i32 {\n  let b: u8 = 42;\n  if (b.kind() != \"u8\" || (42 as u8).kind() != \"u8\" || identify(b) != \"u8\") {\n    return 1;\n  }\n  let bs: u8[] = [42];\n  let view: [u8] = bs;\n  if (bs[0].kind() != \"u8\" || view[0].kind() != \"u8\" || first(bs) != \"u8\") {\n    return 2;\n  }\n  if (\"abc\"[0].kind() != \"u8\" || \"abc\".bytes()[0].kind() != \"u8\") {\n    return 3;\n  }\n  for byte in bs {\n    if (byte.kind() != \"u8\") {\n      return 4;\n    }\n  }\n  for byte in \"abc\" {\n    if (byte.kind() != \"u8\") {\n      return 5;\n    }\n  }\n  let next = (): string => {\n    b = (b + 1) as u8;\n    return b.kind();\n  };\n  if (next() != \"u8\" || b.kind() != \"u8\") {\n    return 6;\n  }\n  let c: Cell[u8] = cell_new(41 as u8);\n  c.set(42 as u8);\n  if (c.get().kind() != \"u8\") {\n    return 7;\n  }\n  let pair: Cell[(u8, i32)] = cell_new((42 as u8, 42));\n  let restored = pair.get();\n  if (restored.0.kind() != \"u8\" || restored.1.kind() != \"i32\") {\n    return 8;\n  }\n  print(\"byte receivers ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_byte_receiver_identity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_byte_receiver_identity-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_byte_receiver_identity-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "byte receivers ok\n",
+      "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13081: these primitive namespaces also work after generic substitution.\ntrait Fresh {\n  function fresh(): Self;\n}\n\nimpl Fresh for usize {\n  function fresh(): usize {\n    return 42 as usize;\n  }\n}\n\nimpl Fresh for char {\n  function fresh(): char {\n    return '\u00e9';\n  }\n}\n\nfunction make[T: Fresh](): T {\n  return T.fresh();\n}\n\nfunction main(): i32 {\n  let n: usize = usize.fresh();\n  let c: char = char.fresh();\n  if (n != 42 as usize || c != '\u00e9' || make[usize]() != n || make[char]() != c) {\n    return 1;\n  }\n  print(\"associated primitives ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13081: these primitive namespaces also work after generic substitution.\ntrait Fresh {\n  function fresh(): Self;\n}\n\nimpl Fresh for usize {\n  function fresh(): usize {\n    return 42 as usize;\n  }\n}\n\nimpl Fresh for char {\n  function fresh(): char {\n    return '\u00e9';\n  }\n}\n\nfunction make[T: Fresh](): T {\n  return T.fresh();\n}\n\nfunction main(): i32 {\n  let n: usize = usize.fresh();\n  let c: char = char.fresh();\n  if (n != 42 as usize || c != '\u00e9' || make[usize]() != n || make[char]() != c) {\n    return 1;\n  }\n  print(\"associated primitives ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13081: these primitive namespaces also work after generic substitution.\ntrait Fresh {\n  function fresh(): Self;\n}\n\nimpl Fresh for usize {\n  function fresh(): usize {\n    return 42 as usize;\n  }\n}\n\nimpl Fresh for char {\n  function fresh(): char {\n    return '\u00e9';\n  }\n}\n\nfunction make[T: Fresh](): T {\n  return T.fresh();\n}\n\nfunction main(): i32 {\n  let n: usize = usize.fresh();\n  let c: char = char.fresh();\n  if (n != 42 as usize || c != '\u00e9' || make[usize]() != n || make[char]() != c) {\n    return 1;\n  }\n  print(\"associated primitives ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13081: these primitive namespaces also work after generic substitution.\ntrait Fresh {\n  function fresh(): Self;\n}\n\nimpl Fresh for usize {\n  function fresh(): usize {\n    return 42 as usize;\n  }\n}\n\nimpl Fresh for char {\n  function fresh(): char {\n    return '\u00e9';\n  }\n}\n\nfunction make[T: Fresh](): T {\n  return T.fresh();\n}\n\nfunction main(): i32 {\n  let n: usize = usize.fresh();\n  let c: char = char.fresh();\n  if (n != 42 as usize || c != '\u00e9' || make[usize]() != n || make[char]() != c) {\n    return 1;\n  }\n  print(\"associated primitives ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_char_usize_associated_functions/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_char_usize_associated_functions-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_char_usize_associated_functions-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "associated primitives ok\n",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13083: contextual primitive names settle as types in generic brackets.\nfunction identity[T](x: T): T {\n  return x;\n}\n\nfunction main(): i32 {\n  let c: char = identity[char]('\u00e9');\n  let source: string = \"hello\";\n  let view: str = slice_unchecked(source, 1, 4);\n  let same: str = identity[str](view);\n  let cs: char[] = identity[char[]](['\u00e9']);\n  if (c != '\u00e9' || same != \"ell\" || cs[0] != c) {\n    return 1;\n  }\n  print(\"contextual type arguments ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13083: contextual primitive names settle as types in generic brackets.\nfunction identity[T](x: T): T {\n  return x;\n}\n\nfunction main(): i32 {\n  let c: char = identity[char]('\u00e9');\n  let source: string = \"hello\";\n  let view: str = slice_unchecked(source, 1, 4);\n  let same: str = identity[str](view);\n  let cs: char[] = identity[char[]](['\u00e9']);\n  if (c != '\u00e9' || same != \"ell\" || cs[0] != c) {\n    return 1;\n  }\n  print(\"contextual type arguments ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13083: contextual primitive names settle as types in generic brackets.\nfunction identity[T](x: T): T {\n  return x;\n}\n\nfunction main(): i32 {\n  let c: char = identity[char]('\u00e9');\n  let source: string = \"hello\";\n  let view: str = slice_unchecked(source, 1, 4);\n  let same: str = identity[str](view);\n  let cs: char[] = identity[char[]](['\u00e9']);\n  if (c != '\u00e9' || same != \"ell\" || cs[0] != c) {\n    return 1;\n  }\n  print(\"contextual type arguments ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// #13083: contextual primitive names settle as types in generic brackets.\nfunction identity[T](x: T): T {\n  return x;\n}\n\nfunction main(): i32 {\n  let c: char = identity[char]('\u00e9');\n  let source: string = \"hello\";\n  let view: str = slice_unchecked(source, 1, 4);\n  let same: str = identity[str](view);\n  let cs: char[] = identity[char[]](['\u00e9']);\n  if (c != '\u00e9' || same != \"ell\" || cs[0] != c) {\n    return 1;\n  }\n  print(\"contextual type arguments ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "leakcheck: allocs=2 frees=2 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "leakcheck: allocs=2 frees=2 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_contextual_type_arguments/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_contextual_type_arguments-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_contextual_type_arguments-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "contextual type arguments ok\n",
+      "stderr": "leakcheck: allocs=2 frees=2 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function (n: i32) to_string(): string {\n  return \"custom\";\n}\n\nfunction main(): i32 {\n  print(f\"{42}\");\n  print(42);\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function (n: i32) to_string(): string {\n  return \"custom\";\n}\n\nfunction main(): i32 {\n  print(f\"{42}\");\n  print(42);\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function (n: i32) to_string(): string {\n  return \"custom\";\n}\n\nfunction main(): i32 {\n  print(f\"{42}\");\n  print(42);\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function (n: i32) to_string(): string {\n  return \"custom\";\n}\n\nfunction main(): i32 {\n  print(f\"{42}\");\n  print(42);\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_custom_method/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_custom_method-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_custom_method-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "custom\ncustom\n",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Direct output also carries the default formatter dependency before typing.\nfunction main(): i32 {\n  print(42 as i32);\n  print(42 as i64);\n  print(42 as u8);\n  print(42 as u32);\n  print(42 as u64);\n  print(42 as usize);\n  print(1.5 as f32);\n  print(1.25 as f64);\n  print(true);\n  print('\ud83e\udd8a');\n  print(\"hello\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Direct output also carries the default formatter dependency before typing.\nfunction main(): i32 {\n  print(42 as i32);\n  print(42 as i64);\n  print(42 as u8);\n  print(42 as u32);\n  print(42 as u64);\n  print(42 as usize);\n  print(1.5 as f32);\n  print(1.25 as f64);\n  print(true);\n  print('\ud83e\udd8a');\n  print(\"hello\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Direct output also carries the default formatter dependency before typing.\nfunction main(): i32 {\n  print(42 as i32);\n  print(42 as i64);\n  print(42 as u8);\n  print(42 as u32);\n  print(42 as u64);\n  print(42 as usize);\n  print(1.5 as f32);\n  print(1.25 as f64);\n  print(true);\n  print('\ud83e\udd8a');\n  print(\"hello\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Direct output also carries the default formatter dependency before typing.\nfunction main(): i32 {\n  print(42 as i32);\n  print(42 as i64);\n  print(42 as u8);\n  print(42 as u32);\n  print(42 as u64);\n  print(42 as usize);\n  print(1.5 as f32);\n  print(1.25 as f64);\n  print(true);\n  print('\ud83e\udd8a');\n  print(\"hello\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "leakcheck: allocs=18 frees=18 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "leakcheck: allocs=18 frees=18 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_direct_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_direct_without_imports-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_direct_without_imports-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "42\n42\n42\n42\n42\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "leakcheck: allocs=20 frees=20 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Only the imported module displays values. The entry adds no display roots.\nimport \"./helper\";\n\nfunction main(): i32 {\n  if (helper.label() != \"7\" || helper.nested() != \"42\") {\n    return 1;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Only the imported module displays values. The entry adds no display roots.\nimport \"./helper\";\n\nfunction main(): i32 {\n  if (helper.label() != \"7\" || helper.nested() != \"42\") {\n    return 1;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Only the imported module displays values. The entry adds no display roots.\nimport \"./helper\";\n\nfunction main(): i32 {\n  if (helper.label() != \"7\" || helper.nested() != \"42\") {\n    return 1;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "// Only the imported module displays values. The entry adds no display roots.\nimport \"./helper\";\n\nfunction main(): i32 {\n  if (helper.label() != \"7\" || helper.nested() != \"42\") {\n    return 1;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_in_imported_defaults/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_in_imported_defaults-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_in_imported_defaults-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function owned_view_text(): string {\n  let source: string = \"longer than inline strings\";\n  let view: str = slice_unchecked(source, 2, 20);\n  return view.to_string();\n}\n\n// All primitive formatters are available without importing their modules.\nfunction main(): i32 {\n  let a: i32 = -2147483648;\n  let b: i64 = -9223372036854775808;\n  let c: u8 = 255;\n  let d: u32 = 4294967295;\n  let e: u64 = 18446744073709551615;\n  let f: usize = 42;\n  let g: f32 = 1.5;\n  let h: f64 = 1.25;\n  let yes: boolean = true;\n  let scalar: char = '\ud83e\udd8a';\n  let text: string = \"hello\";\n  print(f\"{a}|{b}|{c}|{d}|{e}|{f}|{g}|{h}|{yes}|{scalar}|{text}\");\n  print(a);\n  print(b);\n  print(c);\n  print(d);\n  print(e);\n  print(f);\n  print(g);\n  print(h);\n  print(yes);\n  print(scalar);\n  print(text);\n  let original: string = \"longer than inline strings\";\n  let copy: string = original.to_string();\n  original = \"changed\";\n  if (copy != \"longer than inline strings\") {\n    return 1;\n  }\n  if (owned_view_text() != \"nger than inline s\") {\n    return 2;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function owned_view_text(): string {\n  let source: string = \"longer than inline strings\";\n  let view: str = slice_unchecked(source, 2, 20);\n  return view.to_string();\n}\n\n// All primitive formatters are available without importing their modules.\nfunction main(): i32 {\n  let a: i32 = -2147483648;\n  let b: i64 = -9223372036854775808;\n  let c: u8 = 255;\n  let d: u32 = 4294967295;\n  let e: u64 = 18446744073709551615;\n  let f: usize = 42;\n  let g: f32 = 1.5;\n  let h: f64 = 1.25;\n  let yes: boolean = true;\n  let scalar: char = '\ud83e\udd8a';\n  let text: string = \"hello\";\n  print(f\"{a}|{b}|{c}|{d}|{e}|{f}|{g}|{h}|{yes}|{scalar}|{text}\");\n  print(a);\n  print(b);\n  print(c);\n  print(d);\n  print(e);\n  print(f);\n  print(g);\n  print(h);\n  print(yes);\n  print(scalar);\n  print(text);\n  let original: string = \"longer than inline strings\";\n  let copy: string = original.to_string();\n  original = \"changed\";\n  if (copy != \"longer than inline strings\") {\n    return 1;\n  }\n  if (owned_view_text() != \"nger than inline s\") {\n    return 2;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function owned_view_text(): string {\n  let source: string = \"longer than inline strings\";\n  let view: str = slice_unchecked(source, 2, 20);\n  return view.to_string();\n}\n\n// All primitive formatters are available without importing their modules.\nfunction main(): i32 {\n  let a: i32 = -2147483648;\n  let b: i64 = -9223372036854775808;\n  let c: u8 = 255;\n  let d: u32 = 4294967295;\n  let e: u64 = 18446744073709551615;\n  let f: usize = 42;\n  let g: f32 = 1.5;\n  let h: f64 = 1.25;\n  let yes: boolean = true;\n  let scalar: char = '\ud83e\udd8a';\n  let text: string = \"hello\";\n  print(f\"{a}|{b}|{c}|{d}|{e}|{f}|{g}|{h}|{yes}|{scalar}|{text}\");\n  print(a);\n  print(b);\n  print(c);\n  print(d);\n  print(e);\n  print(f);\n  print(g);\n  print(h);\n  print(yes);\n  print(scalar);\n  print(text);\n  let original: string = \"longer than inline strings\";\n  let copy: string = original.to_string();\n  original = \"changed\";\n  if (copy != \"longer than inline strings\") {\n    return 1;\n  }\n  if (owned_view_text() != \"nger than inline s\") {\n    return 2;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "function owned_view_text(): string {\n  let source: string = \"longer than inline strings\";\n  let view: str = slice_unchecked(source, 2, 20);\n  return view.to_string();\n}\n\n// All primitive formatters are available without importing their modules.\nfunction main(): i32 {\n  let a: i32 = -2147483648;\n  let b: i64 = -9223372036854775808;\n  let c: u8 = 255;\n  let d: u32 = 4294967295;\n  let e: u64 = 18446744073709551615;\n  let f: usize = 42;\n  let g: f32 = 1.5;\n  let h: f64 = 1.25;\n  let yes: boolean = true;\n  let scalar: char = '\ud83e\udd8a';\n  let text: string = \"hello\";\n  print(f\"{a}|{b}|{c}|{d}|{e}|{f}|{g}|{h}|{yes}|{scalar}|{text}\");\n  print(a);\n  print(b);\n  print(c);\n  print(d);\n  print(e);\n  print(f);\n  print(g);\n  print(h);\n  print(yes);\n  print(scalar);\n  print(text);\n  let original: string = \"longer than inline strings\";\n  let copy: string = original.to_string();\n  original = \"changed\";\n  if (copy != \"longer than inline strings\") {\n    return 1;\n  }\n  if (owned_view_text() != \"nger than inline s\") {\n    return 2;\n  }\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "leakcheck: allocs=47 frees=47 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "leakcheck: allocs=47 frees=47 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_without_imports/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_without_imports-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_display_without_imports-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "-2147483648|-9223372036854775808|255|4294967295|18446744073709551615|42|1.5|1.25|true|\ud83e\udd8a|hello\n-2147483648\n-9223372036854775808\n255\n4294967295\n18446744073709551615\n42\n1.5\n1.25\ntrue\n\ud83e\udd8a\nhello\n",
+      "stderr": "leakcheck: allocs=53 frees=53 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-Go-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-Go-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-Go-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "import \"core/cmp\";\nimport \"std/num\";\nimport \"std/array\";\n\nfunction lawful[T: cmp.Eq + cmp.Ord + cmp.Hash + cmp.Display](a: T, b: T, text: string): boolean {\n  return a.eq(b) && a.cmp(b) == 0 && a.hash() == b.hash() && a.to_string() == text;\n}\n\nfunction arithmetic[T: num.Num + num.Zero + num.One](a: T, b: T): T {\n  return a.add(b).sub(T.zero()).mul(T.one()).div(T.one());\n}\n\nfunction main(): i32 {\n  if (!lawful(42 as i32, 42 as i32, \"42\")) {\n    return 1;\n  }\n  if (!lawful(42 as i64, 42 as i64, \"42\")) {\n    return 2;\n  }\n  if (!lawful(42 as u8, 42 as u8, \"42\")) {\n    return 3;\n  }\n  if (!lawful(42 as u32, 42 as u32, \"42\")) {\n    return 4;\n  }\n  if (!lawful(42 as u64, 42 as u64, \"42\")) {\n    return 5;\n  }\n  if (!lawful(42 as usize, 42 as usize, \"42\")) {\n    return 6;\n  }\n  if (!lawful(1.5 as f32, 1.5 as f32, \"1.5\")) {\n    return 7;\n  }\n  if (!lawful(1.25 as f64, 1.25 as f64, \"1.25\")) {\n    return 8;\n  }\n  if (!lawful(true, true, \"true\")) {\n    return 9;\n  }\n  if (!lawful('\ud83e\udd8a', '\ud83e\udd8a', \"\ud83e\udd8a\")) {\n    return 10;\n  }\n  if (!lawful(\"hello\", \"hello\", \"hello\")) {\n    return 11;\n  }\n  if (false.cmp(true) != -1 || true.cmp(false) != 1) {\n    return 12;\n  }\n  let cs: char[] = cmp.sort(['\ud83e\udd8a', 'a', '\u00e9']);\n  if (cs[0] != 'a' || cs[1] != '\u00e9' || cs[2] != '\ud83e\udd8a' || !cs.contains('\u00e9')) {\n    return 13;\n  }\n  let ns: usize[] = cmp.sort([3 as usize, 1 as usize, 2 as usize]);\n  if (ns[0] != 1 as usize || !ns.contains(2 as usize)) {\n    return 14;\n  }\n  let bs: u8[] = [250, 10];\n  let sizes: usize[] = [40, 2];\n  if (bs.sum() != 4 as u8 || sizes.sum() != 42 as usize) {\n    return 15;\n  }\n  if (arithmetic(250 as u8, 10 as u8) != 4 as u8) {\n    return 16;\n  }\n  if (arithmetic(40 as usize, 2 as usize) != 42 as usize) {\n    return 17;\n  }\n  let z64: f64 = 0.0;\n  let nz64: f64 = -1.0 * z64;\n  let n64: f64 = z64 / z64;\n  let z32: f32 = 0.0;\n  let nz32: f32 = -1.0 * z32;\n  let n32: f32 = z32 / z32;\n  if (!z64.eq(nz64) || z64.hash() != nz64.hash() || !n64.eq(-n64) || n64.hash() != (-n64).hash()) {\n    return 18;\n  }\n  if (!z32.eq(nz32) || z32.hash() != nz32.hash() || !n32.eq(-n32) || n32.hash() != (-n32).hash()) {\n    return 19;\n  }\n  let payload64: f64 = f64_from_bits(0x7ff0000000000001);\n  let payload32: f32 = f32_from_bits(0x7f800001);\n  if (!n64.eq(payload64) || n64.hash() != payload64.hash()) {\n    return 20;\n  }\n  if (!n32.eq(payload32) || n32.hash() != payload32.hash()) {\n    return 21;\n  }\n  print(\"primitive protocols ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-Go-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-Go/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "import \"core/cmp\";\nimport \"std/num\";\nimport \"std/array\";\n\nfunction lawful[T: cmp.Eq + cmp.Ord + cmp.Hash + cmp.Display](a: T, b: T, text: string): boolean {\n  return a.eq(b) && a.cmp(b) == 0 && a.hash() == b.hash() && a.to_string() == text;\n}\n\nfunction arithmetic[T: num.Num + num.Zero + num.One](a: T, b: T): T {\n  return a.add(b).sub(T.zero()).mul(T.one()).div(T.one());\n}\n\nfunction main(): i32 {\n  if (!lawful(42 as i32, 42 as i32, \"42\")) {\n    return 1;\n  }\n  if (!lawful(42 as i64, 42 as i64, \"42\")) {\n    return 2;\n  }\n  if (!lawful(42 as u8, 42 as u8, \"42\")) {\n    return 3;\n  }\n  if (!lawful(42 as u32, 42 as u32, \"42\")) {\n    return 4;\n  }\n  if (!lawful(42 as u64, 42 as u64, \"42\")) {\n    return 5;\n  }\n  if (!lawful(42 as usize, 42 as usize, \"42\")) {\n    return 6;\n  }\n  if (!lawful(1.5 as f32, 1.5 as f32, \"1.5\")) {\n    return 7;\n  }\n  if (!lawful(1.25 as f64, 1.25 as f64, \"1.25\")) {\n    return 8;\n  }\n  if (!lawful(true, true, \"true\")) {\n    return 9;\n  }\n  if (!lawful('\ud83e\udd8a', '\ud83e\udd8a', \"\ud83e\udd8a\")) {\n    return 10;\n  }\n  if (!lawful(\"hello\", \"hello\", \"hello\")) {\n    return 11;\n  }\n  if (false.cmp(true) != -1 || true.cmp(false) != 1) {\n    return 12;\n  }\n  let cs: char[] = cmp.sort(['\ud83e\udd8a', 'a', '\u00e9']);\n  if (cs[0] != 'a' || cs[1] != '\u00e9' || cs[2] != '\ud83e\udd8a' || !cs.contains('\u00e9')) {\n    return 13;\n  }\n  let ns: usize[] = cmp.sort([3 as usize, 1 as usize, 2 as usize]);\n  if (ns[0] != 1 as usize || !ns.contains(2 as usize)) {\n    return 14;\n  }\n  let bs: u8[] = [250, 10];\n  let sizes: usize[] = [40, 2];\n  if (bs.sum() != 4 as u8 || sizes.sum() != 42 as usize) {\n    return 15;\n  }\n  if (arithmetic(250 as u8, 10 as u8) != 4 as u8) {\n    return 16;\n  }\n  if (arithmetic(40 as usize, 2 as usize) != 42 as usize) {\n    return 17;\n  }\n  let z64: f64 = 0.0;\n  let nz64: f64 = -1.0 * z64;\n  let n64: f64 = z64 / z64;\n  let z32: f32 = 0.0;\n  let nz32: f32 = -1.0 * z32;\n  let n32: f32 = z32 / z32;\n  if (!z64.eq(nz64) || z64.hash() != nz64.hash() || !n64.eq(-n64) || n64.hash() != (-n64).hash()) {\n    return 18;\n  }\n  if (!z32.eq(nz32) || z32.hash() != nz32.hash() || !n32.eq(-n32) || n32.hash() != (-n32).hash()) {\n    return 19;\n  }\n  let payload64: f64 = f64_from_bits(0x7ff0000000000001);\n  let payload32: f32 = f32_from_bits(0x7f800001);\n  if (!n64.eq(payload64) || n64.hash() != payload64.hash()) {\n    return 20;\n  }\n  if (!n32.eq(payload32) || n32.hash() != payload32.hash()) {\n    return 21;\n  }\n  print(\"primitive protocols ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-Go-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-Go-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-Go/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-self-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-self-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-self-fmt",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "import \"core/cmp\";\nimport \"std/num\";\nimport \"std/array\";\n\nfunction lawful[T: cmp.Eq + cmp.Ord + cmp.Hash + cmp.Display](a: T, b: T, text: string): boolean {\n  return a.eq(b) && a.cmp(b) == 0 && a.hash() == b.hash() && a.to_string() == text;\n}\n\nfunction arithmetic[T: num.Num + num.Zero + num.One](a: T, b: T): T {\n  return a.add(b).sub(T.zero()).mul(T.one()).div(T.one());\n}\n\nfunction main(): i32 {\n  if (!lawful(42 as i32, 42 as i32, \"42\")) {\n    return 1;\n  }\n  if (!lawful(42 as i64, 42 as i64, \"42\")) {\n    return 2;\n  }\n  if (!lawful(42 as u8, 42 as u8, \"42\")) {\n    return 3;\n  }\n  if (!lawful(42 as u32, 42 as u32, \"42\")) {\n    return 4;\n  }\n  if (!lawful(42 as u64, 42 as u64, \"42\")) {\n    return 5;\n  }\n  if (!lawful(42 as usize, 42 as usize, \"42\")) {\n    return 6;\n  }\n  if (!lawful(1.5 as f32, 1.5 as f32, \"1.5\")) {\n    return 7;\n  }\n  if (!lawful(1.25 as f64, 1.25 as f64, \"1.25\")) {\n    return 8;\n  }\n  if (!lawful(true, true, \"true\")) {\n    return 9;\n  }\n  if (!lawful('\ud83e\udd8a', '\ud83e\udd8a', \"\ud83e\udd8a\")) {\n    return 10;\n  }\n  if (!lawful(\"hello\", \"hello\", \"hello\")) {\n    return 11;\n  }\n  if (false.cmp(true) != -1 || true.cmp(false) != 1) {\n    return 12;\n  }\n  let cs: char[] = cmp.sort(['\ud83e\udd8a', 'a', '\u00e9']);\n  if (cs[0] != 'a' || cs[1] != '\u00e9' || cs[2] != '\ud83e\udd8a' || !cs.contains('\u00e9')) {\n    return 13;\n  }\n  let ns: usize[] = cmp.sort([3 as usize, 1 as usize, 2 as usize]);\n  if (ns[0] != 1 as usize || !ns.contains(2 as usize)) {\n    return 14;\n  }\n  let bs: u8[] = [250, 10];\n  let sizes: usize[] = [40, 2];\n  if (bs.sum() != 4 as u8 || sizes.sum() != 42 as usize) {\n    return 15;\n  }\n  if (arithmetic(250 as u8, 10 as u8) != 4 as u8) {\n    return 16;\n  }\n  if (arithmetic(40 as usize, 2 as usize) != 42 as usize) {\n    return 17;\n  }\n  let z64: f64 = 0.0;\n  let nz64: f64 = -1.0 * z64;\n  let n64: f64 = z64 / z64;\n  let z32: f32 = 0.0;\n  let nz32: f32 = -1.0 * z32;\n  let n32: f32 = z32 / z32;\n  if (!z64.eq(nz64) || z64.hash() != nz64.hash() || !n64.eq(-n64) || n64.hash() != (-n64).hash()) {\n    return 18;\n  }\n  if (!z32.eq(nz32) || z32.hash() != nz32.hash() || !n32.eq(-n32) || n32.hash() != (-n32).hash()) {\n    return 19;\n  }\n  let payload64: f64 = f64_from_bits(0x7ff0000000000001);\n  let payload32: f32 = f32_from_bits(0x7f800001);\n  if (!n64.eq(payload64) || n64.hash() != payload64.hash()) {\n    return 20;\n  }\n  if (!n32.eq(payload32) || n32.hash() != payload32.hash()) {\n    return 21;\n  }\n  print(\"primitive protocols ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-self-fmt-again",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-fmt",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-self/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "import \"core/cmp\";\nimport \"std/num\";\nimport \"std/array\";\n\nfunction lawful[T: cmp.Eq + cmp.Ord + cmp.Hash + cmp.Display](a: T, b: T, text: string): boolean {\n  return a.eq(b) && a.cmp(b) == 0 && a.hash() == b.hash() && a.to_string() == text;\n}\n\nfunction arithmetic[T: num.Num + num.Zero + num.One](a: T, b: T): T {\n  return a.add(b).sub(T.zero()).mul(T.one()).div(T.one());\n}\n\nfunction main(): i32 {\n  if (!lawful(42 as i32, 42 as i32, \"42\")) {\n    return 1;\n  }\n  if (!lawful(42 as i64, 42 as i64, \"42\")) {\n    return 2;\n  }\n  if (!lawful(42 as u8, 42 as u8, \"42\")) {\n    return 3;\n  }\n  if (!lawful(42 as u32, 42 as u32, \"42\")) {\n    return 4;\n  }\n  if (!lawful(42 as u64, 42 as u64, \"42\")) {\n    return 5;\n  }\n  if (!lawful(42 as usize, 42 as usize, \"42\")) {\n    return 6;\n  }\n  if (!lawful(1.5 as f32, 1.5 as f32, \"1.5\")) {\n    return 7;\n  }\n  if (!lawful(1.25 as f64, 1.25 as f64, \"1.25\")) {\n    return 8;\n  }\n  if (!lawful(true, true, \"true\")) {\n    return 9;\n  }\n  if (!lawful('\ud83e\udd8a', '\ud83e\udd8a', \"\ud83e\udd8a\")) {\n    return 10;\n  }\n  if (!lawful(\"hello\", \"hello\", \"hello\")) {\n    return 11;\n  }\n  if (false.cmp(true) != -1 || true.cmp(false) != 1) {\n    return 12;\n  }\n  let cs: char[] = cmp.sort(['\ud83e\udd8a', 'a', '\u00e9']);\n  if (cs[0] != 'a' || cs[1] != '\u00e9' || cs[2] != '\ud83e\udd8a' || !cs.contains('\u00e9')) {\n    return 13;\n  }\n  let ns: usize[] = cmp.sort([3 as usize, 1 as usize, 2 as usize]);\n  if (ns[0] != 1 as usize || !ns.contains(2 as usize)) {\n    return 14;\n  }\n  let bs: u8[] = [250, 10];\n  let sizes: usize[] = [40, 2];\n  if (bs.sum() != 4 as u8 || sizes.sum() != 42 as usize) {\n    return 15;\n  }\n  if (arithmetic(250 as u8, 10 as u8) != 4 as u8) {\n    return 16;\n  }\n  if (arithmetic(40 as usize, 2 as usize) != 42 as usize) {\n    return 17;\n  }\n  let z64: f64 = 0.0;\n  let nz64: f64 = -1.0 * z64;\n  let n64: f64 = z64 / z64;\n  let z32: f32 = 0.0;\n  let nz32: f32 = -1.0 * z32;\n  let n32: f32 = z32 / z32;\n  if (!z64.eq(nz64) || z64.hash() != nz64.hash() || !n64.eq(-n64) || n64.hash() != (-n64).hash()) {\n    return 18;\n  }\n  if (!z32.eq(nz32) || z32.hash() != nz32.hash() || !n32.eq(-n32) || n32.hash() != (-n32).hash()) {\n    return 19;\n  }\n  let payload64: f64 = f64_from_bits(0x7ff0000000000001);\n  let payload32: f32 = f32_from_bits(0x7f800001);\n  if (!n64.eq(payload64) || n64.hash() != payload64.hash()) {\n    return 20;\n  }\n  if (!n32.eq(payload32) || n32.hash() != payload32.hash()) {\n    return 21;\n  }\n  print(\"primitive protocols ok\");\n  return 0;\n}\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-self-formatted-check",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-self-formatted-interp",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-interp",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-self/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-build-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-x86-64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-run-x86-64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-x86-64-linux"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "leakcheck: allocs=22 frees=22 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-build-arm64-linux",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-arm64-linux",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-run-arm64-linux",
+      "args": [
+        "qemu-aarch64",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-arm64-linux"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "leakcheck: allocs=22 frees=22 live_bytes=0\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-build-wasm32-wasi",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-wasm32-wasi",
+        "-emit",
+        "command-module",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_protocols_and_unsigned_num/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "pass_": true
+    },
+    {
+      "name": "primitive_protocols_and_unsigned_num-run-wasm32-wasi",
+      "args": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-primitive-protocols/verified-matrix/primitive_protocols_and_unsigned_num-wasm32-wasi"
+      ],
+      "exit": 0,
+      "stdout": "primitive protocols ok\n",
+      "stderr": "leakcheck: allocs=24 frees=24 live_bytes=0\n",
+      "pass_": true
+    }
+  ],
+  "failures": []
+}

@@ -64,18 +64,17 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean>>
 ```
-
 ### `module introduction`
 
 ```fern
 <<module introduction>>=
 // This module defines comparison and display traits.
 ```
-
 ### `dependencies 2`
 
 ```fern
 <<dependencies 2>>=
+import "core/utf8_scalar";
 import "std/i32";
 import "std/i64";
 import "std/u32";
@@ -85,7 +84,6 @@ import "std/string";
 import "core/bigint";
 import "std/error";
 ```
-
 ### `3 pub trait Display`
 
 ```fern
@@ -122,6 +120,8 @@ impl Display for u32 {}
 
 impl Display for u64 {}
 
+impl Display for usize {}
+
 impl Display for f64 {}
 
 impl Display for f32 {}
@@ -144,6 +144,14 @@ impl Display for boolean {
     return "false";
   }
 }
+
+impl Display for char {
+  function to_string(self: char): string {
+    return utf8_scalar.from_codepoint(self);
+  }
+}
+
+// ---- Eq --------------------------------------------------------
 
 impl Eq for i32 {
   function eq(self: i32, other: i32): boolean {
@@ -216,8 +224,21 @@ impl Eq for f32 {
     return self == other;
   }
 }
-```
 
+// ---- Ord -------------------------------------------------------
+
+impl Ord for boolean {
+  function cmp(self: boolean, other: boolean): i32 {
+    if (self == other) {
+      return 0;
+    }
+    if (self) {
+      return 1;
+    }
+    return -1;
+  }
+}
+```
 ### `4 impl Ord for i32`
 
 ```fern
@@ -350,7 +371,6 @@ impl Ord for f32 {
   }
 }
 ```
-
 ### `5 impl Ord for string`
 
 ```fern
@@ -367,7 +387,6 @@ impl Ord for string {
   }
 }
 ```
-
 ### `6 function __hash_mix_i32(x: i32): i32`
 
 ```fern
@@ -382,7 +401,6 @@ function __hash_mix_i32(x: i32): i32 {
   return h;
 }
 ```
-
 ### `7 impl Hash for i32`
 
 ```fern
@@ -427,6 +445,33 @@ impl Hash for u64 {
   }
 }
 
+// Float hashes follow Eq: both zeros share a hash, and all NaNs share a hash.
+impl Hash for f64 {
+  function hash(self: f64): i32 {
+    if (self == 0.0) {
+      return __hash_mix_i32(0);
+    }
+    if (self != self) {
+      return __hash_mix_i32(0x7ff80000);
+    }
+    let bits: i64 = f64_bits(self);
+    return __hash_mix_i32(bits as i32 ^ (bits >> 32 as i64) as i32);
+  }
+}
+
+impl Hash for f32 {
+  function hash(self: f32): i32 {
+    if (self == 0.0 as f32) {
+      return __hash_mix_i32(0);
+    }
+    if (self != self) {
+      return __hash_mix_i32(0x7fc00000);
+    }
+    return __hash_mix_i32(f32_bits(self));
+  }
+}
+
+// Folded through u64 so a 32-bit usize (wasm) never shifts by its own width.
 impl Hash for usize {
   function hash(self: usize): i32 {
     let w: u64 = self as u64;
@@ -523,7 +568,6 @@ impl Debug for u32 {
   }
 }
 ```
-
 ### `8 impl Debug for u64`
 
 ```fern
@@ -595,7 +639,6 @@ impl Debug for string {
   }
 }
 ```
-
 ### `9 pub function min[T: Ord](a: T, b: T): T`
 
 ```fern
@@ -682,7 +725,6 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
   return true;
 }
 ```
-
 ### `10 function __cmp_min_run(): i32`
 
 ```fern
@@ -716,7 +758,6 @@ function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T
   return a;
 }
 ```
-
 ### `11 function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[]`
 
 ```fern
@@ -855,7 +896,6 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   return a;
 }
 ```
-
 ### `12 pub function sort[T: Ord](arr: T[]): T[]`
 
 ```fern
@@ -976,7 +1016,6 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
   return a;
 }
 ```
-
 ### `13 function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T)`
 
 ```fern
@@ -1002,7 +1041,6 @@ function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T) => i3
   return a;
 }
 ```
-
 ### `14 pub function is_sorted_by[T](arr: T[], order: (T, T)`
 
 ```fern
@@ -1101,7 +1139,6 @@ pub function sort_by_key_in_place[T, K: Ord](own arr: T[], key: (T) => K): T[] {
   return __cmp_heap_sort(arr, (a: T, b: T): i32 => key(a).cmp(key(b)));
 }
 ```
-
 ### `15 function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[]`
 
 ```fern
@@ -1191,7 +1228,6 @@ function __cmp_sift_down[T](own a: T[], root: i32, n: i32, order: (T, T) => i32)
   return a;
 }
 ```
-
 ### `16 pub function contains[T: Eq](xs: T[], target: T): boolean`
 
 ```fern
@@ -1226,7 +1262,6 @@ pub function distinct[T: Eq](xs: T[]): T[] {
   return out;
 }
 ```
-
 ### `17 impl Display for bigint.BigInt`
 
 ```fern
@@ -1251,7 +1286,6 @@ impl Debug for bigint.BigInt {
   }
 }
 ```
-
 ### `18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean`
 
 ```fern

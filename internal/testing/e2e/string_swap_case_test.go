@@ -2,7 +2,8 @@ package e2e
 
 import "testing"
 
-const stringSwapCaseProg = `
+const stringSwapCaseProg = `import "std/unicode";
+
 import "std/string";
 function main(): i32 {
     if ("Hello World".swap_case() != "hELLO wORLD") { return 1; }

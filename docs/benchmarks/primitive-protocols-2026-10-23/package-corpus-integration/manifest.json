@@ -1,0 +1,534 @@
+{
+  "source_commit": "15a3881824c771fadd1227c831feaa22aa5beb64",
+  "package_dependency": "26c0a362e397506c8bc4c65b104ffc7d3b346cb1",
+  "native_source_commit": "56690b99c644ee5ef39595beb472dc4c4fe7cf18",
+  "native_test_source_commit": "2d845222a5f06a8a21f1e27519cb5995b92b1d96",
+  "issues": [
+    12704,
+    13081,
+    13082,
+    13083,
+    13084,
+    13085
+  ],
+  "tests": [
+    {
+      "file": "/workspace/scratch/lang-primitive-protocols/corpus-worker-integration/go-regressions.jsonl",
+      "cases": 2478,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:03:38.671679025Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/cmd/floattablegen",
+          "Elapsed": 0.272
+        },
+        {
+          "Time": "2026-10-24T23:03:39.351922232Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/stdlib",
+          "Elapsed": 0.161
+        },
+        {
+          "Time": "2026-10-24T23:03:55.655705754Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/pkg/modload",
+          "Elapsed": 2.774
+        },
+        {
+          "Time": "2026-10-24T23:04:05.135412714Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/sourcelint",
+          "Elapsed": 8.627
+        },
+        {
+          "Time": "2026-10-24T23:04:23.841914669Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/check/checker",
+          "Elapsed": 15.38
+        }
+      ]
+    },
+    {
+      "file": "/workspace/scratch/lang-primitive-protocols/latest-package-integration/native-regressions-final.jsonl",
+      "cases": 4566,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T22:03:00.124207679Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Elapsed": 119.538
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "file": "contracts-matrix-results.json",
+      "commands": 144,
+      "balanced_censuses": 24
+    },
+    {
+      "file": "verified-negative.json",
+      "commands": 6,
+      "balanced_censuses": 0
+    },
+    {
+      "file": "package-compatibility/committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-compatibility/package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "package-compatibility/reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    }
+  ],
+  "native_certificate": {
+    "recorded_source": "56690b99c644ee5ef39595beb472dc4c4fe7cf18",
+    "current_source": "15a3881824c771fadd1227c831feaa22aa5beb64",
+    "paths": [
+      "*.fern",
+      "*.fern.md",
+      "bootstrap/stage0.lock",
+      ".github/selfhost-driver-sizes.txt",
+      "scripts/fern-embed-stage",
+      "internal/syntax/diag/explanations",
+      "mise.lock",
+      "mise.toml",
+      "fern.toml",
+      "conformance/cases/primitive_*",
+      "compiler",
+      "internal/stdlib"
+    ],
+    "changed": [],
+    "compiler": "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage3",
+    "compiler_sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94",
+    "native_test_source": "2d845222a5f06a8a21f1e27519cb5995b92b1d96",
+    "native_test_paths": [
+      "internal/testing/e2ecompiler",
+      "internal/testing/e2e",
+      "conformance",
+      "internal/testing/modulecases"
+    ]
+  },
+  "bootstrap": {
+    "source_git": "56690b99c644ee5ef39595beb472dc4c4fe7cf18",
+    "source_sha256": "bf17dbcf2d8d00f8a4c674f353ac538d83d5d161758b8f73661ecdafa932f02d",
+    "stages": [
+      {
+        "stage": "stage1",
+        "producer_sha256": "a4d655b3ce09712582951702c8fce5d0cba0dbe58736c7da95ef2a60a9b3674f",
+        "seconds": 28.38343701401027,
+        "bytes": 14495328,
+        "sha256": "19077d52fdb3161172e1ab5d69668ba0d36b13c1cd555d87643fe802bbfe7f22"
+      },
+      {
+        "stage": "stage2",
+        "producer_sha256": "19077d52fdb3161172e1ab5d69668ba0d36b13c1cd555d87643fe802bbfe7f22",
+        "seconds": 27.022050400992157,
+        "bytes": 14495328,
+        "sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94"
+      },
+      {
+        "stage": "stage3",
+        "producer_sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94",
+        "seconds": 26.279185238003265,
+        "bytes": 14495328,
+        "sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94"
+      }
+    ],
+    "fixedpoint": true
+  },
+  "trace_events": 188,
+  "unpaired": 0,
+  "embedded_commands": 26,
+  "darwin_builds": 8,
+  "darwin_local_execution": false,
+  "performance": {
+    "source_sha256": "9aed03fa67e5ea6b25cb75eeff98aa7a3f073969ffaf92b02ca7ebdd82762b28",
+    "rows": [
+      {
+        "name": "before",
+        "source_commit": "bc623b3fdc2534ce431d0b1c975f29ee6a573fa3",
+        "compiler_sha256": "b72975f4d099ebec5b5354e0e48c0dabfe34c06e066d402085b63d437fd39a96",
+        "binary_sha256": "ed7b7dc7020da1ce7c0d4fc6ea815e5b0417eb7e7536f0237ff83eb1f9cd5b34",
+        "bytes": 29824,
+        "build_args": [
+          "/workspace/scratch/lang-manifest-package/visibility-final-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost-before",
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost.fern",
+          "/workspace/lang-primitive-profile-baseline/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-before.callgrind",
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost-before"
+        ],
+        "instructions": 29937444,
+        "stdout": "321202\n142986\n"
+      },
+      {
+        "name": "after",
+        "source_commit": "56690b99c644ee5ef39595beb472dc4c4fe7cf18",
+        "compiler_sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94",
+        "binary_sha256": "812391afd4207eec62f2723d8d7a635a433260c2460724f733a6714f18d39de0",
+        "bytes": 29824,
+        "build_args": [
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost-after",
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost.fern",
+          "/workspace/lang-primitive-protocols-publish/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-after.callgrind",
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost-after"
+        ],
+        "instructions": 29667649,
+        "stdout": "321202\n142986\n"
+      }
+    ],
+    "instruction_ratio": 0.9909880415976728
+  },
+  "binaries": {
+    "/workspace/scratch/lang-primitive-protocols/corpus-worker-integration/oracle": {
+      "bytes": 27904654,
+      "sha256": "74158205874b178b469c492e93366b3bd2693d1e225edea7e4f7b239775fe05e"
+    },
+    "/workspace/scratch/lang-primitive-protocols/latest-package-integration/oracle": {
+      "bytes": 27904606,
+      "sha256": "0779f4cb2b57e2c1248148b0a37d04e67043537fc1adfed91a6a4a6db56b50b2"
+    },
+    "/workspace/scratch/lang-primitive-protocols/latest-package-integration/oracle-current": {
+      "bytes": 27904606,
+      "sha256": "9b4e1561e29399388b4bf7af7ebc0f6d46960a1a7c0ea41f8c6e6f65261a1581"
+    },
+    "/workspace/scratch/lang-primitive-protocols/latest-package-integration/embedded-fern": {
+      "bytes": 20778512,
+      "sha256": "95dff05fdb3b55488f857815cb4bb1bb42a2c16566969dc6a3269011fd7a4cbd"
+    },
+    "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage2": {
+      "bytes": 14495328,
+      "sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94"
+    },
+    "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage3": {
+      "bytes": 14495328,
+      "sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94"
+    },
+    "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost-before": {
+      "bytes": 29824,
+      "sha256": "ed7b7dc7020da1ce7c0d4fc6ea815e5b0417eb7e7536f0237ff83eb1f9cd5b34"
+    },
+    "/workspace/scratch/lang-primitive-protocols/latest-package-integration/kernel-cost-after": {
+      "bytes": 29824,
+      "sha256": "812391afd4207eec62f2723d8d7a635a433260c2460724f733a6714f18d39de0"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 2325,
+      "sha256": "584e8275fe0d4f10a1fc2038887c0eb65d8a34ef14c7b362f6f3424b51e5390b"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 907926,
+      "sha256": "fa3d5d549213c946c0fd9477758d8ee05aa4c9bcc6f5a9650a3ac79cb24f7e86"
+    },
+    {
+      "path": "current/native-source-certificate.json.gz",
+      "bytes": 467,
+      "sha256": "6e7887731aa684350759a954f93d928c7440c62d2ae67125a795a57aa1b76b86"
+    },
+    {
+      "path": "current/go-regressions.jsonl.gz",
+      "bytes": 147663,
+      "sha256": "c20988f320e94cf8c2802a34cd16b23907dd6485683ce90414f1603a75211462"
+    },
+    {
+      "path": "current/oracle-version.txt.gz",
+      "bytes": 381,
+      "sha256": "49dbe615afb43f57d702115a97cad87af7f6f8f46a71c547728b4fd00563f49d"
+    },
+    {
+      "path": "current/contracts-matrix.py.gz",
+      "bytes": 1462,
+      "sha256": "a8e51719529963e9c62bdbd499f504036a0cc90da741c4f90b1da00236591676"
+    },
+    {
+      "path": "current/contracts-matrix-results.json.gz",
+      "bytes": 4827,
+      "sha256": "d015fffd0b45a2219b24d00b8734c3bb2a6f98982e4e0afc95d6d1feee5e35ef"
+    },
+    {
+      "path": "current/contracts-matrix.log.gz",
+      "bytes": 185,
+      "sha256": "7528648243f72fef96dba55b954470030f537c4376fd0637dd71c9ba6c435244"
+    },
+    {
+      "path": "current/verified-negative.py.gz",
+      "bytes": 734,
+      "sha256": "e0c1da304c8817cb0f9c2db989933ceaa9c1f33354c7d0aca8011f74ca1d882f"
+    },
+    {
+      "path": "current/verified-negative.json.gz",
+      "bytes": 808,
+      "sha256": "a7523e0d1b3a09ba0ed9603a95d1ab8a0f3fb47ef0c72ca3d0a8ff024ff6a8d5"
+    },
+    {
+      "path": "current/verified-negative.log.gz",
+      "bytes": 121,
+      "sha256": "fa62a15b4a9a954f18e789bc7a1e537a0cb27fbb2e5491901effdbcf7415d204"
+    },
+    {
+      "path": "current/vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "current/gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "current/readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "current/pr-body-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "current/record-proofs.py.gz",
+      "bytes": 2988,
+      "sha256": "81de58b98b04ac360dafab68ede9b353333c928253739dc071162ca9ca94cdcd"
+    },
+    {
+      "path": "current/pr-body.md.gz",
+      "bytes": 638,
+      "sha256": "53fd4f3120112b30f74a82b0c39989016dfbf4d6e207a5cc0c8bad0b349ab217"
+    },
+    {
+      "path": "current/package-compatibility/committed-matrix-final.py.gz",
+      "bytes": 1500,
+      "sha256": "edff0d90ab028cc201f687d0f0e41eda71eb34f1aa2d9ff88d5da89515407073"
+    },
+    {
+      "path": "current/package-compatibility/committed-matrix-final-results.json.gz",
+      "bytes": 4494,
+      "sha256": "b5c4b96e6e9d4efced800f76df77bf553d2c35eaa80339c35986395a289dca8b"
+    },
+    {
+      "path": "current/package-compatibility/committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "current/package-compatibility/package-project-matrix-final.py.gz",
+      "bytes": 1434,
+      "sha256": "e9d5a2b88216fade35159e926554f2832bd1269ba97fb347b17be37572898dbc"
+    },
+    {
+      "path": "current/package-compatibility/package-project-matrix-final-results.json.gz",
+      "bytes": 1224,
+      "sha256": "aa8c8b82be1de3ecd53bf7b78dd2a9f23539e9200eefbf0f391826a3ef95d9ff"
+    },
+    {
+      "path": "current/package-compatibility/package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "current/package-compatibility/reexport-matrix-final.py.gz",
+      "bytes": 1484,
+      "sha256": "bcc32dba4525576c2717f7080b29e2d10a76c084f4a9a3ef33faf70b26c2e19f"
+    },
+    {
+      "path": "current/package-compatibility/reexport-matrix-final-results.json.gz",
+      "bytes": 2218,
+      "sha256": "f3ae0d54e521da7295fc4a5b3342c3bdf627ed0ba6eb33c681e742944c30c356"
+    },
+    {
+      "path": "current/package-compatibility/reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    },
+    {
+      "path": "native-records/bootstrap/bootstrap.json.gz",
+      "bytes": 392,
+      "sha256": "d54832f790a50d6fa78754b4ef2f2a55d71e7f0fe23165049aec5335963bcabd"
+    },
+    {
+      "path": "native-records/bootstrap/completed-intermediates.json.gz",
+      "bytes": 263,
+      "sha256": "98baaac6fd270b1ad24663c3325ddb77cef73c8ddeb581cc7a2c0b4d2d843d66"
+    },
+    {
+      "path": "native-records/bootstrap/stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "native-records/bootstrap/stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "native-records/bootstrap/stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "native-records/native-regressions-final.jsonl.gz",
+      "bytes": 264792,
+      "sha256": "6dc4f26042b23839dadb202137469f181018a847f4fd8986b1da1a9c3338505e"
+    },
+    {
+      "path": "native-records/run-native-regressions-final.sh.gz",
+      "bytes": 400,
+      "sha256": "173d583a3c0efffa4f84297fded3d78e84b35c2ce3438ad22402da5949cbb12f"
+    },
+    {
+      "path": "native-records/metadata-only-source-certificate.json.gz",
+      "bytes": 364,
+      "sha256": "cb69dc096038af39371a7134b3abca64991bfa94b2119edf0a0794dfe1e7aae7"
+    },
+    {
+      "path": "native-records/verified-census-results.json.gz",
+      "bytes": 2379,
+      "sha256": "dded7c68c5c206e03350989588c9192e54c1834f078217f4bd7b7fc2ad0507b0"
+    },
+    {
+      "path": "native-records/verified-census.log.gz",
+      "bytes": 185,
+      "sha256": "e37e5d4970bb060a045fe44c2386072d49dde5236233cfdfab7065ab866e5d1f"
+    },
+    {
+      "path": "native-records/measure-verified-census.py.gz",
+      "bytes": 979,
+      "sha256": "69df9d180e8df9154c4307d0bf283bfbbafb95eabe413e0b6b5079c4f469ce95"
+    },
+    {
+      "path": "native-records/embedded-results.json.gz",
+      "bytes": 1144,
+      "sha256": "8c369d76dc26cb8bacdfb51d6b0e8be973a7c6014bbda1e237483cd37a4630dd"
+    },
+    {
+      "path": "native-records/embedded-results.log.gz",
+      "bytes": 257,
+      "sha256": "9817292450dd7f327137343ce29ca8516c6b7074c63a98c1918a32168fde8045"
+    },
+    {
+      "path": "native-records/check-embedded.py.gz",
+      "bytes": 973,
+      "sha256": "ec56e9260fe2c034af3b9469cdc313ef9bfcefd69ce9b1c5d36b2fa441849caf"
+    },
+    {
+      "path": "native-records/darwin-builds-results.json.gz",
+      "bytes": 952,
+      "sha256": "ad3b6126f0ad1d28007921413b6128b5d743d7db31327737e17bc17cb2f9b6f8"
+    },
+    {
+      "path": "native-records/format-final.json.gz",
+      "bytes": 45,
+      "sha256": "2722c224bb4ce32ff65f708ca14f56f64789b93f41b1aea4f4734adb2438d2f8"
+    },
+    {
+      "path": "native-records/format-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "native-records/final-driver-builds.json.gz",
+      "bytes": 1047,
+      "sha256": "77ea84fb1a63611df38f26e4409605f9b5ec13716af8d71d3845e889c576ae67"
+    },
+    {
+      "path": "native-records/final-driver-sizes.txt.gz",
+      "bytes": 166,
+      "sha256": "ea52f42f70713ba98c8be794fe5fc341de0ced4e0dedaf48c4b8ea37bee2ff2c"
+    },
+    {
+      "path": "native-records/final-driver-gate.log.gz",
+      "bytes": 351,
+      "sha256": "847018d2875c2415e11acbc3edb3aafb1c89476f2071a5c9742969360b553c38"
+    },
+    {
+      "path": "native-records/check-sizes.py.gz",
+      "bytes": 899,
+      "sha256": "db2e93b114c98c4994df9084bf7f77ef5c1a8384d289220425e5e44ec27283a8"
+    },
+    {
+      "path": "native-records/complexity-after.txt.gz",
+      "bytes": 104,
+      "sha256": "e7038453733699bf492a9a4b29125bdecab64ef181ca31c042609d89681261ad"
+    },
+    {
+      "path": "native-records/kernel-profile-results.json.gz",
+      "bytes": 716,
+      "sha256": "ba501c88418b39747b7f57fbfbb013a40025b259bcc2ebcfeec21bf487645cbd"
+    },
+    {
+      "path": "native-records/kernel-cost.fern.gz",
+      "bytes": 303,
+      "sha256": "b2e3030f4250080209b4650073b46944e72aed29fb35615cd4aaee6650c1134d"
+    },
+    {
+      "path": "native-records/kernel-before.callgrind.gz",
+      "bytes": 1472,
+      "sha256": "3e73d520f14720ad29d08c6b69ba6b8b8a9b3fa1c6352d93a8bf2d6a2ef5f0df"
+    },
+    {
+      "path": "native-records/kernel-before.log.gz",
+      "bytes": 328,
+      "sha256": "b16258a2de161605d16ea264396e3983775eddbc97fd9ef829fdbb60ffe54857"
+    },
+    {
+      "path": "native-records/kernel-before.stdout.gz",
+      "bytes": 34,
+      "sha256": "d81d0d9a60a2ce5e590289b83d349577e7b7ea47898f576ec3012df786a8a7a9"
+    },
+    {
+      "path": "native-records/kernel-after.callgrind.gz",
+      "bytes": 1475,
+      "sha256": "d64ee529de267fbc725f6802997a0097cfdc6adefd4dd946c6c59c815a0d391b"
+    },
+    {
+      "path": "native-records/kernel-after.log.gz",
+      "bytes": 326,
+      "sha256": "916c56e0454dacf1f070ee0cf4d0f7a8a03a72458bca05aae63053f26dfbdc67"
+    },
+    {
+      "path": "native-records/kernel-after.stdout.gz",
+      "bytes": 34,
+      "sha256": "d81d0d9a60a2ce5e590289b83d349577e7b7ea47898f576ec3012df786a8a7a9"
+    },
+    {
+      "path": "native-records/profile-kernels.py.gz",
+      "bytes": 953,
+      "sha256": "5574ad0ee97343b017ed36a5abdc85627a394f5621061a67aba87992ce32a6e6"
+    },
+    {
+      "path": "native-records/profile-kernels.log.gz",
+      "bytes": 94,
+      "sha256": "d5c7eae61e1449b5552f5ebf09140cda6b26bb9910c0919873d90a28e2202c84"
+    }
+  ]
+}

@@ -1,3 +1,17 @@
+// tail.fern — print the trailing part of each input, like `tail(1)`.
+//
+//   -n N   print the last N lines (default 10)
+//   -c N   print the last N bytes (overrides -n)
+//
+// Accepts the same `-n N` / `-nN` / `-N` flag shapes as `head`. With
+// multiple files each is preceded by a `==> name <==` banner.
+//
+//   $ ./tail -n 3 file.txt
+//   $ seq 100 | ./tail -5
+//
+// Showcases: slicing from the end of an array / string, shared
+// flag-parsing shape with head.fern.
+import "std/result";
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -31,17 +45,17 @@ function main(): i32 {
   while (i < argv.len()) {
     let a: string = argv[i];
     if (a == "-n" && i + 1 < argv.len()) {
-      o = Opts { ...o, count: argv[i + 1].parse_int_or(10), by_bytes: false };
+      o = Opts { ...o, count: i32.parse_i32(argv[i + 1]).unwrap_or(10), by_bytes: false };
       i = i + 1;
     } else if (a == "-c" && i + 1 < argv.len()) {
-      o = Opts { ...o, count: argv[i + 1].parse_int_or(10), by_bytes: true };
+      o = Opts { ...o, count: i32.parse_i32(argv[i + 1]).unwrap_or(10), by_bytes: true };
       i = i + 1;
     } else if (a.starts_with("-n")) {
-      o = Opts { ...o, count: a.drop(2).parse_int_or(10), by_bytes: false };
+      o = Opts { ...o, count: i32.parse_i32(a.drop(2)).unwrap_or(10), by_bytes: false };
     } else if (a.starts_with("-c")) {
-      o = Opts { ...o, count: a.drop(2).parse_int_or(10), by_bytes: true };
+      o = Opts { ...o, count: i32.parse_i32(a.drop(2)).unwrap_or(10), by_bytes: true };
     } else if (a.len() > 1 && a[0] == 45 && a[1].is_ascii_digit()) {
-      o = Opts { ...o, count: a.drop(1).parse_int_or(10), by_bytes: false };
+      o = Opts { ...o, count: i32.parse_i32(a.drop(1)).unwrap_or(10), by_bytes: false };
     } else {
       inputs = inputs.append(a);
     }

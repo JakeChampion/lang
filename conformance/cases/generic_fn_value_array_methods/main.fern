@@ -1,10 +1,4 @@
-
-
-
-
-
-
-
+import "std/array";
 import "std/f64";
 import "std/num" as num;
 

@@ -15,13 +15,13 @@ enum Tagged[R] { Many(R[]), One(R), Both { first: R, rest: R[] }, Nil }
 struct Bag[R] { xs: R[] }
 
 function round(text: string): string {
-  let r: Result[Tagged[string], string] = Tagged.from_json(text);
+  let r: Result[Tagged[string], json.JsonError] = Tagged.from_json(text);
   match (r) {
     Ok(t) => {
       return t.to_json();
     },
     Err(why) => {
-      return "err " + why;
+      return "err " + why.to_string();
     }
   }
   return "";

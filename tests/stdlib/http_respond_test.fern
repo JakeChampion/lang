@@ -87,7 +87,7 @@ function test_problem_without_detail(): test.TestOutcome {
 }
 
 function decode(text: string): Result[HttpResponse, json.JsonError] {
-  let v: json.JsonValue = json.json_parse_result(text)?;
+  let v: json.JsonValue = json.parse(text)?;
   return Ok(http.ok("parsed"));
 }
 

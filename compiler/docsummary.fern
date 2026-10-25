@@ -4,7 +4,7 @@ import "std/utf8";
 import "std/unicode";
 
 function decoded(s: string, i: i32): (i32, i32) {
-  match (utf8.utf8_decode_at(s, i)) {
+  match (utf8.decode_at(s, i)) {
     Some(cp) => {
       return cp;
     },
@@ -54,7 +54,7 @@ function capitalize(s: string): string {
   if (first >= 128) {
     first = 65533;
   }
-  return utf8.utf8_encode((first as char).to_upper()) + slice_unchecked(s, 1, s.len());
+  return utf8.encode((first as char).to_upper()) + slice_unchecked(s, 1, s.len());
 }
 
 pub function summary(intro: string): string {
@@ -165,7 +165,7 @@ pub function quote(s: string): string {
   let out: string = "\"";
   let i: i32 = 0;
   while (i < s.len()) {
-    match (utf8.utf8_decode_at(s, i)) {
+    match (utf8.decode_at(s, i)) {
       Some(cp) => {
         out = out + quoted_scalar(cp.0, slice_unchecked(s, i, i + cp.1));
         i = i + cp.1;

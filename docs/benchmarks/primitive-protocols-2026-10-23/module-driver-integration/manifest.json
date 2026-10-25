@@ -1,0 +1,726 @@
+{
+  "source_commit": "460129e95d676f30cef6a3e8ea94da58872f24ac",
+  "recorded_native_source": "493562d18cd679d2ff4721b6dd9eeca48898c41b",
+  "recorded_go_source": "493562d18cd679d2ff4721b6dd9eeca48898c41b",
+  "baseline_commit": "e4821e67108f3bca308dd18b897e313996a8c3b6",
+  "issues": [
+    12704,
+    13081,
+    13082,
+    13083,
+    13084,
+    13085
+  ],
+  "tests": [
+    {
+      "path": "/workspace/scratch/lang-primitive-protocols/module-driver-integration/go-regressions.jsonl",
+      "cases": 2479,
+      "packages": 5,
+      "skips": 0
+    },
+    {
+      "path": "/workspace/scratch/lang-primitive-protocols/module-driver-integration/native-regressions.jsonl",
+      "cases": 4593,
+      "packages": 1,
+      "skips": 0
+    }
+  ],
+  "matrices": [
+    {
+      "file": "contracts-matrix-results.json",
+      "commands": 144,
+      "balanced_censuses": 24
+    },
+    {
+      "file": "verified-negative.json",
+      "commands": 6,
+      "balanced_censuses": 0
+    },
+    {
+      "file": "package-compatibility/committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-compatibility/package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "package-compatibility/reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    },
+    {
+      "file": "all-coreutils-checks.json",
+      "commands": 212,
+      "balanced_censuses": 0
+    }
+  ],
+  "compiler": {
+    "recorded_source": "493562d18cd679d2ff4721b6dd9eeca48898c41b",
+    "current_source": "460129e95d676f30cef6a3e8ea94da58872f24ac",
+    "paths": [
+      "compiler",
+      "internal/stdlib",
+      "bootstrap/stage0.lock",
+      ".github/selfhost-driver-sizes.txt"
+    ],
+    "compiler": "/workspace/scratch/lang-primitive-protocols/module-driver-integration/bootstrap/stage3",
+    "compiler_sha256": "aeefc6fe2bb67c2bca03b8a4b6c0694234335d85aac54fc96e750e4358a143c6",
+    "oracle": "/workspace/scratch/lang-primitive-protocols/module-driver-integration/oracle",
+    "oracle_sha256": "7c35d20048f86c9a5fa6ae75558007ffa3b5a44384243a364a145e41018bd6f7"
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 1268,
+      "sha256": "8450516399d0dbbf393593390c307662be02195d303f68ecd390bbbe0fd4b177"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 77510,
+      "sha256": "2712b6b05f6097a2e4aebe35700e6ecf33fd231fb032f43941f293270c97ae3f"
+    },
+    {
+      "path": "all-coreutils-checks.json.gz",
+      "bytes": 1825,
+      "sha256": "91f4f2c20d7d813ffaef9ce3f0cde5f5032ca7dea0f96f5b5ec9e8d993bce0ce"
+    },
+    {
+      "path": "all-coreutils-checks.log.gz",
+      "bytes": 438,
+      "sha256": "9c56d79f28ef22bb35a32cbb346037402f41ec0d69149040b22d06c3ab8de5de"
+    },
+    {
+      "path": "asm_ir_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "asm_load_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "asm_modload_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "asm_pathprobe_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "asm_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap__bootstrap.json.gz",
+      "bytes": 392,
+      "sha256": "61f684a6eaaaab8e4f99e7bc1d11e0d3db6ba347d1a886ae9f8a0b6248cb6a26"
+    },
+    {
+      "path": "bootstrap__completed-intermediates.json.gz",
+      "bytes": 263,
+      "sha256": "a4f57b84ce1e8049f661a4581ce928ac904fdad8a5070e39dcf01f6dd64e14c3"
+    },
+    {
+      "path": "bootstrap__stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap__stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap__stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-preservation.log.gz",
+      "bytes": 252,
+      "sha256": "74d2be923386beec5c4c145819df3b21870dd201878c1b2e6027eeea4c97a4d5"
+    },
+    {
+      "path": "bootstrap.log.gz",
+      "bytes": 271,
+      "sha256": "adcbb21dddc1f2f2a8d4aeaa485648b22557662d4e04917434672d6e66fe7025"
+    },
+    {
+      "path": "canonical-head-merge.log.gz",
+      "bytes": 139,
+      "sha256": "ccb1971e03fe04a91e229db7e44e68eafcd19fd1425ede3612557e6c00e1dd14"
+    },
+    {
+      "path": "canonical-source-certificate.json.gz",
+      "bytes": 353,
+      "sha256": "cc59293ef50c981f07d541bb9d66f2dec0b8bf6f863882c13aff41978cecb0bf"
+    },
+    {
+      "path": "check-all-coreutils.py.gz",
+      "bytes": 660,
+      "sha256": "299d81f5410cb85cdbfab45e13870487a533aa7823bc7f7b963afe73ab52a659"
+    },
+    {
+      "path": "check-embedded.py.gz",
+      "bytes": 980,
+      "sha256": "6fca9a798fcfb73b012281bd781dd5c3d4ba895aceeca276d7b6ff58e772518f"
+    },
+    {
+      "path": "check-sizes.log.gz",
+      "bytes": 182,
+      "sha256": "d1dda082bdc8ebc7b30334cbbc45f85e223291df6bfae064ac6759b5a1411e07"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 903,
+      "sha256": "fce65f101f742e874586c299872691b12f5ab27cbe46ff47d663d7c90e543108"
+    },
+    {
+      "path": "checker_modload_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "contracts-matrix-results.json.gz",
+      "bytes": 4814,
+      "sha256": "688ace473260b240bd58001d732f897c55d320b79a6c96796ff91d74fe0f5633"
+    },
+    {
+      "path": "contracts-matrix.log.gz",
+      "bytes": 185,
+      "sha256": "7528648243f72fef96dba55b954470030f537c4376fd0637dd71c9ba6c435244"
+    },
+    {
+      "path": "contracts-matrix.py.gz",
+      "bytes": 1453,
+      "sha256": "593184b0f6e54bf6b6ae67f68ab320566290c1e28cc74bef284988a11f9fa7db"
+    },
+    {
+      "path": "darwin-builds.json.gz",
+      "bytes": 924,
+      "sha256": "6c36373d7c34185c248aa3ce52ba7f51de7605df17f881e5de2f3cd07e2db312"
+    },
+    {
+      "path": "embed-stage.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "embedded-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "embedded-results.json.gz",
+      "bytes": 1155,
+      "sha256": "be0e748e88b421c8d147ebde7e3be2a2457187cca4293fc51b74e6a76cbdc69c"
+    },
+    {
+      "path": "embedded-results.log.gz",
+      "bytes": 257,
+      "sha256": "9817292450dd7f327137343ce29ca8516c6b7074c63a98c1918a32168fde8045"
+    },
+    {
+      "path": "fern-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "final-driver-builds.json.gz",
+      "bytes": 1050,
+      "sha256": "8e74e8cc8c17cfc7011673f50a43d538c64faee21d74d45eb541683addfb2dbb"
+    },
+    {
+      "path": "final-driver-gate.log.gz",
+      "bytes": 351,
+      "sha256": "f3ae029496425aed6fe8011badc5d0884f08026cc450dae3986f878eac353706"
+    },
+    {
+      "path": "final-driver-sizes.txt.gz",
+      "bytes": 165,
+      "sha256": "76264418c2e8c3df7c69afe8933f4fc63edc8bc845ccaf93fc4771e7c1f0b5f1"
+    },
+    {
+      "path": "format-check.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "format-final.json.gz",
+      "bytes": 137,
+      "sha256": "4155d7bce5f74fa0cc6f30b00e7cba4885d612361152d43f9316ae244553e366"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 149937,
+      "sha256": "b47323dca1f88bd128dd846aee22bff22e712d2ec1e3ee5e9ab5dc43cc9d8621"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "kernel-after-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "kernel-after.callgrind.gz",
+      "bytes": 1488,
+      "sha256": "9856f43f75adffcc82fe245dde5fc7f1ab437a18805d31e9aee50d0400fd91cb"
+    },
+    {
+      "path": "kernel-after.log.gz",
+      "bytes": 328,
+      "sha256": "5b5ce011953a8706d839733a3e89532b6197ae5904d7ad71113e900815a2cc22"
+    },
+    {
+      "path": "kernel-after.stdout.gz",
+      "bytes": 34,
+      "sha256": "d81d0d9a60a2ce5e590289b83d349577e7b7ea47898f576ec3012df786a8a7a9"
+    },
+    {
+      "path": "kernel-before-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "kernel-before.callgrind.gz",
+      "bytes": 1478,
+      "sha256": "895063db9fca970e6f14f6110a44dd9c296e1a0ef7184253be47333c15a6ba27"
+    },
+    {
+      "path": "kernel-before.log.gz",
+      "bytes": 329,
+      "sha256": "2a420ade6d228238a76a0cb0f620d151e8bfe42a769e2e3ab026638733929593"
+    },
+    {
+      "path": "kernel-before.stdout.gz",
+      "bytes": 34,
+      "sha256": "d81d0d9a60a2ce5e590289b83d349577e7b7ea47898f576ec3012df786a8a7a9"
+    },
+    {
+      "path": "kernel-cost.fern.gz",
+      "bytes": 303,
+      "sha256": "b2e3030f4250080209b4650073b46944e72aed29fb35615cd4aaee6650c1134d"
+    },
+    {
+      "path": "kernel-profile-results.json.gz",
+      "bytes": 716,
+      "sha256": "8dff8a77b4f05407051ff3126f4bb4bd5af146e08d890a04319c390bbc5e50ca"
+    },
+    {
+      "path": "merge-commit.log.gz",
+      "bytes": 124,
+      "sha256": "929e6cb27f722e291951adcba9ad2811d7cf08ba5bf4a100cf2b53100733da62"
+    },
+    {
+      "path": "merge.log.gz",
+      "bytes": 165,
+      "sha256": "a813f385f516bc451aa637a7de6bc14707221944bb77e7c33b79b17b4f36f954"
+    },
+    {
+      "path": "native-regressions.jsonl.gz",
+      "bytes": 273983,
+      "sha256": "12470d4fbe2c6a7004c2a98c625551c510a1286b1a4a398980ac12c474eeed67"
+    },
+    {
+      "path": "native-source-certificate.json.gz",
+      "bytes": 364,
+      "sha256": "688aec5362d20f497343bee1bf82a37381a0276e1d700750cb1ecd24a2ad5436"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 378,
+      "sha256": "9ceeda784c2402186bfe64e87db56f841f01828333814c429a722fc4e2f7d1e7"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json-Go__main.fern.gz",
+      "bytes": 361,
+      "sha256": "b6a678777be5f5bff5b7aab7facca0b3712ba6cb6da57198ecbfdb0f1afd1aa4"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json-self__main.fern.gz",
+      "bytes": 361,
+      "sha256": "b6a678777be5f5bff5b7aab7facca0b3712ba6cb6da57198ecbfdb0f1afd1aa4"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json_i64-Go__main.fern.gz",
+      "bytes": 260,
+      "sha256": "a9154d5cfcf749beed3ffc63535b096bb3bacf8528a711d9211a0171b88c9421"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json_i64-self__main.fern.gz",
+      "bytes": 260,
+      "sha256": "a9154d5cfcf749beed3ffc63535b096bb3bacf8528a711d9211a0171b88c9421"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json_shapes-Go__expected.stdout.gz",
+      "bytes": 320,
+      "sha256": "a5413b2c72c9b8e2c7e12611ef370399089d597cfe676f1b31217a9469889499"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json_shapes-Go__main.fern.gz",
+      "bytes": 729,
+      "sha256": "871b185606f4120660590a591245965938149e1bd7ebdc84d065eba1e4d59b65"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json_shapes-self__expected.stdout.gz",
+      "bytes": 320,
+      "sha256": "a5413b2c72c9b8e2c7e12611ef370399089d597cfe676f1b31217a9469889499"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__derive_from_json_shapes-self__main.fern.gz",
+      "bytes": 729,
+      "sha256": "871b185606f4120660590a591245965938149e1bd7ebdc84d065eba1e4d59b65"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__for_over_collections-Go__expected.stdout.gz",
+      "bytes": 96,
+      "sha256": "da11d3583fe7e950aca0b75085eae9457de17216b77ddfb5d8e95ba342759bb9"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__for_over_collections-Go__main.fern.gz",
+      "bytes": 380,
+      "sha256": "6641366db4074dc1adb5d97e3686af13d79e87a9f4edf445dde6d11869a37401"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__for_over_collections-self__expected.stdout.gz",
+      "bytes": 96,
+      "sha256": "da11d3583fe7e950aca0b75085eae9457de17216b77ddfb5d8e95ba342759bb9"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__for_over_collections-self__main.fern.gz",
+      "bytes": 380,
+      "sha256": "6641366db4074dc1adb5d97e3686af13d79e87a9f4edf445dde6d11869a37401"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__package_scoped_stdlib_helpers-Go__expected.stdout.gz",
+      "bytes": 39,
+      "sha256": "b924daed592be029b6d10c91901ef0ffd0b9173cde50bd525d8cbde1c2ac8b0a"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__package_scoped_stdlib_helpers-Go__main.fern.gz",
+      "bytes": 969,
+      "sha256": "d68f9a742ec199d487f1df9da3cbb8bfecfbe1352fff46108e3be40581a26ce4"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__package_scoped_stdlib_helpers-Go__shared.fern.gz",
+      "bytes": 68,
+      "sha256": "3ed9b2b5f3bf666d4a3dccd481ee879f6f26a39ffe19d9590fb0d69c85673f04"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__package_scoped_stdlib_helpers-self__expected.stdout.gz",
+      "bytes": 39,
+      "sha256": "b924daed592be029b6d10c91901ef0ffd0b9173cde50bd525d8cbde1c2ac8b0a"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__package_scoped_stdlib_helpers-self__main.fern.gz",
+      "bytes": 969,
+      "sha256": "d68f9a742ec199d487f1df9da3cbb8bfecfbe1352fff46108e3be40581a26ce4"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final__package_scoped_stdlib_helpers-self__shared.fern.gz",
+      "bytes": 68,
+      "sha256": "3ed9b2b5f3bf666d4a3dccd481ee879f6f26a39ffe19d9590fb0d69c85673f04"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final-results.json.gz",
+      "bytes": 4478,
+      "sha256": "f50d9a8284a059abb3fb0929a9ab7844a0515c5cc4ba9a3e1365fa4c69301842"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final.py.gz",
+      "bytes": 1492,
+      "sha256": "c7e17c54603cda2e7fab4526ce33d8eb3363a9b04cbb857fcc216120250dcdc4"
+    },
+    {
+      "path": "package-compatibility__package-project-final__main.fern.gz",
+      "bytes": 163,
+      "sha256": "2e98c0d49782f4f5fd21c59fc1ea74d9d0ef238cf5134efc308fdda396c60131"
+    },
+    {
+      "path": "package-compatibility__package-project-final__sub__lib.fern.gz",
+      "bytes": 143,
+      "sha256": "e6593068a8200eb031119217210da3693a3aa50f24368db018671e53d7dab8c2"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final-results.json.gz",
+      "bytes": 1213,
+      "sha256": "c8dd1c33d8de18e31268d85a2c225682c03ca740ba82614e198d04020ca5b7a7"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final.py.gz",
+      "bytes": 1430,
+      "sha256": "033fcff614251f9140088eac00d998e4c5658919be03a1879c153bd8debffedf"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__bare-payload-variant__facade.fern.gz",
+      "bytes": 53,
+      "sha256": "c518133ae9bd87debf991a1a73a37485f17e7e4493415d896f283534ec7fc471"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__bare-payload-variant__lib.fern.gz",
+      "bytes": 54,
+      "sha256": "8a578987504c5c28fcef534f52cce075750c2a25dbb90d434e366d780adbd15a"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__bare-payload-variant__main.fern.gz",
+      "bytes": 94,
+      "sha256": "ac53f6b73dadea3380262693219a3efa4367176fb814e4995d983738efc5f7bc"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__enum-through-owner__facade.fern.gz",
+      "bytes": 47,
+      "sha256": "e68909261c8318264e7b1ccf552e7ae98a14f1a9211328d8256aa136deedbf63"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__enum-through-owner__lib.fern.gz",
+      "bytes": 54,
+      "sha256": "8a578987504c5c28fcef534f52cce075750c2a25dbb90d434e366d780adbd15a"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__enum-through-owner__main.fern.gz",
+      "bytes": 135,
+      "sha256": "88ec664096a9f9151377deeddb4f5ba901544179fe3a5403eabae9f4f2fabbcc"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__invalid-chain__facade.fern.gz",
+      "bytes": 47,
+      "sha256": "e6621357b71540e79079f7eb270502d86987e51c5dac113c09ea658ea6f1f82f"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__invalid-chain__inner.fern.gz",
+      "bytes": 45,
+      "sha256": "735b5f5d29f20b2ded4af64aedad5095023eb6b2fe4f53ea47df7bd1083c6b30"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__invalid-chain__lib.fern.gz",
+      "bytes": 54,
+      "sha256": "8a578987504c5c28fcef534f52cce075750c2a25dbb90d434e366d780adbd15a"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__invalid-chain__main.fern.gz",
+      "bytes": 73,
+      "sha256": "8489ee4fb7714cee0d165e0a4a20cf757d83a7f6be6ba2ebbf0f582be0e7c576"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__package-function__facade.fern.gz",
+      "bytes": 47,
+      "sha256": "1e5bfa652f8cb24129949e40bbfa0b75eef476344cff386d0203a97e0b76e4e3"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__package-function__lib.fern.gz",
+      "bytes": 70,
+      "sha256": "d15a4cd4d0061a570083fc7404c65dd38b0726c36f1077010d361a61c9b7f2b2"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__package-function__main.fern.gz",
+      "bytes": 73,
+      "sha256": "8489ee4fb7714cee0d165e0a4a20cf757d83a7f6be6ba2ebbf0f582be0e7c576"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__private-function__facade.fern.gz",
+      "bytes": 47,
+      "sha256": "1e5bfa652f8cb24129949e40bbfa0b75eef476344cff386d0203a97e0b76e4e3"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__private-function__lib.fern.gz",
+      "bytes": 57,
+      "sha256": "ea23d765a7c63d87c96f2c8b18311628783ab35aa12ad149e8b18b8ba4f46e40"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__private-function__main.fern.gz",
+      "bytes": 73,
+      "sha256": "8489ee4fb7714cee0d165e0a4a20cf757d83a7f6be6ba2ebbf0f582be0e7c576"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__public-declarations__facade.fern.gz",
+      "bytes": 60,
+      "sha256": "8f65f7e13b571c68ddea153a8f1d43d5344a21afffe822357a857e0c18b2a5d1"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__public-declarations__lib.fern.gz",
+      "bytes": 84,
+      "sha256": "4dc58099f81cda98c0fae3b8427ac59c51aae773dd0496fc5e27027de6907ad6"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__public-declarations__main.fern.gz",
+      "bytes": 119,
+      "sha256": "1a0d5bf9c8b96f034699f2b9a3b93298cfa7b2e24c4952dc9da5e87bac02291b"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__public-function-precedence__facade.fern.gz",
+      "bytes": 45,
+      "sha256": "735b5f5d29f20b2ded4af64aedad5095023eb6b2fe4f53ea47df7bd1083c6b30"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__public-function-precedence__lib.fern.gz",
+      "bytes": 87,
+      "sha256": "6a8398574b2ecf2afc12dac7387d12e9a91dd64920b3f8fa12dd0d105677525b"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__public-function-precedence__main.fern.gz",
+      "bytes": 98,
+      "sha256": "895f52a9fe242d95b2e476a42ff8bb218599fa2a64ae5f2c724e53a88438f5c6"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__unused-missing-name__facade.fern.gz",
+      "bytes": 48,
+      "sha256": "5b947eee37c323015e96806929660cd2e60bcc9da9b49368fa706f6dafd412bf"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__unused-missing-name__lib.fern.gz",
+      "bytes": 54,
+      "sha256": "8a578987504c5c28fcef534f52cce075750c2a25dbb90d434e366d780adbd15a"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__unused-missing-name__main.fern.gz",
+      "bytes": 73,
+      "sha256": "8489ee4fb7714cee0d165e0a4a20cf757d83a7f6be6ba2ebbf0f582be0e7c576"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__unused-unit-variant__facade.fern.gz",
+      "bytes": 44,
+      "sha256": "331f7e08fdefa4e204a4a7aecefe555afa09d4ab1a3e8bd0d85ac7a04fbd1b9a"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__unused-unit-variant__lib.fern.gz",
+      "bytes": 54,
+      "sha256": "8a578987504c5c28fcef534f52cce075750c2a25dbb90d434e366d780adbd15a"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__unused-unit-variant__main.fern.gz",
+      "bytes": 73,
+      "sha256": "8489ee4fb7714cee0d165e0a4a20cf757d83a7f6be6ba2ebbf0f582be0e7c576"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__valid-chain__facade.fern.gz",
+      "bytes": 49,
+      "sha256": "bdf653a457af06dd28e753e3c0da23890a0f8f883203b9b9a789c402a3555ab1"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__valid-chain__inner.fern.gz",
+      "bytes": 47,
+      "sha256": "e68909261c8318264e7b1ccf552e7ae98a14f1a9211328d8256aa136deedbf63"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__valid-chain__lib.fern.gz",
+      "bytes": 54,
+      "sha256": "8a578987504c5c28fcef534f52cce075750c2a25dbb90d434e366d780adbd15a"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final__valid-chain__main.fern.gz",
+      "bytes": 135,
+      "sha256": "88ec664096a9f9151377deeddb4f5ba901544179fe3a5403eabae9f4f2fabbcc"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final-results.json.gz",
+      "bytes": 2211,
+      "sha256": "c5e4a58aebfec414ffcbebc8df17afb6e0a82744274ec5c9b071de2c4657e632"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final.py.gz",
+      "bytes": 1477,
+      "sha256": "76313a525f2e21dccda82c154b5556bd89c17aa3be19c0ddc0455a6214acc2ed"
+    },
+    {
+      "path": "pr-body-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body.md.gz",
+      "bytes": 729,
+      "sha256": "3f38a4ead8c975c9599691cae7dfad024cca318b6e55d3f5dde0f6adb7f51159"
+    },
+    {
+      "path": "profile-kernels.log.gz",
+      "bytes": 94,
+      "sha256": "d5c7eae61e1449b5552f5ebf09140cda6b26bb9910c0919873d90a28e2202c84"
+    },
+    {
+      "path": "profile-kernels.py.gz",
+      "bytes": 951,
+      "sha256": "f725a41ac15a0547269c6536643cf65575619f66f04a3d9680eafe75d68e0075"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "restore-final.log.gz",
+      "bytes": 142,
+      "sha256": "df2a2a60111ddb7ef47114fbfbe3af498fbda91fa180e3d1438228f85a43b1c5"
+    },
+    {
+      "path": "restore.log.gz",
+      "bytes": 83,
+      "sha256": "87b0eed3efbc371df807597d58b38b514ee6dee3cbeac54810b094eb1de7daf0"
+    },
+    {
+      "path": "verified-negative.json.gz",
+      "bytes": 797,
+      "sha256": "6e4dc92eef6af5504ba7bf1b403c5db7fef589d66e9cc99ee441f6db99cdb9a5"
+    },
+    {
+      "path": "verified-negative.log.gz",
+      "bytes": 121,
+      "sha256": "fa62a15b4a9a954f18e789bc7a1e537a0cb27fbb2e5491901effdbcf7415d204"
+    },
+    {
+      "path": "verified-negative.py.gz",
+      "bytes": 723,
+      "sha256": "0c6f23244cdbeb98024e8e1f947b94cfe86e2859a6c8424fc93f19c71c6e92ee"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "wasm_ir_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "wasm_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "wasm_runio_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 3249,
+      "sha256": "1a0a30635b7ef15c9b7c9b6efaee71eb94eeff2fd2e68d8bde7320a2dc448425"
+    }
+  ]
+}

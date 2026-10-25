@@ -61,6 +61,13 @@ func writeClosureArgProject(t *testing.T, root, name, entry string) string {
 	return entryPath
 }
 
+func buildConcatDriver(t *testing.T, gcc string) (string, string) {
+	t.Helper()
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "drivers/asm_modload_run.fern")
+	return dir, buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "mmr")
+}
+
 func TestSelfHostPerModuleClosureArgLinkX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

@@ -1,3 +1,24 @@
+// examples/vcl/machine.fern — the VCL request state machine.
+//
+// This is the part that makes VCL a language rather than a config format:
+// subroutines do not run top to bottom, they are STATES, and the value a
+// subroutine returns picks the next one. `vcl_recv` returning `hash`
+// takes the request to the cache; returning `pass` routes it to the
+// backend without ever looking. What each subroutine may see (`vars.fern`)
+// follows from where it sits in this graph.
+//
+// The built-in subroutines are modelled too, and that is not a detail:
+// in Varnish, a `vcl_recv` that falls off the end WITHOUT returning
+// continues into the built-in `vcl_recv`, which passes any request with
+// a Cookie or Authorization header. VCL authors are caught by this
+// constantly. Here `run_stage` runs the user's subroutine and applies the
+// built-in default only when the user's fell through, which reproduces
+// it.
+//
+// The backend is a mock (`fetch`): it never opens a socket. A URL of the
+// form `/status/NNN` comes back with that status, which is the hook the
+// tests use to drive the error paths.
+import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
@@ -55,11 +76,11 @@ pub function backends_of(decls: ast.Decl[]): Backend[] {
           host = "127.0.0.1";
         }
         let port: i32 = 80;
-        match (prop_string(b.props, ".port").parse_int()) {
-          Some(n) => {
+        match (i32.parse_i32(prop_string(b.props, ".port"))) {
+          Ok(n) => {
             port = n;
           },
-          None => {}
+          Err(_) => {}
         }
         out = out.append(Backend { name: b.name, host: host, port: port });
       },
@@ -159,12 +180,12 @@ pub function mock_fetch(b: Backend, t: runtime.Txn): FetchOut {
   let status: i64 = 200;
   let reason: string = "OK";
   if (url.starts_with("/status/")) {
-    match (slice_unchecked(url, 8, url.len()).to_owned().parse_int()) {
-      Some(n) => {
+    match (i32.parse_i32(slice_unchecked(url, 8, url.len()).to_owned())) {
+      Ok(n) => {
         status = n as i64;
         reason = "Synthetic";
       },
-      None => {}
+      Err(_) => {}
     }
   }
   let h: runtime.Headers = runtime.headers_new();

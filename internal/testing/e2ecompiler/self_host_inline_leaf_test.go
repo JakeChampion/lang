@@ -109,16 +109,16 @@ func TestSelfHostInlinePrimitiveLeaf(t *testing.T) {
 
 const inlineShortCircuitLeafProg = `function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
 function is_alpha(b: i32): boolean { return b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 95; }
-function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+function is_alphanumeric(b: i32): boolean { return is_digit(b) || is_alpha(b); }
 @noinline function count(n: i32): i32 {
     let t: i32 = 0;
     let b: i32 = 0;
-    while (b < n) { if (is_alnum(b)) { t = t + 1; } b = b + 1; }
+    while (b < n) { if (is_alphanumeric(b)) { t = t + 1; } b = b + 1; }
     return t;
 }
 @noinline function first_other(n: i32): i32 {
     let b: i32 = 0;
-    while (b < n && is_alnum(b)) { b = b + 1; }
+    while (b < n && is_alphanumeric(b)) { b = b + 1; }
     return b;
 }
 function main(): i32 { return count(128) + first_other(4); }
