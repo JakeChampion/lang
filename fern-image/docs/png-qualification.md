@@ -77,6 +77,29 @@ They preserve observations from the compiler and reference versions inside each 
 Input hashes can change with a different Pillow or zlib implementation.
 No wall-time, throughput, RSS, visual-quality, or performance-parity claim follows from these records.
 
+## Sequential row campaign
+
+Issue #13341 extends the same 964 inputs to the sequential row API.
+Each accepted file must produce exact reference bytes through eager decode, a full row fold, and a middle row selection.
+The selected range starts at half the image height and contains at most two rows.
+Each rejected file must return the same codec error class through eager decode and the row API.
+
+All three targets pass 964 inputs across 61 fresh batches each.
+Each target accepts 142 inputs and rejects 822 inputs. All 183 batches report zero final live bytes.
+Case outcomes and output hashes agree across native Linux, Wasm, and ARM64/QEMU.
+The filtered frame remains eager and complete before the row consumer runs.
+
+The source commit is `4de281eca`, and the compiler reports `2105e9e82250`.
+The records hash the exact compiler, worker, collector, package sources, reference libraries, and all 163 workspace stdlib sources.
+The complete 84 image TAP cases also pass on these three targets.
+The native and Wasm scripts additionally pass their allocator and cache smoke checks.
+The ARM64 run covers portable TAP cases rather than Linux process RSS workloads.
+
+The new raw records reside in `benchmarks/results/png-rows-native.json`, `png-rows-wasm.json`, and `png-rows-arm64.json`.
+The earlier `png-corpus` records retain their historical source and compiler hashes.
+The campaign limits and qualification exclusions above apply to both sets of records.
+Full current-head CI remains a separate gate.
+
 ## Reproduce
 
 Use CPython 3.12 on Linux x86-64 for the pinned reference wheel.

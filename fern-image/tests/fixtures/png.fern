@@ -71,6 +71,10 @@ pub function short_scanline(): u8[] {
   return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 9 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8, 0 as u8, 1 as u8, 94 as u8, 255 as u8, 125 as u8, 249 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
 }
 
+pub function bad_final_filter(): u8[] {
+  return [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8, 0 as u8, 0 as u8, 0 as u8, 13 as u8, 73 as u8, 72 as u8, 68 as u8, 82 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 8 as u8, 2 as u8, 0 as u8, 0 as u8, 0 as u8, 253 as u8, 212 as u8, 154 as u8, 115 as u8, 0 as u8, 0 as u8, 0 as u8, 22 as u8, 73 as u8, 68 as u8, 65 as u8, 84 as u8, 120 as u8, 156 as u8, 99 as u8, 248 as u8, 207 as u8, 32 as u8, 200 as u8, 125 as u8, 130 as u8, 129 as u8, 149 as u8, 137 as u8, 153 as u8, 229 as u8, 87 as u8, 67 as u8, 50 as u8, 0 as u8, 25 as u8, 209 as u8, 3 as u8, 207 as u8, 50 as u8, 173 as u8, 62 as u8, 5 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 73 as u8, 69 as u8, 78 as u8, 68 as u8, 174 as u8, 66 as u8, 96 as u8, 130 as u8];
+}
+
 pub function rgb_bytes(): u8[] {
   return [255 as u8, 0 as u8, 17 as u8, 11 as u8, 200 as u8, 0 as u8, 2 as u8, 3 as u8, 4 as u8, 250 as u8, 128 as u8, 99 as u8];
 }

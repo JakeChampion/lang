@@ -46,10 +46,78 @@ function sample(name) {
       total: 3,
       rows: ["alpha", "birch", "fern"].map((key) => ({ key, value: "sample" })),
     };
-  return { revision: 0, documents: 0, terms: 0, words: 0 };
+  if (name === "lantern") return { revision: 0, documents: 0, terms: 0, words: 0 };
+  return {};
 }
 
 const draw = {
+  json(c) {
+    const lines = [
+      ['[{"id":', "100000", ',"user":{"name":', '"fern_42"', "},"],
+      ['  "text":', '"moss river light"', ',"score":', "12.345", ","],
+      ['  "tags":[', '"fern","seed"', '],"geo":', "null", "},"],
+      ["  …"],
+    ];
+    lines.forEach((parts, row) => {
+      let x = 34;
+      parts.forEach((part, i) => {
+        c.fillStyle = i % 2 ? spore : text;
+        c.fillText(part, x, 50 + row * 30);
+        x += c.measureText(part).width;
+      });
+    });
+    ["native", "Wasm", "JSON.parse"].forEach((engine, i) => {
+      c.fillStyle = i === 2 ? mint : frond;
+      c.fillText(`→ ${engine}`, 34 + i * 200, 220);
+    });
+  },
+  compress(c) {
+    for (let row = 0; row < 6; row++) {
+      c.fillStyle = "#24332b";
+      c.fillRect(34, 30 + row * 26, 280, 14);
+    }
+    c.fillStyle = muted;
+    c.fillText("access log", 34, 205);
+    ["gzip", "Brotli", "zstd"].forEach((codec, i) => {
+      const y = 40 + i * 52;
+      c.fillStyle = spore;
+      c.fillRect(380, y, 120 - i * 14, 14);
+      c.fillStyle = text;
+      c.fillText(codec, 520, y + 12);
+    });
+    c.fillStyle = frond;
+    c.fillText("→ your browser decodes it", 380, 220);
+  },
+  handshake(c) {
+    const box = (x, label, sub) => {
+      c.fillStyle = "#15211b";
+      c.fillRect(x, 70, 180, 120);
+      c.strokeStyle = "#384a3f";
+      c.strokeRect(x, 70, 180, 120);
+      c.fillStyle = text;
+      c.textAlign = "center";
+      c.fillText(label, x + 90, 120);
+      c.fillStyle = muted;
+      c.fillText(sub, x + 90, 146);
+      c.textAlign = "left";
+    };
+    box(40, "your browser", "Fern Wasm");
+    box(440, "server", "native Fern");
+    c.strokeStyle = spore;
+    c.beginPath();
+    c.moveTo(230, 110);
+    c.lineTo(430, 110);
+    c.moveTo(430, 150);
+    c.lineTo(230, 150);
+    c.stroke();
+    c.fillStyle = spore;
+    c.textAlign = "center";
+    c.fillText("ML-KEM-768 + X25519 →", 330, 100);
+    c.fillText("← ciphertext · sealed", 330, 176);
+    c.fillStyle = frond;
+    c.fillText("one shared key, never sent", 330, 236);
+    c.textAlign = "left";
+  },
   foundry(c, w, h, data) {
     const rows = Math.ceil(data.cells.length / data.width),
       size = Math.min(w / data.width, h / rows),
@@ -167,6 +235,7 @@ for (const canvas of document.querySelectorAll("[data-lab-preview]")) {
       draw[name](c, canvas.width, canvas.height, data);
     };
   render(sample(name));
+  if (!sources[name]) continue;
   fetch(sources[name])
     .then((response) => (response.ok ? response.json() : Promise.reject()))
     .then(render)
