@@ -1,4 +1,5 @@
 import "../packages/color/color";
+import "../packages/pixels/pixels";
 import "std/test";
 
 function near(a: f64, b: f64): boolean {
@@ -58,11 +59,61 @@ function gray(): test.TestOutcome {
     && swapped.r == 3 as u8 && swapped.g == 2 as u8 && swapped.b == 1 as u8 && swapped.a == 4 as u8);
 }
 
+function image_conversion(): Result[boolean, pixels.ImageError] {
+  let image = pixels.create(2, 1, 8, pixels.RGB8, pixels.default_limits())?;
+  image = pixels.write_pixel(image, 0, 0, color.rgb(11 as u8, 22 as u8, 33 as u8))?;
+  image = pixels.write_pixel(image, 1, 0, color.rgb(99 as u8, 88 as u8, 77 as u8))?;
+  let converted = color.to_rgba(image, pixels.default_limits())?;
+  let a = pixels.read_pixel(converted, 0, 0)?;
+  let b = pixels.read_pixel(converted, 1, 0)?;
+  let back = color.flatten_rgb(converted, color.rgb(0 as u8, 0 as u8, 0 as u8), pixels.default_limits())?;
+  let before = pixels.read_pixel(image, 1, 0)?;
+  return Ok(converted.layout.stride == 8 && back.layout.stride == 6
+    && a.r == 11 as u8 && a.g == 22 as u8 && a.b == 33 as u8 && a.a == 255 as u8
+    && b.r == 99 as u8 && b.g == 88 as u8 && b.b == 77 as u8 && b.a == 255 as u8
+    && before.r == 99 as u8 && image.data[6] == 0 as u8 && image.data[7] == 0 as u8);
+}
+
+function image_alpha(): Result[boolean, pixels.ImageError] {
+  let image = pixels.create(3, 1, 16, pixels.RGBA8, pixels.default_limits())?;
+  image = pixels.write_pixel(image, 0, 0, color.rgba(255 as u8, 0 as u8, 0 as u8, 0 as u8))?;
+  image = pixels.write_pixel(image, 1, 0, color.rgba(255 as u8, 255 as u8, 255 as u8, 128 as u8))?;
+  image = pixels.write_pixel(image, 2, 0, color.rgb(255 as u8, 0 as u8, 0 as u8))?;
+  let kept = color.to_rgba(image, pixels.default_limits())?;
+  let transparent = pixels.read_pixel(kept, 0, 0)?;
+  let flattened = color.flatten_rgb(image, color.rgb(0 as u8, 0 as u8, 255 as u8), pixels.default_limits())?;
+  let a = pixels.read_pixel(flattened, 0, 0)?;
+  let b = pixels.read_pixel(flattened, 1, 0)?;
+  let c = pixels.read_pixel(flattened, 2, 0)?;
+  return Ok(kept.layout.stride == 12 && flattened.layout.stride == 9
+    && transparent.r == 255 as u8 && transparent.a == 0 as u8
+    && a.r == 0 as u8 && a.g == 0 as u8 && a.b == 255 as u8 && a.a == 255 as u8
+    && b.r == 188 as u8 && b.g == 188 as u8 && b.b == 255 as u8
+    && c.r == 255 as u8 && c.g == 0 as u8 && c.b == 0 as u8);
+}
+
+function converted_images(): test.TestOutcome {
+  let layout = match (image_conversion()) { Ok(v) => v, Err(_) => false };
+  let alpha = match (image_alpha()) { Ok(v) => v, Err(_) => false };
+  return test.assert_true(layout && alpha);
+}
+
+function image_errors(): test.TestOutcome {
+  let image = match (pixels.create(1, 1, 3, pixels.RGB8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("create image"); } };
+  let malformed = pixels.Image { layout: image.layout, data: [] };
+  let storage = match (color.to_rgba(malformed, pixels.default_limits())) { Ok(_) => false, Err(e) => e == pixels.Storage };
+  let budget = match (color.to_rgba(image, pixels.Limits { max_pixels: 1, max_bytes: 3 })) { Ok(_) => false, Err(e) => e == pixels.Limit };
+  let alpha = match (color.flatten_rgb(image, color.rgba(0 as u8, 0 as u8, 0 as u8, 128 as u8), pixels.default_limits())) { Ok(_) => false, Err(e) => e == pixels.Alpha };
+  return test.assert_true(storage && budget && alpha);
+}
+
 function main(): i32 {
   let r = test.test_new("color M1");
   r = r.it("sRGB thresholds and exhaustive byte round trips", transfer);
   r = r.it("premultiply, unpremultiply, zero alpha and saturation", alpha);
   r = r.it("linear source over and transparent pixels", composite);
   r = r.it("linear luminance and channel operations", gray);
+  r = r.it("whole-image conversion, padding, and alpha preservation", converted_images);
+  r = r.it("image conversion rejects unsafe storage, budgets, and background", image_errors);
   return r.finish();
 }

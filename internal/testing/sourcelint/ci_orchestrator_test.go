@@ -18,6 +18,7 @@ const reaperFile = "cancel-on-failure.yml"
 
 type ciJob struct {
 	id    string
+	file  string
 	keys  map[string]string
 	with  map[string]string
 	perms map[string]string
@@ -47,7 +48,7 @@ func workflowJobs(t *testing.T, file string) []ciJob {
 			continue
 		}
 		if m := jobLine.FindStringSubmatch(line); m != nil {
-			jobs = append(jobs, ciJob{id: m[1], keys: map[string]string{}, with: map[string]string{}, perms: map[string]string{}})
+			jobs = append(jobs, ciJob{id: m[1], file: file, keys: map[string]string{}, with: map[string]string{}, perms: map[string]string{}})
 			sub = ""
 			continue
 		}
@@ -332,14 +333,19 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 			t.Errorf("%s: lane %q has no row in the lane table, so nothing decides whether "+
 				"it runs", ciFile, id)
 		}
-		if j.keys["needs"] != "" {
-			t.Errorf("%s: lane %q must use its passed lane map without another dependency; needs=%q",
-				ciSuiteFile, id, j.keys["needs"])
+		// A suite lane reads the lane map ci.yml passes it; a lane ci.yml runs
+		// itself, outside the suite queue, reads the `changes` job's output.
+		wantNeeds, want := "", "fromJSON(inputs.lanes)['"+id+"']"
+		if j.file == ciFile {
+			wantNeeds, want = "[changes]", "fromJSON(needs.changes.outputs.lanes)['"+id+"']"
 		}
-		want := "fromJSON(inputs.lanes)['" + id + "']"
+		if j.keys["needs"] != wantNeeds {
+			t.Errorf("%s: lane %q has needs=%q, want %q",
+				j.file, id, j.keys["needs"], wantNeeds)
+		}
 		if j.keys["if"] != want {
 			t.Errorf("%s: lane %q is gated on `%s`, not on its own row `%s`",
-				ciFile, id, j.keys["if"], want)
+				j.file, id, j.keys["if"], want)
 		}
 	}
 	var stale []string

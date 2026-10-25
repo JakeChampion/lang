@@ -2,7 +2,7 @@
 
 The color module depends only on pixels and Fern standard math.
 No codec, HTTP, or external color library enters this module.
-The API operates on pixel values. It does not transform complete images.
+The API provides pixel primitives and complete-image RGB/RGBA conversion.
 
 ## Encoded sRGB and linear light
 
@@ -39,10 +39,25 @@ Two fully transparent inputs return transparent black.
 Half-opacity white over opaque black produces sRGB 188 at byte alpha 128.
 An encoded-channel blend produces a different value.
 
+## Image conversion
+
+`to_rgba` converts RGB8 to RGBA8 with alpha 255.
+For RGBA8 input, it preserves all channels, even RGB values at alpha zero.
+The result uses a tight row stride.
+
+`flatten_rgb` requires an opaque background and returns RGB8.
+It composites RGBA8 input over that background in linear light.
+RGB8 input keeps its colors. There is no implicit alpha discard.
+
+Both functions validate source storage before allocation and preserve the source value.
+The destination obeys caller pixel and byte limits and the hard allocation ceiling.
+These functions allocate complete images. They do not establish an aggregate process memory budget.
+
 ## Validation
 
-The native test command includes four color cases.
+The native test command includes six color cases.
 They cover transfer thresholds, all byte round trips, grayscale, channel order, and saturated channels.
 They also cover partial alpha, zero alpha, opaque alpha, and known composite values.
-All four cases pass under the Fern heap sanitizer with zero live bytes.
-SIMD, complete-image operations, ICC profiles, and HDR remain outside this module.
+Image tests also cover row padding, alpha preservation, flatten results, and invalid budgets and storage.
+All six cases pass under the Fern heap sanitizer with zero live bytes.
+SIMD, ICC profiles, and HDR remain outside this module.
