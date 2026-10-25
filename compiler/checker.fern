@@ -339,10 +339,11 @@ function byte_kernel_arity(name: string): i32 {
   if (name == "__aes_ctr32" || name == "__ghash") {
     return 3;
   }
-  if (name == "__aes_gcm_seal" || name == "__aes_gcm_open") {
-    return 5;
-  }
   return 0 - 1;
+}
+
+function is_aes_gcm_into(name: string): boolean {
+  return name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into";
 }
 
 function t_view(elem: typeinfo.Type): typeinfo.Type {
@@ -638,7 +639,7 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__bytes_owned" || argc == 3 && name == "__bytes_range" || argc == 5 && name == "__bytes_into") {
     return t_array(t_u8());
   }
-  if (argc == byte_kernel_arity(name)) {
+  if (argc == byte_kernel_arity(name) || argc == 9 && is_aes_gcm_into(name)) {
     return t_array(t_u8());
   }
   if (argc == 0 && is_sha_hw_builtin(name)) {
@@ -886,6 +887,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (is_sha_hw_builtin(name)) {
     return ([], true);
+  }
+  if (is_aes_gcm_into(name)) {
+    return ([t_view(t_u8()), t_view(t_u8()), t_view(t_u8()), t_u64(), t_array(t_u8()), t_i32(), t_i32(), t_i32(), t_i32()], true);
   }
   if (byte_kernel_arity(name) > 0) {
     let views: typeinfo.Type[] = [];
@@ -16037,7 +16041,7 @@ function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
-    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open", "__aes_gcm_seal", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
@@ -18426,7 +18430,7 @@ function ow_fresh_builtins(): string[] {
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
     "termios_get", "uname_field", "window_size",
-    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal", "__aes_gcm_open", "__sha256_hw_blocks", "__sha1_hw_blocks",
+    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",
   ];
   return out;
 }

@@ -3,6 +3,7 @@ package interp
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/subtle"
 	"encoding/binary"
 	"fmt"
 )
@@ -11,8 +12,8 @@ func registerAESGCM(i *Interp) {
 	i.Builtins["__aes_expand_key"] = &Builtin{Fn: builtinAESExpandKey}
 	i.Builtins["__aes_ctr32"] = &Builtin{Fn: builtinAESCtr32}
 	i.Builtins["__ghash"] = &Builtin{Fn: builtinGHASH}
-	i.Builtins["__aes_gcm_seal"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCM("__aes_gcm_seal", args, true) }}
-	i.Builtins["__aes_gcm_open"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCM("__aes_gcm_open", args, false) }}
+	i.Builtins["__aes_gcm_seal_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCMInto("__aes_gcm_seal_into", args, true) }}
+	i.Builtins["__aes_gcm_open_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCMInto("__aes_gcm_open_into", args, false) }}
 	for _, name := range []string{"__sha256_hw", "__sha1_hw"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Bool(false), nil }}
 	}
@@ -207,12 +208,28 @@ func builtinGHASH(_ *Interp, args []Value) (Value, error) {
 	return byteArray(yb[:]), nil
 }
 
-func aesGCM(name string, args []Value, seal bool) (Value, error) {
-	v, err := byteViews(name, args, 5)
+// aesGCMInto seals or opens buf[at:at+n] under the nonce iv ^ seq, authenticating
+// buf[aad_at:aad_at+aad_n], with the tag at buf[at+n:at+n+16], and returns the
+// buffer. An open decrypts in place and leaves 0 in buf[at+n] when the tag
+// verifies and 1 when it does not.
+func aesGCMInto(name string, args []Value, seal bool) (Value, error) {
+	if len(args) != 9 {
+		return nil, fmt.Errorf("%s: expected 9 args, got %d", name, len(args))
+	}
+	v, err := byteViews(name, []Value{args[0], args[1], args[2], args[4]}, 4)
 	if err != nil {
 		return nil, err
 	}
-	rk, h, nonce, aad, data := v[0], v[1], v[2], v[3], v[4]
+	rk, h, iv, buf := v[0], v[1], v[2], v[3]
+	var ints [5]int64
+	for k, a := range []Value{args[3], args[5], args[6], args[7], args[8]} {
+		n, ok := a.(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: argument %d is not a number", name, k)
+		}
+		ints[k] = int64(n)
+	}
+	seq, aadAt, aadN, at, n := uint64(ints[0]), ints[1], ints[2], ints[3], ints[4]
 	keyLen := 0
 	switch {
 	case len(rk) >= 240:
@@ -220,8 +237,9 @@ func aesGCM(name string, args []Value, seal bool) (Value, error) {
 	case len(rk) >= 176:
 		keyLen = 16
 	}
-	if keyLen == 0 || len(h) < 16 || len(nonce) != 12 {
-		return newArray(0), nil
+	size := int64(len(buf))
+	if keyLen == 0 || len(h) < 16 || len(iv) != 12 || aadAt < 0 || aadN < 0 || at < 0 || n < 0 || at+n+16 > size || aadAt+aadN > size {
+		return nil, fmt.Errorf("%s: range out of bounds", name)
 	}
 	block, err := aes.NewCipher(rk[:keyLen])
 	if err != nil {
@@ -231,14 +249,27 @@ func aesGCM(name string, args []Value, seal bool) (Value, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", name, err)
 	}
+	nonce := append([]byte(nil), iv...)
+	binary.BigEndian.PutUint64(nonce[4:], binary.BigEndian.Uint64(nonce[4:])^seq)
+	aad := buf[aadAt : aadAt+aadN]
+	data := buf[at : at+n]
+	tag := buf[at+n : at+n+16]
 	if seal {
-		return byteArray(gcm.Seal(nil, nonce, data, aad)), nil
+		sealed := gcm.Seal(nil, nonce, data, aad)
+		copy(buf[at:], sealed)
+		return byteArray(buf), nil
 	}
-	pt := make([]byte, len(data))
+	pt := make([]byte, n)
 	var ctr [16]byte
 	copy(ctr[:], nonce)
 	binary.BigEndian.PutUint32(ctr[12:], 2)
 	cipher.NewCTR(block, ctr[:]).XORKeyStream(pt, data)
-	sealed := gcm.Seal(nil, nonce, pt, aad)
-	return byteArray(append(pt, sealed[len(pt):]...)), nil
+	want := gcm.Seal(nil, nonce, pt, aad)[n:]
+	verdict := byte(0)
+	if subtle.ConstantTimeCompare(want, tag) != 1 {
+		verdict = 1
+	}
+	copy(buf[at:], pt)
+	buf[at+n] = verdict
+	return byteArray(buf), nil
 }

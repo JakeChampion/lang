@@ -9995,44 +9995,66 @@ function a64_ghash_blocks_at(p: string, done: string, pad: i32): string {
     + "    ld1 {v2.16b}, [x5]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n";
 }
 
+// The in-place pair, as on x86-64: x0 rk, x1 h, x2 iv (views), x3 seq, x4 buf, x5 aad_at, x6 aad_n, x7 at, x8 n.
 function a64_aes_gcm(seal: boolean): string {
-  let name: string = if (seal) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
+  let name: string = if (seal) { "__fern_aes_gcm_seal_into" } else { "__fern_aes_gcm_open_into" };
   let p: string = if (seal) { ".Lgcs" } else { ".Lgco" };
-  let o: string = "    .global " + name + "\n    .type " + name + ", %function\n" + name + ":\n    stp x29, x30, [sp, #-192]!\n    mov x29, sp\n"
-    + a64_aes_view("x4", "x5", "x6", p + "_d") + "    str x5, [x29, #16]\n    str x6, [x29, #24]\n"
-    + a64_aes_view("x3", "x5", "x6", p + "_a") + "    str x5, [x29, #64]\n    str x6, [x29, #72]\n"
-    + a64_aes_view("x2", "x5", "x6", p + "_n") + "    str x5, [x29, #56]\n    str x6, [x29, #176]\n"
-    + a64_aes_view("x1", "x5", "x6", p + "_h") + "    str x5, [x29, #48]\n    str x6, [x29, #184]\n"
-    + a64_aes_view("x0", "x5", "x6", p + "_k") + "    str x5, [x29, #32]\n";
-  o = o + "    mov x7, #0\n    cmp x6, #176\n    b.lo " + p + "_r\n    mov x7, #10\n    cmp x6, #240\n    b.lo " + p + "_r\n    mov x7, #14\n" + p + "_r:\n"
-    + "    ldr x9, [x29, #176]\n    cmp x9, #12\n    b.eq " + p + "_nok\n    mov x7, #0\n" + p + "_nok:\n"
-    + "    ldr x9, [x29, #184]\n    cmp x9, #16\n    b.hs " + p + "_hok\n    mov x7, #0\n" + p + "_hok:\n    str x7, [x29, #40]\n"
-    + "    ldr x0, [x29, #24]\n    add x0, x0, #16\n    cbnz x7, " + p + "_box\n    mov x0, #0\n" + p + "_box:\n"
-    + a64_aes_alloc("96") + "    ldr x9, [x0]\n    cbz x9, " + p + "_ret\n";
-  o = o + "    ldr x5, [x29, #56]\n    ldr x9, [x5]\n    ldr w10, [x5, #8]\n    str x9, [x29, #112]\n    str w10, [x29, #120]\n"
-    + "    mov w11, #33554432\n    str w11, [x29, #124]\n";
+  let o: string = "    .global " + name + "\n    .type " + name + ", %function\n" + name + ":\n    stp x29, x30, [sp, #-224]!\n    mov x29, sp\n"
+    + "    str x3, [x29, #192]\n    str x4, [x29, #96]\n    sxtw x5, w5\n    str x5, [x29, #208]\n    sxtw x6, w6\n    str x6, [x29, #72]\n"
+    + "    sxtw x7, w7\n    str x7, [x29, #200]\n    sxtw x8, w8\n    str x8, [x29, #24]\n"
+    + a64_aes_view("x2", "x9", "x10", p + "_n") + "    str x9, [x29, #56]\n    str x10, [x29, #176]\n"
+    + a64_aes_view("x1", "x9", "x10", p + "_h") + "    str x9, [x29, #48]\n    str x10, [x29, #184]\n"
+    + a64_aes_view("x0", "x9", "x10", p + "_k") + "    str x9, [x29, #32]\n";
+  o = o + a64_aes_gcm_checks(p) + a64_aes_gcm_own(p)
+    + "    ldr x5, [x29, #56]\n    ldr x9, [x5]\n    ldr w10, [x5, #8]\n    str x9, [x29, #112]\n    str w10, [x29, #120]\n"
+    + "    ldr x9, [x29, #192]\n    rev x9, x9\n    ldur x10, [x29, #116]\n    eor x10, x10, x9\n    stur x10, [x29, #116]\n"
+    + "    mov w11, #33554432\n    str w11, [x29, #124]\n"
+    + "    ldr x9, [x29, #96]\n    add x9, x9, #8\n    ldr x10, [x29, #200]\n    add x10, x9, x10\n    str x10, [x29, #16]\n"
+    + "    ldr x10, [x29, #208]\n    add x9, x9, x10\n    str x9, [x29, #64]\n";
   if (seal) {
-    o = o + a64_aes_gcm_ctr(p) + a64_aes_gcm_hash(p, "    ldr x1, [x29, #96]\n    add x1, x1, #8\n");
+    o = o + a64_aes_gcm_ctr(p) + a64_aes_gcm_hash(p);
   } else {
-    o = o + a64_aes_gcm_hash(p, "    ldr x1, [x29, #16]\n") + a64_aes_gcm_ctr(p);
+    o = o + a64_aes_gcm_hash(p) + a64_aes_gcm_ctr(p);
   }
   o = o + "    mov w11, #16777216\n    str w11, [x29, #124]\n    ldr x8, [x29, #32]\n    ldr x7, [x29, #40]\n" + a64_aes_load_keys_at(p + "_k2")
     + "    add x5, x29, #112\n    ld1 {v0.16b}, [x5]\n    bl .Lctr_enc1\n    add x5, x29, #160\n    ld1 {v1.16b}, [x5]\n    eor v0.16b, v0.16b, v1.16b\n"
-    + "    ldr x3, [x29, #96]\n    add x3, x3, #8\n    ldr x9, [x29, #24]\n    add x3, x3, x9\n    st1 {v0.16b}, [x3]\n";
-  return o + p + "_ret:\n    ldr x0, [x29, #96]\n    ldp x29, x30, [sp], #192\n    ret\n    .size " + name + ", .-" + name + "\n";
+    + "    ldr x3, [x29, #16]\n    ldr x9, [x29, #24]\n    add x3, x3, x9\n";
+  if (seal) {
+    o = o + "    st1 {v0.16b}, [x3]\n";
+  } else {
+    o = o + "    ld1 {v1.16b}, [x3]\n    eor v0.16b, v0.16b, v1.16b\n    umaxv b0, v0.16b\n    umov w9, v0.b[0]\n    cmp w9, #0\n    cset w9, ne\n    strb w9, [x3]\n";
+  }
+  return o + "    ldr x0, [x29, #96]\n    ldp x29, x30, [sp], #224\n    ret\n" + p + "_bad:\n    b __fern_slice_abort\n    .size " + name + ", .-" + name + "\n";
+}
+
+function a64_aes_gcm_checks(p: string): string {
+  return "    mov x11, #10\n    cmp x10, #176\n    b.lo " + p + "_bad\n    cmp x10, #240\n    b.lo " + p + "_r\n    mov x11, #14\n" + p + "_r:\n    str x11, [x29, #40]\n"
+    + "    ldr x9, [x29, #176]\n    cmp x9, #12\n    b.ne " + p + "_bad\n    ldr x9, [x29, #184]\n    cmp x9, #16\n    b.lo " + p + "_bad\n"
+    + "    ldr x9, [x29, #208]\n    ldr x10, [x29, #72]\n    ldr x11, [x29, #200]\n    ldr x12, [x29, #24]\n"
+    + "    orr x13, x9, x10\n    orr x13, x13, x11\n    orr x13, x13, x12\n    tbnz x13, #63, " + p + "_bad\n"
+    + "    ldr x14, [x29, #96]\n    ldr x15, [x14]\n    add x13, x11, x12\n    add x13, x13, #16\n    cmp x13, x15\n    b.hi " + p + "_bad\n"
+    + "    add x13, x9, x10\n    cmp x13, x15\n    b.hi " + p + "_bad\n";
+}
+
+// x14 is the box and x15 its length; a box with another holder is copied first.
+function a64_aes_gcm_own(p: string): string {
+  return "    ldur w9, [x14, #-8]\n    cmp w9, #1\n    b.eq " + p + "_own\n    str x14, [x29, #216]\n    mov x0, x15\n" + a64_aes_alloc("96")
+    + "    ldr x1, [x29, #216]\n    add x1, x1, #8\n    add x2, x0, #8\n    ldr x3, [x0]\n    mov x4, #0\n"
+    + p + "_cp:\n    cmp x4, x3\n    b.hs " + p + "_cpd\n    ldrb w5, [x1, x4]\n    strb w5, [x2, x4]\n    add x4, x4, #1\n    b " + p + "_cp\n" + p + "_cpd:\n"
+    + "    ldr x0, [x29, #216]\n    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n" + p + "_own:\n";
 }
 
 function a64_aes_gcm_ctr(p: string): string {
   return "    add x5, x29, #112\n    ld1 {v6.16b}, [x5]\n    rev32 v6.16b, v6.16b\n    movi v7.2d, #0\n    mov w9, #1\n    ins v7.s[3], w9\n"
     + "    ldr x8, [x29, #32]\n    ldr x7, [x29, #40]\n" + a64_aes_load_keys_at(p + "_k1")
-    + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n    ldr x2, [x29, #96]\n    add x2, x2, #8\n"
+    + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n    mov x2, x1\n"
     + a64_aes_ctr_blocks_at(p + "_c", p + "_cdone", 80) + p + "_cdone:\n";
 }
 
-function a64_aes_gcm_hash(p: string, ct: string): string {
+function a64_aes_gcm_hash(p: string): string {
   return "    movi v31.2d, #0\n    ldr x5, [x29, #48]\n    ld1 {v1.16b}, [x5]\n" + a64_ghash_rev("v1") + "    movi v0.2d, #0\n"
     + "    ldr x1, [x29, #64]\n    ldr x4, [x29, #72]\n" + a64_ghash_blocks_at(p + "_ga", p + "_gadone", 128) + p + "_gadone:\n"
-    + ct + "    ldr x4, [x29, #24]\n" + a64_ghash_blocks_at(p + "_gc", p + "_gcdone", 128) + p + "_gcdone:\n"
+    + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n" + a64_ghash_blocks_at(p + "_gc", p + "_gcdone", 128) + p + "_gcdone:\n"
     + "    ldr x9, [x29, #72]\n    lsl x9, x9, #3\n    rev x9, x9\n    str x9, [x29, #144]\n"
     + "    ldr x9, [x29, #24]\n    lsl x9, x9, #3\n    rev x9, x9\n    str x9, [x29, #152]\n"
     + "    add x5, x29, #144\n    ld1 {v2.16b}, [x5]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n"
@@ -10059,8 +10081,12 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s.write("    ldr x0, [sp], #16\n    bl __fern_aes_expand_key\n    str x0, [sp, #-16]!\n");
   }
   if (o.kind_tag == 444 || o.kind_tag == 445) {
-    let fused: string = if (o.kind_tag == 444) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
-    return s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl " + fused + "\n    str x0, [sp, #-16]!\n");
+    let fused: string = if (o.kind_tag == 444) { "__fern_aes_gcm_seal_into" } else { "__fern_aes_gcm_open_into" };
+    let pops: string = "";
+    for i in 0..9 {
+      pops = pops + "    ldr x" + util.i32_to_string(8 - i) + ", [sp], #16\n";
+    }
+    return s.write(pops + "    bl " + fused + "\n    str x0, [sp, #-16]!\n");
   }
   let callee: string = "__fern_aes_ctr32";
   if (o.kind_tag == 404) {

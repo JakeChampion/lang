@@ -1168,40 +1168,64 @@ function x86_ghash_blocks_at(p: string, done: string, pad: string): string {
     + "    movdqu " + pad + "(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n";
 }
 
+// Seals or opens buf[at:at + n] in place under the nonce iv ^ seq, authenticating buf[aad_at:aad_at + aad_n],
+// with the tag at buf[at + n:at + n + 16]; an open leaves its verdict in buf[at + n], 0 when the tag verifies.
+// rdi rk, rsi h, rdx iv (views), rcx seq, r8 buf, r9 aad_at, r10 aad_n, r11 at, rax n; returns buf, copied first if shared.
 function x86_aes_gcm(seal: boolean): string {
-  let name: string = if (seal) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
+  let name: string = if (seal) { "__fern_aes_gcm_seal_into" } else { "__fern_aes_gcm_open_into" };
   let p: string = if (seal) { ".Lxgs" } else { ".Lxgo" };
-  let o: string = "    .globl " + name + "\n    .type " + name + ", @function\n" + name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $160, %rsp\n"
-    + x86_aes_view("%r8", "%r10", "%r11", p + "_d") + "    movq %r10, -24(%rbp)\n    movq %r11, -32(%rbp)\n"
-    + x86_aes_view("%rcx", "%r10", "%r11", p + "_a") + "    movq %r10, -64(%rbp)\n    movq %r11, -72(%rbp)\n"
+  let o: string = "    .globl " + name + "\n    .type " + name + ", @function\n" + name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $208, %rsp\n"
+    + "    movq %rcx, -168(%rbp)\n    movq %r8, -48(%rbp)\n    movslq %r9d, %r9\n    movq %r9, -184(%rbp)\n    movslq %r10d, %r10\n    movq %r10, -72(%rbp)\n"
+    + "    movslq %r11d, %r11\n    movq %r11, -176(%rbp)\n    cltq\n    movq %rax, -32(%rbp)\n"
     + x86_aes_view("%rdx", "%r10", "%r11", p + "_n") + "    movq %r10, -56(%rbp)\n    movq %r11, -80(%rbp)\n"
     + x86_aes_view("%rsi", "%r10", "%r11", p + "_h") + "    movq %r10, -16(%rbp)\n    movq %r11, -88(%rbp)\n"
     + x86_aes_view("%rdi", "%r10", "%r11", p + "_k") + "    movq %r10, -8(%rbp)\n";
-  o = o + "    xorl %ecx, %ecx\n    cmpq $176, %r11\n    jb " + p + "_r\n    movl $10, %ecx\n    cmpq $240, %r11\n    jb " + p + "_r\n    movl $14, %ecx\n" + p + "_r:\n"
-    + "    cmpq $12, -80(%rbp)\n    je " + p + "_nok\n    xorl %ecx, %ecx\n" + p + "_nok:\n    cmpq $16, -88(%rbp)\n    jae " + p + "_hok\n    xorl %ecx, %ecx\n" + p + "_hok:\n"
-    + "    movq %rcx, -40(%rbp)\n    movq -32(%rbp), %rdi\n    addq $16, %rdi\n    testq %rcx, %rcx\n    jnz " + p + "_box\n    xorl %edi, %edi\n" + p + "_box:\n"
-    + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz " + p + "_ret\n";
-  o = o + "    movq -56(%rbp), %r9\n    movq (%r9), %rax\n    movl 8(%r9), %r10d\n    movq %rax, -112(%rbp)\n    movl %r10d, -104(%rbp)\n    movl $33554432, -100(%rbp)\n";
+  o = o + x86_aes_gcm_checks(p) + x86_aes_gcm_own(p)
+    + "    movq -56(%rbp), %r9\n    movq (%r9), %rax\n    movl 8(%r9), %r10d\n    movq %rax, -112(%rbp)\n    movl %r10d, -104(%rbp)\n"
+    + "    movq -168(%rbp), %rax\n    bswapq %rax\n    xorq %rax, -108(%rbp)\n    movl $33554432, -100(%rbp)\n"
+    + "    movq -48(%rbp), %rax\n    addq $8, %rax\n    movq -176(%rbp), %r9\n    addq %rax, %r9\n    movq %r9, -24(%rbp)\n    addq -184(%rbp), %rax\n    movq %rax, -64(%rbp)\n";
   if (seal) {
-    o = o + x86_aes_gcm_ctr(p) + x86_aes_gcm_hash(p, "    movq -48(%rbp), %rsi\n    addq $8, %rsi\n");
+    o = o + x86_aes_gcm_ctr(p) + x86_aes_gcm_hash(p);
   } else {
-    o = o + x86_aes_gcm_hash(p, "    movq -24(%rbp), %rsi\n") + x86_aes_gcm_ctr(p);
+    o = o + x86_aes_gcm_hash(p) + x86_aes_gcm_ctr(p);
   }
   o = o + "    movl $16777216, -100(%rbp)\n    movdqu -112(%rbp), %xmm0\n    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n    call .Lctr_enc1\n"
-    + "    movdqu -160(%rbp), %xmm5\n    pxor %xmm5, %xmm0\n    movq -48(%rbp), %rax\n    movq -32(%rbp), %r9\n    movdqu %xmm0, 8(%rax,%r9)\n";
-  return o + p + "_ret:\n" + x86_aes_epilogue() + "    .size " + name + ", .-" + name + "\n";
+    + "    movdqu -160(%rbp), %xmm5\n    pxor %xmm5, %xmm0\n    movq -24(%rbp), %rax\n    addq -32(%rbp), %rax\n";
+  if (seal) {
+    o = o + "    movdqu %xmm0, (%rax)\n";
+  } else {
+    o = o + "    movdqu (%rax), %xmm5\n    pxor %xmm5, %xmm0\n    xorl %ecx, %ecx\n    ptest %xmm0, %xmm0\n    setnz %cl\n    movb %cl, (%rax)\n";
+  }
+  return o + x86_aes_epilogue() + "    .size " + name + ", .-" + name + "\n";
+}
+
+// A schedule that is not AES-128's or AES-256's, an h short of a block, an iv that is not 12 bytes, or a region
+// outside buf aborts.
+function x86_aes_gcm_checks(p: string): string {
+  return "    movl $10, %ecx\n    cmpq $176, %r11\n    jb __fern_slice_abort\n    cmpq $240, %r11\n    jb " + p + "_r\n    movl $14, %ecx\n" + p + "_r:\n"
+    + "    movq %rcx, -40(%rbp)\n    cmpq $12, -80(%rbp)\n    jne __fern_slice_abort\n    cmpq $16, -88(%rbp)\n    jb __fern_slice_abort\n"
+    + "    movq -184(%rbp), %rax\n    orq -72(%rbp), %rax\n    orq -176(%rbp), %rax\n    orq -32(%rbp), %rax\n    js __fern_slice_abort\n"
+    + "    movq -48(%rbp), %r8\n    movq (%r8), %r9\n    movq -176(%rbp), %rax\n    addq -32(%rbp), %rax\n    addq $16, %rax\n    cmpq %r9, %rax\n    ja __fern_slice_abort\n"
+    + "    movq -184(%rbp), %rax\n    addq -72(%rbp), %rax\n    cmpq %r9, %rax\n    ja __fern_slice_abort\n";
+}
+
+// A buf with another holder is copied, and the copy is the one sealed: r8 is the box, r9 its length.
+function x86_aes_gcm_own(p: string): string {
+  return "    cmpl $1, -8(%r8)\n    je " + p + "_own\n    movq %r8, -192(%rbp)\n    movq %r9, %rdi\n" + x86_aes_alloc()
+    + "    leaq 8(%rax), %rdi\n    movq -192(%rbp), %rsi\n    addq $8, %rsi\n    movq (%rax), %rcx\n    rep movsb\n"
+    + "    pushq -192(%rbp)\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n" + p + "_own:\n";
 }
 
 function x86_aes_gcm_ctr(p: string): string {
   return "    movdqu .Laes_ctr_swap(%rip), %xmm15\n    movdqu .Laes_ctr_one(%rip), %xmm14\n    movdqu -112(%rbp), %xmm13\n    pshufb %xmm15, %xmm13\n"
-    + "    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n    movq -48(%rbp), %rdi\n    addq $8, %rdi\n"
+    + "    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n    movq %rsi, %rdi\n"
     + x86_aes_ctr_blocks_at(p + "_c", p + "_cdone", "-128") + p + "_cdone:\n";
 }
 
-function x86_aes_gcm_hash(p: string, ct: string): string {
+function x86_aes_gcm_hash(p: string): string {
   return "    movdqu .Laes_gh_bswap(%rip), %xmm15\n    movq -16(%rbp), %r8\n    movdqu (%r8), %xmm1\n    pshufb %xmm15, %xmm1\n    pxor %xmm0, %xmm0\n"
     + "    movq -64(%rbp), %rsi\n    movq -72(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_ga", p + "_gadone", "-128") + p + "_gadone:\n"
-    + ct + "    movq -32(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_gc", p + "_gcdone", "-128") + p + "_gcdone:\n"
+    + "    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_gc", p + "_gcdone", "-128") + p + "_gcdone:\n"
     + "    movq -72(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    movq %rax, -144(%rbp)\n"
     + "    movq -32(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    movq %rax, -136(%rbp)\n"
     + "    movdqu -144(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n    pshufb %xmm15, %xmm0\n    movdqu %xmm0, -160(%rbp)\n";
@@ -1228,8 +1252,8 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s.write("    popq %rdi\n    call __fern_aes_expand_key\n    pushq %rax\n");
   }
   if (o.kind_tag == 444 || o.kind_tag == 445) {
-    let fused: string = if (o.kind_tag == 444) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
-    return s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    call " + fused + "\n    pushq %rax\n");
+    let fused: string = if (o.kind_tag == 444) { "__fern_aes_gcm_seal_into" } else { "__fern_aes_gcm_open_into" };
+    return s.write("    popq %rax\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    call " + fused + "\n    pushq %rax\n");
   }
   let callee: string = "__fern_aes_ctr32";
   if (o.kind_tag == 404) {

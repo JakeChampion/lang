@@ -964,8 +964,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
-	for _, n := range []string{"__aes_gcm_seal", "__aes_gcm_open"} {
-		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u8View, u8View}, Result: u8Arr}
+	u64 := ast.NumberType{Width: 64, Signed: false}
+	for _, n := range []string{"__aes_gcm_seal_into", "__aes_gcm_open_into"} {
+		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u64, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}

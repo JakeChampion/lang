@@ -650,7 +650,7 @@ pub function module_uses_scale_f64(cache: irtables.LowerResult[]): boolean {
 
 pub function module_uses_aes_gcm(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "aes_expand_key") || module_emits_op_cached(cache, "aes_ctr32") || module_emits_op_cached(cache, "ghash")
-    || module_emits_op_cached(cache, "aes_gcm_seal") || module_emits_op_cached(cache, "aes_gcm_open");
+    || module_emits_op_cached(cache, "aes_gcm_seal_into") || module_emits_op_cached(cache, "aes_gcm_open_into");
 }
 
 pub function module_uses_sha_hw_blocks(cache: irtables.LowerResult[]): boolean {

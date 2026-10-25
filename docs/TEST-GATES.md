@@ -807,16 +807,22 @@ runner gates its own ISA. It proves only what the probes execute: a
 secret-dependent path the inputs do not take is not reported. Every later
 crypto kernel adds its own case.
 
-The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`,
-`__aes_gcm_seal`, `__aes_gcm_open`) are checked on their own against known
-answers on every target by `TestSelfHostAESGCMKernelsX86_64`, `…Arm64`
-(qemu), `…Wasm` and `TestSelfHostInterpAESGCMKernels` (both interpreters).
-The answers are FIPS-197's key schedules and blocks, GCM's test case 2
-GHASH and test case 4 seal, and a counter whose low word wraps. Every
+The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`, and the
+in-place pair `__aes_gcm_seal_into` / `__aes_gcm_open_into`) are checked on
+their own against known answers on every target by
+`TestSelfHostAESGCMKernelsX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpAESGCMKernels` (both interpreters). The answers are
+FIPS-197's key schedules and blocks, GCM's test case 2 GHASH, test cases 4
+and 16 sealed and opened in place, and a counter whose low word wraps. Every
 length to 80 bytes is also covered, which crosses each kernel's unrolled
 stride and partial last block. Seal and open are held to what the separate
-kernels compose to. A wrong kernel on one backend fails that
-backend's leg even when the others agree.
+kernels compose to, under a sequence number folded into the nonce. An open
+must leave its verdict byte 1 for a changed tag, ciphertext or aad byte and
+for the wrong sequence number; a buffer with another holder, or a literal,
+is copied before it is written. `…MisuseX86_64`, `…MisuseArm64`,
+`…MisuseWasm` and the interpreter leg hold each region outside the buffer,
+a short schedule and a wrong-length iv to stopping the program. A wrong
+kernel on one backend fails that backend's leg even when the others agree.
 
 ## Netlify deploys and the standalone smoke script
 

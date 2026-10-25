@@ -303,25 +303,32 @@ function ctr_xor_wat(): string {
     + "          (local.set $k (i32.add (local.get $k) (i32.const 1)))\n          (br $byte)))))\n";
 }
 
-function ctr32_func(): string {
-  return "  (func $__fern_aes_ctr32 (param $rk i32) (param $ctr i32) (param $data i32) (result i32)\n"
-    + "    (local $rounds i32) (local $n i32) (local $out i32) (local $tmp i32) (local $sk i32) (local $q i32) (local $w i32) (local $rkp i32) (local $cp i32)\n"
-    + "    (local $ip i32) (local $op i32) (local $j i32) (local $at i32) (local $k i32) (local $c i32) (local $c01 i64) (local $c2 i32)\n"
-    + ctr_rounds_wat()
-    + "    (local.set $out (call $__fern_aes_bytes (local.get $n)))\n    (if (i32.eqz (local.get $n)) (then (return (local.get $out))))\n"
+// CTR over n bytes from ip to op, which may be the same: the schedule at rkp, the counter block at cp.
+function ctr_at_func(): string {
+  return "  (func $__fern_aes_ctr_at (param $rkp i32) (param $rounds i32) (param $cp i32) (param $ip i32) (param $op i32) (param $n i32)\n"
+    + "    (local $tmp i32) (local $sk i32) (local $q i32) (local $w i32) (local $j i32) (local $at i32) (local $k i32) (local $c i32) (local $c01 i64) (local $c2 i32)\n"
+    + "    (if (i32.eqz (local.get $n)) (then (return)))\n"
     + "    (local.set $tmp (call $__fern_aes_bytes (i32.shl (i32.add (local.get $rounds) (i32.const 3)) (i32.const 6))))\n"
     + "    (local.set $sk (i32.add (local.get $tmp) (i32.const 8)))\n"
     + "    (local.set $q (i32.add (local.get $sk) (i32.shl (i32.add (local.get $rounds) (i32.const 1)) (i32.const 6))))\n"
     + "    (local.set $w (i32.add (local.get $q) (i32.const 64)))\n"
-    + "    (local.set $rkp (call $__fern_aes_view_data (local.get $rk)))\n    (local.set $cp (call $__fern_aes_view_data (local.get $ctr)))\n"
-    + "    (local.set $ip (call $__fern_aes_view_data (local.get $data)))\n    (local.set $op (i32.add (local.get $out) (i32.const 8)))\n"
     + ctr_keys_wat()
     + "    (local.set $c01 (i64.load (local.get $cp)))\n    (local.set $c2 (i32.load offset=8 (local.get $cp)))\n"
     + "    (local.set $c (call $__fern_bswap32 (i32.load offset=12 (local.get $cp))))\n"
     + "    (block $done (loop $chunk\n      (br_if $done (i32.ge_u (local.get $at) (local.get $n)))\n"
     + ctr_chunk_wat() + ctr_xor_wat()
     + "      (local.set $c (i32.add (local.get $c) (i32.const 4)))\n      (local.set $at (i32.add (local.get $at) (i32.const 64)))\n      (br $chunk)))\n"
-    + "    (drop (call $__fern_arr_dec (local.get $tmp)))\n    (local.get $out))\n";
+    + "    (drop (call $__fern_arr_dec (local.get $tmp))))\n";
+}
+
+function ctr32_func(): string {
+  return "  (func $__fern_aes_ctr32 (param $rk i32) (param $ctr i32) (param $data i32) (result i32)\n"
+    + "    (local $rounds i32) (local $n i32) (local $out i32)\n"
+    + ctr_rounds_wat()
+    + "    (local.set $out (call $__fern_aes_bytes (local.get $n)))\n"
+    + "    (call $__fern_aes_ctr_at (call $__fern_aes_view_data (local.get $rk)) (local.get $rounds) (call $__fern_aes_view_data (local.get $ctr))\n"
+    + "      (call $__fern_aes_view_data (local.get $data)) (i32.add (local.get $out) (i32.const 8)) (local.get $n))\n"
+    + "    (local.get $out))\n";
 }
 
 function ghash_bits_wat(x: string, label: string): string {
@@ -343,18 +350,14 @@ function ghash_block_wat(): string {
     + "        (local.set $xl (call $__fern_bswap64 (i64.load offset=8 (i32.add (local.get $dp) (local.get $at)))))))\n";
 }
 
-function ghash_func(): string {
-  return "  (func $__fern_ghash (param $h i32) (param $y i32) (param $data i32) (result i32)\n"
-    + "    (local $size i32) (local $out i32) (local $hp i32) (local $dp i32) (local $n i32) (local $at i32) (local $b i32) (local $pad i32)\n"
+// Folds n bytes at dp into the GHASH state at yp, which is also the scratch for a partial last block.
+function ghash_at_func(): string {
+  return "  (func $__fern_ghash_at (param $hp i32) (param $yp i32) (param $dp i32) (param $n i32)\n"
+    + "    (local $at i32) (local $b i32) (local $pad i32)\n"
     + "    (local $hh i64) (local $hl i64) (local $yh i64) (local $yl i64) (local $xh i64) (local $xl i64) (local $zh i64) (local $zl i64) (local $vh i64) (local $vl i64) (local $m i64)\n"
-    + "    (if (i32.and (i32.ge_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16)) (i32.ge_u (call $__fern_aes_view_len (local.get $y)) (i32.const 16))) (then (local.set $size (i32.const 16))))\n"
-    + "    (local.set $out (call $__fern_aes_bytes (local.get $size)))\n    (if (i32.eqz (local.get $size)) (then (return (local.get $out))))\n"
-    + "    (local.set $hp (call $__fern_aes_view_data (local.get $h)))\n"
     + "    (local.set $hh (call $__fern_bswap64 (i64.load (local.get $hp))))\n    (local.set $hl (call $__fern_bswap64 (i64.load offset=8 (local.get $hp))))\n"
-    + "    (local.set $hp (call $__fern_aes_view_data (local.get $y)))\n"
-    + "    (local.set $yh (call $__fern_bswap64 (i64.load (local.get $hp))))\n    (local.set $yl (call $__fern_bswap64 (i64.load offset=8 (local.get $hp))))\n"
-    + "    (local.set $dp (call $__fern_aes_view_data (local.get $data)))\n    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n"
-    + "    (local.set $pad (i32.add (local.get $out) (i32.const 8)))\n"
+    + "    (local.set $yh (call $__fern_bswap64 (i64.load (local.get $yp))))\n    (local.set $yl (call $__fern_bswap64 (i64.load offset=8 (local.get $yp))))\n"
+    + "    (local.set $pad (local.get $yp))\n"
     + "    (block $done (loop $blk\n      (br_if $done (i32.ge_u (local.get $at) (local.get $n)))\n"
     + ghash_block_wat()
     + "      (local.set $xh (i64.xor (local.get $xh) (local.get $yh)))\n      (local.set $xl (i64.xor (local.get $xl) (local.get $yl)))\n"
@@ -362,40 +365,80 @@ function ghash_func(): string {
     + ghash_bits_wat("xh", "hi") + ghash_bits_wat("xl", "lo")
     + "      (local.set $yh (local.get $zh))\n      (local.set $yl (local.get $zl))\n"
     + "      (local.set $at (i32.add (local.get $at) (i32.const 16)))\n      (br $blk)))\n"
-    + "    (i64.store offset=8 (local.get $out) (call $__fern_bswap64 (local.get $yh)))\n"
-    + "    (i64.store offset=16 (local.get $out) (call $__fern_bswap64 (local.get $yl)))\n    (local.get $out))\n";
+    + "    (i64.store (local.get $yp) (call $__fern_bswap64 (local.get $yh)))\n"
+    + "    (i64.store offset=8 (local.get $yp) (call $__fern_bswap64 (local.get $yl))))\n";
 }
 
-function block16_wat(dst: string, hi: string, lo: string): string {
-  return "    (local.set $" + dst + " (call $__fern_aes_bytes (i32.const 16)))\n"
-    + "    (i64.store offset=8 (local.get $" + dst + ") " + hi + ")\n    (i64.store offset=16 (local.get $" + dst + ") " + lo + ")\n";
+function ghash_func(): string {
+  return "  (func $__fern_ghash (param $h i32) (param $y i32) (param $data i32) (result i32)\n"
+    + "    (local $size i32) (local $out i32)\n"
+    + "    (if (i32.and (i32.ge_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16)) (i32.ge_u (call $__fern_aes_view_len (local.get $y)) (i32.const 16))) (then (local.set $size (i32.const 16))))\n"
+    + "    (local.set $out (call $__fern_aes_bytes (local.get $size)))\n    (if (i32.eqz (local.get $size)) (then (return (local.get $out))))\n"
+    + "    (memory.copy (i32.add (local.get $out) (i32.const 8)) (call $__fern_aes_view_data (local.get $y)) (i32.const 16))\n"
+    + "    (call $__fern_ghash_at (call $__fern_aes_view_data (local.get $h)) (i32.add (local.get $out) (i32.const 8))\n"
+    + "      (call $__fern_aes_view_data (local.get $data)) (call $__fern_aes_view_len (local.get $data)))\n"
+    + "    (local.get $out))\n";
 }
 
+function abort_unless(cond: string): string {
+  return "    (if (i32.eqz " + cond + ") (then (call $__fern_abort_slice) (unreachable)))\n";
+}
+
+function gcm_checks_wat(): string {
+  let len: string = "(i64.extend_i32_u (i32.load (local.get $buf)))";
+  return "    (local.set $kl (call $__fern_aes_view_len (local.get $rk)))\n"
+    + abort_unless("(i32.ge_u (local.get $kl) (i32.const 176))")
+    + "    (local.set $rounds (select (i32.const 14) (i32.const 10) (i32.ge_u (local.get $kl) (i32.const 240))))\n"
+    + abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16))")
+    + abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $iv)) (i32.const 12))")
+    + abort_unless("(i32.ge_s (i32.or (i32.or (local.get $aad_at) (local.get $aad_n)) (i32.or (local.get $at) (local.get $n))) (i32.const 0))")
+    + abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $at)) (i64.add (i64.extend_i32_u (local.get $n)) (i64.const 16))) " + len + ")")
+    + abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $aad_at)) (i64.extend_i32_u (local.get $aad_n))) " + len + ")");
+}
+
+function gcm_own_wat(): string {
+  return "    (if (i32.eqz (call $__fern_rc_is_unique (local.get $buf))) (then\n"
+    + "      (local.set $copy (call $__fern_aes_bytes (i32.load (local.get $buf))))\n"
+    + "      (memory.copy (i32.add (local.get $copy) (i32.const 8)) (i32.add (local.get $buf) (i32.const 8)) (i32.load (local.get $buf)))\n"
+    + "      (drop (call $__fern_arr_dec (local.get $buf)))\n      (local.set $buf (local.get $copy))))\n";
+}
+
+function gcm_hash_wat(): string {
+  return "    (i64.store (local.get $s) (i64.const 0))\n    (i64.store offset=8 (local.get $s) (i64.const 0))\n"
+    + "    (call $__fern_ghash_at (local.get $hp) (local.get $s) (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $aad_at)) (local.get $aad_n))\n"
+    + "    (call $__fern_ghash_at (local.get $hp) (local.get $s) (local.get $dp) (local.get $n))\n"
+    + "    (i64.store (local.get $lens) (call $__fern_bswap64 (i64.shl (i64.extend_i32_u (local.get $aad_n)) (i64.const 3))))\n"
+    + "    (i64.store offset=8 (local.get $lens) (call $__fern_bswap64 (i64.shl (i64.extend_i32_u (local.get $n)) (i64.const 3))))\n"
+    + "    (call $__fern_ghash_at (local.get $hp) (local.get $s) (local.get $lens) (i32.const 16))\n";
+}
+
+// The in-place pair: buf[at:at + n] sealed or opened under iv ^ seq, buf[aad_at:aad_at + aad_n] authenticated,
+// the tag at buf[at + n:at + n + 16]; an open leaves 0 in buf[at + n] when the tag verifies and 1 when it does not.
 function gcm_func(): string {
-  return "  (func $__fern_aes_gcm (param $rk i32) (param $h i32) (param $nonce i32) (param $aad i32) (param $data i32) (param $seal i32) (result i32)\n"
-    + "    (local $np i32) (local $cb i32) (local $out i32) (local $ct i32) (local $y i32) (local $t i32) (local $tag i32) (local $all i32) (local $n i32)\n"
-    + "    (if (i32.or (i32.or (i32.lt_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 176)) (i32.lt_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16)))\n"
-    + "        (i32.ne (call $__fern_aes_view_len (local.get $nonce)) (i32.const 12)))\n      (then (return (call $__fern_aes_bytes (i32.const 0)))))\n"
-    + "    (local.set $np (call $__fern_aes_view_data (local.get $nonce)))\n"
-    + block16_wat("cb", "(i64.load (local.get $np))", "(i64.or (i64.extend_i32_u (i32.load offset=8 (local.get $np))) (i64.const 0x0200000000000000))")
-    + "    (local.set $out (call $__fern_aes_ctr32 (local.get $rk) (local.get $cb) (local.get $data)))\n"
-    + "    (local.set $ct (if (result i32) (local.get $seal) (then (local.get $out)) (else (local.get $data))))\n"
-    + "    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n"
-    + block16_wat("y", "(i64.const 0)", "(i64.const 0)")
-    + "    (local.set $t (call $__fern_ghash (local.get $h) (local.get $y) (local.get $aad)))\n    (drop (call $__fern_arr_dec (local.get $y)))\n"
-    + "    (local.set $y (call $__fern_ghash (local.get $h) (local.get $t) (local.get $ct)))\n    (drop (call $__fern_arr_dec (local.get $t)))\n"
-    + block16_wat("t", "(call $__fern_bswap64 (i64.shl (i64.extend_i32_u (call $__fern_aes_view_len (local.get $aad))) (i64.const 3)))", "(call $__fern_bswap64 (i64.shl (i64.extend_i32_u (local.get $n)) (i64.const 3)))")
-    + "    (local.set $tag (call $__fern_ghash (local.get $h) (local.get $y) (local.get $t)))\n    (drop (call $__fern_arr_dec (local.get $y)))\n    (drop (call $__fern_arr_dec (local.get $t)))\n"
-    + "    (i32.store offset=20 (local.get $cb) (i32.const 0x01000000))\n"
-    + "    (local.set $t (call $__fern_aes_ctr32 (local.get $rk) (local.get $cb) (local.get $tag)))\n    (drop (call $__fern_arr_dec (local.get $tag)))\n    (drop (call $__fern_arr_dec (local.get $cb)))\n"
-    + "    (local.set $all (call $__fern_aes_bytes (i32.add (local.get $n) (i32.const 16))))\n"
-    + "    (memory.copy (i32.add (local.get $all) (i32.const 8)) (i32.add (local.get $out) (i32.const 8)) (local.get $n))\n"
-    + "    (memory.copy (i32.add (i32.add (local.get $all) (i32.const 8)) (local.get $n)) (i32.add (local.get $t) (i32.const 8)) (i32.const 16))\n"
-    + "    (drop (call $__fern_arr_dec (local.get $out)))\n    (drop (call $__fern_arr_dec (local.get $t)))\n    (local.get $all))\n"
-    + "  (func $__fern_aes_gcm_seal (param $rk i32) (param $h i32) (param $nonce i32) (param $aad i32) (param $data i32) (result i32)\n"
-    + "    (call $__fern_aes_gcm (local.get $rk) (local.get $h) (local.get $nonce) (local.get $aad) (local.get $data) (i32.const 1)))\n"
-    + "  (func $__fern_aes_gcm_open (param $rk i32) (param $h i32) (param $nonce i32) (param $aad i32) (param $data i32) (result i32)\n"
-    + "    (call $__fern_aes_gcm (local.get $rk) (local.get $h) (local.get $nonce) (local.get $aad) (local.get $data) (i32.const 0)))\n";
+  let params: string = "(param $rk i32) (param $h i32) (param $iv i32) (param $seq i64) (param $buf i32) (param $aad_at i32) (param $aad_n i32) (param $at i32) (param $n i32)";
+  let args: string = "(local.get $rk) (local.get $h) (local.get $iv) (local.get $seq) (local.get $buf) (local.get $aad_at) (local.get $aad_n) (local.get $at) (local.get $n)";
+  let ctr: string = "    (call $__fern_aes_ctr_at (local.get $rkp) (local.get $rounds) (local.get $j0) (local.get $dp) (local.get $dp) (local.get $n))\n";
+  return "  (func $__fern_aes_gcm_into " + params + " (param $seal i32) (result i32)\n"
+    + "    (local $kl i32) (local $rounds i32) (local $copy i32) (local $tmp i32) (local $j0 i32) (local $s i32) (local $lens i32) (local $rkp i32) (local $hp i32) (local $dp i32) (local $ivp i32) (local $tag i32)\n"
+    + gcm_checks_wat() + gcm_own_wat()
+    + "    (local.set $tmp (call $__fern_aes_bytes (i32.const 48)))\n"
+    + "    (local.set $j0 (i32.add (local.get $tmp) (i32.const 8)))\n    (local.set $s (i32.add (local.get $tmp) (i32.const 24)))\n    (local.set $lens (i32.add (local.get $tmp) (i32.const 40)))\n"
+    + "    (local.set $rkp (call $__fern_aes_view_data (local.get $rk)))\n    (local.set $hp (call $__fern_aes_view_data (local.get $h)))\n"
+    + "    (local.set $ivp (call $__fern_aes_view_data (local.get $iv)))\n"
+    + "    (i64.store (local.get $j0) (i64.load (local.get $ivp)))\n    (i32.store offset=8 (local.get $j0) (i32.load offset=8 (local.get $ivp)))\n"
+    + "    (i64.store offset=4 (local.get $j0) (i64.xor (i64.load offset=4 (local.get $j0)) (call $__fern_bswap64 (local.get $seq))))\n"
+    + "    (i32.store offset=12 (local.get $j0) (i32.const 0x02000000))\n"
+    + "    (local.set $dp (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $at)))\n"
+    + "    (if (local.get $seal) (then\n" + ctr + gcm_hash_wat() + "    ) (else\n" + gcm_hash_wat() + ctr + "    ))\n"
+    + "    (i32.store offset=12 (local.get $j0) (i32.const 0x01000000))\n"
+    + "    (call $__fern_aes_ctr_at (local.get $rkp) (local.get $rounds) (local.get $j0) (local.get $s) (local.get $s) (i32.const 16))\n"
+    + "    (local.set $tag (i32.add (local.get $dp) (local.get $n)))\n"
+    + "    (if (local.get $seal) (then (memory.copy (local.get $tag) (local.get $s) (i32.const 16)))\n"
+    + "      (else (i32.store8 (local.get $tag) (i64.ne (i64.or (i64.xor (i64.load (local.get $tag)) (i64.load (local.get $s)))\n"
+    + "        (i64.xor (i64.load offset=8 (local.get $tag)) (i64.load offset=8 (local.get $s)))) (i64.const 0)))))\n"
+    + "    (drop (call $__fern_arr_dec (local.get $tmp)))\n    (local.get $buf))\n"
+    + "  (func $__fern_aes_gcm_seal_into " + params + " (result i32)\n    (call $__fern_aes_gcm_into " + args + " (i32.const 1)))\n"
+    + "  (func $__fern_aes_gcm_open_into " + params + " (result i32)\n    (call $__fern_aes_gcm_into " + args + " (i32.const 0)))\n";
 }
 
 pub function kernel_name(tag: i32): string {
@@ -406,15 +449,15 @@ pub function kernel_name(tag: i32): string {
     return "$__fern_aes_ctr32";
   }
   if (tag == 444) {
-    return "$__fern_aes_gcm_seal";
+    return "$__fern_aes_gcm_seal_into";
   }
   if (tag == 445) {
-    return "$__fern_aes_gcm_open";
+    return "$__fern_aes_gcm_open_into";
   }
   return "$__fern_ghash";
 }
 
 pub function funcs(): string {
   return view_funcs() + sbox_func() + ortho_func() + interleave_funcs() + shift_rows_func() + mix_columns_func()
-    + encrypt_func() + sub_word_func() + expand_key_func() + ctr32_func() + ghash_func() + gcm_func();
+    + encrypt_func() + sub_word_func() + expand_key_func() + ctr_at_func() + ctr32_func() + ghash_at_func() + ghash_func() + gcm_func();
 }

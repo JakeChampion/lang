@@ -5631,11 +5631,11 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__ghash") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_ghash())) };
   }
-  if (ins.str == "__aes_gcm_seal") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_seal())) };
+  if (ins.str == "__aes_gcm_seal_into") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_seal_into())) };
   }
-  if (ins.str == "__aes_gcm_open") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_open())) };
+  if (ins.str == "__aes_gcm_open_into") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_open_into())) };
   }
   let sha: i32 = ir.sha_builtin_tag(ins.str);
   if (sha != 0) {

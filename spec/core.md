@@ -460,8 +460,8 @@ is the number of slots it leaves.
 | `sha1_hw_blocks` | 441 | 2 | 1 |
 | `udp_bind_with` | 442 | 3 | 1 |
 | `raw_vdso` | 443 | 0 | 1 |
-| `aes_gcm_seal` | 444 | 5 | 1 |
-| `aes_gcm_open` | 445 | 5 | 1 |
+| `aes_gcm_seal_into` | 444 | 9 | 1 |
+| `aes_gcm_open_into` | 445 | 9 | 1 |
 | `mismatch_bytes_str` | 446 | 5 | 1 |
 | `vsplat` | 447 | 1 | 1 |
 | `vextract` | 448 | 1 | 1 |

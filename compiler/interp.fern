@@ -6049,10 +6049,61 @@ function aes_gcm_arity(name: string): i32 {
   if (name == "__aes_ctr32" || name == "__ghash") {
     return 3;
   }
-  if (name == "__aes_gcm_seal" || name == "__aes_gcm_open") {
-    return 5;
-  }
   return 0;
+}
+
+function sub_bytes(b: u8[], from: i32, n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  for i in 0..n {
+    out = out.with(i, b[from + i]);
+  }
+  return out;
+}
+
+// The in-place pair over a copy of the buffer argument, as the compiled kernels leave it.
+function call_aes_gcm_into(name: string, args: Value[]): Value {
+  if (args.len() != 9) {
+    return v_err(name + ": expected rk, h, iv, seq, buf, aad_at, aad_n, at and n");
+  }
+  let bs: u8[][] = byte_args([args[0], args[1], args[2], args[4]]);
+  if (bs.len() != 4) {
+    return v_err(name + ": expected byte arrays");
+  }
+  let seq: i64 = vint_as_i64(args[3]);
+  let aad_at: i64 = vint_as_i64(args[5]);
+  let aad_n: i64 = vint_as_i64(args[6]);
+  let at: i64 = vint_as_i64(args[7]);
+  let n: i64 = vint_as_i64(args[8]);
+  let buf: u8[] = bs[3];
+  let size: i64 = buf.len() as i64;
+  if (bs[0].len() < 176 || bs[1].len() < 16 || bs[2].len() != 12 || aad_at < 0 || aad_n < 0 || at < 0 || n < 0 || at + n + 16 > size || aad_at + aad_n > size) {
+    return v_err(name + ": range out of bounds");
+  }
+  let nonce: u8[] = bs[2];
+  for k in 0..8 {
+    nonce = nonce.with(4 + k, nonce[4 + k] ^ (seq >> (8 * (7 - k)) as i64 & 255) as u8);
+  }
+  let seal: boolean = name == "__aes_gcm_seal_into";
+  let d: i32 = at as i32;
+  let m: i32 = n as i32;
+  let out: u8[] = aesref.gcm(bs[0], bs[1], nonce, sub_bytes(buf, aad_at as i32, aad_n as i32), sub_bytes(buf, d, m), seal);
+  let diff: u8 = 0;
+  for i in 0..16 {
+    diff = diff | out[m + i] ^ buf[d + m + i];
+  }
+  for i in 0..m {
+    buf = buf.with(d + i, out[i]);
+  }
+  if (seal) {
+    for i in 0..16 {
+      buf = buf.with(d + m + i, out[m + i]);
+    }
+  } else if (diff == 0) {
+    buf = buf.with(d + m, 0 as u8);
+  } else {
+    buf = buf.with(d + m, 1 as u8);
+  }
+  return byte_value(buf);
 }
 
 function call_aes_gcm(name: string, args: Value[]): Value {
@@ -6066,9 +6117,6 @@ function call_aes_gcm(name: string, args: Value[]): Value {
   }
   if (name == "__ghash") {
     return byte_value(aesref.ghash(bs[0], bs[1], bs[2]));
-  }
-  if (want == 5) {
-    return byte_value(aesref.gcm(bs[0], bs[1], bs[2], bs[3], bs[4], name == "__aes_gcm_seal"));
   }
   return byte_value(aesref.ctr32(bs[0], bs[1], bs[2]));
 }
@@ -6923,6 +6971,9 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
   }
   if (aes_gcm_arity(name) > 0) {
     return call_aes_gcm(name, args);
+  }
+  if (name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into") {
+    return call_aes_gcm_into(name, args);
   }
   if (args.len() == 0 && is_sha_hw_name(name)) {
     return v_bool(false);

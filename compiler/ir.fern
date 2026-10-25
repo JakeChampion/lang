@@ -1520,11 +1520,11 @@ pub function op_ghash(): Op {
   return op0(404);
 }
 
-pub function op_aes_gcm_seal(): Op {
+pub function op_aes_gcm_seal_into(): Op {
   return op0(444);
 }
 
-pub function op_aes_gcm_open(): Op {
+pub function op_aes_gcm_open_into(): Op {
   return op0(445);
 }
 
@@ -3121,12 +3121,6 @@ function kind_id_len12(name: string): i32 {
   if (name == "memchr_bytes") {
     return 358;
   }
-  if (name == "aes_gcm_seal") {
-    return 444;
-  }
-  if (name == "aes_gcm_open") {
-    return 445;
-  }
   let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_i64") {
     return 94;
@@ -3445,6 +3439,12 @@ function kind_id_len16(name: string): i32 {
 }
 
 function kind_id_len17(name: string): i32 {
+  if (name == "aes_gcm_seal_into") {
+    return 444;
+  }
+  if (name == "aes_gcm_open_into") {
+    return 445;
+  }
   if (name == "inner_mul_add_f64") {
     return 382;
   }
@@ -4158,10 +4158,10 @@ function kind_name_4(id: i32): string {
     return "raw_vdso";
   }
   if (id == 444) {
-    return "aes_gcm_seal";
+    return "aes_gcm_seal_into";
   }
   if (id == 445) {
-    return "aes_gcm_open";
+    return "aes_gcm_open_into";
   }
   if (id == 380) {
     return "str_from_bytes_range";
@@ -4990,8 +4990,11 @@ function kind_pops(t: i32): i32 {
   if (t == 206) {
     return 5;
   }
-  if (t == 245 || t == 378 || t == 446 || t == 444 || t == 445) {
+  if (t == 245 || t == 378 || t == 446) {
     return 5;
+  }
+  if (t == 444 || t == 445) {
+    return 9;
   }
   if (t == 228 || t == 382) {
     return 6;
