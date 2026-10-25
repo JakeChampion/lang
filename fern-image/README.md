@@ -7,6 +7,7 @@ The color module provides sRGB transfer functions, grayscale, channel operations
 
 The resize module provides scalar nearest-neighbor and bilinear filters.
 A restricted native PNG codec decodes and encodes noninterlaced RGB8/RGBA8.
+Its [sequential row interface](docs/png-rows.md) emits selected rows after a complete filtered-frame decode.
 HTTP and CDN services remain unimplemented.
 
 ## Build and test
@@ -54,9 +55,9 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-Seventy-six TAP cases cover the essential, compression, pixel, color, resize, PNG, row-pipeline, region, cache, RSS parser, and fusion suites.
+Eighty-four TAP cases cover the essential, compression, pixel, color, resize, PNG, sequential PNG rows, row-pipeline, region, cache, RSS parser, and fusion suites.
 The file I/O probe and pixel example also exit successfully.
-The native script checks twenty-one executables with the sanitizer.
+The native script checks twenty-two executables with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
 The Linux-only RSS workload records its own procfs observations and runs only in the native script.
 See [RSS observations](docs/rss-observations.md) for the parent-memory control and measurement limits.
