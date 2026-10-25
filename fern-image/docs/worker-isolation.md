@@ -56,6 +56,27 @@ The collector checks source and tool hashes before and after the sequence.
 It records the scratch image ID, safe daemon fields, controls, worker output, and final process state.
 It does not record Docker environment values or registry credentials.
 
+## Local observations
+
+The committed record uses compiler `8c22550998a5` and worker source commit `8eb44c989971351361d0a3f3cc5d6855aecb5e8b`.
+All 27 containers pass their expected outcome checks and container removal checks.
+The three OOM workers exit with code 137 and `OOMKilled=true`.
+The six deadline workers exit with code 137 and `OOMKilled=false`.
+The fifteen valid workers and three cancellation workers exit successfully with zero final live bytes.
+
+The busy workers stop 1.071 to 1.129 seconds after the ready observation.
+The workers with retained images stop 1.083 to 1.166 seconds after that observation.
+Their pre-work cgroup peak observations range from 51793920 to 52068352 bytes.
+The cancellation workers report cgroup peaks from 51781632 to 52092928 bytes at their observation phases.
+These values describe this collection on this host.
+They are not thresholds for service latency or exact memory use.
+
+The valid and cancellation modes also pass separate native heap-sanitizer runs under the same container controls.
+The worker source compiles for ARM64 and Wasm.
+Those compile checks do not qualify cgroup execution on those targets.
+The current image library also passes its separate 76 TAP cases on native x86-64, Wasm, and ARM64/QEMU.
+GitHub CI remains separate from this local evidence.
+
 ## Evidence limits
 
 The cgroup memory limit controls kernel memory charge for one container.
