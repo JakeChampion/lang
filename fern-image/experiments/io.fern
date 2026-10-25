@@ -1,0 +1,19 @@
+function main(): i32 {
+  match (write_file("build/io-probe.txt", "fern bytes")) {
+    Ok(_) => {},
+    Err(_) => {
+      return 1;
+    }
+  }
+  let text: string = match (read_file("build/io-probe.txt")) { Ok(v) => v, Err(_) => { return 2; } };
+  if (text != "fern bytes") {
+    return 3;
+  }
+  match (read_file("build/does-not-exist")) {
+    Ok(_) => {
+      return 4;
+    },
+    Err(_) => {}
+  }
+  return 0;
+}

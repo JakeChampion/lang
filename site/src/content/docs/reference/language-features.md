@@ -203,6 +203,9 @@ if let Red(n) | Blue(n) = c { … }           // or-pattern
 if let 10..=20 = score { … }                // range pattern
 ```
 
+Inside a payload, a bare identifier binds the value. Qualify a constructor that has no payload.
+For example, `Some(Color.Red)` tests the `Red` variant. `Some(value)` binds any payload to `value`.
+
 Use `if let` in an expression to select a value. Both branches require
 blocks, and the final `else` is required. Each block yields its final
 expression, without a semicolon:
