@@ -56,7 +56,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<14 impl error.Error for BodyError>>
 
-<<15 function __ended_early_status(fault: i32): i32>>
+<<15 function __ended_early_status(fault: StreamFault): i32>>
 
 <<16 pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]>>
 
@@ -458,7 +458,7 @@ pub enum BodyError {
   MalformedJson(json.JsonError),
   WrongShape(string),
   NotUtf8,
-  EndedEarly(i32),
+  EndedEarly(StreamFault),
 }
 ```
 
@@ -484,7 +484,7 @@ pub function (e: BodyError) message(): string {
       return "body is not valid UTF-8";
     },
     EndedEarly(fault) => {
-      return __ended_early_detail(fault);
+      return fault.message();
     }
   }
   return "";
@@ -510,7 +510,7 @@ impl ToResponse for BodyError {
         return problem(400, "", "body is not valid UTF-8");
       },
       EndedEarly(fault) => {
-        return problem(__ended_early_status(fault), "", __ended_early_detail(fault));
+        return problem(__ended_early_status(fault), "", fault.message());
       },
       UnsupportedMediaType(ct) => {
         if (ct.len() == 0) {
@@ -530,31 +530,32 @@ impl ToResponse for BodyError {
 }
 ```
 
-### `15 function __ended_early_status(fault: i32): i32`
+### `15 function __ended_early_status(fault: StreamFault): i32`
 
 ```fern
-<<15 function __ended_early_status(fault: i32): i32>>=
-function __ended_early_status(fault: i32): i32 {
-  if (fault >= 400 && fault < 600) {
-    return fault;
+<<15 function __ended_early_status(fault: StreamFault): i32>>=
+function __ended_early_status(fault: StreamFault): i32 {
+  match (fault) {
+    StreamTooLarge => {
+      return 413;
+    },
+    StreamFramingTooLarge => {
+      return 431;
+    },
+    StreamTimeout => {
+      return 408;
+    },
+    StreamMalformed => {
+      return 400;
+    },
+    StreamCutShort => {
+      return 400;
+    },
+    StreamCancelled => {
+      return 500;
+    }
   }
   return 500;
-}
-
-function __ended_early_detail(fault: i32): string {
-  if (fault == 413) {
-    return "the body is past the limit";
-  }
-  if (fault == 408) {
-    return "the body arrived too slowly";
-  }
-  if (fault == 400) {
-    return "the body was malformed or cut short";
-  }
-  if (fault == 431) {
-    return "the body's framing is past the limit";
-  }
-  return "the body did not arrive whole";
 }
 ```
 
@@ -2591,8 +2592,8 @@ pub function (r: HttpRequest) body_stream(): ByteStream {
 
 pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
   let (bytes, rest) = __whole_body(r.body);
-  if (rest.fault() != 0) {
-    return Err(EndedEarly(rest.fault()));
+  if let Some(fault) = rest.fault() {
+    return Err(EndedEarly(fault));
   }
   match (utf8.from_bytes(bytes)) {
     Some(s) => {

@@ -35,6 +35,11 @@ function req_headers_placeholder(): HeaderMap {
   return HeaderMap { names: [], values: [] };
 }
 
+function no_fault(): Cell[Option[StreamFault]] {
+  let none: Option[StreamFault] = None;
+  return cell_new(none);
+}
+
 function scripted(chunks: string[]): BodySource {
   let at: Cell[i32] = cell_new(0);
   return BodySource {
@@ -46,19 +51,19 @@ function scripted(chunks: string[]): BodySource {
       at.set(k + 1);
       return Some(chunks[k].bytes());
     },
-    fault: cell_new(0),
+    fault: no_fault(),
     send: (bytes: u8[]): i32 => 0 - 95,
   };
 }
 
-function faulting(chunks: string[], status: i32): BodySource {
+function faulting(chunks: string[], why: StreamFault): BodySource {
   let at: Cell[i32] = cell_new(0);
-  let fault: Cell[i32] = cell_new(0);
+  let fault: Cell[Option[StreamFault]] = no_fault();
   return BodySource {
     next: (): Option[u8[]] => {
       let k: i32 = at.get();
       if (k >= chunks.len()) {
-        fault.set(status);
+        fault.set(Some(why));
         return None;
       }
       at.set(k + 1);
@@ -288,14 +293,14 @@ function test_sourced_body_len_is_declared(): test.TestOutcome {
 }
 
 function test_sourced_fault_is_ended_early(): test.TestOutcome {
-  match (sourced(faulting(["par", "tial"], 413), "99").body_string()) {
+  match (sourced(faulting(["par", "tial"], StreamTooLarge), "99").body_string()) {
     Ok(text) => {
       return test.fail("read " + text);
     },
     Err(e) => {
       match (e) {
-        EndedEarly(status) => {
-          return test.assert_eq(status, 413);
+        EndedEarly(StreamTooLarge()) => {
+          return test.assert_eq(e.message(), "the body is past the limit");
         },
         _ => {
           return test.fail("not EndedEarly");
@@ -306,15 +311,48 @@ function test_sourced_fault_is_ended_early(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function all_faults(): StreamFault[] {
+  return [StreamTooLarge, StreamFramingTooLarge, StreamTimeout, StreamMalformed, StreamCutShort, StreamCancelled];
+}
+
 function test_ended_early_to_response(): test.TestOutcome {
-  let stalled: http.BodyError = EndedEarly(408);
-  let abandoned: http.BodyError = EndedEarly(0 - 2);
-  return test.assert_eq(stalled.to_response().status.to_string() + "," + abandoned.to_response().status.to_string(), "408,500");
+  let got: string = "";
+  for f in all_faults() {
+    let e: http.BodyError = EndedEarly(f);
+    got = got + e.to_response().status.to_string() + " " + e.message() + "\n";
+  }
+  return test.assert_eq(got, "413 the body is past the limit\n431 the body's framing is past the limit\n408 the body arrived too slowly\n400 the body was malformed\n400 the body was cut short\n500 the request was cancelled before its body arrived\n");
+}
+
+function fault_text(f: Option[StreamFault]): string {
+  match (f) {
+    Some(why) => {
+      return why.to_string();
+    },
+    None => {
+      return "<none>";
+    }
+  }
+  return "<none>";
+}
+
+function test_sourced_stream_reports_each_fault(): test.TestOutcome {
+  let got: string = "";
+  let want: string = "";
+  for f in all_faults() {
+    let s: ByteStream = stream.stream_from_source(faulting(["par", "tial"], f));
+    let before: string = fault_text(s.fault());
+    let (all, rest) = s.read_all();
+    got = got + before + "|" + string_from_bytes_unchecked(all) + "|" + fault_text(rest.fault()) + "\n";
+    want = want + "<none>|partial|" + f.message() + "\n";
+  }
+  return test.assert_eq(got, want);
 }
 
 function test_in_memory_stream_has_no_fault(): test.TestOutcome {
   let (all, rest) = parsed("hello").body_stream().read_all();
-  return test.assert_eq(rest.fault(), 0);
+  let (whole, done) = stream.stream_from_source(scripted(["hel", "lo"])).read_all();
+  return test.assert_eq(fault_text(rest.fault()) + "," + fault_text(done.fault()), "<none>,<none>");
 }
 
 function test_read_some_answers_each_chunk(): test.TestOutcome {
@@ -331,7 +369,7 @@ function test_read_some_answers_each_chunk(): test.TestOutcome {
       }
       return None;
     },
-    fault: cell_new(0), send: (bytes: u8[]): i32 => 0,
+    fault: no_fault(), send: (bytes: u8[]): i32 => 0,
   };
   let s: ByteStream = stream.stream_from_source(src);
   let (first, s1) = s.read_some();
@@ -360,8 +398,9 @@ function main(): i32 {
   r = r.it("read_byte reaches the end of a sourced stream", test_sourced_read_byte_ends);
   r = r.it("body_string drains a sourced body", test_sourced_body_string_drains);
   r = r.it("body_len is the declared length of a sourced body", test_sourced_body_len_is_declared);
-  r = r.it("a fault is EndedEarly with its status", test_sourced_fault_is_ended_early);
-  r = r.it("EndedEarly answers the fault's status", test_ended_early_to_response);
+  r = r.it("a fault is EndedEarly with its StreamFault", test_sourced_fault_is_ended_early);
+  r = r.it("EndedEarly answers each fault's status and detail", test_ended_early_to_response);
+  r = r.it("a sourced stream reports each fault once it ends", test_sourced_stream_reports_each_fault);
   r = r.it("an in-memory stream has no fault", test_in_memory_stream_has_no_fault);
   r = r.it("read_some answers each chunk as it comes", test_read_some_answers_each_chunk);
   return r.finish();

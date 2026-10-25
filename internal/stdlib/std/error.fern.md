@@ -4,7 +4,7 @@ This module defines a common supertype for error values.
 
 ## Model
 
-`Error` supplies a message for a concrete error value. The runtime `IoError` implements this interface and the display interface.
+`Error` supplies a message for a concrete error value. The runtime's builtin errors, `IoError` and the `StreamFault` a byte stream ends with, implement this interface and the display interface.
 
 ## Contracts
 
@@ -23,6 +23,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<3 pub function (e: IoError) message(): string>>
 
 <<4 impl Error for IoError>>
+
+<<5 pub function (f: StreamFault) message(): string>>
 ```
 
 ### `module introduction`
@@ -82,4 +84,39 @@ pub function (e: IoError) to_string(): string {
 ```fern
 <<4 impl Error for IoError>>=
 impl Error for IoError {}
+```
+
+### `5 pub function (f: StreamFault) message(): string`
+
+```fern
+<<5 pub function (f: StreamFault) message(): string>>=
+pub function (f: StreamFault) message(): string {
+  match (f) {
+    StreamTooLarge => {
+      return "the body is past the limit";
+    },
+    StreamFramingTooLarge => {
+      return "the body's framing is past the limit";
+    },
+    StreamTimeout => {
+      return "the body arrived too slowly";
+    },
+    StreamMalformed => {
+      return "the body was malformed";
+    },
+    StreamCutShort => {
+      return "the body was cut short";
+    },
+    StreamCancelled => {
+      return "the request was cancelled before its body arrived";
+    }
+  }
+  return "";
+}
+
+pub function (f: StreamFault) to_string(): string {
+  return f.message();
+}
+
+impl Error for StreamFault {}
 ```

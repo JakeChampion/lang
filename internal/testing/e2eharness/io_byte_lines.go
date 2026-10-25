@@ -25,7 +25,8 @@ func IOByteLinesProgram(term, chunkSize int) string {
     let lr: io.ByteLineReader = io.byte_line_reader_new(r, TERM, CHUNK);
     let held: u8[][] = [];
     while (true) {
-        let next: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
+        let next: (Option[u8[]], io.ByteLineReader) = (None, lr);
+        match (lr.next_line_bytes()) { Ok(read) => { next = read; }, Err(_) => { return 2; } }
         lr = next.1;
         match (next.0) {
             Some(line) => {
@@ -35,9 +36,10 @@ func IOByteLinesProgram(term, chunkSize int) string {
             None => { break; },
         }
     }
-    match (lr.error()) { Some(_) => { return 2; }, None => {} }
-    let again: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
-    match (again.0) { Some(_) => { return 3; }, None => {} }
+    match (lr.next_line_bytes()) {
+        Ok(again) => { match (again.0) { Some(_) => { return 3; }, None => {} } },
+        Err(_) => { return 2; }
+    }
     match (r.close()) { Err(_) => { return 4; }, Ok(_) => {} }
     let i: i32 = 0;
     while (i < held.len()) {
@@ -70,9 +72,11 @@ func IOByteLineCases() []IOByteLineCase {
     let held: u8[][] = [];
     let step: i32 = 0;
     while (step < 4) {
+        let read: Result[(Option[u8[]], io.ByteLineReader), IoError] = Ok((None, lr));
+        if (step == 0 || step == 2) { read = lr.next_line_bytes(); }
+        else { read = lr.next_chunk_bytes(); }
         let next: (Option[u8[]], io.ByteLineReader) = (None, lr);
-        if (step == 0 || step == 2) { next = lr.next_line_bytes(); }
-        else { next = lr.next_chunk_bytes(); }
+        match (read) { Ok(got) => { next = got; }, Err(_) => { return 4; } }
         lr = next.1;
         match (next.0) {
             Some(bytes) => { held = held.append(bytes); if (emit(bytes) != 0) { return 1; } },
@@ -80,10 +84,10 @@ func IOByteLineCases() []IOByteLineCase {
         }
         step = step + 1;
     }
-    let end: (Option[u8[]], io.ByteLineReader) = lr.next_chunk_bytes();
-    lr = end.1;
-    match (end.0) { Some(_) => { return 3; }, None => {} }
-    match (lr.error()) { Some(_) => { return 4; }, None => {} }
+    match (lr.next_chunk_bytes()) {
+        Ok(end) => { match (end.0) { Some(_) => { return 3; }, None => {} } },
+        Err(_) => { return 4; }
+    }
     match (r.close()) { Err(_) => { return 5; }, Ok(_) => {} }
     let i: i32 = 0;
     while (i < held.len()) { if (emit(held[i]) != 0) { return 6; } i = i + 1; }
@@ -98,12 +102,14 @@ func IOByteLineCases() []IOByteLineCase {
     let n: i32 = 0;
     while (true) {
         if (n % 2 == 1) {
-            let sk: (boolean, io.ByteLineReader) = lr.skip_line();
+            let sk: (boolean, io.ByteLineReader) = (false, lr);
+            match (lr.skip_line()) { Ok(skipped) => { sk = skipped; }, Err(_) => { return 3; } }
             lr = sk.1;
             if (!sk.0) { break; }
             write("skip\n");
         } else {
-            let next: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
+            let next: (Option[u8[]], io.ByteLineReader) = (None, lr);
+            match (lr.next_line_bytes()) { Ok(read) => { next = read; }, Err(_) => { return 3; } }
             lr = next.1;
             match (next.0) {
                 Some(line) => { if (emit(line) != 0) { return 1; } },
@@ -112,9 +118,10 @@ func IOByteLineCases() []IOByteLineCase {
         }
         n = n + 1;
     }
-    let again: (boolean, io.ByteLineReader) = lr.skip_line();
-    if (again.0) { return 2; }
-    match (again.1.error()) { Some(_) => { return 3; }, None => {} }
+    match (lr.skip_line()) {
+        Ok(again) => { if (again.0) { return 2; } },
+        Err(_) => { return 3; }
+    }
     match (r.close()) { Err(_) => { return 4; }, Ok(_) => {} }
     return 0;
 }`, Check: func(t *testing.T, command func() *exec.Cmd, census bool) {
@@ -143,30 +150,36 @@ func IOByteLineReadErrorProgram(closed bool, chunk, length, value int) string {
 	}
 	return strings.NewReplacer("SETUP", setup, "CHUNK", strconv.Itoa(chunk), "LENGTH", strconv.Itoa(length),
 		"VALUE", strconv.Itoa(value), "CLOSE", closeAtEnd).Replace(`import "std/io_buffered" as io;
+function read_failed(r: Result[(Option[u8[]], io.ByteLineReader), IoError]): boolean {
+    match (r) { Err(Other(_, _, _)) => { return true; }, _ => { return false; } }
+    return false;
+}
 function main(): i32 {
     let r: Reader = stdin();
     SETUP
     let lr: io.ByteLineReader = io.byte_line_reader_new(r, 10, CHUNK);
-    let first: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
-    lr = first.1;
-    match (first.0) {
-        Some(bytes) => {
-            if (LENGTH == 0 || bytes.len() != LENGTH) { return 2; }
-            let i: i32 = 0;
-            while (i < bytes.len()) { if (bytes[i] as i32 != VALUE) { return 3; } i = i + 1; }
-        },
-        None => { if (LENGTH != 0) { return 4; } },
+    let first: Result[(Option[u8[]], io.ByteLineReader), IoError] = lr.next_line_bytes();
+    if (LENGTH == 0) {
+        if (!read_failed(first)) { return 2; }
+    } else {
+        match (first) {
+            Ok(got) => {
+                lr = got.1;
+                match (got.0) {
+                    Some(bytes) => {
+                        if (bytes.len() != LENGTH) { return 3; }
+                        let i: i32 = 0;
+                        while (i < bytes.len()) { if (bytes[i] as i32 != VALUE) { return 4; } i = i + 1; }
+                    },
+                    None => { return 5; },
+                }
+            },
+            Err(_) => { return 6; }
+        }
+        // The failure behind the partial record is answered next, without another read.
+        if (!read_failed(lr.next_chunk_bytes())) { return 7; }
+        if (!read_failed(lr.next_line_bytes())) { return 8; }
     }
-    match (lr.error()) {
-        Some(e) => { match (e) { Other(_, _, _) => {}, _ => { return 5; } } },
-        None => { return 6; },
-    }
-    let again: (Option[u8[]], io.ByteLineReader) = lr.next_chunk_bytes();
-    lr = again.1;
-    match (again.0) { Some(_) => { return 7; }, None => {} }
-    let last: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
-    match (last.0) { Some(_) => { return 8; }, None => {} }
-    match (last.1.error()) { Some(_) => {}, None => { return 9; } }
     if (CLOSE) { match (r.close()) { Err(_) => { return 10; }, Ok(_) => {} } }
     return 0;
 }`)

@@ -209,7 +209,7 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
         in_line = false;
       }
       if (buf_len(h) >= block_size()) {
-        o = o.flush();
+        o = gnu.flush(o);
       }
     }
     buf_push_byte(h, term);
@@ -217,7 +217,7 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
       r.close();
     }
     if (buf_len(h) >= block_size()) {
-      o = o.flush();
+      o = gnu.flush(o);
     }
   }
 
@@ -429,7 +429,7 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
       i = i + 1;
     }
     if (buf_len(h) >= block_size()) {
-      o = o.flush();
+      o = gnu.flush(o);
     }
   }
 
