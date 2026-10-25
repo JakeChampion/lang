@@ -8,7 +8,7 @@ import "../ssacreditreuse" as reuse;
 import "../ssacredithelper" as helper;
 import "../util";
 import "./ssacreditsparse" as sparse;
-import "./ssacreditconverged" as converged;
+import "./ssacreditbranch" as branch;
 
 function require(ok: boolean, id: i32): void {
   if (!ok) {
@@ -199,7 +199,7 @@ function unsafe_storage(name: string, unique: boolean): ssa.SFunc {
 
 function target_checks(target: string): void {
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source())), target).sub;
-  converged.run(source_with_assertion("function require(ok: boolean, code: i32): void { if (ok) { return; } return; }\n"), target);
+  branch.run(source_with_assertion("function require(ok: boolean, code: i32): void { return; }\n"), target);
   let f = body(sub, "replace");
   let assertion = body(sub, "require");
   expect(check(sub, f, assertion), "replace", "scalar call may exit with unproved caller obligations");
