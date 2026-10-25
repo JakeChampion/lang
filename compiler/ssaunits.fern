@@ -4470,7 +4470,8 @@ function held_read(p: Plan, ins: ssa.SInst): boolean {
     || ins.result < p.held.len() && p.held[ins.result];
 }
 
-// A carried construction reads its token from the donor's own local, so it never holds the block's token slot.
+// A carried construction inside a keep's or a classified donor's span reads its token from the donor's own local
+// (ssarc.block_body), so it never needs the block's token slot.
 function token_busy(pairs: ReusePairs, carried: boolean[], from: i32, to: i32, own_build: i32): boolean {
   let pos: i32 = 0;
   while (pos < pairs.builds.len()) {
@@ -4635,6 +4636,11 @@ function keep_overlaps(k: Keeps, from: i32, to: i32): boolean {
     i = i + 1;
   }
   return false;
+}
+
+// Whether a keep or a classified donor holds the token slot across the construction at pos.
+pub function token_slot_held(k: Keeps, pos: i32): boolean {
+  return keep_overlaps(k, pos, pos);
 }
 
 pub function classified_at(k: Keeps, pos: i32): i32 {

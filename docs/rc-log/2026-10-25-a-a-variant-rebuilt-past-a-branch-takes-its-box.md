@@ -1,8 +1,8 @@
 # 2026-10-25 — a variant rebuilt past a branch takes its box
 
 `ssaunits.dying_unclaimed`, replacing `dying_after_claims` and `last_claim`;
-`ssaunits.token_busy` and `carried_builds`; `ssarc.block_body` and
-`reuse_construct`, and `self_token` deleted.
+`ssaunits.token_busy`, `carried_builds` and `token_slot_held`;
+`ssarc.block_body`, `reuse_construct` and `slot_token`.
 
 ## The shape
 
@@ -44,9 +44,21 @@ the 39-field `__Conns`, whose keep starts at the `tls` field's read, before
 `Secured`. The carried construction copied its token into the slot
 (`self_token`), so `token_busy` refused the keep: the update retained all 38
 fields, dropped the old record and reused its shell, 750 instructions a
-request more. A carried construction (and an in-block pairing's) now reads
-its token from the donor's own local, where the carry already holds it, and
-never touches the slot, so `token_busy` no longer counts a carried build.
+request more. A carried construction inside a keep's or a classified donor's
+span now reads its token from the donor's own local, where the carry already
+holds it, and leaves the slot alone, so `token_busy` no longer counts a
+carried build. Everywhere else it moves the token into the slot as before
+(`slot_token`).
+
+The first version read every carried token from the donor's local. That
+changed the lowered shape of every carried construction, and the storage
+proofs (`ssacreditreuse.check_invocations`, run by
+`TestSelfHostCheckedStorageInvocation` and `TestSelfHostRetainedNativeBodies`)
+refused the shape (`invalid reuse boundary`). Their drivers then exited
+mid-run (94 and 89), and the leak checker reported every block they still
+held: a leak in the census, not in any compiled program. The protocol the
+proofs check is the slot's, so only the case the slot cannot serve leaves
+it.
 
 ## Measured
 
