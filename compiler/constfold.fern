@@ -277,7 +277,7 @@ function wrap(v: i64, w: IntWidth): i64 {
     return v;
   }
   if (w.unsigned) {
-    return v & ((1i64 << w.bits) - 1i64);
+    return v & (1i64 << w.bits) - 1i64;
   }
   let s: i64 = 64i64 - w.bits;
   return v << s >> s;
@@ -292,7 +292,7 @@ function shift_count(r: i64, w: IntWidth): i64 {
 
 function shift_right(l: i64, c: i64, w: IntWidth): i64 {
   if (w.unsigned) {
-    return ((l as u64) >> (c as u64)) as i64;
+    return (l as u64 >> c as u64) as i64;
   }
   return l >> c;
 }
@@ -305,10 +305,10 @@ function int_divide(op: string, l: i64, r: i64, w: IntWidth): ConstNum {
     return num_err("modulo by zero in constant expression");
   }
   if (w.unsigned && op == "/") {
-    return int_num(wrap(((l as u64) / (r as u64)) as i64, w));
+    return int_num(wrap((l as u64 / (r as u64)) as i64, w));
   }
   if (w.unsigned) {
-    return int_num(wrap(((l as u64) % (r as u64)) as i64, w));
+    return int_num(wrap((l as u64 % (r as u64)) as i64, w));
   }
   if (op == "/") {
     return int_num(wrap(l / r, w));
@@ -1011,6 +1011,66 @@ function main(): i32 {
     }
   }
 
+  let el: i32 = elide_cases();
+  if (el != 0) {
+    return el;
+  }
+
+  let mod21: parser.Module = fold_module(parser.parse_module(lexer.tokenize(
+    "function pick[T: Ord](a: T, b: T): T { if (a < b) { return a; } return b; }",
+  )));
+  if (mod21.funcs[0].bound_traits.len() != 1) {
+    return 200;
+  }
+  if (mod21.funcs[0].bound_traits[0] != "Ord") {
+    return 201;
+  }
+
+  let mod22: parser.Module = fold_source("let a = 1 + x; let b = !y; return 0;");
+  match (mod22.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBinary(b) => {
+          if (b.line != 1 || b.col != 11) {
+            return 210;
+          }
+        },
+        _ => {
+          return 211;
+        }
+      }
+    },
+    _ => {
+      return 212;
+    }
+  }
+  match (mod22.top_stmts[1]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprUnary(u) => {
+          if (u.line != 1 || u.col != 24) {
+            return 213;
+          }
+        },
+        _ => {
+          return 214;
+        }
+      }
+    },
+    _ => {
+      return 215;
+    }
+  }
+
+  let ec: i32 = eval_cases();
+  if (ec != 0) {
+    return ec;
+  }
+
+  return 0;
+}
+
+function elide_cases(): i32 {
   let mod15: parser.Module = elide_asserts(fold_source(
     "function main(): i32 { assert(1 > 2); return 0; }",
   ));
@@ -1117,58 +1177,6 @@ function main(): i32 {
       return 195;
     }
   }
-
-  let mod21: parser.Module = fold_module(parser.parse_module(lexer.tokenize(
-    "function pick[T: Ord](a: T, b: T): T { if (a < b) { return a; } return b; }",
-  )));
-  if (mod21.funcs[0].bound_traits.len() != 1) {
-    return 200;
-  }
-  if (mod21.funcs[0].bound_traits[0] != "Ord") {
-    return 201;
-  }
-
-  let mod22: parser.Module = fold_source("let a = 1 + x; let b = !y; return 0;");
-  match (mod22.top_stmts[0]) {
-    ast.StmtVar(v) => {
-      match (v.init) {
-        ast.ExprBinary(b) => {
-          if (b.line != 1 || b.col != 11) {
-            return 210;
-          }
-        },
-        _ => {
-          return 211;
-        }
-      }
-    },
-    _ => {
-      return 212;
-    }
-  }
-  match (mod22.top_stmts[1]) {
-    ast.StmtVar(v) => {
-      match (v.init) {
-        ast.ExprUnary(u) => {
-          if (u.line != 1 || u.col != 24) {
-            return 213;
-          }
-        },
-        _ => {
-          return 214;
-        }
-      }
-    },
-    _ => {
-      return 215;
-    }
-  }
-
-  let ec: i32 = eval_cases();
-  if (ec != 0) {
-    return ec;
-  }
-
   return 0;
 }
 
@@ -1180,7 +1188,7 @@ function eval_cases(): i32 {
     "const A: u32 = 4294967288u32 >> 2;",
     "const A: i64 = 0 - 8;\nconst B: i64 = A >> 1;",
     "const A: u64 = 18446744073709551615u64 / 2u64;",
-    "const A: i64 = 2147483647 + 1 + 2147483647 + 1;\nconst B: i64 = 5 / A;"
+    "const A: i64 = 2147483647 + 1 + 2147483647 + 1;\nconst B: i64 = 5 / A;",
   ];
   let want: i64[] = [0 - 1073741824i64, 44i64, 2i64, 1073741822i64, 0 - 4i64, 9223372036854775807i64, 0i64];
   let i: i32 = 0;
@@ -1196,7 +1204,7 @@ function eval_cases(): i32 {
     "const A: f64 = 1.0 / (0.5 - 0.5);",
     "const A: i32[] = [1, 2 / 0];",
     "const A: i32 = 2147483647 + 1 + 2147483647 + 1;\nconst B: i32 = 5 / A;",
-    "const A: boolean = true && false;"
+    "const A: boolean = true && false;",
   ];
   let errs: string[] = [
     "division by zero in constant expression",
@@ -1204,7 +1212,7 @@ function eval_cases(): i32 {
     "division by zero in constant expression",
     "division by zero in constant expression",
     "division by zero in constant expression",
-    ""
+    "",
   ];
   i = 0;
   while (i < srcs.len()) {
@@ -1233,4 +1241,3 @@ function eval_is_int(src: string, want: i64): boolean {
   let v: ConstNum = eval_source(src);
   return v.err == "" && v.kind == 1 && v.i == want;
 }
-
