@@ -672,6 +672,12 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
   return cum[b] - cum[a] > 0;
 }
 
+// With no saved register left, saving a caller register around the cold
+// calls costs less than a spill that every iteration loads and stores.
+function cold_caller(saved_free: i32, cold_integer: boolean, pick: i32, cum: i32[], lo: i32, hi: i32): boolean {
+  return saved_free == 0 && cold_integer && pick >= 0 && !spans_call(cum, lo, hi);
+}
+
 function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.nvals);
   if (cold.len() == 0) {
@@ -1716,11 +1722,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     }
     let pick: i32 = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
     let from_caller: boolean = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
-    // With no saved register left, saving a caller register around the cold
-    // calls costs less than a spill that every iteration loads and stores.
-    if (!from_caller && free_s.len() == 0 && cold_calls && oi < split && pick >= 0 && !spans_call(cum, lo[v], hi[v])) {
-      from_caller = true;
-    }
+    from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     if (!from_caller && free_s.len() == 0) {
       let need_saved: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
       let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);

@@ -4761,6 +4761,18 @@ function ssa_cold_clobbers(cold: i32[]): i32[] {
 
 struct ColdSaves { by_pos: i32[], by_val: i32[], any: boolean }
 
+function ssa_slotless(nspill: i32, views: i32[], cold: ColdSaves): boolean {
+  return nspill == 0 && ssa_view_count(views) == 0 && !cold.any;
+}
+
+function ssa_frame_words(nspill: i32, views: i32[], cold: ColdSaves): i32 {
+  let words: i32 = nspill + 3 * ssa_view_count(views);
+  if (cold.any) {
+    return words + COLD_SLOTS;
+  }
+  return words;
+}
+
 function ssa_cold_saves(f: ssa.SFunc, alloc: ssa.Alloc): ColdSaves {
   let by_pos: i32[] = __alloc_i32(ssa.position_count(f) + 1);
   let by_val: i32[] = __alloc_i32(f.nvals);
@@ -7649,30 +7661,48 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
 
 // `(x & mask) == 0` and `!= 0` read the flags of one `test` of x.
 function ssa_test_fuse(fr: SsaFrame, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
-  if (fu.tag != ir.K_EQ && fu.tag != ir.K_NE || !fr.imm.is_imm[fu.b] || fr.imm.value[fu.b] != 0i64 || ssa.imm_sym(fr.imm, fu.b) != "") {
+  if (!ssa_zero_compare(fr, fu)) {
     return fu;
   }
-  let k: i32 = blk.insts.len() - fu.n - 1;
-  while (k >= 0 && blk.insts[k].result != fu.a && (blk.insts[k].kind_tag == 1 || blk.insts[k].kind_tag == 3) && fr.imm.is_imm[blk.insts[k].result]) {
-    k = k - 1;
-  }
-  if (k < 0) {
+  let k: i32 = ssa_before_immediates(fr, blk, blk.insts.len() - fu.n - 1, fu.a);
+  if (k < 0 || !ssa_single_and(fr, blk.insts[k], fu.a)) {
     return fu;
   }
   let masked: ssa.SInst = blk.insts[k];
-  if (masked.result != fu.a || masked.kind_tag != 9 || ir.kind_id(masked.str) != 28 || fr.uses[masked.result] != 1) {
+  let at: i32 = ssa_mask_at(fr, masked);
+  if (at < 0) {
     return fu;
   }
-  let x: i32 = masked.args[0];
-  let m: i32 = masked.args[1];
-  if (fr.imm.is_imm[x]) {
-    x = masked.args[1];
-    m = masked.args[0];
+  return SsaFuse { ...fu, n: blk.insts.len() - k, a: masked.args[1 - at], b: masked.args[at], test: true };
+}
+
+function ssa_zero_compare(fr: SsaFrame, fu: SsaFuse): boolean {
+  return (fu.tag == ir.K_EQ || fu.tag == ir.K_NE) && fr.imm.is_imm[fu.b] && fr.imm.value[fu.b] == 0i64 && ssa.imm_sym(fr.imm, fu.b) == "";
+}
+
+// The position at or before `k` past the immediates, which emit nothing.
+function ssa_before_immediates(fr: SsaFrame, blk: ssa.SBlock, k: i32, stop: i32): i32 {
+  while (k >= 0 && blk.insts[k].result != stop && (blk.insts[k].kind_tag == 1 || blk.insts[k].kind_tag == 3) && fr.imm.is_imm[blk.insts[k].result]) {
+    k = k - 1;
   }
-  if (fr.imm.is_imm[x] || !fr.imm.is_imm[m] || ssa.imm_sym(fr.imm, m) != "" || fr.imm.value[m] < 0i64 || fr.imm.value[m] > 2147483647i64) {
-    return fu;
+  return k;
+}
+
+function ssa_single_and(fr: SsaFrame, ins: ssa.SInst, v: i32): boolean {
+  return ins.result == v && ins.kind_tag == 9 && ir.kind_id(ins.str) == 28 && fr.uses[ins.result] == 1;
+}
+
+// Which operand of the `and` is a mask testq can take, or -1.
+function ssa_mask_at(fr: SsaFrame, ins: ssa.SInst): i32 {
+  let at: i32 = 1;
+  if (fr.imm.is_imm[ins.args[0]]) {
+    at = 0;
   }
-  return SsaFuse { ...fu, n: blk.insts.len() - k, a: x, b: m, test: true };
+  let m: i32 = ins.args[at];
+  if (fr.imm.is_imm[ins.args[1 - at]] || !fr.imm.is_imm[m] || ssa.imm_sym(fr.imm, m) != "" || fr.imm.value[m] < 0i64 || fr.imm.value[m] > 2147483647i64) {
+    return 0 - 1;
+  }
+  return at;
 }
 
 function ssa_fusable_cmp(ins: ssa.SInst): boolean {
@@ -8301,6 +8331,10 @@ function ssa_cmp_branch(s: asmcore.EmitState, fu: SsaFuse, when_true: boolean, t
 }
 
 function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (fu.test) {
+    s = ssa_read(reg_of, fu.a, "%r11", s);
+    return ssa_test_imm(s, fr.imm.value[fu.b] as i32, ssa_src(reg_of, fu.a, "%r11"));
+  }
   if (!s.retain_sites || !fu.unique) {
     return ssa_fused_test_emit(fr, reg_of, fu, join, s);
   }
@@ -8319,10 +8353,6 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   }
   if (fu.unique) {
     return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
-  }
-  if (fu.test) {
-    s = ssa_read(reg_of, fu.a, "%r11", s);
-    return ssa_test_imm(s, fr.imm.value[fu.b] as i32, ssa_src(reg_of, fu.a, "%r11"));
   }
   if (ssa.float_cmp(ir.kind_name(fu.tag))) {
     s = ssa_fread(reg_of, fu.a, "%xmm1", s);
@@ -8639,7 +8669,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let tails: boolean = s.profile == 0;
   let leaf: boolean = s.profile == 0 && nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let cold: ColdSaves = ssa_cold_saves(f, alloc);
-  let bare: boolean = !leaf && nspill == 0 && ssa_view_count(views) == 0 && !cold.any && !hev_on(s) && tails && f.nparams <= ssa_nargs();
+  let bare: boolean = !leaf && ssa_slotless(nspill, views, cold) && !hev_on(s) && tails && f.nparams <= ssa_nargs();
   let pad: i32 = 0;
   if (saved.len() % 2 == 0) {
     pad = 8;
@@ -8657,10 +8687,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa_view_count(views) };
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
-  let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
-  if (cold.any) {
-    frame = frame + COLD_SLOTS * 8;
-  }
+  let frame: i32 = ssa_frame_words(fr.nspill, views, cold) * 8;
   if ((frame + save) % 16 != 0) {
     frame = frame + 8;
   }
