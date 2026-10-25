@@ -362,7 +362,8 @@ function cursor_step(c: i32): boolean {
 }
 
 function alias_of(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, ins: ssa.SInst): Alias {
-  if (ins.kind_tag == 7 && ins.args.len() == 1) {
+  // A phi with one input, as a folded branch leaves at its join, is a copy.
+  if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.args.len() == 1) {
     return Alias { of: 0, derived: false };
   }
   if (ins.kind_tag == 9) {
