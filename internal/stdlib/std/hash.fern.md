@@ -264,15 +264,19 @@ pub function xxh64(bs: [u8], seed: u64): u64 {
   let at: i32 = 0;
   let h: u64 = seed + 0x27D4EB2F165667C5;
   if (n >= 32) {
-    let v: u64[] = [seed + 0x9E3779B185EBCA87 + 0xC2B2AE3D27D4EB4F, seed + 0xC2B2AE3D27D4EB4F, seed, seed - 0x9E3779B185EBCA87];
+    let v1: u64 = seed + 0x9E3779B185EBCA87 + 0xC2B2AE3D27D4EB4F;
+    let v2: u64 = seed + 0xC2B2AE3D27D4EB4F;
+    let v3: u64 = seed;
+    let v4: u64 = seed - 0x9E3779B185EBCA87;
     while (at + 32 <= n) {
-      v = [__xxh_round(v[0], __le64(bs, at)), __xxh_round(v[1], __le64(bs, at + 8)), __xxh_round(v[2], __le64(bs, at + 16)), __xxh_round(v[3], __le64(bs, at + 24))];
+      v1 = __xxh_round(v1, __le64(bs, at));
+      v2 = __xxh_round(v2, __le64(bs, at + 8));
+      v3 = __xxh_round(v3, __le64(bs, at + 16));
+      v4 = __xxh_round(v4, __le64(bs, at + 24));
       at = at + 32;
     }
-    h = __rotl64(v[0], 1) + __rotl64(v[1], 7) + __rotl64(v[2], 12) + __rotl64(v[3], 18);
-    for x in v {
-      h = (h ^ __xxh_round(0, x)) * 0x9E3779B185EBCA87 + 0x85EBCA77C2B2AE63;
-    }
+    h = __rotl64(v1, 1) + __rotl64(v2, 7) + __rotl64(v3, 12) + __rotl64(v4, 18);
+    h = __xxh_merge(__xxh_merge(__xxh_merge(__xxh_merge(h, v1), v2), v3), v4);
   }
   return __xxh_tail(bs, at, h + n as u64);
 }
@@ -302,21 +306,24 @@ function __xxh_tail(bs: [u8], at: i32, h: u64): u64 {
   return h ^ h >> 32;
 }
 
+@inline
 function __xxh_round(acc: u64, input: u64): u64 {
   return __rotl64(acc + input * 0xC2B2AE3D27D4EB4F, 31) * 0x9E3779B185EBCA87;
 }
 
+@inline
+function __xxh_merge(h: u64, v: u64): u64 {
+  return (h ^ __xxh_round(0, v)) * 0x9E3779B185EBCA87 + 0x85EBCA77C2B2AE63;
+}
+
+@inline
 function __rotl64(x: u64, r: u64): u64 {
   return x << r | x >> 64 - r;
 }
 
+@inline
 function __le64(bs: [u8], at: i32): u64 {
-  let v: u64 = 0;
-  let i: i32 = 7;
-  while (i >= 0) {
-    v = v << 8 | bs[at + i] as u64;
-    i = i - 1;
-  }
-  return v;
+  return bs[at] as u64 | bs[at + 1] as u64 << 8 | bs[at + 2] as u64 << 16 | bs[at + 3] as u64 << 24
+    | bs[at + 4] as u64 << 32 | bs[at + 5] as u64 << 40 | bs[at + 6] as u64 << 48 | bs[at + 7] as u64 << 56;
 }
 ```
