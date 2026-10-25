@@ -36,6 +36,7 @@ import "std/json";
 import "std/result";
 import "std/option";
 import "std/crypto";
+import "std/hex";
 import "../../compiler/util";
 import "../fractal/server" as fractal;
 import "../fractal/source";
@@ -212,7 +213,7 @@ If the executable is unavailable, use a process token so cache keys do not incor
 function identity(): (i64, string) {
   match (read_file_bytes("/proc/self/exe").or_else((e: IoError): Result[u8[], IoError] => read_file_bytes(args()[0]))) {
     Ok(bytes) => {
-      return (bytes.len() as i64, crypto.sha256_new().update(bytes).final_hex().take(24));
+      return (bytes.len() as i64, hex.encode(crypto.sha256_new().update(bytes).finish()).take(24));
     },
     Err(_) => {
       return (0, common.token());

@@ -32,6 +32,7 @@ import "std/platform";
 import "std/parse";
 import "std/f64";
 import "std/crypto";
+import "std/hex";
 import "std/async";
 import "./common";
 
@@ -161,7 +162,7 @@ The response reports synthesis time and sample count. A download request adds an
 <<Cache audio responses>>=
 pub function audio(req: HttpRequest): Result[HttpResponse, http.HttpError] {
   let pattern: Pattern = parse_pattern(req)?;
-  let etag: string = "\"" + crypto.sha256_hex(req.path.bytes()).take(24) + "\"";
+  let etag: string = "\"" + hex.encode(crypto.sha256(req.path.bytes())).take(24) + "\"";
   if (req.headers.get("If-None-Match").unwrap_or("") == etag) {
     return Ok(http.bytes(304, []).with_header("ETag", etag));
   }

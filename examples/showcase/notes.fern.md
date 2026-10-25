@@ -30,6 +30,7 @@ import "std/array";
 import "std/http/form";
 import "std/http/cookie";
 import "std/crypto";
+import "std/hex";
 import "std/time";
 import "std/utf8";
 import "./common";
@@ -51,7 +52,7 @@ HMAC verification rejects a token that an attacker creates. SameSite and HttpOnl
 ```fern
 <<Sign form tokens>>=
 function signed(state: State, token: string): string {
-  return token + "." + crypto.hmac_sha256_hex(state.secret.bytes(), token.bytes());
+  return token + "." + hex.encode(crypto.hmac_sha256(state.secret.bytes(), token.bytes()));
 }
 
 pub function valid_token(state: State, value: string): boolean {
@@ -59,7 +60,10 @@ pub function valid_token(state: State, value: string): boolean {
   if (parts.len() != 2 || parts[0].len() != 24) {
     return false;
   }
-  return crypto.hmac_verify_hex(state.secret.bytes(), parts[0].bytes(), parts[1]);
+  let Ok(mac) = hex.decode(parts[1]) else {
+    return false;
+  };
+  return crypto.hmac_sha256_verify(state.secret.bytes(), parts[0].bytes(), mac);
 }
 ```
 
@@ -131,7 +135,7 @@ pub function post(state: State, req: HttpRequest): HttpResponse {
           return document(state, req, "Please remove unsupported characters from your name or note.", 422);
         }
       }
-      let author_key: string = crypto.sha256_hex(token.bytes());
+      let author_key: string = hex.encode(crypto.sha256(token.bytes()));
       let now: i64 = now_unix_ms();
       let entries: Note[] = state.entries.get();
       for recent in entries {

@@ -111,7 +111,7 @@ pub function (c: Config) with_alpn(protocols: string[]): Config {
 }
 
 pub function (c: Config) with_ticket_key(key: u8[]): Config {
-  return Config { ...c, ticket_key: crypto.sha256_new().update(key).final_bytes() };
+  return Config { ...c, ticket_key: crypto.sha256_new().update(key).finish() };
 }
 
 pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
@@ -470,9 +470,14 @@ function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSe
   }
   let ticket_nonce: u8[] = random_bytes(12);
   let sealed: u8[] = [];
-  match (chacha20poly1305.seal(config.ticket_key, ticket_nonce, body, TICKET_AAD.bytes())) {
-    Ok(b) => {
-      sealed = b;
+  match (chacha20poly1305.key(config.ticket_key)) {
+    Ok(k) => {
+      match (k.seal(ticket_nonce, body, TICKET_AAD.bytes())) {
+        Ok(b) => {
+          sealed = b;
+        },
+        Err(_) => {}
+      }
     },
     Err(_) => {}
   }
@@ -497,7 +502,10 @@ function __open_ticket(config: Config, offer: handshake.Offer, id: [u8], now: i6
   if (id.len() < 12) {
     return None;
   }
-  match (chacha20poly1305.open(config.ticket_key, __copy(id[0:12]), __copy(id[12:id.len()]), TICKET_AAD.bytes())) {
+  let Ok(k) = chacha20poly1305.key(config.ticket_key) else {
+    return None;
+  };
+  match (k.open(__copy(id[0:12]), __copy(id[12:id.len()]), TICKET_AAD.bytes())) {
     Ok(body) => {
       return __usable_ticket(body, offer, now);
     },

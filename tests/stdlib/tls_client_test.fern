@@ -64,7 +64,7 @@ function connect_at(cfg: client.Config, alpn: string[], forge: boolean, now: i64
     signed = signed.append(0 as u8);
   }
   let sig: u8[] = [];
-  match (ed25519.sign(leaf_seed(), signed)) {
+  match (signed_with(leaf_seed(), signed)) {
     Ok(b) => {
       sig = b;
     },
@@ -252,7 +252,7 @@ function refusal_alert(): Result[string, tls.TlsError] {
   let sc: handshake.ServerConfig = handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]);
   let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
-  match (ed25519.sign(leaf_seed(), signing(s1.events))) {
+  match (signed_with(leaf_seed(), signing(s1.events))) {
     Ok(b) => {
       sig = b;
     },
@@ -464,7 +464,7 @@ function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), request_client_certificate: true };
   let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
-  match (ed25519.sign(leaf_seed(), signing(s1.events))) {
+  match (signed_with(leaf_seed(), signing(s1.events))) {
     Ok(b) => {
       sig = b;
     },
@@ -558,4 +558,9 @@ function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
       return [];
     }
   }
+}
+
+function signed_with(key_seed: [u8], msg: [u8]): Result[u8[], ed25519.Ed25519Error] {
+  let k: ed25519.PrivateKey = ed25519.private_key(key_seed)?;
+  return Ok(k.sign(msg));
 }

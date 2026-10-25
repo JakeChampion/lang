@@ -28,6 +28,7 @@ import "std/array";
 import "std/url";
 import "std/parse";
 import "std/crypto";
+import "std/hex";
 import "std/i32";
 import "std/i64";
 import "../../compiler/weave";
@@ -79,7 +80,7 @@ A short allowlist prevents path separators and control characters in room names.
 <<Create identifiers>>=
 pub function token(): string {
   let bytes: u8[] = random_bytes(24);
-  return crypto.sha256_new().update(bytes).final_hex().take(24);
+  return hex.encode(crypto.sha256_new().update(bytes).finish()).take(24);
 }
 
 pub function room_name(value: string): boolean {

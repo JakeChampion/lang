@@ -316,7 +316,14 @@ pub function signature_ok(key: x509.PublicKey, alg: x509.Algorithm, msg: [u8], s
     },
     x509.Ed25519Key(k) => {
       if (x509.algorithm_name(alg) == "ed25519") {
-        return Ok(ed25519.verify(k, msg, sig));
+        match (ed25519.public_key(k)) {
+          Ok(pk) => {
+            return Ok(pk.verify(msg, sig));
+          },
+          Err(e) => {
+            return Err(UnsupportedAlgorithm("Ed25519 key: " + e.message()));
+          }
+        }
       }
     },
     x509.OtherKey(oid) => {
@@ -350,10 +357,10 @@ function __rsa_check(key: rsa.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u
   let i: i32 = 0;
   while (i < 3) {
     if (name == "rsa_pkcs1_" + hashes[i]) {
-      return Ok(rsa.verify_pkcs1v15(key, hs[i], msg, sig));
+      return Ok(key.verify_pkcs1v15(hs[i], msg, sig));
     }
     if (name == "rsa_pss_" + hashes[i]) {
-      return Ok(rsa.verify_pss(key, hs[i], msg, sig));
+      return Ok(key.verify_pss(hs[i], msg, sig));
     }
     i = i + 1;
   }
@@ -388,7 +395,7 @@ function __ecdsa(curve: ecdsa.Curve, point: u8[], alg: x509.Algorithm, msg: [u8]
       let i: i32 = 0;
       while (i < 3) {
         if (name == "ecdsa_" + hashes[i]) {
-          return Ok(ecdsa.verify(k, hs[i], msg, sig));
+          return Ok(k.verify(hs[i], msg, sig));
         }
         i = i + 1;
       }
@@ -716,7 +723,7 @@ function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
 ```fern
 <<21 pub function denied_key(c: x509.Certificate): boolean>>=
 pub function denied_key(c: x509.Certificate): boolean {
-  let h: string = hex.encode(crypto.sha256_new().update(c.spki).final_bytes());
+  let h: string = hex.encode(crypto.sha256_new().update(c.spki).finish());
   for d in DENIED_SPKI {
     if (h == d) {
       return true;

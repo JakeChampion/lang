@@ -353,7 +353,7 @@ function __deflate_param(name: string, kv: string[], bits: i32): i32 {
 ```fern
 <<14 pub function accept_key(key: string): string>>=
 pub function accept_key(key: string): string {
-  return base64.encode(crypto.sha1_bytes((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes()));
+  return base64.encode(crypto.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes()));
 }
 
 pub function frame(fin: boolean, opcode: i32, payload: u8[], mask: u8[]): u8[] {

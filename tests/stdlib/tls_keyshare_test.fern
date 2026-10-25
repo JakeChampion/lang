@@ -30,7 +30,7 @@ function cat(a: [u8], b: [u8]): u8[] {
 }
 
 function sha256(b: u8[]): string {
-  return crypto.sha256_new().update(b).final_hex();
+  return hex.encode(crypto.sha256_new().update(b).finish());
 }
 
 function shown(r: Result[u8[], keyshare.KeyShareError]): string {

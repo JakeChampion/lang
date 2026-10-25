@@ -799,7 +799,7 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/crypto", "# pass 26", "# fail 0", "1..26"} {
+	for _, w := range []string{"# Suite: std/crypto", "# pass 27", "# fail 0", "1..27"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -855,7 +855,7 @@ func TestRunnerDigestSm3ExamplePasses(t *testing.T) {
 }
 
 func TestRunnerChaCha20Poly1305ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "chacha20poly1305", "std/crypto/chacha20poly1305", 12)
+	runnerSuitePasses(t, "chacha20poly1305", "std/crypto/chacha20poly1305", 13)
 }
 
 func TestRunnerAESGCMExamplePasses(t *testing.T) {
@@ -883,7 +883,7 @@ func TestRunnerP256ExamplePasses(t *testing.T) {
 }
 
 func TestRunnerEd25519ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "ed25519", "std/crypto/ed25519", 11)
+	runnerSuitePasses(t, "ed25519", "std/crypto/ed25519", 12)
 }
 
 func TestRunnerRSAExamplePasses(t *testing.T) {
