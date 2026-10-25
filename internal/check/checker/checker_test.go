@@ -1462,7 +1462,7 @@ trait Total: Ord {}
 		`function gt[T: Eq](a: T, b: T): boolean { return a < b; }`,
 	} {
 		err := checkSource(t, traits+src+"\nfunction main(): i32 { return 0; }")
-		if err == nil || !strings.Contains(err.Error(), "requires an integer type") {
+		if err == nil || !strings.Contains(err.Error(), "requires matching numeric or string operands") {
 			t.Errorf("%s: should be rejected (E009), got: %v", src, err)
 		}
 	}
