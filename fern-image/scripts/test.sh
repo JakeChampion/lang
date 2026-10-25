@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
-for source in experiments/essentials.fern experiments/io.fern experiments/zlib.fern tests/pixels_test.fern tests/color_test.fern tests/resize_test.fern tests/png_test.fern tests/pipeline_test.fern tests/pipeline_bilinear_test.fern tests/regions_test.fern experiments/png-encode.fern examples/pixels.fern; do
+for source in experiments/essentials.fern experiments/io.fern experiments/zlib.fern tests/pixels_test.fern tests/color_test.fern tests/resize_test.fern tests/png_test.fern tests/pipeline_test.fern tests/pipeline_bilinear_test.fern tests/regions_test.fern tests/row_cache_test.fern experiments/png-encode.fern examples/pixels.fern; do
   output="build/$(basename "$source" .fern)"
   "$FERN" -check "$source"
   "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
@@ -15,6 +15,12 @@ done
 for mode in unique shared retained rows rows-retained rows-cancelled eager eager-retained; do
   ./build/memory-probe "$mode" 16
   ./build/memory-probe "$mode" 128
+done
+"$FERN" -check benchmarks/row_cache.fern
+"$FERN" -target x86-64-linux -sanitize -o build/row-cache benchmarks/row_cache.fern
+for cache_bytes in 0 12000; do
+  ./build/row-cache "$cache_bytes" 16
+  ./build/row-cache "$cache_bytes" 128
 done
 for spec in immutable-array:E056 immutable-field:E048 usize-checked:E009; do
   name=${spec%:*}

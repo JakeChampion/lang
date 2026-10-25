@@ -62,6 +62,7 @@ These tests do not qualify aggregate memory or production service behavior.
 
 The [region interface](regions.md) adds checked cropped tiles and direct dependency-row queries.
 It uses serial full-row execution and does not retain a row cache.
+The separate [row batch interface](row-cache.md) supports a private per-call row cache with explicit payload and entry limits.
 
 The future graph separates source, decode, orientation, resize, crop, color, and encode operations.
 Each node must expose dimensions, format, alpha semantics, and required input regions.
@@ -70,7 +71,7 @@ A scheduler must enforce scratch budgets and release rows after their final cons
 Codec access patterns determine whether a node can request arbitrary regions.
 Sequential codecs cannot promise efficient arbitrary tile access.
 
-Caching, fusion, and decoder row providers remain future work.
+Cached tile integration, fusion, and decoder row providers remain future work.
 PNG decoding still materializes its complete decoded image.
 The row interface does not assume that every codec supports efficient arbitrary regions.
 
