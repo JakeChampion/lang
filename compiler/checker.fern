@@ -4071,33 +4071,41 @@ function payload_spelling(s: Scope, us: UnionSig, vname: string, k: i32): string
 }
 
 function promotes_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
-  if (is_str_view(from) && is_owned_string(to)) {
+  return shifts_view(from, to, true);
+}
+
+function lends_array_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  return shifts_view(to, from, false);
+}
+
+function shifts_view(from: typeinfo.Type, to: typeinfo.Type, strings: boolean): boolean {
+  if (strings && is_str_view(from) && is_owned_string(to)) {
     return true;
   }
   match (from) {
     typeinfo.TypeArray(fa) => {
       if let typeinfo.TypeArray(ta) = to {
-        return fa.view && !ta.view || promotes_view(fa.elem, ta.elem);
+        return fa.view && !ta.view || shifts_view(fa.elem, ta.elem, strings);
       }
     },
     typeinfo.TypeTuple(ft) => {
       if let typeinfo.TypeTuple(tt) = to {
-        return any_promotes_view(ft.elements, tt.elements);
+        return any_shifts_view(ft.elements, tt.elements, strings);
       }
     },
     typeinfo.TypeMap(fm) => {
       if let typeinfo.TypeMap(tm) = to {
-        return promotes_view(fm.key, tm.key) || promotes_view(fm.value, tm.value);
+        return shifts_view(fm.key, tm.key, strings) || shifts_view(fm.value, tm.value, strings);
       }
     },
     typeinfo.TypeUnion(fu) => {
       if let typeinfo.TypeUnion(tu) = to {
-        return any_promotes_view(fu.args, tu.args);
+        return any_shifts_view(fu.args, tu.args, strings);
       }
     },
     typeinfo.TypeStruct(fs) => {
       if let typeinfo.TypeStruct(ts) = to {
-        return any_promotes_view(fs.args, ts.args);
+        return any_shifts_view(fs.args, ts.args, strings);
       }
     },
     _ => {}
@@ -4109,13 +4117,13 @@ function same_element_type(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return type_eq(a, b) && !promotes_view(a, b) && !promotes_view(b, a);
 }
 
-function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean {
+function any_shifts_view(from: typeinfo.Type[], to: typeinfo.Type[], strings: boolean): boolean {
   if (from.len() != to.len()) {
     return false;
   }
   let i: i32 = 0;
   while (i < from.len()) {
-    if (promotes_view(from[i], to[i])) {
+    if (shifts_view(from[i], to[i], strings)) {
       return true;
     }
     i = i + 1;
@@ -4136,10 +4144,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
     }
     return false;
   }
-  if (promotes_view(from, to)) {
-    return false;
-  }
-  if (is_arr_view(from) && is_owned_array(to) || is_owned_array(from) && is_arr_view(to)) {
+  if (promotes_view(from, to) || lends_array_view(from, to)) {
     return false;
   }
   if (nominal_args_clash(from, to, unions)) {
@@ -14495,9 +14500,6 @@ function checks_array_element(ty: typeinfo.Type): boolean {
       return true;
     },
     typeinfo.TypeStruct(_) => {
-      return true;
-    },
-    typeinfo.TypeArray(_) => {
       return true;
     },
     _ => {
