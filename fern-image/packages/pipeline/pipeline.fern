@@ -17,6 +17,8 @@ pub enum PipelineError { InvalidGraph, Dimensions, Bounds, Budget, Pixel(pixels.
 
 struct Cost { scratch: i64, samples: i64 }
 
+struct NearestChain { root: i32, depth: i32, width_sum: i64 }
+
 pub struct RowStats { rows: i32, hits: i32, misses: i32, peak_cache_bytes: i32, peak_cache_entries: i32 }
 
 pub struct RowFold[S] { value: S, stats: RowStats }
@@ -186,6 +188,50 @@ function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: 
   return fill_row(node, limits, cancelled, sample);
 }
 
+function nearest_chain(graph: Graph, at: i32): NearestChain {
+  let cursor = at;
+  let depth = 0;
+  let width_sum = 0i64;
+  while (true) {
+    match (graph.nodes[cursor].operation) {
+      NearestSource(parent) => {
+        width_sum = width_sum + graph.nodes[cursor].width as i64;
+        depth = depth + 1;
+        cursor = parent;
+      },
+      _ => { return NearestChain { root: cursor, depth: depth, width_sum: width_sum }; }
+    }
+  }
+}
+
+function nearest_coordinate(graph: Graph, at: i32, root: i32, index: i32, vertical: boolean,
+  cancelled: () => boolean): Result[i32, PipelineError] {
+  let cursor = at;
+  let mapped = index;
+  while (cursor != root) {
+    if (vertical && cancelled()) { return Err(Cancelled); }
+    let node = graph.nodes[cursor];
+    let parent = match (node.operation) { NearestSource(v) => v, _ => { return Err(InvalidGraph); } };
+    let from = graph.nodes[parent].width;
+    let to = node.width;
+    if (vertical) { from = graph.nodes[parent].height; to = node.height; }
+    mapped = match (resize.nearest_index(mapped, from, to)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
+    cursor = parent;
+  }
+  return Ok(mapped);
+}
+
+function render_nearest_chain(graph: Graph, at: i32, chain: NearestChain, y: i32, limits: Limits,
+  cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+  let source_y = nearest_coordinate(graph, at, chain.root, y, true, cancelled)?;
+  let row = render_node(graph, chain.root, source_y, limits, None, cancelled)?;
+  let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
+    let source_x = nearest_coordinate(graph, at, chain.root, x, false, cancelled)?;
+    return read(row, source_x, 0);
+  };
+  return fill_row(graph.nodes[at], limits, cancelled, sample);
+}
+
 function render_uncached(graph: Graph, at: i32, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   let node = graph.nodes[at];
   match (node.operation) {
@@ -197,6 +243,17 @@ function render_uncached(graph: Graph, at: i32, y: i32, limits: Limits, cache: O
     },
     NearestSource(parent) => {
       let input = graph.nodes[parent];
+      match (cache) {
+        None => {
+          if let NearestSource(_) = input.operation {
+            let chain = nearest_chain(graph, at);
+            if (node.width as i64 * (chain.depth as i64) <= chain.width_sum) {
+              return render_nearest_chain(graph, at, chain, y, limits, cancelled);
+            }
+          }
+        },
+        Some(_) => {}
+      }
       let source_y = match (resize.nearest_index(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
       let row = render_node(graph, parent, source_y, limits, cache, cancelled)?;
       let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {

@@ -1,0 +1,39 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+import "std/i32";
+import "std/i64";
+
+function never_cancel(): boolean { return false; }
+
+function main(): i32 {
+  let av = args();
+  if (av.len() != 2 || (av[1] != "8" && av[1] != "32")) { return 1; }
+  let count = 8;
+  if (av[1] == "32") { count = 32; }
+  let limits = pipeline.Limits { max_pixels: 10000000, max_row_bytes: 4096, max_scratch_bytes: 21504, max_nodes: 5, max_samples: 2688 };
+  let pixel = pixels.Pixel { r: 17, g: 23, b: 99, a: 128 };
+  let graph = match (pipeline.solid(1024, 8192, pixels.RGBA8, pixel, limits)) { Ok(v) => v, Err(_) => { return 2; } };
+  graph = match (pipeline.nearest(graph, 768, 12000, limits)) { Ok(v) => v, Err(_) => { return 3; } };
+  graph = match (pipeline.nearest(graph, 512, 16000, limits)) { Ok(v) => v, Err(_) => { return 4; } };
+  graph = match (pipeline.nearest(graph, 256, 20000, limits)) { Ok(v) => v, Err(_) => { return 5; } };
+  graph = match (pipeline.nearest(graph, 128, 24000, limits)) { Ok(v) => v, Err(_) => { return 6; } };
+  let allocated = __heap_alloc_count();
+  let before = __heap_bump_bytes();
+  let checksum = 0;
+  let i = 0;
+  while (i < count) {
+    let row = match (pipeline.render_row(graph, 12000 + i, limits, never_cancel)) { Ok(v) => v, Err(_) => { return 7; } };
+    let a = match (pixels.read_pixel(row, 0, 0)) { Ok(v) => v, Err(_) => { return 8; } };
+    let b = match (pixels.read_pixel(row, 127, 0)) { Ok(v) => v, Err(_) => { return 9; } };
+    if (row.data.len() != 512 || a.r != 17 as u8 || a.g != 23 as u8 || a.b != 99 as u8 || a.a != 128 as u8
+      || b.r != a.r || b.g != a.g || b.b != a.b || b.a != a.a) { return 10; }
+    checksum = checksum + b.r as i32;
+    i = i + 1;
+  }
+  let allocations = __heap_alloc_count() - allocated;
+  let fresh = __heap_bump_bytes() - before;
+  if (checksum != count * 17 || allocations <= 0i64 || fresh <= 0i64) { return 11; }
+  print("count=" + count.to_string() + " checksum=" + checksum.to_string()
+    + " allocations=" + allocations.to_string() + " fresh_bytes=" + fresh.to_string());
+  return 0;
+}
