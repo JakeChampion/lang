@@ -111,7 +111,9 @@ of them faults (no `SIGFPE`, no wasm trap):
 This is the "well-defined, no exceptions" contract: a Fern program
 never aborts on a division edge, so callers don't need to guard
 divisors. If you want a different policy (e.g. a sentinel for division
-by zero), test the divisor at the source level first.
+by zero), test the divisor at the source level first. A `const`
+initializer is the exception: it is evaluated at compile time, and a zero
+divisor there is a compile error (see "Known limitations" below).
 
 ### How it's implemented
 
@@ -232,6 +234,13 @@ A declared const's width IS available, and the wrapping operators fold at it:
 expression produces as code, and a shift count masks to the declared width
 (`& 31` for i32) rather than to 63. An undeclared const still folds in int64,
 so it can disagree with the same expression written at a narrower width.
+
+A `/` or `%` whose divisor evaluates to zero in a const initializer is a
+compile error, ``error[E093]: const A: division by zero in constant
+expression`` (or `modulo by zero`), rather than the `0` or dividend the same
+division gives as code. The divisor is evaluated at the declared width, so
+`const Z: i32 = 2147483647 + 1 + 2147483647 + 1` is a zero divisor and the
+same sum declared `i64` is not. A float `/` by zero is refused the same way.
 
 ## Checked arithmetic (opt-in)
 
