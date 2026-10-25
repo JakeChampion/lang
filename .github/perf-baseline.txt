@@ -1,5 +1,7 @@
 # Re-pinned 2026-10-25 (#13276): x86_64/utf8_ingest_unchecked.text 8288 to 8196 and
 # utf8_ingest_validated.text 8802 to 8710, from a local perf-bench run on e5f90a40.
+# aarch64/utf8_ingest_unchecked.text 7802 to 8637, counted from `fern -target arm64-linux`
+# on the same tree; aarch64/utf8_ingest_validated.text reads 9100, within 1% of 9049.
 # Re-pinned 2026-10-25 (#13251), x86_64 rows from a local perf-bench run on
 # f2a9fbef. The runtime word copy cuts byte_copy_*.ir by 73-74%, and the
 # register and release changes cut deflate_encode.ir by 18% and enum_match.ir
@@ -421,7 +423,7 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	7802
+aarch64/utf8_ingest_unchecked.text	8637
 aarch64/utf8_ingest_unchecked.ir	2683450
 aarch64/utf8_ingest_validated.text	9049
 aarch64/utf8_ingest_validated.ir	6269853
