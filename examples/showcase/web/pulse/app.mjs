@@ -39,7 +39,7 @@ function chart(id, key, format, fixedMax) {
   const values = samples.map((s) => s[key]).filter(Number.isFinite);
   const style = getComputedStyle(canvas);
   context.clearRect(0, 0, width, height);
-  context.strokeStyle = style.getPropertyValue("--chart-grid").trim();
+  context.strokeStyle = style.borderTopColor;
   context.lineWidth = 1;
   for (let row = 0; row <= 3; row++) {
     const y = (row * (height - 22)) / 3 + 8;
@@ -49,14 +49,14 @@ function chart(id, key, format, fixedMax) {
     context.stroke();
   }
   context.font = `${Math.max(9, (width / canvas.getBoundingClientRect().width) * 9)}px "IBM Plex Mono", monospace`;
-  context.fillStyle = style.getPropertyValue("--chart-text").trim();
+  context.fillStyle = style.outlineColor;
   if (!values.length) {
     context.fillText("No measurement available on this host.", 12, height / 2);
     return;
   }
   const maximum = Math.max(fixedMax || 1, ...values) * (fixedMax ? 1 : 1.15);
   context.fillText(format(maximum), 4, 12);
-  context.strokeStyle = style.getPropertyValue("--chart-line").trim();
+  context.strokeStyle = style.color;
   context.lineWidth = 2;
   context.beginPath();
   let started = false,
@@ -84,6 +84,7 @@ function charts() {
   chart("rss-chart", "rss", bytes);
   chart("cpu-chart", "cpu", (n) => `${n.toFixed(0)}%`, 100);
 }
+addEventListener("fern-theme", charts);
 function receive(value) {
   clearTimeout(watchdog);
   failures = 0;

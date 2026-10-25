@@ -1,6 +1,7 @@
 import { mountFullscreen } from "/assets/ui.mjs";
 import { $, status, toast } from "/assets/ui.mjs";
-import { load } from "./kernel.mjs";
+import { instantiate, load } from "./kernel.mjs";
+import { mountEditor } from "./editor.mjs";
 const canvas = $("field"),
   max = 16384,
   points = new Float32Array(max * 3);
@@ -231,7 +232,11 @@ canvas.addEventListener("webglcontextlost", (e) => {
 });
 function synthesize() {
   if (worker)
-    worker.postMessage({ id: ++audioID, tone: Number($("tone").value) });
+    worker.postMessage({
+      id: ++audioID,
+      tone: Number($("tone").value),
+      bytes: kernel.buffer === original?.buffer ? undefined : kernel.buffer,
+    });
 }
 $("audio").onclick = async () => {
   if (audio) {
@@ -307,11 +312,24 @@ addEventListener("pagehide", () => {
   worker?.terminate();
   audio?.close();
 });
+let original;
+function install(next) {
+  kernel = next;
+  $("wasm-size").textContent = (kernel.buffer.byteLength / 1024).toFixed(1);
+  canvas.dataset.kernel = kernel === original ? "original" : "edited";
+  synthesize();
+  refresh();
+}
+mountEditor({
+  use: async (buffer) => install(await instantiate(buffer)),
+  restore: async () => install(original),
+});
 try {
-  kernel = await load();
+  kernel = original = await load();
+  canvas.dataset.kernel = "original";
   renderer = graphics();
   $("renderer").textContent = renderer.name;
-  $("wasm-size").textContent = (kernel.bytes / 1024).toFixed(1);
+  $("wasm-size").textContent = (kernel.buffer.byteLength / 1024).toFixed(1);
   resize();
   setPaused(paused);
   status(
