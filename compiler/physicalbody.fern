@@ -116,9 +116,10 @@ function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
   if (at < 0 || semscalarreturn.variant_in_lanes(m.enums[at])) {
     return 0;
   }
+  let variants: semrecords.Variant[] = m.enums[at].variants;
   let mask: i32 = 0;
-  let tag: i32 = 0;
-  for v in m.enums[at].variants {
+  for tag in 0..variants.len() {
+    let v: semrecords.Variant = variants[tag];
     let held: boolean = false;
     if (v.fields.len() == 1) {
       let parts: typeinfo.Type[] = sempair.split_parts(m.records, m.finalizers, v.fields[0].ty);
@@ -134,7 +135,6 @@ function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
     if (held) {
       mask = mask | 1 << tag;
     }
-    tag = tag + 1;
   }
   return mask;
 }

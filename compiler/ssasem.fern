@@ -2519,12 +2519,10 @@ function pair_capture_valid(f: Func, base: i32, count: i32): boolean {
   if (count < 1 || count > 2 || base > f.values.len() - count) {
     return false;
   }
-  let i: i32 = 0;
-  while (i < count) {
+  for i in 0..count {
     if (!is_usize(f.values[base + i])) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }

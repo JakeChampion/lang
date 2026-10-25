@@ -1034,12 +1034,14 @@ function word_slot(w: Walk, ins: ssa.SInst): i32 {
 
 // Whether the call at c hands back a second pair word.
 function three_words(w: Walk, insts: ssa.SInst[], c: i32): boolean {
-  let k: i32 = c + 1;
-  while (k < insts.len() && is_call_word(insts[k])) {
+  let first: i32 = c + 1;
+  for k in first..insts.len() {
+    if (!is_call_word(insts[k])) {
+      return false;
+    }
     if (word_slot(w, insts[k]) == 1) {
       return true;
     }
-    k = k + 1;
   }
   return false;
 }
