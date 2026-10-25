@@ -200,7 +200,7 @@ def main():
     paths["fern-image/scripts/test-png-corpus.sh"] = root / "scripts/test-png-corpus.sh"
     for directory in [root / "packages", root.parent / "internal/stdlib", Path(PIL.__file__).parent]:
         for path in sorted(directory.rglob("*")):
-            if path.is_file() and path.suffix in [".fern", ".py", ".so"]:
+            if path.is_file() and (path.suffix in [".fern", ".py", ".so"] or path.name.endswith(".fern.md")):
                 key = str(path.relative_to(root.parent)) if path.is_relative_to(root.parent) else "reference/PIL/" + str(path.relative_to(directory))
                 paths[key] = path
     for directory in Path(PIL.__file__).parent.parent.glob("*illow.libs"):
