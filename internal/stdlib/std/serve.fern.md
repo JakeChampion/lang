@@ -140,15 +140,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<62 function __shared_event[D: async.Driver](drv: D, pool: fetch.Idle, c: __Conns, fls: __Flight[], fd: i32, re...>>
 
-<<63 function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host)>>
+<<63 function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host)>>
 
 <<64 function __serve_burst[D: async.Driver](drv: D, own c: __Conns, own fls: __Flight[], at: i32, eof: boolean,...>>
 
-<<65 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, platform.Host)>>
+<<65 function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, platform.Host)>>
 
 <<66 pub function supervise(port: i32, opts: Config, handler: (HttpRequest, platform.Host)>>
 
-<<67 function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Writer])>>
+<<67 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer])>>
 
 <<68 function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, worker: (i32, Config, Opt...>>
 
@@ -336,7 +336,7 @@ pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platfo
   if (l.fd < 0) {
     return Err(__listen_error(port, l.fd));
   }
-  return __serve_loop(l.fd, handler, opts, shutdown, None);
+  return __serve_loop(l, handler, opts, shutdown, None);
 }
 ```
 
@@ -357,7 +357,15 @@ function __serve_listener(port: i32, opts: Config): __Listen {
 
 ```fern
 <<11 struct __Listen>>=
-struct __Listen { fd: i32 }
+struct __Listen { fd: i32, inherited: boolean }
+
+// __listen_release closes a listener serve bound itself. An inherited
+// LISTEN_FDS listener stays open, so a caller can retry on it.
+function __listen_release(l: __Listen): void {
+  if (l.fd >= 0 && !l.inherited) {
+    tcp_close(l.fd);
+  }
+}
 ```
 
 ### `12 pub struct ListenError`
@@ -405,7 +413,7 @@ function __listener_of(port: i32, opts: Config): __Listen {
       match (i32.parse_i32_radix(n, 10)) {
         Ok(count) => {
           if (count >= 1) {
-            return __Listen { fd: 3 };
+            return __Listen { fd: 3, inherited: true };
           }
         },
         Err(_) => {}
@@ -416,10 +424,10 @@ function __listener_of(port: i32, opts: Config): __Listen {
   if (target_os() != "wasi") {
     let both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
     if (both >= 0 || !net.error_from_host(both).ipv6_unavailable()) {
-      return __Listen { fd: both };
+      return __Listen { fd: both, inherited: false };
     }
   }
-  return __Listen { fd: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port) };
+  return __Listen { fd: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), inherited: false };
 }
 ```
 
@@ -436,7 +444,7 @@ pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S,
   if (l.fd < 0) {
     return Err(__listen_error(port, l.fd));
   }
-  return __serve_loop_with(l.fd, init, handler, opts, shutdown, None);
+  return __serve_loop_with(l, init, handler, opts, shutdown, None);
 }
 ```
 
@@ -4529,17 +4537,20 @@ function __init_platform(): platform.Host {
 }
 ```
 
-### `63 function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host)`
+### `63 function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host)`
 
 ```fern
-<<63 function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host)>>=
-function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, on_stop: (string) => void, snap: Option[Writer]): Result[i32, ListenError] {
+<<63 function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host)>>=
+function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, on_stop: (string) => void, snap: Option[Writer]): Result[i32, ListenError] {
+  let listener: i32 = l.fd;
   let drv: async.RealDriver = __loop_driver(opts);
   let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
   if (watched < 0) {
+    drv.close();
+    __listen_release(l);
     return Ok(watched);
   }
-  let ex: Option[metrics.Exporter] = __loop_exporter(drv, opts, snap)?;
+  let ex: Option[metrics.Exporter] = __loop_exporter(drv, l, opts, snap)?;
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
@@ -4727,18 +4738,21 @@ function __serve_burst[D: async.Driver](drv: D, own c: __Conns, own fls: __Fligh
 }
 ```
 
-### `65 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, platform.Host)`
+### `65 function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, platform.Host)`
 
 ```fern
-<<65 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, platform.Host)>>=
-function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, on_stop: (string, S) => void, snap: Option[Writer]): Result[i32, ListenError] {
+<<65 function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, platform.Host)>>=
+function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, on_stop: (string, S) => void, snap: Option[Writer]): Result[i32, ListenError] {
+  let listener: i32 = l.fd;
   let st: S = init;
   let drv: async.RealDriver = __loop_driver(opts);
   let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
   if (watched < 0) {
+    drv.close();
+    __listen_release(l);
     return Ok(watched);
   }
-  let ex: Option[metrics.Exporter] = __loop_exporter(drv, opts, snap)?;
+  let ex: Option[metrics.Exporter] = __loop_exporter(drv, l, opts, snap)?;
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
@@ -4899,7 +4913,7 @@ pub function supervise(port: i32, opts: Config, handler: (HttpRequest, platform.
 }
 
 pub function supervise_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): Result[i32, ListenError] {
-  return __supervise(port, opts, (fd: i32, worker_opts: Config, snap: Option[Writer]): Result[i32, ListenError] => __serve_loop(fd, handler, worker_opts, shutdown, snap));
+  return __supervise(port, opts, (l: __Listen, worker_opts: Config, snap: Option[Writer]): Result[i32, ListenError] => __serve_loop(l, handler, worker_opts, shutdown, snap));
 }
 
 pub function supervise_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse)): Result[i32, ListenError] {
@@ -4907,23 +4921,23 @@ pub function supervise_with[S](port: i32, opts: Config, init: S, handler: (S, Ht
 }
 
 pub function supervise_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, ListenError] {
-  return __supervise(port, opts, (fd: i32, worker_opts: Config, snap: Option[Writer]): Result[i32, ListenError] => __serve_loop_with(fd, init, handler, worker_opts, shutdown, snap));
+  return __supervise(port, opts, (l: __Listen, worker_opts: Config, snap: Option[Writer]): Result[i32, ListenError] => __serve_loop_with(l, init, handler, worker_opts, shutdown, snap));
 }
 ```
 
-### `67 function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Writer])`
+### `67 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer])`
 
 ```fern
-<<67 function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Writer])>>=
-function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Writer]) => Result[i32, ListenError]): Result[i32, ListenError] {
-  let listener: i32 = 0 - 1;
+<<67 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer])>>=
+function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError]): Result[i32, ListenError] {
+  let shared: __Listen = __Listen { fd: 0 - 1, inherited: false };
   if (!__per_worker_listeners(opts)) {
-    let l: __Listen = __serve_listener(port, opts);
-    if (l.fd < 0) {
-      return Err(__listen_error(port, l.fd));
+    shared = __serve_listener(port, opts);
+    if (shared.fd < 0) {
+      return Err(__listen_error(port, shared.fd));
     }
-    listener = l.fd;
   }
+  let listener: i32 = shared.fd;
   let workers: i32 = opts.workers;
   if (workers < 1) {
     workers = cpu_count();
@@ -4936,6 +4950,8 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Write
   let drv: async.RealDriver = async.real_driver();
   let chld: i32 = drv.watch_signal(17);
   if (chld < 0) {
+    drv.close();
+    __listen_release(shared);
     return Ok(chld);
   }
   drv.watch_signal(15);
@@ -4946,7 +4962,7 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Write
     if (!sup.stopping && sup.pids.len() < workers) {
       let wait_ms: i64 = sup.fork_after - now_unix_ms();
       if (wait_ms <= 0 as i64) {
-        let forked: (__Supervisor, Option[Result[i32, ListenError]]) = __supervisor_spawn(drv, port, listener, worker, resolved, sup, ex);
+        let forked: (__Supervisor, Option[Result[i32, ListenError]]) = __supervisor_spawn(drv, port, shared, worker, resolved, sup, ex);
         sup = forked.0;
         match (forked.1) {
           Some(ended) => {
@@ -4962,6 +4978,7 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Write
             Err(e) => {
               __supervisor_abandon(drv, sup);
               drv.close();
+              __listen_release(shared);
               return Err(e);
             }
           }
@@ -4973,6 +4990,7 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Write
     if (sup.stopping && sup.pids.len() == 0) {
       __exporter_close(drv, ex);
       drv.close();
+      __listen_release(shared);
       return Ok(sup.worst);
     }
     let events: i32[] = drv.wait(8, refork_ms);
@@ -4982,6 +5000,7 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Write
       __supervisor_abandon(drv, sup);
       __exporter_close(drv, ex);
       drv.close();
+      __listen_release(shared);
       return Ok(sup.crashed);
     }
   }
@@ -5055,18 +5074,18 @@ function __index_of_i32(xs: i32[], x: i32): i32 {
 
 ```fern
 <<68 function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, worker: (i32, Config, Opt...>>=
-function __supervisor_spawn(drv: async.RealDriver, port: i32, listener: i32, worker: (i32, Config, Option[Writer]) => Result[i32, ListenError], opts: Config, sup: __Supervisor, ex: Option[metrics.Exporter]): (__Supervisor, Option[Result[i32, ListenError]]) {
-  let own: __Listen = __worker_listener(port, listener, opts);
+function __supervisor_spawn(drv: async.RealDriver, port: i32, shared: __Listen, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError], opts: Config, sup: __Supervisor, ex: Option[metrics.Exporter]): (__Supervisor, Option[Result[i32, ListenError]]) {
+  let own: __Listen = __worker_listener(port, shared, opts);
   if (own.fd < 0) {
     __supervisor_abandon(drv, sup);
     __exporter_close(drv, ex);
     drv.close();
     return (sup, Some(Err(__listen_error(port, own.fd))));
   }
-  return __supervisor_fork(drv, own, listener, worker, opts, sup);
+  return __supervisor_fork(drv, own, shared.fd, worker, opts, sup);
 }
 
-function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, worker: (i32, Config, Option[Writer]) => Result[i32, ListenError], opts: Config, sup: __Supervisor): (__Supervisor, Option[Result[i32, ListenError]]) {
+function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError], opts: Config, sup: __Supervisor): (__Supervisor, Option[Result[i32, ListenError]]) {
   let snap: Option[Pipe] = __snapshot_pipe(opts);
   let h3_sock: i32 = 0 - 1;
   if (sup.h3_free.len() > 0) {
@@ -5081,11 +5100,11 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
     drv.unwatch_signal(2);
     drv.close();
     __h3_pool_close(sup.h3_free, h3_sock);
-    return (sup, Some(worker(own.fd, Config { ...opts, workers: 1, h3_sock: h3_sock }, None)));
+    return (sup, Some(worker(own, Config { ...opts, workers: 1, h3_sock: h3_sock }, None)));
   }
   if (pid < 0) {
     __snapshot_pipe_close(snap);
-    __worker_listener_close(own, listener);
+    __listen_release(own);
     return (sup, Some(Ok(pid)));
   }
   if (pid == 0) {
@@ -5094,7 +5113,7 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
     if (listener < 0) {
       loop_opts = Config { ...loop_opts, workers: 1 };
     }
-    exit(exit_code(worker(own.fd, loop_opts, __snapshot_writer(snap))));
+    exit(exit_code(worker(own, loop_opts, __snapshot_writer(snap))));
     return (sup, None);
   }
   __worker_listener_close(own, listener);
@@ -5189,14 +5208,16 @@ function __exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): 
   return Ok(None);
 }
 
-// __loop_exporter closes the loop's driver when the exporter cannot listen.
-function __loop_exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): Result[Option[metrics.Exporter], ListenError] {
+// __loop_exporter closes the loop's driver, and releases its listener,
+// when the exporter cannot listen.
+function __loop_exporter(drv: async.RealDriver, l: __Listen, opts: Config, snap: Option[Writer]): Result[Option[metrics.Exporter], ListenError] {
   match (__exporter(drv, opts, snap)) {
     Ok(ex) => {
       return Ok(ex);
     },
     Err(e) => {
       drv.close();
+      __listen_release(l);
       return Err(e);
     }
   }
@@ -5268,9 +5289,9 @@ function __per_worker_listeners(opts: Config): boolean {
   return true;
 }
 
-function __worker_listener(port: i32, listener: i32, opts: Config): __Listen {
-  if (listener >= 0) {
-    return __Listen { fd: listener };
+function __worker_listener(port: i32, shared: __Listen, opts: Config): __Listen {
+  if (shared.fd >= 0) {
+    return shared;
   }
   let own: __Listen = __serve_listener(port, opts);
   if (own.fd >= 0) {

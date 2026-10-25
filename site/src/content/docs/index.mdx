@@ -184,10 +184,11 @@ function main(): i32 {
 Failure travels the same way — as an ordinary value, passed up by `?`:
 
 ```fern
-import "std/string";
+import "std/i32";
+import "std/result";
 
 function double(s: string): Option[i32] {
-    let n: i32 = s.parse_int()?;   // returns None early if the parse fails
+    let n: i32 = i32.parse_i32(s).ok()?;   // returns None early if the parse fails
     return Some(n * 2);
 }
 ```
