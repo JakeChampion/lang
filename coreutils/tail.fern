@@ -1,3 +1,54 @@
+// tail.fern — GNU-compatible `tail`.
+//
+//   tail [-c NUM | -n NUM] [-fFqvz] [--follow[=HOW]] [--retry]
+//        [-s SECONDS] [--max-unchanged-stats=N] [--pid=PID] [FILE]...
+//
+// The last NUM lines (10 by default) or bytes of each FILE, `-` and
+// no operand both meaning stdin. A LEADING PLUS on the count starts
+// at that line or byte instead: `-n +3` is everything from the third
+// line on. With more than one FILE each is introduced by
+// `==> NAME <==` (`standard input` for `-`), every header after the
+// first preceded by a blank line; -v forces the header for one file,
+// -q suppresses it, and the last of the two wins.
+//
+// A regular file is read from its END — the last NUM bytes seek
+// straight there, the last NUM lines are found walking 8 KiB blocks
+// backwards — and anything else (a pipe, or a file under
+// `---presume-input-pipe`) is streamed through a hold of the last NUM.
+//
+// Following. `-f` (`--follow=descriptor`) keeps reading the open
+// descriptors: every interval each file is fstat'ed, one whose size
+// or mtime moved is copied to its end, a shrunk one is `file
+// truncated` and re-read from the start, and a `-` that is a pipe is
+// left out entirely. `--follow=name` (`-F` with `--retry`) watches the
+// NAME instead: after `--max-unchanged-stats` quiet intervals it is
+// reopened, and a file that vanished, reappeared or was replaced is
+// reported in GNU's words. This implementation polls; GNU's inotify
+// path exists only where the kernel offers it and prints the same
+// diagnostics, so `---disable-inotify` is accepted and changes nothing.
+// `--pid` is parsed and checked as GNU does, but its liveness test is
+// kill(2), which the language does not offer (#8767): the warning GNU
+// gives on a system without it is printed and the option is ignored.
+//
+// Two pieces are older than the option syntax and still reproduced:
+//
+//   - The obsolete `[+-]NUM[bcl][f]` form, `tail -5c f` or `tail +2 f`,
+//     accepted when it is the only argument, or is followed by one
+//     operand that is not an option (`-` is not), or by `--` and at
+//     most one more. `_POSIX2_VERSION` in the environment says which
+//     shapes: below 200112 everything, `-c` and `-` alone included;
+//     from 200809 (glibc's default) the leading plus and the
+//     multi-digit minus; between the two (macOS's default) the minus
+//     form only. A digit reaching
+//     the option scan any other way is `option used in invalid
+//     context -- 5`, which is why the ten digits are declared as
+//     options.
+//   - Counts are glibc's strtoumax plus gnulib's suffixes, as head's.
+//
+// A count, a PID, an interval or a stats count that does not parse
+// prints one line and exits 1 with NO `Try …` line; an unknown
+// `--follow` value lists the valid ones and adds it.
+import "std/f64";
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -247,11 +298,11 @@ function parse_seconds(text: string): Option[f64] {
     if (!decimal_float_syntax(rest)) {
       return None;
     }
-    match (rest.parse_float()) {
-      Some(d) => {
+    match (f64.parse_f64(rest)) {
+      Ok(d) => {
         v = d;
       },
-      None => {
+      Err(_) => {
         return None;
       }
     }

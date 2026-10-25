@@ -148,11 +148,11 @@ function main(): i32 {
   let path: string = argv[1];
   let port: i32 = 8080;
   if (argv.len() > 2) {
-    match (argv[2].parse_int()) {
-      Some(n) => {
+    match (i32.parse_i32(argv[2])) {
+      Ok(n) => {
         port = n;
       },
-      None => {
+      Err(_) => {
         eprint("vclproxy: bad port '" + argv[2] + "'");
         return 2;
       }

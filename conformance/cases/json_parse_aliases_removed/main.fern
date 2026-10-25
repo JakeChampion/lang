@@ -1,0 +1,7 @@
+import "std/json";
+
+function main(): i32 {
+  json.json_parse("null");
+  json.json_parse_result("null");
+  return 0;
+}

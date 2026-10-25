@@ -1,30 +1,31 @@
-
-
-
-
-
-
-
-
-
 import "std/i32";
 
 function main(): i32 {
-    let s: string = "AB";
-    let a: u8 = s[0];
-    let b: u8 = s[1];
+  let s: string = "AB";
+  let a: u8 = s[0];
+  let b: u8 = s[1];
 
+  if (a.to_string() != "65") {
+    return 1;
+  }
+  if (b.to_string() != "66") {
+    return 2;
+  }
 
-    if (a.to_string() != "65") { return 1; }
-    if (b.to_string() != "66") { return 2; }
+  if (!a.is_ascii_letter()) {
+    return 3;
+  }
+  if (a.is_ascii_digit()) {
+    return 4;
+  }
 
+  let zero: u8 = 48 as u8;
+  if (!zero.is_ascii_digit()) {
+    return 5;
+  }
+  if (zero.is_ascii_letter()) {
+    return 6;
+  }
 
-    if (!a.is_ascii_alpha()) { return 3; }
-    if (a.is_ascii_digit()) { return 4; }
-
-    let zero: u8 = 48 as u8;
-    if (!zero.is_ascii_digit()) { return 5; }
-    if (zero.is_ascii_alpha()) { return 6; }
-
-    return 0;
+  return 0;
 }

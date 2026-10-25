@@ -29,7 +29,8 @@ import "std/option";
 import "std/array";
 import "std/http/router";
 import "std/platform";
-import "std/parse";
+import "std/i64";
+import "std/number_parse";
 import "std/f64";
 import "std/crypto";
 import "std/async";
@@ -61,7 +62,7 @@ pub function parse_pattern(req: HttpRequest): Result[Pattern, http.HttpError] {
     return Err(http.fail(400, "a pattern needs sixteen steps"));
   }
   for field in fields {
-    let note: i64 = parse.int64(field).map_err((e: parse.IntError): http.HttpError => http.fail(400, "invalid note"))?;
+    let note: i64 = i64.parse_i64(field).map_err((e: number_parse.ParseNumberError): http.HttpError => http.fail(400, "invalid note"))?;
     if (note < -1 || note > 7) {
       return Err(http.fail(400, "note is outside the scale"));
     }

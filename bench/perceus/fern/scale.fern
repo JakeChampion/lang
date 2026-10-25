@@ -1,3 +1,4 @@
+import "std/i32";
 import "std/string";
 
 pub function read(maximum: i32): i32 {
@@ -5,13 +6,13 @@ pub function read(maximum: i32): i32 {
   if (argv.len() != 2) {
     return -1;
   }
-  match (argv[1].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[1])) {
+    Ok(n) => {
       if (n >= 0 && n <= maximum) {
         return n;
       }
     },
-    None => {}
+    Err(_) => {}
   }
   return -1;
 }

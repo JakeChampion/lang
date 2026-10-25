@@ -1,0 +1,114 @@
+{
+  "source_commit": "edcff9889c447be3ffad71709246c5056d5f4134",
+  "native_certificate": {
+    "recorded_source": "489278fceebe29602589bddd221b4c8ae260ed2c",
+    "current_source": "edcff9889c447be3ffad71709246c5056d5f4134",
+    "paths": [
+      "*.fern",
+      "*.fern.md",
+      "bootstrap/stage0.lock",
+      ".github/selfhost-driver-sizes.txt"
+    ],
+    "changed": [],
+    "compiler": "/workspace/scratch/lang-manifest-package/visibility-final-integration/bootstrap/stage3",
+    "compiler_sha256": "b72975f4d099ebec5b5354e0e48c0dabfe34c06e066d402085b63d437fd39a96"
+  },
+  "go_cases": 2453,
+  "packages": 4,
+  "skips": 0,
+  "matrices": [
+    {
+      "file": "committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    }
+  ],
+  "prior_native_proof": "visibility-final-integration",
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 977,
+      "sha256": "3ace135a730c3017226779b6ba40f7c1e46b2402c91d920385f0129bf4ed4f34"
+    },
+    {
+      "path": "native-source-certificate.json.gz",
+      "bytes": 319,
+      "sha256": "a8bb4000ce29fee79e2cdb16364331d4146c6668a02e4d5ec12a41c7e69cd018"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 145801,
+      "sha256": "4fa12c360b40f528c9c42f7e59a4ca4cfafa0ece02c875fadf5a94270903eb4e"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 378,
+      "sha256": "41fe4de551492a41fdc5a5e574740ad1b90b4f3472ffd5b02637a1c4563e4d23"
+    },
+    {
+      "path": "committed-matrix-final.py.gz",
+      "bytes": 1479,
+      "sha256": "520fb1e483b188120073d7260f6d58ceea3571071e3ab81946703e582ad8f682"
+    },
+    {
+      "path": "committed-matrix-final-results.json.gz",
+      "bytes": 4475,
+      "sha256": "c71ba35f048d88ccc35f0e8e8780927d6cf188b447128efe237c823486edd6a3"
+    },
+    {
+      "path": "committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-project-matrix-final.py.gz",
+      "bytes": 1409,
+      "sha256": "3768b3624d6b257f72a868d7284da6a76080c8d01644eb9580f03ea7e2f41987"
+    },
+    {
+      "path": "package-project-matrix-final-results.json.gz",
+      "bytes": 1185,
+      "sha256": "1c696348f518a3f91b1701c114bcf3bc496ab914f4514e69c07a052d736eebc6"
+    },
+    {
+      "path": "package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "reexport-matrix-final.py.gz",
+      "bytes": 1465,
+      "sha256": "ea4037759ef7412e7d8ad7eac05bdfde490cdf7662cacaea3d2dd3a9bed2bf2c"
+    },
+    {
+      "path": "reexport-matrix-final-results.json.gz",
+      "bytes": 2196,
+      "sha256": "e2ec223fc3a0e061771d04d1c438b62526c7188b91437556a170cd68e1a93381"
+    },
+    {
+      "path": "reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1492,
+      "sha256": "6682732d8eb790adf0719c9a72460deb8870634fed0c549c0cd4aaec94bb6639"
+    }
+  ]
+}

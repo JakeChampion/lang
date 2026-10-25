@@ -42,7 +42,9 @@ func TestImportHintStillFiresWithoutTheImport(t *testing.T) {
 	}{
 		{"string", `function f(t: string): i32 { return t.trim().len(); }
 function main(): i32 { return f("abc"); }`, "std/string"},
-		{"i32", `function f(x: i32): string { return x.to_string(); }
+		// Formatting is a builtin; other numeric methods retain their module
+		// boundary and still suggest the module that supplies them.
+		{"i32", `function f(x: i32): string { return x.to_string_radix(16); }
 function main(): i32 { return f(3).len(); }`, "std/i32"},
 		{"transitive only", `import "std/array";
 function f(t: string): i32 { return t.to_json().len(); }

@@ -83,12 +83,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<33 pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): TestOutcome>>
 ```
 
-### `module introduction`
-
-```fern
-<<module introduction>>=
-// This module runs tests and reports TAP results.
-```
 
 ### `dependencies 2`
 
@@ -2547,18 +2541,18 @@ pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
 }
 
 pub function assert_json_eq(actual: string, expected: string): TestOutcome {
-  let av: Option[json.JsonValue] = json.json_parse(actual);
-  let ev: Option[json.JsonValue] = json.json_parse(expected);
+  let av: Result[json.JsonValue, json.JsonError] = json.parse(actual);
+  let ev: Result[json.JsonValue, json.JsonError] = json.parse(expected);
   match (av) {
-    None => {
+    Err(_) => {
       return Fail("assert_json_eq: actual is not valid JSON: " + actual);
     },
-    Some(a) => {
+    Ok(a) => {
       match (ev) {
-        None => {
+        Err(_) => {
           return Fail("assert_json_eq: expected is not valid JSON: " + expected);
         },
-        Some(e) => {
+        Ok(e) => {
           if (__json_value_eq(a, e)) {
             return Pass;
           }
@@ -2578,11 +2572,11 @@ pub function assert_json_eq(actual: string, expected: string): TestOutcome {
 ```fern
 <<31 pub function assert_json_has_key(json_text: string, key: string): TestOutcome>>=
 pub function assert_json_has_key(json_text: string, key: string): TestOutcome {
-  match (json.json_parse(json_text)) {
-    None => {
+  match (json.parse(json_text)) {
+    Err(_) => {
       return Fail("assert_json_has_key: not valid JSON: " + json_text);
     },
-    Some(v) => {
+    Ok(v) => {
       match (v) {
         JObject(m) => {
           if (m.contains(key)) {
@@ -2614,11 +2608,11 @@ pub function assert_json_has_key(json_text: string, key: string): TestOutcome {
 }
 
 pub function assert_json_lacks_key(json_text: string, key: string): TestOutcome {
-  match (json.json_parse(json_text)) {
-    None => {
+  match (json.parse(json_text)) {
+    Err(_) => {
       return Fail("assert_json_lacks_key: not valid JSON: " + json_text);
     },
-    Some(v) => {
+    Ok(v) => {
       match (v) {
         JObject(m) => {
           if (!m.contains(key)) {
@@ -2649,11 +2643,11 @@ pub function assert_json_lacks_key(json_text: string, key: string): TestOutcome 
 }
 
 pub function assert_json_array_len(json_text: string, n: i32): TestOutcome {
-  match (json.json_parse(json_text)) {
-    None => {
+  match (json.parse(json_text)) {
+    Err(_) => {
       return Fail("assert_json_array_len: not valid JSON: " + json_text);
     },
-    Some(v) => {
+    Ok(v) => {
       match (v) {
         JArray(arr) => {
           let got: i32 = arr.len();
@@ -2690,11 +2684,11 @@ pub function assert_json_array_len(json_text: string, n: i32): TestOutcome {
 ```fern
 <<32 pub function assert_json_object_size(json_text: string, n: i32): TestOutcome>>=
 pub function assert_json_object_size(json_text: string, n: i32): TestOutcome {
-  match (json.json_parse(json_text)) {
-    None => {
+  match (json.parse(json_text)) {
+    Err(_) => {
       return Fail("assert_json_object_size: not valid JSON: " + json_text);
     },
-    Some(v) => {
+    Ok(v) => {
       match (v) {
         JObject(m) => {
           let got: i32 = m.len();
@@ -2726,11 +2720,11 @@ pub function assert_json_object_size(json_text: string, n: i32): TestOutcome {
 }
 
 pub function assert_json_eq_field_string(json_text: string, key: string, expected: string): TestOutcome {
-  match (json.json_parse(json_text)) {
-    None => {
+  match (json.parse(json_text)) {
+    Err(_) => {
       return Fail("assert_json_eq_field_string: not valid JSON: " + json_text);
     },
-    Some(v) => {
+    Ok(v) => {
       match (v) {
         JObject(m) => {
           if (!m.contains(key)) {
@@ -2790,11 +2784,11 @@ pub function assert_json_eq_field_string(json_text: string, key: string, expecte
 ```fern
 <<33 pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): TestOutcome>>=
 pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): TestOutcome {
-  match (json.json_parse(json_text)) {
-    None => {
+  match (json.parse(json_text)) {
+    Err(_) => {
       return Fail("assert_json_eq_field_i32: not valid JSON: " + json_text);
     },
-    Some(v) => {
+    Ok(v) => {
       match (v) {
         JObject(m) => {
           if (!m.contains(key)) {
@@ -2803,12 +2797,12 @@ pub function assert_json_eq_field_i32(json_text: string, key: string, expected: 
           }
           match (m.get_or(key, JNull)) {
             JNumber(s) => {
-              match (s.parse_int()) {
-                None => {
+              match (i32.parse_i32(s)) {
+                Err(_) => {
                   return Fail("assert_json_eq_field_i32: at \"" + key
                     + "\" value \"" + s + "\" not i32-parseable");
                 },
-                Some(got) => {
+                Ok(got) => {
                   if (got == expected) {
                     return Pass;
                   }
@@ -2857,11 +2851,11 @@ pub function assert_json_eq_field_i32(json_text: string, key: string, expected: 
 }
 
 pub function assert_json_eq_field_bool(json_text: string, key: string, expected: boolean): TestOutcome {
-  match (json.json_parse(json_text)) {
-    None => {
+  match (json.parse(json_text)) {
+    Err(_) => {
       return Fail("assert_json_eq_field_bool: not valid JSON: " + json_text);
     },
-    Some(v) => {
+    Ok(v) => {
       match (v) {
         JObject(m) => {
           if (!m.contains(key)) {
@@ -2921,4 +2915,11 @@ pub function assert_json_eq_field_bool(json_text: string, key: string, expected:
   }
   return Pass;
 }
+```
+
+### Module introduction
+
+```fern
+<<module introduction>>=
+// TAP test execution and result reporting.
 ```

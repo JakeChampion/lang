@@ -487,12 +487,12 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
 }
 
 function push_count(h: usize, v: u64): void {
-  let nd: i32 = io_buffered.buf_u64_len(v);
+  let nd: i32 = gnu.decimal_len(v);
   while (nd < 7) {
     buf_push_byte(h, 32);
     nd = nd + 1;
   }
-  io_buffered.buf_push_u64(h, v);
+  gnu.push_decimal(h, v);
   buf_push_byte(h, 32);
 }
 

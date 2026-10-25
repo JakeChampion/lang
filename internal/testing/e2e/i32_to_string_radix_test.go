@@ -16,15 +16,15 @@ function main(): i32 {
     if ((5).to_string_radix(37) != "") { return 8; }       // base too large -> ""
     // round-trips through parse_int_radix at the same base
     let s: string = (1234567).to_string_radix(36);
-    match (s.parse_int_radix(36)) {
-        Some(v) => { if (v != 1234567) { return 9; } },
-        None => { return 10; }
+    match (i32.parse_i32_radix(s, 36)) {
+        Ok(v) => { if (v != 1234567) { return 9; } },
+        Err(_) => { return 10; }
     }
     // negative round-trip
     let t: string = (0 - 9999).to_string_radix(16);
-    match (t.parse_int_radix(16)) {
-        Some(v) => { if (v != 0 - 9999) { return 11; } },
-        None => { return 12; }
+    match (i32.parse_i32_radix(t, 16)) {
+        Ok(v) => { if (v != 0 - 9999) { return 11; } },
+        Err(_) => { return 12; }
     }
     return 42;
 }
