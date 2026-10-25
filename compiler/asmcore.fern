@@ -2667,12 +2667,26 @@ pub function rt_src_udp_recvfrom(t: string, packed: boolean): string {
   if (t == "arm64-darwin") {
     family = "let fam: i32 = __raw_load8(sa, 1);";
   }
-  return "function __fern_udp_recvfrom" + packed_suffix(packed) + "(fd: i32, buf: i32[], from: i32[]): i32 { let max: i32 = buf.len(); let p: usize = __raw_alloc(max + 1); let sa: usize = __raw_scratch(32); __raw_store8(sa, 28, 28); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); let n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, (sa + 28) as i64) as i32; " + recv_spread(packed) + " if (n >= 0 && from.len() >= 19) { let f: usize = __raw_arr_ptr(from); let z: i32 = 1; while (z <= 19) { " + elem_store(packed, "f", "z - 1", "0") + " z = z + 1; } " + family + " let n_addr: i32 = 0; let at: i32 = 4; if (fam == 2) { " + elem_store(packed, "f", "0", "4") + " n_addr = 4; } else if (fam == " + sockopt(t, "af_inet6") + ") { " + elem_store(packed, "f", "0", "6") + " n_addr = 16; at = 8; } let k: i32 = 0; while (k < n_addr) { " + elem_store(packed, "f", "1 + k", "__raw_load8(sa, at + k)") + " k = k + 1; } " + elem_store(packed, "f", "17", "__raw_load8(sa, 2)") + " " + elem_store(packed, "f", "18", "__raw_load8(sa, 3)") + " } let p_own: string = __raw_string(p, max + 1); return n; }";
+  return "function __fern_udp_recvfrom" + packed_suffix(packed) + "(fd: i32, buf: i32[], from: i32[]): i32 { let max: i32 = buf.len(); " + recv_target(packed) + " let sa: usize = __raw_scratch(32); __raw_store8(sa, 28, 28); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); let n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, (sa + 28) as i64) as i32; " + recv_spread(packed) + " if (n >= 0 && from.len() >= 19) { let f: usize = __raw_arr_ptr(from); let z: i32 = 1; while (z <= 19) { " + elem_store(packed, "f", "z - 1", "0") + " z = z + 1; } " + family + " let n_addr: i32 = 0; let at: i32 = 4; if (fam == 2) { " + elem_store(packed, "f", "0", "4") + " n_addr = 4; } else if (fam == " + sockopt(t, "af_inet6") + ") { " + elem_store(packed, "f", "0", "6") + " n_addr = 16; at = 8; } let k: i32 = 0; while (k < n_addr) { " + elem_store(packed, "f", "1 + k", "__raw_load8(sa, at + k)") + " k = k + 1; } " + elem_store(packed, "f", "17", "__raw_load8(sa, 2)") + " " + elem_store(packed, "f", "18", "__raw_load8(sa, 3)") + " } " + recv_release(packed) + " return n; }";
+}
+
+function recv_target(packed: boolean): string {
+  if (packed) {
+    return "let p: usize = __raw_arr_ptr(buf) + 8;";
+  }
+  return "let p: usize = __raw_alloc(max + 1);";
+}
+
+function recv_release(packed: boolean): string {
+  if (packed) {
+    return "";
+  }
+  return "let p_own: string = __raw_string(p, max + 1);";
 }
 
 function recv_spread(packed: boolean): string {
   if (packed) {
-    return "if (n > 0) { __memcpy((__raw_arr_ptr(buf) + 8), p, n); }";
+    return "";
   }
   return "let b: usize = __raw_arr_ptr(buf); let i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; }";
 }
