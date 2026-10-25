@@ -17868,6 +17868,9 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: r2.moved, diags: util.append_diags(r1.diags, r2.diags) };
     },
     ast.ExprUnary(u) => {
+      if (u.op == "try_") {
+        return ru_expr(u.operand, moved, ctx);
+      }
       return ru_borrow(u.operand, moved, ctx);
     },
     ast.ExprArray(a) => {

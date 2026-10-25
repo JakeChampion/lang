@@ -804,6 +804,20 @@ function f(own s: string): i32 {
 }`)
 }
 
+func TestOwnedTryMovesItsOperand(t *testing.T) {
+	wantE050Move(t, "own-result-tried-twice", `
+function f(own r: Result[i32[], string]): Result[i32, string] {
+    let a: i32[] = r?;
+    let b: i32[] = r?;
+    return Ok(a.len() + b.len());
+}`)
+	wantOK(t, "own-result-tried-once", `
+function f(own r: Result[i32[], string]): Result[i32, string] {
+    let a: i32[] = r?;
+    return Ok(a.len());
+}`)
+}
+
 func TestOwnGuardAllowsAFieldUnpackedFromAnOwnParam(t *testing.T) {
 	wantOK(t, "own-param-field-unpack", ownConsumer+`
 function f(own p: Pair): i32 {
