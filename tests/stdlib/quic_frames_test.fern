@@ -175,8 +175,8 @@ function test_ack(): test.TestOutcome {
   let wire: string = "02" + "4064" + "19" + "02" + "05" + "02" + "01" + "00" + "00";
   let a: frames.Ack = frames.Ack { delay: 25 as i64, ranges: [frames.AckRange { low: 95 as i64, high: 100 as i64 }, frames.AckRange { low: 90 as i64, high: 91 as i64 }, frames.AckRange { low: 88 as i64, high: 88 as i64 }], ecn: None };
   let ecn: frames.Ack = frames.Ack { ...a, ecn: Some(frames.Ecn { ect0: 1 as i64, ect1: 2 as i64, ce: 3 as i64 }) };
-  let got: string = shown(wire) + "\n" + hex.encode(frames.encode(frames.AckFrame(a))) + "\n" + trip(frames.AckFrame(ecn));
-  return test.assert_eq(got, "ACK delay 25 95-100 90-91 88-88 [10]\n" + wire + "\n03406419020502010000010203 -> ACK delay 25 95-100 90-91 88-88 ecn 1/2/3 [13]");
+  let got: string = shown(wire) + "\n" + hex.encode(frames.encode(frames.AckFrame(a))) + "\n" + trip(frames.AckFrame(ecn)) + "\n" + hex.encode(frames.put_ack([1u8], a.delay, a.ranges));
+  return test.assert_eq(got, "ACK delay 25 95-100 90-91 88-88 [10]\n" + wire + "\n03406419020502010000010203 -> ACK delay 25 95-100 90-91 88-88 ecn 1/2/3 [13]\n01" + wire);
 }
 
 function test_read_all(): test.TestOutcome {

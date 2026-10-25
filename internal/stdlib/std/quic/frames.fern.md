@@ -892,13 +892,7 @@ function __put_ack(own out: u8[], a: Ack): u8[] {
   if (a.ecn.is_some()) {
     kind = ACK_ECN;
   }
-  let top: AckRange = a.ranges[0];
-  out = put_varint(put_varint(put_varint(put_varint(put_varint(out, kind), top.high), a.delay), (a.ranges.len() - 1) as i64), top.high - top.low);
-  let i: i32 = 1;
-  while (i < a.ranges.len()) {
-    out = put_varint(put_varint(out, a.ranges[i - 1].low - a.ranges[i].high - 2), a.ranges[i].high - a.ranges[i].low);
-    i = i + 1;
-  }
+  out = __put_ack_ranges(out, kind, a.delay, a.ranges);
   match (a.ecn) {
     Some(e) => {
       return put_varint(put_varint(put_varint(out, e.ect0), e.ect1), e.ce);
@@ -915,6 +909,23 @@ function __put_ack(own out: u8[], a: Ack): u8[] {
 
 ```fern
 <<20 pub function (f: Frame) ack_eliciting(): boolean>>=
+// put_ack writes an ACK frame without ECN counts, as put would write
+// AckFrame(Ack { delay: delay, ranges: ranges, ecn: None }).
+pub function put_ack(own out: u8[], delay: i64, ranges: AckRange[]): u8[] {
+  return __put_ack_ranges(out, ACK, delay, ranges);
+}
+
+function __put_ack_ranges(own out: u8[], kind: i64, delay: i64, ranges: AckRange[]): u8[] {
+  let top: AckRange = ranges[0];
+  out = put_varint(put_varint(put_varint(put_varint(put_varint(out, kind), top.high), delay), (ranges.len() - 1) as i64), top.high - top.low);
+  let i: i32 = 1;
+  while (i < ranges.len()) {
+    out = put_varint(put_varint(out, ranges[i - 1].low - ranges[i].high - 2), ranges[i].high - ranges[i].low);
+    i = i + 1;
+  }
+  return out;
+}
+
 pub function (f: Frame) ack_eliciting(): boolean {
   match (f) {
     AckFrame(_) => {
