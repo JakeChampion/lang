@@ -43,13 +43,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { runner: ubuntu-24.04,     host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
+        host: [x86_64, aarch64]
+        # The Preflight tier calls this lane with `hosts: x86_64`; the suite
+        # calls it with both hosts and this excludes nothing.
         exclude:
           - host: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
     name: test-e2e-wasm-${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
