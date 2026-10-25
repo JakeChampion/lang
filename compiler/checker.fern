@@ -3355,10 +3355,31 @@ function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.Ex
         payload = join_result_types(args[ti], payload);
       }
       args = args.with(ti, payload);
+    } else {
+      args = nested_payload_args(s, us, payload_spelling(s, us, name, k), inferred_payload(c.args[k], s), args);
     }
     k = k + 1;
   }
   return typeinfo.TypeUnion { name: union_name, args: args };
+}
+
+function nested_payload_args(s: Scope, us: UnionSig, spelling: string, at: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Type[] {
+  if (spelling.len() == 0) {
+    return args;
+  }
+  let none_n: string[] = [];
+  let none_t: typeinfo.Type[] = [];
+  let (bn, bt) = gc_bind_param(parser.parse_type_ref(spelling), at, us.type_params, s.type_names(), none_n, none_t);
+  let out: typeinfo.Type[] = args;
+  let i: i32 = 0;
+  while (i < bn.len()) {
+    let ti: i32 = util.index_of_str(us.type_params, bn[i]);
+    if (ti >= 0 && unbound_enum_argument(out[ti]) && !is_unknown(bt[i])) {
+      out = out.with(ti, bt[i]);
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, whole: typeinfo.Type): Scope {
@@ -3915,6 +3936,10 @@ function ctor_payload_slot(s: Scope, owner: string, vname: string, k: i32): i32 
 }
 
 function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 {
+  return util.index_of_str(us.type_params, payload_spelling(s, us, vname, k));
+}
+
+function payload_spelling(s: Scope, us: UnionSig, vname: string, k: i32): string {
   let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(vname), us.name);
   let want: string = "__ev";
   if (k > 0) {
@@ -3922,9 +3947,9 @@ function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 
   }
   let fi: i32 = util.index_of_str(ss.field_names, want);
   if (fi < 0 || fi >= ss.field_type_names.len()) {
-    return 0 - 1;
+    return "";
   }
-  return util.index_of_str(us.type_params, ss.field_type_names[fi]);
+  return ss.field_type_names[fi];
 }
 
 function promotes_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
@@ -5258,9 +5283,27 @@ function binds_nothing(e: ast.Expr, s: Scope): boolean {
     ast.ExprLambda(lm) => {
       return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
     },
+    ast.ExprCall(c) => {
+      return ctor_pins_nothing(c, s);
+    },
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+function ctor_pins_nothing(c: ast.ExprCall, s: Scope): boolean {
+  if (ctor_name_taken(c, s) || union_of_variant(ctor_variant_name(c), s.unions).len() == 0) {
+    return false;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (qual_variant_union(fa, s).len() == 0) {
+      return false;
+    }
+  }
+  if let typeinfo.TypeUnion(u) = check_expr(c, s) {
+    return u.args.len() > 0 && !settles_any_argument(u.args);
   }
   return false;
 }
@@ -6876,13 +6919,12 @@ function is_dyn_slot(t: typeinfo.Type): boolean {
 function fills_unsettled_argument(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if let typeinfo.TypeUnion(fu) = from {
     if let typeinfo.TypeUnion(tu) = to {
-      if (fu.name != tu.name) {
+      if (fu.name != tu.name || tu.args.len() == 0) {
         return false;
       }
       let i: i32 = 0;
-      while (i < fu.args.len()) {
-        let open: boolean = tu.args.len() == 0 || i < tu.args.len() && unbound_enum_argument(tu.args[i]);
-        if (open && !is_unknown(fu.args[i])) {
+      while (i < fu.args.len() && i < tu.args.len()) {
+        if (unbound_enum_argument(tu.args[i]) && !is_unknown(fu.args[i])) {
           return true;
         }
         i = i + 1;
@@ -6899,7 +6941,10 @@ function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: Unio
   let fa: typeinfo.Type[] = nominal_args(from);
   let ta: typeinfo.Type[] = nominal_args(to);
   if (fa.len() != ta.len()) {
-    return fa.len() > 0 && ta.len() > 0;
+    if (ta.len() == 0) {
+      return settles_any_argument(fa);
+    }
+    return fa.len() > 0;
   }
   let i: i32 = 0;
   while (i < fa.len()) {
@@ -6907,6 +6952,17 @@ function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: Unio
       return true;
     }
     i = i + 1;
+  }
+  return false;
+}
+
+// A generic type named without arguments binds every parameter to never, so
+// it holds no value whose construction settled one.
+function settles_any_argument(args: typeinfo.Type[]): boolean {
+  for a in args {
+    if (!is_unknown(a)) {
+      return true;
+    }
   }
   return false;
 }
@@ -7674,7 +7730,11 @@ function name_with_args_label(name: string, args: typeinfo.Type[]): string {
     if (i > 0) {
       out = out + ", ";
     }
-    out = out + type_label(args[i]);
+    if (unbound_enum_argument(args[i])) {
+      out = out + "_";
+    } else {
+      out = out + type_label(args[i]);
+    }
     i = i + 1;
   }
   return out + "]";
@@ -9590,7 +9650,40 @@ function unsettled_marked_at(t: typeinfo.Type, e: ast.Expr, path: i32[], lits: s
       return typeinfo.TypeI32 { ...i, polymorphic: true };
     }
   }
+  if let typeinfo.TypeArray(a) = t {
+    return unsettled_array_marked(a, e, path, lits);
+  }
   return t;
+}
+
+function unsettled_array_marked(a: typeinfo.TypeArray, e: ast.Expr, path: i32[], lits: string[]): typeinfo.Type {
+  if let typeinfo.TypeI32(ei) = a.elem {
+    if (!a.view && !ei.is_char && unsettled_array_part(e, path, 0, lits)) {
+      return typeinfo.TypeArray { ...a, elem: typeinfo.TypeI32 { ...ei, polymorphic: true } };
+    }
+  }
+  return a;
+}
+
+function unsettled_array_part(e: ast.Expr, path: i32[], at: i32, lits: string[]): boolean {
+  if (at < path.len()) {
+    if let ast.ExprTuple(t) = e {
+      return path[at] < t.elements.len() && unsettled_array_part(t.elements[path[at]], path, at + 1, lits);
+    }
+    return false;
+  }
+  if let ast.ExprArray(al) = e {
+    if (al.elem_ty.len() > 0 || al.elements.len() == 0) {
+      return false;
+    }
+    for el in al.elements {
+      if (!unsettled_tree(el, lits)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 function value_block_body(e: ast.Expr): (ast.Stmt[], boolean) {
@@ -11434,9 +11527,10 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
 
 function declared_payloads_settle(c: ast.ExprCall, want: typeinfo.Type, s: Scope): boolean {
   let vname: string = ctor_variant_name(c);
+  let whole: typeinfo.Type = bare_at_never(want, s);
   let i: i32 = 0;
   while (i < c.args.len()) {
-    let field: typeinfo.Type = generic_variant_payload_type(s, vname, want, i);
+    let field: typeinfo.Type = generic_variant_payload_type(s, vname, whole, i);
     if (is_unknown(field) || !settles_or_assignable(c.args[i], field, s)) {
       return false;
     }
@@ -11488,6 +11582,19 @@ function struct_lit_settles(e: ast.Expr, want: typeinfo.TypeStruct, s: Scope): b
     return s.lookup_struct(sl.type_name).type_params.len() == want.args.len();
   }
   return false;
+}
+
+function bare_at_never(t: typeinfo.Type, s: Scope): typeinfo.Type {
+  if let typeinfo.TypeUnion(u) = t {
+    if (u.args.len() == 0) {
+      let args: typeinfo.Type[] = [];
+      while (args.len() < s.lookup_union(u.name).type_params.len()) {
+        args = args.append(typeinfo.TypeNever { tag: 0 });
+      }
+      return typeinfo.TypeUnion { name: u.name, args: args };
+    }
+  }
+  return t;
 }
 
 function settles_or_assignable(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
@@ -12598,7 +12705,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
         if let typeinfo.TypeStruct(ost) = check_expr(c.args[0], s) {
           out = util.append_diags(out, opaque_access_diags(s.lookup_struct(ost.name), s, "access a field of", expr_line(c.args[1]), expr_col(c.args[1])));
         }
-        out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
+        out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with `T { ...old, " + fld + ": value }`", expr_line(c.args[1]), expr_col(c.args[1])));
       }
       if (id.name == "__set_index" && c.args.len() == 3) {
         out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", c.line, c.col));

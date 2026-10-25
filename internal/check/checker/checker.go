@@ -6973,7 +6973,7 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 	}
 	if e, ok := expected.(ast.ArrayType); ok {
 		a, ok := actual.(ast.ArrayType)
-		return ok && c.unifyType(e.Elem, a.Elem, sub)
+		return ok && (a.Elem == nil || c.unifyType(e.Elem, a.Elem, sub))
 	}
 	if e, ok := expected.(ast.SliceType); ok {
 		a, ok := actual.(ast.SliceType)
@@ -12943,7 +12943,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
 				}
 				for i, a := range n.Args {
-					if i < len(resolvedPayloads) {
+					if i < len(resolvedPayloads) && !containsParamType(resolvedPayloads[i]) {
 						c.settleNumeric(a, resolvedPayloads[i])
 					}
 				}
@@ -14079,11 +14079,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if vt == nil {
 				continue
 			}
-			if containsParamType(fieldExpected) {
-				if at, ok := vt.(ast.ArrayType); ok && at.Elem == nil {
-					continue
-				}
-			} else {
+			if !containsParamType(fieldExpected) {
 				c.settleNumeric(f.Value, fieldExpected)
 				vt = c.postSettleType(f.Value, vt)
 			}
@@ -14102,7 +14098,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				c.stampStructTypeArgs(f.Value, expected)
-				if unifyIfArms(expected, vt) == nil && !c.assignable(expected, vt) {
+				if !c.assignable(expected, vt) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
 			}
