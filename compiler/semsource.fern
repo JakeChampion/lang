@@ -7569,22 +7569,6 @@ function same_bits(a: boolean[], b: boolean[]): boolean {
   return true;
 }
 
-function owned_shape(t: typeinfo.Type): boolean {
-  if (semtypes.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) {
-    return false;
-  }
-  if (ssasem.is_map(t) || ssasem.is_view(t)) {
-    return false;
-  }
-  if let typeinfo.TypeUnion(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeStruct(_) = t {
-    return true;
-  }
-  return false;
-}
-
 function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
   if (!reference(t)) {
     return old;
@@ -7592,7 +7576,7 @@ function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
   if (old == ssaunits.counted_mode()) {
     return old;
   }
-  if (consumed && owned_shape(t)) {
+  if (consumed && ssasem.owned_shape(t)) {
     return ssaunits.counted_mode();
   }
   return old;
@@ -8521,6 +8505,39 @@ pub function with_inferred_modes(b: Built): Built {
     i = i + 1;
   }
   return Built { ...b, decls: decls, instances: instances, contracts: inferred.table };
+}
+
+pub struct Resunk { built: Built, moved: boolean[] }
+
+// with_lent_rereads re-reads projections below the calls that, with the
+// inferred modes, only borrow them (semsink.sink_past_lent). moved marks
+// each row whose graph changed, decls then instances.
+pub function with_lent_rereads(b: Built): Resunk {
+  let moved: boolean[] = [];
+  let decls: Produced[] = b.decls;
+  for i in 0..decls.len() {
+    let sk: semsink.Sunk = lent_rereads(decls[i]);
+    moved = moved.append(sk.reread > 0);
+    if (sk.reread > 0) {
+      decls = decls.with(i, Produced { ...decls[i], func: sk.f, analysis: None });
+    }
+  }
+  let instances: Produced[] = b.instances;
+  for i in 0..instances.len() {
+    let sk: semsink.Sunk = lent_rereads(instances[i]);
+    moved = moved.append(sk.reread > 0);
+    if (sk.reread > 0) {
+      instances = instances.with(i, Produced { ...instances[i], func: sk.f, analysis: None });
+    }
+  }
+  return Resunk { built: with_analyses(Built { ...b, decls: decls, instances: instances }), moved: moved };
+}
+
+function lent_rereads(p: Produced): semsink.Sunk {
+  if (!p.ok || p.template || p.bodyless) {
+    return semsink.Sunk { f: p.func, reread: 0 };
+  }
+  return semsink.sink_past_lent(p.func);
 }
 
 pub function changed_rows(a: Built, b: Built): boolean[] {

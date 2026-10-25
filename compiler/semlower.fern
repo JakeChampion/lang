@@ -372,8 +372,14 @@ function plans_ok(plans: ssaunits.Plan[]): boolean[] {
 }
 
 function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Planned, structs: irtables.StructTab): Inference {
-  let widened: semsource.Built = semsource.with_inferred_modes(built);
+  let resunk: semsource.Resunk = semsource.with_lent_rereads(semsource.with_inferred_modes(built));
+  let widened: semsource.Built = resunk.built;
   let changed: boolean[] = semsource.changed_rows(built, widened);
+  for i in 0..changed.len() {
+    if (i < resunk.moved.len() && resunk.moved[i]) {
+      changed = changed.with(i, true);
+    }
+  }
   if (semsource.any_row_changed(changed)) {
     let prev: Rows = declared.r;
     if (!sem_reuse_on()) {

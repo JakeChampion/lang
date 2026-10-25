@@ -696,6 +696,24 @@ pub function is_char(t: typeinfo.Type): boolean {
   return false;
 }
 
+// owned_shape says ownership inference can count a parameter of type t:
+// a record or a variant, which a callee that keeps one consumes.
+pub function owned_shape(t: typeinfo.Type): boolean {
+  if (semtypes.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) {
+    return false;
+  }
+  if (is_map(t) || is_view(t)) {
+    return false;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return true;
+  }
+  return false;
+}
+
 pub function can_hold(f: Func, outer: typeinfo.Type, inner: typeinfo.Type): boolean {
   let names: string[] = box_names(f, inner);
   let key: string = type_key(inner);
