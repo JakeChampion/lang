@@ -2208,6 +2208,12 @@ function with_written_type_args(callee: ast.Expr, args: string): ast.Expr {
   return callee;
 }
 
+function parse_delimited(p: Par): (ast.Expr, Par) {
+  let saved = p.no_struct;
+  let (expr, next) = parse_expr(p.with_no_struct(false));
+  return (expr, next.with_no_struct(saved));
+}
+
 function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
   let pending_type_arg_list: string[] = [];
   let pending_type_line: i32 = 0;
@@ -2234,11 +2240,11 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
             let acol: i32 = p.peek_col();
             p = p.advance();
             p = p.advance();
-            let (rv_expr, rv_p) = parse_expr(p);
+            let (rv_expr, rv_p) = parse_delimited(p);
             p = rv_p;
             args = args.append(ast.ExprBinary { op: "__named_arg", left: ast.ExprIdent { name: an, line: aline, col: acol, ty: "", builtin: false }, right: rv_expr, line: aline, col: acol, ty: "" });
           } else {
-            let (ra_expr, ra_p) = parse_expr(p);
+            let (ra_expr, ra_p) = parse_delimited(p);
             p = ra_p;
             args = args.append(ra_expr);
           }
@@ -2273,7 +2279,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
           base = e_slice_all(base, bline, bcol);
           continue;
         }
-        let (shi_expr, shi_p) = parse_expr(p);
+        let (shi_expr, shi_p) = parse_delimited(p);
         p = shi_p;
         if (p.peek_punct() != "]") {
           return missing_close("missing ] in slice", "]", [shi_expr], p);
@@ -2283,7 +2289,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         continue;
       }
       let idxStart: i32 = p.pos;
-      let (idx_expr, idx_p) = parse_expr(p);
+      let (idx_expr, idx_p) = parse_delimited(p);
       if (type_shaped_bracket(p)) {
         idx_p = p;
       }
@@ -2371,7 +2377,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
           base = e_slice_open(base, idx_expr, bline, bcol);
           continue;
         }
-        let (end_expr, end_p) = parse_expr(p);
+        let (end_expr, end_p) = parse_delimited(p);
         p = end_p;
         if (p.peek_punct() != "]") {
           return missing_close("missing ] in slice", "]", [idx_expr, end_expr], p);
@@ -2601,7 +2607,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           p = p.advance();
           return parse_postfix(p, e_unit_at(tpl, tpc));
         }
-        let (inner_expr, inner_p) = parse_expr(p);
+        let (inner_expr, inner_p) = parse_delimited(p);
         p = inner_p;
         if (p.peek_punct() == ",") {
           let elems: ast.Expr[] = [];
@@ -2611,7 +2617,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
             if (p.peek_punct() == ")") {
               break;
             }
-            let (er_expr, er_p) = parse_expr(p);
+            let (er_expr, er_p) = parse_delimited(p);
             p = er_p;
             elems = elems.append(er_expr);
           }
@@ -2630,7 +2636,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let elems: ast.Expr[] = [];
         if (p.peek_punct() != "]") {
           while (true) {
-            let (er_expr, er_p) = parse_expr(p);
+            let (er_expr, er_p) = parse_delimited(p);
             p = er_p;
             elems = elems.append(er_expr);
             let (ea_more, ea_p) = p.more_elems("]");
