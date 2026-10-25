@@ -6,6 +6,7 @@ const files = new URL("./compiler/", import.meta.url);
 const provided = new Set([
   "wasi_snapshot_preview1.proc_exit",
   "wasi_snapshot_preview1.fd_write",
+  "wasi_snapshot_preview1.random_get",
 ]);
 const required = [
   "fern:showcase/swarm#particle",
@@ -105,7 +106,7 @@ export function mountEditor({ use, restore }) {
           [
             ...imports.map(
               (name) =>
-                `The kernel imports ${name}. The page provides only proc_exit and fd_write.`,
+                `The kernel imports ${name}. The page provides only proc_exit, fd_write, and random_get.`,
             ),
             ...missing.map(
               (name) =>
