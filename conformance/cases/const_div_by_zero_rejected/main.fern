@@ -1,0 +1,8 @@
+// spec: IS-15
+// A const is evaluated when the program is compiled, so a zero divisor is a
+// compile error rather than the `x / 0 == 0` the same division gives as code.
+const A: i32 = 1 / 0;
+
+function main(): i32 {
+    return A;
+}

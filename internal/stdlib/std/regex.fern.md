@@ -8,7 +8,7 @@ A compiled expression retains its syntax tree, case policy, and capture metadata
 
 ## Contracts
 
-Search and complete-match operations have different purposes. Invalid patterns can produce optional errors through the public helper contracts.
+Search and complete-match operations have different purposes. Compilation returns a typed error for invalid patterns. Text output methods report invalid UTF-8 through a typed error. Byte output methods preserve raw bytes.
 
 ## Executable example
 
@@ -16,7 +16,8 @@ Search and complete-match operations have different purposes. Invalid patterns c
 import "std/regex";
 
 function main(): i32 {
-  if (!regex.regex_match("a+b", "aaab") || regex.regex_match("a+b", "ac")) { return 1; }
+  let Ok(prog) = regex.compile("a+b") else { return 1; };
+  if (!prog.is_match("aaab") || prog.is_match("ac")) { return 2; }
   return 0;
 }
 ```
@@ -37,33 +38,26 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 function __rx_count(p: string, pos: i32, a: RParse): RParse>>
 
-<<6 pub struct RProg>>
 
 <<7 function __rx_group_names(pattern: string): string[]>>
 
 <<8 function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[]>>
 
-<<9 pub struct RMatch>>
 
 <<10 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch]>>
 
-<<11 pub function regex_search(pattern: string, text: string): Option[RMatch]>>
 
 <<12 function __rx_advance(m: RMatch): i32>>
 
-<<13 pub function regex_find_all(pattern: string, text: string): RMatch[]>>
 
 <<14 function __rx_finish(h: usize): u8[]>>
 
-<<15 pub function regex_replace_all(pattern: string, text: string, repl: string): Option[string]>>
 
 <<16 function __rx_replace_all_from(prog: RProg, text: string, repl: string, first: Option[RMatch]): u8[]>>
 
-<<17 pub function regex_split(text: string, pattern: string): Option[string[]]>>
 
 <<18 function __rx_replace_span(text: string, repl: string, m: RMatch): u8[]>>
 
-<<19 pub function regex_replace_bytes(pattern: string, text: string, repl: string): u8[]>>
 
 <<20 struct RSplit>>
 
@@ -73,44 +67,36 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<23 function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string, ti: i32): RAdd>>
 
-<<24 pub struct RCaps>>
 
-<<25 pub function (c: RCaps) group_count(): i32>>
 
 <<26 function __rx_span(c: RCaps, i: i32): (i32, i32)>>
 
-<<27 pub function (c: RCaps) group(i: i32): Option[string]>>
 
 <<28 function __rx_named_index(c: RCaps, name: string): i32>>
 
-<<29 pub function (c: RCaps) group_named(name: string): Option[string]>>
 
 <<30 function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): Option[RCaps]>>
 
-<<31 pub function regex_captures(pattern: string, text: string): Option[RCaps]>>
 
 <<32 function __rx_template_ref(tmpl: string, i: i32, c: RCaps): (i32, i32)>>
 
-<<33 pub function regex_replace_groups(pattern: string, text: string, tmpl: string): Option[string]>>
 
 <<34 function __rx_replace_capture(text: string, tmpl: string, c: RCaps): u8[]>>
 
-<<35 pub function regex_replace_all_groups(pattern: string, text: string, tmpl: string): Option[string]>>
 
 <<36 function __rx_replace_captures(text: string, tmpl: string, all: RCaps[]): u8[]>>
+<<typed decode errors>>
 ```
 
-### `module introduction`
-
-```fern
-<<module introduction>>=
-// This module evaluates regular expressions.
-```
 
 ### `dependencies 2`
 
 ```fern
 <<dependencies 2>>=
+import "core/cmp";
+import "std/error";
+import "std/i32";
+import "std/string";
 import "std/utf8" as utf8;
 ```
 
@@ -123,7 +109,7 @@ struct RGroupData { idx: i32, node: RNode }
 pub enum RNode {
   RChar(i32),
   RAny,
-  RClass(string),
+  RClass(u8[]),
   RStart,
   REnd,
   RBound(boolean),
@@ -142,132 +128,33 @@ struct RParse { node: RNode, pos: i32, g: i32 }
 
 ```fern
 <<4 function __rx_atom(p: string, i: i32, g: i32): RParse>>=
-function __rx_atom(p: string, i: i32, g: i32): RParse {
+function __rx_atom(errors: Cell[Option[CompileError]], depth: i32, p: string, i: i32, g: i32): RParse {
   let c: i32 = p[i] as i32;
   if (c == 92) {
-    if (i + 1 >= p.len()) {
-      return RParse { node: RChar(92), pos: i + 1, g: g };
-    }
-    let d: i32 = p[i + 1] as i32;
-    let sh: string = __rx_shorthand(d);
-    if (sh.len() > 0) {
-      return RParse { node: RClass(sh), pos: i + 2, g: g };
-    }
-    if (d == 98) {
-      return RParse { node: RBound(true), pos: i + 2, g: g };
-    }
-    if (d == 66) {
-      return RParse { node: RBound(false), pos: i + 2, g: g };
-    }
-    return RParse { node: RChar(__rx_escape_char(d)), pos: i + 2, g: g };
+    return __rx_escape(errors, p, i, g);
+  }
+  if (c == 42 || c == 43 || c == 63 || c == 123) {
+    return __rx_fail(errors, MissingAtom, i, p.len(), g);
   }
   if (c == 40) {
-    if (i + 1 < p.len() && p[i + 1] == 63) {
-      if (i + 3 < p.len() && p[i + 2] == 60
-        && p[i + 3] != 61 && p[i + 3] != 33) {
-        let ne: i32 = i + 3;
-        while (ne < p.len() && p[ne] != 62) {
-          ne = ne + 1;
-        }
-        if (ne < p.len()) {
-          let gi: RParse = __rx_alt(p, ne + 1, g + 1);
-          let gpos: i32 = gi.pos;
-          if (gpos < p.len() && p[gpos] == 41) {
-            gpos = gpos + 1;
-          }
-          return RParse { node: RGroup(RGroupData { idx: g, node: gi.node }), pos: gpos, g: gi.g };
-        }
-      }
-      let nb: i32 = i + 1;
-      if (i + 2 < p.len() && p[i + 2] == 58) {
-        nb = i + 3;
-      }
-      let ni: RParse = __rx_alt(p, nb, g);
-      let npos: i32 = ni.pos;
-      if (npos < p.len() && p[npos] == 41) {
-        npos = npos + 1;
-      }
-      return RParse { node: ni.node, pos: npos, g: ni.g };
-    }
-    let inner: RParse = __rx_alt(p, i + 1, g + 1);
-    let pos: i32 = inner.pos;
-    if (pos < p.len() && p[pos] == 41) {
-      pos = pos + 1;
-    }
-    return RParse { node: RGroup(RGroupData { idx: g, node: inner.node }), pos: pos, g: inner.g };
+    return __rx_group(errors, depth, p, i, g);
   }
   if (c == 91) {
-    let endb: i32 = __rx_class_end(p, i);
-    return RParse { node: RClass(slice_unchecked(p, i, endb) + ""), pos: endb, g: g };
+    let Some(end) = __rx_class_end(p, i) else {
+      return __rx_fail(errors, UnclosedClass, i, p.len(), g);
+    };
+    return RParse { node: RClass(__rx_mask(slice_unchecked(p, i, end + 1) + "", errors, i)), pos: end + 1, g: g };
   }
-  if (c == 46) {
+  if (c == 46) {  // '.'
     return RParse { node: RAny, pos: i + 1, g: g };
   }
-  if (c == 94) {
+  if (c == 94) {  // '^'
     return RParse { node: RStart, pos: i + 1, g: g };
   }
-  if (c == 36) {
+  if (c == 36) {  // '$'
     return RParse { node: REnd, pos: i + 1, g: g };
   }
-  return RParse { node: RChar(c), pos: i + 1, g: g };
-}
-
-// The class token for the shorthand escape d (\d, \w, \s and their negations), or "".
-function __rx_shorthand(d: i32): string {
-  if (d == 100) {
-    return "[0-9]";
-  }
-  if (d == 68) {
-    return "[^0-9]";
-  }
-  if (d == 119) {
-    return "[A-Za-z0-9_]";
-  }
-  if (d == 87) {
-    return "[^A-Za-z0-9_]";
-  }
-  if (d == 115) {
-    return "[ \t\n\r]";
-  }
-  if (d == 83) {
-    return "[^ \t\n\r]";
-  }
-  return "";
-}
-
-function __rx_escape_char(d: i32): i32 {
-  if (d == 110) {
-    return 10;
-  }
-  if (d == 116) {
-    return 9;
-  }
-  if (d == 114) {
-    return 13;
-  }
-  return d;
-}
-
-// The index after the class that opens at p[i], or p.len() when it is not closed.
-function __rx_class_end(p: string, i: i32): i32 {
-  let n: i32 = p.len();
-  let j: i32 = i + 1;
-  if (j < n && p[j] == 94) {
-    j = j + 1;
-  }
-  if (j < n && p[j] == 93) {
-    j = j + 1;
-  }
-  while (j < n && p[j] != 93) {
-    if (p[j] == 92) {
-      j = j + 1;
-    }
-    j = j + 1;
-  }
-  if (j >= n) {
-    return n;
-  }
-  return j + 1;
+  return RParse { node: RChar(c), pos: i + 1, g: g };  // literal
 }
 
 function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
@@ -297,40 +184,56 @@ function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
 
 ```fern
 <<5 function __rx_count(p: string, pos: i32, a: RParse): RParse>>=
-function __rx_count(p: string, pos: i32, a: RParse): RParse {
+function __rx_count(errors: Cell[Option[CompileError]], depth: i32, p: string, pos: i32, a: RParse): RParse {
   let j: i32 = pos + 1;
   let n: i32 = 0;
   let have_n: boolean = false;
   while (j < p.len() && p[j] as i32 >= 48 && p[j] as i32 <= 57) {
-    n = n * 10 + (p[j] as i32 - 48);
+    let digit: i32 = p[j] as i32 - 48;
+    if (n > MAX_REPEAT / 10 || n == MAX_REPEAT / 10 && digit > MAX_REPEAT % 10) {
+      return __rx_fail(errors, RepeatLimit, pos, p.len(), a.g);
+    }
+    n = n * 10 + digit;
     j = j + 1;
     have_n = true;
   }
   if (!have_n) {
-    return a;
+    return __rx_fail(errors, InvalidRepeat, pos, p.len(), a.g);
   }
   let m: i32 = n;
   let has_max: boolean = true;
-  if (j < p.len() && p[j] == 44) {
+  if (j < p.len() && p[j] == 44) {  // ','
     j = j + 1;
-    if (j < p.len() && p[j] == 125) {
+    if (j < p.len() && p[j] == 125) {  // `{n,}`
       has_max = false;
     } else {
       m = 0;
+      let have_m: boolean = false;
       while (j < p.len() && p[j] as i32 >= 48 && p[j] as i32 <= 57) {
-        m = m * 10 + (p[j] as i32 - 48);
+        let digit: i32 = p[j] as i32 - 48;
+        if (m > MAX_REPEAT / 10 || m == MAX_REPEAT / 10 && digit > MAX_REPEAT % 10) {
+          return __rx_fail(errors, RepeatLimit, pos, p.len(), a.g);
+        }
+        m = m * 10 + digit;
+        have_m = true;
         j = j + 1;
+      }
+      if (!have_m) {
+        return __rx_fail(errors, InvalidRepeat, pos, p.len(), a.g);
       }
     }
   }
   if (j >= p.len() || p[j] != 125) {
-    return a;
+    return __rx_fail(errors, InvalidRepeat, pos, p.len(), a.g);
+  }
+  if (has_max && m < n) {
+    return __rx_fail(errors, InvalidRepeat, pos, p.len(), a.g);
   }
   return RParse { node: __rx_repeat(a.node, n, m, has_max), pos: j + 1, g: a.g };
 }
 
-function __rx_quant(p: string, i: i32, g: i32): RParse {
-  let a: RParse = __rx_atom(p, i, g);
+function __rx_quant(errors: Cell[Option[CompileError]], depth: i32, p: string, i: i32, g: i32): RParse {
+  let a: RParse = __rx_atom(errors, depth, p, i, g);
   let pos: i32 = a.pos;
   if (pos < p.len()) {
     let c: i32 = p[pos] as i32;
@@ -343,19 +246,19 @@ function __rx_quant(p: string, i: i32, g: i32): RParse {
     if (c == 63) {
       return RParse { node: ROpt(a.node), pos: pos + 1, g: a.g };
     }
-    if (c == 123) {
-      return __rx_count(p, pos, a);
+    if (c == 123) {  // '{'
+      return __rx_count(errors, depth, p, pos, a);
     }
   }
   return a;
 }
 
-function __rx_seq(p: string, i: i32, g: i32): RParse {
+function __rx_seq(errors: Cell[Option[CompileError]], depth: i32, p: string, i: i32, g: i32): RParse {
   let items: RNode[] = [];
   let pos: i32 = i;
   let gi: i32 = g;
-  while (pos < p.len() && p[pos] != 124 && p[pos] != 41) {
-    let q: RParse = __rx_quant(p, pos, gi);
+  while (pos < p.len() && p[pos] != 124 && p[pos] != 41) {  // not '|' / ')'
+    let q: RParse = __rx_quant(errors, depth, p, pos, gi);
     items = items.append(q.node);
     pos = q.pos;
     gi = q.g;
@@ -366,13 +269,13 @@ function __rx_seq(p: string, i: i32, g: i32): RParse {
   return RParse { node: RSeq(items), pos: pos, g: gi };
 }
 
-function __rx_alt(p: string, i: i32, g: i32): RParse {
-  let first: RParse = __rx_seq(p, i, g);
+function __rx_alt(errors: Cell[Option[CompileError]], depth: i32, p: string, i: i32, g: i32): RParse {
+  let first: RParse = __rx_seq(errors, depth, p, i, g);
   let branches: RNode[] = [first.node];
   let pos: i32 = first.pos;
   let gi: i32 = first.g;
-  while (pos < p.len() && p[pos] == 124) {
-    let nxt: RParse = __rx_seq(p, pos + 1, gi);
+  while (pos < p.len() && p[pos] == 124) {  // '|'
+    let nxt: RParse = __rx_seq(errors, depth, p, pos + 1, gi);
     branches = branches.append(nxt.node);
     pos = nxt.pos;
     gi = nxt.g;
@@ -418,12 +321,6 @@ function __rx_fold(c: i32, ci: boolean): i32 {
 }
 ```
 
-### `6 pub struct RProg`
-
-```fern
-<<6 pub struct RProg>>=
-pub struct RProg { root: RNode, ci: boolean, ngroups: i32, names: string[] }
-```
 
 ### `7 function __rx_group_names(pattern: string): string[]`
 
@@ -435,29 +332,36 @@ function __rx_group_names(pattern: string): string[] {
   let n: i32 = pattern.len();
   while (i < n) {
     let c: i32 = pattern[i] as i32;
-    if (c == 92) {
+    if (c == 92) {  // '\' escape — skip next byte
       i = i + 2;
-    } else if (c == 91) {
-      i = __rx_class_end(pattern, i);
-    } else if (c == 40) {
-      if (i + 1 < n && pattern[i + 1] == 63) {
+    } else if (c == 91) {  // '[' character class
+      match (__rx_class_end(pattern, i)) {
+        Some(end) => {
+          i = end + 1;
+        },
+        None => {
+          i = n;
+        }
+      }
+    } else if (c == 40) {  // '('
+      if (i + 1 < n && pattern[i + 1] == 63) {  // '(?'
         if (i + 3 < n && pattern[i + 2] == 60
-          && pattern[i + 3] != 61 && pattern[i + 3] != 33) {
+          && pattern[i + 3] != 61 && pattern[i + 3] != 33) {  // '(?<' name
           let ne: i32 = i + 3;
-          while (ne < n && pattern[ne] != 62) {
+          while (ne < n && pattern[ne] != 62) {  // to '>'
             ne = ne + 1;
           }
-          if (ne < n) {
+          if (ne < n) {  // named capturing group
             names = names.append(slice_unchecked(pattern, i + 3, ne) + "");
             i = ne + 1;
           } else {
-            i = i + 1;
+            i = i + 1;  // `(?<…` no '>' → non-capturing
           }
         } else {
-          i = i + 1;
+          i = i + 1;  // `(?:` / `(?i)` / … → non-capturing
         }
       } else {
-        names = names.append("");
+        names = names.append("");  // bare capturing group
         i = i + 1;
       }
     } else {
@@ -467,61 +371,12 @@ function __rx_group_names(pattern: string): string[] {
   return names;
 }
 
-function __rx_compile(pattern: string): RProg {
-  let names: string[] = __rx_group_names(pattern);
-  if (pattern.starts_with("(?i)")) {
-    let r: RParse = __rx_alt(pattern, 4, 1);
-    return RProg { root: r.node, ci: true, ngroups: r.g - 1, names: names };
+function __rx_class(mask: u8[], byte: i32, ci: boolean): boolean {
+  let at: i32 = byte;
+  if (ci) {
+    at = at + 256;
   }
-  let r0: RParse = __rx_alt(pattern, 0, 1);
-  return RProg { root: r0.node, ci: false, ngroups: r0.g - 1, names: names };
-}
-
-function __rx_class(tok: string, c0: i32, ci: boolean): boolean {
-  let c: i32 = __rx_fold(c0, ci);
-  let j: i32 = 1;
-  let neg: boolean = false;
-  if (j < tok.len() && tok[j] == 94) {
-    neg = true;
-    j = j + 1;
-  }
-  let found: boolean = false;
-  let end: i32 = tok.len() - 1;
-  while (j < end) {
-    if (tok[j] == 92 && j + 1 < end) {
-      let sh: string = __rx_shorthand(tok[j + 1] as i32);
-      if (sh.len() > 0) {
-        if (__rx_class(sh, c0, ci)) {
-          found = true;
-        }
-        j = j + 2;
-        continue;
-      }
-    }
-    let (lo, k) = __rx_class_unit(tok, j, end);
-    let hi: i32 = lo;
-    j = k;
-    if (k + 1 < end && tok[k] == 45) {
-      let (top, k2) = __rx_class_unit(tok, k + 1, end);
-      hi = top;
-      j = k2;
-    }
-    if (c >= __rx_fold(lo, ci) && c <= __rx_fold(hi, ci)) {
-      found = true;
-    }
-  }
-  if (neg) {
-    return !found;
-  }
-  return found;
-}
-
-// The member at tok[j] and the index after it. A backslash escapes the next byte.
-function __rx_class_unit(tok: string, j: i32, end: i32): (i32, i32) {
-  if (tok[j] == 92 && j + 1 < end) {
-    return (__rx_escape_char(tok[j + 1] as i32), j + 2);
-  }
-  return (tok[j] as i32, j + 1);
+  return mask[at] != 0;
 }
 
 function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci: boolean): i32[] {
@@ -677,18 +532,12 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
 }
 ```
 
-### `9 pub struct RMatch`
-
-```fern
-<<9 pub struct RMatch>>=
-pub struct RMatch { start: i32, end: i32 }
-```
 
 ### `10 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch]`
 
 ```fern
 <<10 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch]>>=
-function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch] {
+function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[Match] {
   let ti: i32 = from;
   while (true) {
     let ends: i32[] = __rx_match(root, text, ti, ci);
@@ -701,7 +550,7 @@ function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Op
         }
         i = i + 1;
       }
-      return Some(RMatch { start: ti, end: best });
+      return Some(Match { start: ti, end: best });
     }
     if (ti >= text.len()) {
       return None;
@@ -712,35 +561,12 @@ function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Op
 }
 ```
 
-### `11 pub function regex_search(pattern: string, text: string): Option[RMatch]`
-
-```fern
-<<11 pub function regex_search(pattern: string, text: string): Option[RMatch]>>=
-pub function regex_search(pattern: string, text: string): Option[RMatch] {
-  let prog: RProg = __rx_compile(pattern);
-  return __rx_search_from(prog.root, text, 0, prog.ci);
-}
-
-pub function regex_match(pattern: string, text: string): boolean {
-  if let Some(_) = regex_search(pattern, text) {
-    return true;
-  }
-  return false;
-}
-
-pub function regex_find(pattern: string, text: string): Option[i32] {
-  if let Some(m) = regex_search(pattern, text) {
-    return Some(m.start);
-  }
-  return None;
-}
-```
 
 ### `12 function __rx_advance(m: RMatch): i32`
 
 ```fern
 <<12 function __rx_advance(m: RMatch): i32>>=
-function __rx_advance(m: RMatch): i32 {
+function __rx_advance(m: Match): i32 {
   if (m.end > m.start) {
     return m.end;
   }
@@ -748,24 +574,6 @@ function __rx_advance(m: RMatch): i32 {
 }
 ```
 
-### `13 pub function regex_find_all(pattern: string, text: string): RMatch[]`
-
-```fern
-<<13 pub function regex_find_all(pattern: string, text: string): RMatch[]>>=
-pub function regex_find_all(pattern: string, text: string): RMatch[] {
-  let prog: RProg = __rx_compile(pattern);
-  let out: RMatch[] = [];
-  let pos: i32 = 0;
-  while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
-      return out;
-    };
-    out = out.append(m);
-    pos = __rx_advance(m);
-  }
-  return out;
-}
-```
 
 ### `14 function __rx_finish(h: usize): u8[]`
 
@@ -784,36 +592,15 @@ function __rx_bytes(text: string, lo: i32, hi: i32): u8[] {
 }
 ```
 
-### `15 pub function regex_replace_all(pattern: string, text: string, repl: string): Option[string]`
-
-```fern
-<<15 pub function regex_replace_all(pattern: string, text: string, repl: string): Option[string]>>=
-pub function regex_replace_all(pattern: string, text: string, repl: string): Option[string] {
-  let prog: RProg = __rx_compile(pattern);
-  let first: Option[RMatch] = __rx_search_from(prog.root, text, 0, prog.ci);
-  match (first) {
-    None => {
-      return Some(text);
-    },
-    _ => {}
-  }
-  return utf8.from_bytes(__rx_replace_all_from(prog, text, repl, first));
-}
-
-pub function regex_replace_all_bytes(pattern: string, text: string, repl: string): u8[] {
-  let prog: RProg = __rx_compile(pattern);
-  return __rx_replace_all_from(prog, text, repl, __rx_search_from(prog.root, text, 0, prog.ci));
-}
-```
 
 ### `16 function __rx_replace_all_from(prog: RProg, text: string, repl: string, first: Option[RMatch]): u8[]`
 
 ```fern
 <<16 function __rx_replace_all_from(prog: RProg, text: string, repl: string, first: Option[RMatch]): u8[]>>=
-function __rx_replace_all_from(prog: RProg, text: string, repl: string, first: Option[RMatch]): u8[] {
+function __rx_replace_all_from(prog: Regex, text: string, repl: string, first: Option[Match]): u8[] {
   let h: usize = buf_new(text.len());
   let last: i32 = 0;
-  let next: Option[RMatch] = first;
+  let next: Option[Match] = first;
   while (true) {
     let Some(m) = next else {
       break;
@@ -836,93 +623,12 @@ function __rx_replace_all_from(prog: RProg, text: string, repl: string, first: O
 }
 ```
 
-### `17 pub function regex_split(text: string, pattern: string): Option[string[]]`
-
-```fern
-<<17 pub function regex_split(text: string, pattern: string): Option[string[]]>>=
-pub function regex_split(text: string, pattern: string): Option[string[]] {
-  let prog: RProg = __rx_compile(pattern);
-  let out: string[] = [];
-  let last: i32 = 0;
-  let pos: i32 = 0;
-  while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
-      if (!utf8.is_char_boundary(text, last)) {
-        return None;
-      }
-      out = out.append(slice_unchecked(text, last, text.len()) + "");
-      return Some(out);
-    };
-    if (m.end > m.start) {
-      if (last != m.start && (!utf8.is_char_boundary(text, last) || !utf8.is_char_boundary(text, m.start))) {
-        return None;
-      }
-      out = out.append(slice_unchecked(text, last, m.start) + "");
-      last = m.end;
-      pos = m.end;
-    } else {
-      pos = m.start + 1;
-    }
-  }
-  if (!utf8.is_char_boundary(text, last)) {
-    return None;
-  }
-  out = out.append(slice_unchecked(text, last, text.len()) + "");
-  return Some(out);
-}
-
-pub function regex_split_bytes(text: string, pattern: string): u8[][] {
-  let prog: RProg = __rx_compile(pattern);
-  let out: u8[][] = [];
-  let last: i32 = 0;
-  let pos: i32 = 0;
-  while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
-      out = out.append(__rx_bytes(text, last, text.len()));
-      return out;
-    };
-    if (m.end > m.start) {
-      out = out.append(__rx_bytes(text, last, m.start));
-      last = m.end;
-      pos = m.end;
-    } else {
-      pos = m.start + 1;
-    }
-  }
-  out = out.append(__rx_bytes(text, last, text.len()));
-  return out;
-}
-
-pub function regex_full_match(pattern: string, text: string): boolean {
-  let prog: RProg = __rx_compile(pattern);
-  let ends: i32[] = __rx_match(prog.root, text, 0, prog.ci);
-  let i: i32 = 0;
-  while (i < ends.len()) {
-    if (ends[i] == text.len()) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-pub function regex_count(pattern: string, text: string): i32 {
-  return regex_find_all(pattern, text).len();
-}
-
-pub function regex_replace(pattern: string, text: string, repl: string): Option[string] {
-  let Some(m) = regex_search(pattern, text) else {
-    return Some(text);
-  };
-  return utf8.from_bytes(__rx_replace_span(text, repl, m));
-}
-```
 
 ### `18 function __rx_replace_span(text: string, repl: string, m: RMatch): u8[]`
 
 ```fern
 <<18 function __rx_replace_span(text: string, repl: string, m: RMatch): u8[]>>=
-function __rx_replace_span(text: string, repl: string, m: RMatch): u8[] {
+function __rx_replace_span(text: string, repl: string, m: Match): u8[] {
   let h: usize = buf_new(text.len());
   buf_push_range(h, text, 0, m.start);
   buf_push(h, repl);
@@ -931,17 +637,6 @@ function __rx_replace_span(text: string, repl: string, m: RMatch): u8[] {
 }
 ```
 
-### `19 pub function regex_replace_bytes(pattern: string, text: string, repl: string): u8[]`
-
-```fern
-<<19 pub function regex_replace_bytes(pattern: string, text: string, repl: string): u8[]>>=
-pub function regex_replace_bytes(pattern: string, text: string, repl: string): u8[] {
-  let Some(m) = regex_search(pattern, text) else {
-    return __rx_bytes(text, 0, text.len());
-  };
-  return __rx_replace_span(text, repl, m);
-}
-```
 
 ### `20 struct RSplit`
 
@@ -952,7 +647,7 @@ struct RSplit { a: i32, b: i32 }
 enum RInst {
   IChar(i32),
   IAny,
-  IClass(string),
+  IClass(u8[]),
   IAssert(i32),
   ISplit(RSplit),
   IJmp(i32),
@@ -1208,48 +903,13 @@ function __rx_csearch_from(prog: RInst[], t: string, from: i32, ci: boolean, nsl
 }
 ```
 
-### `24 pub struct RCaps`
 
-```fern
-<<24 pub struct RCaps>>=
-pub struct RCaps { text: string, starts: i32[], ends: i32[], names: string[] }
-```
-
-### `25 pub function (c: RCaps) group_count(): i32`
-
-```fern
-<<25 pub function (c: RCaps) group_count(): i32>>=
-pub function (c: RCaps) group_count(): i32 {
-  return c.starts.len() - 1;
-}
-
-pub function (c: RCaps) group_start(i: i32): Option[i32] {
-  if (i < 0 || i >= c.starts.len() || c.starts[i] < 0) {
-    return None;
-  }
-  return Some(c.starts[i]);
-}
-
-pub function (c: RCaps) group_end(i: i32): Option[i32] {
-  if (i < 0 || i >= c.ends.len() || c.ends[i] < 0) {
-    return None;
-  }
-  return Some(c.ends[i]);
-}
-
-pub function (c: RCaps) has_group(i: i32): boolean {
-  if let Some(_) = c.group_start(i) {
-    return true;
-  }
-  return false;
-}
-```
 
 ### `26 function __rx_span(c: RCaps, i: i32): (i32, i32)`
 
 ```fern
 <<26 function __rx_span(c: RCaps, i: i32): (i32, i32)>>=
-function __rx_span(c: RCaps, i: i32): (i32, i32) {
+function __rx_span(c: Captures, i: i32): (i32, i32) {
   if (i < 0 || i >= c.starts.len() || c.starts[i] < 0 || c.ends[i] < 0) {
     return (0 - 1, 0 - 1);
   }
@@ -1257,46 +917,12 @@ function __rx_span(c: RCaps, i: i32): (i32, i32) {
 }
 ```
 
-### `27 pub function (c: RCaps) group(i: i32): Option[string]`
-
-```fern
-<<27 pub function (c: RCaps) group(i: i32): Option[string]>>=
-pub function (c: RCaps) group(i: i32): Option[string] {
-  let (s, e) = __rx_span(c, i);
-  if (s < 0) {
-    return Some("");
-  }
-  if (s != e && (!utf8.is_char_boundary(c.text, s) || !utf8.is_char_boundary(c.text, e))) {
-    return None;
-  }
-  return Some(slice_unchecked(c.text, s, e) + "");
-}
-
-pub function (c: RCaps) group_bytes(i: i32): u8[] {
-  let (s, e) = __rx_span(c, i);
-  if (s < 0) {
-    return [];
-  }
-  return __rx_bytes(c.text, s, e);
-}
-
-pub function (c: RCaps) group_index(name: string): Option[i32] {
-  let i: i32 = 0;
-  while (i < c.names.len()) {
-    if (c.names[i] == name) {
-      return Some(i + 1);
-    }
-    i = i + 1;
-  }
-  return None;
-}
-```
 
 ### `28 function __rx_named_index(c: RCaps, name: string): i32`
 
 ```fern
 <<28 function __rx_named_index(c: RCaps, name: string): i32>>=
-function __rx_named_index(c: RCaps, name: string): i32 {
+function __rx_named_index(c: Captures, name: string): i32 {
   if let Some(i) = c.group_index(name) {
     return i;
   }
@@ -1304,36 +930,12 @@ function __rx_named_index(c: RCaps, name: string): i32 {
 }
 ```
 
-### `29 pub function (c: RCaps) group_named(name: string): Option[string]`
-
-```fern
-<<29 pub function (c: RCaps) group_named(name: string): Option[string]>>=
-pub function (c: RCaps) group_named(name: string): Option[string] {
-  return c.group(__rx_named_index(c, name));
-}
-
-pub function (c: RCaps) group_named_bytes(name: string): u8[] {
-  return c.group_bytes(__rx_named_index(c, name));
-}
-
-pub function (c: RCaps) group_named_start(name: string): Option[i32] {
-  return c.group_start(__rx_named_index(c, name));
-}
-
-pub function (c: RCaps) group_named_end(name: string): Option[i32] {
-  return c.group_end(__rx_named_index(c, name));
-}
-
-pub function (c: RCaps) has_group_named(name: string): boolean {
-  return c.has_group(__rx_named_index(c, name));
-}
-```
 
 ### `30 function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): Option[RCaps]`
 
 ```fern
 <<30 function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): Option[RCaps]>>=
-function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): Option[RCaps] {
+function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): Option[Captures] {
   if (caps.len() == 0) {
     return None;
   }
@@ -1345,45 +947,16 @@ function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]
     ends = ends.append(caps[i + i + 1]);
     i = i + 1;
   }
-  return Some(RCaps { text: text, starts: starts, ends: ends, names: names });
+  return Some(Captures { text: text, starts: starts, ends: ends, names: names });
 }
 ```
 
-### `31 pub function regex_captures(pattern: string, text: string): Option[RCaps]`
-
-```fern
-<<31 pub function regex_captures(pattern: string, text: string): Option[RCaps]>>=
-pub function regex_captures(pattern: string, text: string): Option[RCaps] {
-  let prog: RProg = __rx_compile(pattern);
-  let insts: RInst[] = __rx_cprog(prog.root);
-  let nslots: i32 = (prog.ngroups + 1) * 2;
-  let caps: i32[] = __rx_csearch_from(insts, text, 0, prog.ci, nslots);
-  return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
-}
-
-pub function regex_captures_all(pattern: string, text: string): RCaps[] {
-  let prog: RProg = __rx_compile(pattern);
-  let insts: RInst[] = __rx_cprog(prog.root);
-  let nslots: i32 = (prog.ngroups + 1) * 2;
-  let out: RCaps[] = [];
-  let pos: i32 = 0;
-  while (pos <= text.len()) {
-    let caps: i32[] = __rx_csearch_from(insts, text, pos, prog.ci, nslots);
-    let Some(c) = __rx_caps_wrap(caps, text, prog.ngroups, prog.names) else {
-      return out;
-    };
-    out = out.append(c);
-    pos = __rx_advance(RMatch { start: caps[0], end: caps[1] });
-  }
-  return out;
-}
-```
 
 ### `32 function __rx_template_ref(tmpl: string, i: i32, c: RCaps): (i32, i32)`
 
 ```fern
 <<32 function __rx_template_ref(tmpl: string, i: i32, c: RCaps): (i32, i32)>>=
-function __rx_template_ref(tmpl: string, i: i32, c: RCaps): (i32, i32) {
+function __rx_template_ref(tmpl: string, i: i32, c: Captures): (i32, i32) {
   if (i + 1 >= tmpl.len()) {
     return (0 - 1, i);
   }
@@ -1406,7 +979,7 @@ function __rx_template_ref(tmpl: string, i: i32, c: RCaps): (i32, i32) {
   return (0 - 1, i);
 }
 
-function __rx_expand_into(h: usize, tmpl: string, c: RCaps): void {
+function __rx_expand_into(h: usize, tmpl: string, c: Captures): void {
   let lit: i32 = 0;
   let i: i32 = 0;
   while (i < tmpl.len()) {
@@ -1435,30 +1008,12 @@ function __rx_expand_into(h: usize, tmpl: string, c: RCaps): void {
 }
 ```
 
-### `33 pub function regex_replace_groups(pattern: string, text: string, tmpl: string): Option[string]`
-
-```fern
-<<33 pub function regex_replace_groups(pattern: string, text: string, tmpl: string): Option[string]>>=
-pub function regex_replace_groups(pattern: string, text: string, tmpl: string): Option[string] {
-  let Some(c) = regex_captures(pattern, text) else {
-    return Some(text);
-  };
-  return utf8.from_bytes(__rx_replace_capture(text, tmpl, c));
-}
-
-pub function regex_replace_groups_bytes(pattern: string, text: string, tmpl: string): u8[] {
-  let Some(c) = regex_captures(pattern, text) else {
-    return __rx_bytes(text, 0, text.len());
-  };
-  return __rx_replace_capture(text, tmpl, c);
-}
-```
 
 ### `34 function __rx_replace_capture(text: string, tmpl: string, c: RCaps): u8[]`
 
 ```fern
 <<34 function __rx_replace_capture(text: string, tmpl: string, c: RCaps): u8[]>>=
-function __rx_replace_capture(text: string, tmpl: string, c: RCaps): u8[] {
+function __rx_replace_capture(text: string, tmpl: string, c: Captures): u8[] {
   let h: usize = buf_new(text.len());
   buf_push_range(h, text, 0, c.starts[0]);
   __rx_expand_into(h, tmpl, c);
@@ -1467,34 +1022,17 @@ function __rx_replace_capture(text: string, tmpl: string, c: RCaps): u8[] {
 }
 ```
 
-### `35 pub function regex_replace_all_groups(pattern: string, text: string, tmpl: string): Option[string]`
-
-```fern
-<<35 pub function regex_replace_all_groups(pattern: string, text: string, tmpl: string): Option[string]>>=
-pub function regex_replace_all_groups(pattern: string, text: string, tmpl: string): Option[string] {
-  let all: RCaps[] = regex_captures_all(pattern, text);
-  if (all.len() == 0) {
-    return Some(text);
-  }
-  return utf8.from_bytes(__rx_replace_captures(text, tmpl, all));
-}
-
-pub function regex_replace_all_groups_bytes(pattern: string, text: string, tmpl: string): u8[] {
-  let all: RCaps[] = regex_captures_all(pattern, text);
-  return __rx_replace_captures(text, tmpl, all);
-}
-```
 
 ### `36 function __rx_replace_captures(text: string, tmpl: string, all: RCaps[]): u8[]`
 
 ```fern
 <<36 function __rx_replace_captures(text: string, tmpl: string, all: RCaps[]): u8[]>>=
-function __rx_replace_captures(text: string, tmpl: string, all: RCaps[]): u8[] {
+function __rx_replace_captures(text: string, tmpl: string, all: Captures[]): u8[] {
   let h: usize = buf_new(text.len());
   let last: i32 = 0;
   let mi: i32 = 0;
   while (mi < all.len()) {
-    let m: RCaps = all[mi];
+    let m: Captures = all[mi];
     buf_push_range(h, text, last, m.starts[0]);
     __rx_expand_into(h, tmpl, m);
     last = m.ends[0];
@@ -1503,4 +1041,700 @@ function __rx_replace_captures(text: string, tmpl: string, all: RCaps[]): u8[] {
   buf_push_range(h, text, last, text.len());
   return __rx_finish(h);
 }
+```
+
+### Typed decode errors
+
+```fern
+<<typed decode errors>>=
+pub const MAX_NESTING: i32 = 128;
+
+pub const MAX_PROGRAM: i32 = 100000;
+
+pub const MAX_REPEAT: i32 = 1000;
+
+@derive(cmp.Eq)
+pub enum CompileErrorKind {
+  TrailingEscape,
+  UnclosedGroup,
+  UnclosedClass,
+  UnexpectedClose,
+  MissingAtom,
+  InvalidRepeat,
+  RepeatLimit,
+  UnsupportedGroup,
+  NestingLimit,
+  InvalidClassRange,
+  ProgramLimit,
+}
+
+pub enum TextError { InvalidUtf8Output }
+
+function __rx_child_size(child: RNode, overhead: i32, budget: i32): i32 {
+  let size: i32 = __rx_program_size(child, budget - overhead);
+  if (size < 0) {
+    return -1;
+  }
+  return overhead + size;
+}
+
+function __rx_class_end(pattern: string, start: i32): Option[i32] {
+  let i: i32 = start + 1;
+  if (i < pattern.len() && pattern[i] == 94) {
+    i = i + 1;
+  }
+  if (i < pattern.len() && pattern[i] == 93) {
+    i = i + 1;
+  }
+  while (i < pattern.len()) {
+    if (pattern[i] == 92) {
+      i = i + 2;
+    } else if (pattern[i] == 93) {
+      return Some(i);
+    } else {
+      i = i + 1;
+    }
+  }
+  return None;
+}
+
+function __rx_class_unit(token: string, at: i32): (i32, i32, i32) {
+  let byte: i32 = token[at] as i32;
+  if (byte != 92) {
+    return (0, byte, at + 1);
+  }
+  byte = token[at + 1] as i32;
+  if (byte == 100) {
+    return (1, 0, at + 2);
+  }
+  if (byte == 68) {
+    return (-1, 0, at + 2);
+  }
+  if (byte == 119) {
+    return (2, 0, at + 2);
+  }
+  if (byte == 87) {
+    return (-2, 0, at + 2);
+  }
+  if (byte == 115) {
+    return (3, 0, at + 2);
+  }
+  if (byte == 83) {
+    return (-3, 0, at + 2);
+  }
+  if (byte == 110) {
+    byte = 10;
+  } else if (byte == 116) {
+    byte = 9;
+  } else if (byte == 114) {
+    byte = 13;
+  }
+  return (0, byte, at + 2);
+}
+
+function __rx_class_units(token: string, errors: Cell[Option[CompileError]], offset: i32): RClassUnit[] {
+  let out: RClassUnit[] = [];
+  let i: i32 = 1;
+  if (token[i] == 94) {
+    i = i + 1;
+  }
+  let end: i32 = token.len() - 1;
+  while (i < end) {
+    let (kind, lo, next) = __rx_class_unit(token, i);
+    if (next + 1 < end && token[next] == 45) {
+      let (upper_kind, hi, after) = __rx_class_unit(token, next + 1);
+      if (kind != 0 || upper_kind != 0 || hi < lo) {
+        __rx_fail(errors, InvalidClassRange, offset + i, offset + token.len(), 0);
+        return [];
+      }
+      out = out.append(RClassUnit { kind: 0, lo: lo, hi: hi });
+      i = after;
+    } else {
+      out = out.append(RClassUnit { kind: kind, lo: lo, hi: lo });
+      i = next;
+    }
+  }
+  return out;
+}
+
+function __rx_escape(errors: Cell[Option[CompileError]], p: string, i: i32, g: i32): RParse {
+  // '\' escape
+  if (i + 1 >= p.len()) {
+    return __rx_fail(errors, TrailingEscape, i, p.len(), g);
+  }
+  let d: i32 = p[i + 1] as i32;
+  // Shorthand classes (and their negations) desugar to an equivalent
+  // `[ … ]` class token the matcher already understands.
+  if (d == 100) {  // \d
+    return RParse { node: RClass(__rx_mask("[0-9]", errors, i)), pos: i + 2, g: g };
+  }
+  if (d == 68) {  // \D
+    return RParse { node: RClass(__rx_mask("[^0-9]", errors, i)), pos: i + 2, g: g };
+  }
+  if (d == 119) {  // \w
+    return RParse { node: RClass(__rx_mask("[A-Za-z0-9_]", errors, i)), pos: i + 2, g: g };
+  }
+  if (d == 87) {  // \W
+    return RParse { node: RClass(__rx_mask("[^A-Za-z0-9_]", errors, i)), pos: i + 2, g: g };
+  }
+  if (d == 115) {  // \s
+    return RParse { node: RClass(__rx_mask("[ \t\n\r]", errors, i)), pos: i + 2, g: g };
+  }
+  if (d == 83) {  // \S
+    return RParse { node: RClass(__rx_mask("[^ \t\n\r]", errors, i)), pos: i + 2, g: g };
+  }
+  // Word-boundary assertions (zero-width).
+  if (d == 98) {  // \b
+    return RParse { node: RBound(true), pos: i + 2, g: g };
+  }
+  if (d == 66) {  // \B
+    return RParse { node: RBound(false), pos: i + 2, g: g };
+  }
+  // Escaped control bytes.
+  if (d == 110) {  // \n
+    return RParse { node: RChar(10), pos: i + 2, g: g };
+  }
+  if (d == 116) {  // \t
+    return RParse { node: RChar(9), pos: i + 2, g: g };
+  }
+  if (d == 114) {  // \r
+    return RParse { node: RChar(13), pos: i + 2, g: g };
+  }
+  // Any other escaped byte is that literal byte — covers the
+  // metacharacters `\. \* \+ \? \( \) \[ \] \| \^ \$ \\` etc.
+  // NOTE: this includes `\1`…`\9` — they are literal digit bytes,
+  // NOT backreferences (which this engine does not support).
+  return RParse { node: RChar(d), pos: i + 2, g: g };
+}
+
+function __rx_fail(errors: Cell[Option[CompileError]], kind: CompileErrorKind, offset: i32, end: i32, g: i32): RParse {
+  if let None = errors.get() {
+    errors.set(Some(CompileError { kind: kind, offset: offset }));
+  }
+  return RParse { node: RSeq([]), pos: end, g: g };
+}
+
+function __rx_group(errors: Cell[Option[CompileError]], depth: i32, p: string, i: i32, g: i32): RParse {
+  // '('
+  if (depth >= MAX_NESTING) {
+    return __rx_fail(errors, NestingLimit, i, p.len(), g);
+  }
+  // Only named captures and non-capturing groups use the `(?` prefix.
+  if (i + 1 < p.len() && p[i + 1] == 63) {  // '?'
+    if (i + 3 < p.len() && p[i + 2] == 60
+      && p[i + 3] != 61 && p[i + 3] != 33) {  // '?' '<' !'=' !'!'
+      let ne: i32 = i + 3;
+      while (ne < p.len() && p[ne] != 62) {  // scan to '>'
+        ne = ne + 1;
+      }
+      if (ne < p.len()) {  // found '>'
+        let gi: RParse = __rx_alt(errors, depth + 1, p, ne + 1, g + 1);
+        let gpos: i32 = gi.pos;
+        if (gpos < p.len() && p[gpos] == 41) {  // ')'
+          gpos = gpos + 1;
+        } else {
+          return __rx_fail(errors, UnclosedGroup, i, p.len(), g);
+        }
+        return RParse { node: RGroup(RGroupData { idx: g, node: gi.node }), pos: gpos, g: gi.g };
+      }
+    }
+    if (i + 2 >= p.len() || p[i + 2] != 58) {
+      return __rx_fail(errors, UnsupportedGroup, i, p.len(), g);
+    }
+    let nb: i32 = i + 3;
+    let ni: RParse = __rx_alt(errors, depth + 1, p, nb, g);
+    let npos: i32 = ni.pos;
+    if (npos < p.len() && p[npos] == 41) {  // ')'
+      npos = npos + 1;
+    } else {
+      return __rx_fail(errors, UnclosedGroup, i, p.len(), g);
+    }
+    return RParse { node: ni.node, pos: npos, g: ni.g };
+  }
+  // `( … )` — capturing: claim index `g`, then parse the body (which
+  // numbers any nested groups after this one, left to right).
+  let inner: RParse = __rx_alt(errors, depth + 1, p, i + 1, g + 1);
+  let pos: i32 = inner.pos;
+  if (pos < p.len() && p[pos] == 41) {  // ')'
+    pos = pos + 1;
+  } else {
+    return __rx_fail(errors, UnclosedGroup, i, p.len(), g);
+  }
+  return RParse { node: RGroup(RGroupData { idx: g, node: inner.node }), pos: pos, g: inner.g };
+}
+
+function __rx_mark_range(own mask: u8[], lo: i32, hi: i32, value: u8): u8[] {
+  let byte: i32 = lo;
+  while (byte <= hi) {
+    mask = mask.with(byte, value);
+    mask = mask.with(byte + 256, value);
+    if (byte >= 65 && byte <= 90) {
+      mask = mask.with(byte + 32 + 256, value);
+    } else if (byte >= 97 && byte <= 122) {
+      mask = mask.with(byte - 32 + 256, value);
+    }
+    byte = byte + 1;
+  }
+  return mask;
+}
+
+function __rx_mask(token: string, errors: Cell[Option[CompileError]], offset: i32): u8[] {
+  let units = __rx_class_units(token, errors, offset);
+  let out: u8[] = __alloc_u8(512);
+  let fill: u8 = if (token[1] == 94) { 1 } else { 0 };
+  let value: u8 = 1 - fill;
+  if (fill != 0) {
+    for i in 0..512 {
+      out = out.with(i, fill);
+    }
+  }
+  for unit in units {
+    if (unit.kind == 0) {
+      out = __rx_mark_range(out, unit.lo, unit.hi, value);
+    } else {
+      for byte in 0..256 {
+        if (__rx_shorthand_matches(unit.kind, byte)) {
+          out = out.with(byte, value);
+          out = out.with(byte + 256, value);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function __rx_nodes_size(nodes: RNode[], overhead: i32, budget: i32): i32 {
+  let total: i32 = overhead;
+  if (total > budget) {
+    return -1;
+  }
+  for child in nodes {
+    let size: i32 = __rx_program_size(child, budget - total);
+    if (size < 0) {
+      return -1;
+    }
+    total = total + size;
+  }
+  return total;
+}
+
+function __rx_program_size(node: RNode, budget: i32): i32 {
+  if (budget < 0) {
+    return -1;
+  }
+  match (node) {
+    RSeq(nodes) => {
+      return __rx_nodes_size(nodes, 0, budget);
+    },
+    RAlt(nodes) => {
+      let overhead: i32 = 0;
+      if (nodes.len() > 0) {
+        overhead = (nodes.len() - 1) * 2;
+      }
+      return __rx_nodes_size(nodes, overhead, budget);
+    },
+    RGroup(group) => {
+      return __rx_child_size(group.node, 2, budget);
+    },
+    RStar(child) => {
+      return __rx_child_size(child, 2, budget);
+    },
+    RPlus(child) => {
+      return __rx_child_size(child, 1, budget);
+    },
+    ROpt(child) => {
+      return __rx_child_size(child, 1, budget);
+    },
+    _ => {
+      if (budget < 1) {
+        return -1;
+      }
+      return 1;
+    }
+  }
+}
+
+function __rx_shorthand_matches(kind: i32, byte: i32): boolean {
+  let negated: boolean = kind < 0;
+  if (negated) {
+    kind = -kind;
+  }
+  let found: boolean = false;
+  if (kind == 1) {
+    found = byte >= 48 && byte <= 57;
+  } else if (kind == 2) {
+    found = __rx_is_word(byte);
+  } else {
+    found = byte == 32 || byte == 9 || byte == 10 || byte == 13;
+  }
+  if (negated) {
+    return !found;
+  }
+  return found;
+}
+
+function __rx_text(bytes: u8[]): Result[string, TextError] {
+  match (utf8.from_bytes(bytes)) {
+    Some(text) => {
+      return Ok(text);
+    },
+    None => {
+      return Err(InvalidUtf8Output);
+    }
+  }
+  return Err(InvalidUtf8Output);
+}
+
+pub function (prog: Regex) captures(text: string): Option[Captures] {
+  let insts: RInst[] = prog.program;
+  let nslots: i32 = (prog.ngroups + 1) * 2;
+  let caps: i32[] = __rx_csearch_from(insts, text, 0, prog.ci, nslots);
+  return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
+}
+
+pub function (prog: Regex) captures_all(text: string): Captures[] {
+  let insts: RInst[] = prog.program;
+  let nslots: i32 = (prog.ngroups + 1) * 2;
+  let out: Captures[] = [];
+  let pos: i32 = 0;
+  while (pos <= text.len()) {
+    let caps: i32[] = __rx_csearch_from(insts, text, pos, prog.ci, nslots);
+    let Some(c) = __rx_caps_wrap(caps, text, prog.ngroups, prog.names) else {
+      return out;
+    };
+    out = out.append(c);
+    // Slots 0/1 are the whole-match span; advance through the shared
+    // helper so this stays mechanically in step with Regex.find_all.
+    pos = __rx_advance(Match { start: caps[0], end: caps[1] });
+  }
+  return out;
+}
+
+pub function compile(pattern: string): Result[Regex, CompileError] {
+  let errors: Cell[Option[CompileError]] = cell_new(None);
+  let start: i32 = 0;
+  let ci: boolean = false;
+  if (pattern.starts_with("(?i)")) {
+    start = 4;
+    ci = true;
+  }
+  let r: RParse = __rx_alt(errors, 0, pattern, start, 1);
+  if let Some(e) = errors.get() {
+    return Err(e);
+  }
+  if (r.pos != pattern.len()) {
+    return Err(CompileError { kind: UnexpectedClose, offset: r.pos });
+  }
+  if (__rx_program_size(r.node, MAX_PROGRAM - 3) < 0) {
+    return Err(CompileError { kind: ProgramLimit, offset: pattern.len() });
+  }
+  return Ok(Regex { root: r.node, ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), program: __rx_cprog(r.node) });
+}
+
+pub function (prog: Regex) count(text: string): i32 {
+  return prog.find_all(text).len();
+}
+
+pub function (prog: Regex) find(text: string): Option[Match] {
+  return __rx_search_from(prog.root, text, 0, prog.ci);
+}
+
+pub function (prog: Regex) find_all(text: string): Match[] {
+  let out: Match[] = [];
+  let pos: i32 = 0;
+  while (pos <= text.len()) {
+    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
+      return out;
+    };
+    out = out.append(m);
+    pos = __rx_advance(m);
+  }
+  return out;
+}
+
+pub function (c: Captures) group(i: i32): Result[Option[string], TextError] {
+  let (s, e) = __rx_span(c, i);
+  if (s < 0) {
+    return Ok(None);
+  }
+  if (s != e && (!utf8.is_char_boundary(c.text, s) || !utf8.is_char_boundary(c.text, e))) {
+    return Err(InvalidUtf8Output);
+  }
+  return Ok(Some(slice_unchecked(c.text, s, e) + ""));
+}
+
+pub function (c: Captures) group_bytes(i: i32): Option[u8[]] {
+  let (s, e) = __rx_span(c, i);
+  if (s < 0) {
+    return None;
+  }
+  return Some(__rx_bytes(c.text, s, e));
+}
+
+pub function (c: Captures) group_count(): i32 {
+  return c.starts.len() - 1;
+}
+
+pub function (c: Captures) group_end(i: i32): Option[i32] {
+  if (i < 0 || i >= c.ends.len() || c.ends[i] < 0) {
+    return None;
+  }
+  return Some(c.ends[i]);
+}
+
+pub function (c: Captures) group_index(name: string): Option[i32] {
+  let i: i32 = 0;
+  while (i < c.names.len()) {
+    if (c.names[i] == name) {  // names[i] is group i+1
+      return Some(i + 1);
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+pub function (c: Captures) group_named(name: string): Result[Option[string], TextError] {
+  return c.group(__rx_named_index(c, name));
+}
+
+pub function (c: Captures) group_named_bytes(name: string): Option[u8[]] {
+  return c.group_bytes(__rx_named_index(c, name));
+}
+
+pub function (c: Captures) group_named_end(name: string): Option[i32] {
+  return c.group_end(__rx_named_index(c, name));
+}
+
+pub function (c: Captures) group_named_start(name: string): Option[i32] {
+  return c.group_start(__rx_named_index(c, name));
+}
+
+pub function (c: Captures) group_start(i: i32): Option[i32] {
+  if (i < 0 || i >= c.starts.len() || c.starts[i] < 0) {
+    return None;
+  }
+  return Some(c.starts[i]);
+}
+
+pub function (c: Captures) has_group(i: i32): boolean {
+  if let Some(_) = c.group_start(i) {
+    return true;
+  }
+  return false;
+}
+
+pub function (c: Captures) has_group_named(name: string): boolean {
+  return c.has_group(__rx_named_index(c, name));
+}
+
+pub function (prog: Regex) index_of(text: string): Option[i32] {
+  if let Some(m) = prog.find(text) {
+    return Some(m.start);
+  }
+  return None;
+}
+
+pub function (prog: Regex) is_full_match(text: string): boolean {
+  let ends: i32[] = __rx_match(prog.root, text, 0, prog.ci);
+  let i: i32 = 0;
+  while (i < ends.len()) {
+    if (ends[i] == text.len()) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+pub function (prog: Regex) is_match(text: string): boolean {
+  if let Some(_) = prog.find(text) {
+    return true;
+  }
+  return false;
+}
+
+pub function (e: CompileError) message(): string {
+  return e.to_string();
+}
+
+pub function (e: TextError) message(): string {
+  return e.to_string();
+}
+
+pub function (prog: Regex) replace(text: string, repl: string): Result[string, TextError] {
+  let Some(m) = prog.find(text) else {
+    return Ok(text);
+  };
+  return __rx_text(__rx_replace_span(text, repl, m));
+}
+
+pub function (prog: Regex) replace_all(text: string, repl: string): Result[string, TextError] {
+  let first: Option[Match] = __rx_search_from(prog.root, text, 0, prog.ci);
+  match (first) {
+    None => {
+      return Ok(text);
+    },
+    _ => {}
+  }
+  return __rx_text(__rx_replace_all_from(prog, text, repl, first));
+}
+
+pub function (prog: Regex) replace_all_bytes(text: string, repl: string): u8[] {
+  return __rx_replace_all_from(prog, text, repl, __rx_search_from(prog.root, text, 0, prog.ci));
+}
+
+pub function (prog: Regex) replace_all_groups(text: string, tmpl: string): Result[string, TextError] {
+  let all: Captures[] = prog.captures_all(text);
+  if (all.len() == 0) {
+    return Ok(text);
+  }
+  return __rx_text(__rx_replace_captures(text, tmpl, all));
+}
+
+pub function (prog: Regex) replace_all_groups_bytes(text: string, tmpl: string): u8[] {
+  let all: Captures[] = prog.captures_all(text);
+  return __rx_replace_captures(text, tmpl, all);
+}
+
+pub function (prog: Regex) replace_bytes(text: string, repl: string): u8[] {
+  let Some(m) = prog.find(text) else {
+    return __rx_bytes(text, 0, text.len());
+  };
+  return __rx_replace_span(text, repl, m);
+}
+
+pub function (prog: Regex) replace_groups(text: string, tmpl: string): Result[string, TextError] {
+  let Some(c) = prog.captures(text) else {
+    return Ok(text);
+  };
+  return __rx_text(__rx_replace_capture(text, tmpl, c));
+}
+
+pub function (prog: Regex) replace_groups_bytes(text: string, tmpl: string): u8[] {
+  let Some(c) = prog.captures(text) else {
+    return __rx_bytes(text, 0, text.len());
+  };
+  return __rx_replace_capture(text, tmpl, c);
+}
+
+pub function (prog: Regex) split(text: string): Result[string[], TextError] {
+  let out: string[] = [];
+  let last: i32 = 0;
+  let pos: i32 = 0;
+  while (pos <= text.len()) {
+    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
+      if (!utf8.is_char_boundary(text, last)) {
+        return Err(InvalidUtf8Output);
+      }
+      out = out.append(slice_unchecked(text, last, text.len()) + "");
+      return Ok(out);
+    };
+    if (m.end > m.start) {  // non-empty separator
+      if (last != m.start && (!utf8.is_char_boundary(text, last) || !utf8.is_char_boundary(text, m.start))) {
+        return Err(InvalidUtf8Output);
+      }
+      out = out.append(slice_unchecked(text, last, m.start) + "");
+      last = m.end;
+      pos = m.end;
+    } else {
+      pos = m.start + 1;  // skip a zero-width match
+    }
+  }
+  if (!utf8.is_char_boundary(text, last)) {
+    return Err(InvalidUtf8Output);
+  }
+  out = out.append(slice_unchecked(text, last, text.len()) + "");
+  return Ok(out);
+}
+
+pub function (prog: Regex) split_bytes(text: string): u8[][] {
+  let out: u8[][] = [];
+  let last: i32 = 0;
+  let pos: i32 = 0;
+  while (pos <= text.len()) {
+    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
+      out = out.append(__rx_bytes(text, last, text.len()));
+      return out;
+    };
+    if (m.end > m.start) {  // non-empty separator
+      out = out.append(__rx_bytes(text, last, m.start));
+      last = m.end;
+      pos = m.end;
+    } else {
+      pos = m.start + 1;  // skip a zero-width match
+    }
+  }
+  out = out.append(__rx_bytes(text, last, text.len()));
+  return out;
+}
+
+pub function (e: CompileError) to_string(): string {
+  let why: string = "invalid pattern";
+  match (e.kind) {
+    TrailingEscape => {
+      why = "escape has no following byte";
+    },
+    UnclosedGroup => {
+      why = "group has no closing parenthesis";
+    },
+    UnclosedClass => {
+      why = "class has no closing bracket";
+    },
+    UnexpectedClose => {
+      why = "unexpected closing parenthesis";
+    },
+    MissingAtom => {
+      why = "quantifier has no preceding atom";
+    },
+    InvalidRepeat => {
+      why = "invalid repetition count";
+    },
+    RepeatLimit => {
+      why = "repetition count exceeds " + MAX_REPEAT.to_string();
+    },
+    UnsupportedGroup => {
+      why = "unsupported group syntax";
+    },
+    NestingLimit => {
+      why = "group depth exceeds " + MAX_NESTING.to_string();
+    },
+    InvalidClassRange => {
+      why = "invalid character class range";
+    },
+    ProgramLimit => {
+      why = "compiled pattern exceeds " + MAX_PROGRAM.to_string() + " instructions";
+    }
+  }
+  return "regex byte " + e.offset.to_string() + ": " + why;
+}
+
+pub function (e: TextError) to_string(): string {
+  return "regex output is not valid UTF-8";
+}
+
+impl cmp.Display for CompileError {}
+
+impl cmp.Display for TextError {}
+
+impl error.Error for CompileError {}
+
+impl error.Error for TextError {}
+
+pub struct Captures { text: string, starts: i32[], ends: i32[], names: string[] }
+
+@derive(cmp.Eq)
+pub struct CompileError { kind: CompileErrorKind, offset: i32 }
+
+pub struct Match { start: i32, end: i32 }
+
+struct RClassUnit { kind: i32, lo: i32, hi: i32 }
+
+pub struct Regex { root: RNode, ci: boolean, ngroups: i32, names: string[], program: RInst[] }
+```
+
+### Module introduction
+
+```fern
+<<module introduction>>=
+// Compiled regular expressions with checked syntax and UTF-8 output.
 ```

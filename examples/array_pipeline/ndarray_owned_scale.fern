@@ -1,3 +1,8 @@
+// Run n rounds shared, with shared either 0 (unique) or 1 (a live alias).
+// Measure only the scale call. Verify every result and live alias outside
+// that timer. Both allocation counters include the handle's metadata.
+import "std/i32";
+import "std/result";
 import "std/ndarray";
 import "std/string";
 
@@ -38,10 +43,10 @@ function main(): i32 {
   let rounds: i32 = 2;
   let shared: boolean = false;
   if (argv.len() > 1) {
-    n = argv[1].parse_int_or(n);
+    n = i32.parse_i32(argv[1]).unwrap_or(n);
   }
   if (argv.len() > 2) {
-    rounds = argv[2].parse_int_or(rounds);
+    rounds = i32.parse_i32(argv[2]).unwrap_or(rounds);
   }
   if (argv.len() > 3) {
     shared = argv[3] == "1";

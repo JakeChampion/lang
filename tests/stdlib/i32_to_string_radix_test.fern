@@ -35,11 +35,11 @@ function test_bad_base(): test.TestOutcome {
 
 function test_round_trip(): test.TestOutcome {
   let s: string = 1234567.to_string_radix(36);
-  match (s.parse_int_radix(36)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(s, 36)) {
+    Ok(v) => {
       return test.assert_true(v == 1234567);
     },
-    None => {
+    Err(_) => {
       return test.fail("round-trip parse failed");
     }
   }

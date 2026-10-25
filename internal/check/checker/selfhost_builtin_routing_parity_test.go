@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/stdlib"
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
@@ -28,6 +29,23 @@ func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 		}
 		for _, m := range regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`).FindAllStringSubmatch(stripLineComments(string(b)), -1) {
 			routed[m[1]] = true
+		}
+	}
+	// Default display builtins route to ordinary private runtime functions.
+	// Parse their actual bodies so a missing definition fails this gate.
+	for _, name := range []string{"primitive_text", "f64_text"} {
+		source, err := stdlib.ReadModule("core/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mod, err := parser.Parse(source.Code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, fn := range mod.Funcs {
+			if strings.HasPrefix(fn.Name, "__primitive_") && fn.Body != nil && len(fn.Body.Stmts) > 0 {
+				routed[fn.Name] = true
+			}
 		}
 	}
 	var missing, nowRouted []string

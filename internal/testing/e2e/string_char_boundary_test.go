@@ -62,7 +62,7 @@ function main(): i32 {
         let b: i32 = a;
         while (b <= 10) {
             let cut: str = slice_unchecked(s, utf8.floor_char_boundary(s, a), utf8.ceil_char_boundary(s, b));
-            if (!utf8.is_valid_utf8(cut.to_owned())) { return 24; }
+            if (!utf8.is_valid(cut.to_owned())) { return 24; }
             b = b + 1;
         }
         a = a + 1;
@@ -70,7 +70,7 @@ function main(): i32 {
 
     // The unsnapped slice is what all of this exists to guard against:
     // today slice_unchecked(s, 0, 2) splits the e-acute and yields invalid UTF-8.
-    if (utf8.is_valid_utf8(slice_unchecked(s, 0, 2).to_owned())) { return 25; }
+    if (utf8.is_valid(slice_unchecked(s, 0, 2).to_owned())) { return 25; }
     return 0;
 }
 `

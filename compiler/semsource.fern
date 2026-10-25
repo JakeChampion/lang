@@ -16,6 +16,7 @@ import "./ssaunits";
 import "./ownership";
 import "./util";
 import "./rtbytecopy";
+import "./semunique";
 import "./sembytecopy";
 import "./byteconst";
 import "./seminline";
@@ -2492,17 +2493,42 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: S
   return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), ssasem.unbound());
 }
 
+function primitive_contract(c: ast.ExprCall, fa: ast.ExprFieldAccess, owner: string, contracts: ssasem.Contracts, scope: checker.Scope): i32 {
+  let at: i32 = ssasem.find_contract(contracts, owner + "." + fa.field);
+  if (at >= 0 && scope.visible_method(fa.field, owner).name.len() == 0) {
+    at = -1;
+  }
+  if (at < 0 && fa.field == "to_string" && c.args.len() == 0) {
+    at = ssasem.find_contract(contracts, "__primitive_" + owner + "_to_string");
+  }
+  return at;
+}
+
+function missing_string_display(at: i32, owner: string, c: ast.ExprCall, fa: ast.ExprFieldAccess): boolean {
+  return at < 0 && owner == "string" && fa.field == "to_string" && c.args.len() == 0;
+}
+
+function primitive_text_fallback(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State): Value {
+  if (ssasem.is_string(s.values[recv]) && fa.field == "to_string" && c.args.len() == 0) {
+    return Value { s: s, id: recv };
+  }
+  if (ssasem.is_bool(s.values[recv]) && fa.field == "to_string" && c.args.len() == 0) {
+    return boolean_text(recv, s);
+  }
+  return refused(s, "unsupported call target");
+}
+
 function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
   let owner: string = parser.receiver_base(typeinfo.spelling(s.values[recv]));
+  if (owner == "str") {
+    owner = "string";
+  }
   if (owner.len() == 0) {
     return refused(s, "unsupported call target");
   }
-  let at: i32 = ssasem.find_contract(s.contracts, owner + "." + fa.field);
+  let at: i32 = primitive_contract(c, fa, owner, s.contracts, s.scope);
   if (at < 0) {
-    if (ssasem.is_bool(s.values[recv]) && fa.field == "to_string" && c.args.len() == 0) {
-      return boolean_text(recv, s);
-    }
-    return refused(s, "unsupported call target");
+    return primitive_text_fallback(c, fa, recv, s);
   }
   let contract: ssasem.Contract = s.contracts.list[at];
   if (c.args.len() + 1 != contract.params.len()) {
@@ -2640,6 +2666,9 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   let key: string = owner + "." + fa.field;
   let at: i32 = ssasem.find_contract(s.contracts, key);
+  if (missing_string_display(at, owner, c, fa)) {
+    return primitive_method(c, fa, recv, s, statement);
+  }
   if (at < 0) {
     return refused(s, "call target has no semantic contract: " + key);
   }
@@ -3415,7 +3444,15 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (at < 0) {
     return variant_call(e, name, c, s, expected);
   }
-  return direct_call(c, s.contracts.list[at], s, statement, expected);
+  return exiting(name, direct_call(c, s.contracts.list[at], s, statement, expected));
+}
+
+// The builtin exit never returns, so the block it ends has no successor.
+function exiting(name: string, v: Value): Value {
+  if (name != "exit" || !v.s.ok || util.has_str(v.s.shadows, name)) {
+    return v;
+  }
+  return Value { s: terminate(v.s, t_unreachable()), id: v.id };
 }
 
 function lane_memory_call(name: string, c: ast.ExprCall): boolean {
@@ -7545,11 +7582,17 @@ function instance_limit(): i32 {
 
 struct Inferred { all: Produced[], table: ssasem.Contracts }
 
-function seed_bits(n: i32): boolean[] {
+// A row's bit is the parameter's final mode, so a caller counts an argument only where the callee will.
+function mode_bits(p: Produced, escapes: boolean[]): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
-  while (i < n) {
-    out = out.append(true);
+  while (i < p.func.params.len()) {
+    let consumed: boolean = i >= escapes.len() || escapes[i];
+    if (i < p.modes.len()) {
+      out = out.append(inferred_mode(p.modes[i], p.func.params[i], consumed) == ssaunits.counted_mode());
+    } else {
+      out = out.append(consumed);
+    }
     i = i + 1;
   }
   return out;
@@ -7750,7 +7793,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: false, cycle: 0 - 1, quiet: [] });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: mode_bits(all[i], []), lends: false, cycle: 0 - 1, quiet: [] });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -7790,7 +7833,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     queued = queued.with(i, false);
     let at: i32 = own_row[i];
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
-      let next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows, ix);
+      let next: boolean[] = mode_bits(all[i], ownership.escaping(all[i].func, analyses[i], rows, ix));
       let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
         rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
@@ -7915,7 +7958,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   if (verify) {
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
-    all = prune_dead_constructions(reached_only(scale_ndarray_maps(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod)), names, mod, opts.array_report), names, mod, opts.whole));
+    all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
   instances = [];
@@ -7986,6 +8029,24 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 
 struct Spliced { all: Produced[], spliced: boolean[] }
 
+function unique_loops(all: Produced[]): Produced[] {
+  let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
+  let contract = ssasem.Contract { name: semunique.name(), params: [bytes], modes: [ssaunits.counted_mode()], result: bytes };
+  let sw: optbisect.Switches = optbisect.switches();
+  let out: Produced[] = [];
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template) {
+      let h = semunique.hoisted(p.func, contract, p.modes);
+      if (h.changed && optbisect.allowed_by(sw, "unique-loops", p.func.graph.name)) {
+        p = Produced { ...p, func: h.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
 function byte_copy_loops(all: Produced[]): Produced[] {
   let out: Produced[] = [];
   let contracts = byte_copy_contracts();
@@ -8013,6 +8074,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let rewrite: boolean[] = [];
   let unnamed: boolean[] = [];
   let uncalled: boolean[] = [];
+  let always: boolean[] = [];
   let arms: util.NameIndex = util.name_index(dispatched_arms(all));
   let sw: optbisect.Switches = optbisect.switches();
   let i: i32 = 0;
@@ -8025,9 +8087,10 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline && !mod.funcs[i].fip && !mod.funcs[i].fbip && optbisect.allowed_by(sw, "inline", names[i]));
     unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
     uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, arms));
+    always = always.append(i < mod.funcs.len() && mod.funcs[i].always_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, size);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {

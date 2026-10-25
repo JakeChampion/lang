@@ -14,6 +14,7 @@ var ifLetCases = []struct {
 	{"none-else", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); if let Some(v) = m.get(\"absent\") { return v; } else { return 7; } }", 7},
 	{"no-else-fallthrough", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 5); if let Some(v) = m.get(\"absent\") { return v; } return 9; }", 9},
 	{"user-variant", "enum Shape { Circle(i32), Empty } function main(): i32 { let s: Shape = Circle(42); if let Circle(r) = s { return r; } else { return 0; } }", 42},
+	{"value-if-else-if-let", "enum Box { Full(i32), Half(i32), Empty } function pick(box: Box, n: i32): i32 { let w: i32 = if (n > 1) { 1 } else if let Half(h) = box { h } else { 3 }; return w; } function main(): i32 { return pick(Half(5), 1) * 10 + pick(Empty, 0) + pick(Full(9), 2) * 100; }", 153},
 }
 
 func TestSelfHostIfLetX86_64(t *testing.T) {

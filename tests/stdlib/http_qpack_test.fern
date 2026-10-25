@@ -1,3 +1,5 @@
+import "std/i32";
+import "std/result";
 import "std/test";
 import "std/http/qpack";
 import "std/hex";
@@ -123,7 +125,7 @@ function b_step(d: qpack.Decoder, step: string): Result[(qpack.Decoder, string),
     return Err("a step with no space: " + step);
   };
   let id: string = step.drop(2).take(space);
-  let (next, text) = section(d, id.parse_int().unwrap_or(0) as i64, step.drop(3 + space))?;
+  let (next, text) = section(d, i32.parse_i32(id).unwrap_or(0) as i64, step.drop(3 + space))?;
   return Ok((next, id + ": " + text));
 }
 

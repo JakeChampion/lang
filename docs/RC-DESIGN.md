@@ -26,7 +26,10 @@ an earlier one.
 
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
-runs tail recursion modulo cons. It is a graph-to-graph pass; the stages
+runs tail recursion modulo cons. It splices a function declared `@inline` at
+every call, as it splices a function called once. The function must not be
+recursive, must have at most 400 instructions, and must only read its view
+parameters (`seminline.forced_spliceable`). It is a graph-to-graph pass; the stages
 below never see what it removed. Four more run last. `semthread.fern` sends
 a branch the path to it already decided straight to the side it takes: a
 branch on a constant (the done flag a nested pattern's arms test), and a
@@ -96,7 +99,10 @@ its parameter counted and a quiet cycle (functions returning no reference)
 does not. A declared `own` stays counted whatever the analysis says, since
 the checker's affine discipline (E050) and call sites rely on it; a bare
 string or array parameter is deliberately not promoted (`owned_shape`): a
-byte kernel reads its argument and hands back an index.
+byte kernel reads its argument and hands back an index. A row holds the
+mode each parameter ends with (`mode_bits`), not the raw escape, so a caller
+handing a field to a parameter its callee can never count keeps its own
+parameter borrowed.
 
 `semsource.with_inferred_modes` rewrites the modes of every produced body and
 every callee contract it carries from the same rows, so definition and call
@@ -229,7 +235,7 @@ for every plan ownership inference tries):
   the construction spends (`ReusePairs.tokens` where it is taken,
   `.builds` where it is spent, `.selfs` for a value dying at the
   construction itself). A value dying after its block's last construction
-  may be **carried** to a construction in a later block (`Carry`): the
+  of its own slot count may be **carried** to a construction in a later block (`Carry`): the
   blocks holding it, the constructions it is handed to, the edges leaving
   its ways that free it, and the edges on which it arrives null because the
   donor died there as a box of another count. A construction that reads a
@@ -240,7 +246,9 @@ for every plan ownership inference tries):
   whose payloads a block takes and which dies in the block with no such
   construction is **classified** (a keep with no construction, `built` -1):
   its takes and its death follow one uniqueness read. The
-  routes and the one-token-slot discipline are decided here, once; the
+  routes and the one-token-slot discipline are decided here, once (a
+  carried construction inside a keep's or a classified donor's span reads
+  its token from the donor's local, so it needs no slot); the
   lowering only emits what the tables say. `FERN_SELFHOST_NO_REUSE=1`
   (`reuse_layer_disabled`) plans no token, and the program's behaviour is
   unchanged.
@@ -293,7 +301,9 @@ locals sit above `nvals`. It emits:
   one, the replaced children are released under the token's non-null arm and
   the kept fields are left in place (`reuse_construct`). A carried token is
   taken where the donor dies (`hold_token`), passed through its way in the
-  donor's own local, spent by the construction (`self_token`) and freed on
+  donor's own local, moved into the token slot for the construction
+  (`slot_token`), or read from the local where a keep or a classified donor
+  holds the slot (`token_slot_held`), and freed on
   an exit edge (`free_token`); a null edge zeroes the local. The lowering
   makes no pairing of its own. Pinned by `TestSelfHostCrossBlockReuse`,
   `TestSelfHostLoopReuseIR*`, `TestSelfHostSemanticReuseDifferential`, the
@@ -305,8 +315,16 @@ locals sit above `nvals`. It emits:
   string or of a byte array, whose every use reads it within one
   instruction (`ssaunits.frame_views`) builds its descriptor in three frame
   slots (`op_str_slice_frame`, `op_raw_string_frame`) that the release
-  skips; on wasm, which has no data pointer to share, the same op copies the
-  bytes and the release frees the copy.
+  skips. That box is a native string, which carries a data pointer. On wasm
+  a string is an inline `{len, bytes}` block, and a callee cannot address
+  its caller's locals, so there a byte slice's descriptor is a window:
+  `{data, len}` in eight bytes of the call's shadow-stack frame
+  (`$__fern_shadow_sp`, between the free lists and the heap), handed on
+  tagged 3. The view's string-arm reads (`ir.view_string`) and the wasm
+  kernels that take a string or a view decode it, and the release skips it
+  as it skips any odd address (`TestSelfHostLentWindowConsumers`). A string
+  slice still copies its bytes there (`$__fern_substr`), and so does a byte
+  slice's heap form (`__fern_str_borrow`).
 
 What the lowering may assume: the plan verified; it re-derives the semantic
 facts it needs from the graph rather than trusting a sidecar. It refuses the

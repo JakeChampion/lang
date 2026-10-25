@@ -69,12 +69,12 @@ function main(): i32 {
       return 1;
     }
   }
-  match (json.json_parse(input)) {
-    Some(v) => {
+  match (json.parse(input)) {
+    Ok(v) => {
       print(pretty(v, 0));
       return 0;
     },
-    None => {
+    Err(_) => {
       eprint("json_pretty: malformed input");
       return 1;
     }

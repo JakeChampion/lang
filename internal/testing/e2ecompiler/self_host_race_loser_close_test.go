@@ -14,7 +14,6 @@ import (
 
 const raceLoserSource = `import "std/async";
 import "std/fetch";
-import "std/net";
 
 function parse(s: string): i32 {
     let n: i32 = 0; let i: i32 = 0;
@@ -22,19 +21,24 @@ function parse(s: string): i32 {
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
-function loopback(p: i32): net.SocketAddr { return net.socket_addr(net.ipv4_loopback(), p); }
+function body_at(key: string, path: string): string {
+    match (fetch.send(fetch.get("http://127.0.0.1:" + port(key).to_string() + path))) {
+        Ok(resp) => { return resp.body_string(); },
+        Err(e) => { return e.message(); }
+    }
+    return "";
+}
 function open_fds(): i32 {
     match (read_dir("/proc/self/fd")) { Ok(names) => { return names.len(); }, Err(_) => { return 0; } }
 }
 
 function main(): i32 {
-    let none: u8[] = [];
     let before: i32 = open_fds();
     let k: i32 = 0;
     while (k < 5) {
-        let fs: async.Future[u8[]][] = [fetch.fetch_future(loopback(port("PA")), "/a"), fetch.fetch_future(loopback(port("PB")), "/b")];
-        let (winner, body) = async.race(fs, none);
-        if (winner != 0 || body.len() != 3) { return 90; }
+        let both: (() => string)[] = [() => body_at("PA", "/a"), () => body_at("PB", "/b")];
+        let (winner, body) = async.race_tasks(both, "none");
+        if (winner != 0 || body != "AAA") { return 90; }
         k = k + 1;
     }
     return open_fds() - before;

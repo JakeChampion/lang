@@ -39,19 +39,19 @@ function main(): i32 {
   }
   let records: i32 = 0;
   let batch: i32 = 0;
-  match (argv[2].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[2])) {
+    Ok(n) => {
       records = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }
-  match (argv[3].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[3])) {
+    Ok(n) => {
       batch = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }

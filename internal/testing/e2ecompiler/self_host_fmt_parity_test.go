@@ -76,6 +76,24 @@ function nested(o: Outer): i32 {
 }
 function main(): i32 { return whole(H.S(P { x: 1 })) + nested(Outer.B); }
 `},
+	{"match-value-arm-diverges", `enum Opt { Has(i32), Nil }
+function returns(o: Opt): i32 {
+  let v: i32 = match (o) { Has(x) => x, Nil => { eprint("none"); return 0; } };
+  return v;
+}
+function exits(o: Opt): i32 {
+  let v: i32 = match (o) { Has(x) => x, Nil => { exit(6); } };
+  return v;
+}
+function branch(k: boolean): i32 {
+  let v: i32 = if (k) { 1 } else { exit(2); };
+  return v;
+}
+function stub(): i32 {
+  todo("later");
+}
+function main(): i32 { return returns(Opt.Has(1)) + exits(Opt.Has(2)) + branch(true); }
+`},
 	{"nested-whole-struct-pattern", `struct P { x: i32 }
 enum H { S(P) }
 function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
@@ -265,6 +283,41 @@ function pick(flag: boolean, box: Box): i32 {
   return 0;
 }
 function main(): i32 { return pick(false, Full(7)); }
+`},
+	{"if-let-else-if-let-chain", `enum Box { Full(i32), Half(i32), Empty }
+struct Pair { a: i32, b: i32 }
+function variant(flag: boolean, box: Box): i32 {
+  if let Full(v) = box { return v; } else if let Half(h) = box { return h; } else if (flag) { return 1; } else if let Empty = box { return 2; } else { return 0; }
+}
+function patterns(pair: (i32, i32), rec: Pair, n: i32): i32 {
+  if let (1, v) = pair { return v; } else if let Pair { a: 2, b } = rec { return b; } else if let 3 | 4 = n { return n; } else if let k @ 7..=9 = n { return k; }
+  return 0;
+}
+function nested(o: Option[Option[i32]]): i32 {
+  if let Some(Some(v)) = o { return v; } else if let Some(None) = o { return 1; }
+  return 0;
+}
+function braced(box: Box): i32 {
+  if let Full(v) = box { return v; } else { if let Half(h) = box { return h; } }
+  return 0;
+}
+function main(): i32 { return variant(false, Half(1)) + patterns((1, 2), Pair { a: 2, b: 3 }, 8) + nested(Some(None)) + braced(Empty); }
+`},
+	{"value-else-if-chain", `enum Box { Full(i32), Half(i32), Empty }
+function plain(n: i32): i32 {
+  let s: i32 = if (n > 1) { 1 } else if (n > 0) { 2 } else if (n == 0) { 3 } else { 4 };
+  let t: i32 = if (n > 1) { 1 } else { if (n > 0) { 2 } else { 3 } };
+  return s + t;
+}
+function pattern(box: Box, n: i32): i32 {
+  let r: i32 = if let Full(v) = box { v } else if let Half(h) = box { h } else if (n > 1) { n } else { 0 };
+  let w: i32 = if (n > 1) { 1 } else if let Half(h) = box { h } else { 3 };
+  let x: i32 = if let (1, v) = (n, n) { v } else if let Empty = box { 4 } else { 5 };
+  let y: i32 = if let 1 | 2 = n { 6 } else if let k @ 3..=9 = n { k } else { 8 };
+  let u: i32 = if let Full(v) = box { v } else { if let Half(h) = box { h } else { 0 } };
+  return r + w + x + y + u;
+}
+function main(): i32 { return plain(1) + pattern(Half(2), 4); }
 `},
 	{"pub-package", `pub(package) struct S { n: i32 }
 pub(package) enum E { A, B }

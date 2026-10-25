@@ -112,6 +112,35 @@ const byteCopyRuntimeSuccess = `function main(): i32 {
   let i: i32 = 3;
   while (i < 33) { if (__raw_load8(__raw_arr_ptr(rep) + 8, i) != __raw_load8(__raw_arr_ptr(rep) + 8, i - 2)) { return 8; } i = i + 1; }
   if (__fern_bytes_append_back(rep, 0 - 1, 0).len() != 33) { return 9; }
+  let dists: i32[] = [1, 2, 3, 7, 8, 9, 15, 16, 17, 24];
+  let counts: i32[] = [1, 6, 7, 8, 9, 15, 16, 17, 40];
+  let di: i32 = 0;
+  while (di < dists.len()) {
+    let ci: i32 = 0;
+    while (ci < counts.len()) {
+      if (!back_ok(roomy(24, 3), dists[di], counts[ci])) { return 10; }
+      if (!back_ok(roomy(24, 20), dists[di], counts[ci])) { return 11; }
+      ci = ci + 1;
+    }
+    di = di + 1;
+  }
   return 0;
+}
+@noinline function roomy(n: i32, words: i32): i32[] {
+  let p: usize = __raw_arr_box(words);
+  __store_i64(p, n as i64);
+  let i: i32 = 0;
+  while (i < n) { __raw_store8(p + 8, i, i * 7 + 1); i = i + 1; }
+  return __raw_array(p);
+}
+@noinline function back_ok(own a: i32[], dist: i32, n: i32): boolean {
+  let len = a.len();
+  let out = __fern_bytes_append_back(a, dist, n);
+  if (out.len() != len + n) { return false; }
+  let base: usize = __raw_arr_ptr(out) + 8;
+  let i: i32 = 0;
+  while (i < len) { if (__raw_load8(base, i) != i * 7 + 1) { return false; } i = i + 1; }
+  while (i < len + n) { if (__raw_load8(base, i) != __raw_load8(base, i - dist)) { return false; } i = i + 1; }
+  return true;
 }
 `

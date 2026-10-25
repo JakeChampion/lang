@@ -405,6 +405,17 @@ pub function op_str_data(): Op {
   return op0(345);
 }
 
+// A str_len or str_data read of a byte view's string arm. On wasm that
+// operand may be a frame window ({data, len}, tagged 1) rather than a string,
+// so the read must tell them apart; the native backends ignore the mark.
+pub function view_string(o: Op): Op {
+  return Op { ...o, i32_imm: 1 };
+}
+
+pub function is_view_string(o: Op): boolean {
+  return (o.kind_tag == K_STR_LEN || o.kind_tag == K_STR_DATA) && o.i32_imm == 1;
+}
+
 pub function op_str_concat(): Op {
   return op0(98);
 }
@@ -630,6 +641,14 @@ pub function op_ret_word(): Op {
 
 pub function op_call_word(): Op {
   return op0(385);
+}
+
+pub function op_ret_pair_word(slot: i32): Op {
+  return Op { ...op_ret_word(), i32_imm: slot };
+}
+
+pub function op_call_pair_word(slot: i32): Op {
+  return Op { ...op_call_word(), i32_imm: slot };
 }
 
 pub function op_ret_scalar_word(slot: i32): Op {
@@ -6220,7 +6239,7 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
   j = loop_idx + 1;
   while (j < ops.len()) {
     let slot: i32 = 0 - 1;
-    if (j + 1 < end && ops[j].kind_tag == k_load) {
+    if (j + 1 < end && ops[j].kind_tag == k_load && !is_view_string(ops[j + 1])) {
       let src: i32 = ops[j].i32_imm;
       if (j + 1 < hdr_end && ops[j + 1].kind_tag == k_len) {
         slot = slot_for[src];
@@ -6245,7 +6264,7 @@ function licm_data_slots(ops: Op[], loop_idx: i32, end: i32, slot_for: i32[], ne
   let out: i32[] = util.minus_ones(slot_for.len());
   let j: i32 = loop_idx + 1;
   while (j + 1 < end) {
-    if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_data) {
+    if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_data && !is_view_string(ops[j + 1])) {
       let src: i32 = ops[j].i32_imm;
       if (src < slot_for.len() && slot_for[src] >= 0 && out[src] < 0) {
         out = out.with(src, next);
@@ -6263,7 +6282,7 @@ function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: i32[], 
   let order: i32[] = [];
   let j: i32 = loop_idx + 1;
   while (j + 1 < hdr_end) {
-    if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_len) {
+    if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_len && !is_view_string(ops[j + 1])) {
       let src: i32 = ops[j].i32_imm;
       if (stored[src] != mark && !licm_listed(order, src)) {
         order = order.append(src);

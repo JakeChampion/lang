@@ -165,6 +165,45 @@ function test_time_only_advances_in_poll(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 0 as i64);
 }
 
+function __draws(seed: i64): string {
+  let s: sim.Sim = sim.new(seed);
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < 4) {
+    out = out + (s.random_i32() & 255).to_string() + " ";
+    i = i + 1;
+  }
+  return out;
+}
+
+function test_seed_replays_its_draws(): test.TestOutcome {
+  if (sim.new(9).rng_state() != sim.new(9).rng_state()) {
+    return test.fail("same-seed sims start with different PRNG states");
+  }
+  if (__draws(9) != __draws(9)) {
+    return test.fail("same seed drew different values");
+  }
+  if (__draws(1) == __draws(2)) {
+    return test.fail("seeds 1 and 2 drew identical values");
+  }
+  return test.assert_eq(__draws(1), "127 54 76 67 ");
+}
+
+function __not_seven(seed: i64): boolean {
+  return seed != 7;
+}
+
+function __always(seed: i64): boolean {
+  return true;
+}
+
+function test_sweep_finds_first_failing_seed(): test.TestOutcome {
+  if (sim.sweep_seeds(20, __always) != 0 as i64) {
+    return test.fail("a property that always holds reported a failing seed");
+  }
+  return test.assert_eq(sim.sweep_seeds(20, __not_seven), 7 as i64);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/sim driver");
   r = r.it("with_deadline some and none", test_deadline_some_and_none);
@@ -175,5 +214,7 @@ function main(): i32 {
   r = r.it("chain resolves after resuspensions", test_chain_resolves_after_resuspensions);
   r = r.it("chain suspension count", test_chain_suspension_count);
   r = r.it("time only advances in poll_ready", test_time_only_advances_in_poll);
+  r = r.it("a seed replays its draws, another diverges", test_seed_replays_its_draws);
+  r = r.it("sweep_seeds answers the first failing seed", test_sweep_finds_first_failing_seed);
   return r.finish();
 }

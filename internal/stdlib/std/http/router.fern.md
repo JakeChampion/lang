@@ -58,6 +58,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "std/http";
 import "std/string";
 import "core/int";
@@ -105,11 +106,11 @@ pub function (p: Params) param(name: string): Result[string, http.HttpError] {
 
 pub function (p: Params) int(name: string): Result[i32, http.HttpError] {
   let v: string = p.param(name)?;
-  match (int.parse_int_radix(v, 10)) {
-    Some(n) => {
+  match (i32.parse_i32_radix(v, 10)) {
+    Ok(n) => {
       return Ok(n);
     },
-    None => {
+    Err(_) => {
       return Err(http.fail(400, "path parameter " + name + " is not an integer: " + v));
     }
   }

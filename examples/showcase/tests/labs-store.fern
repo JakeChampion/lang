@@ -1,0 +1,57 @@
+import "../labs_store" as store;
+import "std/result";
+import "std/option";
+import "std/string";
+
+function main(): i32 {
+  let Ok(directory) = temp_dir("fern-labs-store") else {
+    return 1;
+  };
+  let Ok(absent) = store.load(directory, "book") else {
+    return 2;
+  };
+  if (absent.is_some()) {
+    return 3;
+  }
+  if (store.save(directory, "book", "café 東京 checkpoint one").is_err()) {
+    return 4;
+  }
+  let Ok(first) = store.load(directory, "book") else {
+    return 5;
+  };
+  if (first.unwrap_or("") != "café 東京 checkpoint one") {
+    return 6;
+  }
+  if (write_file(directory + "/book.json.next", "incomplete temporary file").is_err()) {
+    return 7;
+  }
+  let Ok(old) = store.load(directory, "book") else {
+    return 8;
+  };
+  if (old.unwrap_or("") != "café 東京 checkpoint one") {
+    return 9;
+  }
+  if (store.save(directory, "book", "checkpoint two").is_err()) {
+    return 10;
+  }
+  let Ok(next) = store.load(directory, "book") else {
+    return 11;
+  };
+  if (next.unwrap_or("") != "checkpoint two") {
+    return 12;
+  }
+  let Ok(data) = read_file(directory + "/book.json") else {
+    return 13;
+  };
+  if (write_file(directory + "/book.json", data + "corruption").is_err()) {
+    return 14;
+  }
+  if (store.load(directory, "book").is_ok()) {
+    return 15;
+  }
+  if (store.save(directory, "other", "clean").is_err()) {
+    return 16;
+  }
+  let cleanup = remove_dir_all(directory);
+  return 0;
+}

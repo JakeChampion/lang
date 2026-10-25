@@ -89,6 +89,7 @@ They are outside the public library inventory below.
 | `std/envflag` | [Boolean environment flags](../internal/stdlib/std/envflag.fern.md) |
 | `std/errno` | [Portable runtime error numbers](../internal/stdlib/std/errno.fern.md) |
 | `std/error` | [The common error interface](../internal/stdlib/std/error.fern.md) |
+| `std/f32` | [Binary32 parsing](../internal/stdlib/std/f32.fern.md) |
 | `std/f64` | [Floating-point operations and text](../internal/stdlib/std/f64.fern.md) |
 | `std/fetch` | [HTTP client requests](../internal/stdlib/std/fetch.fern.md) |
 | `std/format` | [Text format helpers](../internal/stdlib/std/format.fern.md) |
@@ -125,7 +126,6 @@ They are outside the public library inventory below.
 | `std/i64` | [64-bit integer methods](../internal/stdlib/std/i64.fern.md) |
 | `std/io` | [Reader and input helpers](../internal/stdlib/std/io.fern.md) |
 | `std/io_buffered` | [Buffered byte input and output](../internal/stdlib/std/io_buffered.fern.md) |
-| `std/io_outcome` | [I/O failure extraction](../internal/stdlib/std/io_outcome.fern.md) |
 | `std/jni` | [Java Native Interface calls](../internal/stdlib/std/jni.fern.md) |
 | `std/json` | [JSON trees and documents](../internal/stdlib/std/json.fern.md) |
 | `std/log` | [Structured log entries](../internal/stdlib/std/log.fern.md) |
@@ -134,11 +134,11 @@ They are outside the public library inventory below.
 | `std/mock_platform` | [Recorded platform operations](../internal/stdlib/std/mock_platform.fern.md) |
 | `std/ndarray` | [Multidimensional array views](../internal/stdlib/std/ndarray.fern.md) |
 | `std/net` | [Network address values](../internal/stdlib/std/net.fern.md) |
+| `std/number_parse` | [Numeric parse errors and kernels](../internal/stdlib/std/number_parse.fern.md) |
 | `std/num` | [Arithmetic trait contracts](../internal/stdlib/std/num.fern.md) |
 | `std/option` | [Optional values](../internal/stdlib/std/option.fern.md) |
 | `std/ordmap` | [Persistent ordered maps](../internal/stdlib/std/ordmap.fern.md) |
 | `std/ordset` | [Persistent ordered sets](../internal/stdlib/std/ordset.fern.md) |
-| `std/parse` | [Strict decimal integer parsing](../internal/stdlib/std/parse.fern.md) |
 | `std/path` | [POSIX path text](../internal/stdlib/std/path.fern.md) |
 | `std/peg` | [Parsing expression grammars](../internal/stdlib/std/peg.fern.md) |
 | `std/platform` | [Handler platform capabilities](../internal/stdlib/std/platform.fern.md) |

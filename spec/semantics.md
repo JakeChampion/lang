@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**47 of 50** claims are pinned by a conformance case. The remaining
+**49 of 52** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -99,6 +99,8 @@ of them.
 | `IS-12` | `docs/INTEGER-SEMANTICS.md` | `a <<? n` is `None` when bits are shifted out or `n` is negative or `>= width`, so it is `Some` exactly when `a * 2^n` fits | `int_checked_shl` |
 | `IS-13` | `docs/INTEGER-SEMANTICS.md` | `<<\|` clamps exactly where `<<?` is `None`, to `MIN` for a negative value and `MAX` otherwise; `0 <<\| n` is `0` | `int_saturating_shl` |
 | `IS-14` | `docs/INTEGER-SEMANTICS.md` | A checked or saturating shift on `usize` is rejected (`E009`) | `shift_usize_rejected` |
+| `IS-15` | `docs/INTEGER-SEMANTICS.md` | A `/` or `%` whose divisor evaluates to zero inside a `const` initializer is rejected (`E093`) | `const_div_by_zero_rejected` |
+| `IS-16` | `docs/INTEGER-SEMANTICS.md` | A declared `const` evaluates at its declared width: `+ - * <<` wrap there and a shift count masks to it | `const_folds_at_declared_width` |
 | `FS-01` | `docs/FLOAT-SEMANTICS.md` | Float-to-int conversion of `NaN` yields `0` | `float_to_int_saturating` |
 | `FS-02` | `docs/FLOAT-SEMANTICS.md` | Out-of-range float-to-int saturates to the destination's min / max | `float_to_int_saturating` |
 | `FS-03` | `docs/FLOAT-SEMANTICS.md` | In-range float-to-int truncates toward zero | `float_to_int_saturating` |

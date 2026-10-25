@@ -340,7 +340,7 @@ pub function call(): i32 {
 }
 
 pub function fresh_result_builtin(name: string): boolean {
-  return name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
+  return name == "__sem_bytes_unique" || name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
     || name == "__ghash" || name == "__aes_gcm_seal" || name == "__aes_gcm_open" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
 
@@ -2513,7 +2513,7 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 
 function call_capture_valid(f: Func, ins: ssa.SInst): boolean {
   if (ins.imm >= 0) {
-    return ins.imm == 0 || ins.imm <= f.values.len() && is_usize(f.values[ins.imm - 1]);
+    return ins.imm == 0 || pair_capture_valid(f, pair_capture_base(ins.imm), pair_capture_count(ins.imm));
   }
   if (ins.imm == 0 - 2147483647 - 1 || !is_wide(f.values[ins.result])) {
     return false;
@@ -2531,6 +2531,31 @@ function call_capture_valid(f: Func, ins: ssa.SInst): boolean {
     i = i + 1;
   }
   return true;
+}
+
+function pair_capture_valid(f: Func, base: i32, count: i32): boolean {
+  if (count < 1 || count > 2 || base > f.values.len() - count) {
+    return false;
+  }
+  for i in 0..count {
+    if (!is_usize(f.values[base + i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A paired call stores its words, one or two, in the values from base up.
+pub function pair_capture_imm(base: i32, count: i32): i32 {
+  return base * 4 + count;
+}
+
+pub function pair_capture_base(imm: i32): i32 {
+  return imm / 4;
+}
+
+pub function pair_capture_count(imm: i32): i32 {
+  return imm % 4;
 }
 
 pub function scalar_capture_base(imm: i32): i32 {

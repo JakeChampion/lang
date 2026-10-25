@@ -1,3 +1,19 @@
+// fold.fern — wrap input lines to a fixed width, like `fold(1)`.
+//
+//   -w N    wrap at N columns (default 80)
+//   -s      break at the last space within the width, when possible
+//
+//   $ printf 'aaaaaaaa\n' | ./fold -w 3
+//   aaa
+//   aaa
+//   aa
+//   $ echo 'the quick brown fox' | ./fold -s -w 10
+//   the quick
+//   brown fox
+//
+// Showcases: chunking a string to a width, optional word-boundary
+// breaking via `last_index_of`.
+import "std/result";
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -45,10 +61,10 @@ function main(): i32 {
   while (i < argv.len()) {
     let a: string = argv[i];
     if (a == "-w" && i + 1 < argv.len()) {
-      width = argv[i + 1].parse_int_or(width);
+      width = i32.parse_i32(argv[i + 1]).unwrap_or(width);
       i = i + 1;
     } else if (a.starts_with("-w")) {
-      width = a.drop(2).parse_int_or(width);
+      width = i32.parse_i32(a.drop(2)).unwrap_or(width);
     } else if (a == "-s") {
       at_spaces = true;
     } else {

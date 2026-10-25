@@ -1,0 +1,7 @@
+// An initializer of the wrong type is an E002 at the const, like a
+// return value of the wrong type.
+const A: string = 1;
+
+function main(): i32 {
+    return A.len() as i32;
+}

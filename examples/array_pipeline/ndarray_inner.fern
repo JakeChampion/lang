@@ -1,3 +1,7 @@
+// Native probe: rows, contracted extent, columns, rounds, mode (0 stdlib,
+// 1 packed scalar probe, 2 SIMD kernel). Check outputs and inputs outside timing.
+import "std/i32";
+import "std/result";
 import "std/ndarray";
 import "std/array";
 import "std/string";
@@ -116,19 +120,19 @@ function main(): i32 {
   let rounds: i32 = 2;
   let mode: i32 = 0;
   if (argv.len() > 1) {
-    rows = argv[1].parse_int_or(rows);
+    rows = i32.parse_i32(argv[1]).unwrap_or(rows);
   }
   if (argv.len() > 2) {
-    extent = argv[2].parse_int_or(extent);
+    extent = i32.parse_i32(argv[2]).unwrap_or(extent);
   }
   if (argv.len() > 3) {
-    columns = argv[3].parse_int_or(columns);
+    columns = i32.parse_i32(argv[3]).unwrap_or(columns);
   }
   if (argv.len() > 4) {
-    rounds = argv[4].parse_int_or(rounds);
+    rounds = i32.parse_i32(argv[4]).unwrap_or(rounds);
   }
   if (argv.len() > 5) {
-    mode = argv[5].parse_int_or(mode);
+    mode = i32.parse_i32(argv[5]).unwrap_or(mode);
   }
   if (rows < 1 || extent < 1 || columns < 1 || rounds < 1 || mode < 0 || mode > 2) {
     return 1;

@@ -29,7 +29,7 @@ function is_alpha(b: i32): boolean {
   return b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 95;
 }
 
-pub function is_alnum(b: i32): boolean {
+pub function is_alphanumeric(b: i32): boolean {
   return is_digit(b) || is_alpha(b);
 }
 
@@ -960,7 +960,7 @@ function bad_char_message(src: string, i: i32, n: i32): string {
 
 pub function decode_source(bytes: u8[]): Result[string, TokError] {
   let src: string = string_from_bytes_unchecked(bytes);
-  if (utf8.is_valid_utf8(src)) {
+  if (utf8.is_valid(src)) {
     return Ok(src);
   }
   let i: i32 = 0;

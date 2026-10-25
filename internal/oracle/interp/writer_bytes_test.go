@@ -44,10 +44,10 @@ func TestWriterBytesHostOutcomes(t *testing.T) {
 			i := New()
 			i.Stdout = host
 			i.closedStd = map[int64]bool{1: tc.closed}
-			a := Array{E: []Value{Number(0), Number(255), Number(128)}}
+			a := arrayOf(Number(0), Number(255), Number(128))
 			expected := []byte{0, 255, 128}
 			if tc.empty {
-				a.E = nil
+				a = arrayOf()
 				expected = nil
 			}
 			w := &Struct{TypeName: "Writer", Fields: map[string]Value{"fd": Number(1)}}
@@ -68,7 +68,7 @@ func TestWriterBytesHostOutcomes(t *testing.T) {
 			if host.calls != tc.calls || !bytes.Equal(host.out, expected[:tc.written]) {
 				t.Fatalf("calls=%d output=%v", host.calls, host.out)
 			}
-			for n, v := range a.E {
+			for n, v := range a.Elems() {
 				if v != Number(expected[n]) {
 					t.Fatal("input changed")
 				}
