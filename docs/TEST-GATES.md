@@ -8,22 +8,25 @@ compiler bugs shipped past three heavyweight green gates in a row.
 This document is about *which* lanes carry signal for *which* kind of
 change, and — more usefully — which ones look authoritative and are not.
 
-Every lane runs on the pull request AND on the merge to main, under the same
-path filter: `.github/workflows/ci.yml` is the one workflow either event
-launches, every lane is a `workflow_call` it calls, and its lane table is the
-single filter both events read (`TestGateLanesRunOnMain`,
-`internal/testing/sourcelint`). The second half matters because PRs here are
-rebase-merged: each commit lands on a main its own CI never saw, so a coupling
-between two individually-green PRs exists only in the combination.
+`.github/workflows/ci.yml` is the one workflow a pull request or a push to
+main launches, every lane is a `workflow_call` it calls, and its lane table is
+the single path filter both events read (`TestGateLanesRunOnMain`,
+`internal/testing/sourcelint`).
 
-Three checks run outside that queue, as soon as a pull request is pushed:
-`Lint`, the `changes` job that picks the lanes, and `Preflight`
-(`.github/workflows/preflight.yml`). Preflight runs the fixture corpus through
-the self-host compiler, one leg per target plus the front-end leg. Preflight is the broadest
-cheap probe of a compiler change, a few minutes on one runner per leg. A red
-leg cancels the run through `reap-preflight`, queued suite included. A broken
-compiler is therefore reported in minutes, and its suite slot goes to the next
-pull request.
+A pull request runs the fast tier: `Lint`, the `changes` job that picks the
+lanes, and `Preflight` (`.github/workflows/preflight.yml`). Preflight runs the
+fixture corpus through the self-host compiler, one leg per target plus the
+front-end leg. It also calls the unit, e2e, wasm, differential and coreutils
+lanes with `hosts: x86_64`, which runs their x86-64 legs alone. That is about 110
+runner-minutes and ten minutes of wall against a pool of about 40 runners, so
+it never queues. A red job cancels the run through `reap-preflight`.
+
+The full suite runs on main after the merge, through the `ci-suite.yml` queue,
+and on a pull request labelled `ci-full`. PRs here are rebase-merged, so each
+commit lands on a main its own CI never saw: main's run has always been the
+gate for the combination, and it is now also the gate for the aarch64 legs,
+the self-host shards and the other heavy lanes. `main-red.yml` opens an issue
+per red lane, and fixing it is the next task.
 
 Pull requests take two queues (`pr-ci-even` / `pr-ci-odd`, `queue: max`, first
 in first out, chosen by the parity of the PR number): at most two PRs' suites
