@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	floatFern  = "../../internal/stdlib/std/f64.fern.md"
-	stringFern = "../../internal/stdlib/std/string.fern.md"
+	floatFern      = "../../internal/stdlib/std/f64.fern.md"
+	stringFern     = "../../internal/stdlib/std/string.fern.md"
+	longDoubleFern = "../../coreutils/lib/cached_powers.fern"
 )
 
 func TestCacheEntryIsNormalisedCeiling(t *testing.T) {
@@ -57,7 +58,7 @@ func abs(x int) int {
 }
 
 func TestCommittedFileIsUpToDate(t *testing.T) {
-	for _, path := range []string{floatFern, stringFern} {
+	for _, path := range []string{floatFern, stringFern, longDoubleFern} {
 		src, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -67,10 +68,14 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 			t.Fatal(err)
 		}
 		if out != string(src) {
-			t.Errorf("%s is out of date; regenerate with:\n\tgo run ./cmd/floattablegen %s %s",
-				path, floatFern, stringFern)
+			t.Errorf("%s is out of date; regenerate with:\n\tgo run ./cmd/floattablegen %s %s %s",
+				path, floatFern, stringFern, longDoubleFern)
 		}
 	}
+}
+
+func TestLongDoubleCache(t *testing.T) {
+	checkTable(t, "long double powers", committedTable(t, longDoubleFern, "POW10_CACHE"), flat(Cache64()))
 }
 
 func committedTable(t *testing.T, path, name string) []uint64 {

@@ -127,6 +127,13 @@ type block struct {
 
 var blocks = []block{
 	{
+		begin: "// BEGIN GENERATED LONG DOUBLE CACHE (cmd/floattablegen)",
+		end:   "// END GENERATED LONG DOUBLE CACHE",
+		generate: func() string {
+			return fmt.Sprintf("const POW10_CACHE: u64[] = [%s];\n", ArrayLiteral(flat(Cache64()), 2))
+		},
+	},
+	{
 		begin: "// BEGIN GENERATED DRAGONBOX TABLES (cmd/floattablegen) — do not edit by hand.",
 		end:   "// END GENERATED DRAGONBOX TABLES",
 		generate: func() string {

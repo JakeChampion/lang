@@ -3,7 +3,7 @@ import "std/string";
 import "std/array";
 import "std/u64";
 import "core/bigint";
-import "std/f64";
+import "./cached_powers";
 
 pub struct Format { mant: i32, emax: i32, explicit_bit: boolean }
 
@@ -1226,9 +1226,9 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   if (s < 0 - 292 || s > 326) {
     return no_dec();
   }
-  let chi: u64 = f64.pow10_hi(s);
-  let clo: u64 = f64.pow10_lo(s);
-  let t: i32 = 63 - f64.pow10_log2(s) - v.e;
+  let chi: u64 = cached_powers.hi(s);
+  let clo: u64 = cached_powers.lo(s);
+  let t: i32 = 63 - cached_powers.log2(s) - v.e;
   if (t < 48 || t > 126) {
     return no_dec();
   }
