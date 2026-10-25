@@ -5646,6 +5646,9 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__crc32_cksum_array") {
     return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_name(), 2)) };
   }
+  if (ins.str == "__crc32_ieee_array") {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_ieee_name(), 2)) };
+  }
   if (ins.str == "__ascii_run") {
     return Lowered { found: true, r: emit(r, ir.op_ascii_run()) };
   }

@@ -5679,7 +5679,7 @@ function builtin_i32_names(): string[] {
     "__arr_push_shared_count",
     "__map_hash_seed",
     "__memchr",
-    "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
+    "__count_byte_bytes", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
     "__ascii_run",
     "__scan_set", "__scan_set_bytes",
     "__count_runs", "__count_runs_bytes",

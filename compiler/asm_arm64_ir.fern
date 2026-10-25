@@ -809,13 +809,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x2, x2, #1\n    b " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
   }
-  if (o.kind_tag == 309 || o.kind_tag == 373) {
-    s = s.need("crc32_cksum");
-    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 373) {
-      s = s.write("    ldr x6, [x1]\n    add x7, x1, #8\n    bl __fern_crc32_cksum_data\n");
+  if (ir.is_crc32_op(o.kind_tag)) {
+    let kernel: string = "crc32_cksum";
+    if (o.kind_tag >= 480) {
+      kernel = "crc32_ieee";
+      s = s.need("crc32_ieee");
     } else {
-      s = s.write("    bl __fern_crc32_cksum\n");
+      s = s.need("crc32_cksum");
+    }
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    if (o.kind_tag == 373 || o.kind_tag == 481) {
+      s = s.write("    ldr x6, [x1]\n    add x7, x1, #8\n    bl __fern_" + kernel + "_data\n");
+    } else {
+      s = s.write("    bl __fern_" + kernel + "\n");
     }
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
@@ -8929,6 +8935,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("crc32_cksum")) {
     s = emit_rt_crc32_cksum(s);
   }
+  if (s.has_need("crc32_ieee")) {
+    s = emit_rt_crc32_ieee(s);
+  }
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
   }
@@ -10373,6 +10382,48 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldp x29, x30, [sp], #64\n");
   s = s.write("    ret\n");
   s = s.write("    .size __fern_crc32_cksum, .-__fern_crc32_cksum\n");
+  return s;
+}
+
+// The reflected IEEE CRC-32 register update: w0 is the register, x7 the data and x6 the length.
+function emit_rt_crc32_ieee(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .arch_extension crc\n");
+  s = s.write("    .global __fern_crc32_ieee\n");
+  s = s.write("    .global __fern_crc32_ieee_data\n");
+  s = s.write("    .type __fern_crc32_ieee, %function\n");
+  s = s.write("__fern_crc32_ieee:\n");
+  s = s.write("    ldr x6, [x1, #8]\n");
+  s = s.write("    ldr x7, [x1]\n");
+  s = s.write("__fern_crc32_ieee_data:\n");
+  s = s.write(".Lcrc32_ieee_32:\n");
+  s = s.write("    subs x6, x6, #32\n");
+  s = s.write("    b.lo .Lcrc32_ieee_8in\n");
+  s = s.write("    ldp x2, x3, [x7], #16\n");
+  s = s.write("    ldp x4, x5, [x7], #16\n");
+  s = s.write("    crc32x w0, w0, x2\n");
+  s = s.write("    crc32x w0, w0, x3\n");
+  s = s.write("    crc32x w0, w0, x4\n");
+  s = s.write("    crc32x w0, w0, x5\n");
+  s = s.write("    b .Lcrc32_ieee_32\n");
+  s = s.write(".Lcrc32_ieee_8in:\n");
+  s = s.write("    add x6, x6, #32\n");
+  s = s.write(".Lcrc32_ieee_8:\n");
+  s = s.write("    subs x6, x6, #8\n");
+  s = s.write("    b.lo .Lcrc32_ieee_1in\n");
+  s = s.write("    ldr x2, [x7], #8\n");
+  s = s.write("    crc32x w0, w0, x2\n");
+  s = s.write("    b .Lcrc32_ieee_8\n");
+  s = s.write(".Lcrc32_ieee_1in:\n");
+  s = s.write("    adds x6, x6, #8\n");
+  s = s.write("    b.eq .Lcrc32_ieee_ret\n");
+  s = s.write(".Lcrc32_ieee_1:\n");
+  s = s.write("    ldrb w2, [x7], #1\n");
+  s = s.write("    crc32b w0, w0, w2\n");
+  s = s.write("    subs x6, x6, #1\n");
+  s = s.write("    b.ne .Lcrc32_ieee_1\n");
+  s = s.write(".Lcrc32_ieee_ret:\n");
+  s = s.write("    ret\n");
+  s = s.write("    .size __fern_crc32_ieee, .-__fern_crc32_ieee\n");
   return s;
 }
 

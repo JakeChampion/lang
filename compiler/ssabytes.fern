@@ -247,15 +247,27 @@ pub function crc32_name(): string {
   return "__sem_byte_view_crc32";
 }
 
-function crc32(): irtables.LowerResult {
-  return body(crc32_name(), 2, 2, [
+pub function crc32_ieee_name(): string {
+  return "__sem_byte_view_crc32_ieee";
+}
+
+function crc32_view(name: string, string_op: ir.Op, array_op: ir.Op): irtables.LowerResult {
+  return body(name, 2, 2, [
     ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("eq", ir.width_ptr(), false), ir.op_if(0),
     ir.op_load_local(0), ir.op_return(), ir.op_end(),
     ir.op_load_local(1), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0),
     ir.op_load_local(0), ir.op_load_local(1), ir.op_const_i32(0 - 2), ir.op_raw_addr(),
-    ir.op_crc32_cksum(), ir.op_return(), ir.op_end(),
-    ir.op_load_local(0), ir.op_load_local(1), ir.packed(ir.op_crc32_cksum_array()), ir.op_return(),
+    string_op, ir.op_return(), ir.op_end(),
+    ir.op_load_local(0), ir.op_load_local(1), ir.packed(array_op), ir.op_return(),
   ]);
+}
+
+function crc32(): irtables.LowerResult {
+  return crc32_view(crc32_name(), ir.op_crc32_cksum(), ir.op_crc32_cksum_array());
+}
+
+function crc32_ieee(): irtables.LowerResult {
+  return crc32_view(crc32_ieee_name(), ir.op_crc32_ieee(), ir.op_crc32_ieee_array());
 }
 
 // Views compare through the string kernel and arrays through the packed kernel.
@@ -309,5 +321,5 @@ function string_copy(): irtables.LowerResult {
 }
 
 pub function helpers(): irtables.LowerResult[] {
-  return [length(), data(), slice(), release(), crc32(), mismatch(), sum(), bsd(), string_copy()];
+  return [length(), data(), slice(), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
 }

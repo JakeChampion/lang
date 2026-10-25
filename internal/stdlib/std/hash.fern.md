@@ -38,23 +38,19 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 pub struct Crc32>>
 
-<<6 function __crc32b_tables(): u32[]>>
+<<6 pub function crc32_new(): Crc32>>
 
-<<7 pub function crc32_new(): Crc32>>
+<<7 pub function (c: Crc32) update(chunk: [u8]): Crc32>>
 
-<<8 function __crc32_absorb(c: Crc32, bs: [u8]): Crc32>>
+<<8 pub struct BsdSum>>
 
-<<9 pub function (c: Crc32) update(chunk: [u8]): Crc32>>
+<<9 pub function bsd_sum_new(): BsdSum>>
 
-<<10 pub struct BsdSum>>
+<<10 pub struct SysvSum>>
 
-<<11 pub function bsd_sum_new(): BsdSum>>
+<<11 pub function sysv_sum_new(): SysvSum>>
 
-<<12 pub struct SysvSum>>
-
-<<13 pub function sysv_sum_new(): SysvSum>>
-
-<<14 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>
+<<12 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>
 ```
 
 ### `module introduction`
@@ -149,84 +145,27 @@ pub function cksum_of(s: [u8]): u32 {
 pub struct Crc32 {
   crc: u32,
   len: u64,
-  table: u32[],
 }
 ```
 
-### `6 function __crc32b_tables(): u32[]`
+### `6 pub function crc32_new(): Crc32`
 
 ```fern
-<<6 function __crc32b_tables(): u32[]>>=
-function __crc32b_tables(): u32[] {
-  let t: u32[] = [];
-  let i: u32 = 0;
-  while (i < 256) {
-    let c: u32 = i;
-    let k: i32 = 0;
-    while (k < 8) {
-      if ((c & 1) != 0) {
-        c = c >> 1 ^ 0xedb88320;
-      } else {
-        c = c >> 1;
-      }
-      k = k + 1;
-    }
-    t = t.append(c);
-    i = i + 1;
-  }
-  let j: i32 = 0;
-  let p: u32 = 0;
-  while (j < 1792) {
-    p = t[j];
-    t = t.append(p >> 8 ^ t[(p & 255) as i32]);
-    j = j + 1;
-  }
-  return t;
-}
-```
-
-### `7 pub function crc32_new(): Crc32`
-
-```fern
-<<7 pub function crc32_new(): Crc32>>=
+<<6 pub function crc32_new(): Crc32>>=
 pub function crc32_new(): Crc32 {
-  return Crc32 { crc: 0xffffffff, len: 0 as u64, table: __crc32b_tables() };
+  return Crc32 { crc: 0xffffffff, len: 0 as u64 };
 }
 ```
 
-### `8 function __crc32_absorb(c: Crc32, bs: [u8]): Crc32`
+### `7 pub function (c: Crc32) update(chunk: [u8]): Crc32`
 
 ```fern
-<<8 function __crc32_absorb(c: Crc32, bs: [u8]): Crc32>>=
-function __crc32_absorb(c: Crc32, bs: [u8]): Crc32 {
-  let t: u32[] = c.table;
-  let crc: u32 = c.crc;
-  let n: i32 = bs.len();
-  let i: i32 = 0;
-  let lim: i32 = n - 8;
-  let w0: u32 = 0;
-  let w1: u32 = 0;
-  while (i <= lim) {
-    w0 = crc ^ (bs[i] as u32 | bs[i + 1] as u32 << 8 | bs[i + 2] as u32 << 16 | bs[i + 3] as u32 << 24);
-    w1 = bs[i + 4] as u32 | bs[i + 5] as u32 << 8 | bs[i + 6] as u32 << 16 | bs[i + 7] as u32 << 24;
-    crc = t[1792 + (w0 & 255) as i32] ^ t[1536 + (w0 >> 8 & 255) as i32] ^ t[1280 + (w0 >> 16 & 255) as i32] ^ t[1024 + (w0 >> 24 & 255) as i32] ^ t[768 + (w1 & 255) as i32] ^ t[512 + (w1 >> 8 & 255) as i32] ^ t[256 + (w1 >> 16 & 255) as i32] ^ t[(w1 >> 24 & 255) as i32];
-    i = i + 8;
-  }
-  while (i < n) {
-    crc = crc >> 8 ^ t[((crc ^ bs[i] as u32) & 255) as i32];
-    i = i + 1;
-  }
-  return Crc32 { ...c, crc: crc, len: c.len + n as u64 };
-}
-```
-
-### `9 pub function (c: Crc32) update(chunk: [u8]): Crc32`
-
-```fern
-<<9 pub function (c: Crc32) update(chunk: [u8]): Crc32>>=
+<<7 pub function (c: Crc32) update(chunk: [u8]): Crc32>>=
 pub function (c: Crc32) update(chunk: [u8]): Crc32 {
-  c = __crc32_absorb(c, chunk);
-  return c;
+  return Crc32 {
+    crc: __crc32_ieee_array(c.crc as i32, chunk) as u32,
+    len: c.len + chunk.len() as u64,
+  };
 }
 
 pub function (c: Crc32) byte_count(): u64 {
@@ -242,20 +181,20 @@ pub function crc32_of(s: [u8]): u32 {
 }
 ```
 
-### `10 pub struct BsdSum`
+### `8 pub struct BsdSum`
 
 ```fern
-<<10 pub struct BsdSum>>=
+<<8 pub struct BsdSum>>=
 pub struct BsdSum {
   sum: u32,
   len: u64,
 }
 ```
 
-### `11 pub function bsd_sum_new(): BsdSum`
+### `9 pub function bsd_sum_new(): BsdSum`
 
 ```fern
-<<11 pub function bsd_sum_new(): BsdSum>>=
+<<9 pub function bsd_sum_new(): BsdSum>>=
 pub function bsd_sum_new(): BsdSum {
   return BsdSum { sum: 0, len: 0 as u64 };
 }
@@ -281,20 +220,20 @@ pub function bsd_sum_of(s: [u8]): u32 {
 }
 ```
 
-### `12 pub struct SysvSum`
+### `10 pub struct SysvSum`
 
 ```fern
-<<12 pub struct SysvSum>>=
+<<10 pub struct SysvSum>>=
 pub struct SysvSum {
   sum: u32,
   len: u64,
 }
 ```
 
-### `13 pub function sysv_sum_new(): SysvSum`
+### `11 pub function sysv_sum_new(): SysvSum`
 
 ```fern
-<<13 pub function sysv_sum_new(): SysvSum>>=
+<<11 pub function sysv_sum_new(): SysvSum>>=
 pub function sysv_sum_new(): SysvSum {
   return SysvSum { sum: 0, len: 0 as u64 };
 }
@@ -339,10 +278,10 @@ pub function xxh64(bs: [u8], seed: u64): u64 {
 }
 ```
 
-### `14 function __xxh_tail(bs: [u8], at: i32, h: u64): u64`
+### `12 function __xxh_tail(bs: [u8], at: i32, h: u64): u64`
 
 ```fern
-<<14 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>=
+<<12 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>=
 function __xxh_tail(bs: [u8], at: i32, h: u64): u64 {
   let n: i32 = bs.len();
   while (at + 8 <= n) {

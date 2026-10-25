@@ -1509,6 +1509,180 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// This kernel updates the raw reflected IEEE CRC-32 register. The caller inverts the register.
+// Four lanes fold 64 bytes at a time, then one lane folds 16 bytes at a time.
+// A Barrett reduction gives the register. A byte table then takes the last 15 bytes or fewer.
+function emit_rt_crc32_ieee(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write("    .align 16\n");
+  s = s.write(".Lcrc32_ieee_k12:\n");
+  s = s.write("    .quad 0x0000000154442bd4\n");
+  s = s.write("    .quad 0x00000001c6e41596\n");
+  s = s.write(".Lcrc32_ieee_k34:\n");
+  s = s.write("    .quad 0x00000001751997d0\n");
+  s = s.write("    .quad 0x00000000ccaa009e\n");
+  s = s.write(".Lcrc32_ieee_k5:\n");
+  s = s.write("    .quad 0x0000000163cd6124\n");
+  s = s.write("    .quad 0x0000000000000000\n");
+  s = s.write(".Lcrc32_ieee_pmu:\n");
+  s = s.write("    .quad 0x00000001db710641\n");
+  s = s.write("    .quad 0x00000001f7011641\n");
+  s = s.write(".Lcrc32_ieee_table:\n");
+  s = s.write(crc32_ieee_table_rows());
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_crc32_ieee\n");
+  s = s.write("    .globl __fern_crc32_ieee_data\n");
+  s = s.write("    .type __fern_crc32_ieee, @function\n");
+  s = s.write("__fern_crc32_ieee:\n");
+  s = s.write("    movq 8(%rsi), %rdx\n");
+  s = s.write("    movq (%rsi), %rsi\n");
+  s = s.write("__fern_crc32_ieee_data:\n");
+  s = s.write("    movl %edi, %eax\n");
+  s = s.write("    cmpq $16, %rdx\n");
+  s = s.write("    jb .Lcrc32_ieee_tail\n");
+  s = s.write("    movd %eax, %xmm1\n");
+  s = s.write("    movdqu (%rsi), %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movdqa .Lcrc32_ieee_k34(%rip), %xmm4\n");
+  s = s.write("    cmpq $64, %rdx\n");
+  s = s.write("    jae .Lcrc32_ieee_wide\n");
+  s = s.write("    addq $16, %rsi\n");
+  s = s.write("    subq $16, %rdx\n");
+  s = s.write("    jmp .Lcrc32_ieee_fold1\n");
+  s = s.write(".Lcrc32_ieee_wide:\n");
+  s = s.write("    movdqu 16(%rsi), %xmm1\n");
+  s = s.write("    movdqu 32(%rsi), %xmm2\n");
+  s = s.write("    movdqu 48(%rsi), %xmm3\n");
+  s = s.write("    movdqa .Lcrc32_ieee_k12(%rip), %xmm5\n");
+  s = s.write("    addq $64, %rsi\n");
+  s = s.write("    subq $64, %rdx\n");
+  s = s.write("    cmpq $64, %rdx\n");
+  s = s.write("    jb .Lcrc32_ieee_combine\n");
+  s = s.write(".Lcrc32_ieee_fold4:\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm6\n");
+  s = s.write("    movdqu (%rsi), %xmm10\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm10, %xmm0\n");
+  s = s.write("    movdqa %xmm1, %xmm7\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm1\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm7\n");
+  s = s.write("    movdqu 16(%rsi), %xmm11\n");
+  s = s.write("    pxor %xmm7, %xmm1\n");
+  s = s.write("    pxor %xmm11, %xmm1\n");
+  s = s.write("    movdqa %xmm2, %xmm8\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm2\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm8\n");
+  s = s.write("    movdqu 32(%rsi), %xmm12\n");
+  s = s.write("    pxor %xmm8, %xmm2\n");
+  s = s.write("    pxor %xmm12, %xmm2\n");
+  s = s.write("    movdqa %xmm3, %xmm9\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm3\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm9\n");
+  s = s.write("    movdqu 48(%rsi), %xmm13\n");
+  s = s.write("    pxor %xmm9, %xmm3\n");
+  s = s.write("    pxor %xmm13, %xmm3\n");
+  s = s.write("    addq $64, %rsi\n");
+  s = s.write("    subq $64, %rdx\n");
+  s = s.write("    cmpq $64, %rdx\n");
+  s = s.write("    jae .Lcrc32_ieee_fold4\n");
+  s = s.write(".Lcrc32_ieee_combine:\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm2, %xmm0\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm3, %xmm0\n");
+  s = s.write(".Lcrc32_ieee_fold1:\n");
+  s = s.write("    cmpq $16, %rdx\n");
+  s = s.write("    jb .Lcrc32_ieee_reduce\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    movdqu (%rsi), %xmm1\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    addq $16, %rsi\n");
+  s = s.write("    subq $16, %rdx\n");
+  s = s.write("    jmp .Lcrc32_ieee_fold1\n");
+  s = s.write(".Lcrc32_ieee_reduce:\n");
+  s = s.write("    movdqa %xmm0, %xmm1\n");
+  s = s.write("    pclmulqdq $0x10, %xmm4, %xmm1\n");
+  s = s.write("    psrldq $8, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movd %xmm0, %ecx\n");
+  s = s.write("    movd %ecx, %xmm1\n");
+  s = s.write("    movdqa .Lcrc32_ieee_k5(%rip), %xmm2\n");
+  s = s.write("    pclmulqdq $0x00, %xmm2, %xmm1\n");
+  s = s.write("    psrldq $4, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movd %xmm0, %ecx\n");
+  s = s.write("    movd %ecx, %xmm1\n");
+  s = s.write("    movdqa .Lcrc32_ieee_pmu(%rip), %xmm2\n");
+  s = s.write("    pclmulqdq $0x10, %xmm2, %xmm1\n");
+  s = s.write("    movd %xmm1, %ecx\n");
+  s = s.write("    movd %ecx, %xmm1\n");
+  s = s.write("    pclmulqdq $0x00, %xmm2, %xmm1\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    psrldq $4, %xmm0\n");
+  s = s.write("    movd %xmm0, %eax\n");
+  s = s.write(".Lcrc32_ieee_tail:\n");
+  s = s.write("    testq %rdx, %rdx\n");
+  s = s.write("    jz .Lcrc32_ieee_ret\n");
+  s = s.write("    leaq .Lcrc32_ieee_table(%rip), %r8\n");
+  s = s.write(".Lcrc32_ieee_byte:\n");
+  s = s.write("    movzbl (%rsi), %ecx\n");
+  s = s.write("    xorl %eax, %ecx\n");
+  s = s.write("    movzbl %cl, %ecx\n");
+  s = s.write("    shrl $8, %eax\n");
+  s = s.write("    xorl (%r8,%rcx,4), %eax\n");
+  s = s.write("    addq $1, %rsi\n");
+  s = s.write("    subq $1, %rdx\n");
+  s = s.write("    jnz .Lcrc32_ieee_byte\n");
+  s = s.write(".Lcrc32_ieee_ret:\n");
+  s = s.write("    ret\n");
+  s = s.write("    .size __fern_crc32_ieee, .-__fern_crc32_ieee\n");
+  return s;
+}
+
+function crc32_ieee_table_rows(): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < 256) {
+    let c: u32 = i as u32;
+    let k: i32 = 0;
+    while (k < 8) {
+      if ((c & 1) != 0) {
+        c = c >> 1 ^ 0xedb88320;
+      } else {
+        c = c >> 1;
+      }
+      k = k + 1;
+    }
+    if (i % 8 == 0) {
+      out = out + "    .long ";
+    } else {
+      out = out + ",";
+    }
+    out = out + util.i32_to_string(c as i32);
+    if (i % 8 == 7) {
+      out = out + "\n";
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "hostname", "uname_field",
@@ -4404,13 +4578,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $1, %r9\n    jmp " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
   }
-  if (o.kind_tag == 309 || o.kind_tag == 373) {
-    s = s.need("crc32_cksum");
-    s = s.write("    popq %rsi\n    popq %rdi\n");
-    if (o.kind_tag == 373) {
-      s = s.write("    movq (%rsi), %rdx\n    addq $8, %rsi\n    call __fern_crc32_cksum_data\n");
+  if (ir.is_crc32_op(o.kind_tag)) {
+    let kernel: string = "crc32_cksum";
+    if (o.kind_tag >= 480) {
+      kernel = "crc32_ieee";
+      s = s.need("crc32_ieee");
     } else {
-      s = s.write("    call __fern_crc32_cksum\n");
+      s = s.need("crc32_cksum");
+    }
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    if (o.kind_tag == 373 || o.kind_tag == 481) {
+      s = s.write("    movq (%rsi), %rdx\n    addq $8, %rsi\n    call __fern_" + kernel + "_data\n");
+    } else {
+      s = s.write("    call __fern_" + kernel + "\n");
     }
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
@@ -10350,6 +10530,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("crc32_cksum")) {
     s = emit_rt_crc32_cksum(s);
+  }
+  if (s.has_need("crc32_ieee")) {
+    s = emit_rt_crc32_ieee(s);
   }
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
