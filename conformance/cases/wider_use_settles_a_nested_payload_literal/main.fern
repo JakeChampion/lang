@@ -1,0 +1,44 @@
+// An unannotated local built from a constructor takes the type of a later,
+// wider use. That holds when the payload's literals sit in a tuple or an
+// array, not only when a literal is the whole payload.
+enum Bag[T] { Items(T[]), Count(i32), Empty }
+
+function total(b: Bag[i64]): i64 {
+    match (b) {
+        Items(xs) => {
+            let t: i64 = 0;
+            for x in xs {
+                t = t + x;
+            }
+            return t;
+        },
+        Count(n) => {
+            return n as i64;
+        },
+        Empty => {
+            return 0;
+        }
+    }
+}
+
+function main(): i32 {
+    let o = Some((1, 2));
+    let p: Option[(i64, i32)] = o;
+    if let Some((a, b)) = p {
+        print(f"{a + 5000000000} {b}");
+    }
+    let q = Some([1, 2]);
+    let r: Option[i64[]] = q;
+    if let Some(xs) = r {
+        print(f"{xs[0] + xs[1] + 5000000000}");
+    }
+    let x = Items([3]);
+    let c: Bag[i64] = x;
+    print(f"{total(c) + 5000000000}");
+    let k = Ok((200, 7));
+    let m: Result[(u8, i64), string] = k;
+    if let Ok((u, w)) = m {
+        print(f"{u + 55} {w + 5000000000}");
+    }
+    return 0;
+}

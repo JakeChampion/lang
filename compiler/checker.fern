@@ -23393,8 +23393,8 @@ function settle_generic_lit_fields(sl: ast.ExprStructLit, fields: ast.Expr[], s:
 }
 
 function settle_wide_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
-  if (type_to_irtag(t) == "i64" && int_literal_tree(e)) {
-    return settle_int_tree(e, "i64");
+  if (lit_suffix_spelled(type_to_irtag(t)) && int_literal_tree(e)) {
+    return settle_int_tree(e, type_to_irtag(t));
   }
   if let typeinfo.TypeArray(at) = t {
     if let ast.ExprArray(ea) = e {
@@ -25172,9 +25172,9 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
 }
 
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[] }
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: string[], ptypes: typeinfo.Type[] }
 
-struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[] }
+struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[], pargs: string[], ptypes: typeinfo.Type[] }
 
 const LIT_MARK: string = "literal local #";
 
@@ -25432,10 +25432,7 @@ function lit_union_demand(e: ast.Expr, wu: typeinfo.TypeUnion, s: Scope, st: Lit
       let out: LitInfer = st;
       let j: i32 = 0;
       while (j < have.args.len()) {
-        let k: i32 = lit_id(have.args[j]);
-        if (k >= 0) {
-          out = lit_fix(out, [k], wu.args[j]);
-        }
+        out = lit_type_demand(have.args[j], wu.args[j], out);
         j = j + 1;
       }
       return out;
@@ -26489,6 +26486,13 @@ function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type
         slot = payload_type_param(s, s.lookup_union(u.name), ctor_variant_name(c), p);
       }
       let (seed, ids) = lit_tree(c.args[p], s, []);
+      if (!seed && lit_composite(c.args[p])) {
+        let (shape, next) = lit_payload_shape(c, p, u.name, s, out);
+        if (shape.slot >= 0 && shape.slot < args.len()) {
+          args = args.with(shape.slot, shape.param);
+          out = LitInfer { ...next, pargs: next.pargs.append(gcall_arg_key(c, p)), ptypes: next.ptypes.append(shape.arg) };
+        }
+      }
       if (slot >= 0 && slot < args.len() && seed) {
         let k: i32 = out.parent.len();
         out = lit_link(lit_new(out, ""), ids.append(k));
@@ -26506,8 +26510,40 @@ function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type
       }
       p = p + 1;
     }
-    if (out.eids.len() > st.eids.len()) {
+    if (out.eids.len() > st.eids.len() || out.pargs.len() > st.pargs.len()) {
       return (typeinfo.TypeUnion { ...u, args: args }, out);
+    }
+  }
+  return (none, st);
+}
+
+// A constructor argument that is a tuple or array literal of unsettled
+// integers: the type parameter its payload spells as T or T[], the marked
+// type that parameter takes, and the marked type of the whole argument.
+struct LitPayloadShape { slot: i32, param: typeinfo.Type, arg: typeinfo.Type }
+
+function lit_payload_shape(c: ast.ExprCall, p: i32, owner: string, s: Scope, st: LitInfer): (LitPayloadShape, LitInfer) {
+  let none: LitPayloadShape = LitPayloadShape { slot: 0 - 1, param: t_unknown("no payload shape"), arg: t_unknown("no payload shape") };
+  let (arg, next, found) = lit_composite_local(c.args[p], s, st);
+  if (!found) {
+    return (none, st);
+  }
+  let vname: string = ctor_variant_name(c);
+  let slot: i32 = ctor_payload_slot(s, owner, vname, p);
+  if (slot >= 0) {
+    return (LitPayloadShape { slot: slot, param: arg, arg: arg }, next);
+  }
+  if (owner == "Option" || owner == "Result" || scope_variant_owner(vname, s) != owner) {
+    return (none, st);
+  }
+  let us: UnionSig = s.lookup_union(owner);
+  let spelled: string = payload_spelling(s, us, vname, p);
+  if let typeinfo.TypeArray(a) = arg {
+    if (spelled.ends_with("[]")) {
+      let elem_slot: i32 = util.index_of_str(us.type_params, slice_unchecked(spelled, 0, spelled.len() - 2) + "");
+      if (elem_slot >= 0) {
+        return (LitPayloadShape { slot: elem_slot, param: a.elem, arg: arg }, next);
+      }
     }
   }
   return (none, st);
@@ -26672,7 +26708,11 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     ei = ei + 1;
   }
   let (ck, ct) = agreed_tags(call_keys, call_tags);
-  return LitRewrite { keys: ok, tags: ot, cargs: ck, ctags: ct };
+  let ptypes: typeinfo.Type[] = [];
+  for pt in st.ptypes {
+    ptypes = ptypes.append(lit_typed_type(pt, st, false));
+  }
+  return LitRewrite { keys: ok, tags: ot, cargs: ck, ctags: ct, pargs: st.pargs, ptypes: ptypes };
 }
 
 function agreed_tags(keys: string[], tags: string[]): (string[], string[]) {
@@ -26795,7 +26835,7 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
 function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
   let k: i32 = 0;
   while (k < c.args.len()) {
-    if (util.index_of_str(rw.cargs, gcall_arg_key(c, k)) >= 0) {
+    if (util.index_of_str(rw.cargs, gcall_arg_key(c, k)) >= 0 || util.index_of_str(rw.pargs, gcall_arg_key(c, k)) >= 0) {
       return true;
     }
     k = k + 1;
@@ -26811,6 +26851,10 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     let at: i32 = util.index_of_str(rw.cargs, gcall_arg_key(c, k));
     if (at >= 0) {
       a = settle_int_tree(a, rw.ctags[at]);
+    }
+    let pt: i32 = util.index_of_str(rw.pargs, gcall_arg_key(c, k));
+    if (pt >= 0) {
+      a = settle_wide_literals(a, rw.ptypes[pt]);
     }
     let (ae, aa, ah) = astwalk.map_expr_acc(a, rw, lit_rewrite_stmt, lit_rewrite_expr);
     args = args.append(ae);
@@ -26954,9 +26998,9 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [] }));
+  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [], pargs: [], ptypes: [] }));
   let rw: LitRewrite = lit_rewrites(st);
-  if (rw.keys.len() == 0 && rw.cargs.len() == 0) {
+  if (rw.keys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
     return stmts;
   }
   let (out, ra) = astwalk.map_stmts_acc(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr);
