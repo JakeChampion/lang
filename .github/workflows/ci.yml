@@ -268,7 +268,7 @@ jobs:
               // or did not run runs here, so main stays the backstop for the
               // filters. A run still in flight with its suite under way is
               // waited for, polling until it completes or the wait budget
-              // runs out (cancel-on-merge.yml and reap-stale-runs.yml spare
+              // runs out (cancel-on-merge.yml and the reap-stale-runs action spare
               // exactly that run); one whose suite is still queued is not,
               // since main alone is faster than the queue. perf always runs,
               // because its main run records the history. Any error proves

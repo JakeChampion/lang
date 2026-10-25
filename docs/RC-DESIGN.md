@@ -99,7 +99,10 @@ its parameter counted and a quiet cycle (functions returning no reference)
 does not. A declared `own` stays counted whatever the analysis says, since
 the checker's affine discipline (E050) and call sites rely on it; a bare
 string or array parameter is deliberately not promoted (`owned_shape`): a
-byte kernel reads its argument and hands back an index.
+byte kernel reads its argument and hands back an index. A row holds the
+mode each parameter ends with (`mode_bits`), not the raw escape, so a caller
+handing a field to a parameter its callee can never count keeps its own
+parameter borrowed.
 
 `semsource.with_inferred_modes` rewrites the modes of every produced body and
 every callee contract it carries from the same rows, so definition and call
@@ -232,7 +235,7 @@ for every plan ownership inference tries):
   the construction spends (`ReusePairs.tokens` where it is taken,
   `.builds` where it is spent, `.selfs` for a value dying at the
   construction itself). A value dying after its block's last construction
-  may be **carried** to a construction in a later block (`Carry`): the
+  of its own slot count may be **carried** to a construction in a later block (`Carry`): the
   blocks holding it, the constructions it is handed to, the edges leaving
   its ways that free it, and the edges on which it arrives null because the
   donor died there as a box of another count. A construction that reads a
@@ -243,7 +246,9 @@ for every plan ownership inference tries):
   whose payloads a block takes and which dies in the block with no such
   construction is **classified** (a keep with no construction, `built` -1):
   its takes and its death follow one uniqueness read. The
-  routes and the one-token-slot discipline are decided here, once; the
+  routes and the one-token-slot discipline are decided here, once (a
+  carried construction inside a keep's or a classified donor's span reads
+  its token from the donor's local, so it needs no slot); the
   lowering only emits what the tables say. `FERN_SELFHOST_NO_REUSE=1`
   (`reuse_layer_disabled`) plans no token, and the program's behaviour is
   unchanged.
@@ -296,7 +301,9 @@ locals sit above `nvals`. It emits:
   one, the replaced children are released under the token's non-null arm and
   the kept fields are left in place (`reuse_construct`). A carried token is
   taken where the donor dies (`hold_token`), passed through its way in the
-  donor's own local, spent by the construction (`self_token`) and freed on
+  donor's own local, moved into the token slot for the construction
+  (`slot_token`), or read from the local where a keep or a classified donor
+  holds the slot (`token_slot_held`), and freed on
   an exit edge (`free_token`); a null edge zeroes the local. The lowering
   makes no pairing of its own. Pinned by `TestSelfHostCrossBlockReuse`,
   `TestSelfHostLoopReuseIR*`, `TestSelfHostSemanticReuseDifferential`, the

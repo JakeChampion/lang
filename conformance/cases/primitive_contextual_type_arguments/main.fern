@@ -8,8 +8,9 @@ function main(): i32 {
   let source: string = "hello";
   let view: str = slice_unchecked(source, 1, 4);
   let same: str = identity[str](view);
+  let literal: str = identity[str]("abc");
   let cs: char[] = identity[char[]](['é']);
-  if (c != 'é' || same != "ell" || cs[0] != c) {
+  if (c != 'é' || same != "ell" || literal != "abc" || cs[0] != c) {
     return 1;
   }
   print("contextual type arguments ok");

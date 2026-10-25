@@ -110,6 +110,45 @@ only a test-specific driver. The lane runs on main and on `ci-full` pull
 requests. There, the five minutes of latency the edge adds cost less than a
 driver build in each of some thirty jobs.
 
+## Fewer jobs
+
+Run 40179239803, main's full suite before the drivers-once edge, ran 97 jobs
+for 705 runner-minutes. 41 of those jobs ran under four minutes, and a job's
+setup (checkout, toolchain, test binaries) is one to two minutes of that.
+Jobs waited 10 to 35 minutes for a runner. On a pool that queues, a job slot
+costs more than the minutes it saves, so the small jobs fold:
+
+| Lane | Before | After | Why |
+| --- | ---: | ---: | --- |
+| Self-host whole-compiler proofs | 5 jobs | 0 | The seven tests measure 48 to 165 s each since #13197. They ride the shards with weight rows. |
+| Test units, heavy group | 4 shards per host | 2 | About 4 minutes of tests per shard after setup. |
+| Test coreutils | 4 shards per host | 2 | About 3.5 minutes of tests per shard after setup. |
+| Test e2e differential | 2 shards per arch | 1 | About 3 minutes of sweep per shard after setup. |
+| Test e2e x86_64 | 2 shards | 1 | About 90 seconds of tests per shard. |
+| Test e2e arm64 | 3 shards | 1 | About 1.5 minutes of tests per shard. |
+
+Eighteen jobs fewer per full run, and seven fewer per Preflight run. The
+longest job of the suite is unchanged: the self-host shards at 10 to 13
+minutes. `TestSelfHostConstFuncGen2` is opt-in locally, so the shard job
+sets `RUN_CONST_FUNC_GEN2=1`.
+
+## Fewer helper runs
+
+At 12:04 UTC on 2026-10-25 the repository had 4 jobs running and 92 runs
+queued. Of those runs, 11 were `Check sources`, 11 `Cancel runs on conflict`,
+11 `Reap stale runs` for pushes, and 16 `Cancel superseded runs` and 15
+`Reap stale runs` for pull requests. Each is one job that waits in the same
+queue as the suite's jobs. In that hour the dispatcher started 4 to 8 jobs
+per five minutes. Every job in the queue therefore cost the same wait,
+whatever its length.
+
+A push to main now runs one job, `main-housekeeping.yml`, with the three
+steps the three workflows ran. A closed pull request runs one job,
+`cancel-on-merge.yml`, which now runs the stale-run sweep after its own
+cancel. The sweep is a composite action, `.github/actions/reap-stale-runs`,
+and `reap-stale-runs.yml` keeps only its cron, the quiet-hours floor. That
+is two jobs fewer per merge and one fewer per closed pull request.
+
 ## The catch-all lane, measured
 
 The lane's selection after the deletion, run through `cmd/ci-test-workers`

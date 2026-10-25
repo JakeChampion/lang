@@ -12,24 +12,16 @@ name: Test e2e differential
 #
 # Split via the `DIFF_ORACLE_SHARD=I/N` env var the tests honour: each
 # shard claims `seed % N == I`, so at N=1 one job sweeps the whole
-# corpus. Crossed with the per-arch matrix that gives 2 parallel jobs.
+# corpus. Crossed with the per-arch matrix.
 #
-# The shard count is set by queue pressure, not by the work, and it has
-# come down twice for that reason: four per arch (run 31819148034, 18.5
-# min of work across 8 jobs), then two. On run 33675174529 the four
-# jobs ran 4.6-5.0 min each after waiting 30-40 min for a runner — six
-# to eight times more queueing than working, which is a slot spent on
-# job setup. ONE shard per arch then swept the whole corpus in ~9.5 min,
-# which made it one of the suite's longest jobs (10.8 min on aarch64, run
-# 35745901102). Two per arch again since a push cancels its superseded run
-# server-side (#10011), which is what took the queue pressure away.
-#
-# Splitting a fixed corpus costs no coverage at any N: every seed is
-# claimed by exactly one bucket, and at N=1 that bucket is the sweep.
-# So this trades wall-clock for slots and nothing else. Raise it again
-# if per-shard wall-clock creeps toward the slow lanes as the corpus
-# grows; nshard rides the matrix, so the denominator moves with the
-# job count rather than being restated by hand.
+# ONE SHARD per arch. Splitting a fixed corpus costs no coverage at any N:
+# every seed is claimed by exactly one bucket, and at N=1 that bucket is
+# the sweep. So the count trades wall-clock for runner slots and nothing
+# else. The sweep is about 6 minutes of tests per arch after setup, and two
+# shards each ran about 3 minutes after the same setup while the pool queued
+# jobs for 20 minutes or more (docs/ci-log/2026-10-25-pr-ci-queue.md).
+# Raise it if the sweep grows toward the suite's longest jobs; nshard rides
+# the matrix, so the denominator moves with the job count.
 #
 # Needs wasmtime for the wasm32-wasi legs. arm64 legs skip on x86 (no
 # qemu / cross-gcc); x86 legs skip on arm64 (no qemu-x86_64). Matrix per
@@ -70,21 +62,20 @@ jobs:
         host:
           - { runner: ubuntu-24.04,     name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Two shards per arch, each half the 2048-seed sweep. See the
-        # shard-count note above before changing this; nshard rides along so the partition
+        # One shard per arch, the whole 2048-seed sweep. See the shard-count
+        # note above before changing this; nshard rides along so the partition
         # denominator cannot drift from the number of jobs scheduled, which
         # is pinned by TestShardDenominatorMatchesMatrix.
         shard:
-          - { index: 0, nshard: 2 }
-          - { index: 1, nshard: 2 }
+          - { index: 0, nshard: 1 }
         exclude:
           - host:
               runner: ubuntu-24.04-arm
               name: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
     name: test-e2e-differential-${{ matrix.host.name }}-shard${{ matrix.shard.index }}
     runs-on: ${{ matrix.host.runner }}
-    # ~5 min of sweep per shard at two; 25 is generous and leaves room for a
-    # slow runner or a return to one shard.
+    # About 6 minutes of sweep in the one shard; 25 leaves room for a slow
+    # runner.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
