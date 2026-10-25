@@ -124,6 +124,12 @@ const byteCopyRuntimeSuccess = `function main(): i32 {
     }
     di = di + 1;
   }
+  if (!back_ok(roomy(24, 5), 8, 8)) { return 12; }
+  if (!back_ok(roomy(24, 5), 8, 9)) { return 13; }
+  let shared = roomy(24, 20); let kept = shared;
+  let before5 = __heap_alloc_count();
+  let cloned = __fern_bytes_append_back(shared, 8, 8);
+  if (__heap_alloc_count() - before5 != 1i64 || kept.len() != 24 || cloned.len() != 32) { return 14; }
   return 0;
 }
 @noinline function roomy(n: i32, words: i32): i32[] {
