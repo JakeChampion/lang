@@ -2998,11 +2998,11 @@ pub function tcp_connect_with_func(): string {
   o = o + "  (func $__fern_tcp_connect_with (param $addr i32) (param $port i32) (param $nb i32) (result i32)\n";
   o = o + "    (local $sock i32) (local $ret i32) (local $st i32) (local $e i32) (local $p i32) (local $flat i32) (local $tmp i32)\n";
   o = o + ip_flat_prologue();
-  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 20)))\n";
   o = o + "    (call $__fern_wasi_create_tcp_socket (i32.load (local.get $flat)) (local.get $ret))\n";
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
   o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 20))\n";
   o = o + "      (return (local.get $e))))\n";
   o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
   o = o + "    (call $__fern_wasi_tcp_start_connect (local.get $sock) (call $__fern_network_handle)\n";
@@ -3011,11 +3011,12 @@ pub function tcp_connect_with_func(): string {
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
   o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
   o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=1 (local.get $ret)))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 20))\n";
   o = o + "      (return (local.get $e))))\n";
   o = o + "    (if (local.get $nb) (then\n";
   o = o + "      (i32.store (local.get $ret) (local.get $sock))\n";
   o = o + "      (i32.store offset=12 (local.get $ret) (i32.const 4))\n";
+  o = o + "      (i32.store offset=16 (local.get $ret) (i32.const 1))\n";
   o = o + "      (return (local.get $ret))))\n";
   o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
   o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
@@ -3024,13 +3025,14 @@ pub function tcp_connect_with_func(): string {
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
   o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
   o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 20))\n";
   o = o + "      (return (local.get $e))))\n";
   o = o + "    (local.set $st (local.get $ret))\n";
   o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
   o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
   o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
   o = o + "    (i32.store offset=12 (local.get $st) (i32.const 1))\n";
+  o = o + "    (i32.store offset=16 (local.get $st) (i32.const 0))\n";
   o = o + "    (local.get $st))\n";
   return o;
 }
@@ -3071,7 +3073,7 @@ function tcp_listen_step(call: string): string {
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
   o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
   o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=1 (local.get $ret)))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 20))\n";
   o = o + "      (return (local.get $e))))\n";
   return o;
 }
@@ -3083,7 +3085,7 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
   if (with_backlog) {
     o = o + ip_flat_prologue();
   }
-  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 20)))\n";
   if (with_backlog) {
     o = o + "    (call $__fern_wasi_create_tcp_socket (i32.load (local.get $flat)) (local.get $ret))\n";
   } else {
@@ -3091,7 +3093,7 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
   }
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
   o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 20))\n";
   o = o + "      (return (local.get $e))))\n";
   o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
   if (with_backlog) {
@@ -3115,6 +3117,7 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
   o = o + "    (i32.store offset=4 (local.get $st) (i32.const 0))\n";
   o = o + "    (i32.store offset=8 (local.get $st) (i32.const 0))\n";
   o = o + "    (i32.store offset=12 (local.get $st) (i32.const 0))\n";
+  o = o + "    (i32.store offset=16 (local.get $st) (i32.const 0))\n";
   o = o + "    (local.get $st))\n";
   return o;
 }
@@ -3155,7 +3158,7 @@ pub function tcp_socket_ctl_func(udp: boolean): string {
   o = o + "    (local $ret i32) (local $e i32)\n";
   o = o + name_group_arm(9, "$__fern_wasi_tcp_local_address", "$__fern_wasi_udp_local_address", udp);
   o = o + name_group_arm(10, "$__fern_wasi_tcp_remote_address", "$__fern_wasi_udp_remote_address", udp);
-  o = o + "    (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (i32.or (i32.eq (local.get $op) (i32.const 6)) (i32.eq (local.get $op) (i32.const 8)))) (then (return (i32.const -58))))\n";
+  o = o + "    (if (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.or (i32.eq (local.get $op) (i32.const 6)) (i32.eq (local.get $op) (i32.const 8)))) (then (return (i32.const -58))))\n";
   o = o + "    (if (i32.eq (local.get $op) (i32.const 7)) (then\n";
   o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const 0))))\n";
   o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
@@ -3171,6 +3174,9 @@ pub function tcp_socket_ctl_func(udp: boolean): string {
   o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
   o = o + "      (return (local.get $e))))\n";
   o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const -58))))\n";
+  o = o + "    (if (i32.eq (local.get $op) (i32.const 3)) (then\n";
+  o = o + "      (i32.store offset=16 (local.get $c) (i32.ne (local.get $arg) (i32.const 0)))\n";
+  o = o + "      (return (i32.const 0))))\n";
   o = o + "    (if (i32.eq (local.get $op) (i32.const 5)) (then\n";
   o = o + "      (if (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 1)) (then (return (i32.const 0))))\n";
   o = o + "      (if (i32.ne (i32.load offset=12 (local.get $c)) (i32.const 4)) (then (return (i32.const -28))))\n";
@@ -3228,20 +3234,22 @@ pub function tcp_accept_func(): string {
   o = o + "  (func $__fern_tcp_accept (param $l i32) (result i32)\n";
   o = o + "    (local $sock i32) (local $p i32) (local $ret i32) (local $st i32) (local $e i32)\n";
   o = o + "    (local.set $sock (i32.load (local.get $l)))\n";
-  o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
-  o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
-  o = o + "    (call $__fern_wasi_pollable_drop (local.get $p))\n";
-  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+  o = o + "    (if (i32.eqz (i32.load offset=16 (local.get $l))) (then\n";
+  o = o + "      (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
+  o = o + "      (call $__fern_wasi_pollable_block (local.get $p))\n";
+  o = o + "      (call $__fern_wasi_pollable_drop (local.get $p))))\n";
+  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 20)))\n";
   o = o + "    (call $__fern_wasi_tcp_accept (local.get $sock) (local.get $ret))\n";
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
   o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 20))\n";
   o = o + "      (return (local.get $e))))\n";
   o = o + "    (local.set $st (local.get $ret))\n";
   o = o + "    (i32.store (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
   o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
   o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=12 (local.get $ret)))\n";
   o = o + "    (i32.store offset=12 (local.get $st) (i32.const 1))\n";
+  o = o + "    (i32.store offset=16 (local.get $st) (i32.const 0))\n";
   o = o + "    (local.get $st))\n";
   return o;
 }
@@ -3516,23 +3524,29 @@ pub function reactor_wait_func(): string {
 pub function tcp_recv_into_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_recv_into (param $c i32) (param $buf i32) (result i32)\n";
-  o = o + "    (local $ret i32) (local $n i32) (local $src i32) (local $len i32) (local $closed i32)\n";
+  o = o + "    (local $ret i32) (local $n i32) (local $src i32) (local $len i32) (local $closed i32) (local $p i32)\n";
   o = o + "    (if (i32.ne (i32.load offset=12 (local.get $c)) (i32.const 1)) (then (return (i32.const -8))))\n";
   o = o + "    (local.set $n (i32.load (local.get $buf)))\n";
   o = o + "    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))\n";
   o = o + "    (local.set $ret (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
-  o = o + "    (global.set $__fern_lend (i32.add (local.get $buf) (i32.const 8)))\n";
-  o = o + "    (global.set $__fern_lend_cap (local.get $n))\n";
-  o = o + "    (call $__fern_wasi_stream_read_nb (i32.load offset=4 (local.get $c)) (i64.extend_i32_u (local.get $n)) (local.get $ret))\n";
-  o = o + "    (global.set $__fern_lend (i32.const 0))\n";
-  o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "      (local.set $closed (i32.load8_u offset=4 (local.get $ret)))\n";
-  o = o + "      (if (i32.eqz (local.get $closed)) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
-  o = o + "      (if (local.get $closed) (then (return (i32.const 0))))\n";
-  o = o + "      (return (i32.const -29))))\n";
-  o = o + "    (local.set $src (i32.load offset=4 (local.get $ret)))\n";
-  o = o + "    (local.set $len (i32.load offset=8 (local.get $ret)))\n";
-  o = o + "    (if (i32.eqz (local.get $len)) (then (return (i32.const -6))))\n";
+  o = o + "    (loop $wait\n";
+  o = o + "      (global.set $__fern_lend (i32.add (local.get $buf) (i32.const 8)))\n";
+  o = o + "      (global.set $__fern_lend_cap (local.get $n))\n";
+  o = o + "      (call $__fern_wasi_stream_read_nb (i32.load offset=4 (local.get $c)) (i64.extend_i32_u (local.get $n)) (local.get $ret))\n";
+  o = o + "      (global.set $__fern_lend (i32.const 0))\n";
+  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
+  o = o + "        (local.set $closed (i32.load8_u offset=4 (local.get $ret)))\n";
+  o = o + "        (if (i32.eqz (local.get $closed)) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+  o = o + "        (if (local.get $closed) (then (return (i32.const 0))))\n";
+  o = o + "        (return (i32.const -29))))\n";
+  o = o + "      (local.set $src (i32.load offset=4 (local.get $ret)))\n";
+  o = o + "      (local.set $len (i32.load offset=8 (local.get $ret)))\n";
+  o = o + "      (if (i32.eqz (local.get $len)) (then\n";
+  o = o + "        (if (i32.load offset=16 (local.get $c)) (then (return (i32.const -6))))\n";
+  o = o + "        (local.set $p (call $__fern_wasi_input_stream_subscribe (i32.load offset=4 (local.get $c))))\n";
+  o = o + "        (call $__fern_wasi_pollable_block (local.get $p))\n";
+  o = o + "        (call $__fern_wasi_pollable_drop (local.get $p))\n";
+  o = o + "        (br $wait))))\n";
   o = o + "    (if (i32.ne (local.get $src) (i32.add (local.get $buf) (i32.const 8))) (then\n";
   o = o + "      (memory.copy (i32.add (local.get $buf) (i32.const 8)) (local.get $src) (local.get $len))\n";
   o = o + "      (call $__fern_raw_free (local.get $src) (local.get $len))))\n";
@@ -3777,7 +3791,7 @@ pub function tcp_close_func(udp: boolean): string {
   o = o + "      (call $__fern_wasi_input_stream_drop (i32.load offset=4 (local.get $c)))\n";
   o = o + "      (call $__fern_wasi_output_stream_drop (i32.load offset=8 (local.get $c)))))\n";
   o = o + "    (call $__fern_wasi_tcp_socket_drop (i32.load (local.get $c)))\n";
-  o = o + "    (call $__fern_raw_free (local.get $c) (i32.const 16))\n";
+  o = o + "    (call $__fern_raw_free (local.get $c) (i32.const 20))\n";
   o = o + "    (i32.const 0))\n";
   return o;
 }
@@ -9383,7 +9397,7 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   }
   if (need(needs, "reactor_ctl")) {
     parts = parts.append(wasi_stream_subscribe_imports());
-  } else if (need(needs, "tcp_pollable")) {
+  } else if (need_any(needs, ["tcp_pollable", "tcp_recv_into"])) {
     parts = parts.append(wasi_input_stream_subscribe_import());
   }
   if (need(needs, "tcp_recv_into")) {
@@ -9423,15 +9437,15 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
     parts = parts.append(wasi_udp_in_subscribe_import());
   }
   let udp_waits: boolean = need_udp_send(needs) || need(needs, "udp_recvfrom");
-  let connects: boolean = need(needs, "tcp_connect_with") || need(needs, "tcp_accept");
+  let socket_waits: boolean = need_any(needs, ["tcp_connect_with", "tcp_accept", "tcp_recv_into"]);
   let sleeps: boolean = sleep_p2 && need_any(needs, ["sleep_ms", "sleep_ns"]);
   if (need_any(needs, ["wasm_timer_pollable", "poll", "reactor_wait"]) || sleeps) {
     parts = parts.append(wasi_subscribe_duration_import());
   }
-  if (need(needs, "wasm_block") || udp_waits || connects || sleeps) {
+  if (need(needs, "wasm_block") || udp_waits || socket_waits || sleeps) {
     parts = parts.append(wasi_pollable_block_import());
   }
-  if (need_any(needs, ["wasm_pollable_drop", "reactor_ctl", "reactor_wait", "poll"]) || udp_waits || connects || sleeps) {
+  if (need_any(needs, ["wasm_pollable_drop", "reactor_ctl", "reactor_wait", "poll"]) || udp_waits || socket_waits || sleeps) {
     parts = parts.append(wasi_pollable_drop_import());
   }
   if (need_any(needs, ["wasm_poll", "poll", "reactor_wait"])) {
@@ -12763,7 +12777,7 @@ function called_names(mod: parser.Module): util.NameIndex {
 struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, clkres: boolean, ep: boolean, ex: boolean, net: boolean, fs: boolean, wait: boolean }
 
 pub function census_on(sw: asmcore.Switches): boolean {
-  return sw.sanitize || asmcore.leak_check_on();
+  return sw.sanitize || sw.leak_check;
 }
 
 function host_needs(mod: parser.Module, census: boolean): HostNeeds {

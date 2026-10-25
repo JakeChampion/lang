@@ -326,6 +326,19 @@ pub function from_lanes(f: ssasem.Func, insts: ssa.SInst[], words: i32[], t: typ
   return Lanes { f: value(out.f, t), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.tuple_new(), result: v, args: args, imm: 0, str: "" }), value: v };
 }
 
+// lane_set and lane_as move one 64-bit part of a split payload through lane
+// k, beside the pair words that carry its other parts.
+pub function lane_set(f: ssasem.Func, insts: ssa.SInst[], v: i32, t: typeinfo.Type, k: i32): Lanes {
+  let out: Build = call(Build { f: f, insts: insts, result: v }, conversion(bits_name(), t), v, t, word_type());
+  out = call(out, set_prefix() + util.i32_to_string(k), out.result, word_type(), dummy_type());
+  return Lanes { f: out.f, insts: out.insts, value: 0 - 1 };
+}
+
+pub function lane_as(f: ssasem.Func, insts: ssa.SInst[], w: i32, t: typeinfo.Type): Lanes {
+  let out: Build = call(Build { f: f, insts: insts, result: w }, conversion(as_name(), t), w, word_type(), t);
+  return Lanes { f: out.f, insts: out.insts, value: out.result };
+}
+
 pub function lane_word(f: ssasem.Func, insts: ssa.SInst[], w: i32, lane: i32, k: i32): Lanes {
   let name: string = word_prefix() + util.i32_to_string(k);
   let g: ssasem.Func = contract(f, name, word_type(), word_type());

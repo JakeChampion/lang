@@ -86,6 +86,9 @@ pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[]
 }
 
 pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  if (nonce.len() != 12) {
+    return Err(aead.NonceLength(nonce.len()));
+  }
   if (sealed.len() < 16) {
     return Err(aead.Forged);
   }

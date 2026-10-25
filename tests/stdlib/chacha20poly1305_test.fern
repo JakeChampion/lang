@@ -179,6 +179,9 @@ function test_lengths(): test.TestOutcome {
   if (shown(seal_bytes(__codec_bytes(hex.decode("0011")), aead_nonce(), none, none)) != "aead: the key is 2 bytes, the wrong length for this cipher") {
     return test.fail("a short key was not refused by its length");
   }
+  if (shown(open_bytes(key_seq(0), __codec_bytes(hex.decode("00")), none, none)) != "aead: the nonce is 1 bytes, want 12") {
+    return test.fail("a short message with a 1-byte nonce was not refused by the nonce");
+  }
   return test.assert_eq(shown(seal_bytes(key_seq(0), __codec_bytes(hex.decode("00")), none, none)), "aead: the nonce is 1 bytes, want 12");
 }
 

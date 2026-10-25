@@ -1,5 +1,6 @@
 import "std/test";
 import "std/quic/conn";
+import "std/quic/streams";
 import "std/quic/packet";
 import "std/quic/frames";
 import "std/quic/recovery";
@@ -70,9 +71,9 @@ function start_at(cc: conn.Config, sc: conn.Config, unix_ms: i64): Result[Pair, 
   return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false });
 }
 
-function noted(who: string, evs: conn.Event[]): string {
+function noted(who: string, c: conn.Conn): string {
   let out: string = "";
-  for e in evs {
+  for e in c.events {
     match (e) {
       conn.Connected => {
         out = out + who + " connected; ";
@@ -83,15 +84,19 @@ function noted(who: string, evs: conn.Event[]): string {
           side = "remote";
         }
         out = out + who + " closed " + side + " " + why.code.to_string() + " " + why.reason + "; ";
-      },
-      conn.StreamOpened(id) => {
+      }
+    }
+  }
+  for n in c.stream_events() {
+    match (n) {
+      streams.Opened(id) => {
         out = out + who + " opened " + id.to_string() + "; ";
       },
-      conn.StreamReadable(_) => {},
-      conn.StreamReset(id, code) => {
+      streams.Readable(_) => {},
+      streams.ResetByPeer(id, code) => {
         out = out + who + " reset " + id.to_string() + " " + code.to_string() + "; ";
       },
-      conn.StreamStopped(id, code) => {
+      streams.StopRequested(id, code) => {
         out = out + who + " stopped " + id.to_string() + " " + code.to_string() + "; ";
       }
     }
@@ -103,7 +108,7 @@ function to_server(p: Pair, d: u8[]): Pair {
   match (p.server) {
     Some(s) => {
       let step: conn.Conn = s.receive(d, p.now);
-      return Pair { ...p, server: Some(step.events_taken()), log: p.log + noted("server", step.events) };
+      return Pair { ...p, server: Some(step.events_taken()), log: p.log + noted("server", step) };
     },
     None => {
       match (packet.parse(d, 0, 8)) {
@@ -127,7 +132,7 @@ function to_server(p: Pair, d: u8[]): Pair {
 
 function to_client(p: Pair, d: u8[]): Pair {
   let step: conn.Conn = p.client.receive(d, p.now);
-  return Pair { ...p, client: step.events_taken(), log: p.log + noted("client", step.events) };
+  return Pair { ...p, client: step.events_taken(), log: p.log + noted("client", step) };
 }
 
 function exchange(p: Pair): (Pair, boolean) {
@@ -216,11 +221,11 @@ function tick(p: Pair, until: i64): Pair {
     now = p.now;
   }
   let cs: conn.Conn = p.client.tick(now);
-  let cur: Pair = Pair { ...p, now: now, client: cs.events_taken(), log: p.log + noted("client", cs.events) };
+  let cur: Pair = Pair { ...p, now: now, client: cs.events_taken(), log: p.log + noted("client", cs) };
   match (cur.server) {
     Some(s) => {
       let ss: conn.Conn = s.tick(now);
-      return Pair { ...cur, server: Some(ss.events_taken()), log: cur.log + noted("server", ss.events) };
+      return Pair { ...cur, server: Some(ss.events_taken()), log: cur.log + noted("server", ss) };
     },
     None => {
       return cur;

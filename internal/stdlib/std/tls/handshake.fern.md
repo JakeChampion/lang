@@ -2850,6 +2850,9 @@ pub function (s: Server) write_framed(own buf: u8[]): Result[ServerStep, Handsha
 
 function __write_framed(c: Conn, own buf: u8[]): Result[Wrote, HandshakeError] {
   let n: i32 = buf.len() - record.FRAMED_HEAD - record.FRAMED_TAIL;
+  if (n < 0) {
+    return Err(Record(record.EmptyFragment));
+  }
   if (c.quic || c.writing == 0 || c.kernel || n > 16384) {
     return __write(c, record.ApplicationData, buf[record.FRAMED_HEAD:record.FRAMED_HEAD + n]);
   }
