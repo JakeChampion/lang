@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
@@ -52,14 +51,14 @@ func TestFernloadX86_64(t *testing.T) {
 		t.Fatalf("fernload build failed: %v\n%s", err, o)
 	}
 	addr, _ := e2eharness.StartInheritedServer(t, runX86Bin(qemu, hello))
-	e2eharness.WaitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr)
 	checkFernload(t, runX86Bin(qemu, load, "--rate", "200", "--connections", "4", "--duration", "2", "http://"+addr+"/"), 400)
 }
 
 func TestFernloadInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", writeFernloadHello(t)))
-	e2eharness.WaitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr)
 	checkFernload(t, exec.Command(bin, "-interp", fernloadSource(t), "--", "--rate", "50", "--connections", "2", "--duration", "2", "http://"+addr+"/"), 100)
 }
 

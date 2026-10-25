@@ -31,7 +31,7 @@ var ConfigHandlerEnv = []string{"GREETING=hello", "TOKEN=s3cr3t"}
 
 func CheckConfigHandler(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	client := &http.Client{Timeout: 5 * time.Second}
 	for _, c := range []struct{ path, want string }{
 		{"/greeting", "hello"},
