@@ -134,12 +134,12 @@ function load_world(folder: string, name: string): model.World {
     },
     Err(error) => {
       eprint("Blockyard recovery: " + error);
-      let unavailable = model.world(name, map_new(4) as Map[i32, i32], 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("World storage is unavailable."));
+      let unavailable = model.world(name, map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("World storage is unavailable."));
       unavailable.fault.set(error);
       return unavailable;
     }
   }
-  return model.world(name, map_new(4) as Map[i32, i32], 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("World storage is unavailable."));
+  return model.world(name, map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("World storage is unavailable."));
 }
 
 pub function participants(state: State): i32 {

@@ -7,7 +7,7 @@ import "../blockyard_world" as model;
 import "../voxel";
 
 function memory_world(): model.World {
-  return model.world("test", map_new(4) as Map[i32, i32], 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Ok(()));
+  return model.world("test", map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Ok(()));
 }
 
 function input(seq: i64, flags: i32, x: i32, z: i32, pitch: i32): u8[] {
@@ -97,7 +97,7 @@ function seats_and_interest(): test.TestOutcome {
 
 function edit_authority(): test.TestOutcome {
   let commits = cell_new(0);
-  let world = model.world("build", map_new(4) as Map[i32, i32], 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => {
+  let world = model.world("build", map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => {
     commits.set(commits.get() + changes.len());
     return Ok(());
   });
@@ -142,7 +142,7 @@ function edit_authority(): test.TestOutcome {
 }
 
 function storage_failure(): test.TestOutcome {
-  let world = model.world("fault", map_new(4) as Map[i32, i32], 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("disk unavailable"));
+  let world = model.world("fault", map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("disk unavailable"));
   let Ok(seat) = model.reserve(world, 0) else {
     return test.fail("no seat");
   };

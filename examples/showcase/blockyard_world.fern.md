@@ -119,9 +119,9 @@ pub function material(blocks: Map[i32, i32], x: i32, y: i32, z: i32): i32 {
 pub function world(name: string, blocks: Map[i32, i32], revision: i64, persist: (Map[i32, i32], Change[], i64) => Result[void, string]): World {
   let value = World {
     name: name, players: cell_new([] as Player[]), count: cell_new(0), updated: cell_new(None as Option[i64]), tick: cell_new(0 as i64),
-    blocks: cell_new(blocks), chunks: cell_new(map_new(32) as Map[i32, (i32, i32)[]]), versions: cell_new(map_new(32) as Map[i32, i64]), revision: cell_new(revision),
+    blocks: cell_new(blocks), chunks: cell_new(map_new(32)), versions: cell_new(map_new(32)), revision: cell_new(revision),
     pending: cell_new([] as Proposal[]), history: cell_new([] as Event[]), serial: cell_new(0 as i64), fault: cell_new(""),
-    index: cell_new(Index { starts: [], ids: [] }), packets: cell_new(map_new(16) as Map[i32, u8[]]), deltas: cell_new(map_new(16) as Map[string, string]), inputs: cell_new(0 as i64), persist: persist,
+    index: cell_new(Index { starts: [], ids: [] }), packets: cell_new(map_new(16)), deltas: cell_new(map_new(16)), inputs: cell_new(0 as i64), persist: persist,
   };
   for entry in blocks.entries() {
     let x = entry.0 % 512;
@@ -473,7 +473,7 @@ function index_change(world: World, change: Change, revision: i64): void {
   let chunk = chunk_key(change.x, change.z);
   let local = local_key(change.x, change.y, change.z);
   let chunks = world.chunks.get();
-  world.chunks.set(map_new(32) as Map[i32, (i32, i32)[]]);
+  world.chunks.set(map_new(32));
   let entries = chunks.get(chunk).unwrap_or([] as (i32, i32)[]);
   let next: (i32, i32)[] = [];
   for entry in entries {
@@ -486,7 +486,7 @@ function index_change(world: World, change: Change, revision: i64): void {
   }
   world.chunks.set(chunks.insert(chunk, next));
   let versions = world.versions.get();
-  world.versions.set(map_new(32) as Map[i32, i64]);
+  world.versions.set(map_new(32));
   world.versions.set(versions.insert(chunk, revision));
 }
 
@@ -619,8 +619,8 @@ pub function advance(world: World, now: i64): void {
   world.players.set(players);
   commit(world);
   world.index.set(spatial(world.players.get()));
-  world.packets.set(map_new(16) as Map[i32, u8[]]);
-  world.deltas.set(map_new(16) as Map[string, string]);
+  world.packets.set(map_new(16));
+  world.deltas.set(map_new(16));
 }
 
 pub function event_start(history: Event[], cursor: i64): i32 {
@@ -665,7 +665,7 @@ pub function delta(world: World, cell: i32, cursor: i64): string {
   }
   let result = Delta { kind: "edits", cursor: world.serial.get(), revision: world.revision.get(), reset: reset, blocks: changes }.to_json();
   let cache = world.deltas.get();
-  world.deltas.set(map_new(16) as Map[string, string]);
+  world.deltas.set(map_new(16));
   world.deltas.set(cache.insert(cache_key, result));
   return result;
 }
@@ -749,7 +749,7 @@ pub function packet(world: World, cell: i32): u8[] {
     z = z + 1;
   }
   let cache = world.packets.get();
-  world.packets.set(map_new(16) as Map[i32, u8[]]);
+  world.packets.set(map_new(16));
   world.packets.set(cache.insert(cell, out));
   return out;
 }
