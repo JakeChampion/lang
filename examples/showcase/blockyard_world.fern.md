@@ -639,6 +639,10 @@ pub function event_start(history: Event[], cursor: i64): i32 {
 @derive(json.Json)
 struct Delta { kind: string, cursor: i64, revision: i64, reset: boolean, blocks: Change[] }
 
+pub function visible(change: Change, cell: i32): boolean {
+  return (change.x / 32 - cell % 16).abs() <= 1 && (change.z / 32 - cell / 16).abs() <= 1;
+}
+
 pub function delta(world: World, cell: i32, cursor: i64): string {
   let cache_key = cursor.to_string() + "/" + cell.to_string();
   if let Some(cached) = world.deltas.get().get(cache_key) {
@@ -652,7 +656,7 @@ pub function delta(world: World, cell: i32, cursor: i64): string {
     while (at < history.len()) {
       let event = history[at];
       let change = event.change;
-      if (event.error == "" && (change.x / 32 - cell % 16).abs() <= 1 && (change.z / 32 - cell / 16).abs() <= 1) {
+      if (event.error == "" && visible(change, cell)) {
         changes = changes.append(change);
       }
       at = at + 1;

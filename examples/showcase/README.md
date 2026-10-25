@@ -222,9 +222,11 @@ node examples/showcase/tests/blockyard.load.mjs http://localhost:8080 512 5
 
 The connection test first crowds all participants into the plaza. It then distributes them across four distant landmarks.
 It checks actual snapshot membership, input acknowledgements, capacity rejection, and complete seat cleanup.
+
 An optimized x86-64 Linux run retained 10 updates per second with 512 real connections in both arrangements.
 Crowded input latency was 10.5 ms at the median and 25.9 ms at p95. Server RSS was 14.5 MiB.
 Four distant groups received 128 players each. Snapshot traffic fell from 205 MiB to 51 MiB over five seconds.
+
 Loopback measurements exclude Internet latency and hosting limits.
 
 The browser gate checks two participants, shared touch edits, movement, flight, landmarks, mobile widths, and fullscreen:

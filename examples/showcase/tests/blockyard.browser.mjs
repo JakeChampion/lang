@@ -104,6 +104,35 @@ try {
       Number(document.querySelector("#view").dataset.x) > 400 &&
       document.querySelector("#welcome").hidden,
   );
+  await a.waitForFunction(
+    () => Number(document.querySelector("#view").dataset.chunks) === 49,
+  );
+  const refreshed = [];
+  a.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      url.pathname === "/blockyard/chunk" &&
+      url.searchParams.get("x") === "28"
+    )
+      refreshed.push(url.href);
+  });
+  const movement = await a.locator("#joystick").boundingBox();
+  await drag(
+    movement.x + movement.width / 2,
+    movement.y + movement.height / 2,
+    30,
+    0,
+    1000,
+  );
+  await a.waitForFunction(
+    () => Number(document.querySelector("#view").dataset.x) > 416,
+  );
+  const crossed = Date.now() + 5000;
+  while (!refreshed.length && Date.now() < crossed) await a.waitForTimeout(50);
+  assert.ok(
+    refreshed.length,
+    "the new update area did not refresh prefetched chunks",
+  );
   await a.locator(".fullscreen-toggle").tap();
   await a.waitForFunction(() => !!document.querySelector(".is-fullscreen"));
   await a.setViewportSize({ width: 844, height: 390 });

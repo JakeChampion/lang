@@ -10,6 +10,7 @@ import {
   chunkKey,
   voxelKey,
   localKey,
+  enteringChunks,
 } from "./protocol.mjs";
 import { palette as colors } from "./mesh.mjs";
 import { Renderer } from "./renderer.mjs";
@@ -19,6 +20,7 @@ const canvas = $("view"),
 const chunks = new Map(),
   wanted = new Set(),
   loading = new Set(),
+  refresh = new Set(),
   updates = new Map(),
   pending = new Map(),
   overlay = new Map(),
@@ -44,6 +46,7 @@ let renderer,
   tickSpan = 1,
   received = 0,
   rtt = 0;
+let interest = -1;
 let animation = 0,
   lastDraw = 0,
   lastSend = 0,
@@ -167,6 +170,8 @@ function resetChunks() {
   chunks.clear();
   wanted.clear();
   loading.clear();
+  refresh.clear();
+  interest = -1;
   updates.clear();
   lastChunks = "";
   renderer.clear();
@@ -193,12 +198,16 @@ function updateChunks(force = false) {
       renderer.remove(key);
       worker.postMessage({ kind: "forget", key, epoch });
     }
+  for (const key of updates.keys()) if (!wanted.has(key)) updates.delete(key);
+  for (const key of refresh) if (!wanted.has(key)) refresh.delete(key);
   pump();
 }
 function pump() {
   if (!workerReady) return;
   const choices = [...wanted]
-    .filter((key) => !chunks.has(key) && !loading.has(key))
+    .filter(
+      (key) => (!chunks.has(key) || refresh.has(key)) && !loading.has(key),
+    )
     .sort((a, b) => distance(a) - distance(b));
   while (activeFetches < 4 && choices.length) {
     const key = choices.shift();
@@ -214,6 +223,7 @@ function distance(key) {
 async function loadChunk(key, version) {
   activeFetches++;
   loading.add(key);
+  refresh.delete(key);
   try {
     const value = await json(
       `/blockyard/chunk?world=${encodeURIComponent(world)}&x=${key % 32}&z=${Math.floor(key / 32)}`,
@@ -246,6 +256,7 @@ async function loadChunk(key, version) {
     }
   } finally {
     activeFetches--;
+    if (version === epoch && !wanted.has(key)) loading.delete(key);
     pump();
   }
 }
@@ -260,7 +271,13 @@ function onWorker({ data: message }) {
     fatal(message.message);
     return;
   }
-  if (message.epoch !== epoch || !wanted.has(message.key)) return;
+  if (message.epoch !== epoch) return;
+  if (!wanted.has(message.key)) {
+    loading.delete(message.key);
+    worker.postMessage({ kind: "forget", key: message.key, epoch });
+    pump();
+    return;
+  }
   loading.delete(message.key);
   const voxels = message.voxels;
   for (const [at, change] of updates.get(message.key) || [])
@@ -402,6 +419,7 @@ function connect() {
           resetChunks();
           drawSoon();
         } else if (value.kind === "edits") applyEdits(value);
+        else if (value.kind === "receipt") resolve(value.nonce);
         else if (value.kind === "reject") {
           resolve(value.nonce);
           toast(value.message);
@@ -419,6 +437,10 @@ function connect() {
         return;
       }
       if (frame && value.tick <= frame.tick) return;
+      for (const key of enteringChunks(wanted, interest, value.sector))
+        if (chunks.has(key) || loading.has(key)) refresh.add(key);
+      interest = value.sector;
+      pump();
       tickSpan = frame ? value.tick - frame.tick : 1;
       previous = new Map(
         (frame?.players || value.players).map((p) => [p.id, p]),

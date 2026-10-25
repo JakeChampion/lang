@@ -5,6 +5,15 @@ export const voxelKey = (x, y, z) => (y * SIZE + z) * SIZE + x;
 export const chunkKey = (x, z) => z * 32 + x;
 export const localKey = (x, y, z) => (y * 16 + (z & 15)) * 16 + (x & 15);
 export const solid = (material) => material > 0 && material !== 11;
+export function enteringChunks(keys, previous, next) {
+  if (previous < 0 || previous === next) return [];
+  const contains = (key, cell) =>
+    Math.abs(((key % 32) >> 1) - (cell % 16)) <= 1 &&
+    Math.abs(Math.floor(key / 64) - Math.floor(cell / 16)) <= 1;
+  return [...keys].filter(
+    (key) => contains(key, next) && !contains(key, previous),
+  );
+}
 export function controls(seq, input) {
   const bytes = new ArrayBuffer(16),
     v = new DataView(bytes);
@@ -96,7 +105,15 @@ export function decode(bytes) {
       throw Error("Invalid player coordinate");
     players.push(player);
   }
-  return { kind: "snapshot", tick: v.getUint32(4, true), total, players };
+  if (v.getUint8(12) > 15 || v.getUint8(13) > 15)
+    throw Error("Invalid interest area");
+  return {
+    kind: "snapshot",
+    tick: v.getUint32(4, true),
+    sector: v.getUint8(13) * 16 + v.getUint8(12),
+    total,
+    players,
+  };
 }
 export function collisionMask(get, x, y, z) {
   const ox = Math.floor(x) - 1,

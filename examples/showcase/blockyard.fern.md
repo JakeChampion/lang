@@ -232,6 +232,9 @@ struct Rejection { kind: string, nonce: i64, message: string }
 @derive(json.Json)
 struct Travel { kind: string, seq: i64, x: f64, y: f64, z: f64 }
 
+@derive(json.Json)
+struct Receipt { kind: string, nonce: i64 }
+
 function rejected(connection: websocket.Conn, nonce: i64, message: string): void {
   let result = connection.send_text(Rejection { kind: "reject", nonce: nonce, message: message }.to_json());
   if let websocket.Dropped = result {
@@ -337,6 +340,12 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
           let event = history[at];
           if (event.lease == seat.key && event.error != "") {
             rejected(connection, event.change.nonce, event.error);
+          }
+          if (event.lease == seat.key && event.error == "" && !model.visible(event.change, model.sector(player))) {
+            let receipt = Receipt { kind: "receipt", nonce: event.change.nonce }.to_json();
+            if let websocket.Dropped = connection.send_text(receipt) {
+              connection.close(1013, "Cannot receive block results.");
+            }
           }
           at = at + 1;
         }

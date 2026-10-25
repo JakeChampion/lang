@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { controls, edit, decode, ray } from "../web/blockyard/protocol.mjs";
+import {
+  controls,
+  edit,
+  travel,
+  decode,
+  ray,
+  enteringChunks,
+} from "../web/blockyard/protocol.mjs";
 import { meshChunk } from "../web/blockyard/mesh.mjs";
 
 test("controls and edits have exact little-endian layouts", () => {
@@ -110,4 +117,25 @@ test("grid rays stop at the first solid cell and preserve the adjacent face", ()
     ray(() => 0, { x: 5, y: 2, z: 5 }, 0, 0),
     null,
   );
+});
+
+test("area changes refresh chunks that could miss distant edits", () => {
+  const keys = Array.from({ length: 1024 }, (_, i) => i),
+    cell = 8 * 16 + 8;
+  assert.deepEqual(enteringChunks(keys, -1, cell), []);
+  assert.deepEqual(enteringChunks(keys, cell, cell), []);
+  const entered = enteringChunks(keys, cell, cell + 1);
+  assert.equal(entered.length, 12);
+  for (const key of entered) {
+    assert.ok(key % 32 === 20 || key % 32 === 21);
+    assert.ok(Math.floor(key / 32) >= 14 && Math.floor(key / 32) <= 19);
+  }
+  assert.equal(enteringChunks(keys, cell, cell + 17).length, 20);
+  assert.equal(enteringChunks(keys, 0, 1).length, 8);
+  assert.deepEqual(enteringChunks(keys, 1, 0), []);
+  const packet = new DataView(travel(42, 3));
+  assert.equal(packet.byteLength, 16);
+  assert.equal(packet.getUint8(0), 3);
+  assert.equal(packet.getUint8(1), 3);
+  assert.equal(packet.getUint32(10, true), 42);
 });
