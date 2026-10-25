@@ -52,7 +52,8 @@ tracked in [#4415](https://github.com/JakeChampion/lang/issues/4415).
   ways. The hover text reads `(var) x: i32`,
   `function add(i32, i32): i32`, `struct Point { x: i32, y: i32 }`,
   `(variant of Color) Red`, `(method on Point) …` or `(from util) …`, with
-  another module's types under their bundled names (`util__Point`). Hover
+  another module's types spelled as the importing module writes them
+  (`util.Point`, or `u.Point` under `import "./util" as u`). Hover
   covers constants, a lambda's parameters and enum-qualified variants too. A
   definition lands on the declared name; one into another module names that
   module's file, one into the stdlib the stdlib file under the root; and a
