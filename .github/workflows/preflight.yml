@@ -1,0 +1,46 @@
+name: Preflight
+
+# The fast, high-signal checks a pull request gets BEFORE its full suite takes
+# a queue slot. ci.yml calls this lane outside the ci-suite.yml FIFO, beside
+# Lint, so a change that breaks the compiler is reported in minutes rather than
+# after the queue wait, and reap-preflight cancels the run, queued suite
+# included, the moment a leg fails. The jobs here were the self-host lane's
+# fixture legs: the whole fixture corpus (conformance/) through the self-host
+# compiler, one leg per target, which is the broadest cheap probe of a compiler
+# change. A leg is a few minutes on one runner, so the tier costs the pool
+# little while a red one hands a suite slot back to the next pull request.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures-selfhost:
+    name: fixtures-selfhost-${{ matrix.leg }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.job-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64-quarantine, test: TestFernFixturesSelfHostX86_64Quarantine, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
+          - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 45, go-timeout: 43m }
+          - { leg: front-end, test: "(TestFernFixturesSelfHostInterp|TestFernFixturesSelfHostCheck|TestGrammarDerivesSelfHostParsedSources)", wasmtime: "false", job-minutes: 30, go-timeout: 28m }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: ${{ matrix.wasmtime }}
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: aarch64 cross toolchain + qemu (arm64 leg)
+        if: matrix.qemu == 'true'
+        uses: ./.github/actions/apt-cross-toolchain
+      - name: run the fixture corpus through the self-host compiler
+        env:
+          FERN_SELFHOST_FIXTURES: "1"
+        run: go test ./internal/testing/e2e/ -run '^${{ matrix.test }}$' -v -timeout ${{ matrix.go-timeout }}

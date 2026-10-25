@@ -1,0 +1,5 @@
+function main(): i32 {
+  let n: usize = 1;
+  let result: Option[usize] = n *? n;
+  return 0;
+}
