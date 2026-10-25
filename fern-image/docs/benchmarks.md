@@ -34,3 +34,30 @@ The shared host produced substantial timing variance.
 Raw records identify the CPU, compiler hash, flags, and source hash.
 These numbers do not isolate kernel latency or establish a regression threshold.
 RSS, throughput, image quality, and libvips comparisons remain unmeasured.
+
+## M4 sparse row observations
+
+The row benchmark represents a ten-million-pixel solid source and nearest output graph.
+It requests five sparse rows, each with 2,000 output bytes.
+The logical scratch limit is 12,000 bytes.
+The implementation does not allocate a complete source or destination pixel array.
+
+Three process samples took 2.803, 2.066, and 1.960 milliseconds.
+Their Linux child RSS observations were 6,844 KiB each.
+The RSS counter includes the Python collector inherited at fork before exec.
+It is not an isolated measurement of Fern RSS or a hard memory limit.
+
+Raw results record the compiler, binary, source hashes, host, and collection limits.
+Wall time includes startup, graph validation, row execution, and process cleanup.
+The shared host has no isolation. These samples do not establish throughput or libvips parity.
+
+Use a compiler with the native append fix from PR #13208.
+Run these commands from this package directory to collect another record:
+
+```sh
+../bin/fern -target x86-64-linux -o build/row-benchmark benchmarks/row_pipeline.fern
+python3 benchmarks/measure_rows.py build/row-benchmark ../bin/fern /tmp/row-result.json
+```
+
+See `benchmarks/results/row-pipeline-m4.json` for the original observations.
+Recoverable OOM, allocator overhead, caller retention, and aggregate service memory remain unqualified.

@@ -1,0 +1,53 @@
+{
+  "workload": "Generated 1000x10000 RGBA source, nearest node 500x20000, five sparse output rows. No full source or destination pixel array.",
+  "output_rows": [
+    0,
+    5000,
+    10000,
+    15000,
+    19999
+  ],
+  "logical_source_pixels": 10000000,
+  "logical_output_pixels": 10000000,
+  "output_bytes_per_row": 2000,
+  "logical_scratch_limit_bytes": 12000,
+  "sample_limit": 1500,
+  "concurrency": 1,
+  "warmup_processes": 0,
+  "flags": "-target x86-64-linux, no sanitizer",
+  "host": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "compiler": "fern d39f3c4487fa-dirty\nbuilt for x86-64-linux",
+  "compiler_sha256": "8b501ccf8a2b0df768ec5862a6fdf0540f460235e37569fa93dcd4bec472d20f",
+  "binary_sha256": "5d04545032217cec9c794d7038388da041b1569c3fd1442221d54bc4de341ca5",
+  "sources_sha256": {
+    "fern-image/benchmarks/row_pipeline.fern": "90ab83453bfe22c9be933712c7d9e111d96e23732d91aceba5ebd287325d96ff",
+    "fern-image/packages/pipeline/pipeline.fern": "634180dd73f8e640463cd774fd8b40585774abff2ed1a85b34ed993e289402b3",
+    "fern-image/packages/resize/resize.fern": "37a6081c2fc67200a565be6cda5c396c3a02fd35f91f8ca4d36cb199bb671bf5",
+    "fern-image/packages/pixels/pixels.fern": "62bc9f993b4836709f74ee8950af8f610cfc5dfaf3692dc153a0071c13308fb0"
+  },
+  "samples": [
+    {
+      "wall_ms": 2.803356000185886,
+      "peak_rss_kib": 6844,
+      "user_seconds": 0.0023599999999999997,
+      "system_seconds": 0.0,
+      "exit_code": 0
+    },
+    {
+      "wall_ms": 2.06592799986538,
+      "peak_rss_kib": 6844,
+      "user_seconds": 0.001705,
+      "system_seconds": 0.0,
+      "exit_code": 0
+    },
+    {
+      "wall_ms": 1.959977999831608,
+      "peak_rss_kib": 6844,
+      "user_seconds": 0.0017679999999999998,
+      "system_seconds": 0.0,
+      "exit_code": 0
+    }
+  ],
+  "limitations": "Linux wait4 child RSS includes the Python collector inherited at fork before exec. This is not isolated Fern RSS. Wall time includes fork, startup, validation, rendering, and cleanup. Shared host, no isolation. No claim of allocator recovery, memory upper bound, real-image throughput, or libvips parity."
+}

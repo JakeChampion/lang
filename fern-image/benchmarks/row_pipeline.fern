@@ -1,0 +1,31 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function main(): i32 {
+  let limits = pipeline.Limits { max_pixels: 10000000, max_row_bytes: 4000, max_scratch_bytes: 12000, max_nodes: 2, max_samples: 1500 };
+  let pixel = pixels.Pixel { r: 11, g: 22, b: 33, a: 17 };
+  let graph = match (pipeline.solid(1000, 10000, pixels.RGBA8, pixel, limits)) { Ok(v) => v, Err(_) => { return 1; } };
+  graph = match (pipeline.nearest(graph, 500, 20000, limits)) { Ok(v) => v, Err(_) => { return 2; } };
+  let rows: i32[] = [0, 5000, 10000, 15000, 19999];
+  let total = 0;
+  for y in rows {
+    let row = match (pipeline.render_row(graph, y, limits, never_cancel)) { Ok(v) => v, Err(_) => { return 3; } };
+    if (row.data.len() != 2000 || row.layout.height != 1) {
+      return 4;
+    }
+    let value = match (pixels.read_pixel(row, 499, 0)) { Ok(v) => v, Err(_) => { return 5; } };
+    if (value.a != 17 as u8) {
+      return 6;
+    }
+    total = total + value.r as i32;
+  }
+  if (total != 55) {
+    return 7;
+  }
+  print("Five sparse row requests passed");
+  return 0;
+}

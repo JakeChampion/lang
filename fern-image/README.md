@@ -53,9 +53,9 @@ A per-image limit does not establish a process memory limit.
 
 ## Scope and status
 
-Thirty-one TAP cases pass across the essential, compression, pixel, color, resize, and PNG suites.
+Thirty-nine TAP cases pass across the essential, compression, pixel, color, resize, PNG, and row-pipeline suites.
 The file I/O probe and pixel example also exit successfully.
-All ten executables report zero live bytes under the sanitizer.
+All eleven executables report zero live bytes under the sanitizer.
 
 Three negative probes confirm compiler restrictions.
 The formatter regression also passes before and after the format check.
@@ -72,3 +72,6 @@ See [resize semantics](docs/resize.md) for coordinate and alpha rules.
 The [native compression audit](docs/compression-audit.md) verifies prerequisites for PNG.
 See [PNG compatibility](docs/png.md) before use.
 PNG requires the static-append compiler fix in PR #13208.
+
+The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor chains on demand.
+It enforces logical row budgets and cooperative cancellation. It is not the complete M4 region engine.
