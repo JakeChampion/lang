@@ -103,7 +103,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<38 pub function udp_socket(addr: SocketAddr): Result[i32, NetError]>>
 
-<<39 function __sender(from: u8[]): SocketAddr>>
+<<39 pub function sender(from: [u8]): SocketAddr>>
 
 <<40 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError]>>
 
@@ -1505,11 +1505,12 @@ pub function send(sock: i32, data: u8[]): Result[i32, NetError] {
 }
 ```
 
-### `39 function __sender(from: u8[]): SocketAddr`
+### `39 pub function sender(from: [u8]): SocketAddr`
 
 ```fern
-<<39 function __sender(from: u8[]): SocketAddr>>=
-function __sender(from: u8[]): SocketAddr {
+<<39 pub function sender(from: [u8]): SocketAddr>>=
+// sender reads the address recv_into wrote into its 19 bytes.
+pub function sender(from: [u8]): SocketAddr {
   let n: i32 = 4;
   if (from[0] == 6u8) {
     n = 16;
@@ -1533,13 +1534,21 @@ function __sender(from: u8[]): SocketAddr {
 ```fern
 <<40 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError]>>=
 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError] {
-  let from: u8[] = __zero_bytes(19);
+  let from: u8[] = __alloc_u8(SENDER_BYTES);
   let n: i32 = udp_recvfrom(sock, buf, from);
   if (n < 0) {
     return Err(error_from_host(n));
   }
-  return Ok((n, __sender(from)));
+  return Ok((n, sender(from)));
 }
+
+// recv_into reads one datagram into buf and its sender into from, SENDER_BYTES
+// long, for sender to read only when the address is needed.
+pub function recv_into(sock: i32, buf: u8[], from: u8[]): Result[i32, NetError] {
+  return __socket_count(udp_recvfrom(sock, buf, from));
+}
+
+pub const SENDER_BYTES: i32 = 19;
 
 pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
   let none: u8[] = [];
