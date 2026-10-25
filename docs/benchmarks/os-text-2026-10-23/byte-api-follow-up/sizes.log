@@ -1,0 +1,11 @@
+{'source': 'drivers/asm_load_run.fern', 'bytes': 11500240, 'seconds': 14.058355201006634}
+{'source': 'fern.fern', 'bytes': 14454144, 'seconds': 18.909987562001334}
+{'source': 'drivers/asm_modload_run.fern', 'bytes': 10128624, 'seconds': 12.375901804000023}
+{'source': 'drivers/asm_ir_run.fern', 'bytes': 9774576, 'seconds': 12.082650787997409}
+{'source': 'drivers/asm_run.fern', 'bytes': 8967440, 'seconds': 16.81227203599701}
+{'source': 'drivers/wasm_ir_run.fern', 'bytes': 8940288, 'seconds': 15.684726534003858}
+{'source': 'drivers/wasm_run.fern', 'bytes': 8940320, 'seconds': 12.341365237996797}
+{'source': 'drivers/wasm_runio_run.fern', 'bytes': 8921920, 'seconds': 14.828002035006648}
+{'source': 'drivers/checker_modload_run.fern', 'bytes': 3138864, 'seconds': 4.619803118999698}
+{'source': 'drivers/asm_pathprobe_run.fern', 'bytes': 5941808, 'seconds': 12.091553609992843}
+All 11 strict driver sizes pass

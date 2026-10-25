@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 )
 
 func builtinOpenDir(i *Interp, args []Value) (Value, error) {
@@ -85,6 +86,13 @@ func closedDir() Value {
 }
 
 func builtinDirEntries(i *Interp, args []Value) (Value, error) {
+	return dirEntriesValue(i, args, false)
+}
+func builtinDirEntriesBytes(i *Interp, args []Value) (Value, error) {
+	return dirEntriesValue(i, args, true)
+}
+
+func dirEntriesValue(i *Interp, args []Value, raw bool) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("Dir.entries: expected 1 arg, got %d", len(args))
 	}
@@ -104,7 +112,14 @@ func builtinDirEntries(i *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(entries))
 	for k, e := range entries {
-		out.E[k] = String(e.Name())
+		if !raw && !utf8.ValidString(e.Name()) {
+			return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
+		}
+		if raw {
+			out.E[k] = byteArray([]byte(e.Name()))
+		} else {
+			out.E[k] = String(e.Name())
+		}
 	}
 	return resultOk(out), nil
 }

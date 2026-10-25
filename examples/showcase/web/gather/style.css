@@ -1,0 +1,124 @@
+.gather-page {
+  --paper: #f0f2e5;
+  --line: #d3dac7;
+}
+.gather-player {
+  position: relative;
+}
+.gather-hud {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  padding: 18px 24px;
+  background: #e3e9d4;
+  border: 1px solid #c9d4b7;
+  border-radius: 12px 12px 0 0;
+}
+.gather-hud b {
+  display: block;
+  font-size: 25px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.gather-hud span {
+  font: 9px monospace;
+  letter-spacing: 0.1em;
+  color: #637653;
+}
+.arena-wrap {
+  position: relative;
+  background: #112e29;
+  border-radius: 0 0 12px 12px;
+  overflow: hidden;
+}
+.arena-wrap canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 8/5;
+  touch-action: none;
+}
+.arena-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  background: #112e29c7;
+  color: #f1f0cd;
+  pointer-events: none;
+  padding: 24px;
+}
+.arena-message strong {
+  font:
+    36px Georgia,
+    serif;
+}
+.arena-message span {
+  font-size: 13px;
+}
+.gather-bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  margin-top: 20px;
+}
+.gather-bottom h2 {
+  font-size: 16px;
+}
+.gather-bottom ol {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.gather-bottom li {
+  display: flex;
+  justify-content: space-between;
+  max-width: 300px;
+}
+.gather-bottom p {
+  font-size: 13px;
+  color: #637653;
+  line-height: 1.8;
+}
+.gather-player.is-fullscreen .arena-wrap {
+  height: calc(100dvh - 240px);
+  min-height: 180px;
+}
+.gather-player.is-fullscreen canvas {
+  height: 100%;
+  aspect-ratio: auto;
+}
+.gather-player.is-fullscreen .gather-bottom {
+  display: none;
+}
+@media (max-width: 720px) {
+  .gather-hud {
+    gap: 10px;
+    padding: 16px;
+  }
+  .gather-hud b {
+    font-size: 17px;
+  }
+  .gather-hud span {
+    font-size: 8px;
+  }
+  .gather-bottom {
+    grid-template-columns: 1fr;
+  }
+  .arena-message strong {
+    font-size: 25px;
+  }
+  .gather-hud {
+    grid-template-columns: 1fr 1fr;
+  }
+  .gather-player.is-fullscreen .arena-wrap {
+    height: calc(100dvh - 290px);
+  }
+}

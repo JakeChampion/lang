@@ -1,0 +1,7 @@
+enum E { A(string), B }
+
+function main(): i32 {
+  let e = E.A("hello");
+  let s = if let E.A(v) = e { v } else { "" };
+  return s.len() - 5;
+}

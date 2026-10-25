@@ -21,13 +21,16 @@ record; a closed epic alone is not validation evidence.
 | Producer | Bytes from | What it does with ill-formed bytes |
 |---|---|---|
 | `read_file` | a file | `Err(InvalidUtf8)`; `read_file_bytes` is raw |
+| Directory listing APIs | directory-entry names | `Err(InvalidUtf8(path))`; `Dir.entries` uses an empty error path |
+| `read_link`, `getcwd`, `mounts` | link targets, current path, mount fields | `Err(InvalidUtf8)` |
+| `hostname`, `uname_field` | kernel identity fields | empty text, as for a failed OS request |
 | `utf8.from_bytes` | anywhere | `None` |
 | `http` header values, request path | the peer | refused, 400 |
 | `HttpRequest.body_string` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
 | `dns.decode_name` | the wire | `Err(Malformed)` |
 | `url_decode` / `form_decode` | an escape | U+FFFD per ill-formed unit; `*_decode_bytes` are raw |
-| `Stream.read_all_string` | a byte cursor | `None` (#10950); `read_all` is raw |
-| `Stream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
+| `ByteStream.read_all_string` | a byte cursor | `None` (#10950); `read_all` is raw |
+| `ByteStream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
 | `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |
 | `HttpResponse.body_string` | the program's own `BodyBytes` | U+FFFD; `body_bytes` is raw |
 | Regex replacements, splits and captures | byte-oriented matches | `None` when text would be invalid; explicit byte variants preserve raw output |
@@ -73,6 +76,11 @@ owned byte array and has separate text and byte renderers. This preserves
 unknown conversions that split a scalar into parser pieces without making
 partial strings. Raw CLI output matches GNU; text rendering validates only
 after those pieces have been joined.
+
+The [OS text audit](string-log/2026-10-23-os-text.md) covers directory
+names and the other runtime OS text producers. Native byte callers use
+`read_link_bytes`, `read_dir_bytes`, and `Dir.entries_bytes` to preserve
+path bytes without passing through text validation.
 
 The OS text contract remains a deliberate exception:
 
@@ -481,7 +489,7 @@ the recorded capacity. So an accumulator re-copies its prefix once per
 doubling: 3000 one-byte appends cost 26 blocks where the exact box cost one
 per allocator class step, a two-byte literal append retires 51 instructions
 where it retired 135, an 8-byte range append 78 where it retired 419, and
-`bench/string_build` retires 37% fewer. On wasm the block-size word every
+`bench/string_build.fern` retires 37% fewer. On wasm the block-size word every
 heap string already carries records the headroom. Any `+` that consumes a
 non-literal left operand takes this path, a one-shot `c = a + b` included,
 as Rust's `String + &str` grows the buffer it consumes: the slack is at most
@@ -1262,7 +1270,7 @@ combinator timing.
 
 The HTTP MESSAGE layer followed. A serve loop holds its buffer as
 `u8[]` and parses it with `http_parse_request_bytes`; `HttpRequest.body`
-is a `Stream` over the body's bytes, on every target and in the
+is a `ByteStream` over the body's bytes, on every target and in the
 wasi-http marshalling. The request line and header block are checked
 where they become text: a method and a header name are tokens, so
 ASCII by grammar; a header value may carry obs-text (RFC 9110 §5.5),
@@ -1525,6 +1533,6 @@ grapheme clusters — landed against #5552 directly.
 - [MoonBit updates 2025-02-10](https://www.moonbitlang.com/updates/2025/02/10/index) / [2025-03-24](https://www.moonbitlang.com/updates/2025/03/24/index) (UTF-16 storage, `@string.View`)
 - Fern, in-tree: `docs/SSO-PLAN.md`, `docs/RC-STRINGS-PLAN.md`,
   `docs/LANGUAGE-DIRECTION.md`, `docs/STDLIB-ROADMAP.md` §17,
-  `internal/stdlib/std/{string,utf8,unicode}.fern`,
+  `internal/stdlib/std/string.fern.md`, `internal/stdlib/std/utf8.fern.md`, and `internal/stdlib/std/unicode.fern`,
   `cmd/unicodegen/main.go`, `internal/syntax/lexer/lexer.go`,
-  `compiler/{irlower,asmcore}.fern`
+  `compiler/{semsource,asmcore}.fern`

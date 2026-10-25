@@ -19,7 +19,7 @@ func TestSelfHostDiagnosticTextParity(t *testing.T) {
 		{"integer_operand", `function main(): i32 { return 1 + true; }`},
 		{"two_bad_operands", `function main(): i32 { return "a" + true; }`},
 		{"float_operand", `function main(): i32 { return (1.0 + true) as i32; }`},
-		{"mixed_float_widths", `function main(): i32 { let x: f32 = 1.0; let y: f64 = 2.0; return (x + y) as i32; }`},
+		{"float_narrowing", `function main(): i32 { let x: f64 = 1.0; let y: f32 = x; return y as i32; }`},
 		{"captured_array", `function main(): i32 { let xs: i32[] = [1]; let f = (): i32 => { xs = [2]; return 0; }; return f(); }`},
 		{"tuple_bad_first", `function main(): i32 { let p = (1, 2); match (p) { (a, b, c) => { return a; }, (a, b) => { return b; } } return 0; }`},
 		{"tuple_bad_second", `function main(): i32 { let p = (1, 2, 3); match (p) { (a, b) when a > 0 => { return a; }, (a, b, c) => { return c; } } return 0; }`},

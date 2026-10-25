@@ -3,20 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/fractal/favicon.svg">
 <title>Fern Fractal Explorer</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/fractal/style.css">
 </head>
 <body>
 <div id="map"></div>
 
 <section class="panel" id="intro">
   <h1><span class="leaf">&#x2766;</span> Fern Fractal Explorer</h1>
-  <p>Every tile of this Mandelbrot set is computed on request by a static
-  <span id="binary-size">Fern</span> binary: escape-time
-  iteration, smooth colour and PNG encoding (deflate, CRC-32, Adler-32) are all
-  Fern code.</p>
-  <p class="source-row"><a class="source-link" href="/_src/">Browse the source →</a></p>
+  <p>Fern renders Mandelbrot tiles on demand, including the iteration, color, and PNG encoding. The server is a <span id="binary-size">Fern</span> binary.</p>
+  <p class="source-row"><a class="source-link" href="/">← All examples</a> · <a class="source-link" href="/_src/">Browse the source →</a></p>
   <div class="row">
     <span class="label">Transport</span>
     <div class="toggle" role="radiogroup">
@@ -72,6 +70,6 @@
 </footer>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script type="module" src="/app.js"></script>
+<script type="module" src="/fractal/app.js"></script>
 </body>
 </html>

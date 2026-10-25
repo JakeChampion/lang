@@ -3,6 +3,8 @@
 Status: [record] measurement snapshot of the machine code Fern emitted in
 September 2026 and its gap to other languages; Tier A of §6 has landed.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 What machine code Fern actually emits, how it ranks against other languages,
 and what it would take to close the gap.
 

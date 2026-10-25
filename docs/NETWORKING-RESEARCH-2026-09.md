@@ -6,6 +6,8 @@ is a build item; the plan in the issue is. This document records what the
 field looks like, with sources, so the plan's choices can be checked against
 evidence rather than recollection.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 Method. Seven research passes ran in parallel, each over web search plus
 fetches of primary sources, with a separate fact-check pass re-fetching the key
 sources of three of them, and a five-lens adversarial review of the plan that

@@ -2,6 +2,8 @@
 
 Status: [record] shipped.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > The wasm reactor runs on Preview-2 pollables
 > (timer/block/poll/drop + the `std/wasm_reactor` scheduler) on stock
 > wasmtime — see `WASI-PREVIEW3-ASYNC-PLAN.md` for what a Preview-3 native

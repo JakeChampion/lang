@@ -587,7 +587,7 @@ func TestX86_64KtlsServe(t *testing.T) {
 func TestX86_64KtlsFetch(t *testing.T) {
 	requireKtls(t)
 	w := startTLSWorld(t)
-	bin := buildKtlsProgram(t, "ktls_fetch", w.source())
+	bin := buildKtlsProgram(t, "ktls_fetch", w.source(time.Minute))
 	tx, rx := tlsStat(t, "TlsTxSw"), tlsStat(t, "TlsRxSw")
 	cmd := exec.Command(bin)
 	cmd.Env = append(w.env(), "FERN_KTLS=1")

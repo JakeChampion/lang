@@ -32,7 +32,7 @@ func selfHostHelperRows(t *testing.T) []string {
 
 func TestSelfHostRuntimeHelperRowsMatch(t *testing.T) {
 	got := selfHostHelperRows(t)
-	want := []string{"__map_", "__mapiter_", "map_new_impl"}
+	want := []string{"__map_", "map_new_impl"}
 	if len(got) != len(want) {
 		t.Fatalf("self-host predicate names %v, want %v", got, want)
 	}
@@ -41,7 +41,7 @@ func TestSelfHostRuntimeHelperRowsMatch(t *testing.T) {
 			t.Fatalf("self-host predicate names %v, want %v", got, want)
 		}
 	}
-	for _, probe := range []string{"map_new_impl", "__map_set_impl", "__mapiter_key_impl"} {
+	for _, probe := range []string{"map_new_impl", "__map_set_impl"} {
 		if !isRuntimeHelperName(probe) {
 			t.Errorf("the self-host keeps %q bare and this side mangles it", probe)
 		}
@@ -61,7 +61,7 @@ func TestSelfHostRuntimeHelperMethodRowIsNativeOnly(t *testing.T) {
 }
 
 func TestRuntimeHelperExemptionIsNarrow(t *testing.T) {
-	for _, probe := range []string{"map_new", "parse", "__fern_alloc", "mapper", "__mapped"} {
+	for _, probe := range []string{"map_new", "parse", "__fern_alloc", "mapper", "__mapped", "__mapiter_key_impl"} {
 		if isRuntimeHelperName(probe) {
 			t.Errorf("%q is exempt from module prefixing and should not be", probe)
 		}

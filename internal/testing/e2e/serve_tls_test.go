@@ -94,7 +94,7 @@ function big(n: i32): u8[] {
 }
 
 function sum_body(req: HttpRequest): HttpResponse {
-  let s: Stream = req.body_stream();
+  let s: ByteStream = req.body_stream();
   let count: i32 = 0;
   let sum: i32 = 0;
   let going: boolean = true;

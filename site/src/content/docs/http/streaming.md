@@ -13,7 +13,7 @@ park, so the worker serves other connections in the meantime.
 ## Request bodies as they arrive
 
 Set `stream_bodies: true` and a handler starts as soon as the request's
-header block is in. `req.body` is then a `Stream` that pulls bytes from
+header block is in. `req.body` is then a `ByteStream` that pulls bytes from
 the connection as you read; reads are values, so each returns the bytes
 and the stream advanced past them.
 
@@ -28,12 +28,12 @@ function init(): serve.Config {
 }
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    let s: Stream = req.body;
+    let s: ByteStream = req.body;
     let total: i32 = 0;
     let lines: i32 = 0;
     let going: boolean = true;
     while (going) {
-        let got: (u8[], Stream) = s.read_n(64 * 1024);
+        let got: (u8[], ByteStream) = s.read_n(64 * 1024);
         s = got.1;
         if (got.0.len() == 0) {
             going = false;

@@ -1,0 +1,203 @@
+# Platform capabilities under simulation
+
+This module provides platform capabilities for deterministic simulations.
+
+## Model
+
+The simulated platform combines a virtual driver, a scripted network, and a recorded mock platform. Request policy can add cookies, access limits, deadlines, and trace context.
+
+## Contracts
+
+Environment and configuration changes affect simulated state. Handler tests can share the same capability interface as host execution without real network effects.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub struct SimPlatform>>
+
+<<4 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform>>
+
+<<5 impl platform.Platform for SimPlatform>>
+
+<<6 pub function (p: SimPlatform) env_set(name: string, value: string): void>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module provides platform capabilities for deterministic simulations.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/platform";
+import "std/sim";
+import "std/sim_fetch";
+import "std/fetch";
+import "std/time";
+import "std/mock_platform";
+import "std/net";
+import "std/http/cookie";
+import "std/async";
+import "std/http/trace";
+```
+
+### `3 pub struct SimPlatform`
+
+```fern
+<<3 pub struct SimPlatform>>=
+pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow], deadline: Option[i64], trace: Option[trace.Context] }
+```
+
+### `4 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform`
+
+```fern
+<<4 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform>>=
+pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform {
+  return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new(), jar: None, allow: None, deadline: None, trace: None };
+}
+
+pub function (p: SimPlatform) with_jar(jar: cookie.Jar): SimPlatform {
+  return SimPlatform { ...p, jar: Some(jar) };
+}
+
+pub function (p: SimPlatform) with_allow(a: fetch.Allow): SimPlatform {
+  return SimPlatform { ...p, allow: Some(a) };
+}
+
+pub function (p: SimPlatform) with_deadline(at: i64): SimPlatform {
+  return SimPlatform { ...p, deadline: Some(at) };
+}
+
+pub function (p: SimPlatform) with_trace(span: trace.Context): SimPlatform {
+  return SimPlatform { ...p, trace: Some(span) };
+}
+```
+
+### `5 impl platform.Platform for SimPlatform`
+
+```fern
+<<5 impl platform.Platform for SimPlatform>>=
+impl platform.Platform for SimPlatform {
+  function log(self: SimPlatform, msg: string): void {
+    self.mock.record("log", msg);
+  }
+
+  function now_ms(self: SimPlatform): i64 {
+    self.mock.record("now_ms", "");
+    return self.drv.now_ns() / 1000000;
+  }
+
+  function elapsed_ns(self: SimPlatform): i64 {
+    self.mock.record("elapsed_ns", "");
+    return self.drv.now_ns();
+  }
+
+  function env(self: SimPlatform, name: string): Option[string] {
+    self.mock.record("env", name);
+    return self.mock.canned("env " + name);
+  }
+
+  function config(self: SimPlatform, name: string): Option[string] {
+    self.mock.record("config", name);
+    return self.mock.canned("config " + name);
+  }
+
+  function secret(self: SimPlatform, name: string): Option[string] {
+    self.mock.record("secret", name);
+    return self.mock.canned("secret " + name);
+  }
+
+  function random_i32(self: SimPlatform): i32 {
+    self.mock.record("random_i32", "");
+    return self.drv.random_i32();
+  }
+
+  function sleep(self: SimPlatform, d: Duration): void {
+    self.mock.record("sleep", d.as_millis().to_string());
+    let moved: boolean = self.drv.advance_to(self.drv.now_ns() + d.as_nanos());
+  }
+
+  function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
+    self.mock.record("http", req.method + " " + req.url);
+    let drv: sim.Sim = self.drv;
+    let m: mock_platform.MockPlatform = self.mock;
+    let proxies: fetch.ProxyEnv = fetch.proxy_env_from(m.canned("env http_proxy"), m.canned("env https_proxy"), m.canned("env HTTPS_PROXY"), m.canned("env no_proxy"), m.canned("env NO_PROXY"), m.canned("env REQUEST_METHOD"));
+    return fetch.send_on(self.net, platform.traced(req, self.trace, (): i32 => drv.random_i32()), fetch.Policy { ...fetch.public_policy_via(proxies), jar: self.jar, allow: self.allow });
+  }
+
+  function stat(self: SimPlatform, path: string): Result[FileStat, IoError] {
+    return self.mock.stat(path);
+  }
+
+  function peer(self: SimPlatform): Option[net.SocketAddr] {
+    return self.mock.peer();
+  }
+
+  function deadline(self: SimPlatform): Option[i64] {
+    self.mock.record("deadline", "");
+    return self.deadline;
+  }
+
+  function trace(self: SimPlatform): Option[trace.Context] {
+    self.mock.record("trace", "");
+    return self.trace;
+  }
+
+  function cancelled(self: SimPlatform): boolean {
+    self.mock.record("cancelled", "");
+    return async.task_cancelled() || platform.passed(self.deadline, self.drv.now_ns());
+  }
+}
+```
+
+### `6 pub function (p: SimPlatform) env_set(name: string, value: string): void`
+
+```fern
+<<6 pub function (p: SimPlatform) env_set(name: string, value: string): void>>=
+pub function (p: SimPlatform) env_set(name: string, value: string): void {
+  p.mock.env_set(name, value);
+}
+
+pub function (p: SimPlatform) config_set(name: string, value: string): void {
+  p.mock.config_set(name, value);
+}
+
+pub function (p: SimPlatform) secret_set(name: string, value: string): void {
+  p.mock.secret_set(name, value);
+}
+
+pub function (p: SimPlatform) file_set(path: string, content: string, mtime: i64): void {
+  p.mock.file_set(path, content, mtime);
+}
+
+pub function (p: SimPlatform) peer_set(addr: string): void {
+  p.mock.peer_set(addr);
+}
+
+pub function (p: SimPlatform) dir_set(path: string): void {
+  p.mock.dir_set(path);
+}
+
+pub function (p: SimPlatform) materialize(resp: HttpResponse): HttpResponse {
+  return p.mock.materialize(resp);
+}
+
+pub function (p: SimPlatform) calls(): mock_platform.MockCall[] {
+  return p.mock.calls();
+}
+
+pub function (p: SimPlatform) reset(): void {
+  p.mock.reset();
+}
+```

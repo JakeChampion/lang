@@ -11,11 +11,13 @@ var wideSettleAccepts = []struct{ name, src string }{
 	{"some-literal-option-i64", `function main(): i32 { let o: Option[i64] = Some(40); match (o) { Some(v) => { return v as i32; }, None => { return 0; } } }`},
 	{"err-literal-result-i64", `function g(): Result[i32, i64] { return Err(40); } function main(): i32 { match (g()) { Ok(v) => { return v; }, Err(e) => { return e as i32; } } }`},
 	{"ok-i32-into-result-i64", `function g(n: i32): Result[i64, i32] { return Ok(n); } function main(): i32 { match (g(3)) { Ok(v) => { return v as i32; }, Err(e) => { return e; } } }`},
+	{"some-i32-var-into-option-i64", `function main(): i32 { let n: i32 = 5; let o: Option[i64] = Some(n); return 0; }`},
+	{"if-expr-i32-var-into-i64", `function main(): i32 { let n: i32 = 5; let c = 1; let x: i64 = if (c > 0) { n } else { 9 }; return x as i32; }`},
 }
 
 var wideSettleRejects = []struct{ name, src string }{
-	{"some-i32-var-into-option-i64", `function main(): i32 { let n: i32 = 5; let o: Option[i64] = Some(n); return 0; }`},
-	{"if-expr-i32-var-into-i64", `function main(): i32 { let n: i32 = 5; let c = 1; let x: i64 = if (c > 0) { n } else { 9 }; return x as i32; }`},
+	{"stored-option-i32-into-option-i64", `function main(): i32 { let n: Option[i32] = Some(5); let o: Option[i64] = n; return 0; }`},
+	{"if-expr-i64-var-into-i32", `function main(): i32 { let n: i64 = 5; let c = 1; let x: i32 = if (c > 0) { n } else { 9 }; return x; }`},
 }
 
 func TestSelfHostWideLiteralSettle(t *testing.T) {

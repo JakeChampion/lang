@@ -4,19 +4,20 @@ import (
 	"testing"
 )
 
+// TestSelfHostMapIterMethodIR compiles Map iterators with strict IR.
 func TestSelfHostMapIterMethodIR(t *testing.T) {
 	cli := newStrictCLI(t)
 
-	src := `import "core/map";
+	src := `import "core/map"; import "core/iter";
 function f(): i32 {
     let m: Map[string, i32] = map_new(0);
     m = m.insert("a", 7);
     m = m.insert("b", 8);
     let sum: i32 = 0;
-    let it: MapIter[string, i32] = m.iter();
-    while (it.has_next()) {
-        sum = sum + it.value();
-        it.advance();
+    let it: iter.ArrayIter[(string, i32)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        sum = sum + __mapvalue_it;
+
     }
     return sum;
 }

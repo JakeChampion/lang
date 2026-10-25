@@ -219,7 +219,7 @@ function ticked(e: Ends): Ends {
 }
 
 function get(path: string): HttpRequest {
-  return HttpRequest { method: "GET", path: path, body: Stream { data: [], pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example").append("accept", "*/*"), trailers: headers.header_map_new() };
+  return HttpRequest { method: "GET", path: path, body: ByteStream { data: [], pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example").append("accept", "*/*"), trailers: headers.header_map_new() };
 }
 
 function asked(e: Ends, req: HttpRequest): Result[Ends, string] {
@@ -274,7 +274,7 @@ function test_upload_lossy(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
       let e: Ends = Ends { ...settled(e0, 12), log: "", lose_every: 9, reorder: true };
-      let req: HttpRequest = HttpRequest { method: "POST", path: "/up", body: Stream { data: big(30000), pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example"), trailers: headers.header_map_new() };
+      let req: HttpRequest = HttpRequest { method: "POST", path: "/up", body: ByteStream { data: big(30000), pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example"), trailers: headers.header_map_new() };
       match (asked(e, req)) {
         Ok(e1) => {
           let e2: Ends = settled(e1, 300);

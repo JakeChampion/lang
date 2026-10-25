@@ -1,0 +1,50 @@
+[
+  {
+    "index": 0,
+    "count": 4,
+    "file": "printer-shard-0.jsonl",
+    "cases": 269,
+    "skips": 0,
+    "packages": 1,
+    "files": 258,
+    "total_files": 1032,
+    "checked": 245,
+    "elapsed": 493.226
+  },
+  {
+    "index": 1,
+    "count": 4,
+    "file": "printer-shard-1.jsonl",
+    "cases": 269,
+    "skips": 0,
+    "packages": 1,
+    "files": 258,
+    "total_files": 1032,
+    "checked": 246,
+    "elapsed": 442.414
+  },
+  {
+    "index": 2,
+    "count": 4,
+    "file": "printer-shard-2.jsonl",
+    "cases": 269,
+    "skips": 0,
+    "packages": 1,
+    "files": 258,
+    "total_files": 1032,
+    "checked": 245,
+    "elapsed": 572.395
+  },
+  {
+    "index": 3,
+    "count": 4,
+    "file": "printer-shard-3.jsonl",
+    "cases": 269,
+    "skips": 0,
+    "packages": 1,
+    "files": 258,
+    "total_files": 1032,
+    "checked": 244,
+    "elapsed": 485.76
+  }
+]

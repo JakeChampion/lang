@@ -2,6 +2,8 @@
 
 Status: [record] design for the Go SSA native path, which was deleted in 2026-10 (`NATIVE-RETIREMENT.md`).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Tracking: #4112 (SSA-level register allocation, child of the binary-size
 epic #4109). This is the design for bringing the `__fern_*`
 reference-counting runtime helpers to the SSA native path (`x86_64ssa`),

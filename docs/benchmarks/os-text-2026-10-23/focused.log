@@ -1,0 +1,65 @@
+=== RUN   TestBuiltinReadFileInvalidUtf8
+--- PASS: TestBuiltinReadFileInvalidUtf8 (0.00s)
+=== RUN   TestTempDirRejectsMalformedHostRoot
+--- PASS: TestTempDirRejectsMalformedHostRoot (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/oracle/interp	0.005s
+=== RUN   TestInterpreterOSText
+--- PASS: TestInterpreterOSText (1.22s)
+=== RUN   TestInterpreterOSTextGetcwd
+--- PASS: TestInterpreterOSTextGetcwd (0.01s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	1.237s
+=== RUN   TestSelfHostOSText
+=== RUN   TestSelfHostOSText/x86-64-linux
+=== RUN   TestSelfHostOSText/arm64-linux
+=== RUN   TestSelfHostOSText/wasm32-wasi
+=== RUN   TestSelfHostOSText/component
+=== RUN   TestSelfHostOSText/interp
+--- PASS: TestSelfHostOSText (28.24s)
+    --- PASS: TestSelfHostOSText/x86-64-linux (0.13s)
+    --- PASS: TestSelfHostOSText/arm64-linux (0.14s)
+    --- PASS: TestSelfHostOSText/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostOSText/component (0.04s)
+    --- PASS: TestSelfHostOSText/interp (5.12s)
+=== RUN   TestSelfHostOSTextGetcwd
+=== RUN   TestSelfHostOSTextGetcwd/x86-64-linux
+=== RUN   TestSelfHostOSTextGetcwd/arm64-linux
+=== RUN   TestSelfHostOSTextGetcwd/interp
+--- PASS: TestSelfHostOSTextGetcwd (7.03s)
+    --- PASS: TestSelfHostOSTextGetcwd/x86-64-linux (0.04s)
+    --- PASS: TestSelfHostOSTextGetcwd/arm64-linux (0.06s)
+    --- PASS: TestSelfHostOSTextGetcwd/interp (5.22s)
+=== RUN   TestSelfHostArm64DarwinOSText
+    self_host_os_text_test.go:95: requires Apple Silicon
+--- SKIP: TestSelfHostArm64DarwinOSText (0.00s)
+=== RUN   TestSelfHostReaderText
+=== RUN   TestSelfHostReaderText/pin-built-interp
+=== RUN   TestSelfHostReaderText/interp
+=== RUN   TestSelfHostReaderText/x86-64-linux
+=== RUN   TestSelfHostReaderText/arm64-linux
+=== RUN   TestSelfHostReaderText/wasm32-wasi
+=== RUN   TestSelfHostReaderText/component
+--- PASS: TestSelfHostReaderText (7.50s)
+    --- PASS: TestSelfHostReaderText/pin-built-interp (0.01s)
+    --- PASS: TestSelfHostReaderText/interp (5.36s)
+    --- PASS: TestSelfHostReaderText/x86-64-linux (0.10s)
+    --- PASS: TestSelfHostReaderText/arm64-linux (0.11s)
+    --- PASS: TestSelfHostReaderText/wasm32-wasi (0.07s)
+    --- PASS: TestSelfHostReaderText/component (0.12s)
+=== RUN   TestSelfHostPerModuleReaderText
+=== RUN   TestSelfHostPerModuleReaderText/x86-64-linux
+=== RUN   TestSelfHostPerModuleReaderText/arm64-linux
+--- PASS: TestSelfHostPerModuleReaderText (3.02s)
+    --- PASS: TestSelfHostPerModuleReaderText/x86-64-linux (1.08s)
+    --- PASS: TestSelfHostPerModuleReaderText/arm64-linux (1.12s)
+=== RUN   TestSelfHostXattrBytes
+=== RUN   TestSelfHostXattrBytes/interp
+=== RUN   TestSelfHostXattrBytes/x86-64-linux
+=== RUN   TestSelfHostXattrBytes/arm64-linux
+--- PASS: TestSelfHostXattrBytes (3.02s)
+    --- PASS: TestSelfHostXattrBytes/interp (0.27s)
+    --- PASS: TestSelfHostXattrBytes/x86-64-linux (0.40s)
+    --- PASS: TestSelfHostXattrBytes/arm64-linux (0.68s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	48.841s

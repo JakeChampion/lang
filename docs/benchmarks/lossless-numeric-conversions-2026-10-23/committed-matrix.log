@@ -1,0 +1,9 @@
+DONE numeric_lossless_widening
+DONE literal_local_read_at_two_widths
+DONE literal_local_takes_its_use_width
+DONE array_literal_takes_its_sibling_float_width
+DONE char_byte_literals
+DONE float_width_conversion
+DONE f64_tryop_widen
+DONE audit_numeric_types
+PASS 150 commands

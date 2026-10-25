@@ -1,0 +1,165 @@
+{
+  "environment": "All FERN_* variables removed, as CompileWithSelfHost requires",
+  "builds": [
+    {
+      "source": "fern.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/fern",
+        "/workspace/lang-map-iterator-current/compiler/fern.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 13458688,
+      "sha256": "e084b3662a81171d60b30a8ac76cc3bb98cfcbeb46b5f8f8c29d08dcb89b308e",
+      "seconds": 28.80049481700553
+    },
+    {
+      "source": "drivers/asm_load_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/asm_load_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/asm_load_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 10577696,
+      "sha256": "4b6c9fb74cbed3ddb0a41f25d8692659dad0ca5065fabac51294815e149bf0b2",
+      "seconds": 36.54381658800412
+    },
+    {
+      "source": "drivers/asm_modload_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/asm_modload_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/asm_modload_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 9215408,
+      "sha256": "60a9da3bafc49b7475650257a3b934d453e5961369cd3a15fa31c97e4fbde5a6",
+      "seconds": 19.707307793003565
+    },
+    {
+      "source": "drivers/asm_ir_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/asm_ir_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/asm_ir_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8836912,
+      "sha256": "4d7d2a550bf5b70b9bb05f2d45f52cee18230068aa7e5eb23b2fc508e9af8b27",
+      "seconds": 22.037178548001975
+    },
+    {
+      "source": "drivers/asm_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/asm_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/asm_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8039264,
+      "sha256": "2560507b0cd0e8daecdafe994d20751dd1f957142ec7b149169f60456bd76046",
+      "seconds": 19.046179805001884
+    },
+    {
+      "source": "drivers/wasm_ir_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/wasm_ir_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/wasm_ir_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8017120,
+      "sha256": "9667ccc5233bf4d0d95aa46b7e9bd637350b59c0db1d28eca614df4e898275d8",
+      "seconds": 14.171468177999486
+    },
+    {
+      "source": "drivers/wasm_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/wasm_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/wasm_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8017072,
+      "sha256": "10027632de1eb124e90322fb51391ba9628530d5482e8eb124807b347d882a3c",
+      "seconds": 14.49178931399365
+    },
+    {
+      "source": "drivers/wasm_runio_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/wasm_runio_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/wasm_runio_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8000112,
+      "sha256": "5baa5f4f1565d8f1e6bd35c4a3c7d3fffd0de1d098a878415b66ee2833ca3b6e",
+      "seconds": 13.825810894006281
+    },
+    {
+      "source": "drivers/asm_pathprobe_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/asm_pathprobe_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/asm_pathprobe_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 5132208,
+      "sha256": "054ef8f8c0dcc461228627d6f39e37ee2ab150cc9664471b19596a17e4003d3e",
+      "seconds": 9.41411626199988
+    },
+    {
+      "source": "drivers/checker_modload_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-map-iterator/argument-diags-validation/drivers/checker_modload_run",
+        "/workspace/lang-map-iterator-current/compiler/drivers/checker_modload_run.fern",
+        "/workspace/lang-map-iterator-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 3045664,
+      "sha256": "30ae1244e6613a3c4c57660a71e712309ef0e5b1fc7bbeef51af5fa19feba88c",
+      "seconds": 4.7527714610041585
+    }
+  ]
+}

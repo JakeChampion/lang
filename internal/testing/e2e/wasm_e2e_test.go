@@ -2118,26 +2118,26 @@ function main(): i32 {
 
 func TestWASMMapIter(t *testing.T) {
 	src := `
-import "core/map";
+import "core/map"; import "core/iter";
 function main(): i32 {
     let m: Map[i32, i32] = Map { 10: 100, 20: 200, 30: 300, 40: 400 };
     let sum_keys: i32 = 0;
     let sum_vals: i32 = 0;
     let count: i32 = 0;
-    let it: MapIter[i32, i32] = m.iter();
-    while (it.has_next()) {
-        sum_keys = sum_keys + it.key();
-        sum_vals = sum_vals + it.value();
+    let it: iter.ArrayIter[(i32, i32)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        sum_keys = sum_keys + __mapkey_it;
+        sum_vals = sum_vals + __mapvalue_it;
         count = count + 1;
-        it.advance();
+
     }
     if (count != 4) { return 1; }
     if (sum_keys != 100) { return 2; }   // 10+20+30+40
     if (sum_vals != 1000) { return 3; }  // 100+200+300+400
     // Iteration over an empty map yields zero steps.
     let empty: Map[i32, i32] = map_new(4);
-    let it2: MapIter[i32, i32] = empty.iter();
-    if (it2.has_next()) { return 4; }
+    let it2: iter.ArrayIter[(i32, i32)] = empty.iter();
+    if let Some(__mapstep_it2) = it2.next() { let __mapkey_it2 = __mapstep_it2.0.0; let __mapvalue_it2 = __mapstep_it2.0.1; return 4; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2270,14 +2270,14 @@ function main(): i32 {
 
 func TestWASMMapIterValueWide(t *testing.T) {
 	src := `
-import "core/map";
+import "core/map"; import "core/iter";
 function main(): i32 {
     let m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
     let sum: i64 = 0 as i64;
-    let it: MapIter[i32, i64] = m.iter();
-    while (it.has_next()) {
-        sum = sum + it.value();
-        it.advance();
+    let it: iter.ArrayIter[(i32, i64)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        sum = sum + __mapvalue_it;
+
     }
     if (sum == (12884901888 as i64)) { return 0; }
     return 1;
@@ -2289,16 +2289,16 @@ function main(): i32 {
 
 func TestWASMMapIterStringKeys(t *testing.T) {
 	src := `
-import "core/map";
+import "core/map"; import "core/iter";
 function main(): i32 {
     let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     let concat: string = "";
     let sum: i32 = 0;
-    let it: MapIter[string, i32] = m.iter();
-    while (it.has_next()) {
-        concat = concat + it.key();
-        sum = sum + it.value();
-        it.advance();
+    let it: iter.ArrayIter[(string, i32)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        concat = concat + __mapkey_it;
+        sum = sum + __mapvalue_it;
+
     }
     if (concat != "abc") { return 1; }
     if (sum != 6) { return 2; }
@@ -2516,14 +2516,10 @@ func TestWASMFloatCasts(t *testing.T) {
 	}
 }
 
-func TestF32F64MixRejected(t *testing.T) {
-	src := `function bad(): f64 { let x: f32 = 1.0; let y: f64 = 2.0; return x + y; }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if _, err := checker.Check(prog); err == nil {
-		t.Fatalf("expected checker error for mixed f32/f64 add, got none")
+func TestF32F64MixWidening(t *testing.T) {
+	src := `function main(): i32 { let x: f32 = 1.25; let y: f64 = 2.5; if (x + y == 3.75f64) { return 0; } return 1; }`
+	if got := runWasm(t, src); got != 0 {
+		t.Fatalf("mixed f32/f64 sum returned %d, want 0", got)
 	}
 }
 
@@ -3243,27 +3239,32 @@ function main(): i32 { return f() as i32; }`
 	}
 }
 
-func TestMixedSignednessRejected(t *testing.T) {
+func TestMixedSignednessWidening(t *testing.T) {
 	for _, src := range []string{
-		`function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`,
-		`function bad(): i64 { let x: u32 = 1 as u32; let y: i64 = 2i64; return (x as i64) + y; }`,
+		`function good(): i64 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`,
+		`function good(): i64 { let x: u32 = 1 as u32; let y: i64 = 2i64; return x + y; }`,
 	} {
 		prog, err := parser.Parse(src)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		_, err = checker.Check(prog)
-		_ = err
+		if _, err := checker.Check(prog); err != nil {
+			t.Fatalf("lossless mixed operands: %v", err)
+		}
 	}
+
 	src := `function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if _, err := checker.Check(prog); err == nil {
-		t.Fatalf("expected checker error for mixed i32/u32 add, got none")
-	} else if !strings.Contains(err.Error(), "use `as`") {
-		t.Errorf("expected error mentioning `as`, got: %v", err)
+		t.Fatal("expected a refusal to narrow the i64 sum to i32")
+	} else if !strings.Contains(err.Error(), "expected i32, got i64") {
+		t.Errorf("expected return type mismatch, got: %v", err)
+	}
+	if got := runWasm(t, `function main(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return (x + y) as i32; }`); got != 3 {
+		t.Errorf("mixed sum = %d, want 3", got)
 	}
 }
 

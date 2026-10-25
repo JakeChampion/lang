@@ -1,0 +1,156 @@
+{
+  "core_commit": "c89b24f6f6c8e5abd20b7c4e014ca4b11900ac0c",
+  "base_commit": "ee72b0f3bb6d26789191fac200234bf210f9e03d",
+  "source_sha256": "789de058835e7c3c86a587a035b98b073b7601fbf76a3dae9cfc302b974824ef",
+  "binaries": {
+    "/workspace/scratch/lang-lossless-widening/committed-oracle": {
+      "bytes": 32433732,
+      "sha256": "16d3d13c0eb52217763ea6ab714f5ec7ae85230464fc9a94b8b4591787eacf95"
+    },
+    "/workspace/scratch/lang-lossless-widening/committed-validation/bootstrap/stage1": {
+      "bytes": 13480592,
+      "sha256": "cd42fc0bcf827ce990781b1cb6694d29e009e0863b5f3590ef7c5bd94132fb7c"
+    },
+    "/workspace/scratch/lang-lossless-widening/committed-validation/bootstrap/stage2": {
+      "bytes": 14256640,
+      "sha256": "fe9894b204fba76c8614b1eceb35ae2f838718c175911ae5755363cc349c2f70"
+    },
+    "/workspace/scratch/lang-lossless-widening/committed-validation/bootstrap/stage3": {
+      "bytes": 14256640,
+      "sha256": "fe9894b204fba76c8614b1eceb35ae2f838718c175911ae5755363cc349c2f70"
+    }
+  },
+  "files": [
+    {
+      "file": "committed-validation-bootstrap-bootstrap.json",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-validation/bootstrap/bootstrap.json",
+      "bytes": 1015,
+      "sha256": "4b70425e12f7e8c4445a7e5c4e5f7c1cb9388e73f6607cfaf805a5a50f8fc72a"
+    },
+    {
+      "file": "committed-validation-driver-sizes.txt",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-validation/driver-sizes.txt",
+      "bytes": 357,
+      "sha256": "f186cb98e3c3c4b267e66e737d344e19df8daf15c65159472aaa7bc6c68f0bc8"
+    },
+    {
+      "file": "committed-validation-driver-builds.json",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-validation/driver-builds.json",
+      "bytes": 7614,
+      "sha256": "a94fc6ef18b359d0390526f6e7d026000eda95c0cabd21428697df90bfc0b778"
+    },
+    {
+      "file": "committed-validation-driver-gate.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-validation/driver-gate.log",
+      "bytes": 894,
+      "sha256": "f50fa8b6903b51b59a6e733edaac5245eae7588121867ae1c51016eac8ae2eb8"
+    },
+    {
+      "file": "committed-validation-bootstrap.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-validation/bootstrap.log",
+      "bytes": 702,
+      "sha256": "009d900017648ff425ec1cc540ab121594bb59ac1e4dd9d80feda13dc0094734"
+    },
+    {
+      "file": "committed-frontend.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-frontend.log",
+      "bytes": 200,
+      "sha256": "659425d56e554eda328d998df03c075a863d79e18def9af44a93742077d6aa82"
+    },
+    {
+      "file": "committed-vet.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "committed-fixtures.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-fixtures.log",
+      "bytes": 9316,
+      "sha256": "24683ca2a1000b6cfc2d7c464161d3f02750a348b4dcb66ff05a0b30932c23a6"
+    },
+    {
+      "file": "committed-corpus-format.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-corpus-format.log",
+      "bytes": 62,
+      "sha256": "d67357b9bbffe953dd27c6fd8f4c1f8883f9da255fccc66fafc275c4bdd66a2c"
+    },
+    {
+      "file": "committed-numeric-properties.log.gz",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-numeric-properties.log",
+      "bytes": 7535,
+      "sha256": "ee1251f7d30a7677d35386cab8881bd63d31f51276ac305fe084921bde7d146b"
+    },
+    {
+      "file": "committed-property-counts.json",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-property-counts.json",
+      "bytes": 132,
+      "sha256": "086efcbda2d94af864614dd7fee9d7226cdd0b27e51f83c183e35ac011fc7e8a"
+    },
+    {
+      "file": "committed-matrix.py",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-matrix.py",
+      "bytes": 3729,
+      "sha256": "3ce17a08c222d1a1828ac85c4f41b07eac6ad61d40e9755963bbfc946ffdab43"
+    },
+    {
+      "file": "committed-matrix.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-matrix.log",
+      "bytes": 273,
+      "sha256": "9e27bee3532af18219e7c47135919a474ecef19f62cf85fd82ca658faaaf8963"
+    },
+    {
+      "file": "committed-matrix-results.json.gz",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-matrix-results.json",
+      "bytes": 7200,
+      "sha256": "2e7b7c352802b5456df230e5ac1f3c782731dc60dd1b3615a67588a5069df899"
+    },
+    {
+      "file": "check-matrix.py",
+      "source": "/workspace/scratch/lang-lossless-widening/check-matrix.py",
+      "bytes": 1307,
+      "sha256": "41d3dbc8e83084fa6d23c9decc3c7f3c17c004a5085a057a647098714e1ad1d9"
+    },
+    {
+      "file": "committed-oracle-checks.json",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-oracle-checks.json",
+      "bytes": 9120,
+      "sha256": "87dce540588b71721119665212e4c3279d9eb9269ff8ed540f167f08775d0278"
+    },
+    {
+      "file": "committed-self-checks.json",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-self-checks.json",
+      "bytes": 9128,
+      "sha256": "20e95bc627e1a48d5f37e2025c02ac599eece761def7e3bcb624e8a674d4e229"
+    },
+    {
+      "file": "committed-fmt.log",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-fmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "committed-fmt.json",
+      "source": "/workspace/scratch/lang-lossless-widening/committed-fmt.json",
+      "bytes": 126,
+      "sha256": "8159ad8b6d45a0c4f8960a9a7d2a85fa80552e0c24f8e9f3910aabed230bf0ce"
+    },
+    {
+      "file": "ste-prose.log",
+      "source": "/workspace/scratch/lang-lossless-widening/ste-prose.log",
+      "bytes": 165,
+      "sha256": "9103ca54349262fc43f5505b05ce1b4783c76b95abf9962e8b96fb4aaeeabf04"
+    },
+    {
+      "file": "ste-comments.log",
+      "source": "/workspace/scratch/lang-lossless-widening/ste-comments.log",
+      "bytes": 1356,
+      "sha256": "dc33df653731922c1f5ddbf51e052f766dbded9cd8e60800f6a96fb978c4b333"
+    },
+    {
+      "file": "core-source.patch.gz",
+      "bytes": 18842,
+      "sha256": "c262bd387b65a920f16ad7f8b52d85956fc9f59751a70e7805f99f7fe7b6a09c"
+    }
+  ]
+}

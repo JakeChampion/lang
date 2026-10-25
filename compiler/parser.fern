@@ -1724,6 +1724,25 @@ function (p: Par) keyword_at(idx: i32): string {
 
 function (p: Par) if_stmt_has_else(): boolean {
   let i: i32 = p.pos + 1;
+  if (p.keyword_at(i) == "let") {
+    i = i + 1;
+    let depth: i32 = 0;
+    let source: boolean = false;
+    while (i < p.toks.len()) {
+      let pt: string = p.punct_at(i);
+      if (source && depth == 0 && pt == "{") {
+        break;
+      }
+      if (!source && depth == 0 && pt == "=") {
+        source = true;
+      } else if (pt == "(" || pt == "[" || pt == "{") {
+        depth = depth + 1;
+      } else if (pt == ")" || pt == "]" || pt == "}") {
+        depth = depth - 1;
+      }
+      i = i + 1;
+    }
+  }
   if (p.punct_at(i) == "(") {
     let depth: i32 = 0;
     while (i < p.toks.len()) {
@@ -2524,10 +2543,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       }
       if (x.name == "if") {
         let ic: IfChain = parse_if_chain(p);
-        let no_params: ast.ParamDecl[] = [];
-        let lam_body: ast.Stmt[] = [ic.stmt];
-        let no_args: ast.Expr[] = [];
-        let iife: ast.Expr = e_call_at(e_lambda_origin(no_params, ic.rt, lam_body, ORIGIN_IF_EXPR), no_args, x.line, x.col);
+        let iife: ast.Expr = value_chain_expr(ic, ORIGIN_IF_EXPR, x.line, x.col);
         return parse_postfix(ic.par, iife);
       }
       let is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
@@ -3626,7 +3642,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (ast.StructArm[], 
         sbrt = if_expr_rt(ser_expr);
       }
     } else {
-      let (sblk_body, sblk_p) = parse_block(p);
+      let (sblk_body, sblk_p) = parse_match_stmt_body(p);
       p = sblk_p;
       sbody = sblk_body;
     }
@@ -3779,6 +3795,14 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
   }
   p = p.advance();
   while (p.peek_punct() != "}" && !p.at_end()) {
+    if (p.peek_keyword() == "match") {
+      let (valueless, stmt, next) = valueless_branch_tail(p);
+      if (valueless) {
+        leading = leading.append(stmt);
+        p = next;
+        continue;
+      }
+    }
     let (is_stmt, ip) = item_is_stmt(p);
     p = ip;
     if (is_stmt) {
@@ -3848,12 +3872,21 @@ function valueless_branch_tail(p: Par): (boolean, ast.Stmt, Par) {
 }
 
 function match_arms_braced(p: Par): boolean {
+  if (p.too_deep_by(BLOCK_NEST_UNITS)) {
+    return false;
+  }
   let depth: i32 = 0;
   let k: i32 = 1;
   while (p.pos + k < p.toks.len()) {
     let t: string = p.peek_punct_at(k);
-    if (t == "=>" && depth == 1 && p.peek_punct_at(k + 1) != "{") {
-      return false;
+    if (t == "=>" && depth == 1) {
+      let body_start: Par = Par { ...p, pos: p.pos + k + 1, depth: p.depth + BLOCK_NEST_UNITS };
+      let (leading, have_tail, tail, ok, after) = parse_block_items(body_start);
+      if (!ok || have_tail || after.type_errs.len() != p.type_errs.len()) {
+        return false;
+      }
+      k = after.pos - p.pos;
+      continue;
     }
     depth = depth + bracket_step(t);
     if (depth == 0 && t == "}") {
@@ -3923,7 +3956,26 @@ function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
   return (leading, rt, false, p);
 }
 
+function value_chain_expr(chain: IfChain, origin: string, line: i32, col: i32): ast.Expr {
+  let params: ast.ParamDecl[] = [];
+  let args: ast.Expr[] = [];
+  let body: ast.Stmt[] = [chain.stmt];
+  if (chain.value_local.len() > 0) {
+    body = [s_var(chain.value_local, "", zero_expr_for(chain.rt)), chain.stmt, s_return(e_ident(chain.value_local))];
+  } else if (chain.needs_default_return) {
+    body = body.append(s_return(zero_expr_for(chain.rt)));
+  }
+  if (chain.scrut_bind.len() > 0) {
+    let inner: ast.Expr = e_call(e_lambda_origin(params, chain.rt, body, origin), args);
+    body = [chain.scrut_bind[0], s_return(inner)];
+  }
+  return e_call_at(e_lambda_origin(params, chain.rt, body, origin), args, line, col);
+}
+
 function parse_if_chain(p: Par): IfChain {
+  if (p.advance().peek_keyword() == "let") {
+    return parse_pattern_if(p.advance(), true);
+  }
   let (condr_expr, condr_p) = parse_paren_head(p.advance());
   p = condr_p;
   let (thenb_body, thenb_rt, then_dead, thenb_p) = parse_branch_body_written(p);
@@ -4417,10 +4469,14 @@ function parse_block(p: Par): (ast.Stmt[], Par) {
 }
 
 function parse_block_body(p: Par, tail_value: boolean): (ast.Stmt[], Par) {
+  return parse_block_body_mode(p, tail_value, false);
+}
+
+function parse_block_body_mode(p: Par, tail_value: boolean, discard_tail: boolean): (ast.Stmt[], Par) {
   if (p.too_deep_by(BLOCK_NEST_UNITS)) {
     return ([s_unknown_at("nest:too-deep", p.peek_line(), p.peek_col())], p.bail());
   }
-  let (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + BLOCK_NEST_UNITS), tail_value);
+  let (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + BLOCK_NEST_UNITS), tail_value, discard_tail);
   return (g0, gq.with_depth(p.depth));
 }
 
@@ -4437,7 +4493,7 @@ function parse_lambda_body(p: Par): (ast.Stmt[], Par) {
   return (lb_body, p);
 }
 
-function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par) {
+function parse_block_body_nested(p: Par, tail_value: boolean, discard_tail: boolean): (ast.Stmt[], Par) {
   let body: ast.Stmt[] = [];
   while (p.peek_punct() != "}" && !p.at_end()) {
     if (p.peek_keyword() == "use") {
@@ -4490,6 +4546,14 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       }
       return (body, p);
     }
+    if (discard_tail && (p.peek_keyword() == "if" || p.peek_keyword() == "match")) {
+      let (stmt, next) = parse_stmt(p);
+      if (next.type_errs.len() == p.type_errs.len() && !stmts_have_parse_error([stmt])) {
+        body = body.append(stmt);
+        p = next;
+        continue;
+      }
+    }
     if (tail_value) {
       let (vb_ok, vb_stmt, vb_p) = valueless_branch_tail(p);
       if (vb_ok) {
@@ -4502,8 +4566,16 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
     p = tp;
     if (tail_item) {
       let (tv_expr, tv_p) = parse_expr(p);
-      if (tv_p.peek_punct() == "}") {
-        body = body.append(s_return(tv_expr));
+      if ((tv_p.peek_punct() == "}" || discard_tail && (p.peek_keyword() == "if" || p.peek_keyword() == "match") && tv_p.peek_punct() == ";") && (!discard_tail || tv_p.type_errs.len() == p.type_errs.len())) {
+        if (discard_tail) {
+          body = body.append(s_expr(tv_expr));
+        } else {
+          body = body.append(s_return(tv_expr));
+        }
+        if (discard_tail && tv_p.peek_punct() == ";") {
+          p = tv_p.advance();
+          continue;
+        }
         return (body, tv_p);
       }
     }
@@ -5209,6 +5281,32 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
   return ast.MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false };
 }
 
+function stmts_have_parse_error(body: ast.Stmt[]): boolean {
+  let errors: string[] = [];
+  for stmt in body {
+    errors = astwalk.fold_stmt_spine(stmt, errors, collect_parse_error);
+  }
+  return errors.len() > 0;
+}
+
+function collect_parse_error(stmt: ast.Stmt, own errors: string[]): string[] {
+  if let ast.StmtUnknown(u) = stmt {
+    return errors.append(u.kind);
+  }
+  return errors;
+}
+
+function parse_match_stmt_body(p: Par): (ast.Stmt[], Par) {
+  if (p.peek_punct() != "{") {
+    let (expr, next) = parse_expr(p);
+    return ([s_expr(expr)], next);
+  }
+  let (body, next) = parse_block_body_mode(p.advance(), true, true);
+  return (body, next.expect("}"));
+}
+
+// parse_match_stmt reads a statement match with comma-separated arms.
+// Each arm has a bare expression or a block body.
 function parse_match_stmt(p: Par): (ast.Stmt, Par) {
   let mkline: i32 = p.peek_line();
   let mkcol: i32 = p.peek_col();
@@ -5259,7 +5357,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
         t_has_guard = true;
       }
       p = p.expect("=>");
-      let (tbb_body, tbb_p) = parse_block(p);
+      let (tbb_body, tbb_p) = parse_match_stmt_body(p);
       p = tbb_p;
       if (t_wild) {
         let tw_kinds: i32[] = [];
@@ -5326,7 +5424,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
         lhas_guard = true;
       }
       p = p.expect("=>");
-      let (lbb_body, lbb_p) = parse_block(p);
+      let (lbb_body, lbb_p) = parse_match_stmt_body(p);
       p = lbb_p;
       if (lwild) {
         lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
@@ -5370,7 +5468,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
       arm_has_guard = true;
     }
     p = p.expect("=>");
-    let (bb_body, bb_p) = parse_block(p);
+    let (bb_body, bb_p) = parse_match_stmt_body(p);
     p = bb_p;
     let pi: i32 = 0;
     while (pi < pats.len()) {
@@ -5449,7 +5547,7 @@ pub function stmts_mention(stmts: ast.Stmt[], name: string): boolean {
 
 function parse_loop_stmt(p: Par): (ast.Stmt, Par) {
   let p2: Par = p.advance();
-  let (lb_body, lb_p) = parse_block_or_stmt(p2);
+  let (lb_body, lb_p) = parse_block(p2);
   return (ast.StmtWhile { cond: e_bool(true), body: lb_body, label: "", line: 0, is_loop: true, todo: false }, lb_p);
 }
 
@@ -5588,7 +5686,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     }
     iter_expr = e_call(e_ident(range_fn), rargs);
   }
-  let (fb_body, fb_p) = parse_block_or_stmt(p);
+  let (fb_body, fb_p) = parse_block(p);
   p = fb_p;
   let fbi: i32 = 0;
   while (fbi < fb_body.len()) {
@@ -5779,181 +5877,211 @@ function at_local_struct_pattern(p: Par): boolean {
   return is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{");
 }
 
+struct PatternIfBranches { par: Par, yes: ast.Stmt[], no: ast.Stmt[], rt: string }
+
+function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: string): PatternIfBranches {
+  if (!value_form) {
+    let (yes, next) = parse_block_or_stmt(p);
+    p = next;
+    let no: ast.Stmt[] = [];
+    if (p.peek_keyword() == "else") {
+      let (body, after) = parse_block_or_stmt(p.advance());
+      no = body;
+      p = after;
+    }
+    return PatternIfBranches { par: p, yes: yes, no: no, rt: "" };
+  }
+  let (yes, yes_rt, next) = parse_branch_body(p);
+  p = next.expect("else");
+  let no: ast.Stmt[] = [];
+  let no_rt: string = "i32";
+  if (p.peek_keyword() == "if") {
+    let chain: IfChain = parse_if_chain(p);
+    let expr: ast.Expr = value_chain_expr(chain, ORIGIN_IF_EXPR, p.peek_line(), p.peek_col());
+    no = [s_return(expr)];
+    no_rt = chain.rt;
+    p = chain.par;
+  } else {
+    let (body, rt, after) = parse_branch_body(p);
+    no = body;
+    no_rt = rt;
+    p = after;
+  }
+  return PatternIfBranches { par: p, yes: value_arm_body(yes, value_local), no: value_arm_body(no, value_local), rt: wider_rt(yes_rt, no_rt) };
+}
+
+function pattern_if_chain(stmt: ast.Stmt, p: Par, rt: string, value_form: boolean, value_local: string): IfChain {
+  let local: string = "";
+  if (value_form) {
+    local = value_local;
+  }
+  return IfChain { par: p, stmt: stmt, rt: rt, needs_default_return: false, value_local: local, scrut_bind: [] };
+}
+
+// parse_pattern_if shares pattern and branch rules between the two if-let forms.
+function parse_pattern_if(p: Par, value_form: boolean): IfChain {
+  let rt: string = "i32";
+  let value_local: string = "__il" + dl_itoa(p.peek_line()) + "_" + dl_itoa(p.peek_col()) + "_r";
+  p = p.advance();
+  // Local records use the field-pattern builder.
+  if (at_local_struct_pattern(p)) {
+    let ils_line: i32 = p.peek_line();
+    let ils_col: i32 = p.peek_col();
+    let ils_at: string = "";
+    if (p.peek_ident().len() > 0 && p.peek2_punct() == "@") {
+      ils_at = p.peek_ident();
+      p = p.advance();
+      p = p.advance();
+    }
+    let ils_type: string = p.peek_ident();
+    let (ils_sap, ils_pp) = parse_struct_arm_pattern(p);
+    let ils_binds: string[] = ils_sap.binds;
+    let ils_fields: string[] = ils_sap.fields;
+    let ils_field_kinds: i32[] = ils_sap.kinds;
+    let ils_field_lits: ast.Expr[] = ils_sap.lits;
+    let ils_field_pats: ast.Pattern[] = ils_sap.pats;
+    let ils_ok: boolean = ils_sap.ok;
+    p = ils_pp;
+    if (!ils_ok) {
+      return pattern_if_chain(s_unknown(p, "a struct pattern binds field names"), p, rt, value_form, value_local);
+    }
+    p = p.expect("=");
+    let ils_saved: boolean = p.no_struct;
+    let (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
+    p = ils_sp.with_no_struct(ils_saved);
+    let branches: PatternIfBranches = parse_pattern_if_branches(p, value_form, value_local);
+    p = branches.par;
+    rt = branches.rt;
+    let ils_then: ast.Stmt[] = branches.yes;
+    let ils_else: ast.Stmt[] = branches.no;
+    let ils_arms: ast.StructArm[] = [];
+    ils_arms = ils_arms.append(ast.StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, rest_written: ils_sap.rest_written, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
+    let ils_nb: string[] = [];
+    let ils_no_pats: ast.Pattern[] = [];
+    let ils_no_kinds: i32[] = [];
+    let ils_no_lits: ast.Expr[] = [];
+    let ils_nf: string[] = [];
+    ils_arms = ils_arms.append(ast.StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
+    return pattern_if_chain(with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p, rt, value_form, value_local);
+  }
+  if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
+    let ilt_line: i32 = p.peek_line();
+    let ilt_col: i32 = p.peek_col();
+    let ilt_at: string = "";
+    if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
+      ilt_at = p.peek_ident();
+      p = p.advance();
+      p = p.advance();
+    }
+    let ilt_empty: ast.Stmt[] = [];
+    let ilt_pats: ast.TupArm[] = [];
+    let (ilt_kinds, ilt_binds, ilt_lits, ilt_elems, ilt_pp) = parse_tuple_arm_pattern(p);
+    p = ilt_pp;
+    if (ilt_kinds.len() == 0) {
+      return pattern_if_chain(s_unknown(p, "bad tuple pattern"), p, rt, value_form, value_local);
+    }
+    ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilt_kinds, binds: ilt_binds, lits: ilt_lits, elem_pats: ilt_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
+    while (p.peek_punct() == "|") {
+      p = p.advance();
+      let (ilo_kinds, ilo_binds, ilo_lits, ilo_elems, ilo_p) = parse_tuple_arm_pattern(p);
+      p = ilo_p;
+      if (ilo_kinds.len() == 0) {
+        return pattern_if_chain(s_unknown(p, "bad tuple pattern"), p, rt, value_form, value_local);
+      }
+      ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
+    }
+    p = p.expect("=");
+    let ilt_saved: boolean = p.no_struct;
+    let (ilt_scrut, ilt_sp) = parse_expr(p.with_no_struct(true));
+    p = ilt_sp.with_no_struct(ilt_saved);
+    let branches: PatternIfBranches = parse_pattern_if_branches(p, value_form, value_local);
+    p = branches.par;
+    rt = branches.rt;
+    let ilt_then: ast.Stmt[] = branches.yes;
+    let ilt_else: ast.Stmt[] = branches.no;
+    let ilt_arms: ast.TupArm[] = [];
+    for ilt_i in 0..ilt_pats.len() {
+      let ilt_a: ast.TupArm = ilt_pats[ilt_i];
+      ilt_arms = ilt_arms.append(ast.TupArm { is_wild: false, elem_kinds: ilt_a.elem_kinds, binds: ilt_a.binds, lits: ilt_a.lits, elem_pats: ilt_a.elem_pats, at_binding: ilt_at, guard: e_bool(true), has_guard: false, body: ilt_then, line: ilt_line, col: ilt_col, alt_cont: ilt_i > 0 });
+    }
+    let ilt_wk: i32[] = [];
+    let ilt_wb: string[] = [];
+    let ilt_wl: ast.Expr[] = [];
+    let ilt_wp: ast.Pattern[] = [];
+    ilt_arms = ilt_arms.append(ast.TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
+    return pattern_if_chain(with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let"), p, rt, value_form, value_local);
+  }
+  // Literal and range patterns share the literal match builder.
+  if (p.peek_is_pat_literal() || p.peek_at_literal()) {
+    let ill_line: i32 = p.peek_line();
+    let ill_col: i32 = p.peek_col();
+    let (ill_at, ill_atp) = take_at_binding(p);
+    p = ill_atp;
+    let (ill_lits, ill_his, ill_hrs, ill_incs, ill_p) = parse_lit_alts(p);
+    p = ill_p;
+    p = p.expect("=");
+    let ill_saved: boolean = p.no_struct;
+    let (ill_scrut, ill_sp) = parse_expr(p.with_no_struct(true));
+    p = ill_sp.with_no_struct(ill_saved);
+    let branches: PatternIfBranches = parse_pattern_if_branches(p, value_form, value_local);
+    p = branches.par;
+    rt = branches.rt;
+    let ill_then: ast.Stmt[] = branches.yes;
+    let ill_else: ast.Stmt[] = branches.no;
+    let ill_arms: ast.LitArm[] = [];
+    for ill_i in 0..ill_lits.len() {
+      ill_arms = ill_arms.append(ast.LitArm { is_wild: false, lit: ill_lits[ill_i], guard: e_bool(true), has_guard: false, body: ill_then, line: ill_line, col: ill_col, range_hi: ill_his[ill_i], has_range: ill_hrs[ill_i], range_inclusive: ill_incs[ill_i], alt_cont: ill_i > 0, at_binding: ill_at });
+    }
+    ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
+
+    return pattern_if_chain(with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p, rt, value_form, value_local);
+  }
+  let il_line: i32 = p.peek_line();
+  let il_col: i32 = p.peek_col();
+  let (ilpat_pattern, ilpat_p) = parse_pattern(p);
+  p = ilpat_p;
+  let ilpats: ast.Pattern[] = [ilpat_pattern];
+  while (p.peek_punct() == "|") {
+    p = p.advance();
+    let (ilalt_pattern, ilalt_p) = parse_pattern(p);
+    p = ilalt_p;
+    ilpats = ilpats.append(ilalt_pattern);
+  }
+  p = p.expect("=");
+  let il_saved: boolean = p.no_struct;
+  let (ilscrut_expr, ilscrut_p) = parse_expr(p.with_no_struct(true));
+  p = ilscrut_p.with_no_struct(il_saved);
+  let branches: PatternIfBranches = parse_pattern_if_branches(p, value_form, value_local);
+  p = branches.par;
+  rt = branches.rt;
+  let ilthen_body: ast.Stmt[] = branches.yes;
+  let ilelse: ast.Stmt[] = branches.no;
+  let ilarms: ast.MatchArm[] = [];
+  let ilwritten: ast.MatchArm[] = [];
+  for ilpi in 0..ilpats.len() {
+    ilwritten = ilwritten.append(ast.MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false });
+    let (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
+    ilarms = ilarms.append(ast.MatchArm { pattern: fi_pat, body: ilthen_body, line: il_line, col: il_col, guard: fi_g, has_guard: fi_hg, alt_cont: false });
+  }
+  let ilwild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: ilelse, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false };
+  ilarms = ilarms.append(ilwild);
+  ilwritten = ilwritten.append(ilwild);
+  if (arms_take_flag_chain(ilarms)) {
+    return pattern_if_chain(with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let"), p, rt, value_form, value_local);
+  }
+  ilarms = desugar_nested_arms(ilarms, 0, "");
+  let ilsugar: ast.MatchArm[] = [];
+  if (arms_have_written_form(ilwritten)) {
+    ilsugar = ilwritten;
+  }
+  return pattern_if_chain(s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p, rt, value_form, value_local);
+}
+
 function parse_if_stmt(p: Par): (ast.Stmt, Par) {
   p = p.advance();
   if (p.peek_keyword() == "let") {
-    p = p.advance();
-    if (at_local_struct_pattern(p)) {
-      let ils_line: i32 = p.peek_line();
-      let ils_col: i32 = p.peek_col();
-      let ils_at: string = "";
-      if (p.peek_ident().len() > 0 && p.peek2_punct() == "@") {
-        ils_at = p.peek_ident();
-        p = p.advance();
-        p = p.advance();
-      }
-      let ils_type: string = p.peek_ident();
-      let (ils_sap, ils_pp) = parse_struct_arm_pattern(p);
-      let ils_binds: string[] = ils_sap.binds;
-      let ils_fields: string[] = ils_sap.fields;
-      let ils_field_kinds: i32[] = ils_sap.kinds;
-      let ils_field_lits: ast.Expr[] = ils_sap.lits;
-      let ils_field_pats: ast.Pattern[] = ils_sap.pats;
-      let ils_ok: boolean = ils_sap.ok;
-      p = ils_pp;
-      if (!ils_ok) {
-        return (s_unknown(p, "a struct pattern binds field names"), p);
-      }
-      p = p.expect("=");
-      let ils_saved: boolean = p.no_struct;
-      let (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
-      p = ils_sp.with_no_struct(ils_saved);
-      let (ils_then, ils_tp) = parse_block_or_stmt(p);
-      p = ils_tp;
-      let ils_else: ast.Stmt[] = [];
-      if (p.peek_keyword() == "else") {
-        p = p.advance();
-        let (ils_eb, ils_ep) = parse_block_or_stmt(p);
-        p = ils_ep;
-        ils_else = ils_eb;
-      }
-      let ils_arms: ast.StructArm[] = [];
-      ils_arms = ils_arms.append(ast.StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, rest_written: ils_sap.rest_written, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
-      let ils_nb: string[] = [];
-      let ils_no_pats: ast.Pattern[] = [];
-      let ils_no_kinds: i32[] = [];
-      let ils_no_lits: ast.Expr[] = [];
-      let ils_nf: string[] = [];
-      ils_arms = ils_arms.append(ast.StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
-      return (with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p);
-    }
-    if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
-      let ilt_line: i32 = p.peek_line();
-      let ilt_col: i32 = p.peek_col();
-      let ilt_at: string = "";
-      if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
-        ilt_at = p.peek_ident();
-        p = p.advance();
-        p = p.advance();
-      }
-      let ilt_empty: ast.Stmt[] = [];
-      let ilt_pats: ast.TupArm[] = [];
-      let (ilt_kinds, ilt_binds, ilt_lits, ilt_elems, ilt_pp) = parse_tuple_arm_pattern(p);
-      p = ilt_pp;
-      if (ilt_kinds.len() == 0) {
-        return (s_unknown(p, "bad tuple pattern"), p);
-      }
-      ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilt_kinds, binds: ilt_binds, lits: ilt_lits, elem_pats: ilt_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
-      while (p.peek_punct() == "|") {
-        p = p.advance();
-        let (ilo_kinds, ilo_binds, ilo_lits, ilo_elems, ilo_p) = parse_tuple_arm_pattern(p);
-        p = ilo_p;
-        if (ilo_kinds.len() == 0) {
-          return (s_unknown(p, "bad tuple pattern"), p);
-        }
-        ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
-      }
-      p = p.expect("=");
-      let ilt_saved: boolean = p.no_struct;
-      let (ilt_scrut, ilt_sp) = parse_expr(p.with_no_struct(true));
-      p = ilt_sp.with_no_struct(ilt_saved);
-      let (ilt_then, ilt_tp) = parse_block_or_stmt(p);
-      p = ilt_tp;
-      let ilt_else: ast.Stmt[] = [];
-      if (p.peek_keyword() == "else") {
-        p = p.advance();
-        let (ilt_eb, ilt_ep) = parse_block_or_stmt(p);
-        p = ilt_ep;
-        ilt_else = ilt_eb;
-      }
-      let ilt_arms: ast.TupArm[] = [];
-      let ilt_i: i32 = 0;
-      while (ilt_i < ilt_pats.len()) {
-        let ilt_a: ast.TupArm = ilt_pats[ilt_i];
-        ilt_arms = ilt_arms.append(ast.TupArm { is_wild: false, elem_kinds: ilt_a.elem_kinds, binds: ilt_a.binds, lits: ilt_a.lits, elem_pats: ilt_a.elem_pats, at_binding: ilt_at, guard: e_bool(true), has_guard: false, body: ilt_then, line: ilt_line, col: ilt_col, alt_cont: ilt_i > 0 });
-        ilt_i = ilt_i + 1;
-      }
-      let ilt_wk: i32[] = [];
-      let ilt_wb: string[] = [];
-      let ilt_wl: ast.Expr[] = [];
-      let ilt_wp: ast.Pattern[] = [];
-      ilt_arms = ilt_arms.append(ast.TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
-      return (with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let"), p);
-    }
-    if (p.peek_is_pat_literal() || p.peek_at_literal()) {
-      let ill_line: i32 = p.peek_line();
-      let ill_col: i32 = p.peek_col();
-      let (ill_at, ill_atp) = take_at_binding(p);
-      p = ill_atp;
-      let (ill_lits, ill_his, ill_hrs, ill_incs, ill_p) = parse_lit_alts(p);
-      p = ill_p;
-      p = p.expect("=");
-      let ill_saved: boolean = p.no_struct;
-      let (ill_scrut, ill_sp) = parse_expr(p.with_no_struct(true));
-      p = ill_sp.with_no_struct(ill_saved);
-      let (ill_then, ill_tp) = parse_block_or_stmt(p);
-      p = ill_tp;
-      let ill_else: ast.Stmt[] = [];
-      if (p.peek_keyword() == "else") {
-        p = p.advance();
-        let (ill_eb, ill_ep) = parse_block_or_stmt(p);
-        p = ill_ep;
-        ill_else = ill_eb;
-      }
-      let ill_arms: ast.LitArm[] = [];
-      let ill_i: i32 = 0;
-      while (ill_i < ill_lits.len()) {
-        ill_arms = ill_arms.append(ast.LitArm { is_wild: false, lit: ill_lits[ill_i], guard: e_bool(true), has_guard: false, body: ill_then, line: ill_line, col: ill_col, range_hi: ill_his[ill_i], has_range: ill_hrs[ill_i], range_inclusive: ill_incs[ill_i], alt_cont: ill_i > 0, at_binding: ill_at });
-        ill_i = ill_i + 1;
-      }
-      ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
-      return (with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p);
-    }
-    let il_line: i32 = p.peek_line();
-    let il_col: i32 = p.peek_col();
-    let (ilpat_pattern, ilpat_p) = parse_pattern(p);
-    p = ilpat_p;
-    let ilpats: ast.Pattern[] = [ilpat_pattern];
-    while (p.peek_punct() == "|") {
-      p = p.advance();
-      let (ilalt_pattern, ilalt_p) = parse_pattern(p);
-      p = ilalt_p;
-      ilpats = ilpats.append(ilalt_pattern);
-    }
-    p = p.expect("=");
-    let il_saved: boolean = p.no_struct;
-    let (ilscrut_expr, ilscrut_p) = parse_expr(p.with_no_struct(true));
-    p = ilscrut_p.with_no_struct(il_saved);
-    let (ilthen_body, ilthen_p) = parse_block_or_stmt(p);
-    p = ilthen_p;
-    let ilelse: ast.Stmt[] = [];
-    if (p.peek_keyword() == "else") {
-      p = p.advance();
-      let (ileb_body, ileb_p) = parse_block_or_stmt(p);
-      p = ileb_p;
-      ilelse = ileb_body;
-    }
-    let ilarms: ast.MatchArm[] = [];
-    let ilwritten: ast.MatchArm[] = [];
-    let ilpi: i32 = 0;
-    while (ilpi < ilpats.len()) {
-      ilwritten = ilwritten.append(ast.MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false });
-      let (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
-      ilarms = ilarms.append(ast.MatchArm { pattern: fi_pat, body: ilthen_body, line: il_line, col: il_col, guard: fi_g, has_guard: fi_hg, alt_cont: false });
-      ilpi = ilpi + 1;
-    }
-    let ilwild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: ilelse, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false };
-    ilarms = ilarms.append(ilwild);
-    ilwritten = ilwritten.append(ilwild);
-    if (arms_take_flag_chain(ilarms)) {
-      return (with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let"), p);
-    }
-    ilarms = desugar_nested_arms(ilarms, 0, "");
-    let ilsugar: ast.MatchArm[] = [];
-    if (arms_have_written_form(ilwritten)) {
-      ilsugar = ilwritten;
-    }
-    return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p);
+    let chain: IfChain = parse_pattern_if(p, false);
+    return (chain.stmt, chain.par);
   }
   let (c_expr, c_p) = parse_paren_head(p);
   p = c_p;
@@ -6175,6 +6303,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
   }
   if (kw == "match") {
     let (mr_stmt, mr_p) = parse_match_stmt(p);
+    if (mr_p.peek_punct() == ";") {
+      return (mr_stmt, mr_p.advance());
+    }
     return (mr_stmt, mr_p);
   }
   if (kw == "if") {
@@ -6183,7 +6314,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
   if (kw == "while") {
     let (wc_expr, wc_p) = parse_paren_head(p.advance());
     p = wc_p;
-    let (wb_body, wb_p) = parse_block_or_stmt(p);
+    let (wb_body, wb_p) = parse_block(p);
     p = wb_p;
     return (with_loop_label(s_while(wc_expr, wb_body), loop_label), p);
   }
@@ -8081,11 +8212,11 @@ pub function builtin_function_names(): string[] {
     "open_reader", "open_writer", "open_appender", "open_exclusive",
     "open_reader_with", "open_writer_with",
     "open_dir",
-    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "remove_file",
+    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "remove_file",
     "create_dir_all", "stat", "lstat", "access", "temp_dir",
     "statfs", "mounts",
     "sysctl",
-    "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
+    "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "read_link_bytes", "umask", "rename",
     "clone_file",
     "rename_noreplace", "rename_exchange",
     "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes",
@@ -8150,7 +8281,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_variant(structs, "Unsupported", none, "IoError");
   structs = add_builtin_variant(structs, "BodyText", ["string"], "Body");
   structs = add_builtin_variant(structs, "BodyBytes", ["u8[]"], "Body");
-  structs = add_builtin_variant(structs, "BodyStream", ["Stream"], "Body");
+  structs = add_builtin_variant(structs, "BodyStream", ["ByteStream"], "Body");
   structs = add_builtin_variant(structs, "BodyFile", ["string"], "Body");
   structs = add_builtin_variant(structs, "BodyChunks", ["ChunkProducer"], "Body");
   structs = add_builtin_variant(structs, "BodyFileRanges", ["string", "i64[]", "u8[][]"], "Body");
@@ -8248,7 +8379,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     let hrf: StructFieldDecl[] = [];
     hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "" });
     hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
-    hrf = hrf.append(StructFieldDecl { name: "body", type_name: "Stream", fn_ret: "", fn_param_types: "" });
+    hrf = hrf.append(StructFieldDecl { name: "body", type_name: "ByteStream", fn_ret: "", fn_param_types: "" });
     hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
     hrf = hrf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
@@ -8329,12 +8460,12 @@ function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
     bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]" });
     structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
-  if (!name_declared(structs, "Stream")) {
+  if (!name_declared(structs, "ByteStream")) {
     let stf: StructFieldDecl[] = [];
     stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
     stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
     stf = stf.append(StructFieldDecl { name: "source", type_name: "Option[BodySource]", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "ByteStream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
 }
@@ -8939,6 +9070,9 @@ function split_dunder(s: string): string[] {
 }
 
 function split_key(s: string, n: i32, structs: StructDecl[], enums: EnumDecl[]): string[] {
+  if (util.contains(s, ";")) {
+    return split_inst_key(s);
+  }
   if (n <= 1 && !util.str_has_prefix(s, "tup__")) {
     return [s];
   }
@@ -8976,6 +9110,14 @@ function group_tokens(tokens: string[], at0: i32, n: i32, spare0: i32, structs: 
 }
 
 function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
+  if (tokens[at] == "view" && at + 1 < tokens.len()) {
+    let elem: Grouped = take_piece(tokens, at + 1, spare - 1, structs, enums);
+    return Grouped { pieces: ["[" + elem.pieces[0] + "]"], at: elem.at };
+  }
+  if (tokens[at] == "arr" && at + 1 < tokens.len()) {
+    let elem: Grouped = take_piece(tokens, at + 1, spare - 1, structs, enums);
+    return Grouped { pieces: [elem.pieces[0] + "[]"], at: elem.at };
+  }
   if (tokens[at] == "tup") {
     let tup: Grouped = take_tuple(tokens, at, structs, enums);
     if (tup.at + 1 < tokens.len() && tokens[tup.at] == "fto") {
@@ -8999,7 +9141,7 @@ function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[]
     if (params > 0 && spare - k - params >= 0) {
       let args: Grouped = group_tokens(tokens, end, params, spare - k - params, structs, enums);
       if (args.pieces.len() == params) {
-        return Grouped { pieces: [cand + "__" + join_dunder(args.pieces, 0, params)], at: args.at };
+        return Grouped { pieces: [cand + "__" + sanitize_key(join_dunder(args.pieces, 0, params))], at: args.at };
       }
     }
     k = k - 1;
@@ -9061,6 +9203,45 @@ function join_dunder(xs: string[], from: i32, to: i32): string {
 }
 
 pub function sanitize_key(s: string): string {
+  if (!util.contains(s, "[]")) {
+    return sanitize_plain_key(s);
+  }
+  let out: string = "";
+  for part in split_inst_key(s) {
+    if (out.len() > 0) {
+      out = out + "__";
+    }
+    out = out + array_key_ref(parse_type_ref(part));
+  }
+  return out;
+}
+
+function array_key_ref(t: TypeRef): string {
+  if (t.is_view) {
+    return "view__" + array_key_ref(t.args[0]);
+  }
+  if (t.array_depth > 0) {
+    return "arr__" + array_key_ref(TypeRef { ...t, array_depth: t.array_depth - 1 });
+  }
+  let out: string = sanitize_plain_key(t.base);
+  if (t.is_tuple || t.is_fn) {
+    out = "tup";
+  }
+  let i: i32 = 0;
+  while (i < t.args.len()) {
+    if (t.is_fn && i + 1 == t.args.len()) {
+      out = out + "__put__fto";
+    }
+    out = out + "__" + array_key_ref(t.args[i]);
+    i = i + 1;
+  }
+  if (t.is_tuple) {
+    out = out + "__put";
+  }
+  return out;
+}
+
+function sanitize_plain_key(s: string): string {
   let out: string = "";
   let i: i32 = 0;
   while (i < s.len()) {
@@ -13002,7 +13183,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
         let pr: TyIns = mg_ty(parts[j], gstructs, cur);
         cur = pr.mins;
         if (j > 0) {
-          key = key + "__";
+          key = key + ";";
         }
         key = key + pr.ty;
         j = j + 1;
@@ -13096,7 +13277,7 @@ function infer_lit_key(gd: StructDecl, fnames: string[], fvals: ast.Expr[], env:
       return "";
     }
     if (k > 0) {
-      key = key + "__";
+      key = key + ";";
     }
     key = key + b;
     k = k + 1;
@@ -15921,13 +16102,17 @@ function dl_itoa(n: i32): string {
 
 struct DeferAcc { stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32[] }
 
+pub function is_iflet_value_local(name: string): boolean {
+  return is_value_local_name(name) && name.starts_with("__il");
+}
+
 pub function is_value_local_name(name: string): boolean {
   let n: i32 = name.len();
   if (n < 6 || slice_unchecked(name, n - 2, n) != "_r") {
     return false;
   }
   let head: str = slice_unchecked(name, 0, 4);
-  return head == "__tm" || head == "__sm" || head == "__nt" || head == "__na";
+  return head == "__tm" || head == "__sm" || head == "__nt" || head == "__na" || head == "__il";
 }
 
 pub function is_value_block(c: ast.ExprCall): boolean {
@@ -17723,10 +17908,10 @@ pub function is_reserved_struct_name(name: string): boolean {
     return false;
   }
   let reserved: string[] = [
-    "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Dir", "DirEntry", "Duration", "FileStat",
+    "BodySource", "ByteStream", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Dir", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "MountEntry", "Pipe", "ProcessResult",
-    "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
+    "MountEntry", "Pipe", "ProcessResult",
+    "Reader", "Span", "Time", "TimeZone", "Url", "WinSize", "Writer",
     "Zoned",
   ];
   return util.index_of_str(reserved, name) >= 0;
@@ -17737,9 +17922,6 @@ pub function reserved_struct_tparams(name: string): string[] {
     return ["T"];
   }
   if (name == "Map") {
-    return ["K", "V"];
-  }
-  if (name == "MapIter") {
     return ["K", "V"];
   }
   let none: string[] = [];
@@ -23340,6 +23522,14 @@ function required_own_tps(bad: ast.Stmt[], at: Par, fd: FuncDecl): ast.Stmt[] {
   return bad;
 }
 
+function trait_parent_path_end(p: Par): Par {
+  let out: Par = p.advance();
+  while (out.peek_punct() == "." && out.peek_ident_at(1).len() > 0) {
+    out = out.advance().advance();
+  }
+  return out;
+}
+
 function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stmt[], Par) {
   let defaults: TraitDefault[] = [];
   let trait_bad: ast.Stmt[] = [];
@@ -23370,10 +23560,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
     while (go_sup && !p.at_end()) {
       let parent_at: Par = p;
       let parent_ident: boolean = p.peek_ident().len() > 0;
-      let parent_path: Par = p.advance();
-      while (parent_path.peek_punct() == "." && parent_path.peek_ident_at(1).len() > 0) {
-        parent_path = parent_path.advance().advance();
-      }
+      let parent_path: Par = trait_parent_path_end(p);
       if (parent_path.peek_punct() == "::") {
         p = parent_path;
         break;

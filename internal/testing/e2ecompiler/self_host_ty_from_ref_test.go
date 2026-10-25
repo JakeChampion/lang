@@ -44,8 +44,6 @@ func TestSelfHostTyFromRef(t *testing.T) {
 		"Map => map:unknown\n" +
 		"MapConfig => unknown\n" +
 		"Map[string] => map:unknown\n" +
-		"MapIter[i32, string] => mapiter:string\n" +
-		"MapIter[string] => mapiter:unknown\n" +
 		"Cell[i32] => cell:i32\n" +
 		"Cell[string] => cell:string\n" +
 		"Option[i32] => option:i32\n" +

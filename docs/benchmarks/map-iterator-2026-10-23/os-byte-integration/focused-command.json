@@ -1,0 +1,11 @@
+[
+  "go",
+  "test",
+  "-json",
+  "./internal/testing/e2ecompiler",
+  "./internal/testing/e2e",
+  "-run",
+  "^(TestMapIteratorIsReclaimed|TestSelfHostFeatureCensus|TestSelfHostMapHelpersKeepBareNames|TestSelfHostMapIterAcrossModules|TestSelfHostMapIterIsReclaimed|TestSelfHostMapIterMethodIR|TestSelfHostMapIterOutlivesItsFrame|TestSelfHostMapIteratorChecker|TestSelfHostMapIteratorProtocol|TestSelfHostRepoComplexityRatchet|TestWASMMapBasics|TestX86_64Map)$",
+  "-count=1",
+  "-timeout=15m"
+]

@@ -7,6 +7,8 @@ premise was, what the measurement said, and the one real allocation source the
 work did find — so nobody re-derives it. The harness that made it decidable is
 `scripts/selfhost-alloc-bench`.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Numbers below are the self-host x86-64 compiler compiling
 `compiler/checker.fern` against `internal/stdlib`, measured
 2026-08-26 at `fce242c`.

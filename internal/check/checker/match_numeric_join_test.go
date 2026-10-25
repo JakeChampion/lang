@@ -32,6 +32,12 @@ func TestMatchNumericJoinRetainsConcreteArms(t *testing.T) {
 					arms := fmt.Sprintf(shape.arms, values[order[0]], values[order[1]], values[order[2]])
 					src := fmt.Sprintf("%s function f(%s, a: %s, b: %s): i32 { let result = match (tag) { %s }; return 0; }", shape.decl, shape.param, num.a, num.b, arms)
 					err := checkSource(t, src)
+					if num.name == "float" || num.name == "integer" {
+						if err != nil {
+							t.Fatal(err)
+						}
+						return
+					}
 					if err == nil || !strings.Contains(diag.Format("join.fern", src, err), "E031") {
 						t.Fatalf("concrete arm conflict must report E031, got %v", err)
 					}

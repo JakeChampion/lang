@@ -27,13 +27,13 @@ var abortReportCases = []struct{ name, src, cause string }{
 	{"buf_push_range_past_end", bufPushRangeSrc("1", "args().len() + 8"), "fern: slice range out of bounds"},
 	{"buf_push_range_negative", bufPushRangeSrc("args().len() - 3", "2"), "fern: slice range out of bounds"},
 	{"buf_push_range_inverted", bufPushRangeSrc("args().len() + 2", "1"), "fern: slice range out of bounds"},
-	{"map_cursor_key_past_end", mapCursorPastEndSrc("key"), "fern: array index out of range"},
-	{"map_cursor_value_past_end", mapCursorPastEndSrc("value"), "fern: array index out of range"},
+	{"map_snapshot_key_past_end", mapSnapshotPastEndSrc("0"), "fern: array index out of range"},
+	{"map_snapshot_value_past_end", mapSnapshotPastEndSrc("1"), "fern: array index out of range"},
 }
 
-func mapCursorPastEndSrc(read string) string {
+func mapSnapshotPastEndSrc(field string) string {
 	return `import "core/map";
-function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 5); let it = m.iter(); it.advance(); return it.` + read + `(); }`
+function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 5); let entries = m.entries(); return entries[entries.len()].` + field + `; }`
 }
 
 func bufPushRangeSrc(lo, hi string) string {

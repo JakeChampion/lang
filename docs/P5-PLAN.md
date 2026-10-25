@@ -2,6 +2,8 @@
 
 Status: [record] shipped; `own R` / `borrow R` handle types are checked and the self-host compiler inserts each owned handle's `[resource-drop]` call.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Adds the *language* layer on top of the shipped P5 baseline (a handle is
 already an opaque `i32` at the canonical ABI). Two user-visible goals:
 

@@ -1012,9 +1012,9 @@ function main(): i32 {
     if (m.contains("b")) { return 1; }
     let total: i32 = 0;
     let it = m.iter();
-    while (it.has_next()) {
-        total = total + it.value();
-        it.advance();
+    for (__mapkey_it, __mapvalue_it) in it {
+        total = total + __mapvalue_it;
+
     }
     return total;
 }`, 40},

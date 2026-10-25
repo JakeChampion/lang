@@ -12,6 +12,8 @@ wasm backend already uses the two-word form; see "Prerequisite
 + static-literal sentinel, per backend — self-contained and shippable
 wasm-first.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Why
 
 Every other heap value reclaims at its last reference (the merged rc

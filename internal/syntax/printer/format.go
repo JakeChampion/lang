@@ -1788,6 +1788,22 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.formatExpr(x.Inner, precUnary)
 		f.b.WriteByte('?')
 	case *ast.MatchExpr:
+		if x.Origin == ast.OriginIfLet && len(x.Arms) >= 2 {
+			f.b.WriteString("if let ")
+			for i, arm := range x.Arms[:len(x.Arms)-1] {
+				if i > 0 {
+					f.b.WriteString(" | ")
+				}
+				f.formatExprArmPattern(arm)
+			}
+			f.b.WriteString(" = ")
+			f.formatExpr(x.Tag, precLowest)
+			f.b.WriteByte(' ')
+			f.formatBranch(x.Arms[0].Body)
+			f.b.WriteString(" else ")
+			f.formatBranch(x.Arms[len(x.Arms)-1].Body)
+			break
+		}
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
 		f.b.WriteString(") { ")

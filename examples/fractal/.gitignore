@@ -1,3 +1,7 @@
 /netlify/functions/
 /public/
 /server
+/.showcase/
+/web/**/*.br
+/web/**/*.gz
+/web/**/*.zst

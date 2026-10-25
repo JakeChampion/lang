@@ -478,26 +478,6 @@ pub function arr_concat(): i32 {
   return 0 - 54;
 }
 
-pub function map_iter(): i32 {
-  return 0 - 39;
-}
-
-pub function mapiter_has_next(): i32 {
-  return 0 - 40;
-}
-
-pub function mapiter_key(): i32 {
-  return 0 - 41;
-}
-
-pub function mapiter_value(): i32 {
-  return 0 - 42;
-}
-
-pub function mapiter_advance(): i32 {
-  return 0 - 43;
-}
-
 pub function dyn_up(): i32 {
   return 0 - 44;
 }
@@ -536,11 +516,6 @@ pub function append_range(): i32 {
 
 pub function is_hole_op(kind: i32): boolean {
   return kind == hole_at() || kind == hole_fill();
-}
-
-pub function is_map_iter_op(kind: i32): boolean {
-  return kind == map_iter() || kind == mapiter_has_next() || kind == mapiter_key()
-    || kind == mapiter_value() || kind == mapiter_advance();
 }
 
 pub function refused_analysis(why: string): Analysis {
@@ -930,7 +905,7 @@ pub function float_map_value(v: typeinfo.Type): boolean {
 }
 
 pub function keyed_map_key(k: typeinfo.Type): boolean {
-  if (semtypes.is_handle(k) || semtypes.is_map_iter(k) || semtypes.is_env(k) || semtypes.is_cell(k)) {
+  if (semtypes.is_handle(k) || semtypes.is_env(k) || semtypes.is_cell(k)) {
     return false;
   }
   if let typeinfo.TypeStruct(r) = k {
@@ -1779,8 +1754,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 
 function is_builtin_op(kind: i32): boolean {
   return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-    || kind == append_range() || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind)
-    || is_map_iter_op(kind);
+    || kind == append_range() || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
 }
 
 pub function is_arr_helper_op(kind: i32): boolean {
@@ -1860,9 +1834,7 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (is_map_op(ins.kind_tag)) {
     return map_error(ins, f, result);
   }
-  if (is_map_iter_op(ins.kind_tag)) {
-    return map_iter_error(ins, f, result);
-  }
+
   return append_error(ins, f, result);
 }
 
@@ -1874,53 +1846,6 @@ function cell_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return cell_read_error(ins, f, result);
   }
   return cell_write_error(ins, f, result);
-}
-
-function map_iter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  if (ins.args.len() != 1) {
-    return "map cursor arity";
-  }
-  let recv: typeinfo.Type = f.values[ins.args[0]];
-  if (ins.kind_tag == map_iter()) {
-    if (!is_supported_map(recv)) {
-      return "unsupported map shape: " + typeinfo.spelling(recv);
-    }
-    if (!semtypes.is_map_iter(result)) {
-      return "map cursor type";
-    }
-    if (!semtypes.equal(semtypes.map_iter_key(result), map_key(recv))) {
-      return "map cursor key type";
-    }
-    if (!semtypes.equal(semtypes.map_iter_value(result), map_value(recv))) {
-      return "map cursor value type";
-    }
-    return "";
-  }
-  if (!semtypes.is_map_iter(recv)) {
-    return "map cursor receiver type";
-  }
-  if (ins.kind_tag == mapiter_has_next()) {
-    if (!is_bool(result)) {
-      return "map cursor bound type";
-    }
-    return "";
-  }
-  if (ins.kind_tag == mapiter_key()) {
-    if (!semtypes.equal(semtypes.map_iter_key(recv), result)) {
-      return "map cursor key type";
-    }
-    return "";
-  }
-  if (ins.kind_tag == mapiter_value()) {
-    if (!semtypes.equal(semtypes.map_iter_value(recv), result)) {
-      return "map cursor value type";
-    }
-    return "";
-  }
-  if (!is_void(result)) {
-    return "map cursor advance type";
-  }
-  return "";
 }
 
 function cell_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -3538,8 +3463,7 @@ function guard_error(f: Func): string {
 function projects(kind: i32): boolean {
   return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
     || kind == variant_get() || kind == variant_up() || kind == variant_as()
-    || kind == slice() || kind == arr_slice() || kind == str_as() || kind == array_lend() || kind == str_byte_view() || kind == dyn_up() || kind == dyn_as()
-    || kind == mapiter_key() || kind == mapiter_value();
+    || kind == slice() || kind == arr_slice() || kind == str_as() || kind == array_lend() || kind == str_byte_view() || kind == dyn_up() || kind == dyn_as();
 }
 
 function borrows_storage(ins: ssa.SInst, f: Func): boolean {

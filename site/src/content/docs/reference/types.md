@@ -263,15 +263,34 @@ when no other owner holds it.
 
 ## Implicit conversions
 
-There aren't any between numeric widths. Casts are explicit:
+Numeric conversions are implicit when they preserve every source value:
+
+| Source | Destinations |
+| ------ | ------------ |
+| `i32` | `i64` |
+| `u8` | `u32`, `u64`, `i32`, `i64` |
+| `u32` | `u64`, `i64` |
+| `f32` | `f64` |
 
 ```fern
 let a: i32 = 7;
-let b: i64 = a as i64;
+let b: i64 = a;
 ```
 
-The one exception is the polymorphic numeric literal: `1` types as
-whatever integer the context demands.
+These conversions apply to assignments, arguments, returns, constructor
+payloads, struct fields, array literal elements, and operators.
+For example, `u32 + i32` converts both operands to `i64`.
+An operation keeps its source width before its result converts to a wider destination.
+
+A stored container keeps its element type.
+For example, an `i32[]` value cannot convert to `i64[]`.
+A fresh `i64[]` literal can convert its elements before it stores them.
+
+Conversions that can lose values require `as`.
+This includes conversions to narrower types, integer to float conversions of typed values,
+and unsigned conversions of signed values.
+The distinct `char` type also requires an explicit cast to or from integers.
+An unsuffixed numeric literal takes the type that its context requires.
 
 ## Generics
 

@@ -34,7 +34,7 @@ func TestTLSClientAgainstGo(t *testing.T) {
 	w := startTLSWorld(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "tls_client.fern")
-	if err := os.WriteFile(srcPath, []byte(w.source()), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(w.source(time.Minute)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, be := range nativeBackends() {
@@ -60,7 +60,9 @@ func TestTLSClientAgainstGo(t *testing.T) {
 func TestTLSClientAgainstGoInterp(t *testing.T) {
 	w := startTLSWorld(t)
 	p := filepath.Join(t.TempDir(), "tls_client.fern")
-	if err := os.WriteFile(p, []byte(w.source()), 0o644); err != nil {
+	// The interpreter executes cryptographic arithmetic as Fern operations.
+	// Give interop requests a separate budget from the native clients.
+	if err := os.WriteFile(p, []byte(w.source(4*time.Minute)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(buildLangBinForInterp(t), "-interp", p)
@@ -135,8 +137,9 @@ func (w *tlsWorld) env() []string {
 	return append(out, "SSL_CERT_FILE="+w.caFile)
 }
 
-func (w *tlsWorld) source() string {
+func (w *tlsWorld) source(total time.Duration) string {
 	return strings.NewReplacer(
+		"@TOTAL@", strconv.Itoa(int(total/time.Second)),
 		"@MAIN@", strconv.Itoa(w.main), "@RETRY@", strconv.Itoa(w.retry), "@RSA@", strconv.Itoa(w.rsa),
 		"@ED@", strconv.Itoa(w.ed), "@BAD@", strconv.Itoa(w.bad), "@ECHO@", strconv.Itoa(w.echo), "@PROXY@", strconv.Itoa(w.px),
 		"@MTLS@", strconv.Itoa(w.mtls), "@CLIENT_CERT@", w.clientCert, "@CLIENT_KEY@", w.clientKey, "@H2@", strconv.Itoa(w.h2),
@@ -151,6 +154,10 @@ import "std/tls";
 import "std/tls/client";
 import "std/tls/identity";
 import "std/tls/verify";
+
+function interop_get(url: string): fetch.Request {
+  return fetch.get(url).with_timeouts(fetch.Timeouts { ...fetch.timeouts(), total: time.duration_seconds(@TOTAL@) });
+}
 
 function show(label: string, r: Result[HttpResponse, fetch.FetchError]): void {
   match (r) {
@@ -305,26 +312,26 @@ function resumed_line(cfg: client.Config, tickets: client.Ticket[]): string {
 
 function main(): i32 {
   let tr: fetch.Sockets = fetch.sockets();
-  show("first", fetch.send_on(tr, fetch.get("https://localhost:@MAIN@/a"), proxies("")));
-  show("again", fetch.send_on(tr, fetch.get("https://localhost:@MAIN@/b"), proxies("")));
+  show("first", fetch.send_on(tr, interop_get("https://localhost:@MAIN@/a"), proxies("")));
+  show("again", fetch.send_on(tr, interop_get("https://localhost:@MAIN@/b"), proxies("")));
   fetch.close_idle(tr);
-  show("address", fetch.send(fetch.get("https://127.0.0.1:@MAIN@/c")));
-  show("retry", fetch.send(fetch.get("https://localhost:@RETRY@/d")));
-  show("rsa", fetch.send(fetch.get("https://localhost:@RSA@/e")));
-  show("ed25519", fetch.send(fetch.get("https://localhost:@ED@/f")));
-  show("untrusted", fetch.send(fetch.get("https://localhost:@BAD@/")));
-  show("wrongname", fetch.send(fetch.get("https://127.0.0.1:@RSA@/")));
-  show("tunnel", fetch.send_on(fetch.sockets(), fetch.get("https://tls.test:@MAIN@/g"), proxies("http://127.0.0.1:@PROXY@")));
+  show("address", fetch.send(interop_get("https://127.0.0.1:@MAIN@/c")));
+  show("retry", fetch.send(interop_get("https://localhost:@RETRY@/d")));
+  show("rsa", fetch.send(interop_get("https://localhost:@RSA@/e")));
+  show("ed25519", fetch.send(interop_get("https://localhost:@ED@/f")));
+  show("untrusted", fetch.send(interop_get("https://localhost:@BAD@/")));
+  show("wrongname", fetch.send(interop_get("https://127.0.0.1:@RSA@/")));
+  show("tunnel", fetch.send_on(fetch.sockets(), interop_get("https://tls.test:@MAIN@/g"), proxies("http://127.0.0.1:@PROXY@")));
   let over_h2: fetch.Sockets = fetch.sockets();
-  show("h2", fetch.send_on(over_h2, fetch.get("https://localhost:@H2@/k").with_header("X-Fern", "yes"), proxies("")));
-  show("h2 again", fetch.send_on(over_h2, fetch.get("https://localhost:@H2@/l").with_body(BodyText("body-bytes")), proxies("")));
+  show("h2", fetch.send_on(over_h2, interop_get("https://localhost:@H2@/k").with_header("X-Fern", "yes"), proxies("")));
+  show("h2 again", fetch.send_on(over_h2, interop_get("https://localhost:@H2@/l").with_body(BodyText("body-bytes")), proxies("")));
   fetch.close_idle(over_h2);
   match (verify.system_roots()) {
     Some(roots) => {
       let held: fetch.Sockets = fetch.sockets();
-      show("given", fetch.send_on(held, fetch.get("https://localhost:@RSA@/h"), trusting(roots)));
-      show("none", fetch.send_on(held, fetch.get("https://localhost:@RSA@/i"), trusting(verify.roots([]))));
-      show("given again", fetch.send_on(held, fetch.get("https://localhost:@RSA@/j"), trusting(roots)));
+      show("given", fetch.send_on(held, interop_get("https://localhost:@RSA@/h"), trusting(roots)));
+      show("none", fetch.send_on(held, interop_get("https://localhost:@RSA@/i"), trusting(verify.roots([]))));
+      show("given again", fetch.send_on(held, interop_get("https://localhost:@RSA@/j"), trusting(roots)));
       fetch.close_idle(held);
       print("socket: " + socket(roots));
       print("mtls: " + mtls(roots));

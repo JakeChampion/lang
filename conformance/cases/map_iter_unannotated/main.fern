@@ -4,35 +4,38 @@
 
 
 import "core/map";
+import "core/iter";
 
 function main(): i32 {
-    let m: Map[i32, i32] = map_new(8);
-    m = m.insert(1, 10);
-    m = m.insert(2, 20);
+  let m: Map[i32, i32] = map_new(8);
+  m = m.insert(1, 10);
+  m = m.insert(2, 20);
 
+  let it = m.iter();
+  let total: i32 = 0;
+  let seen: i32 = 0;
+  for (__mapkey_it, __mapvalue_it) in it {
+    total = total + __mapvalue_it;
+    seen = seen + __mapkey_it;
+  }
+  if (total != 30) {
+    return 1;
+  }
+  if (seen != 3) {
+    return 2;
+  }
 
-    let it = m.iter();
-    let total: i32 = 0;
-    let seen: i32 = 0;
-    while (it.has_next()) {
-        total = total + it.value();
-        seen = seen + it.key();
-        it.advance();
-    }
-    if (total != 30) { return 1; }
-    if (seen != 3) { return 2; }
+  // both retain their string types.
+  let s: Map[string, string] = map_new(4);
+  s = s.insert("a", "xy");
+  let it2 = s.iter();
+  let chars: i32 = 0;
+  for (__mapkey_it2, __mapvalue_it2) in it2 {
+    chars = chars + __mapkey_it2.len() + __mapvalue_it2.len();
+  }
+  if (chars != 3) {
+    return 3;
+  }
 
-
-
-    let s: Map[string, string] = map_new(4);
-    s = s.insert("a", "xy");
-    let it2 = s.iter();
-    let chars: i32 = 0;
-    while (it2.has_next()) {
-        chars = chars + it2.key().len() + it2.value().len();
-        it2.advance();
-    }
-    if (chars != 3) { return 3; }
-
-    return 42;
+  return 42;
 }

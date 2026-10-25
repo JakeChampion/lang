@@ -1,0 +1,178 @@
+struct Wide { integer: i64, float: f64 }
+
+@noinline
+function signed(value: i32): i32 {
+  return value;
+}
+
+@noinline
+function unsigned(value: u32): u32 {
+  return value;
+}
+
+@noinline
+function single(value: f32): f32 {
+  return value;
+}
+
+@noinline
+function return_wide(value: i32): i64 {
+  return value;
+}
+
+@noinline
+function take_wide(value: i64): i64 {
+  return value;
+}
+
+@noinline
+function some_wide(value: i32): Option[i64] {
+  return Some(value);
+}
+
+@noinline
+function ok_wide(value: u32): Result[i64, string] {
+  return Ok(value);
+}
+
+@noinline
+function err_wide(value: f32): Result[string, f64] {
+  return Err(value);
+}
+
+@noinline
+function float_wide(value: f32): f64 {
+  return value;
+}
+
+function main(): i32 {
+  let negative: i32 = signed(-123456789);
+  let high: u32 = unsigned(4294967295u32);
+  let byte: u8 = 255u8;
+  let f: f32 = single(1.25f32);
+  let wide: i64 = negative;
+  if (wide != -123456789i64 || return_wide(negative) != wide || take_wide(negative) != wide) {
+    return 1;
+  }
+  wide = high;
+  if (wide != 4294967295i64) {
+    return 2;
+  }
+  let u: u64 = high;
+  let b32: u32 = byte;
+  let b64: u64 = byte;
+  let bi: i32 = byte;
+  let bl: i64 = byte;
+  if (u != 4294967295u64 || b32 != 255u32 || b64 != 255u64 || bi != 255 || bl != 255i64) {
+    return 3;
+  }
+  let d: f64 = f;
+  if (d != 1.25 || float_wide(f) != 1.25 || f + 0.5f64 != 1.75 || f >= 1.5f64) {
+    return 4;
+  }
+  let mixed = high + negative;
+  if (mixed != 4171510506i64 || !(byte > negative) || high < negative) {
+    return 5;
+  }
+  if (high + signed(1) != 4294967296i64 || high * signed(2) != 8589934590i64 || unsigned(0u32) < signed(-1)) {
+    return 16;
+  }
+  if (single(16777216f32) + 1f64 != 16777217f64) {
+    return 17;
+  }
+  let wrapped: i64 = signed(2147483647) + signed(1);
+  if (wrapped != -2147483648i64) {
+    return 18;
+  }
+  let branch = if (negative < 0) { negative } else { 7i64 };
+  let branch2 = if (negative > 0) { 7i64 } else { negative };
+  let joined = match (bi) { 255 => negative, _ => 7i64 };
+  if (branch != -123456789i64 || branch2 != -123456789i64 || joined != -123456789i64) {
+    return 19;
+  }
+  let record: Wide = Wide { integer: negative, float: f };
+  let numbers: i64[] = [negative, high];
+  let floats: f64[] = [f, 2.5f64];
+  let pair: (i64, f64) = (negative, f);
+  if (record.integer != -123456789i64 || record.float != 1.25 || numbers[0] != -123456789i64 || numbers[1] != 4294967295i64 || floats[0] != 1.25 || pair.0 != -123456789i64 || pair.1 != 1.25) {
+    return 6;
+  }
+  match (some_wide(negative)) {
+    Some(n) => {
+      if (n != -123456789i64) {
+        return 7;
+      }
+    },
+    None => {
+      return 8;
+    }
+  }
+  match (ok_wide(high)) {
+    Ok(n) => {
+      if (n != 4294967295i64) {
+        return 9;
+      }
+    },
+    Err(_) => {
+      return 10;
+    }
+  }
+  match (err_wide(f)) {
+    Err(n) => {
+      if (n != 1.25) {
+        return 11;
+      }
+    },
+    Ok(_) => {
+      return 12;
+    }
+  }
+  let nested: Option[Option[i64]] = Some(Some(negative));
+  match (nested) {
+    Some(inner) => {
+      match (inner) {
+        Some(n) => {
+          if (n != -123456789i64) {
+            return 13;
+          }
+        },
+        None => {
+          return 14;
+        }
+      }
+    },
+    None => {
+      return 15;
+    }
+  }
+  record = Wide { ...record, integer: high, float: single(2.5f32) };
+  numbers = numbers.with(0, high);
+  floats = floats.with(0, single(2.5f32));
+  if (record.integer != 4294967295i64 || record.float != 2.5 || numbers[0] != 4294967295i64 || floats[0] != 2.5) {
+    return 20;
+  }
+  let closure = (value: i64): i64 => value;
+  if (closure(negative) != -123456789i64) {
+    return 21;
+  }
+  let checked: Option[i64] = high +? signed(1);
+  match (checked) {
+    Some(n) => {
+      if (n != 4294967296i64) {
+        return 22;
+      }
+    },
+    None => {
+      return 23;
+    }
+  }
+  if (high +| signed(1) != 4294967296i64 || (high & signed(-1)) != 4294967295i64 || single(16777216f32) - 1f64 != 16777215f64) {
+    return 24;
+  }
+  let masked: u8 = byte & 15;
+  if (masked != 15u8) {
+    return 25;
+  }
+  print("widening passed");
+  return 0;
+}

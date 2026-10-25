@@ -2,15 +2,15 @@ package checker
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
-	"github.com/jakechampion/lang/internal/syntax/diag"
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-func TestNumericJoinDestinationCannotWidenConcreteArm(t *testing.T) {
+// A destination can widen a joined scalar result in either source order.
+// The source operands keep their types until the conversion.
+func TestNumericJoinDestinationWidensConcreteArm(t *testing.T) {
 	forms := []struct{ name, decl, tag, expr string }{
 		{"literal", "", "i32", "match (tag) { 0 => %s, _ => %s }"},
 		{"tuple", "", "(i32, i32)", "match (tag) { (0, _) => %s, _ => %s }"},
@@ -28,12 +28,8 @@ func TestNumericJoinDestinationCannotWidenConcreteArm(t *testing.T) {
 					}
 					src := fmt.Sprintf("%s function f(tag: %s, concrete: i32): %s { let result: %s = %s; return result; }", form.decl, form.tag, destination, destination, fmt.Sprintf(form.expr, a, b))
 					err := checkSource(t, src)
-					if destination == "i32" {
-						if err != nil {
-							t.Fatalf("matching destination rejected: %v", err)
-						}
-					} else if err == nil || !strings.Contains(diag.Format("join.fern", src, err), "E003") {
-						t.Fatalf("widening a concrete arm must report E003, got %v", err)
+					if err != nil {
+						t.Fatal(err)
 					}
 				})
 			}

@@ -1,0 +1,11 @@
+enum E { A(i32), B(i32), C }
+
+function source(): E {
+  print("read");
+  return E.B(4);
+}
+
+function main(): i32 {
+  let n = if let E.A(v) | E.B(v) = source() { v } else { 0 };
+  return n - 4;
+}

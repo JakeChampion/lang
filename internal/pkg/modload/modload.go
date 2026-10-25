@@ -984,9 +984,6 @@ func isRuntimeHelperName(name string) bool {
 	if strings.HasPrefix(name, "__map_") {
 		return true
 	}
-	if strings.HasPrefix(name, "__mapiter_") {
-		return true
-	}
 	if name == "map_new_impl" {
 		return true
 	}
@@ -1552,7 +1549,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			}
 		}
 		if id, ok := x.Target.(*ast.Ident); ok {
-			if r.ownEnums[id.Name] && !r.localVars[id.Name] && !r.typeParams[id.Name] {
+			if (r.ownEnums[id.Name] || r.ownStructs[id.Name]) && !r.localVars[id.Name] && !r.typeParams[id.Name] {
 				id.Name = r.selfPrefix + id.Name
 				return
 			}

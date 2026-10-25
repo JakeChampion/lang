@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Pulse · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+  </head>
+  <body class="app-page pulse-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark" aria-hidden="true">✳</span> fern<span
+          class="brand-suffix"
+        >
+          / in action</span
+        ></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/metrics.fern">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow">06 / PROCESS METRICS</div>
+          <h1>Server <em>metrics.</em></h1>
+          <p>Live memory, CPU, and request metrics from this Fern process.</p>
+          <div class="tech-chips">
+            <span>Process RSS + CPU</span><span>Live event stream</span
+            ><a href="/pulse/metrics">Prometheus ↗</a
+            ><a href="/pulse/snapshot">JSON snapshot ↗</a>
+          </div>
+        </section>
+        <div>
+          <div id="connection" class="status" role="status">
+            Waiting for the first sample
+          </div>
+          <div class="sampling-controls" style="margin-top: 16px">
+            <button class="button small" id="pause">Pause updates</button
+            ><span id="sample-time">—</span>
+          </div>
+        </div>
+      </div>
+      <section class="metric-grid" aria-label="Live server metrics">
+        <div class="metric-card">
+          <label>Resident memory / RSS</label><strong id="rss">—</strong
+          ><small>Physical pages held by this process</small>
+        </div>
+        <div class="metric-card">
+          <label>Peak resident memory</label><strong id="peak">—</strong
+          ><small>RSS high-water mark since startup</small>
+        </div>
+        <div class="metric-card">
+          <label>Process CPU</label><strong id="cpu">—</strong
+          ><small>User + system over the sample interval</small>
+        </div>
+        <div class="metric-card">
+          <label>HTTP requests</label><strong id="requests">—</strong
+          ><small id="request-rate">Waiting for two samples</small>
+        </div>
+        <div class="metric-card">
+          <label>P95 handler time</label><strong id="latency">—</strong
+          ><small>Last 32 handlers · excludes stream delivery</small>
+        </div>
+        <div class="metric-card">
+          <label>Runtime arena</label><strong id="arena">—</strong
+          ><small>High-water mark, not live heap usage</small>
+        </div>
+        <div class="metric-card">
+          <label>WebSocket peers</label><strong id="peers">—</strong
+          ><small>Fractal, Rally, Mosaic, and Gather connections</small>
+        </div>
+        <div class="metric-card">
+          <label>Heap allocations</label><strong id="allocations">—</strong
+          ><small>Cumulative count since process start</small>
+        </div>
+      </section>
+      <div class="pulse-charts">
+        <section class="chart-panel">
+          <h2>RESIDENT MEMORY / RSS</h2>
+          <canvas
+            id="rss-chart"
+            aria-label="Resident memory over received samples"
+          ></canvas>
+          <div class="chart-caption">
+            <span>LAST 60 RECEIVED SAMPLES</span><span id="rss-range">—</span>
+          </div>
+        </section>
+        <section class="chart-panel">
+          <h2>PROCESS CPU</h2>
+          <canvas
+            id="cpu-chart"
+            aria-label="Process CPU usage over received samples"
+          ></canvas>
+          <div class="chart-caption">
+            <span>1 SECOND TARGET INTERVAL</span><span>USER + SYSTEM</span>
+          </div>
+        </section>
+      </div>
+      <section class="memory-detail" aria-label="Memory breakdown">
+        <div><span>ANONYMOUS RESIDENT</span><b id="anonymous">—</b></div>
+        <div><span>FILE-BACKED RESIDENT</span><b id="file-backed">—</b></div>
+        <div><span>VIRTUAL ADDRESS SPACE</span><b id="virtual">—</b></div>
+        <div><span>SWAP</span><b id="swap">—</b></div>
+        <div><span>CGROUP MEMORY USE</span><b id="container">—</b></div>
+        <div><span>CGROUP MEMORY LIMIT</span><b id="container-limit">—</b></div>
+        <div><span>PROCESS THREADS</span><b id="threads">—</b></div>
+        <div><span>PROCESS UPTIME</span><b id="uptime">—</b></div>
+      </section>
+      <div class="pulse-bottom">
+        <section class="chart-panel">
+          <h2>RECENT HTTP REQUESTS</h2>
+          <table class="request-table">
+            <thead>
+              <tr>
+                <th>Verb</th>
+                <th>Path</th>
+                <th>Status</th>
+                <th>ms</th>
+              </tr>
+            </thead>
+            <tbody id="recent">
+              <tr>
+                <td colspan="4">Waiting for traffic.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="chart-panel">
+          <h2>APPLICATION ACTIVITY</h2>
+          <dl class="runtime-list">
+            <div>
+              <dt>FRACTAL TILES RENDERED</dt>
+              <dd id="tiles">—</dd>
+            </div>
+            <div>
+              <dt>ACTIVE TILE RENDERS</dt>
+              <dd id="renders">—</dd>
+            </div>
+            <div>
+              <dt>RALLY ROOMS</dt>
+              <dd id="games">—</dd>
+            </div>
+            <div>
+              <dt>ARENA PARTICIPANTS</dt>
+              <dd id="arena-players">—</dd>
+            </div>
+            <div>
+              <dt>CANVAS ROOMS</dt>
+              <dd id="canvases">—</dd>
+            </div>
+            <div>
+              <dt>PAINT STROKES</dt>
+              <dd id="strokes">—</dd>
+            </div>
+            <div>
+              <dt>GAME MESSAGES</dt>
+              <dd id="messages">—</dd>
+            </div>
+            <div>
+              <dt>HTTP 4XX / 5XX</dt>
+              <dd id="errors">—</dd>
+            </div>
+            <div>
+              <dt>INSTANCE</dt>
+              <dd id="instance">—</dd>
+            </div>
+          </dl>
+          <button class="button small" id="traffic">
+            Send 20 small requests ↗
+          </button>
+          <p class="fine-print" style="margin-top: 17px">
+            Process and cgroup metrics come from Linux procfs and cgroup files.
+            A dash means the host does not expose that value. Arena size and
+            allocation totals are not current live heap size. Query strings and
+            request bodies never appear in this public request log.
+          </p>
+        </section>
+      </div>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          One-second server-sent events carry real process samples. OS reads
+          share a short cache across viewers. RSS measures resident physical
+          pages. Virtual size includes reserved address space. The runtime
+          allocator can reuse freed blocks within its arena. Handler timing ends
+          when the response is built and excludes the lifetime of an event
+          stream or WebSocket. HTTP polling is a fallback when streaming is
+          unavailable.
+        </p>
+        <a href="/_src/showcase/metrics.fern">Read the metrics collector ↗</a>
+      </details>
+      <noscript
+        ><p>
+          Live charts use JavaScript. The
+          <a href="/pulse/snapshot">JSON snapshot</a> and
+          <a href="/pulse/metrics">Prometheus endpoint</a> also work without it.
+        </p></noscript
+      >
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

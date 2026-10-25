@@ -9,7 +9,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "gen-huffman-table.py")
-TABLE = os.path.join(HERE, "..", "internal", "stdlib", "std", "http", "huffman.fern")
+TABLE = os.path.join(HERE, "..", "internal", "stdlib", "std", "http", "huffman.fern.md")
 
 
 class HuffmanTableGateTest(unittest.TestCase):
@@ -34,7 +34,7 @@ class HuffmanTableGateTest(unittest.TestCase):
         self.assertIsNotNone(m, "could not find HUFF in the table")
         drifted = text[: m.start(2)] + str(int(m.group(2)) + 1) + text[m.end(2) :]
         with tempfile.TemporaryDirectory() as directory:
-            target = os.path.join(directory, "huffman.fern")
+            target = os.path.join(directory, "huffman.fern.md")
             pathlib.Path(target).write_text(drifted, encoding="utf-8")
             result = self.check(target)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)

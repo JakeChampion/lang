@@ -1,0 +1,175 @@
+{
+  "core_commit": "a6c41c4be14334a31d1207c137e374a2018379aa",
+  "compiler_source_commit": "e3bd61f9e4acb0a88d11df490738b404da3283fc",
+  "base_commit": "7394f435de7353bdbb2ad29413c236dd5bf7bb21",
+  "source_sha256": "40316214d3762ea853c5a803b7af57e9abe265babce9c7bb7b99ae33c691607e",
+  "binaries": {
+    "/workspace/scratch/lang-stream-name/committed-oracle": {
+      "bytes": 32438959,
+      "sha256": "2918961dc042b500739cd4c522ae43b2e0ad5e386b1772daad53bc720187424c"
+    },
+    "/workspace/scratch/lang-stream-name/committed-validation/bootstrap/stage1": {
+      "bytes": 14269312,
+      "sha256": "c82ddb8e98b950454de611f63060d49f8b46112666ac22f77fe0940c89d35c85"
+    },
+    "/workspace/scratch/lang-stream-name/committed-validation/bootstrap/stage2": {
+      "bytes": 14269312,
+      "sha256": "30986923323a80d003f2cd94fc75da39347a920913ace7473f9ad18452f6b20c"
+    },
+    "/workspace/scratch/lang-stream-name/committed-validation/bootstrap/stage3": {
+      "bytes": 14269312,
+      "sha256": "30986923323a80d003f2cd94fc75da39347a920913ace7473f9ad18452f6b20c"
+    }
+  },
+  "files": [
+    {
+      "file": "committed-validation-bootstrap-bootstrap.json",
+      "source": "/workspace/scratch/lang-stream-name/committed-validation/bootstrap/bootstrap.json",
+      "bytes": 1014,
+      "sha256": "6ead0879767a208362f0192bc08e24a64e199b8d03de74e2a8a132fd779371f2"
+    },
+    {
+      "file": "committed-validation-bootstrap.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-validation/bootstrap.log",
+      "bytes": 701,
+      "sha256": "378bc915543260e3fdf9501ae95d7dea0043e6fbb257ae82235f9024bfee09da"
+    },
+    {
+      "file": "committed-validation-driver-sizes.txt",
+      "source": "/workspace/scratch/lang-stream-name/committed-validation/driver-sizes.txt",
+      "bytes": 357,
+      "sha256": "de504a21ac19b6836de25e7f85fb2cf8edb7ce7b2aa2b1b3cbb204b90ee0cf65"
+    },
+    {
+      "file": "committed-validation-driver-builds.json",
+      "source": "/workspace/scratch/lang-stream-name/committed-validation/driver-builds.json",
+      "bytes": 7435,
+      "sha256": "6343f9a851bf4b5a53d6f4aa21c88089ceecfee7a7eebf19ff5ed62f674c0ca8"
+    },
+    {
+      "file": "committed-validation-driver-gate.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-validation/driver-gate.log",
+      "bytes": 896,
+      "sha256": "4a58afa29ba5f53f5114d9a17a30da8573d961e3a538114014cc21eb6e24eac7"
+    },
+    {
+      "file": "committed-frontend.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-frontend.log",
+      "bytes": 200,
+      "sha256": "8b3f98c77f0956e72cb79cc14a9000ffdec8b3e0ae52f79122d2ee7f4cc09e50"
+    },
+    {
+      "file": "committed-vet.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "committed-ast.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-ast.log",
+      "bytes": 61,
+      "sha256": "912e7a3ef03c503ac626d1b7b49adf4c043e2106ecd82b57b3eb1a81fb353a4e"
+    },
+    {
+      "file": "committed-fixtures.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-fixtures.log",
+      "bytes": 5736,
+      "sha256": "288d45b567fd601242f18b8af33b7487bfdf81997b5fb56eefa0080eafa8c0b8"
+    },
+    {
+      "file": "committed-corpus-format.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-corpus-format.log",
+      "bytes": 62,
+      "sha256": "4292bd37b134040216da27cc7e0b46630bf33f7d8d211c9e71e311694d1755ed"
+    },
+    {
+      "file": "committed-formatter-parity.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-formatter-parity.log",
+      "bytes": 14981,
+      "sha256": "c32db93f20741f184a8949ea7b38a3c333c4921e0810c590e08fe80db66ca706"
+    },
+    {
+      "file": "committed-printer-package.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-printer-package.log",
+      "bytes": 66,
+      "sha256": "8ea8221df92c7cd2126c3bb8fcd2e2dd7fa3044449389ff6d60ceafb09a255a1"
+    },
+    {
+      "file": "committed-printer-vet.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-printer-vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "go-printer-first.log",
+      "source": "/workspace/scratch/lang-stream-name/go-printer-first.log",
+      "bytes": 14841,
+      "sha256": "38d72afc12c9ffe175e79e8369517779644cf7efe96f4e135e0b788e2572841a"
+    },
+    {
+      "file": "go-destructure-comments.log",
+      "source": "/workspace/scratch/lang-stream-name/go-destructure-comments.log",
+      "bytes": 65,
+      "sha256": "9763e5e786984b008dec1363fbc23e738a8866b40ddff9b403b7985bc8d4855c"
+    },
+    {
+      "file": "committed-matrix.py",
+      "source": "/workspace/scratch/lang-stream-name/committed-matrix.py",
+      "bytes": 3237,
+      "sha256": "a971ae7e0550e8baa0f9d5b3fdcfb6476125027a0bba98e822b43236ccb83c8f"
+    },
+    {
+      "file": "committed-matrix.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-matrix.log",
+      "bytes": 137,
+      "sha256": "4d505350083086327d918abfc4b533fa801d9b34d21a5bc7ed555feaba2c91a6"
+    },
+    {
+      "file": "committed-matrix-results.json.gz",
+      "source": "/workspace/scratch/lang-stream-name/committed-matrix-results.json",
+      "bytes": 3224,
+      "sha256": "23086d141c5a3b553bf4845bff9e59a4b8e5e56f047c5c27b13ad6401e897db4"
+    },
+    {
+      "file": "committed-fmt.json",
+      "source": "/workspace/scratch/lang-stream-name/committed-fmt.json",
+      "bytes": 65,
+      "sha256": "b357335c63ca7e9bc70457c8590ee8c16e3c211df6720bf8634dad89a6bf5c3a"
+    },
+    {
+      "file": "committed-fmt.log",
+      "source": "/workspace/scratch/lang-stream-name/committed-fmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "baseline-checked-cast-fmt.txt.gz",
+      "source": "/workspace/scratch/lang-stream-name/baseline-checked-cast-fmt.fern",
+      "bytes": 81,
+      "sha256": "d06c79e647e329c5a384fbc1e16ba66fdf61766e43635da1d51bcec096959da9"
+    },
+    {
+      "file": "baseline-checked-cast-writeback.log",
+      "source": "/workspace/scratch/lang-stream-name/baseline-checked-cast-writeback.log",
+      "bytes": 190,
+      "sha256": "dafb33a1bfb8455a5c270b21b9aacc864bc7b066864a7ba7dcbe3954e0476c2a"
+    },
+    {
+      "file": "baseline-destructure-comment-Go.txt.gz",
+      "source": "/workspace/scratch/lang-stream-name/baseline-destructure-comment-Go.fern",
+      "bytes": 91,
+      "sha256": "e64dbbe3321c20c64efcd8f9d1d3fd9ce0418511a8f589a875f0348abc5464e8"
+    },
+    {
+      "file": "baseline-destructure-comment-self.txt.gz",
+      "source": "/workspace/scratch/lang-stream-name/baseline-destructure-comment-self.fern",
+      "bytes": 90,
+      "sha256": "dffcfa24be4952f724b6512726c3fa52765099beb4dc0a23252797e3a6a88c83"
+    },
+    {
+      "file": "core-source.patch.gz",
+      "bytes": 23196,
+      "sha256": "f63238c3069a7c0c85c3acbcfa7bad98f32f39f0b13d6e426977255ef7d07987"
+    }
+  ]
+}

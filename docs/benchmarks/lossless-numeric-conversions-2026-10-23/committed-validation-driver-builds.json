@@ -1,0 +1,165 @@
+{
+  "environment": "All FERN_* variables removed, as CompileWithSelfHost requires",
+  "builds": [
+    {
+      "source": "fern.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/fern",
+        "/workspace/lang-lossless-widening-current/compiler/fern.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 13480592,
+      "sha256": "cd42fc0bcf827ce990781b1cb6694d29e009e0863b5f3590ef7c5bd94132fb7c",
+      "seconds": 23.18188706500223
+    },
+    {
+      "source": "drivers/asm_load_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/asm_load_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/asm_load_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 10599488,
+      "sha256": "d37475e2dec47e20ceca1c745fb7d9ba7adbedef4db7f8e0c1157f32e93dbc5d",
+      "seconds": 17.63243606800097
+    },
+    {
+      "source": "drivers/asm_modload_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/asm_modload_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/asm_modload_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 9233088,
+      "sha256": "cef215523ed2cd173125688358a6ea671b6c20f45d099ea3e64a40e4f4798870",
+      "seconds": 16.251396459003445
+    },
+    {
+      "source": "drivers/asm_ir_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/asm_ir_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/asm_ir_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8854528,
+      "sha256": "32f0e01de73cf7bc4998ae5beb8464ed96046547ad6d1fe2d055d3c7cc52ba75",
+      "seconds": 14.402206528000534
+    },
+    {
+      "source": "drivers/asm_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/asm_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/asm_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8056880,
+      "sha256": "4e5dd2e4802043c1ada88f9d5a88db20f2f497a0921f1826aa3b2252e701cb3f",
+      "seconds": 13.010114457996679
+    },
+    {
+      "source": "drivers/wasm_ir_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/wasm_ir_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/wasm_ir_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8034768,
+      "sha256": "202f8b8a0750e605dfef50938809756f2981c5f64870a543e76b61e9a582404c",
+      "seconds": 14.89766322899959
+    },
+    {
+      "source": "drivers/wasm_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/wasm_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/wasm_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8038816,
+      "sha256": "236e4dc7ffbe523090875e8ef425a3ec2c4a375eb3f413c8c7f468120ec038f4",
+      "seconds": 19.220210234998376
+    },
+    {
+      "source": "drivers/wasm_runio_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/wasm_runio_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/wasm_runio_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8021856,
+      "sha256": "a0959af516ba09d5e377f5a588ec2968474a9a89aea2f66fd060d6dfadba17b6",
+      "seconds": 13.27457395800593
+    },
+    {
+      "source": "drivers/asm_pathprobe_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/asm_pathprobe_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/asm_pathprobe_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 5136976,
+      "sha256": "4dbf543a3928ae5afe59d686acd4bd1116f420bba6dec00c675281d635dbab9b",
+      "seconds": 10.50555059400358
+    },
+    {
+      "source": "drivers/checker_modload_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-lossless-widening/committed-validation/drivers/checker_modload_run",
+        "/workspace/lang-lossless-widening-current/compiler/drivers/checker_modload_run.fern",
+        "/workspace/lang-lossless-widening-current/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 3054160,
+      "sha256": "4f153ddb9f88eaf8e4bab2a99d31576128ce0c9f6477671984b65c9c1a33c055",
+      "seconds": 4.965880012001435
+    }
+  ]
+}

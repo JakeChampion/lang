@@ -1034,17 +1034,17 @@ function main(): i32 {
 			   if (u.0.get_or("k", 0) == 7 && u.1 == 5) { return 7; }
 			   return 9;
 			 }`, 7},
-	{"mapiter/iter-cursor", `import "core/map";
+	{"mapiter/iter-cursor", `import "core/map"; import "core/iter";
 function main(): i32 {
     let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     m = m.insert(3, 30);
-    let it: MapIter[i32, i32] = m.iter();
+    let it: iter.ArrayIter[(i32, i32)] = m.iter();
     let sum: i32 = 0;
-    while (it.has_next()) {
-        sum = sum + it.key() + it.value();
-        it.advance();
+    for (__mapkey_it, __mapvalue_it) in it {
+        sum = sum + __mapkey_it + __mapvalue_it;
+
     }
     return sum;
 }`, 66},

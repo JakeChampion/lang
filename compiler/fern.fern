@@ -1528,7 +1528,17 @@ pub function capability_diags(merged: parser.Module, target: string): util.Diag[
 
 pub function ambient_diags(merged: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
-  for v in ambient.enforce(merged) {
+  let has_bag: boolean = false;
+  for fd in merged.funcs {
+    if (fd.body.len() > 0 && ambient.bag_param(fd).len() > 0) {
+      has_bag = true;
+      break;
+    }
+  }
+  if (!has_bag) {
+    return out;
+  }
+  for v in ambient.enforce(checker.annotate_module(merged)) {
     out = out.append(util.violation_diag("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
   }
   return out;
@@ -2539,7 +2549,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1)), origin);
       let shown: string = display_path(rm.shown, root);
       if (rm.map.doc.len() > 0) {
-        shown = rm.map.doc;
+        shown = display_path(rm.map.doc, root);
       }
       files = files.append(shown);
       maps = maps.append(rm.map);
@@ -3665,7 +3675,7 @@ function lsp_ref_doc(s: Server, q: Asked, at: RefDoc, m: i32): RefDoc {
     return at;
   }
   let path: string = lsp_module_doc(s, q.d, m, q.path);
-  let stdlib: boolean = m > 0 && m <= q.d.files.len() && util.str_has_prefix(q.d.files[m - 1], "stdlib://");
+  let stdlib: boolean = util.str_has_prefix(display_path(path, s.root), "stdlib://") || m > 0 && m <= q.d.files.len() && util.str_has_prefix(q.d.files[m - 1], "stdlib://");
   if (path == q.path) {
     return RefDoc { m: m, uri: q.uri, text: q.text, stdlib: stdlib };
   }

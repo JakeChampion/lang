@@ -1,0 +1,10 @@
+{
+  "base_commit": "8207edece5bcf7bb94bc5f4192024abc94c367d4",
+  "baseline_compiler_sha256": "66c80da3991b7e8d7413d16cb3e9016c9afa8b4677740067ee3f12b6cd665d29",
+  "candidate_compiler_sha256": "c08e0dab9d7ec4afa636f5f026445a75bb675b33a201e97e1dc4afa0d4f249a9",
+  "source_sha256": "583f9349bec15fe4c143c2ea1dbd0597c3f570677e35330600b8df48a53b0687",
+  "formatter_files": 1176,
+  "formatter_exit": 0,
+  "go_vet_exit": 0,
+  "macos_execution": "Not available on the Linux host"
+}

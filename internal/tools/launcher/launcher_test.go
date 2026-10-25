@@ -17,7 +17,7 @@ func TestStdlibRootWritesTheEmbeddedTreeOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"std/io.fern", "core/int.fern", "std/option.fern.md", "std/result.fern.md", "std/csv.fern.md"} {
+	for _, f := range []string{"std/io.fern.md", "core/int.fern.md", "std/option.fern.md", "std/result.fern.md", "std/csv.fern.md"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("%s missing from %s: %v", f, dir, err)
 		}

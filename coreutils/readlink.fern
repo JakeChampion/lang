@@ -139,7 +139,7 @@ pub function main(): i32 {
     let name: string = operands[i];
     let answer: Result[string, IoError] = Err(Unsupported);
     if (mode == mode_none()) {
-      answer = read_link(name);
+      answer = canon.byte_link_target(name);
     } else {
       answer = canon.canonicalize(name, mode, false);
     }

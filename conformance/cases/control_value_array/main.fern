@@ -1,0 +1,7 @@
+enum E { A(i32[]), B }
+
+function main(): i32 {
+  let e = E.A([2, 3]);
+  let a = if let E.A(v) = e { v } else { [0] };
+  return a[0] + a[1] - 5;
+}

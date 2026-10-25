@@ -219,6 +219,11 @@ function coerce_int_width(val: Value, type_name: string): Value {
       }
     }
   }
+  if (type_name == "f64") {
+    if let VFloat32(f) = val {
+      return v_float(f.v);
+    }
+  }
   if (type_name == "f32") {
     match (val) {
       VFloat(f) => {
@@ -2078,6 +2083,21 @@ function stat_result_value(r: Result[FileStat, IoError]): Value {
   }
 }
 
+function byte_arrays_result_value(r: Result[u8[][], IoError]): Value {
+  match (r) {
+    Ok(names) => {
+      let out: Value[] = [];
+      for name in names {
+        out = out.append(byte_array_value(name));
+      }
+      return ok_value(v_arr_of(out, "u8[]"));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
 function dir_entries_result_value(r: Result[DirEntry[], IoError]): Value {
   match (r) {
     Ok(es) => {
@@ -2860,6 +2880,9 @@ function call_host_fs_read(name: string, path: string): Value {
   if (name == "read_link") {
     return string_result_value(read_link(path));
   }
+  if (name == "read_link_bytes") {
+    return bytes_result_value(read_link_bytes(path));
+  }
   if (name == "temp_dir") {
     return string_result_value(temp_dir(path));
   }
@@ -2873,6 +2896,9 @@ function call_host_fs_read(name: string, path: string): Value {
 }
 
 function call_host_fs_list(name: string, path: string): Value {
+  if (name == "read_dir_bytes") {
+    return byte_arrays_result_value(read_dir_bytes(path));
+  }
   if (name == "read_dir") {
     return strings_result_value(read_dir(path));
   }
@@ -3167,7 +3193,7 @@ function is_handle_method(kind: string, name: string): boolean {
     return true;
   }
   if (kind == "Dir") {
-    return util.has_str(["open_dir", "entries", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
+    return util.has_str(["open_dir", "entries", "entries_bytes", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
   }
   if (util.has_str(["seek", "flags", "isatty", "fsync", "fdatasync", "syncfs", "drop_cache", "dup_onto"], name)) {
     return true;
@@ -3338,6 +3364,9 @@ function dir_method(d: Dir, name: string, args: Value[]): Value {
   let entry: string = arg_str(args, 0);
   if (name == "open_dir") {
     return dir_result_value(d.open_dir(entry));
+  }
+  if (name == "entries_bytes") {
+    return byte_arrays_result_value(d.entries_bytes());
   }
   if (name == "entries") {
     return strings_result_value(d.entries());
@@ -4865,7 +4894,15 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     return call_method_targs(recv, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls, env.outs);
   }
   if (is_closure) {
-    return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs);
+    let inline_value: boolean = false;
+    if let ast.ExprLambda(lm) = c.callee {
+      if (lm.params.len() == 0 && lm.body.len() >= 3 && parser.is_value_block_origin(lm.origin)) {
+        if let ast.StmtVar(v) = lm.body[0] {
+          inline_value = parser.is_iflet_value_local(lexical.source_name(v.name));
+        }
+      }
+    }
+    return call_closure_mode(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs, inline_value);
   }
   return call_func_targs(name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls, env.outs);
 }
@@ -4908,7 +4945,7 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
   let i: i32 = 0;
   while (i < env.funcs.len()) {
     let fd: parser.FuncDecl = env.funcs[i];
-    if (fd.name == name && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return i;
     }
     i = i + 1;
@@ -5292,6 +5329,10 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
 }
 
 function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
+  return call_closure_mode(cv, args, funcs, aliases, type_decls, outs, false);
+}
+
+function call_closure_mode(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable, inline_value: boolean): Value {
   let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
   match (cv) {
     VFunc(v) => {
@@ -5312,6 +5353,21 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
     j = j + 1;
+  }
+  if (inline_value) {
+    let before_tail: ast.Stmt[] = [];
+    for i in 0..fv.body.len() - 1 {
+      before_tail = before_tail.append(fv.body[i]);
+    }
+    let leading: StepResult = eval_block(before_tail, env);
+    if (leading.sig != 0) {
+      if (leading.sig == 1 && is_err(leading.ret)) {
+        return leading.ret;
+      }
+      return VControl { box: leading.ret, sig: leading.sig };
+    }
+    let tail: StepResult = eval_stmt(fv.body[fv.body.len() - 1], leading.env);
+    return coerce_int_width(tail.ret, fv.ret_type);
   }
   let step: StepResult = eval_block(fv.body, env);
   if (step.sig != 1) {
@@ -5579,9 +5635,16 @@ function value_type_name(v: Value): string {
   }
 }
 
+function runtime_method_name(fd: parser.FuncDecl): string {
+  if (fd.name == "__iterator" && runtime_receiver_name(fd.receiver_type) == "Map") {
+    return "iter";
+  }
+  return fd.name;
+}
+
 function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: string): boolean {
   for fd in funcs {
-    if (fd.name == name && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
       return true;
     }
   }
@@ -5648,39 +5711,6 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   return false;
 }
 
-function map_iter_method(it: VStruct, name: string): Value {
-  let pos: i32 = 0;
-  if let VCellI(pc) = it.field_values[2] {
-    pos = pc.c.get();
-    if (name == "advance") {
-      pc.c.set(pos + 1);
-      return v_void();
-    }
-  }
-  let col: Value[] = [];
-  if (name == "key" || name == "has_next") {
-    col = vals_of(it.field_values[0]);
-  } else if (name == "value") {
-    col = vals_of(it.field_values[1]);
-  } else {
-    return v_err("MapIter has no method `" + name + "`");
-  }
-  if (name == "has_next") {
-    return v_bool(pos < col.len());
-  }
-  if (pos >= col.len()) {
-    return index_abort(aborts.arr_oob(), util.i32_to_string(pos), col.len());
-  }
-  return col[pos];
-}
-
-function vals_of(v: Value): Value[] {
-  if let VArr(a) = v {
-    return a.elements;
-  }
-  return [];
-}
-
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   return call_method_targs(recv, name, args, [], funcs, aliases, type_decls, outs);
 }
@@ -5696,11 +5726,6 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     VHandle(hv) => {
       if (is_handle_method(handle_kind(hv), name)) {
         return handle_method(hv, name, args);
-      }
-    },
-    VStruct(sv) => {
-      if (sv.type_name == "MapIter") {
-        return map_iter_method(sv, name);
       }
     },
     _ => {}
@@ -5851,9 +5876,6 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
       if (name == "cleared") {
         return v_map_new();
       }
-      if (name == "iter") {
-        return VStruct { type_name: "MapIter", field_names: ["keys", "values", "pos"], field_values: [v_arr(m.keys), v_arr(m.values), VCellI { c: cell_new(0), is_char: false, is_bool: false }], owner: "", targs: [] };
-      }
     },
     _ => {}
   }
@@ -5891,7 +5913,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     if (!rt_match && recv_type == "Array" && is_array_recv_type(fd.receiver_type)) {
       rt_match = true;
     }
-    if (fd.name == name && fd.receiver_name.len() > 0 && rt_match) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && rt_match) {
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
@@ -7945,7 +7967,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
 function receiver_has_method(funcs: parser.FuncDecl[], recv: Value, name: string): boolean {
   let rt: string = value_type_name(recv);
   for fd in funcs {
-    if (fd.name == name && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return true;
     }
   }

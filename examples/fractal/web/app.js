@@ -4,9 +4,11 @@
 // in fractal.fern. In Leaflet's simple CRS that square is lng 0..256 and
 // lat -256..0 at zoom 0, so a point c maps to
 // lng = (re + 2.5) * 64 and lat = (im - 2) * 64.
+import { mountFullscreen } from "./fullscreen.mjs";
 import { TileDelivery, TileCache, percentile } from "./delivery.mjs";
 
 const MAX_ZOOM = 42;
+const BASE_PATH = "/fractal";
 let delivery = null;
 
 const places = {
@@ -41,8 +43,10 @@ const map = L.map("map", {
   wheelPxPerZoomLevel: 90,
   maxBounds: [[-320, -64], [64, 320]],
   maxBoundsViscosity: 0.6,
-  zoomControl: true,
+  zoomControl: false,
 });
+
+L.control.zoom({ position: "bottomleft" }).addTo(map);
 
 const Fractal = L.GridLayer.extend({
   createTile(coords, done) {
@@ -172,7 +176,7 @@ function setBinarySize(bytes) {
 async function pollStats() {
   if (state.transport !== "http") return;
   try {
-    const s = await (await fetch("/api/stats", { cache: "no-store" })).json();
+    const s = await (await fetch(`${BASE_PATH}/api/stats`, { cache: "no-store" })).json();
     setServer(`HTTP → container ${s.instance}, up ${fmtUptime(s.uptime_ms)}, ${s.tiles.toLocaleString()} tiles since boot`, true);
     setBinarySize(s.binary_bytes);
   } catch {
@@ -244,12 +248,13 @@ document.querySelectorAll("[data-labels]").forEach((b) =>
 // ---- start ---------------------------------------------------------------
 
 async function start() {
-  const response = await fetch("/api/config", { cache: "no-store" });
+  const response = await fetch(`${BASE_PATH}/api/config`, { cache: "no-store" });
   if (!response.ok) throw new Error("Cannot load renderer configuration");
   const config = await response.json();
   delivery = new TileDelivery({
     version: config.render_version,
     origin: location.origin,
+    basePath: BASE_PATH,
     cache: new TileCache(config.binary_bytes > 0 ? 16 * 1024 * 1024 : 0),
     onVersionChange: () => location.reload(),
     priority: (job) => {
@@ -278,3 +283,22 @@ async function start() {
 }
 start().catch((error) => setServer(error.message, false));
 window.addEventListener("pagehide", () => delivery?.close());
+
+const viewerControls = document.createElement("div");
+viewerControls.className = "viewer-controls";
+document.body.append(viewerControls);
+const panels = document.createElement("button");
+panels.type = "button";
+panels.className = "fullscreen-toggle";
+panels.textContent = "Hide panels";
+panels.setAttribute("aria-pressed", "false");
+panels.onclick = () => {
+  const hidden = document.body.classList.toggle("panels-hidden");
+  panels.textContent = hidden ? "Show panels" : "Hide panels";
+  panels.setAttribute("aria-pressed", String(hidden));
+};
+viewerControls.append(panels);
+mountFullscreen(document.body, {
+  container: viewerControls,
+  onchange: () => map.invalidateSize(),
+});

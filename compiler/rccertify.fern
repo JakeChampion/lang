@@ -993,9 +993,6 @@ function load_origin(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Fo
 }
 
 function call_origin_at(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
-  if (is_call(ins, "__mapiter_map_impl") && child_load(w, c.regions, bi, ins, c.children_box)) {
-    return child(1);
-  }
   if (paired_call(w.f.blocks[bi], pos) && !w.sigs.lookup(ins.str).known) {
     return plain(word_origin(w.abis.lookup(ins.str), false));
   }

@@ -1,5 +1,10 @@
 # f64 transcendentals: per-backend kernels vs std/f64 (2026-10-10)
 
+Status: [record] historical source record.
+
+This record cites historical source paths. Some files no longer exist in the current tree.
+
+
 #5541 replaced the hand-written exp, log, sin, cos and pow kernels (x86-64 and
 arm64 assembly in the self-host emitters, wasm text, the Go interpreter's
 copies and `internal/tables/fdlibm`) with one Fern definition in

@@ -51,27 +51,29 @@ func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	}
 
 	mapBlk := checkedForEachBlock(t, mapProg)
-	if len(mapBlk.Stmts) != 2 {
-		t.Fatalf("map lowering: expected 2 stmts (cursor/for), got %d", len(mapBlk.Stmts))
+	if len(mapBlk.Stmts) != 5 {
+		t.Fatalf("map lowering: expected map/keys/values/index/for, got %d statements", len(mapBlk.Stmts))
 	}
-	cursor, ok := mapBlk.Stmts[0].(*ast.Var)
+	for i, method := range []string{"__method_Map_keys", "__method_Map_values"} {
+		column, ok := mapBlk.Stmts[i+1].(*ast.Var)
+		if !ok {
+			t.Fatalf("map column: got %T", mapBlk.Stmts[i+1])
+		}
+		call, ok := column.Init.(*ast.Call)
+		if !ok {
+			t.Fatalf("map column initializer: got %T", column.Init)
+		}
+		callee, ok := call.Callee.(*ast.Ident)
+		if !ok || callee.Name != method {
+			t.Fatalf("map column call: got %#v", call.Callee)
+		}
+	}
+	mapLoop, ok := mapBlk.Stmts[4].(*ast.For)
 	if !ok {
-		t.Fatalf("map lowering: first stmt should bind the cursor, got %T", mapBlk.Stmts[0])
-	}
-	call, ok := cursor.Init.(*ast.Call)
-	if !ok {
-		t.Fatalf("map lowering: the cursor is `m.iter()`, got %T", cursor.Init)
-	}
-	callee, ok := call.Callee.(*ast.Ident)
-	if !ok || callee.Name != "__method_Map_iter" {
-		t.Fatalf("map lowering: the cursor is `m.iter()`, got %#v", call.Callee)
-	}
-	mapLoop, ok := mapBlk.Stmts[1].(*ast.For)
-	if !ok {
-		t.Fatalf("map lowering: last stmt should be the For, got %T", mapBlk.Stmts[1])
+		t.Fatalf("map loop: got %T", mapBlk.Stmts[4])
 	}
 	if mapLoop.Step == nil {
-		t.Errorf("map lowering: the For needs a step (advance) so `continue` advances the cursor")
+		t.Errorf("map lowering: the For needs an index step so continue advances")
 	}
 }
 

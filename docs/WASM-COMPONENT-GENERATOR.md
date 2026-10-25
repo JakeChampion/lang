@@ -2,6 +2,8 @@
 
 Status: [record] complete: the prefix and suffix blobs were replaced by generated sections, now in `compiler/watbin.fern`.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Why
 
 The self-hosted wasm backend (`compiler/wasm.fern`) emits a

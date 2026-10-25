@@ -7,6 +7,8 @@ closures (Phase 1e).
 Date: 2026-05-21.
 Status: [record] Phase 1e of the Go native compiler's RC, since deleted with the native backends.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Why this plan exists
 
 The parent doc `docs/RC-PERCEUS-PLAN.md` sketches Phase 1e in

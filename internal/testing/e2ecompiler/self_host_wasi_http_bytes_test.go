@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func TestSelfHostWasiHttpByteWriterCleanup(t *testing.T) {
-	source, err := os.ReadFile("../../stdlib/std/wasi_http.fern")
+	source, err := literate.ReadFile("../../stdlib/std/wasi_http.fern")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +95,7 @@ import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let data: u8[] = req.body_bytes();
     if (req.path == "/stream") {
-        return http.stream(200, Stream { data: data, pos: 1, source: None });
+        return http.stream(200, ByteStream { data: data, pos: 1, source: None });
     }
     if (req.path == "/chunks") {
         return http.chunks(200, (i: i32): Option[u8[]] => {

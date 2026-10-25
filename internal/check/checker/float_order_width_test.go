@@ -2,20 +2,17 @@ package checker
 
 import (
 	"fmt"
-	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-func TestFloatOrderingRequiresCompatibleWidths(t *testing.T) {
+func TestFloatOrderingWidensOperands(t *testing.T) {
 	for _, op := range []string{"<", "<=", ">", ">="} {
 		for _, operands := range [][2]string{{"a", "b"}, {"b", "a"}} {
 			t.Run(op+operands[0], func(t *testing.T) {
 				src := fmt.Sprintf("function f(a: f32, b: f64): boolean { return %s %s %s; }", operands[0], op, operands[1])
 				err := checkSource(t, src)
-				if err == nil || strings.Count(diag.Format("order.fern", src, err), "error[E009]") != 1 {
-					t.Fatalf("want one width diagnostic, got %v", err)
+				if err != nil {
+					t.Fatal(err)
 				}
 			})
 		}

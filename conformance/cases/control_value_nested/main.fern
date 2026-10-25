@@ -1,0 +1,9 @@
+enum Inner { Good(i32), Bad }
+
+enum Outer { Pair(Inner, Inner), Empty }
+
+function main(): i32 {
+  let e = Outer.Pair(Inner.Good(3), Inner.Bad);
+  let n = if let Outer.Pair(Inner.Good(a), Inner.Good(b)) = e { a + b } else { if let Outer.Pair(Inner.Good(a), Inner.Bad()) = e { a } else { 0 } };
+  return n - 3;
+}

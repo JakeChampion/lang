@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const playgroundProgram = `import "std/i64";
@@ -29,10 +31,19 @@ func buildPlaygroundDriver(t *testing.T) string {
 
 func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 	t.Helper()
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("playground driver needs a supported native compiler host")
+	}
+	return buildPlaygroundDriverForTarget(t, stdlib, target)
+}
+
+func buildPlaygroundDriverForTarget(t *testing.T, stdlib, target string) string {
+	t.Helper()
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "playground_run.fern")
 	bin := filepath.Join(dir, "playground_run")
-	cmd := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux",
+	cmd := exec.Command(buildFernCLIBin(t), "-target", target,
 		"-embed", stdlib, "-o", bin, filepath.Join(dir, "playground_run.fern"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building the playground driver failed: %v\n%s", err, out)
@@ -48,7 +59,14 @@ func runPlayground(t *testing.T, bin, cwd, src string, args ...string) (string, 
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if cmd.ProcessState == nil {
+			t.Fatalf("start playground driver: %v", err)
+		}
+		if cmd.ProcessState.ExitCode() < 0 {
+			errb.WriteString(err.Error() + "\n")
+		}
+	}
 	return out.String(), errb.String(), cmd.ProcessState.ExitCode()
 }
 
@@ -139,8 +157,8 @@ func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 	if err := json.Unmarshal(response(t, frames, "4").Result, &def); err != nil {
 		t.Fatal(err)
 	}
-	if def.URI != "file:///stdlib/std/i32.fern" || def.Range.Start.Line == 0 {
-		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern", def)
+	if def.URI != "file:///stdlib/std/i32.fern.md" || def.Range.Start.Line == 0 {
+		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern.md", def)
 	}
 }
 

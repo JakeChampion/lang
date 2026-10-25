@@ -164,7 +164,7 @@ function now(): i64 {
 }
 
 function request(method: string, path: string, body: u8[]): HttpRequest {
-  return HttpRequest { method: method, path: path, body: Stream { data: body, pos: 0, source: None }, headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
+  return HttpRequest { method: method, path: path, body: ByteStream { data: body, pos: 0, source: None }, headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
 }
 
 function summary(method: string, resp: HttpResponse): string {

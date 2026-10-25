@@ -14,12 +14,12 @@ func TestSelfHostCheckValueBlockPosition(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
 	oracle := e2eharness.BuildLangBinForInterp(t)
-	decls := "enum Bx[T] { Full(T), Empty }\nfunction get(b: Bx[i64]): i32 { return 0; }\n"
+	decls := "enum Bx[T] { Full(T), Empty }\nfunction get(b: Bx[i32]): i32 { return 0; }\n"
 	cases := []struct{ name, body string }{
-		{"if", "function f(c: boolean, n: i32): i32 { return get(if (c) { Full(n) } else { Full(1) }); }\n"},
-		{"if-literal-first", "function f(c: boolean, n: i32): i32 { return get(if (c) { Full(1) } else { Full(n) }); }\n"},
-		{"match", "function f(k: i32, n: i32): i32 { return get(match (k) { 0 => Full(n), _ => Full(1) }); }\n"},
-		{"block", "function f(n: i32): i32 { return get({ let m: i32 = n; Full(m) }); }\n"},
+		{"if", "function f(c: boolean, n: i64): i32 { return get(if (c) { Full(n) } else { Full(1) }); }\n"},
+		{"if-literal-first", "function f(c: boolean, n: i64): i32 { return get(if (c) { Full(1) } else { Full(n) }); }\n"},
+		{"match", "function f(k: i32, n: i64): i32 { return get(match (k) { 0 => Full(n), _ => Full(1) }); }\n"},
+		{"block", "function f(n: i64): i32 { return get({ let m: i64 = n; Full(m) }); }\n"},
 	}
 	lead := regexp.MustCompile(`(?m)^[^\s:]+:(\d+):(\d+): error\[E038\]`)
 	for _, tc := range cases {

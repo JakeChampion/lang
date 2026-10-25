@@ -323,7 +323,7 @@ func (s SliceType) String() string {
 }
 func (s StreamType) String() string {
 	if s.Elem == nil {
-		return "stream"
+		return "Stream"
 	}
 	return "Stream[" + s.Elem.String() + "]"
 }
@@ -1466,30 +1466,33 @@ func ForEachArrayLoop(fe *ForEach, iterName string) []Stmt {
 
 func ForEachMapLoop(fe *ForEach, iterName string) []Stmt {
 	kw := fe.P
-	iterIdent := func() *Ident { return &Ident{P: kw, Name: iterName} }
-	callOnIter := func(method string) *Call {
-		return &Call{P: kw, Callee: &FieldAccess{P: kw, Target: iterIdent(), Field: method, FieldPos: kw}}
+	keysName, valuesName := iterName+"_keys", iterName+"_values"
+	idxName := fmt.Sprintf("__foreach_idx_%d", fe.ID)
+	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
+	call := func(name, method string) *Call {
+		return &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(name), Field: method, FieldPos: kw}}
 	}
-
-	innerStmts := []Stmt{
-		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[0], Init: callOnIter("key")},
-		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[1], Init: callOnIter("value")},
+	read := func(name string) *Index {
+		return &Index{P: fe.Pattern.P, Array: mkIdent(name), Idx: mkIdent(idxName), Unchecked: true}
+	}
+	inner := []Stmt{
+		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[0], Init: read(keysName)},
+		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[1], Init: read(valuesName)},
 	}
 	for _, sub := range fe.Pattern.Nested {
 		if sub != nil {
-			innerStmts = append(innerStmts, sub)
+			inner = append(inner, sub)
 		}
 	}
-	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
-
-	forLoop := &For{
-		P:     kw,
-		Cond:  callOnIter("has_next"),
-		Step:  &ExprStmt{P: kw, Expr: callOnIter("advance")},
-		Body:  &Block{P: kw, Stmts: innerStmts},
-		Label: fe.Label,
+	inner = append(inner, foreachBodyStmts(fe)...)
+	loop := &For{P: kw, Cond: &Binary{P: kw, Op: "<", Left: mkIdent(idxName), Right: call(keysName, "len")},
+		Step: &ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(idxName), Value: &Binary{P: kw, Op: "+", Left: mkIdent(idxName), Right: &NumberLit{P: kw, Value: 1}}}},
+		Body: &Block{P: kw, Stmts: inner}, Label: fe.Label}
+	return []Stmt{
+		&Var{P: kw, Name: keysName, Init: call(iterName, "keys")},
+		&Var{P: kw, Name: valuesName, Init: call(iterName, "values")},
+		&Var{P: kw, Name: idxName, Init: &NumberLit{P: kw, Value: 0}}, loop,
 	}
-	return []Stmt{forLoop}
 }
 
 func ForEachIteratorLoop(fe *ForEach, iterName string) []Stmt {
@@ -1659,6 +1662,7 @@ func armTakesPointer(bindings []string, types []Type, at string, tuple []TuplePa
 }
 
 type MatchExpr struct {
+	Origin      string
 	P           Position
 	Tag         Expr
 	Arms        []*MatchExprArm

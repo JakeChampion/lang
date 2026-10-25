@@ -22,6 +22,18 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"nested-valueless-match-lambda", `function main(): i32 {
+  let count = cell_new(0);
+  let visit = (n: i32): void => {
+    match (n) {
+      0 => { match (n) { 0 => { count.set(1); }, _ => { count.set(2); } } },
+      _ => { count.set(3); }
+    }
+  };
+  visit(0);
+  return count.get() - 1;
+}
+`},
 	{"qualified-record-binding-sites", `import "./shapes";
 function f(whole @ shapes.Open { n, .. }: shapes.Open): i32 { return whole.n + n; }
 function main(): i32 {
@@ -32,11 +44,49 @@ function main(): i32 {
 }
 `},
 	{"generic-supertraits", `trait Child[U]: api.Parent[Option[U], (string, u8)] + Marker {}`},
+	{"nested-match-value-early-return", `struct P { x: i32 }
+enum H { S(P), N }
+enum Outer { A(H), B }
+function whole(h: H): i32 {
+  return match (h) { S(w @ P { x }) => { return w.x + x; }, N => 0 };
+}
+function nested(o: Outer): i32 {
+  let value = match (o) { A(S(p)) => { return p.x; }, _ => 0 };
+  return value + 1;
+}
+function main(): i32 { return whole(H.S(P { x: 1 })) + nested(Outer.B); }
+`},
 	{"nested-whole-struct-pattern", `struct P { x: i32 }
 enum H { S(P) }
 function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
 function main(): i32 { return 0; }
 `},
+	{"tuple-binding-trailing-comment", "function main(): i32 {\n  let (a, b) = (1, 2); // pair\n  return a + b;\n}\n"},
+	{"checked-trait-cast", `trait Named {
+  function name(self: Self): string;
+}
+struct Square { side: i32 }
+impl Named for Square {
+  function name(self: Self): string { return "square"; }
+}
+function recover(value: dyn Named): Option[Square] {
+  return value as? Square;
+}
+`},
+	{"checked-numeric-casts", `function narrow(value: i64): Option[u8] {
+  return (value + 1i64) as? u8;
+}
+function chained(value: i32): Option[u8] {
+  return (value as i64) as? u8;
+}
+function unwrap(value: i64): Option[u8] {
+  let smaller = (value as? u32)?;
+  return smaller as? u8;
+}
+`},
+	// A binding's annotation types a lambda that writes no return type; the
+	// compile parse stamps the return type onto the lambda, and -fmt must print
+	// the lambda as written (#12359).
 	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
 	{"opaque-struct-kept", "pub opaque struct A { a: i32 }\npub(package) opaque struct B { b: i32 }\n@must_consume pub opaque struct C { c: i32 }\ntrait Default { function default(): Self; }\n@derive(Default) opaque struct D { d: i32 }\nfunction main(): i32 { return 0; }\n"},
 	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
@@ -202,6 +252,11 @@ pub(package) type T = S | S;
 pub(package) function helper(n: i32): i32 { return n + 1; }
 pub function api(n: i32): i32 { return helper(n); }
 function main(): i32 { return api(1); }
+`},
+	{"export-attribute", `@export("fern:test/math", "add")
+pub function add(x: i32, y: i32): i32 { return x + y; }
+@export("fern:test/math", "zero")
+function zero(): i32 { return 0; }
 `},
 	{"inline-hints", `@inline
 function inc(n: i32): i32 { return n + 1; }
@@ -1814,7 +1869,7 @@ var selfHostFmtKnownDivergences = map[string]string{}
 
 func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	root := repoRootFromTest(t)
+	root := formatterCorpusRoot(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -1855,7 +1910,7 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 
 func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	root := repoRootFromTest(t)
+	root := formatterCorpusRoot(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -1895,6 +1950,16 @@ func repoRootFromTest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func formatterCorpusRoot(t *testing.T) string {
+	t.Helper()
+	root := repoRootFromTest(t)
+	dst := t.TempDir()
+	if err := corpus.Materialize(root, dst, corpus.Sources); err != nil {
+		t.Fatal(err)
+	}
+	return dst
 }
 
 func corpusFernFiles(t *testing.T, root string) []string {

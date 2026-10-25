@@ -54,7 +54,7 @@ test("stdlib index links to at least one auto-generated module", async ({
 
 test("stdlib string page renders its first public function", async ({ page }) => {
   await page.goto("stdlib/string/");
-  // is_empty is the first decl in std/string.fern.
+  // is_empty is the first decl in std/string.fern.md.
   await expect(page.locator("main")).toContainText("is_empty");
   await expect(page.locator("main")).toContainText("pub function");
 });

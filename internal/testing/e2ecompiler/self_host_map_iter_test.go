@@ -1,7 +1,9 @@
 package e2ecompiler
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -10,10 +12,10 @@ var mapIterCases = []struct {
 	src  string
 	exit int
 }{
-	{"key-len-plus-value", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 10); m = m.insert(\"bb\", 20); let it: MapIter[string,i32] = m.iter(); let sum: i32 = 0; while (it.has_next()) { sum = sum + it.key().len() + it.value(); it.advance(); } return sum; }", 33},
-	{"empty", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); let it: MapIter[string,i32] = m.iter(); let n: i32 = 0; while (it.has_next()) { n = n + 1; it.advance(); } return n + 50; }", 50},
-	{"string-values", "import \"core/map\"; function main(): i32 { let m: Map[string,string] = map_new(4); m = m.insert(\"k1\", \"abc\"); m = m.insert(\"k2\", \"de\"); let it: MapIter[string,string] = m.iter(); let t: i32 = 0; while (it.has_next()) { t = t + it.value().len(); it.advance(); } return t; }", 5},
-	{"count", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(8); m = m.insert(\"x\", 1); m = m.insert(\"y\", 2); m = m.insert(\"z\", 3); let it: MapIter[string,i32] = m.iter(); let c: i32 = 0; while (it.has_next()) { c = c + 1; it.advance(); } return c; }", 3},
+	{"key-len-plus-value", "import \"core/map\"; import \"core/iter\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 10); m = m.insert(\"bb\", 20); let it: iter.ArrayIter[(string,i32)] = m.iter(); let sum: i32 = 0; for (__mapkey_it, __mapvalue_it) in it { sum = sum + __mapkey_it.len() + __mapvalue_it;  } return sum; }", 33},
+	{"empty", "import \"core/map\"; import \"core/iter\"; function main(): i32 { let m: Map[string,i32] = map_new(4); let it: iter.ArrayIter[(string,i32)] = m.iter(); let n: i32 = 0; for (__mapkey_it, __mapvalue_it) in it { n = n + 1;  } return n + 50; }", 50},
+	{"string-values", "import \"core/map\"; import \"core/iter\"; function main(): i32 { let m: Map[string,string] = map_new(4); m = m.insert(\"k1\", \"abc\"); m = m.insert(\"k2\", \"de\"); let it: iter.ArrayIter[(string,string)] = m.iter(); let t: i32 = 0; for (__mapkey_it, __mapvalue_it) in it { t = t + __mapvalue_it.len();  } return t; }", 5},
+	{"count", "import \"core/map\"; import \"core/iter\"; function main(): i32 { let m: Map[string,i32] = map_new(8); m = m.insert(\"x\", 1); m = m.insert(\"y\", 2); m = m.insert(\"z\", 3); let it: iter.ArrayIter[(string,i32)] = m.iter(); let c: i32 = 0; for (__mapkey_it, __mapvalue_it) in it { c = c + 1;  } return c; }", 3},
 }
 
 func TestSelfHostMapIterX86_64(t *testing.T) {
@@ -53,5 +55,16 @@ func TestSelfHostMapIterArm64(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSelfHostMapIteratorProtocol(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, name := range []string{"map_iterator_protocol", "iterator_nested_tuple_adapter"} {
+		source, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "cases", name, "main.fern"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		runMapIterCensus(t, cli, name, name, string(source), 0)
 	}
 }

@@ -35,6 +35,11 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"arrow lambda with an owning first parameter", `function main(): i32 { let f = (own a: string[]): string[] => a; return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
 
+		{"if let value after a diverging branch", `function f(): i32 { let n = if let 1 = value { return 2; } else { if let 3 = value { return 4; } else { value } }; return n; }`},
+		{"if let value", `function f(): i32 { return if let Some(n) = source() { n } else { 0 }; }`},
+		{"if let value chain", `function f(): i32 { let n = if let Some(n) = source() { n } else if let Other(n) = source() { n } else { 0 }; return n; }`},
+		{"statement match bare arms", `function f(): i32 { match (n) { 1 => print("one"), _ => print("other"), } return 0; }`},
+		{"statement match value blocks", `function f(): i32 { match (n) { 1 => { let x = 1; print(x) }, _ => {} } return 0; }`},
 		{"if let empty body", `function f(): i32 { if let Some(_) = value {} else { return 1; } return 0; }`},
 		{"if let qualified empty body", `function f(): i32 { if let option.Some(_) = record.value {} else { return 1; } return 0; }`},
 		{"if let empty body without else", `function f(): i32 { if let Some(_) = value {} return 0; }`},
@@ -109,6 +114,16 @@ func TestGrammarRejects(t *testing.T) {
 	g := loadGrammar(t)
 
 	cases := []struct{ name, src string }{
+		{"visible struct field", `struct P { pub x: i32 }`},
+		{"plain binding with else", `function f(): i32 { let n = 1 else { return 0; }; return n; }`},
+		{"struct binding with else", `struct P { x: i32 } function f(p: P): i32 { let P { x } = p else { return 0; }; return x; }`},
+		{"tuple binding with else", `function f(p: (i32, i32)): i32 { let (x, y) = p else { return 0; }; return x; }`},
+		{"while without a block", `function f(): i32 { while (false) return 1; return 0; }`},
+		{"loop without a block", `function f(): i32 { loop return 1; }`},
+		{"for without a block", `function f(): i32 { for x in [1] return x; return 0; }`},
+		{"statement match missing comma", `function f(): i32 { match (n) { 1 => {} _ => {} } return 0; }`},
+		{"expression match missing comma", `function f(): i32 { return match (n) { 1 => 2 _ => 3 }; }`},
+		{"if let value missing else", `function f(): i32 { return if let Some(n) = value { n }; }`},
 		{"token soup", `) } => ; ; [`},
 		{"unclosed block", `function main(): i32 { return 0;`},
 		{"statement outside a declaration", `return 0;`},

@@ -26,6 +26,32 @@ var interpProgs = []struct {
 	src  string
 	exit int
 }{
+	{"raw-filesystem-byte-results", `function main(): i32 {
+  let Ok(root) = temp_dir("fern-byte-results") else { return 1; };
+  defer { remove_dir_all(root); }
+  let raw = string_from_bytes_unchecked([255u8, 254u8]);
+  let Ok(_) = write_file(root + "/" + raw, "x") else { return 2; };
+  match (read_dir(root)) { Err(InvalidUtf8(_)) => {}, _ => { return 3; } }
+  match (read_dir_bytes(root)) {
+    Ok(names) => { if (names.len() != 1 || names[0].len() != 2 || names[0][0] != 255u8 || names[0][1] != 254u8) { return 4; } },
+    Err(_) => { return 5; }
+  }
+  let Ok(d) = open_dir(root) else { return 6; };
+  let good: boolean = false;
+  match (d.entries_bytes()) {
+    Ok(names) => { good = names.len() == 1 && names[0].len() == 2 && names[0][0] == 255u8 && names[0][1] == 254u8; },
+    Err(_) => {}
+  }
+  d.close();
+  if (!good) { return 7; }
+  let Ok(_) = create_symlink(raw, root + "/link") else { return 8; };
+  match (read_link_bytes(root + "/link")) {
+    Ok(bytes) => { if (bytes.len() != 2 || bytes[0] != 255u8 || bytes[1] != 254u8) { return 9; } },
+    Err(_) => { return 10; }
+  }
+  return 0;
+}`, 0},
+
 	{"return-literal", "function main(): i32 { return 42; }", 42},
 	{"arith", "function main(): i32 { return 6 * 7; }", 42},
 	{"hex-literal", "function main(): i32 { return 0x1F; }", 31},
@@ -136,8 +162,8 @@ var interpProgs = []struct {
 	{"or-short-circuit", "function main(): i32 { let a = [1, 2, 3]; let i = 5; if (i >= 3 || a[i] == 1) { return 42; } return 0; }", 42},
 	{"oob-var-init-not-swallowed", "function main(): i32 { let a = [1, 2, 3]; let x = a[5]; return 7; }", 254},
 	{"braceless-if-else", "function main(): i32 { let x = 0; if (x == 0) x = 40; else x = 1; return x; }", 40},
-	{"braceless-while", "function main(): i32 { let x = 0; while (x < 42) x = x + 1; return x; }", 42},
-	{"braceless-for", "function main(): i32 { let s = 0; for i in 0..5 s = s + i; return s; }", 10},
+	{"braceless-while-refused", "function main(): i32 { let x = 0; while (x < 42) x = x + 1; return x; }", 254},
+	{"braceless-for-refused", "function main(): i32 { let s = 0; for i in 0..5 s = s + i; return s; }", 254},
 	{"chained-assign-2", "function main(): i32 { let x = 0; let y = 0; x = y = 20; return x + y; }", 40},
 	{"chained-assign-3", "function main(): i32 { let x = 0; let y = 0; let z = 0; x = y = z = 14; return x + y + z; }", 42},
 	{"use-monadic-bind", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); } function main(): i32 { use r <- apply(41); return r + 1; }", 42},

@@ -67,7 +67,7 @@ function main(): i32 {
   out = out + "brif=" + util.i32_to_string(ssa.term_id("brif")) + "\n";
 
   let sid: i32 = 1;
-  while (ssa.kind_name(0 - sid) != "invalid") {
+  while (sid <= ssa.semantic_kind_count()) {
     out = out + "semantic" + util.i32_to_string(sid) + "=" + ssa.kind_name(0 - sid) + "\n";
     sid = sid + 1;
   }

@@ -1,0 +1,8 @@
+{
+  "packaged_source": "da85e7590d8fc3ac6a6d0d7e123a189043218a5b",
+  "compiled_and_measured_source": "d7a45a2145dafdcc5d6aa6d23a68f4ccdd0e465f",
+  "dependency_base": "b4a59ec925fdf3af25c61f0833d6e47fc6264d69",
+  "only_dependency_proof_documents_changed_after_measurement": true,
+  "native_source_sha256": "96e6a22ebe9debab546fae76537f860c3977ecd33cb51bf2b935a78244ae5e20",
+  "go_oracle_sha256": "70f36550e741bf2a450a8a1c889bc465921280be0b66a26ba3bc93c88cde5e73"
+}

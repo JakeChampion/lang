@@ -5,6 +5,8 @@ compilers were both maintained. Not a plan; the plans it points at
 are `TYPED-IR-REWRITE.md`, `SELFHOST-SYMBOL-INTERNING.md`, `SSA-DECISION.md`
 and `NATIVE-CONVERGENCE.md`.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 This doc answers a specific question: *given the list of architectural ideas
 a compiler designed from scratch in 2026 would adopt, which ones does Fern
 already have, which are worth buying, and which are actively wrong here?*

@@ -330,8 +330,11 @@ function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32): string 
         let vl: string = iife_value_local(lm.body[0], lm.body[2]);
         if (vl.len() > 0) {
           match (lm.body[1]) {
+            ast.StmtMatch(m) => {
+              return print_match_expr_arms(m, vl, depth);
+            },
             ast.StmtIf(vf) => {
-              return print_sugared_match_expr(vf.sugar, "", depth);
+              return print_sugared_match_expr(vf.sugar, vl, depth);
             },
             _ => {
               return "";
@@ -498,6 +501,10 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32): string 
   if (arms.len() == 0) {
     return "";
   }
+  if (m.origin == "if_let") {
+    let sg: ast.MatchSugar = ast.MatchSugar { scrut: m.scrutinee, tup: [], strct: [], lits: [], arms: arms, line: m.line, col: m.col, origin: "if_let" };
+    return print_sugared_match_expr(sg, v, depth);
+  }
   let out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
   let i: i32 = 0;
   while (i < arms.len()) {
@@ -524,15 +531,40 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32): string 
   return out + " }";
 }
 
+function value_branch_text(value: string): string {
+  if (value.starts_with("{")) {
+    return value;
+  }
+  return "{ " + value + " }";
+}
+
 function print_sugared_match_expr(sg: ast.MatchSugar, v: string, depth: i32): string {
+  let value_local: string = v;
+  if (sg.arms.len() > 0 && sg.origin != "if_let") {
+    value_local = "";
+  }
   let arms: WrittenArm[] = sugar_written_arms(sg);
   if (arms.len() == 0) {
     return "";
   }
+  if (sg.origin == "if_let" && arms.len() >= 2) {
+    let head: string = arms[0].head;
+    let i: i32 = 1;
+    while (i < arms.len() - 1) {
+      head = head + " | " + arms[i].head;
+      i = i + 1;
+    }
+    let yes: string = arm_expr_value(arms[0].body, value_local, depth);
+    let no: string = arm_expr_value(arms[arms.len() - 1].body, value_local, depth);
+    if (yes.len() == 0 || no.len() == 0) {
+      return "";
+    }
+    return "if let " + head + " = " + print_expr(sg.scrut, depth) + " " + value_branch_text(yes) + " else " + value_branch_text(no);
+  }
   let out: string = "match (" + print_expr(sg.scrut, depth) + ") { ";
   let i: i32 = 0;
   while (i < arms.len()) {
-    let av: string = arm_expr_value(arms[i].body, v, depth);
+    let av: string = arm_expr_value(arms[i].body, value_local, depth);
     if (av.len() == 0) {
       return "";
     }
@@ -556,10 +588,16 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
   let last: ast.Stmt = body[body.len() - 1];
   let tail: string = "";
   if (v.len() == 0) {
+    if (body.len() > 1 && parser.branch_stmts_diverge([body[body.len() - 2]])) {
+      return print_value_block(body, tail_expr(last), false, depth);
+    }
     tail = print_return_only([last], depth);
   } else {
     let set: AssignParts = assign_parts(last);
     if (!set.ok || print_expr(set.place, depth) != v) {
+      if (parser.branch_stmts_diverge(body)) {
+        return print_value_block(body.append(last), tail_expr(last), false, depth);
+      }
       return "";
     }
     tail = print_expr(set.value, depth);
@@ -674,9 +712,18 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       return (inner, bf2);
     },
     ast.ExprUnary(u) => {
-      if (u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
+      // Both cast forms are written after their operand. The checked form
+      // uses the same precedence and parentheses as a plain cast.
+      let checked_cast: boolean = u.op.len() > 4 && util.str_has_prefix(u.op, "as?_");
+      if (checked_cast || u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
         let (co, cf) = print_expr_c(u.operand, prec_cast(), depth, f);
-        let cinner: string = co + " as " + slice_unchecked(u.op, 3, u.op.len());
+        let start: i32 = 3;
+        let cast_op: string = " as ";
+        if (checked_cast) {
+          start = 4;
+          cast_op = " as? ";
+        }
+        let cinner: string = co + cast_op + slice_unchecked(u.op, start, u.op.len());
         if (parent_prec >= prec_cast()) {
           return ("(" + cinner + ")", cf);
         }
@@ -3337,6 +3384,11 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = cf;
       } else {
         let fd: parser.FuncDecl = mod.funcs[idxs[di]];
+        for binding in mod.exports {
+          if (binding.func_name == fd.name && !binding.c_abi) {
+            chunks = chunks.append("@export(" + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n");
+          }
+        }
         let has_hint: boolean = hint_cursor < hints.len()
           && hints[hint_cursor].line == fd.line && hints[hint_cursor].col == fd.col;
         let never: boolean = false;
@@ -3384,6 +3436,10 @@ function roundtrip_module(src: string): parser.Module {
 
 function main(): i32 {
   let rc: i32 = check_expressions_and_control_flow();
+  if (rc != 0) {
+    return rc;
+  }
+  rc = check_checked_casts();
   if (rc != 0) {
     return rc;
   }
@@ -5210,6 +5266,21 @@ function diff_selftest(): i32 {
   }
   if (unified_diff("a\n", "a\n", "x", "y") != "") {
     return 360;
+  }
+  return 0;
+}
+
+function check_checked_casts(): i32 {
+  for src in ["let x = value as? u8;", "let x = (value + 1) as? u8;", "let x = (value as i64) as? u32;", "let x = (value as? ByteStream)?;"] {
+    let m: parser.Module = parser.parse_module(lexer.tokenize(src));
+    let printed: string = print_module(m);
+    if (!util.contains(printed, " as? ")) {
+      return 361;
+    }
+    let again: parser.Module = parser.parse_module(lexer.tokenize(printed));
+    if (again.top_stmts.len() != 1 || print_module(again) != printed) {
+      return 362;
+    }
   }
   return 0;
 }

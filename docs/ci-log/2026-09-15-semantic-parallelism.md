@@ -1,5 +1,10 @@
 # Parallel semantic compiler tests
 
+Status: [record] historical source record.
+
+This record cites historical source paths. Some files no longer exist in the current tree.
+
+
 ## Problem and change
 
 `TestSelfHostSSASemantic` took 64.09 seconds on native x86 CI in

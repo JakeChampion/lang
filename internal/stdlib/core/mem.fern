@@ -1,5 +1,0 @@
-// This module controls value lifetimes.
-
-pub trait Drop {
-  function drop(self: Self): void;
-}

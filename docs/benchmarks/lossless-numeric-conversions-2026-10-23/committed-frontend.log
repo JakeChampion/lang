@@ -1,0 +1,3 @@
+ok  	github.com/jakechampion/lang/internal/check/checker	17.744s
+ok  	github.com/jakechampion/lang/internal/syntax/parser	10.720s
+ok  	github.com/jakechampion/lang/internal/testing/sourcelint	21.162s

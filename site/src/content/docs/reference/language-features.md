@@ -203,6 +203,32 @@ if let Red(n) | Blue(n) = c { … }           // or-pattern
 if let 10..=20 = score { … }                // range pattern
 ```
 
+Use `if let` in an expression to select a value. Both branches require
+blocks, and the final `else` is required. Each block yields its final
+expression, without a semicolon:
+
+```fern
+let count = if let Some(n) = lookup(id) { n } else { 0 };
+```
+
+A statement `match` also accepts a bare expression after `=>`. Its value
+is discarded. Separate arms with commas. The last arm can have a comma.
+A block arm can contain statements and a final expression.
+
+Fern has no `while let` form. Use `loop` with `if let` to express repetition
+and conditional patterns. This keeps the exit branch explicit, and the
+pattern names remain in the success branch:
+
+```fern
+loop {
+    if let Some(item) = next() {
+        consume(item);
+    } else {
+        break;
+    }
+}
+```
+
 An irrefutable head (a struct pattern, an all-binder tuple pattern)
 is accepted — the `else` is simply dead — so `if let` doubles as a
 destructuring form when you don't need the miss branch.
