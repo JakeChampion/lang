@@ -8063,14 +8063,12 @@ struct Spliced { all: Produced[], spliced: boolean[] }
 // A callee that takes a record parameter as its fields declares the fields.
 function split_contracts(table: ssasem.Contracts, all: Produced[], names: string[]): ssasem.Contracts {
   let list: ssasem.Contract[] = table.list;
-  let i: i32 = 0;
-  while (i < all.len() && i < names.len()) {
+  for i in 0..names.len() {
     let p: Produced = all[i];
     let at: i32 = table.names.find(names[i]);
     if (p.ok && !p.template && !p.bodyless && at >= 0 && !same_types(list[at].params, p.func.params)) {
       list = list.with(at, ssasem.Contract { ...list[at], params: p.func.params, modes: p.modes });
     }
-    i = i + 1;
   }
   return ssasem.Contracts { ...table, list: list };
 }
@@ -8079,12 +8077,10 @@ function same_types(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (!semtypes.equal(a[i], b[i])) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }

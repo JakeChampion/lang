@@ -408,14 +408,12 @@ pub function split_param(f: ssasem.Func, p: i32, types: typeinfo.Type[]): ssasem
   let payload: typeinfo.Type[] = option_payload(f, f.params[p]);
   let extra: i32 = types.len() - 1;
   let map: i32[] = [];
-  let v: i32 = 0;
-  while (v < f.graph.nvals) {
+  for v in 0..f.graph.nvals {
     if (v <= p) {
       map = map.append(v);
     } else {
       map = map.append(v + extra);
     }
-    v = v + 1;
   }
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
@@ -583,7 +581,7 @@ function emitted(w: Words, t: typeinfo.Type, ins: ssa.SInst): Words {
 // of any other record.
 function record_words(w0: Words, a: i32, ty: typeinfo.Type, defs: ssa.SInst[]): Words {
   let parts: Parts = parts_of(w0.b.f, ty);
-  let d: ssa.SInst = built_record(defs, a);
+  let d: ssa.SInst = through_copies(defs, a);
   if (d.kind_tag == ssasem.record_new() && d.args.len() == parts.types.len() && ssasem.update_base(d) < 0) {
     return Words { ...w0, args: util.append_all(w0.args, d.args) };
   }
@@ -598,7 +596,7 @@ function record_words(w0: Words, a: i32, ty: typeinfo.Type, defs: ssa.SInst[]): 
 // call hands on its parts; any other Option reaching here is a split
 // parameter of the caller, whose own split turns these reads into its parts.
 function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst[]): Words {
-  let d: ssa.SInst = built_record(defs, a);
+  let d: ssa.SInst = through_copies(defs, a);
   let w: Words = w0;
   if (d.kind_tag == ssasem.variant_new() && d.str == "None") {
     w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: 2, result: 0, args: [], imm: 0, str: "" });
@@ -633,7 +631,7 @@ pub function needs_branch(f: ssasem.Func, defs: ssa.SInst[], ty: typeinfo.Type, 
   if (option_payload(f, ty).len() == 0) {
     return false;
   }
-  if (built_record(defs, a).kind_tag == ssasem.variant_new()) {
+  if (through_copies(defs, a).kind_tag == ssasem.variant_new()) {
     return false;
   }
   return !(a >= 0 && a < own.len() && own[a]);
@@ -670,7 +668,8 @@ pub function branch_parts(f0: ssasem.Func, a: i32, ty: typeinfo.Type): Branch {
   return Branch { f: f, head: head, flag: flag, some: some.b.insts, none: none.b.insts, joins: joins, parts: parts };
 }
 
-function built_record(defs: ssa.SInst[], v: i32): ssa.SInst {
+// The instruction defining `v`, seen through copies.
+pub function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
   let x: i32 = v;
   let steps: i32 = 0;
   while (x >= 0 && x < defs.len() && steps < 64) {

@@ -130,7 +130,7 @@ function returned_constructions(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
-      let d: ssa.SInst = through_copies(defs, b.term.value);
+      let d: ssa.SInst = semscalarreturn.through_copies(defs, b.term.value);
       if (d.kind_tag == ssasem.variant_new() && d.result >= 0 && semtypes.equal(f.values[d.result], f.result)) {
         out = out.with(d.result, true);
       }
@@ -224,7 +224,7 @@ pub function reads_apart(k: i32): boolean {
 
 function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[]): boolean {
   for a in phi.args {
-    let d: ssa.SInst = through_copies(defs, a);
+    let d: ssa.SInst = semscalarreturn.through_copies(defs, a);
     let k: i32 = d.kind_tag;
     if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0 && !split_payload(d, defs, ix, split)) {
       return false;
@@ -234,7 +234,7 @@ function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: 
 }
 
 function split_payload(d: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, split: boolean[]): boolean {
-  return split.len() > 0 && d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && paired_callee(through_copies(defs, d.args[0]), ix, split) >= 0;
+  return split.len() > 0 && d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && paired_callee(semscalarreturn.through_copies(defs, d.args[0]), ix, split) >= 0;
 }
 
 function marked_all(own flags: boolean[], vs: i32[]): boolean[] {
@@ -439,7 +439,7 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   while (bi < n) {
     let b: ssa.SBlock = f.graph.blocks[bi];
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
-      let d: ssa.SInst = through_copies(defs, b.term.value);
+      let d: ssa.SInst = semscalarreturn.through_copies(defs, b.term.value);
       if (sh.tuple) {
         f = pair_return(f, bi, sh, d);
       } else if (d.kind_tag == ssasem.variant_new() && semtypes.equal(f.values[d.result], sh.ty)) {
@@ -538,7 +538,7 @@ struct Parts { a: Arm, words: i32[] }
 // A two-word payload's parts: a construction's arguments, or else read out of
 // the payload.
 function parts_of(a: Arm, v: i32, ty: typeinfo.Type, ts: typeinfo.Type[], defs: ssa.SInst[]): Parts {
-  let d: ssa.SInst = through_copies(defs, v);
+  let d: ssa.SInst = semscalarreturn.through_copies(defs, v);
   let built: boolean = d.kind_tag == ssasem.record_new() || d.kind_tag == ssasem.tuple_new();
   if (built && d.args.len() == 2 && semtypes.equal(a.f.values[d.result], ty)) {
     return Parts { a: a, words: d.args };
@@ -1128,20 +1128,6 @@ function defs_of(g: ssa.SFunc): ssa.SInst[] {
   return out;
 }
 
-function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
-  let x: i32 = v;
-  let steps: i32 = 0;
-  while (x >= 0 && x < defs.len() && steps < 64) {
-    let d: ssa.SInst = defs[x];
-    if (d.kind_tag != 7 || d.args.len() != 1) {
-      return d;
-    }
-    x = d.args[0];
-    steps = steps + 1;
-  }
-  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-}
-
 pub struct Scalarized { funcs: ssasem.Func[], modes: i32[][], changed: boolean[] }
 
 // Passes a record parameter of scalar fields as its fields when every call
@@ -1295,18 +1281,15 @@ function split_calls(f0: ssasem.Func, funcs: ssasem.Func[], modes: i32[][], ix: 
   while (bi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[bi];
     let insts: ssa.SInst[] = [];
-    let k: i32 = 0;
-    while (k < done[bi]) {
-      insts = insts.append(b.insts[k]);
-      k = k + 1;
+    for j in 0..done[bi] {
+      insts = insts.append(b.insts[j]);
     }
     let branched: boolean = false;
-    while (k < b.insts.len() && !branched) {
+    for k in done[bi]..b.insts.len() {
       let ins: ssa.SInst = b.insts[k];
       let at: i32 = split_callee(ins, ix, split);
       if (at < 0) {
         insts = insts.append(ins);
-        k = k + 1;
         continue;
       }
       let declared: ssasem.Contract = ssasem.Contract { name: ins.str, params: funcs[at].params, modes: modes[at], result: funcs[at].result };
@@ -1315,7 +1298,6 @@ function split_calls(f0: ssasem.Func, funcs: ssasem.Func[], modes: i32[][], ix: 
         let sc: semscalarreturn.SplitCall = semscalarreturn.split_args(f, ins, declared, split[at], defs, 0 - 1, []);
         f = sc.f;
         insts = util.append_all(insts, sc.insts).append(sc.call);
-        k = k + 1;
         continue;
       }
       let br: semscalarreturn.Branch = semscalarreturn.branch_parts(f, ins.args[u], declared.params[u]);
@@ -1323,6 +1305,7 @@ function split_calls(f0: ssasem.Func, funcs: ssasem.Func[], modes: i32[][], ix: 
       f = branched_block(sc.f, bi, b, util.append_all(insts, br.head), br, util.append_all(br.joins, sc.insts).append(sc.call), k + 1);
       done = done.append(0).append(0).append(br.joins.len() + sc.insts.len() + 1);
       branched = true;
+      break;
     }
     if (!branched) {
       f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
@@ -1349,10 +1332,8 @@ function branched_block(f0: ssasem.Func, bi: i32, b: ssa.SBlock, head: ssa.SInst
   let none_id: i32 = some_id + 1;
   let join_id: i32 = some_id + 2;
   let tail: ssa.SInst[] = joined;
-  let k: i32 = rest;
-  while (k < b.insts.len()) {
+  for k in rest..b.insts.len() {
     tail = tail.append(b.insts[k]);
-    k = k + 1;
   }
   let f: ssasem.Func = repointed(f0, term_targets(b.term), b.id, join_id);
   let start: ssa.SBlock = ssa.SBlock { ...b, insts: head, term: ssa.STerm { kind_tag: 3, cond: branch.flag, target: 0, t: some_id, f: none_id, value: 0 } };
@@ -1366,10 +1347,8 @@ function spliced_modes(modes: i32[], at: i32, n: i32): i32[] {
   let out: i32[] = [];
   for i in 0..modes.len() {
     if (i == at) {
-      let k: i32 = 0;
-      while (k < n) {
+      for _ in 0..n {
         out = out.append(ssasem.value_mode());
-        k = k + 1;
       }
     } else {
       out = out.append(modes[i]);

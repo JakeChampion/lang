@@ -372,13 +372,11 @@ function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled
   let s: sempair.Scalarized = sempair.scalar_params(prev.funcs, names, rewrite, uncalled, modes);
   let funcs: ssasem.Func[] = s.funcs;
   let rewritten: boolean[] = prev.rewritten;
-  let i: i32 = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (s.changed[i]) {
       funcs = funcs.with(i, drop_unread(funcs[i]).f);
       rewritten = rewritten.with(i, true);
     }
-    i = i + 1;
   }
   return Scalars { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, modes: s.modes };
 }
