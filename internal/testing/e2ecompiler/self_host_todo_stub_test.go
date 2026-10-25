@@ -56,7 +56,7 @@ func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 func warnings(out []byte) []string {
 	ws := []string{}
 	for _, line := range bytes.Split(out, []byte("\n")) {
-		if bytes.Contains(line, []byte(": warning: ")) {
+		if bytes.Contains(line, []byte(": warning[W001]: ")) {
 			ws = append(ws, string(line))
 		}
 	}

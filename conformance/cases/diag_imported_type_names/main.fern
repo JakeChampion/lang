@@ -1,0 +1,17 @@
+import "core/iter";
+
+struct Pair__Of { x: i32 }
+
+function take(n: i32): i32 {
+    return n;
+}
+
+function count(): i32 {
+    return iter.of([1, 2]);
+}
+
+function main(): i32 {
+    let s: string = iter.of([1, 2]);
+    let p: string = Pair__Of { x: 1 };
+    return take(iter.of([3]));
+}

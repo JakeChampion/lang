@@ -1,0 +1,6 @@
+const LIMIT: i32 = 10;
+const LIMIT: i32 = 11;
+
+function main(): i32 {
+    return LIMIT;
+}

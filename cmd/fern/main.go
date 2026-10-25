@@ -218,7 +218,7 @@ func (e entry) format(err error) error {
 
 func warnUnusedChunks(srcPath string, doc *literate.Document) {
 	for _, name := range doc.UnusedChunks() {
-		fmt.Fprintf(os.Stderr, "%s: warning: chunk <<%s>> is defined but never used\n", srcPath, name)
+		fmt.Fprintf(os.Stderr, "%s:%d:1: warning[W003]: chunk <<%s>> is defined but never used\n", srcPath, doc.ChunkLine(name), name)
 	}
 }
 

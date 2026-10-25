@@ -1,0 +1,69 @@
+import "core/map";
+import "std/array";
+import "std/result";
+import "../blockyard_store" as store;
+import "../blockyard_world" as model;
+
+function main(): i32 {
+  let Ok(directory) = temp_dir("blockyard-store") else {
+    return 1;
+  };
+  let disk = store.store(directory, "test", 0);
+  let blocks: Map[i32, i32] = map_new(4);
+  let change = model.Change { x: 256, y: 14, z: 256, material: 7, actor: 1, nonce: 1 };
+  blocks = blocks.insert(model.key(256, 14, 256), 7);
+  if (store.commit(disk, blocks, [change], 1).is_err()) {
+    return 2;
+  }
+  let Ok(first) = store.recover(directory, "test") else {
+    return 3;
+  };
+  if (first.revision != 1 || first.blocks.get(model.key(256, 14, 256)).unwrap_or(0) != 7) {
+    return 4;
+  }
+  let Ok(writer) = open_appender(directory + "/test.journal") else {
+    return 5;
+  };
+  let written = writer.write("interrupted batch");
+  let closed = writer.close();
+  let Ok(torn) = store.recover(directory, "test") else {
+    return 6;
+  };
+  if (torn.revision != 1 || torn.journal_bytes != first.journal_bytes) {
+    return 7;
+  }
+  if (store.compact(disk, blocks, 1).is_err()) {
+    return 8;
+  }
+  let Ok(compacted) = store.recover(directory, "test") else {
+    return 9;
+  };
+  if (compacted.revision != 1 || compacted.blocks.len() != 1 || compacted.journal_bytes != 0) {
+    return 10;
+  }
+  let next = model.Change { ...change, x: 257, material: 10, nonce: 2 };
+  blocks = blocks.insert(model.key(257, 14, 256), 10);
+  if (store.commit(disk, blocks, [next], 2).is_err()) {
+    return 11;
+  }
+  let Ok(second) = store.recover(directory, "test") else {
+    return 12;
+  };
+  if (second.revision != 2 || second.blocks.len() != 2) {
+    return 13;
+  }
+  let Ok(data) = read_file(directory + "/test.snapshot") else {
+    return 14;
+  };
+  let digest_prefix = "0";
+  if (data[0] == b'0') {
+    digest_prefix = "1";
+  }
+  let damaged = digest_prefix + data.drop(1);
+  let result = write_file(directory + "/test.snapshot", damaged);
+  if (store.recover(directory, "test").is_ok()) {
+    return 15;
+  }
+  let cleanup = remove_dir_all(directory);
+  return 0;
+}
