@@ -1,0 +1,154 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+import "std/i32";
+import "std/i64";
+
+@noinline
+function source_image(): Result[pixels.Image, pixels.ImageError] {
+  return pixels.create(64, 64, 256, pixels.RGBA8, pixels.default_limits());
+}
+
+@noinline
+function update(image: pixels.Image, count: i32): Result[pixels.Image, pixels.ImageError] {
+  let output = image;
+  let i = 0;
+  while (i < count) {
+    output = pixels.write_pixel(output, i % 64, (i / 64) % 64, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 })?;
+    i = i + 1;
+  }
+  return Ok(output);
+}
+
+function update_checksum(output: pixels.Image, count: i32): i32 {
+  let p = match (pixels.read_pixel(output, (count - 1) % 64, ((count - 1) / 64) % 64)) { Ok(v) => v, Err(_) => { return 0 - 3; } };
+  if (p.r != 17 as u8 || p.a != 128 as u8) {
+    return 0 - 4;
+  }
+  return count * 17;
+}
+
+@noinline
+function unique_updates(count: i32): i32 {
+  let image = match (source_image()) { Ok(v) => v, Err(_) => { return 0 - 1; } };
+  let output = match (update(image, count)) { Ok(v) => v, Err(_) => { return 0 - 2; } };
+  return update_checksum(output, count);
+}
+
+@noinline
+function shared_updates(count: i32): i32 {
+  let image = match (source_image()) { Ok(v) => v, Err(_) => { return 0 - 1; } };
+  let output = match (update(image, count)) { Ok(v) => v, Err(_) => { return 0 - 2; } };
+  let original = match (pixels.read_pixel(image, 0, 0)) { Ok(v) => v, Err(_) => { return 0 - 5; } };
+  if (original.r != 0 as u8 || original.a != 0 as u8) {
+    return 0 - 6;
+  }
+  return update_checksum(output, count);
+}
+
+@noinline
+function retained_updates(count: i32): i32 {
+  let image = match (source_image()) { Ok(v) => v, Err(_) => { return 0 - 1; } };
+  let retained: pixels.Image[] = [];
+  let i = 0;
+  while (i < count) {
+    image = match (pixels.write_pixel(image, i % 64, (i / 64) % 64, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 })) { Ok(v) => v, Err(_) => { return 0 - 2; } };
+    retained = retained.append(image);
+    i = i + 1;
+  }
+  let checksum = 0;
+  i = 0;
+  while (i < retained.len()) {
+    let p = match (pixels.read_pixel(retained[i], i % 64, (i / 64) % 64)) { Ok(v) => v, Err(_) => { return 0 - 3; } };
+    if (p.a != 128 as u8) {
+      return 0 - 4;
+    }
+    if (i + 1 < count) {
+      let untouched = match (pixels.read_pixel(retained[i], (i + 1) % 64, ((i + 1) / 64) % 64)) { Ok(v) => v, Err(_) => { return 0 - 5; } };
+      if (untouched.a != 0 as u8) {
+        return 0 - 6;
+      }
+    }
+    checksum = checksum + p.r as i32;
+    i = i + 1;
+  }
+  return checksum;
+}
+
+@noinline
+function source_graph(): Result[pipeline.Graph, pipeline.PipelineError] {
+  let limits = pipeline.default_limits();
+  let graph = pipeline.solid(64, 10000, pixels.RGBA8, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 }, limits)?;
+  return pipeline.bilinear(graph, 32, 20000, limits);
+}
+
+@noinline
+function rows(count: i32, keep: boolean, cancel: boolean): i32 {
+  let graph = match (source_graph()) { Ok(v) => v, Err(_) => { return 0 - 1; } };
+  let retained: pixels.Image[] = [];
+  let total = 0;
+  let i = 0;
+  while (i < count) {
+    let calls = cell_new(0);
+    let cancelled = (): boolean => {
+      calls.set(calls.get() + 1);
+      return cancel && calls.get() >= 7;
+    };
+    let result = pipeline.render_row(graph, 10000 + i, pipeline.default_limits(), cancelled);
+    if (cancel) {
+      match (result) {
+        Err(pipeline.Cancelled()) => { total = total + 17; },
+        _ => { return 0 - 2; }
+      }
+    } else {
+      let row = match (result) { Ok(v) => v, Err(_) => { return 0 - 3; } };
+      let p = match (pixels.read_pixel(row, 31, 0)) { Ok(v) => v, Err(_) => { return 0 - 4; } };
+      if (p.a != 128 as u8) {
+        return 0 - 5;
+      }
+      total = total + p.r as i32;
+      if (keep) {
+        retained = retained.append(row);
+      }
+    }
+    i = i + 1;
+  }
+  for row in retained {
+    let p = match (pixels.read_pixel(row, 31, 0)) { Ok(v) => v, Err(_) => { return 0 - 6; } };
+    if (p.r != 17 as u8 || p.a != 128 as u8) {
+      return 0 - 7;
+    }
+  }
+  return total;
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() != 3 || (av[2] != "16" && av[2] != "128")) {
+    eprint("usage: memory_probe MODE 16|128");
+    return 1;
+  }
+  let count = 16;
+  if (av[2] == "128") {
+    count = 128;
+  }
+  let before: i64 = __heap_bump_bytes();
+  let allocations: i64 = __heap_alloc_count();
+  let checksum = match (av[1]) {
+    "unique" => unique_updates(count),
+    "shared" => shared_updates(count),
+    "retained" => retained_updates(count),
+    "rows" => rows(count, false, false),
+    "rows-retained" => rows(count, true, false),
+    "rows-cancelled" => rows(count, false, true),
+    _ => { return 2; }
+  };
+  let used: i64 = __heap_alloc_count() - allocations;
+  let after: i64 = __heap_bump_bytes();
+  if (checksum != count * 17 || used <= 0i64 || after < before) {
+    return 3;
+  }
+  print("mode=" + av[1] + " count=" + count.to_string() + " allocations=" + used.to_string()
+    + " bump_before=" + before.to_string() + " bump_after=" + after.to_string()
+    + " bump_delta=" + (after - before).to_string() + " checksum=" + checksum.to_string());
+  return 0;
+}

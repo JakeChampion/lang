@@ -42,3 +42,6 @@ One image limit does not bound aggregate memory, retained aliases, allocator ove
 
 A production service requires process budgets and isolation.
 Thread safety and cross-thread ownership remain outside this milestone.
+
+See [native allocator observations](memory-measurements.md) for measured update, retention, row, and cancellation costs.
+These observations do not establish a process memory bound.

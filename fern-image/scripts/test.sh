@@ -10,6 +10,12 @@ for source in experiments/essentials.fern experiments/io.fern experiments/zlib.f
   "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
   "$output"
 done
+"$FERN" -check benchmarks/memory_probe.fern
+"$FERN" -target x86-64-linux -sanitize -o build/memory-probe benchmarks/memory_probe.fern
+for mode in unique shared retained rows rows-retained rows-cancelled; do
+  ./build/memory-probe "$mode" 16
+  ./build/memory-probe "$mode" 128
+done
 for spec in immutable-array:E056 immutable-field:E048 usize-checked:E009; do
   name=${spec%:*}
   code=${spec#*:}

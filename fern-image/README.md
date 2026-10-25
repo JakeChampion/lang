@@ -50,12 +50,13 @@ Shared array updates can copy an entire image.
 
 The allocator does not expose a recoverable allocation error through this API.
 A per-image limit does not establish a process memory limit.
+See [native allocator observations](docs/memory-measurements.md) for measured update and row costs.
 
 ## Scope and status
 
 Forty-five TAP cases pass across the essential, compression, pixel, color, resize, PNG, and row-pipeline suites.
 The file I/O probe and pixel example also exit successfully.
-All twelve executables report zero live bytes under the sanitizer.
+All thirteen executables report zero live bytes under the sanitizer.
 
 Three negative probes confirm compiler restrictions.
 The formatter regression also passes before and after the format check.
