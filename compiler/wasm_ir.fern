@@ -2828,7 +2828,6 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
 }
 
 pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection): string {
-  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache);
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
   let ft: string[] = fn_value_table(ir_cache);
@@ -2862,6 +2861,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
 pub struct EmittedCore { wat: string, needs: string[] }
 
 pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): EmittedCore {
+  ircore.refuse_claims(sub.refused);
   let lm: parser.Module = ircore.with_records(route_normalized(mod), sub);
   let bad_import: string = wasm_unsupported_import(lm);
   if (bad_import.len() > 0) {
@@ -6799,7 +6799,9 @@ function crc32_ieee_lookup(table: i32, k: i32, word: string, shift: i32): string
 // The helpers update the raw register. The parameter table is the address of the crc32_ieee_table_bytes data.
 function crc32_ieee_helpers(table: i32): string {
   let o: string = "  (func $__fern_crc32_ieee (param $crc i32) (param $s i32) (result i32)\n";
-  o = o + "    (call $__fern_crc32_ieee_at (local.get $crc) (i32.add (local.get $s) (i32.const 4)) (i32.load (local.get $s))))\n";
+  o = o + "    (local $p i32) (local $len i32)\n";
+  o = o + view_string_decode("$s", "$p", "$len");
+  o = o + "    (call $__fern_crc32_ieee_at (local.get $crc) (local.get $p) (local.get $len)))\n";
   o = o + "  (func $__fern_crc32_ieee_array (param $crc i32) (param $s i32) (result i32)\n";
   o = o + "    (call $__fern_crc32_ieee_at (local.get $crc) (i32.add (local.get $s) (i32.const 8)) (i32.load (local.get $s))))\n";
   o = o + "  (func $__fern_crc32_ieee_at (param $crc i32) (param $p i32) (param $n i32) (result i32)\n";

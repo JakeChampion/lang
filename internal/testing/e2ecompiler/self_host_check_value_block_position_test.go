@@ -99,7 +99,7 @@ func TestSelfHostCheckFStringToStringPosition(t *testing.T) {
 	oracle := e2eharness.BuildLangBinForInterp(t)
 	lead := regexp.MustCompile(`(?m)^[^\s:]+:(\d+):(\d+): error\[E043\]: (.+)$`)
 	p := filepath.Join(t.TempDir(), "prog.fern")
-	src := "function main(): i32 {\n  let n = 7;\n  let s = f\"n = {n}\";\n  return 0;\n}\n"
+	src := "struct P { x: i32 }\n\nfunction main(): i32 {\n  let p = P { x: 7 };\n  let s = f\"p = {p}\";\n  return 0;\n}\n"
 	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}

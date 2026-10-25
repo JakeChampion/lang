@@ -6005,6 +6005,7 @@ function main(): i32 {
 func TestArm64StdlibBundle27(t *testing.T) {
 	src := `
 import "std/array";
+import "std/unicode";
 function main(): i32 {
     // median
     match ([5, 1, 3, 4, 2].median()) {
@@ -7178,6 +7179,7 @@ func TestArm64StdlibBundle5(t *testing.T) {
 import "std/i32";
 import "std/option";
 import "std/i64";
+import "std/unicode";
 function main(): i32 {
     // Parity i32 + i64
     if (!(4).is_even()) { return 1; }
