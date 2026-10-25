@@ -11,25 +11,18 @@ name: Test e2e self-host
 # partition the UNION of both lists, running each test against the binary it
 # lives in, so the residuals keep exactly their old coverage.
 #
-# EVERY JOB IS INDEPENDENT: no job waits on another except the leaf `verify`.
-# A `needs:` edge means the dependent jobs are not created, let alone queued,
-# until the prerequisite finishes, and under the account-wide concurrent-job
-# ceiling that prerequisite waits in the queue behind every other job the run
-# created. The lane used to warm the self-host drivers in three `warm` jobs the
-# shards depended on; measured on runs 35708985176 and 35708878302, those jobs
-# sat 8-14 minutes in the queue to do 45 seconds of work, so the shards were not
-# even created until minute 17 of a 35-minute run. So every job builds what it
-# needs on its own runner, into a driver cache carried between runs
-# (.github/actions/selfhost-driver-cache): the closure-keyed disk cache
-# (hashSelfHostSources) builds each driver at most once per job, the two worker
-# processes of a shard share it through the atomic publish, and the Actions
-# cache hands every job the drivers an earlier run built for the same stage0
-# pin, self-host sources and stdlib. The drivers are built by the pinned stage0
-# self-host compiler (bootstrap/stage0.lock, fetched once per job by
-# bootstrap/bootstrap.sh), ~90-105 s per driver and 300 s for fern.fern
-# (docs/LOCAL-DEV-LOOP.md), so a shard that misses the cache pays its distinct
-# drivers first and its tests second. `driver-sizes` builds every stock x86
-# driver and saves that cache; the aarch64 shard saves the Linux ARM64 one.
+# DRIVERS ARE BUILT ONCE. `driver-sizes` builds every stock x86 driver with the
+# pinned stage0 compiler (bootstrap/stage0.lock) and saves the driver cache
+# (.github/actions/selfhost-driver-cache) under the key of the stage0 pin, the
+# self-host sources and the stdlib. Every other x86 job `needs:` it, so it
+# restores that exact cache and builds nothing a stock driver covers; only a
+# test-specific driver is still built where its test runs, once per job through
+# the closure-keyed disk cache (hashSelfHostSources), shared by a shard's two
+# worker processes. The edge costs the dependent jobs the warm job's wall time,
+# about five minutes on a miss, and saves a driver build or more in each of
+# some thirty jobs. This lane runs on main and on a `ci-full` pull request,
+# where runner minutes count for more than a few minutes of latency. The
+# aarch64 shards build their own drivers; shard 0 saves the Linux ARM64 cache.
 #
 # TWO WORKERS PER SHARD. Each x86 shard runs its selection as two isolated
 # processes through cmd/ci-test-workers (docs/CI-X86-WORKERS.md), each with
@@ -116,6 +109,7 @@ jobs:
   # belongs in QUARANTINED_TESTS, by name and with its issue, where it is
   # visible.
   cli:
+    needs: [driver-sizes]
     name: cli-driver-tests-x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -245,6 +239,7 @@ jobs:
   # driver cache either way. `fixpoints` holds the two gen0/gen1 proofs,
   # `stage2` the two that run what stage 1 built.
   selfhost-fixpoints:
+    needs: [driver-sizes]
     name: selfhost-fixpoints-x86_64-${{ matrix.group }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -314,6 +309,7 @@ jobs:
   # weight could place one without crowding its worker (#6667); run 39091470716
   # timed out two workers that each held one of them.
   selfhost-stdtest:
+    needs: [driver-sizes]
     name: selfhost-stdtest-${{ matrix.leg }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -381,6 +377,7 @@ jobs:
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   wasm-wholecompiler-link:
+    needs: [driver-sizes]
     name: wasm-wholecompiler-link-x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -404,6 +401,7 @@ jobs:
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   arm64-permodule-wholecompiler:
+    needs: [driver-sizes]
     name: arm64-permodule-wholecompiler-x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -432,6 +430,7 @@ jobs:
   # inside the test (see its header), so the job is bound by the two heaviest
   # emits rather than their sum.
   semantic-wholecompiler:
+    needs: [driver-sizes]
     name: semantic-wholecompiler-x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -457,6 +456,7 @@ jobs:
   # second job per target would only buy another job's setup. The wasm leg
   # t.Skips without wasmtime, so its job installs it.
   diff-selfhost:
+    needs: [driver-sizes]
     name: diff-selfhost-${{ matrix.target }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -508,9 +508,11 @@ jobs:
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostWasm$' -v -timeout 43m
 
-  # THE SHARDS. Each builds both test binaries and the drivers its tests need,
-  # then runs its LPT slice of the union list in two isolated worker processes.
+  # THE SHARDS. Each builds both test binaries, restores the drivers
+  # driver-sizes built, and runs its LPT slice of the union list in two
+  # isolated worker processes.
   test:
+    needs: [driver-sizes]
     strategy:
       fail-fast: false
       matrix:
