@@ -1,6 +1,6 @@
 # Roadmap and proposed issues
 
-M0 and M1 are implemented.
+M0, M1, and scalar M2 are implemented.
 M1 provides scalar pixel color operations. Whole-image transforms remain future work.
 These issue proposals are local documents. No GitHub issues were created.
 
