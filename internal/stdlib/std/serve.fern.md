@@ -5514,13 +5514,6 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
   }
   return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + int.int_to_string(c.quic.port) + "\"; ma=86400") };
 }
-
-function __dated(c: __Conns, resp: HttpResponse): HttpResponse {
-  if (c.date.len() == 0 || resp.headers.has("date")) {
-    return resp;
-  }
-  return HttpResponse { ...resp, headers: resp.headers.append("date", c.date) };
-}
 ```
 
 ### `75 function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void`
@@ -5790,21 +5783,21 @@ function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], seri
   }
   let cur: __Conns = __stage_background(c, resp);
   let q: __Quic = cur.quic;
-  resp = __file_chunks(__dated(cur, resp));
+  resp = __file_chunks(resp);
   match (resp.body) {
     BodyChunks(producer) => {
       if (method == "HEAD" || http.http_bodiless(resp.status)) {
-        return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond_head(id, resp, 0 - 1 as i64).end(id, HeaderMap { names: [], values: [] })) } }, fls);
+        return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].with_date(cur.date).respond_head(id, resp, 0 - 1 as i64).end(id, HeaderMap { names: [], values: [] })) } }, fls);
       }
       let p: __H3Producer = __H3Producer { serial: serial, stream: id, producer: producer, index: 0, trailers: resp.trailers, running: false };
-      cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond_head(id, resp, 0 - 1 as i64)), producers: q.producers.append(p) } };
+      cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].with_date(cur.date).respond_head(id, resp, 0 - 1 as i64)), producers: q.producers.append(p) } };
       return __h3_produce(drv, cur, fls, cur.quic.producers.len() - 1);
     },
     _ => {
       if (method == "HEAD") {
-        return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond_head(id, resp, resp.body_bytes().len() as i64).end(id, HeaderMap { names: [], values: [] })) } }, fls);
+        return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].with_date(cur.date).respond_head(id, resp, resp.body_bytes().len() as i64).end(id, HeaderMap { names: [], values: [] })) } }, fls);
       }
-      return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond(id, resp)) } }, fls);
+      return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].with_date(cur.date).respond(id, resp)) } }, fls);
     }
   }
   return (cur, fls);
