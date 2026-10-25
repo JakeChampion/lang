@@ -1487,7 +1487,7 @@ function __zmatch_at(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32,
   }
   let limit: i32 = cmp.min(input.len(), (pos / 131072 + 1) * 131072);
   let len: i32 = 0;
-  if (rep <= pos) {
+  if (rep <= pos && input[pos - rep] == input[pos]) {
     len = __mismatch_bytes(input, pos - rep, input, pos, limit - pos);
   }
   let best: (i32, i32) = __chain(input, pos, cand, prev, window, rep, limit, (len, rep));
