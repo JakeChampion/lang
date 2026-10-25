@@ -237,6 +237,17 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "BodyFileRanges", Payloads: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ast.ArrayType{Elem: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}},
 			},
 		},
+		{
+			Name: "StreamFault",
+			Variants: []ast.EnumVariant{
+				{Name: "StreamTooLarge"},
+				{Name: "StreamFramingTooLarge"},
+				{Name: "StreamTimeout"},
+				{Name: "StreamMalformed"},
+				{Name: "StreamCutShort"},
+				{Name: "StreamCancelled"},
+			},
+		},
 	}
 }
 
