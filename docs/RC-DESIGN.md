@@ -244,8 +244,8 @@ for every plan ownership inference tries):
   construction is **classified** (a keep with no construction, `built` -1):
   its takes and its death follow one uniqueness read. The
   routes and the one-token-slot discipline are decided here, once (a
-  carried construction reads its token from the donor's local, so it holds
-  no slot); the
+  carried construction inside a keep's or a classified donor's span reads
+  its token from the donor's local, so it needs no slot); the
   lowering only emits what the tables say. `FERN_SELFHOST_NO_REUSE=1`
   (`reuse_layer_disabled`) plans no token, and the program's behaviour is
   unchanged.
@@ -298,7 +298,9 @@ locals sit above `nvals`. It emits:
   one, the replaced children are released under the token's non-null arm and
   the kept fields are left in place (`reuse_construct`). A carried token is
   taken where the donor dies (`hold_token`), passed through its way in the
-  donor's own local, spent by the construction (`self_token`) and freed on
+  donor's own local, moved into the token slot for the construction
+  (`slot_token`), or read from the local where a keep or a classified donor
+  holds the slot (`token_slot_held`), and freed on
   an exit edge (`free_token`); a null edge zeroes the local. The lowering
   makes no pairing of its own. Pinned by `TestSelfHostCrossBlockReuse`,
   `TestSelfHostLoopReuseIR*`, `TestSelfHostSemanticReuseDifferential`, the
