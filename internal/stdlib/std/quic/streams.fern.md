@@ -100,7 +100,7 @@ pub function (r: Reassembly) delivered(): i64 {
   return r.taken + r.ready.len() as i64;
 }
 
-pub function (r: Reassembly) add(offset: i64, data: u8[]): Reassembly {
+pub function (r: Reassembly) add(offset: i64, data: [u8]): Reassembly {
   let front: i64 = r.delivered();
   let end: i64 = offset + data.len() as i64;
   if (end <= front) {
@@ -111,7 +111,7 @@ pub function (r: Reassembly) add(offset: i64, data: u8[]): Reassembly {
   }
   let skip: i32 = (front - offset) as i32;
   if (skip == 0 && r.ready.len() == 0) {
-    return __drain(Reassembly { ...r, ready: data });
+    return __drain(Reassembly { ...r, ready: __bytes_owned(data) });
   }
   return __drain(Reassembly { ...r, ready: __append_range(r.ready, data, skip, data.len()) });
 }
@@ -129,7 +129,7 @@ function (r: Reassembly) __discard(): Reassembly {
   return Reassembly { ...r, ready: [], held_at: [], held: [], held_bytes: 0 as i64 };
 }
 
-function __hold(r: Reassembly, offset: i64, data: u8[]): Reassembly {
+function __hold(r: Reassembly, offset: i64, data: [u8]): Reassembly {
   let end: i64 = offset + data.len() as i64;
   let cur: i64 = offset;
   let at: i64[] = [];
@@ -554,7 +554,7 @@ pub function (s: Streams) on_frame(f: frames.Frame): Streams {
   let cur: Streams = Streams { ...s, failed: None };
   match (f) {
     frames.StreamFrame(d) => {
-      return cur.__on_stream(d);
+      return cur.on_stream(d.stream, d.offset, d.data, d.fin);
     },
     frames.ResetStreamFrame(r) => {
       return cur.__on_reset(r);
@@ -632,14 +632,15 @@ function (s: Streams) __peer_opens(t: i32, n: i64): Streams {
   return Streams { ...cur, opened: cur.opened.with(t, n + 1) };
 }
 
-function (s: Streams) __on_stream(d: frames.StreamData): Streams {
-  let (cur, i) = s.__stream_for(d.stream, true, frames.STREAM);
+// on_stream takes a STREAM frame's fields, its data a view of the packet.
+pub function (s: Streams) on_stream(id: i64, offset: i64, data: [u8], fin: boolean): Streams {
+  let (cur, i) = Streams { ...s, failed: None }.__stream_for(id, true, frames.STREAM);
   if (i < 0) {
     return cur;
   }
   let st: Stream = cur.list[i];
-  let end: i64 = d.offset + d.data.len() as i64;
-  if let Some(e) = __final_error(st.recv, end, d.fin, frames.STREAM) {
+  let end: i64 = offset + data.len() as i64;
+  if let Some(e) = __final_error(st.recv, end, fin, frames.STREAM) {
     return cur.__fail(e);
   }
   if let Some(e) = cur.__credit_error(st.recv, end, frames.STREAM) {
@@ -648,33 +649,33 @@ function (s: Streams) __on_stream(d: frames.StreamData): Streams {
   let more: i64 = __max(0 as i64, end - st.recv.highest);
   let next: Streams = Streams { ...cur, recv_highest: cur.recv_highest + more };
   if (st.recv.reset >= 0 || st.recv.stop >= 0) {
-    return Streams { ...next, list: next.list.with(i, next.list[i].__received(d, end, more, false)) };
+    return Streams { ...next, list: next.list.with(i, next.list[i].__received(offset, data, fin, more, false)) };
   }
   let before: i64 = st.recv.data.delivered();
   let fin_read: boolean = st.recv.fin_read;
-  next = Streams { ...next, list: next.list.with(i, next.list[i].__received(d, end, more, true)) };
+  next = Streams { ...next, list: next.list.with(i, next.list[i].__received(offset, data, fin, more, true)) };
   let r: Recv = next.list[i].recv;
-  if (r.data.delivered() > before || d.fin && !fin_read && r.data.delivered() == r.final_size) {
-    return Streams { ...next, events: next.events.append(Readable(d.stream)) };
+  if (r.data.delivered() > before || fin && !fin_read && r.data.delivered() == r.final_size) {
+    return Streams { ...next, events: next.events.append(Readable(id)) };
   }
   return next;
 }
 
-function (st: Stream) __received(d: frames.StreamData, end: i64, more: i64, keep: boolean): Stream {
-  return Stream { ...st, recv: st.recv.__received(d, end, more, keep) };
+function (st: Stream) __received(offset: i64, data: [u8], fin: boolean, more: i64, keep: boolean): Stream {
+  return Stream { ...st, recv: st.recv.__received(offset, data, fin, more, keep) };
 }
 
 // __received takes a STREAM frame's data into the reassembly when keep,
 // and otherwise only its final size and extent.
-function (r: Recv) __received(d: frames.StreamData, end: i64, more: i64, keep: boolean): Recv {
+function (r: Recv) __received(offset: i64, data: [u8], fin: boolean, more: i64, keep: boolean): Recv {
   let final: i64 = r.final_size;
-  if (d.fin) {
-    final = end;
+  if (fin) {
+    final = offset + data.len() as i64;
   }
   if (!keep) {
     return Recv { ...r, final_size: final, highest: r.highest + more };
   }
-  return Recv { ...r, final_size: final, highest: r.highest + more, data: r.data.add(d.offset, d.data) };
+  return Recv { ...r, final_size: final, highest: r.highest + more, data: r.data.add(offset, data) };
 }
 
 function __final_error(r: Recv, end: i64, fin: boolean, kind: i64): Option[frames.FrameError] {
@@ -1291,7 +1292,7 @@ function __rest_i64(xs: i64[]): i64[] {
   return out;
 }
 
-function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
+function __append_range(out: u8[], src: [u8], from: i32, to: i32): u8[] {
   if (from == to) {
     return out;
   }
@@ -1301,7 +1302,7 @@ function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
   return out.concat(src[from:to]);
 }
 
-function __slice_range(src: u8[], from: i32, to: i32): u8[] {
+function __slice_range(src: [u8], from: i32, to: i32): u8[] {
   return __bytes_range(src, from, to);
 }
 

@@ -216,6 +216,7 @@ pub struct Conn {
   handshake_done_pending: boolean,
   probes: i32[],
   pending: frames.Frame[],
+  reader: frames.Reader,
   held: u8[][],
   streams: streams.Streams,
   events: Event[],
@@ -276,7 +277,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plan: __no_plan(0), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plan: __no_plan(0), reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
 }
 ```
 
@@ -908,18 +909,16 @@ function (c: Conn) __opened(h: packet.Header, o: packet.Opened, space: i32, kind
   if (cur.server && space == recovery.HANDSHAKE && !cur.spaces[recovery.INITIAL].discarded) {
     cur = Conn { ...cur, validated: true }.__discard(recovery.INITIAL);
   }
-  match (frames.read_all(o.payload)) {
-    Ok(fs) => {
-      cur = cur.__frames(fs, space, kind, now);
-      if (cur.state < CLOSING) {
-        cur = Conn { ...cur, idle_until: __idle(cur, now) }.__received(space, o.pn, __eliciting(fs), now);
-      }
-      return cur;
-    },
-    Err(e) => {
-      return cur.__fail(e.code, e.frame_type, e.reason, now);
-    }
+  if (o.payload.len() == 0) {
+    return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a packet with no frames", now);
   }
+  cur = Conn { ...cur, reader: cur.reader.started(o.payload) }.__frames(o.payload, space, kind, now);
+  let eliciting: boolean = cur.reader.elicited;
+  cur = Conn { ...cur, reader: cur.reader.done() };
+  if (cur.state < CLOSING) {
+    cur = Conn { ...cur, idle_until: __idle(cur, now) }.__received(space, o.pn, eliciting, now);
+  }
+  return cur;
 }
 
 function (c: Conn) __peer_cid(h: packet.Header): Conn {
@@ -954,15 +953,6 @@ function __idle(c: Conn, now: i64): i64 {
   return now + d;
 }
 
-function __eliciting(fs: frames.Frame[]): boolean {
-  for f in fs {
-    if (f.ack_eliciting()) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64): Conn {
   return Conn { ...c, spaces: c.spaces.with(space, c.spaces[space].__received(pn, eliciting, now)) };
 }
@@ -977,18 +967,37 @@ function (s: Space) __received(pn: i64, eliciting: boolean, now: i64): Space {
   return Space { ...s, ranges: __add_range(s.ranges, pn), largest_recv: largest, largest_recv_at: at, ack_wanted: s.ack_wanted || eliciting };
 }
 
-function (c: Conn) __frames(fs: frames.Frame[], space: i32, kind: i32, now: i64): Conn {
+// __frames acts on each frame of the payload as the reader reads it.
+function (c: Conn) __frames(payload: u8[], space: i32, kind: i32, now: i64): Conn {
   let cur: Conn = c;
-  for f in fs {
-    if (cur.state >= CLOSING) {
-      return cur;
+  while (cur.state < CLOSING && cur.reader.more()) {
+    cur = Conn { ...cur, reader: cur.reader.next() };
+    if let Some(e) = cur.reader.failed {
+      return cur.__fail(e.code, e.frame_type, e.reason, now);
     }
-    if (!f.permitted(kind)) {
+    if (!cur.reader.permitted(kind)) {
       return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a frame not allowed in this packet type", now);
     }
-    cur = cur.__frame(f, space, now);
+    cur = cur.__frame_read(payload, space, now);
   }
   return cur;
+}
+
+function (c: Conn) __frame_read(payload: u8[], space: i32, now: i64): Conn {
+  if (c.reader.is_stream()) {
+    return Conn { ...c, streams: c.streams.on_stream(c.reader.stream, c.reader.offset, payload[c.reader.from:c.reader.to], c.reader.fin) }.__streams_checked(now);
+  }
+  if (c.reader.is_ack()) {
+    return c.__ack(c.reader.ack, space, now);
+  }
+  return c.__frame(c.reader.frame, space, now);
+}
+
+function (c: Conn) __streams_checked(now: i64): Conn {
+  if let Some(e) = c.streams.failed {
+    return c.__fail(e.code, e.frame_type, e.reason, now);
+  }
+  return c;
 }
 ```
 
@@ -998,9 +1007,6 @@ function (c: Conn) __frames(fs: frames.Frame[], space: i32, kind: i32, now: i64)
 <<26 function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn>>=
 function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
   match (f) {
-    frames.AckFrame(a) => {
-      return c.__ack(a, space, now);
-    },
     frames.Crypto(offset, data) => {
       return c.__crypto(space, offset, data, now);
     },
@@ -1021,11 +1027,7 @@ function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
 
 function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
   if (streams.owns(f)) {
-    let cur: Conn = Conn { ...c, streams: c.streams.on_frame(f) };
-    if let Some(e) = cur.streams.failed {
-      return cur.__fail(e.code, e.frame_type, e.reason, now);
-    }
-    return cur;
+    return Conn { ...c, streams: c.streams.on_frame(f) }.__streams_checked(now);
   }
   match (f) {
     frames.NewToken(_) => {
