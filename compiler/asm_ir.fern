@@ -5601,6 +5601,16 @@ function ssa_test_bit(s: asmcore.EmitState, imm: i32, reg: string): asmcore.Emit
   return s.write("    testb $" + util.i32_to_string(imm) + ", " + ssa_r8(reg) + "\n");
 }
 
+function ssa_test_imm(s: asmcore.EmitState, imm: i32, reg: string): asmcore.EmitState {
+  if (s.records()) {
+    let r: i32 = ssa_xreg(reg);
+    if (r >= 0) {
+      return s.bytes(x86_native.x86_rec_test_ir(64, imm, r));
+    }
+  }
+  return s.write("    testq $" + util.i32_to_string(imm) + ", " + reg + "\n");
+}
+
 function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
   return asmcore.EmitState { ...s, ssa_x0: 0 - 1 };
 }
@@ -6524,6 +6534,15 @@ function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   }
   s = s.write("    " + ssa_fmath_op(ins.str) + " " + a + ", " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// A shift by a register count works in its result's home: the fixed table
+// keeps that home off rcx, and the count is in rcx before the home is written.
+function ssa_shift_home(ins: ssa.SInst, reg_of: i32[]): string {
+  if (ssa_shift_tag(ir.kind_id(ins.str)) && ssa_in_x(reg_of, ins.result) && ssa_reg(reg_of[ins.result]) != "%rcx") {
+    return ssa_reg(reg_of[ins.result]);
+  }
+  return ssa_bin_work(ins.str);
 }
 
 function ssa_bin_work(op: string): string {
@@ -7558,17 +7577,18 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 
 struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32 }
 
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
+// With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, test: boolean }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, test: false };
 }
 
 function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boolean): ssaprepare.Fusion[] {
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: fu.test });
 }
 
 function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
@@ -7584,7 +7604,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   let n: i32 = 1;
   let inverted: boolean = false;
   if (last.kind_tag == 10 && last.str == "!") {
-    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false };
+    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, test: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -7599,7 +7619,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa_unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
+    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, test: false };
   }
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
@@ -7612,14 +7632,42 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
       } else {
         tag = "fge";
       }
-      return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+      return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false };
     }
-    return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+    return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false };
   }
   if (fr.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+    return ssa_test_fuse(fr, blk, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false });
   }
-  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+  return ssa_test_fuse(fr, blk, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false });
+}
+
+// `(x & mask) == 0` and `!= 0` read the flags of one `test` of x.
+function ssa_test_fuse(fr: SsaFrame, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
+  if (fu.tag != ir.K_EQ && fu.tag != ir.K_NE || !fr.imm.is_imm[fu.b] || fr.imm.value[fu.b] != 0i64 || ssa.imm_sym(fr.imm, fu.b) != "") {
+    return fu;
+  }
+  let k: i32 = blk.insts.len() - fu.n - 1;
+  while (k >= 0 && blk.insts[k].result != fu.a && (blk.insts[k].kind_tag == 1 || blk.insts[k].kind_tag == 3) && fr.imm.is_imm[blk.insts[k].result]) {
+    k = k - 1;
+  }
+  if (k < 0) {
+    return fu;
+  }
+  let masked: ssa.SInst = blk.insts[k];
+  if (masked.result != fu.a || masked.kind_tag != 9 || ir.kind_id(masked.str) != 28 || fr.uses[masked.result] != 1) {
+    return fu;
+  }
+  let x: i32 = masked.args[0];
+  let m: i32 = masked.args[1];
+  if (fr.imm.is_imm[x]) {
+    x = masked.args[1];
+    m = masked.args[0];
+  }
+  if (fr.imm.is_imm[x] || !fr.imm.is_imm[m] || ssa.imm_sym(fr.imm, m) != "" || fr.imm.value[m] < 0i64 || fr.imm.value[m] > 2147483647i64) {
+    return fu;
+  }
+  return SsaFuse { ...fu, n: blk.insts.len() - k, a: x, b: m, test: true };
 }
 
 function ssa_fusable_cmp(ins: ssa.SInst): boolean {
@@ -7673,9 +7721,9 @@ function ssa_select_fuse(fr: SsaFrame, blk: ssa.SBlock, ii: i32): SelectCond {
 
 function ssa_cmp_flags(fr: SsaFrame, cmp: ssa.SInst): SsaFuse {
   if (fr.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false };
   }
-  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -7987,7 +8035,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
   } else if (k == 9) {
-    d = ssa_bin_work(ins.str);
+    d = ssa_shift_home(ins, reg_of);
     if (!fr.imm.is_imm[ins.args[1]]) {
       s = ssa_load(reg_of, ins.args[1], "%rcx", s);
     }
@@ -8267,6 +8315,10 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   if (fu.unique) {
     return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
+  if (fu.test) {
+    s = ssa_read(reg_of, fu.a, "%r11", s);
+    return ssa_test_imm(s, fr.imm.value[fu.b] as i32, ssa_src(reg_of, fu.a, "%r11"));
+  }
   if (ssa.float_cmp(ir.kind_name(fu.tag))) {
     s = ssa_fread(reg_of, fu.a, "%xmm1", s);
     s = ssa_fread(reg_of, fu.b, "%xmm2", s);
@@ -8328,14 +8380,17 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   if (ssa_has_phis(f, fr, h.term.t) || ssa_has_phis(f, fr, h.term.f)) {
     return false;
   }
-  let n: i32 = 0;
-  for ins in h.insts {
+  let tail: i32 = h.insts.len() - ssa_fuse(fr, h).n;
+  let k: i32 = 0;
+  while (k < tail) {
+    let ins: ssa.SInst = h.insts[k];
     let imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3 || ins.kind_tag == 46) && fr.imm.is_imm[ins.result];
     if (ins.kind_tag != 8 && !imm) {
-      n = n + 1;
+      return false;
     }
+    k = k + 1;
   }
-  return n == ssa_fuse(fr, h).n;
+  return true;
 }
 
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {

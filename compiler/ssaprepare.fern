@@ -39,6 +39,7 @@ pub struct Fusion {
   b: i32,
   unique: boolean,
   aligned: boolean,
+  test: boolean,
 }
 
 pub struct Allocation {
