@@ -24673,15 +24673,15 @@ function vb_zero_of(tag: string): ast.Expr {
     return ast.ExprBool { value: false, line: 0, col: 0 };
   }
   if (tag == "f64") {
-    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, line: 0, col: 0 };
+    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, bits: 0, line: 0, col: 0 };
   }
   if (tag == "f32") {
     return ast.ExprUnary { op: "as_f32", operand: vb_zero_of("f64"), line: 0, col: 0, ty: "f32" };
   }
   if (tag == "i32") {
-    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 };
   }
-  return ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, line: 0, col: 0 };
+  return ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, bits: 0, line: 0, col: 0 };
 }
 
 function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
@@ -26897,7 +26897,7 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
     return e;
   }
   if let ast.ExprNumber(n) = e {
-    return ast.ExprNumber { ...n, is_float: true, suffix: want.base };
+    return ast.ExprNumber { ...n, is_float: true, bits: parser.literal_bits(n.text, true), suffix: want.base };
   }
   if let ast.ExprBinary(b) = e {
     return ast.ExprBinary { ...b, left: lit_float_read(b.left, want), right: lit_float_read(b.right, want), ty: want.base };

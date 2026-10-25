@@ -4412,14 +4412,14 @@ function cast_i32_value(v: Value): Value {
   }
 }
 
-function eval_number_literal(is_float: boolean, t: string, suffix: string): Value {
-  return coerce_int_width(eval_unsuffixed_literal(is_float, t), suffix);
+function eval_number_literal(n: ast.ExprNumber): Value {
+  if (n.is_float) {
+    return coerce_int_width(v_float(f64_from_bits(n.bits)), n.suffix);
+  }
+  return coerce_int_width(eval_int_literal(n.text), n.suffix);
 }
 
-function eval_unsuffixed_literal(is_float: boolean, t: string): Value {
-  if (is_float) {
-    return v_float(f64_from_bits(util.parse_f64_bits(t)));
-  }
+function eval_int_literal(t: string): Value {
   let hs: i32 = 0;
   if (t.len() > 0 && t[0] == b'-') {
     hs = 1;
@@ -4583,7 +4583,7 @@ function bit_op_method(op: string): string {
 function eval_expr(e: ast.Expr, env: Env): Value {
   match (e) {
     ast.ExprNumber(n) => {
-      return eval_number_literal(n.is_float, n.text, n.suffix);
+      return eval_number_literal(n);
     },
     ast.ExprBool(b) => {
       return v_bool(b.value);

@@ -6707,7 +6707,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
   }
   if (!ends_in_return) {
     body = body.append(ast.StmtReturn {
-      value: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 },
+      value: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 },
       line: 0,
       col: 0,
     });

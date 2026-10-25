@@ -193,15 +193,22 @@ function concat_enums(a: EnumDecl[], b: EnumDecl[]): EnumDecl[] {
 }
 
 function e_number(text: string, suffix: string, is_float: boolean): ast.Expr {
-  return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: 0, col: 0 };
+  return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, bits: literal_bits(text, is_float), line: 0, col: 0 };
+}
+
+pub function literal_bits(text: string, is_float: boolean): i64 {
+  if (!is_float) {
+    return 0;
+  }
+  return util.parse_f64_bits(text);
 }
 
 function e_spelled_at(text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32): ast.Expr {
-  return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: is_float, line: line, col: col };
+  return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: is_float, bits: literal_bits(text, is_float), line: line, col: col };
 }
 
 function e_unit_at(line: i32, col: i32): ast.Expr {
-  return ast.ExprNumber { text: "0", suffix: "", raw: "()", is_float: false, line: line, col: col };
+  return ast.ExprNumber { text: "0", suffix: "", raw: "()", is_float: false, bits: 0, line: line, col: col };
 }
 
 pub function discard_name(name: string, line: i32, col: i32, nth: i32): string {
@@ -10305,7 +10312,8 @@ pub function number_literal_tree(e: ast.Expr): boolean {
 pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   match (e) {
     ast.ExprNumber(n) => {
-      return ast.ExprNumber { ...n, suffix: tag, is_float: n.is_float || tag == "f32" || tag == "f64" };
+      let is_float: boolean = n.is_float || tag == "f32" || tag == "f64";
+      return ast.ExprNumber { ...n, suffix: tag, is_float: is_float, bits: literal_bits(n.text, is_float) };
     },
     ast.ExprUnary(u) => {
       return ast.ExprUnary { ...u, operand: settle_int_tree(u.operand, tag), ty: tag };
@@ -11989,7 +11997,7 @@ function bc_binary(b: ast.ExprBinary, ctx: BoundUse): ast.Expr {
     lt = mono_infer(b.right, ctx.env, ctx.funcs);
   }
   if (util.has_str(["<", "<=", ">", ">="], b.op) && str_list_contains(ctx.ord, lt)) {
-    let zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: b.line, col: b.col };
+    let zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: b.line, col: b.col };
     return ast.ExprBinary { ...b, left: dv_call1(left, bound_method(lt, "cmp", true, ctx), right), right: zero };
   }
   if (b.op == "==" && str_list_contains(ctx.eq, lt)) {
@@ -21494,7 +21502,7 @@ function tv_obj_ident(e: ast.Expr, sc: TvScope): ast.Expr {
   if let ast.ExprIdent(id) = e {
     let k: i32 = tp_index(id.name, sc.vars);
     if (k >= 0 && !str_in(sc.values, id.name) && sc.lits) {
-      return ast.ExprNumber { text: sc.cts[k], suffix: "", raw: "", is_float: false, line: id.line, col: id.col };
+      return ast.ExprNumber { text: sc.cts[k], suffix: "", raw: "", is_float: false, bits: 0, line: id.line, col: id.col };
     }
     if (k >= 0 && !str_in(sc.values, id.name)) {
       return ast.ExprIdent { ...id, name: sc.cts[k] };
@@ -23825,7 +23833,7 @@ function settle_float_expr(e: ast.Expr): ast.Expr {
   }
   match (e) {
     ast.ExprNumber(n) => {
-      return ast.ExprNumber { text: n.text, suffix: n.suffix, raw: n.raw, is_float: true, line: n.line, col: n.col };
+      return ast.ExprNumber { text: n.text, suffix: n.suffix, raw: n.raw, is_float: true, bits: literal_bits(n.text, true), line: n.line, col: n.col };
     },
     ast.ExprUnary(u) => {
       return ast.ExprUnary { op: u.op, operand: settle_float_expr(u.operand), line: u.line, col: u.col, ty: u.ty };

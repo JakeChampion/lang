@@ -13,7 +13,7 @@ function lit_int(v: i64, suffix: string): ast.Expr {
 }
 
 function num_lit(text: string, suffix: string): ast.Expr {
-  return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: false, line: 0, col: 0 };
+  return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: false, bits: 0, line: 0, col: 0 };
 }
 
 function fits(v: i64, suffix: string, peak: i64): boolean {
@@ -402,7 +402,7 @@ function num_unary(op: string, v: ConstNum, w: IntWidth): ConstNum {
 
 function number_value(n: ast.ExprNumber): ConstNum {
   if (n.is_float) {
-    return float_num(f64_from_bits(util.parse_f64_bits(n.text)));
+    return float_num(f64_from_bits(n.bits));
   }
   return int_num(util.lit_to_i64(n.text));
 }
