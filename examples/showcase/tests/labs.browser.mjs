@@ -83,12 +83,12 @@ async function fullscreen(p) {
 }
 try {
   await a.goto(base + "/");
-  assert.equal(await a.locator(".example").count(), 15);
+  assert.equal(await a.locator(".example").count(), 18);
   await overflow(a);
   await a.getByRole("button", { name: "Make something", exact: true }).tap();
   assert.equal(await a.locator(".example:visible").count(), 10);
-  await a.getByRole("button", { name: "All fifteen", exact: true }).tap();
-  assert.equal(await a.locator(".example:visible").count(), 15);
+  await a.getByRole("button", { name: "All eighteen", exact: true }).tap();
+  assert.equal(await a.locator(".example:visible").count(), 18);
   await visit("foundry");
   await a.waitForFunction(
     () => Number(document.querySelector("#view").dataset.tick) >= 0,
