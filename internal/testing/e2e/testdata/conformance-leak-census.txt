@@ -244,6 +244,8 @@ eval_order_aggregate_literal                         0
 exit                                                 0
 exit_42                                              0
 exit_code                                            0
+exit_diverges                                        0
+exit_diverges_let_else_taken                         0
 exit_max                                             0
 f32_array_element                                    0
 f32_array_param                                      0
