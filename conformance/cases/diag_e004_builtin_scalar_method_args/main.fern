@@ -1,0 +1,7 @@
+function main(): i32 {
+  let flag: string = true.to_string(1);
+  let n: i32 = "abc".len(2);
+  let b: [u8] = "abc".as_bytes(3);
+  let ok: i32 = true.to_string().len() + "abc".len() + "abc".as_bytes().len();
+  return ok;
+}

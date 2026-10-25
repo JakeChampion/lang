@@ -1,0 +1,3 @@
+method "to_string" takes 0 arguments but was given 1
+method "len" takes 0 arguments but was given 1
+method "as_bytes" takes 0 arguments but was given 1
