@@ -8,7 +8,7 @@
   "compiler": "fern 0a6db7d5686b-dirty\nbuilt for x86-64-linux",
   "compiler_sha256": "e2133e25d0ca1fc48e17dc8fadb37d8793eb12ab01f1c1d57984ae6487bb7cae",
   "binary_sha256": "b7cda780bd6814347f8254210a18c2a19548a9943c6cc7515d7b9eb986ccd6f0",
-  "collector_sha256": "f4829799011a38f0c6556ffa38ca842dea0ad7e0327ec247ff67a4ca8b782496",
+  "collector_sha256": "0ee590ee0a31e9fca121cafb197b9b63e9061bb9f3f79b0f4b695f7434aad97f",
   "sources_sha256": {
     "fern-image/benchmarks/memory_probe.fern": "6dc28874e6aa72861427f0144557644b6eb23a2f3b4fad4effcf5da9cf071cc2",
     "fern-image/packages/pipeline/pipeline.fern": "27826fb3d13a186f04a7281ce76552b1f832aed4b3043fa80122db38b427dec7",

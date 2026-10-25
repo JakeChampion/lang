@@ -22,6 +22,10 @@ def main():
                "packages/resize/resize.fern", "packages/color/color.fern",
                "packages/pixels/pixels.fern"]
     fingerprints = {"fern-image/" + p: digest(root / p) for p in sources}
+    tool_paths = {"compiler_sha256": compiler, "binary_sha256": binary,
+                  "collector_sha256": Path(__file__)}
+    tool_hashes = {key: digest(path) for key, path in tool_paths.items()}
+    compiler_version = subprocess.check_output([str(compiler), "-version"], text=True).strip()
     samples = []
     for mode in ["unique", "shared", "retained", "rows", "rows-retained", "rows-cancelled",
                  "eager", "eager-retained"]:
@@ -43,14 +47,14 @@ def main():
                                 "process_allocations": int(leak[1]), "exit_code": result.returncode})
     if fingerprints != {"fern-image/" + p: digest(root / p) for p in sources}:
         raise SystemExit("benchmark sources changed during measurement")
+    if tool_hashes != {key: digest(path) for key, path in tool_paths.items()}:
+        raise SystemExit("benchmark tools changed during measurement")
     record = {
         "workload": "64x64 RGBA pixel updates, rows from a virtual 64x10000 RGBA source and a bilinear 32x20000 node, or repeated 64x64 to 32x32 eager bilinear transforms of transparent RGBA pixels.",
         "image_bytes": 16384, "output_row_bytes": 128,
         "concurrency": 1, "warmup_processes": 0,
         "flags": "-target x86-64-linux with FERN_LEAKCHECK=1, no quarantine",
-        "compiler": subprocess.check_output([str(compiler), "-version"], text=True).strip(),
-        "compiler_sha256": digest(compiler), "binary_sha256": digest(binary),
-        "collector_sha256": digest(Path(__file__)),
+        "compiler": compiler_version, **tool_hashes,
         "sources_sha256": fingerprints, "host": platform.platform(), "samples": samples,
         "limitations": "Fresh-process allocator observations only. Bump bytes measure fresh allocator demand, not live bytes, peak RSS, or a process memory bound. Counters exclude report construction. They include input, graph, temporary, and retained-output allocations during each workload. No timing, throughput, OOM-recovery, or production-safety claim."
     }
