@@ -3,40 +3,57 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
+// The self-host front end must report exactly the Go checker's diagnostics,
+// one per diagnostic, for nested arrays whose view-ness or element type does
+// not match the destination.
 func TestSelfHostNestedArrayViewDiagnostics(t *testing.T) {
 	cli := newStrictCLI(t)
-	cases := []struct{ name, decl string }{
-		{"view-first", "let all = [data[:1], data];"},
-		{"owned-first", "let all = [data, data[:1]];"},
-		{"owned-destination", "let all: u8[][] = [data[:1], data];"},
-		{"view-destination", "let all: [u8][] = [data[:1], data];"},
-		{"single-view", "let all: u8[][] = [data[:1]];"},
-		{"single-owned", "let all: [u8][] = [data];"},
+	const data = "function main(): i32 { let data: u8[] = [1u8, 2u8]; "
+	cases := []struct{ name, src string }{
+		{"view-first", data + "let all = [data[:1], data]; return all.len(); }"},
+		{"owned-first", data + "let all = [data, data[:1]]; return all.len(); }"},
+		{"owned-destination", data + "let all: u8[][] = [data[:1], data]; return all.len(); }"},
+		{"view-destination", data + "let all: [u8][] = [data[:1], data]; return all.len(); }"},
+		{"single-view", data + "let all: u8[][] = [data[:1]]; return all.len(); }"},
+		{"single-owned", data + "let all: [u8][] = [data]; return all.len(); }"},
+		{"owned-local-into-views", data + "let owned: u8[][] = [data]; let all: [u8][] = owned; return all.len(); }"},
+		{"owned-in-tuple-view", data + "let t: (u8[], i32) = (data, 1); let u: ([u8], i32) = t; return u.1; }"},
+		{"owned-in-option-view", data + "let p: Option[u8[][]] = Some([data]); let q: Option[[u8][]] = p; return 0; }"},
+		{"literal-into-nested-view", "function main(): i32 { let all: [u8][] = [[1u8]]; return all.len(); }"},
+		{"literal-into-tuple-view", "function main(): i32 { let t: ([u8], i32) = ([1u8], 1); return t.1; }"},
+		{"literal-into-option-view", "function main(): i32 { let o: Option[[u8]] = Some([1u8]); return 0; }"},
+		{"literal-into-variant-view", "enum E { A([u8]), B }\nfunction main(): i32 { let e: E = A([1u8]); return 0; }"},
+		{"literal-argument-into-nested-view", "function h(xs: [u8][]): i32 { return xs.len(); }\nfunction main(): i32 { return h([[1u8]]); }"},
+		{"widened-element-let", "function main(): i32 { let narrow: i32[] = [1]; let all: i64[][] = [narrow]; return all.len(); }"},
+		{"widened-element-return", "function f(values: i32[]): i64[][] { return [values]; }\nfunction main(): i32 { return 0; }"},
+		{"widened-element-argument", "function g(xs: i64[][]): i32 { return xs.len(); }\nfunction f(values: i32[]): i32 { return g([values]); }\nfunction main(): i32 { return 0; }"},
+		{"struct-element", "struct S { x: i32 }\nstruct T { x: i64 }\nfunction f(v: S): T[] { return [v]; }\nfunction main(): i32 { return 0; }"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := "function main(): i32 { let data: u8[] = [1u8, 2u8]; " + tc.decl + " return all.len(); }"
 			dir := t.TempDir()
-			if codes := goCheckerCodes(t, dir, src); len(codes) == 0 {
+			want := goCheckerDiagCodes(t, dir, tc.src)
+			if len(want) == 0 {
 				t.Fatal("Go checker accepted the invalid aggregate")
 			}
 			path := filepath.Join(dir, "main.fern")
-			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			if err := os.WriteFile(path, []byte(tc.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			cmd := runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib)
 			out, err := cmd.CombinedOutput()
-			if err == nil || !strings.Contains(string(out), "E034") {
-				t.Fatalf("check = %v, want E034\n%s", err, out)
+			if got := sortedCodes(string(out)); err == nil || !slices.Equal(got, want) {
+				t.Fatalf("check = %v, codes %v, want %v\n%s", err, got, want, out)
 			}
 			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
-				_, diags, err := cli.tryEmit(t, target, src)
-				if err == nil || !strings.Contains(diags, "E034") || strings.Contains(diags, "FERN_SEM_IR") {
-					t.Fatalf("%s = %v, want checker E034\n%s", target, err, diags)
+				_, diags, err := cli.tryEmit(t, target, tc.src)
+				if got := sortedCodes(diags); err == nil || !slices.Equal(got, want) || strings.Contains(diags, "FERN_SEM_IR") {
+					t.Fatalf("%s = %v, codes %v, want checker %v\n%s", target, err, got, want, diags)
 				}
 			}
 		})
