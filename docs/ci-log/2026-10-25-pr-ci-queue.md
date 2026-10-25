@@ -84,11 +84,27 @@ twelve did. The weights file is unchanged. Its rows for the modload tests now
 read high, which costs balance only, and the next refresh
 (`docs/CI-WEIGHT-REFRESH.md`) corrects them.
 
-## Outside this repository
+## The catch-all lane, measured
 
-Two settings of the `main` ruleset add load that no workflow change removes.
-`strict_required_status_checks_policy` is on, so a branch must be level with
-main before it merges. Every merge then forces every other open pull request to
-rebase and run its suite again. The required checks name
-`Full suite / Test e2e arm64 / test-e2e-arm64`, a job that no longer exists
-under that name. Both are owner settings.
+The lane's selection after the deletion, run through `cmd/ci-test-workers`
+with two workers on the 4-core container beside other work:
+
+| Measure | Value |
+| --- | ---: |
+| Tests | 1655 |
+| Wall time, two workers | 41.7 min |
+| Tests at 10 s or more | 64 |
+| Their summed duration | 3787 s |
+
+`.github/other-test-weights.txt` lists those 64 tests, and the lane runs
+three x86-64 shards instead of four, with two aarch64 shards as before.
+
+## The main ruleset
+
+On 2026-10-25 the owner removed the `main` ruleset. Until then
+`strict_required_status_checks_policy` required a branch to be level with
+main before it merged, so every merge forced every other open pull request
+to rebase and run its suite again, and the required checks named a job that
+no longer existed. The `changes` job's identical-tree proof still applies
+when a branch happens to be level with main; otherwise the main run is the
+backstop for the merged tree.
