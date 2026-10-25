@@ -1221,7 +1221,20 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
   return out;
 }
 
-function array_helper_parts(needs: string[], own parts: string[], empty: i32): string[] {
+// A byte-copy helper that the module defines itself gets no runtime copy.
+function byte_copy_need(needs: string[], key: string, name: string, mod: parser.Module): boolean {
+  if (!need(needs, key)) {
+    return false;
+  }
+  for fd in mod.funcs {
+    if (fd.name == name && fd.receiver_type.len() == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function array_helper_parts(needs: string[], mod: parser.Module, own parts: string[], empty: i32): string[] {
   if (need(needs, "@uses_arr_str_join")) {
     parts = parts.append(arr_str_join_helper());
   }
@@ -1231,9 +1244,11 @@ function array_helper_parts(needs: string[], own parts: string[], empty: i32): s
   if (need(needs, "@uses_bytes_owned")) {
     parts = parts.append(bytes_owned_helper(empty));
   }
-  let back = need(needs, "@uses_byte_back");
-  if (need(needs, "@uses_byte_append") || need(needs, "@uses_byte_write") || back) {
-    parts = parts.append(rtbytecopy.wasm_source(need(needs, "@uses_byte_append"), need(needs, "@uses_byte_write"), back));
+  let append = byte_copy_need(needs, "@uses_byte_append", "__fern_bytes_append_range", mod);
+  let write = byte_copy_need(needs, "@uses_byte_write", "__fern_bytes_write_range", mod);
+  let back = byte_copy_need(needs, "@uses_byte_back", "__fern_bytes_append_back", mod);
+  if (append || write || back) {
+    parts = parts.append(rtbytecopy.wasm_source(append, write, back));
   }
   if (need(needs, "@uses_bytes_range")) {
     parts = parts.append(bytes_range_helper(empty));
@@ -10071,7 +10086,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (ei >= 0) {
     empty = const_agg_offset(sv, cv, ei) + 8;
   }
-  parts = array_helper_parts(needs, parts, empty);
+  parts = array_helper_parts(needs, mod, parts, empty);
   if (need(needs, "@uses_str_case")) {
     parts = parts.append(str_case_helpers());
   }
