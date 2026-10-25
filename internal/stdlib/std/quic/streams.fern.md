@@ -876,18 +876,47 @@ function (s: Streams) __data(room: i32): Streams {
 }
 
 function (s: Streams) __stream_data(i: i32, room: i32): Streams {
-  let st: Stream = s.list[i];
-  if (!st.has_send || st.send.reset >= 0 || !__sendable(st.send)) {
+  if (!__sends(s.list[i])) {
     return s;
   }
+  if (s.list[i].send.lost.len() == 0) {
+    return s.__new_data(i, room);
+  }
+  let st: Stream = s.list[i];
   let out: u8[] = s.filled;
   let resend: recovery.Resend[] = s.resend;
   let taken: Streams = Streams { ...s, filled: [], resend: [] };
   let (snd, o1, r1) = __resend_lost(st.id, st.send, out, room, resend);
-  let credit: i64 = __min(snd.max, snd.sent + taken.send_max - taken.send_sent);
-  let (snd2, o2, r2) = __send_new(st.id, snd, credit, o1, room, r1);
-  let cur: Streams = Streams { ...taken, send_sent: taken.send_sent + (snd2.sent - snd.sent), filled: o2, resend: r2 };
-  return cur.__put(i, Stream { ...st, send: snd2 });
+  return Streams { ...taken, filled: o1, resend: r1 }.__put(i, Stream { ...st, send: snd }).__new_data(i, room);
+}
+
+function __sends(st: Stream): boolean {
+  return st.has_send && st.send.reset < 0 && __sendable(st.send);
+}
+
+// __new_data adds the stream's next unsent bytes that the room and the
+// credit allow, and the send half moves on in its slot.
+function (s: Streams) __new_data(i: i32, room: i32): Streams {
+  let id: i64 = s.list[i].id;
+  let sent: i64 = s.list[i].send.sent;
+  let written: i64 = __written(s.list[i].send);
+  let credit: i64 = __min(s.list[i].send.max, sent + s.send_max - s.send_sent);
+  let avail: i64 = __min(written, credit) - sent;
+  let fit: i64 = (room - s.filled.len() - frames.stream_overhead(id, sent, avail as i32)) as i64;
+  let n: i64 = __max(0 as i64, __min(avail, fit));
+  let fin: boolean = s.list[i].send.fin && !s.list[i].send.fin_sent && sent + n == written;
+  if (n == 0 && (!fin || fit < 0)) {
+    return s;
+  }
+  let at: i32 = (sent - s.list[i].send.base) as i32;
+  let out: u8[] = s.filled;
+  let cur: Streams = Streams { ...s, filled: [] };
+  out = __append_range(frames.put_stream_head(out, id, sent, n as i32, fin), cur.list[i].send.buf, at, at + n as i32);
+  return Streams { ...cur, filled: out, resend: cur.resend.append(recovery.StreamRange(id, sent, n as i32, fin)), send_sent: cur.send_sent + n, list: cur.list.with(i, cur.list[i].__sent(n, fin)) };
+}
+
+function (st: Stream) __sent(n: i64, fin: boolean): Stream {
+  return Stream { ...st, send: Send { ...st.send, sent: st.send.sent + n, fin_sent: st.send.fin_sent || fin } };
 }
 
 function __written(snd: Send): i64 {
@@ -929,23 +958,6 @@ function __resend_lost(id: i64, snd: Send, out: u8[], room: i32, resend: recover
     i = i + 2;
   }
   return (Send { ...snd, lost: kept }, o, rs);
-}
-
-function __send_new(id: i64, snd: Send, credit: i64, own out: u8[], room: i32, resend: recovery.Resend[]): (Send, u8[], recovery.Resend[]) {
-  let avail: i64 = __min(__written(snd), credit) - snd.sent;
-  let fit: i64 = (room - out.len() - frames.stream_overhead(id, snd.sent, avail as i32)) as i64;
-  let n: i64 = __max(0 as i64, __min(avail, fit));
-  let fin: boolean = snd.fin && !snd.fin_sent && snd.sent + n == __written(snd);
-  if (n == 0 && !fin) {
-    return (snd, out, resend);
-  }
-  if (n == 0 && fit < 0) {
-    return (snd, out, resend);
-  }
-  let at: i32 = (snd.sent - snd.base) as i32;
-  let o: u8[] = __append_range(frames.put_stream_head(out, id, snd.sent, n as i32, fin), snd.buf, at, at + n as i32);
-  let next: Send = Send { ...snd, sent: snd.sent + n, fin_sent: snd.fin_sent || fin };
-  return (next, o, resend.append(recovery.StreamRange(id, snd.sent, n as i32, fin)));
 }
 
 function (s: Streams) __blocked(room: i32): Streams {
