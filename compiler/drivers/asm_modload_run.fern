@@ -3,6 +3,7 @@ import "../lexer";
 import "../parser";
 import "../flatten";
 import "../treeshake";
+import "../checker";
 import "../asm_arm64_ir";
 import "../asm_ir";
 import "../asmcore";
@@ -131,13 +132,15 @@ function merged_program(entry: parser.Module, loaded: flatten.LoadedModule[], ta
   return constfold.prune_literal_branches(merged);
 }
 
+// Annotated before the shake, as fern.fern does: the display desugar of
+// `print(x)` reaches a primitive's `to_string` only through the annotation.
 function merged_emitted(merged: parser.Module): parser.Module {
   let errs: util.Diag[] = asmcore.check_undefined_calls(merged);
   if (errs.len() > 0) {
     eprint(util.format_diags(errs));
     exit(1);
   }
-  return treeshake.treeshake(merged);
+  return treeshake.treeshake(checker.annotate_module(merged));
 }
 
 function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
@@ -692,11 +695,11 @@ function main(): i32 {
         }
       }
       if (target == "arm64-linux") {
-        let d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
+        let d64: semlower.Driven = semlower.driven_shaken(merged_emitted(merged), target);
         write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
         return 0;
       }
-      let d: semlower.Driven = semlower.driven(merged_emitted(merged), target);
+      let d: semlower.Driven = semlower.driven_shaken(merged_emitted(merged), target);
       write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
       return 0;
     },
