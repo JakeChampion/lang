@@ -1,0 +1,5 @@
+main.fern:7:24: error[E034]: array element: expected P, got i32
+main.fern:8:24: error[E034]: array element: expected P, got Q
+main.fern:13:29: error[E034]: array element: expected P, got Q
+main.fern:14:3: error[E003]: variable "b": expected P[], got Q[]
+main.fern:14:29: error[E034]: array element: expected Q, got P
