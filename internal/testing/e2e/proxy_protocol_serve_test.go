@@ -100,7 +100,7 @@ function with_tls(cfg: serve.Config): serve.Config {
         Ok(key) => {
           match (identity.from_pem(cert, key)) {
             Ok(id) => {
-              return cfg.with_tls(server.config(id));
+              return cfg.with_tls(server.config(id, random_bytes(32)));
             },
             Err(e) => {}
           }

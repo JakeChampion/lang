@@ -90,7 +90,7 @@ function secured(opts: serve.Config): Result[serve.Config, string] {
   match (env("TLS_KEY")) {
     Some(key_path) => {
       let id: identity.Identity = identity_from(cert_path, key_path)?;
-      let tls: serve.Config = opts.with_tls(client_roots(server.config(id))?);
+      let tls: serve.Config = opts.with_tls(client_roots(server.config(id, random_bytes(32)))?);
       if (env("H3").is_some()) {
         return Ok(tls.with_h3());
       }
