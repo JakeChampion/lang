@@ -66,8 +66,10 @@ function eager_agreement(): test.TestOutcome {
 function mixed_alpha(): test.TestOutcome {
   let image = pixels.Image {
     layout: pixels.Layout { width: 2, height: 2, stride: 8, bytes: 16, format: pixels.RGBA8 },
-    data: [255 as u8, 0 as u8, 0 as u8, 255 as u8, 0 as u8, 255 as u8, 0 as u8, 0 as u8,
-      0 as u8, 0 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 128 as u8]
+    data: [
+      255 as u8, 0 as u8, 0 as u8, 255 as u8, 0 as u8, 255 as u8, 0 as u8, 0 as u8,
+      0 as u8, 0 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 128 as u8,
+    ],
   };
   let limits = pipeline.default_limits();
   let graph = match (pipeline.from_image(image, limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
@@ -121,12 +123,8 @@ function cancellation(): test.TestOutcome {
 }
 
 function validation(): test.TestOutcome {
-  let same = match (resize.bilinear_axis(2147483646, 2147483647, 2147483647)) {
-    Ok(v) => v.first == 2147483646 && v.second == 2147483646 && v.weight == 0.0, Err(_) => false
-  };
-  let middle = match (resize.bilinear_axis(0, 2147483647, 1)) {
-    Ok(v) => v.first == 1073741823 && v.second == 1073741824 && v.weight == 0.0, Err(_) => false
-  };
+  let same = match (resize.bilinear_axis(2147483646, 2147483647, 2147483647)) { Ok(v) => v.first == 2147483646 && v.second == 2147483646 && v.weight == 0.0, Err(_) => false };
+  let middle = match (resize.bilinear_axis(0, 2147483647, 1)) { Ok(v) => v.first == 1073741823 && v.second == 1073741824 && v.weight == 0.0, Err(_) => false };
   let low = match (resize.bilinear_axis(0, 1, 9)) { Ok(v) => v.first == 0 && v.second == 0 && v.weight == 0.0, Err(_) => false };
   let bounds = match (resize.bilinear_axis(1, 1, 1)) { Err(e) => e == pixels.Bounds, Ok(_) => false };
   let dimensions = match (resize.bilinear_axis(0, 0, 1)) { Err(e) => e == pixels.Dimensions, Ok(_) => false };

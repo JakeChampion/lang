@@ -10,19 +10,19 @@ function valid(): test.TestOutcome {
 
 function malformed(): test.TestOutcome {
   let good = true;
-  for status in ["", "VmRSS: 1 kB", "VmSize: 10 kB\nVmRSS: 2 kB\nVmHWM: 1 kB",
+  for status in [
+    "", "VmRSS: 1 kB", "VmSize: 10 kB\nVmRSS: 2 kB\nVmHWM: 1 kB",
     "VmSize: 1 kB\nVmRSS: 2 kB\nVmHWM: 2 kB", "VmSize: 10 kB\nVmRSS: -1 kB\nVmHWM: 1 kB",
     "VmSize: 10 kB\nVmRSS: abc kB\nVmHWM: 1 kB", "VmSize: 10 kB\nVmRSS: 1 MB\nVmHWM: 1 kB",
-    "VmSize: 10 kB\nVmRSS: 1 kB extra\nVmHWM: 1 kB", "VmSize: 10 kB\nVmRSS: 1 kB\nVmRSS: 1 kB\nVmHWM: 1 kB"] {
+    "VmSize: 10 kB\nVmRSS: 1 kB extra\nVmHWM: 1 kB", "VmSize: 10 kB\nVmRSS: 1 kB\nVmRSS: 1 kB\nVmHWM: 1 kB",
+  ] {
     good = good && match (linux_rss.parse_status(status)) { Err(linux_rss.Malformed()) => true, _ => false };
   }
   return test.assert_true(good);
 }
 
 function overflow(): test.TestOutcome {
-  return test.assert_true(match (linux_rss.parse_status("VmSize: 9223372036854775807 kB\nVmRSS: 1 kB\nVmHWM: 1 kB")) {
-    Err(linux_rss.Overflow()) => true, _ => false
-  });
+  return test.assert_true(match (linux_rss.parse_status("VmSize: 9223372036854775807 kB\nVmRSS: 1 kB\nVmHWM: 1 kB")) { Err(linux_rss.Overflow()) => true, _ => false });
 }
 
 function main(): i32 {

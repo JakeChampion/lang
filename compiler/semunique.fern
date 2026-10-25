@@ -100,17 +100,68 @@ function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
 
 // The check consumes its array. An array the function only borrows would
 // need a retain first, so the check would copy it although a push on a sole
-// borrowed array works in place. Only an owned parameter, a field of one, or
-// an array the function made is checked.
+// borrowed array works in place. A push, a with or a concat on a borrowed
+// array, or a call lent one, may return that same buffer written in place, so
+// the walk follows them to their roots, visiting each value once. Only an
+// owned parameter, a field of one, or an array the function made from owned
+// arrays is checked.
 function owned_entry(f: ssasem.Func, modes: i32[], e: i32): boolean {
-  let d: ssa.SInst = def_of(f, e);
-  while (d.kind_tag == ssasem.record_get() && d.args.len() > 0) {
-    d = def_of(f, d.args[0]);
+  let seen: boolean[] = __alloc_bool(f.values.len());
+  let frontier: i32[] = [e];
+  while (frontier.len() > 0) {
+    let next: i32[] = [];
+    for v in frontier {
+      if (seen[v]) {
+        continue;
+      }
+      seen = seen.with(v, true);
+      let d: ssa.SInst = def_of(f, v);
+      if ((d.kind_tag == ssasem.record_get() || keeps_receiver(d)) && d.args.len() > 0) {
+        next = next.append(d.args[0]);
+        continue;
+      }
+      if (d.kind_tag == ssasem.param()) {
+        if (!(d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssasem.counted_mode())) {
+          return false;
+        }
+        continue;
+      }
+      if (d.kind_tag == ssasem.call()) {
+        next = lent_arrays(f, d, next);
+      }
+      if (!(d.result >= 0 && d.kind_tag != 8 && d.kind_tag != ssasem.variant_get() && d.kind_tag != ssasem.tuple_get() && d.kind_tag != ssasem.array_get())) {
+        return false;
+      }
+    }
+    frontier = next;
   }
-  if (d.kind_tag == ssasem.param()) {
-    return d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssasem.counted_mode();
+  return true;
+}
+
+// The array arguments call lends in borrow mode, appended to acc.
+function lent_arrays(f: ssasem.Func, call: ssa.SInst, own acc: i32[]): i32[] {
+  let c: i32 = ssasem.find_contract_in(f.calls, call.str);
+  if (c < 0) {
+    return acc;
   }
-  return d.result >= 0 && d.kind_tag != 8 && d.kind_tag != ssasem.variant_get() && d.kind_tag != ssasem.tuple_get() && d.kind_tag != ssasem.array_get();
+  for i in 0..call.args.len() {
+    let a: i32 = call.args[i];
+    if (i < f.calls[c].modes.len() && f.calls[c].modes[i] == ssasem.borrow_mode() && is_array(f.values[a])) {
+      acc = acc.append(a);
+    }
+  }
+  return acc;
+}
+
+function keeps_receiver(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.arr_concat();
+}
+
+function is_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(_) = t {
+    return true;
+  }
+  return false;
 }
 
 function def_of(f: ssasem.Func, v: i32): ssa.SInst {
