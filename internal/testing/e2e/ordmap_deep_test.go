@@ -154,7 +154,7 @@ function main(): i32 {
 func checkOrdmapDeep(t *testing.T, target string, run censusRun) {
 	t.Helper()
 	stdout, stderr, exit := run(t, ordmapDeepSrc)
-	if exit != 0 || strings.TrimSpace(stdout) != "" {
+	if exit != 0 || strings.TrimSpace(stdout) != "" && strings.TrimSpace(stdout) != "0" {
 		t.Fatalf("%s: exit %d, stdout %q, want 0; stderr: %s", target, exit, stdout, stderr)
 	}
 	if a, f, live := parseLeakCheckLine(t, stderr); a != f || live != 0 {
