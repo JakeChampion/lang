@@ -23,6 +23,12 @@ const uniqueLoopProgram = `@noinline function grow(own out: u8[], n: i32): u8[] 
   while (i < n) { o = o.append(i as u8); i = i + 1; }
   return o;
 }
+@noinline function put_head(out: u8[], value: i64): u8[] {
+  let o: u8[] = out.append(128u8);
+  let rest: i64 = value;
+  while (rest >= 128i64) { o = o.append((rest & 127i64 | 128i64) as u8); rest = rest >> 7i64; }
+  return o.append(rest as u8);
+}
 @noinline function grow_and_keep(out: u8[], n: i32): i32 {
   let first: u8[] = out;
   let i: i32 = 0;
@@ -42,6 +48,11 @@ const uniqueLoopProgram = `@noinline function grow(own out: u8[], n: i32): u8[] 
   let shared: u8[] = lent(kept, 2);
   if (shared.len() != 5 || kept.len() != 3 || kept[0] != 1u8 || shared[4] != 1u8) { return 5; }
   if (grow_and_keep([9u8], 4) != 6) { return 6; }
+  let heads: u8[] = [];
+  let c0: i64 = __heap_alloc_count();
+  for k in 0..1000 { heads = put_head(heads, (k * 50) as i64); }
+  if (__heap_alloc_count() - c0 >= 50i64) { return 7; }
+  if (heads.len() != 3669 || heads[0] != 128u8 || heads[3668] != 3u8) { return 8; }
   return 0;
 }
 function main(): i32 {
@@ -53,11 +64,11 @@ function main(): i32 {
 
 // A loop that grows a byte array it owns checks the count once before the
 // loop, not at each push, and a shared array is copied, not written. A loop
-// over a borrowed array keeps the push's own check, which writes a sole
-// borrowed array in place.
+// over a borrowed array, or over a push onto one, keeps the push's own check,
+// which writes a sole borrowed array in place.
 func TestSelfHostUniqueLoop(t *testing.T) {
 	runSemanticProgram(t, "unique-loop", uniqueLoopProgram,
-		[]string{"grow", "lent", "grow_and_keep", "exercise"}, semInlineWants("ok\n"))
+		[]string{"grow", "lent", "put_head", "grow_and_keep", "exercise"}, semInlineWants("ok\n"))
 
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -82,6 +93,9 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 	}
 	if lent := condBranchBody(t, string(asm), "lent"); strings.Contains(lent, "__fern_bytes_owned") {
 		t.Errorf("lent copies the array it borrows before its loop:\n%s", lent)
+	}
+	if head := condBranchBody(t, string(asm), "put_head"); strings.Contains(head, "__fern_bytes_owned") {
+		t.Errorf("put_head copies the array its first push wrote in place before its loop:\n%s", head)
 	}
 	kept := condBranchBody(t, string(asm), "grow_and_keep")
 	if strings.Contains(kept, "__fern_bytes_owned") {
