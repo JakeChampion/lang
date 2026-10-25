@@ -214,6 +214,15 @@ function main(): i32 {
         },
         Err(e) => { return fail(9); },
     }
+    if (sent(net.send_to(a, [111u8, 107u8], loopback(pb))) != 2) { return fail(25); }
+    let from: u8[] = zeros(net.SENDER_BYTES);
+    match (net.recv_into(b, buf, from)) {
+        Ok(n) => {
+            if (n != 2 || buf[0] != 111u8 || buf[1] != 107u8) { return fail(26); }
+            if (!net.sender(from).eq(loopback(pa))) { return fail(27); }
+        },
+        Err(e) => { return fail(28); },
+    }
     match (net.set_peer(b, loopback(pa))) {
         Ok(u) => {},
         Err(e) => { return fail(10); },

@@ -93,6 +93,25 @@ function test_refusals(): test.TestOutcome {
   return test.assert_eq(cut + " | " + window + " | " + limit, "brotli: truncated | brotli: malformed: window size | brotli: output past the limit");
 }
 
+// Each cut ends inside the meta-block header, or inside a command.
+function test_cuts(): test.TestOutcome {
+  let stream: string = english();
+  let cuts: i32[] = [120, 184];
+  let k: i32 = 1;
+  while (k <= 52) {
+    cuts = cuts.append(k);
+    k = k + 1;
+  }
+  let wrong: string = "";
+  for cut in cuts {
+    let got: string = read(stream.slice_snap(0, 2 * cut));
+    if (got != "brotli: truncated") {
+      wrong = wrong + " " + cut.to_string() + ": " + got;
+    }
+  }
+  return test.assert_eq(wrong, "");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/brotli");
   r = r.it("a small stream", test_text);
@@ -102,6 +121,7 @@ function main(): i32 {
   r = r.it("transforms that trim a word's start", test_trimmed_starts);
   r = r.it("an empty stream and a metadata block", test_empty_and_metadata);
   r = r.it("refusals", test_refusals);
+  r = r.it("a stream cut in its header or a command is truncated", test_cuts);
   return r.finish();
 }
 

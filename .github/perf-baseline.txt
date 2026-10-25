@@ -1,9 +1,11 @@
-# Re-pinned 2026-10-25 (semunique borrowed push chains) on seven `.text`
-# rows, measured by scripts/perf-bench (x86_64) and by `fern -target
-# arm64-linux` line counts (aarch64) on this branch. All seven were over
-# tolerance on main before it: x86_64 sort_strings, string_build and
-# string_scan measure the same here as on main, and the utf8_ingest rows
-# fall 94 (x86_64) and 111 (aarch64) instructions below what main emits.
+# Re-pinned 2026-10-25 (#13251), x86_64 rows from a local perf-bench run on
+# f2a9fbef. The runtime word copy cuts byte_copy_*.ir by 73-74%, and the
+# register and release changes cut deflate_encode.ir by 18% and enum_match.ir
+# by 7%. struct_drop.ir (+7.2%) and string_build.ir (+2.6%) count more because
+# callgrind counts a short rep movsb as one instruction. Their wall time is 6%
+# and 22% lower. __fern_memcpy adds 1-5% `.text` to the string and sort rows.
+# After the merge of main at ec11dd1e, the utf8_ingest_*.text rows take main's
+# typed JSON decoding, which main's own compiler emits at 8213 and 9486.
 # 2026-10-25: the x86_64 perceus_rbtree rows re-pinned from a local perf-bench for the carried-token change (ssaunits.dying_unclaimed).
 # Re-pinned 2026-10-25 (#13177) from Perf run 40168342835 on both arches. The
 # word-refill decoder and the hash-chain matcher cut deflate_decode.ir by 36-41%
@@ -87,64 +89,64 @@ x86_64/array_with.ir	37759081
 x86_64/array_with.text	1189
 x86_64/ascii_scan.text	1252
 x86_64/ascii_scan.ir	37213728
-x86_64/byte_copy_append.text	1105
-x86_64/byte_copy_append.ir	50279080
-x86_64/byte_copy_with.text	1060
-x86_64/byte_copy_with.ir	49708254
+x86_64/byte_copy_append.text	1153
+x86_64/byte_copy_append.ir	13448080
+x86_64/byte_copy_with.text	1108
+x86_64/byte_copy_with.ir	12850254
 x86_64/call_overhead.text	233
 x86_64/call_overhead.ir	8250807
 x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
-x86_64/deflate_decode.ir	46404541
-x86_64/deflate_decode.text	13185
-x86_64/deflate_encode.ir	61051330
-x86_64/deflate_encode.text	7840
+x86_64/deflate_decode.ir	42196555
+x86_64/deflate_decode.text	12488
+x86_64/deflate_encode.ir	49965640
+x86_64/deflate_encode.text	7144
 x86_64/enum_match.text	994
-x86_64/enum_match.ir	52425085
-x86_64/http_hello.text	17528
+x86_64/enum_match.ir	48825085
+x86_64/http_hello.text	17206
 x86_64/http_hello.ir	23788438
 x86_64/int_loop.text	178
 x86_64/int_loop.ir	12000070
 x86_64/map_int.text	5589
-x86_64/map_int.ir	37020100
+x86_64/map_int.ir	36645632
 x86_64/map_probe_chain.text	5596
-x86_64/map_probe_chain.ir	346820614
+x86_64/map_probe_chain.ir	342935024
 x86_64/map_string.text	6520
-x86_64/map_string.ir	61448856	2
+x86_64/map_string.ir	59723383	2
 x86_64/ordmap_insert.text	2815
 x86_64/ordmap_insert.ir	103433462
-x86_64/pmap_insert.text	2640
+x86_64/pmap_insert.text	2680
 x86_64/pmap_insert.ir	53347199
-x86_64/pvec_with.text	2819
+x86_64/pvec_with.text	2850
 x86_64/pvec_with.ir	55173081
 x86_64/record_update.ir	37759081
 x86_64/record_update.text	1280
-x86_64/sort_inplace.text	1343
+x86_64/sort_inplace.text	1393
 x86_64/sort_inplace.ir	41788393
-x86_64/sort_ints.text	1819
+x86_64/sort_ints.text	1879
 x86_64/sort_ints.ir	30644556
-x86_64/sort_strings.text	3103
+x86_64/sort_strings.text	3134
 x86_64/sort_strings.ir	105294698
-x86_64/string_build.text	1856
-x86_64/string_build.ir	42429808
+x86_64/string_build.text	1907
+x86_64/string_build.ir	43517008
 x86_64/string_count_byte.text	1142
 x86_64/string_count_byte.ir	135589342
-x86_64/string_find_byte.text	1548
+x86_64/string_find_byte.text	1500
 x86_64/string_find_byte.ir	43717394
-x86_64/string_rfind_byte.text	1633
+x86_64/string_rfind_byte.text	1679
 x86_64/string_rfind_byte.ir	43732300
-x86_64/string_scan.text	2100
+x86_64/string_scan.text	2157
 x86_64/string_scan.ir	52603745
 x86_64/string_slice.text	803
 x86_64/string_slice.ir	38700086
-x86_64/struct_drop.text	2250
-x86_64/struct_drop.ir	191340574
+x86_64/struct_drop.text	2327
+x86_64/struct_drop.ir	205020574
 x86_64/tokenize.text	1104
 x86_64/tokenize.ir	37880086
-x86_64/utf8_ingest_unchecked.text	8109
-x86_64/utf8_ingest_unchecked.ir	2805309
-x86_64/utf8_ingest_validated.text	9382
-x86_64/utf8_ingest_validated.ir	5887911
+x86_64/utf8_ingest_unchecked.text	8288
+x86_64/utf8_ingest_unchecked.ir	2205771
+x86_64/utf8_ingest_validated.text	8802
+x86_64/utf8_ingest_validated.ir	5297772
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -417,9 +419,9 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	8631
+aarch64/utf8_ingest_unchecked.text	7802
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	9878
+aarch64/utf8_ingest_validated.text	9049
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
