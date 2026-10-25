@@ -17,8 +17,8 @@ const a = await context.newPage(),
 await a.goto(base + "/");
 await a.getByRole("button", { name: "Make something", exact: true }).click();
 assert.equal(await a.locator(".example:visible").count(), 10);
-await a.getByRole("button", { name: "All fifteen", exact: true }).click();
-assert.equal(await a.locator(".example:visible").count(), 15);
+await a.getByRole("button", { name: "All eighteen", exact: true }).click();
+assert.equal(await a.locator(".example:visible").count(), 18);
 console.log("gallery filters OK");
 await a.goto(base + "/rally/");
 await a.waitForFunction(() =>
@@ -181,7 +181,7 @@ for (const width of [320, 360, 375, 430, 721]) {
   const p = await mobile.newPage();
   await p.setViewportSize({ width, height: 844 });
   await p.goto(base + "/");
-  for (const filter of ["All fifteen", "Make something", "The web"]) {
+  for (const filter of ["All eighteen", "Make something", "The web"]) {
     await p.getByRole("button", { name: filter, exact: true }).click();
     const size = await p.evaluate(() => [
       document.documentElement.scrollWidth,
