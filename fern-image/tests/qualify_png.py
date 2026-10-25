@@ -196,6 +196,8 @@ def main():
     if getattr(zlib, "__file__", None):
         paths["python_zlib"] = Path(zlib.__file__)
     paths["fern-image/tests/png_corpus.fern"] = root / "tests/png_corpus.fern"
+    paths["fern-image/tests/requirements-reference.txt"] = root / "tests/requirements-reference.txt"
+    paths["fern-image/scripts/test-png-corpus.sh"] = root / "scripts/test-png-corpus.sh"
     for directory in [root / "packages", root.parent / "internal/stdlib", Path(PIL.__file__).parent]:
         for path in sorted(directory.rglob("*")):
             if path.is_file() and path.suffix in [".fern", ".py", ".so"]:
@@ -265,7 +267,9 @@ def main():
     record = {
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
         "compiler_version": subprocess.check_output([str(compiler), "-version"], text=True).strip(),
-        "host": platform.platform(), "runtime": runtime, "seed": SEED,
+        "host": platform.platform(), "host_machine": platform.machine(), "runtime": runtime, "seed": SEED,
+        "compiler_flags": ["-target", "wasm32-wasi" if options.wasmtime else "arm64-linux" if options.qemu else "x86-64-linux", "-sanitize"],
+        "warmup_processes": 0, "cache_policy": "No page-cache flush or cold/warm performance comparison.",
         "reference": {"Pillow": PIL.__version__, "Pillow_zlib": features.version_codec("zlib"),
                       "Python": platform.python_version(), "Python_zlib": zlib.ZLIB_RUNTIME_VERSION,
                       "Python_zlib_module": zlib.__spec__.origin}, "sha256": hashes,
