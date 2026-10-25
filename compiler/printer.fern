@@ -371,7 +371,7 @@ function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32): string 
           let out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
           let i: i32 = 0;
           while (i < marms.len()) {
-            let av: string = print_return_only(marms[i].body, depth);
+            let av: string = arm_expr_value(marms[i].body, "", depth);
             if (av.len() == 0) {
               return "";
             }

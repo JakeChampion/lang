@@ -56,6 +56,24 @@ function nested(o: Outer): i32 {
 }
 function main(): i32 { return whole(H.S(P { x: 1 })) + nested(Outer.B); }
 `},
+	{"match-value-arm-diverges", `enum Opt { Has(i32), Nil }
+function returns(o: Opt): i32 {
+  let v: i32 = match (o) { Has(x) => x, Nil => { eprint("none"); return 0; } };
+  return v;
+}
+function exits(o: Opt): i32 {
+  let v: i32 = match (o) { Has(x) => x, Nil => { exit(6); } };
+  return v;
+}
+function branch(k: boolean): i32 {
+  let v: i32 = if (k) { 1 } else { exit(2); };
+  return v;
+}
+function stub(): i32 {
+  todo("later");
+}
+function main(): i32 { return returns(Opt.Has(1)) + exits(Opt.Has(2)) + branch(true); }
+`},
 	{"nested-whole-struct-pattern", `struct P { x: i32 }
 enum H { S(P) }
 function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
