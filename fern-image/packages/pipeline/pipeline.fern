@@ -17,6 +17,14 @@ pub enum PipelineError { InvalidGraph, Dimensions, Bounds, Budget, Pixel(pixels.
 
 struct Cost { scratch: i64, samples: i64 }
 
+pub struct RowStats { rows: i32, hits: i32, misses: i32, peak_cache_bytes: i32, peak_cache_entries: i32 }
+
+pub enum RowFailure[E] { GraphFailure(PipelineError), ConsumerFailure(E) }
+
+struct CacheEntry { node: i32, y: i32, row: pixels.Image }
+
+struct RowCache { entries: CacheEntry[], bytes: i32, limit: i32, max_entries: i32, stats: RowStats }
+
 pub function default_limits(): Limits {
   return Limits { max_pixels: 16777216, max_row_bytes: 65536, max_scratch_bytes: 1048576, max_nodes: 16, max_samples: 1048576 };
 }
@@ -157,13 +165,13 @@ function read(image: pixels.Image, x: i32, y: i32): Result[pixels.Pixel, Pipelin
   return match (pixels.read_pixel(image, x, y)) { Ok(v) => Ok(v), Err(e) => Err(Pixel(e)) };
 }
 
-function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   let input = graph.nodes[parent];
   let axis = match (resize.bilinear_axis(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
-  let first = render_node(graph, parent, axis.first, limits, cancelled)?;
+  let first = render_node(graph, parent, axis.first, limits, cache, cancelled)?;
   let second = first;
   if (axis.second != axis.first) {
-    second = render_node(graph, parent, axis.second, limits, cancelled)?;
+    second = render_node(graph, parent, axis.second, limits, cache, cancelled)?;
   }
   let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
     let horizontal = match (resize.bilinear_axis(x, input.width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
@@ -176,10 +184,7 @@ function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: 
   return fill_row(node, limits, cancelled, sample);
 }
 
-function render_node(graph: Graph, at: i32, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
-  if (cancelled()) {
-    return Err(Cancelled);
-  }
+function render_uncached(graph: Graph, at: i32, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
   let node = graph.nodes[at];
   match (node.operation) {
     ImageSource(image) => {
@@ -191,7 +196,7 @@ function render_node(graph: Graph, at: i32, y: i32, limits: Limits, cancelled: (
     NearestSource(parent) => {
       let input = graph.nodes[parent];
       let source_y = match (resize.nearest_index(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
-      let row = render_node(graph, parent, source_y, limits, cancelled)?;
+      let row = render_node(graph, parent, source_y, limits, cache, cancelled)?;
       let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
         let source_x = match (resize.nearest_index(x, input.width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
         return read(row, source_x, 0);
@@ -199,9 +204,80 @@ function render_node(graph: Graph, at: i32, y: i32, limits: Limits, cancelled: (
       return fill_row(node, limits, cancelled, sample);
     },
     BilinearSource(parent) => {
-      return render_bilinear(graph, node, parent, y, limits, cancelled);
+      return render_bilinear(graph, node, parent, y, limits, cache, cancelled);
     }
   }
+}
+
+function cache_get(cache: Option[Cell[RowCache]], at: i32, y: i32): Option[pixels.Image] {
+  if let Some(cell) = cache {
+    let state = cell.get();
+    for entry in state.entries {
+      if (entry.node == at && entry.y == y) {
+        cell.set(RowCache { ...state, stats: RowStats { ...state.stats, hits: state.stats.hits + 1 } });
+        return Some(entry.row);
+      }
+    }
+    cell.set(RowCache { ...state, stats: RowStats { ...state.stats, misses: state.stats.misses + 1 } });
+  }
+  return None;
+}
+
+function cache_remove(state: RowCache, at: i32): RowCache {
+  let entries: CacheEntry[] = [];
+  let i = 0;
+  while (i < state.entries.len()) {
+    if (i != at) {
+      entries = entries.append(state.entries[i]);
+    }
+    i = i + 1;
+  }
+  return RowCache { ...state, entries: entries, bytes: state.bytes - state.entries[at].row.layout.bytes };
+}
+
+function cache_put(cache: Option[Cell[RowCache]], at: i32, y: i32, row: pixels.Image): void {
+  if let Some(cell) = cache {
+    let state = cell.get();
+    if (row.layout.bytes > state.limit) {
+      return;
+    }
+    let count = 0;
+    let first = 0;
+    let i = 0;
+    while (i < state.entries.len()) {
+      if (state.entries[i].node == at) {
+        if (count == 0) { first = i; }
+        count = count + 1;
+      }
+      i = i + 1;
+    }
+    if (count == 2) {
+      state = cache_remove(state, first);
+    }
+    while (state.entries.len() > 0 && (state.bytes + row.layout.bytes > state.limit || state.entries.len() >= state.max_entries)) {
+      state = cache_remove(state, 0);
+    }
+    let entries = state.entries.append(CacheEntry { node: at, y: y, row: row });
+    let bytes = state.bytes + row.layout.bytes;
+    let peak_bytes = state.stats.peak_cache_bytes;
+    let peak_entries = state.stats.peak_cache_entries;
+    if (bytes > peak_bytes) { peak_bytes = bytes; }
+    if (entries.len() > peak_entries) { peak_entries = entries.len(); }
+    cell.set(RowCache { ...state, entries: entries, bytes: bytes,
+      stats: RowStats { ...state.stats, peak_cache_bytes: peak_bytes, peak_cache_entries: peak_entries } });
+  }
+}
+
+function render_node(graph: Graph, at: i32, y: i32, limits: Limits, cache: Option[Cell[RowCache]], cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+  if (cancelled()) {
+    return Err(Cancelled);
+  }
+  if let Some(row) = cache_get(cache, at, y) {
+    return Ok(row);
+  }
+  let row = render_uncached(graph, at, y, limits, cache, cancelled)?;
+  cache_put(cache, at, y, row);
+  return Ok(row);
 }
 
 pub function render_row(graph: Graph, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
@@ -213,5 +289,38 @@ pub function render_row(graph: Graph, y: i32, limits: Limits, cancelled: () => b
   if (y < 0 || y >= graph.nodes[output].height) {
     return Err(PipelineError.Bounds);
   }
-  return render_node(graph, output, y, limits, cancelled);
+  return render_node(graph, output, y, limits, None, cancelled);
+}
+
+pub function render_rows[E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean,
+  consume: (pixels.Image) => Result[void, E]): Result[RowStats, RowFailure[E]] {
+  if (cancelled()) {
+    return Err(GraphFailure(Cancelled));
+  }
+  let cost = match (analyze(graph, limits)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
+  if (count <= 0) {
+    return Err(GraphFailure(PipelineError.Dimensions));
+  }
+  let output = graph.nodes.len() - 1;
+  if (first < 0 || first as i64 + count as i64 > graph.nodes[output].height as i64) {
+    return Err(GraphFailure(PipelineError.Bounds));
+  }
+  if (cache_bytes < 0 || cost.scratch + cache_bytes as i64 > limits.max_scratch_bytes as i64
+    || cost.samples * (count as i64) > limits.max_samples as i64) {
+    return Err(GraphFailure(Budget));
+  }
+  let stats = RowStats { rows: 0, hits: 0, misses: 0, peak_cache_bytes: 0, peak_cache_entries: 0 };
+  let cache = cell_new(RowCache { entries: [], bytes: 0, limit: cache_bytes, max_entries: graph.nodes.len() * 2, stats: stats });
+  let i = 0;
+  while (i < count) {
+    let row = match (render_node(graph, output, first + i, limits, Some(cache), cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
+    match (consume(row)) {
+      Ok(_) => {},
+      Err(e) => { return Err(ConsumerFailure(e)); }
+    }
+    let state = cache.get();
+    cache.set(RowCache { ...state, stats: RowStats { ...state.stats, rows: state.stats.rows + 1 } });
+    i = i + 1;
+  }
+  return Ok(cache.get().stats);
 }
