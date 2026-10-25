@@ -1,0 +1,10 @@
+// spec: IS-15
+// The divisor is an earlier const, so only evaluating the initializer finds
+// the zero.
+const STEP: i32 = 4;
+const SPAN: i32 = STEP - 4;
+const A: i32 = 10 % SPAN;
+
+function main(): i32 {
+    return A;
+}

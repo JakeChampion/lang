@@ -122,14 +122,9 @@ function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Exp
     if (ri.v > peak) {
       peak = ri.v;
     }
-    if (op == "+") {
-      return fold_arith(li.v + ri.v, sfx, peak, unfolded);
-    }
-    if (op == "-") {
-      return fold_arith(li.v - ri.v, sfx, peak, unfolded);
-    }
-    if (op == "*") {
-      return fold_arith(li.v * ri.v, sfx, peak, unfolded);
+    let ar: OptInt = int_arith(op, li.v, ri.v);
+    if (ar.ok) {
+      return fold_arith(ar.v, sfx, peak, unfolded);
     }
     if (op == "/") {
       if (ri.v == 0) {
@@ -194,6 +189,19 @@ function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Exp
   return unfolded;
 }
 
+function int_arith(op: string, l: i64, r: i64): OptInt {
+  if (op == "+") {
+    return OptInt { ok: true, v: l + r, suffix: "" };
+  }
+  if (op == "-") {
+    return OptInt { ok: true, v: l - r, suffix: "" };
+  }
+  if (op == "*") {
+    return OptInt { ok: true, v: l * r, suffix: "" };
+  }
+  return OptInt { ok: false, v: 0, suffix: "" };
+}
+
 function fold_arith(v: i64, suffix: string, peak: i64, unfolded: ast.Expr): ast.Expr {
   if (!fits(v, suffix, peak)) {
     return unfolded;
@@ -215,6 +223,255 @@ function fold_unary(op: string, operand: ast.Expr, unfolded: ast.Expr): ast.Expr
     }
   }
   return unfolded;
+}
+
+// A const initializer's value as `eval_const` computes it: kind 1 is the
+// integer `i`, kind 2 the float `f`, and kind 0 anything no operator here can
+// divide by. `err` is set when the initializer cannot be evaluated.
+pub struct ConstNum { kind: i32, i: i64, f: f64, err: string }
+
+pub struct ConstEnv { names: string[], values: ConstNum[] }
+
+struct IntWidth { bits: i64, unsigned: boolean }
+
+pub function const_env_add(env: ConstEnv, name: string, v: ConstNum): ConstEnv {
+  return ConstEnv { names: env.names.append(name), values: env.values.append(v) };
+}
+
+function no_num(): ConstNum {
+  return ConstNum { kind: 0, i: 0, f: 0.0, err: "" };
+}
+
+function int_num(v: i64): ConstNum {
+  return ConstNum { kind: 1, i: v, f: 0.0, err: "" };
+}
+
+function float_num(v: f64): ConstNum {
+  return ConstNum { kind: 2, i: 0, f: v, err: "" };
+}
+
+function num_err(msg: string): ConstNum {
+  return ConstNum { kind: 0, i: 0, f: 0.0, err: msg };
+}
+
+// Zero bits is no declared width: the value is computed in i64 and never
+// wrapped, as for an undeclared const or a pointer-width one.
+function int_width(t: parser.TypeRef): IntWidth {
+  if (t.array_depth != 0 || t.is_tuple) {
+    return IntWidth { bits: 0, unsigned: false };
+  }
+  if (t.base == "i32" || t.base == "u32") {
+    return IntWidth { bits: 32, unsigned: t.base == "u32" };
+  }
+  if (t.base == "i64" || t.base == "u64") {
+    return IntWidth { bits: 64, unsigned: t.base == "u64" };
+  }
+  if (t.base == "u8") {
+    return IntWidth { bits: 8, unsigned: true };
+  }
+  return IntWidth { bits: 0, unsigned: false };
+}
+
+function wrap(v: i64, w: IntWidth): i64 {
+  if (w.bits == 0 || w.bits >= 64) {
+    return v;
+  }
+  if (w.unsigned) {
+    return v & ((1i64 << w.bits) - 1i64);
+  }
+  let s: i64 = 64i64 - w.bits;
+  return v << s >> s;
+}
+
+function shift_count(r: i64, w: IntWidth): i64 {
+  if (w.bits > 0 && w.bits <= 32) {
+    return r & 31i64;
+  }
+  return r & 63i64;
+}
+
+function shift_right(l: i64, c: i64, w: IntWidth): i64 {
+  if (w.unsigned) {
+    return ((l as u64) >> (c as u64)) as i64;
+  }
+  return l >> c;
+}
+
+function int_divide(op: string, l: i64, r: i64, w: IntWidth): ConstNum {
+  if (r == 0) {
+    if (op == "/") {
+      return num_err("division by zero in constant expression");
+    }
+    return num_err("modulo by zero in constant expression");
+  }
+  if (w.unsigned && op == "/") {
+    return int_num(wrap(((l as u64) / (r as u64)) as i64, w));
+  }
+  if (w.unsigned) {
+    return int_num(wrap(((l as u64) % (r as u64)) as i64, w));
+  }
+  if (op == "/") {
+    return int_num(wrap(l / r, w));
+  }
+  return int_num(wrap(l % r, w));
+}
+
+function int_binary(op: string, l: i64, r: i64, w: IntWidth): ConstNum {
+  if (op == "/" || op == "%") {
+    return int_divide(op, l, r, w);
+  }
+  let ar: OptInt = int_arith(op, l, r);
+  if (ar.ok) {
+    return int_num(wrap(ar.v, w));
+  }
+  if (op == "&") {
+    return int_num(wrap(l & r, w));
+  }
+  if (op == "|") {
+    return int_num(wrap(l | r, w));
+  }
+  if (op == "^") {
+    return int_num(wrap(l ^ r, w));
+  }
+  if (op == "<<") {
+    return int_num(wrap(l << shift_count(r, w), w));
+  }
+  if (op == ">>") {
+    return int_num(wrap(shift_right(l, shift_count(r, w), w), w));
+  }
+  return no_num();
+}
+
+function float_binary(op: string, l: f64, r: f64): ConstNum {
+  if (op == "/" && r == 0.0) {
+    return num_err("division by zero in constant expression");
+  }
+  if (op == "/") {
+    return float_num(l / r);
+  }
+  if (op == "+") {
+    return float_num(l + r);
+  }
+  if (op == "-") {
+    return float_num(l - r);
+  }
+  if (op == "*") {
+    return float_num(l * r);
+  }
+  return no_num();
+}
+
+function num_binary(op: string, l: ConstNum, r: ConstNum, w: IntWidth): ConstNum {
+  if (l.kind == 1 && r.kind == 1) {
+    return int_binary(op, l.i, r.i, w);
+  }
+  if (l.kind == 2 && r.kind == 2) {
+    return float_binary(op, l.f, r.f);
+  }
+  return no_num();
+}
+
+function num_unary(op: string, v: ConstNum, w: IntWidth): ConstNum {
+  if (op == "-" && v.kind == 1) {
+    return int_num(wrap(0 - v.i, w));
+  }
+  if (op == "-" && v.kind == 2) {
+    return float_num(0.0 - v.f);
+  }
+  return no_num();
+}
+
+function number_value(n: ast.ExprNumber): ConstNum {
+  if (n.is_float) {
+    return float_num(f64_from_bits(util.parse_f64_bits(n.text)));
+  }
+  return int_num(util.lit_to_i64(n.text));
+}
+
+function env_value(env: ConstEnv, name: string): ConstNum {
+  let i: i32 = util.index_of_str(env.names, name);
+  if (i < 0) {
+    return no_num();
+  }
+  return env.values[i];
+}
+
+// Evaluates a const initializer the way the oracle's constfold does: integer
+// operators wrap at the declared width, and a zero divisor is an error. A
+// shape the type checker refuses evaluates to kind 0 rather than an error.
+pub function eval_const(e: ast.Expr, ty: string, env: ConstEnv): ConstNum {
+  return eval_at(e, parser.parse_type_ref(ty), env);
+}
+
+function eval_at(e: ast.Expr, t: parser.TypeRef, env: ConstEnv): ConstNum {
+  let none: parser.TypeRef = parser.parse_type_ref("");
+  match (e) {
+    ast.ExprArray(a) => {
+      if (t.array_depth > 0) {
+        return eval_elems(a.elements, [parser.elem_type_ref(t)], env);
+      }
+      return eval_elems(a.elements, [none], env);
+    },
+    ast.ExprTuple(tu) => {
+      if (t.is_tuple && t.array_depth == 0 && t.args.len() == tu.elements.len()) {
+        return eval_elems(tu.elements, t.args, env);
+      }
+      return eval_elems(tu.elements, [none], env);
+    },
+    ast.ExprStructLit(st) => {
+      return eval_elems(st.field_values, [none], env);
+    },
+    _ => {}
+  }
+  return eval_scalar(e, t, env);
+}
+
+// The last of `ts` is the type of every element past the end of it.
+function eval_elems(elems: ast.Expr[], ts: parser.TypeRef[], env: ConstEnv): ConstNum {
+  let i: i32 = 0;
+  while (i < elems.len()) {
+    let k: i32 = i;
+    if (k >= ts.len()) {
+      k = ts.len() - 1;
+    }
+    let v: ConstNum = eval_at(elems[i], ts[k], env);
+    if (v.err.len() > 0) {
+      return v;
+    }
+    i = i + 1;
+  }
+  return no_num();
+}
+
+function eval_scalar(e: ast.Expr, t: parser.TypeRef, env: ConstEnv): ConstNum {
+  match (e) {
+    ast.ExprNumber(n) => {
+      return number_value(n);
+    },
+    ast.ExprIdent(id) => {
+      return env_value(env, id.name);
+    },
+    ast.ExprUnary(u) => {
+      let v: ConstNum = eval_at(u.operand, t, env);
+      if (v.err.len() > 0) {
+        return v;
+      }
+      return num_unary(u.op, v, int_width(t));
+    },
+    ast.ExprBinary(b) => {
+      let l: ConstNum = eval_at(b.left, t, env);
+      if (l.err.len() > 0) {
+        return l;
+      }
+      let r: ConstNum = eval_at(b.right, t, env);
+      if (r.err.len() > 0) {
+        return r;
+      }
+      return num_binary(b.op, l, r, int_width(t));
+    },
+    _ => {}
+  }
+  return no_num();
 }
 
 function fold_stmt(st: ast.Stmt): ast.Stmt {
@@ -907,5 +1164,73 @@ function main(): i32 {
     }
   }
 
+  let ec: i32 = eval_cases();
+  if (ec != 0) {
+    return ec;
+  }
+
   return 0;
 }
+
+function eval_cases(): i32 {
+  let ints: string[] = [
+    "const A: i32 = (2147483647 + 1) / 2;",
+    "const A: u8 = 200u8 + 100u8;",
+    "const A: i32 = 1 << 33;",
+    "const A: u32 = 4294967288u32 >> 2;",
+    "const A: i64 = 0 - 8;\nconst B: i64 = A >> 1;",
+    "const A: u64 = 18446744073709551615u64 / 2u64;",
+    "const A: i64 = 2147483647 + 1 + 2147483647 + 1;\nconst B: i64 = 5 / A;"
+  ];
+  let want: i64[] = [0 - 1073741824i64, 44i64, 2i64, 1073741822i64, 0 - 4i64, 9223372036854775807i64, 0i64];
+  let i: i32 = 0;
+  while (i < ints.len()) {
+    if (!eval_is_int(ints[i], want[i])) {
+      return 220 + i;
+    }
+    i = i + 1;
+  }
+  let srcs: string[] = [
+    "const Z: i32 = 0;\nconst A: i32 = 10 / Z;",
+    "const A: i32 = 7 % (3 - 3);",
+    "const A: f64 = 1.0 / (0.5 - 0.5);",
+    "const A: i32[] = [1, 2 / 0];",
+    "const A: i32 = 2147483647 + 1 + 2147483647 + 1;\nconst B: i32 = 5 / A;",
+    "const A: boolean = true && false;"
+  ];
+  let errs: string[] = [
+    "division by zero in constant expression",
+    "modulo by zero in constant expression",
+    "division by zero in constant expression",
+    "division by zero in constant expression",
+    "division by zero in constant expression",
+    ""
+  ];
+  i = 0;
+  while (i < srcs.len()) {
+    if (eval_source(srcs[i]).err != errs[i]) {
+      return 240 + i;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+function eval_source(src: string): ConstNum {
+  let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+  let env: ConstEnv = ConstEnv { names: [], values: [] };
+  let last: ConstNum = no_num();
+  for fd in mod.funcs {
+    if let ast.StmtReturn(r) = fd.body[0] {
+      last = eval_const(r.value, fd.ret_type, env);
+      env = const_env_add(env, fd.name, last);
+    }
+  }
+  return last;
+}
+
+function eval_is_int(src: string, want: i64): boolean {
+  let v: ConstNum = eval_source(src);
+  return v.err == "" && v.kind == 1 && v.i == want;
+}
+

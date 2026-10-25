@@ -7,6 +7,7 @@ import "./typeinfo";
 import "./decltypes";
 import "./semtypes";
 import "./stdlib_methods";
+import "./constfold";
 
 function t_i32(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
@@ -15264,7 +15265,7 @@ pub function build_gate_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
-  let cgd: util.Diag[] = const_grammar_diags(mod);
+  let cgd: util.Diag[] = const_init_diags(mod);
   if (cgd.len() > 0) {
     return cgd;
   }
@@ -15276,7 +15277,7 @@ pub function build_runtime_gate_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_runtime_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
-  let cgd: util.Diag[] = const_grammar_diags(mod);
+  let cgd: util.Diag[] = const_init_diags(mod);
   if (cgd.len() > 0) {
     return cgd;
   }
@@ -15509,26 +15510,34 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
   return "";
 }
 
-function const_grammar_diags(mod: parser.Module): util.Diag[] {
+function const_init_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
-  let earlier: string[] = [];
+  let env: constfold.ConstEnv = constfold.ConstEnv { names: [], values: [] };
   for fd in mod.funcs {
     if (fd.is_const && fd.receiver_type.len() == 0) {
-      for stmt in fd.body {
-        match (stmt) {
-          ast.StmtReturn(r) => {
-            let msg: string = const_expr_err(r.value, earlier);
-            if (msg.len() > 0) {
-              out = out.append(dg_at("E093", "const " + fd.name + ": " + msg, fd.line, fd.col));
-            }
-          },
-          _ => {}
-        }
+      let v: constfold.ConstNum = const_init_value(fd, env);
+      if (v.err.len() > 0) {
+        out = out.append(dg_at("E093", "const " + fd.name + ": " + v.err, fd.line, fd.col));
+      } else {
+        env = constfold.const_env_add(env, fd.name, v);
       }
-      earlier = earlier.append(fd.name);
     }
   }
   return out;
+}
+
+function const_init_value(fd: parser.FuncDecl, env: constfold.ConstEnv): constfold.ConstNum {
+  let v: constfold.ConstNum = constfold.ConstNum { kind: 0, i: 0, f: 0.0, err: "" };
+  for stmt in fd.body {
+    if let ast.StmtReturn(r) = stmt {
+      let msg: string = const_expr_err(r.value, env.names);
+      if (msg.len() > 0) {
+        return constfold.ConstNum { ...v, err: msg };
+      }
+      v = constfold.eval_const(r.value, fd.ret_type, env);
+    }
+  }
+  return v;
 }
 
 function is_script(mod: parser.Module): boolean {
@@ -15946,7 +15955,7 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
+  let out: util.Diag[] = util.append_diags([], const_init_diags(mod));
   out = util.append_diags(out, handler_state_diags(mod));
   out = util.append_diags(out, e078_diags(mod));
   out = util.append_diags(out, e079_diags(mod));
@@ -21674,7 +21683,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     body_diags = util.append_diags(body_diags, e057_struct_diags(esd, mod.enums, fld_scope));
   }
   body_diags = util.append_diags(body_diags, e085_decl_diags(mod, focus, e064_tn));
-  let cgd: util.Diag[] = const_grammar_diags(mod);
+  let cgd: util.Diag[] = const_init_diags(mod);
   if (cgd.len() > 0) {
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
   }
