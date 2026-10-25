@@ -4921,7 +4921,7 @@ function eval_pinned_arg(c: ast.ExprCall, i: i32, name: string, fd: parser.FuncD
 }
 
 function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): (parser.FuncDecl, boolean) {
-  let none: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+  let none: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
   if (is_closure) {
     return (none, false);
   }
