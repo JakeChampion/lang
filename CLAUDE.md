@@ -171,7 +171,8 @@ is the place to wait, not your terminal.
 **PR CI is one run, and one PR at a time.** `ci.yml` calls every lane and holds
 one FIFO queue: a PR's lanes run in parallel, PRs wait their turn, and a push
 to a PR cancels its older run the moment it lands. Wait time is queue
-position, not runner scarcity.
+position, not runner scarcity. Lint and Preflight (the fixture corpus through
+the compiler) run outside the queue, and a red one cancels the queued suite.
 
 **Push as soon as a fix is ready.** Do not hold a validated commit back to let
 an in-flight run finish: the push cancels the older run, and that is accepted.
