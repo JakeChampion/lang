@@ -3776,6 +3776,56 @@ function x86_gas_andn(own a: X86Asm, mnem: string, size: i32, rest: string): X86
   return a;
 }
 
+function x86_shiftx_pp(mnem: string): i32 {
+  if (mnem == "shlxl" || mnem == "shlxq") {
+    return 1;
+  }
+  if (mnem == "sarxl" || mnem == "sarxq") {
+    return 2;
+  }
+  if (mnem == "shrxl" || mnem == "shrxq") {
+    return 3;
+  }
+  return 0;
+}
+
+// AT&T order: the count, the source (a register or memory), the destination.
+function x86_gas_shiftx(own a: X86Asm, mnem: string, ext: i32, rest: string): X86Asm {
+  let size: i32 = ext & 127;
+  let pp: i32 = ext >> 7;
+  let ops: string[] = x86_gas_split_ops(rest);
+  if (ops.len() != 3) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  let count: i32 = x86_gas_reg_w(ops[0], size);
+  let dst: i32 = x86_gas_reg_w(ops[2], size);
+  if (count < 0 || dst < 0) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  if (x86_gas_has_paren(ops[1])) {
+    let m: GasMem = x86_gas_parse_mem(ops[1]);
+    if (!x86_gas_mem_ok(m)) {
+      return x86_gas_bad(a, mnem + " " + rest);
+    }
+    let ix: boolean = !m.is_rip && m.has_index && m.index >= 8;
+    let bs: boolean = !m.is_rip && m.base >= 8;
+    x86_push_arr(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, count, false, pp));
+    buf_push_byte(a.code, 247);
+    return x86_gas_membytes(a, dst, m, 0);
+  }
+  let src: i32 = x86_gas_reg_w(ops[1], size);
+  if (src < 0) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  x86_push_arr(a.code, x86_rec_shiftx_rr(size, pp, dst, src, count));
+  return a;
+}
+
+pub function x86_rec_shiftx_rr(size: i32, pp: i32, dst: i32, src: i32, count: i32): i32[] {
+  let b: i32[] = x86_vex([], dst >= 8, false, src >= 8, 2, size == 64, count, false, pp);
+  return b.append(247).append(x86_modrm(3, dst, src));
+}
+
 pub function x86_rec_andn_rr(size: i32, dst: i32, inverted: i32, other: i32): i32[] {
   let b: i32[] = x86_vex([], dst >= 8, false, other >= 8, 2, size == 64, inverted, false, 0);
   return b.append(242).append(x86_modrm(3, dst, other));
@@ -5323,6 +5373,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_RORX) {
     return x86_gas_rorx(a, mnem, l.ext, rest);
   }
+  if (k == GK_SHIFTX) {
+    return x86_gas_shiftx(a, mnem, l.ext, rest);
+  }
   if (k == GK_FIXED) {
     return x86_gas_emit_packed(a, l.ext);
   }
@@ -6290,6 +6343,9 @@ const GK_RORX: i32 = 46;
 
 const GK_ANDN: i32 = 47;
 
+// BMI2 shlx, shrx and sarx; the extension holds the operand size and the VEX pp field.
+const GK_SHIFTX: i32 = 48;
+
 const GP_TEXT: i32 = 0;
 
 const GP_BYTES: i32 = 1;
@@ -6465,6 +6521,14 @@ function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
   }
   if (mnem == "rorxl") {
     return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 32 };
+  }
+  let pp: i32 = x86_shiftx_pp(mnem);
+  if (pp > 0) {
+    let size: i32 = 32;
+    if (mnem[mnem.len() - 1] == b'q') {
+      size = 64;
+    }
+    return MnemVerdict { ...v, a_kind: GK_SHIFTX, a_ext: pp * 128 + size };
   }
   if (mnem == "rorxq") {
     return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 64 };

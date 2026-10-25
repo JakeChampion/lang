@@ -8,6 +8,8 @@ Server configuration combines an identity, ALPN policy, ticket policy, and optio
 
 ## Contracts
 
+A session draws no randomness of its own: `start` takes exactly `entropy(config)` bytes from the caller, covering the handshake's random and key share and the ticket it issues, so a session given the same bytes and clock writes the same records. `accept` draws those bytes from the platform's random source. The ticket key is the caller's too: `config` takes it, and every server sharing it can resume the others' tickets.
+
 Ticket keys and lifetimes control resumption policy. Optional client roots enable a separate client-authentication requirement. The caller retains the next state from each step.
 
 ## Module assembly
@@ -22,11 +24,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct Config>>
 
-<<4 pub function config(id: identity.Identity): Config>>
+<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>
 
 <<5 pub struct Session>>
 
-<<6 pub function start(config: Config): Result[Session, tls.TlsError]>>
+<<6 pub function start(config: Config, entropy: [u8]): Result[Session, tls.TlsError]>>
 
 <<7 function __read(s: Session, buf: [u8], now: i64): Result[Step, tls.Failure]>>
 
@@ -42,7 +44,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 const TICKET_AAD: string>>
 
-<<14 function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSessionTicket>>
+<<14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket>>
 
 <<15 function __same(a: [u8], b: [u8]): boolean>>
 
@@ -98,20 +100,16 @@ import "std/tls/verify";
 pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots] }
 ```
 
-### `4 pub function config(id: identity.Identity): Config`
+### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Config`
 
 ```fern
-<<4 pub function config(id: identity.Identity): Config>>=
-pub function config(id: identity.Identity): Config {
-  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: random_bytes(32), client_roots: None };
+<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>=
+pub function config(id: identity.Identity, ticket_key: [u8]): Config {
+  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: crypto.sha256_new().update(ticket_key).finish(), client_roots: None };
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
   return Config { ...c, alpn: protocols };
-}
-
-pub function (c: Config) with_ticket_key(key: u8[]): Config {
-  return Config { ...c, ticket_key: crypto.sha256_new().update(key).finish() };
 }
 
 pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
@@ -131,16 +129,37 @@ pub function (c: Config) with_client_roots(roots: verify.Roots): Config {
 
 ```fern
 <<5 pub struct Session>>=
-pub struct Session { server: handshake.Server, config: Config, held: u8[] }
+pub struct Session { server: handshake.Server, config: Config, ticket_entropy: u8[], held: u8[] }
 
 pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, rekeyed: handshake.KernelKeys }
 ```
 
-### `6 pub function start(config: Config): Result[Session, tls.TlsError]`
+### `6 pub function start(config: Config, entropy: [u8]): Result[Session, tls.TlsError]`
 
 ```fern
-<<6 pub function start(config: Config): Result[Session, tls.TlsError]>>=
-pub function start(config: Config): Result[Session, tls.TlsError] {
+<<6 pub function start(config: Config, entropy: [u8]): Result[Session, tls.TlsError]>>=
+pub function start(config: Config, entropy: [u8]): Result[Session, tls.TlsError] {
+  let sc: handshake.ServerConfig = __handshake_config(config);
+  let n: i32 = handshake.server_entropy(sc);
+  if (entropy.len() != n + TICKET_ENTROPY) {
+    return Err(tls.HandshakeFailed(handshake.Entropy(entropy.len(), n + TICKET_ENTROPY)));
+  }
+  match (handshake.server_new(sc, entropy[0:n])) {
+    Ok(s) => {
+      return Ok(Session { server: s, config: config, ticket_entropy: __copy(entropy[n:entropy.len()]), held: [] });
+    },
+    Err(e) => {
+      return Err(tls.HandshakeFailed(e));
+    }
+  }
+  return Err(tls.ClosedEarly);
+}
+
+pub function entropy(config: Config): i32 {
+  return handshake.server_entropy(__handshake_config(config)) + TICKET_ENTROPY;
+}
+
+function __handshake_config(config: Config): handshake.ServerConfig {
   let asks: boolean = false;
   match (config.client_roots) {
     Some(_) => {
@@ -148,16 +167,7 @@ pub function start(config: Config): Result[Session, tls.TlsError] {
     },
     None => {}
   }
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks };
-  match (handshake.server_new(sc, random_bytes(handshake.server_entropy(sc)))) {
-    Ok(s) => {
-      return Ok(Session { server: s, config: config, held: [] });
-    },
-    Err(e) => {
-      return Err(tls.HandshakeFailed(e));
-    }
-  }
-  return Err(tls.ClosedEarly);
+  return handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks };
 }
 
 pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure] {
@@ -378,7 +388,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
     },
     handshake.Connected => {
       if (s.config.tickets) {
-        return __failed(srv, srv.ticket(__issue(s.config, srv, now)));
+        return __failed(srv, srv.ticket(__issue(s.config, srv, s.ticket_entropy, now)));
       }
     },
     _ => {}
@@ -447,16 +457,18 @@ function __client_alert(e: tls.TlsError): handshake.HandshakeError {
 const TICKET_AAD: string = "fern tls ticket";
 
 const TICKET_VERSION: i32 = 1;
+
+// A ticket's obfuscated-age addend (4 bytes) and its sealing nonce (12).
+const TICKET_ENTROPY: i32 = 16;
 ```
 
-### `14 function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSessionTicket`
+### `14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket`
 
 ```fern
-<<14 function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSessionTicket>>=
-function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSessionTicket {
+<<14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket>>=
+function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket {
   let nonce: u8[] = [0 as u8];
   let lifetime: i64 = config.ticket_lifetime.as_millis() / (1000 as i64);
-  let age_add: u8[] = random_bytes(4);
   let body: u8[] = [TICKET_VERSION as u8];
   body = __u16(body, srv.cipher_suite().code());
   body = __i64(body, now);
@@ -468,7 +480,7 @@ function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSe
     },
     Err(_) => {}
   }
-  let ticket_nonce: u8[] = random_bytes(12);
+  let ticket_nonce: u8[] = __copy(entropy[4:16]);
   let sealed: u8[] = [];
   match (chacha20poly1305.key(config.ticket_key)) {
     Ok(k) => {
@@ -481,7 +493,7 @@ function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSe
     },
     Err(_) => {}
   }
-  return message.NewSessionTicket { lifetime: lifetime as u32, age_add: __u32_of(age_add), nonce: nonce, ticket: __cat(ticket_nonce, sealed), extensions: [] };
+  return message.NewSessionTicket { lifetime: lifetime as u32, age_add: __u32_of(entropy), nonce: nonce, ticket: __cat(ticket_nonce, sealed), extensions: [] };
 }
 
 function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
@@ -569,7 +581,7 @@ function __i64_at(b: [u8], at: i32): i64 {
   return v;
 }
 
-function __u32_of(b: u8[]): u32 {
+function __u32_of(b: [u8]): u32 {
   return b[0] as u32 << 24 | b[1] as u32 << 16 | b[2] as u32 << 8 | b[3] as u32;
 }
 
@@ -646,7 +658,7 @@ pub function accept(fd: i32, config: Config, timeout: Duration): Result[Connecti
 ```fern
 <<18 function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, tls.TlsError]>>=
 function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, tls.TlsError] {
-  let s: Session = start(config)?;
+  let s: Session = start(config, random_bytes(entropy(config)))?;
   let pending: u8[] = [];
   let ended: boolean = false;
   while (!s.connected() && !ended) {

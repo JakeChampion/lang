@@ -439,6 +439,12 @@ function inst_is_call(k: i32): boolean {
   return k >= 19 && k <= 27;
 }
 
+// A runtime abort exits the process, so no value has to survive it.
+pub function never_returns(ins: SInst): boolean {
+  return inst_is_call(ins.kind_tag) && ins.args.len() == 0
+    && (ins.str == "__fern_oob_abort" || ins.str == "__fern_str_oob_abort" || ins.str == "__fern_slice_abort" || ins.str == "__fern_alloc_size_abort");
+}
+
 pub function cold_call(ins: SInst): boolean {
   return ins.kind_tag == 50 && ins.result >= 0 && util.str_has_prefix(ins.str, "arr_push");
 }
@@ -465,7 +471,7 @@ pub function cold_positions(f: SFunc, size: boolean): i32[] {
         if (!size) {
           kind = COLD_INLINE;
         }
-      } else if (cold[bi] && inst_is_call(ins.kind_tag) && !returns_call(blk, k)) {
+      } else if (cold[bi] && inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k)) {
         kind = COLD_BRANCH;
       }
       out = out.append(kind);
@@ -627,7 +633,7 @@ pub function calls_out(f: SFunc): boolean {
 }
 
 pub function calls(ins: SInst): boolean {
-  return inst_is_call(ins.kind_tag) && !rc_inlined(ins);
+  return inst_is_call(ins.kind_tag) && !rc_inlined(ins) && !never_returns(ins);
 }
 
 pub function rc_inlined(ins: SInst): boolean {
@@ -664,6 +670,12 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
     b = cum.len() - 1;
   }
   return cum[b] - cum[a] > 0;
+}
+
+// With no saved register left, saving a caller register around the cold
+// calls costs less than a spill that every iteration loads and stores.
+function cold_caller(saved_free: i32, cold_integer: boolean, pick: i32, cum: i32[], lo: i32, hi: i32): boolean {
+  return saved_free == 0 && cold_integer && pick >= 0 && !spans_call(cum, lo, hi);
 }
 
 function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[]): boolean[] {
@@ -879,7 +891,7 @@ function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: b
 }
 
 function pick_fixed_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: boolean, fixed: ssafixed.Table, lo: i32, hi: i32): i32 {
-  if (fixed.before.len() == 0) {
+  if (ssafixed.empty(fixed)) {
     return pick_caller_reg(free, abi_reg, want_abi, abi_ok);
   }
   let take_abi = abi_ok && abi_reg >= 0 && ssafixed.allows(fixed, abi_reg, lo, hi) && index_of_reg(free, abi_reg) >= 0;
@@ -1404,7 +1416,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         }
         a = a + 1;
       }
-      if (inst_is_call(ins.kind_tag)) {
+      if (inst_is_call(ins.kind_tag) && !never_returns(ins)) {
         if (!returns_call(blk, k)) {
           all_calls = all_calls.append(pos);
           let kind: i32 = COLD_NONE;
@@ -1710,6 +1722,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     }
     let pick: i32 = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
     let from_caller: boolean = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
+    from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     if (!from_caller && free_s.len() == 0) {
       let need_saved: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
       let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);

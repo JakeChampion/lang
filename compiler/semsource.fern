@@ -16,6 +16,7 @@ import "./ssaunits";
 import "./ownership";
 import "./util";
 import "./rtbytecopy";
+import "./semunique";
 import "./sembytecopy";
 import "./byteconst";
 import "./seminline";
@@ -3415,7 +3416,15 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (at < 0) {
     return variant_call(e, name, c, s, expected);
   }
-  return direct_call(c, s.contracts.list[at], s, statement, expected);
+  return exiting(name, direct_call(c, s.contracts.list[at], s, statement, expected));
+}
+
+// The builtin exit never returns, so the block it ends has no successor.
+function exiting(name: string, v: Value): Value {
+  if (name != "exit" || !v.s.ok || util.has_str(v.s.shadows, name)) {
+    return v;
+  }
+  return Value { s: terminate(v.s, t_unreachable()), id: v.id };
 }
 
 function lane_memory_call(name: string, c: ast.ExprCall): boolean {
@@ -7931,7 +7940,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   if (verify) {
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
-    all = prune_dead_constructions(reached_only(scale_ndarray_maps(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod)), names, mod, opts.array_report), names, mod, opts.whole));
+    all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
   instances = [];
@@ -8002,6 +8011,24 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 
 struct Spliced { all: Produced[], spliced: boolean[] }
 
+function unique_loops(all: Produced[]): Produced[] {
+  let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
+  let contract = ssasem.Contract { name: semunique.name(), params: [bytes], modes: [ssaunits.counted_mode()], result: bytes };
+  let sw: optbisect.Switches = optbisect.switches();
+  let out: Produced[] = [];
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template) {
+      let h = semunique.hoisted(p.func, contract, p.modes);
+      if (h.changed && optbisect.allowed_by(sw, "unique-loops", p.func.graph.name)) {
+        p = Produced { ...p, func: h.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
 function byte_copy_loops(all: Produced[]): Produced[] {
   let out: Produced[] = [];
   let contracts = byte_copy_contracts();
@@ -8029,6 +8056,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let rewrite: boolean[] = [];
   let unnamed: boolean[] = [];
   let uncalled: boolean[] = [];
+  let always: boolean[] = [];
   let arms: util.NameIndex = util.name_index(dispatched_arms(all));
   let sw: optbisect.Switches = optbisect.switches();
   let i: i32 = 0;
@@ -8041,9 +8069,10 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline && !mod.funcs[i].fip && !mod.funcs[i].fbip && optbisect.allowed_by(sw, "inline", names[i]));
     unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
     uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, arms));
+    always = always.append(i < mod.funcs.len() && mod.funcs[i].always_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, size);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {

@@ -1,10 +1,10 @@
 name: CI
 
-# Lint, lane selection and the Preflight tier run outside the full-suite
-# queue, so a queued PR gets useful feedback without waiting for earlier
-# compiler suites, and a red Preflight cancels the queued suite before it takes
-# a slot. The Lint / lint check remains unconditional and keeps its name.
-# ci-suite.yml owns the PR FIFO; ci-main.yml still coalesces pending main tips.
+# A pull request runs Lint, lane selection and the Preflight tier, all outside
+# the full-suite queue. The full suite runs on main after the merge (ci-main.yml
+# coalesces pending main tips) and on a pull request labelled ci-full, through
+# the ci-suite.yml FIFO. The Lint / lint check remains unconditional and keeps
+# its name.
 
 on:
   pull_request:
@@ -475,9 +475,12 @@ jobs:
 
   suite:
     name: Full suite
-    # Preserve independent lanes on main and live ci-full opt-outs. The lint
-    # reaper reads current labels and cancels this run when appropriate.
+    # A pull request runs Preflight alone; the suite runs on main after the
+    # merge, on a dispatch, and on a pull request labelled ci-full. The label
+    # is read from the event, so it must be on the pull request before the
+    # push that should run the suite.
     needs: [changes]
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
     uses: ./.github/workflows/ci-suite.yml
     with:
       lanes: ${{ needs.changes.outputs.lanes }}

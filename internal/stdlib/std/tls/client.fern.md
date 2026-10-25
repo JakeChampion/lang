@@ -8,6 +8,8 @@ Client configuration supplies a server name, trust roots, ALPN protocols, and op
 
 ## Contracts
 
+A session draws no randomness of its own: `start` takes exactly `entropy(config)` bytes from the caller, so a session given the same bytes and clock writes the same records. `connect` and `over` draw those bytes from the platform's random source.
+
 A session step returns state, output, application data, and ticket updates. The caller must preserve the returned state and apply the configured verification policy.
 
 ## Module assembly
@@ -26,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 pub struct Session>>
 
-<<6 pub function start(config: Config, now: i64): Result[Step, tls.TlsError]>>
+<<6 pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError]>>
 
 <<7 function __offer(config: Config, now: i64): Option[handshake.Resumption]>>
 
@@ -129,23 +131,13 @@ pub struct Session { client: handshake.Client, name: string, roots: verify.Roots
 pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, tickets: Ticket[], rekeyed: handshake.KernelKeys }
 ```
 
-### `6 pub function start(config: Config, now: i64): Result[Step, tls.TlsError]`
+### `6 pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError]`
 
 ```fern
-<<6 pub function start(config: Config, now: i64): Result[Step, tls.TlsError]>>=
-pub function start(config: Config, now: i64): Result[Step, tls.TlsError] {
-  let sni: string = config.server_name;
-  if (__is_address(sni)) {
-    sni = "";
-  }
-  let hc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config(sni), alpn: config.alpn, resume: __offer(config, now) };
-  match (config.identity) {
-    Some(id) => {
-      hc = handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };
-    },
-    None => {}
-  }
-  match (handshake.client_start(hc, random_bytes(handshake.client_entropy(hc)))) {
+<<6 pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError]>>=
+pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError] {
+  let hc: handshake.ClientConfig = handshake.ClientConfig { ...__hello(config), resume: __offer(config, now) };
+  match (handshake.client_start(hc, entropy)) {
     Ok(step) => {
       let s: Session = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [] };
       return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
@@ -155,6 +147,25 @@ pub function start(config: Config, now: i64): Result[Step, tls.TlsError] {
     }
   }
   return Err(tls.ClosedEarly);
+}
+
+pub function entropy(config: Config): i32 {
+  return handshake.client_entropy(__hello(config));
+}
+
+function __hello(config: Config): handshake.ClientConfig {
+  let sni: string = config.server_name;
+  if (__is_address(sni)) {
+    sni = "";
+  }
+  let hc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config(sni), alpn: config.alpn };
+  match (config.identity) {
+    Some(id) => {
+      return handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };
+    },
+    None => {}
+  }
+  return hc;
 }
 ```
 
@@ -569,7 +580,7 @@ function __handshake_by(fd: i32, config: Config, deadline: i64): Result[Connecti
 }
 
 function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, tls.TlsError] {
-  let step: Step = start(config, now_unix_ms())?;
+  let step: Step = start(config, random_bytes(entropy(config)), now_unix_ms())?;
   __send_fd(fd, step.output)?;
   let s: Session = step.session;
   let tickets: Ticket[] = [];

@@ -84,6 +84,28 @@ twelve did. The weights file is unchanged. Its rows for the modload tests now
 read high, which costs balance only, and the next refresh
 (`docs/CI-WEIGHT-REFRESH.md`) corrects them.
 
+## The fast tier
+
+Even at 600 runner-minutes a suite is 15 minutes of the whole pool. Pushes
+arrive about every 12 minutes, so the queue returns at every busy hour. The
+second change moves the full suite off the pull request: a push runs Lint and
+Preflight, where Preflight also calls the x86-64 legs of the unit, e2e, wasm,
+differential and coreutils lanes (`hosts: x86_64`). The full suite runs on main
+after the merge and on a pull request labelled `ci-full`.
+
+The owner chose this on 2026-10-25. A regression only the heavy or aarch64 lanes catch now lands on
+main and is caught by main's run.
+
+## Drivers built once
+
+Every x86 job of the self-host lane built the stage0 drivers its tests need.
+The jobs started together, so on a compiler change all of them missed the
+driver cache. `driver-sizes` already built every stock driver and saved the
+cache. The other x86 jobs now `needs:` it, so they restore that cache and build
+only a test-specific driver. The lane runs on main and on `ci-full` pull
+requests. There, the five minutes of latency the edge adds cost less than a
+driver build in each of some thirty jobs.
+
 ## The catch-all lane, measured
 
 The lane's selection after the deletion, run through `cmd/ci-test-workers`
