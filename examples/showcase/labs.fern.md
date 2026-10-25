@@ -5,6 +5,7 @@ Transactions compare the submitted revision before publication. A stale writer r
 
 Set `FERN_LABS_DATA` to retain checkpoints on a persistent volume. Storage errors block later writes until explicit recovery.
 Temporary rooms start again from the sample archive and an empty database after recovery or process restart.
+
 The browser sends commands through one persistent WebSocket. This connection keeps its process active on request-driven container hosts.
 The HTTP APIs remain available. Multiple owners still require connection affinity or separate public origins.
 

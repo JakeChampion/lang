@@ -227,7 +227,7 @@ while (bounce < 5) {
 ## Pack linear light
 
 Each channel uses ten bits with a fixed scale of 255 units per radiance value.
-The host averages these linear samples before tone mapping. Averaging gamma-corrected samples would bias the result.
+The host averages these linear samples before tone mapping. An average of gamma-corrected samples biases the result.
 
 ```fern
 <<Pack linear light>>=

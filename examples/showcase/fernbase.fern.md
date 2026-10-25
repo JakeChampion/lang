@@ -59,6 +59,7 @@ pub function initial(): Database {
 
 Binary search returns an insertion position and a comparison count. An absent key is an ordinary position.
 An insert preserves key order. An update replaces one row. Duplicate inserts return a Result error.
+
 Keys compare in UTF-8 byte order. The database holds at most 10000 rows.
 
 ```fern

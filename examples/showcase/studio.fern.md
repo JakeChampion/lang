@@ -7,6 +7,7 @@ Each connection receives a snapshot, then small changes. A reconnect receives th
 Projects use process-local memory until a visitor saves a checkpoint.
 Set `FERN_LABS_DATA` to retain checkpoints on a persistent volume. Visitors can also export a project.
 A checkpoint uses schema version 1. Recovery validates the version, application, dimensions, cells, and counters.
+
 A project has at most 65536 integers. The server retains at most 24 projects and 128 changes per project.
 
 ```fern
