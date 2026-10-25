@@ -37,20 +37,22 @@ function native_append(unique: string): string {
     + "__store_i64(__raw_arr_ptr(out), total64); return out; } ";
 }
 
-// Each chunk reads only bytes that already hold their final value, so the
-// copy repeats the last dist bytes when dist < n, as the byte loop does.
+// The copy moves 8-byte words, so the array keeps 8 bytes of room past its
+// new length. A word reads from step back, the first multiple of dist that is
+// at least 8, so it reads only bytes that hold their final value.
 function native_back(unique: string): string {
   return "function __fern_bytes_append_back(own a: i32[], dist: i32, n: i32): i32[] { "
     + "if (n <= 0) { return a; } let len = a.len(); if (dist < 1 || dist > len) { __fern_oob_abort(); } "
     + "let total64: i64 = (len as i64) + (n as i64); if (total64 > 2147483647i64) { return __raw_array(__raw_arr_box(0 - 1)); } "
-    + "let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16); let reuse = " + unique + " && total64 <= cap * 8i64; "
+    + "let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16); let reuse = " + unique + " && total64 + 8i64 <= cap * 8i64; "
     + "let out = a; if (!reuse) { "
     + "let words: i64 = cap; if (words < 4i64) { words = 4i64; } "
-    + "while (words * 8i64 < total64) { words = words * 2i64; } "
+    + "while (words * 8i64 < total64 + 8i64) { words = words * 2i64; } "
     + "out = __fern_bytes_clone(out, words as i32); } "
-    + "let base: usize = __raw_arr_ptr(out) + 8; let from = len - dist; let at = len; let total = total64 as i32; "
-    + "while (at < total) { let chunk = at - from; if (chunk > total - at) { chunk = total - at; } "
-    + "__memcpy(base + at, base + from, chunk); at = at + chunk; } "
+    + "let base: usize = __raw_arr_ptr(out) + 8; let at = len; let total = total64 as i32; let step = dist; "
+    + "if (dist < 8) { while (step < 8) { step = step + dist; } let stop = len + step; if (stop > total) { stop = total; } "
+    + "while (at < stop) { __store_u8(base + at, __load_u8(base + at - dist)); at = at + 1; } } "
+    + "while (at < total) { __store_i64(base + at, __load_i64(base + at - step)); at = at + 8; } "
     + "__store_i64(__raw_arr_ptr(out), total64); return out; } ";
 }
 
