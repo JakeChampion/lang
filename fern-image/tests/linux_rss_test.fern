@@ -1,0 +1,34 @@
+import "../benchmarks/linux_rss";
+import "std/test";
+
+function valid(): test.TestOutcome {
+  let status = "Name:\tprobe\nVmSize:\t  2048 kB\nVmRSS:\t64 kB\nVmHWM:\t128 kB\nThreads:\t1\n";
+  let result = match (linux_rss.parse_status(status)) { Ok(v) => v, Err(_) => { return test.fail("parse"); } };
+  let zero = match (linux_rss.parse_status("VmSize: 0 kB\nVmRSS: 0 kB\nVmHWM: 0 kB")) { Ok(v) => v.hwm_bytes == 0i64, _ => false };
+  return test.assert_true(result.rss_bytes == 65536i64 && result.hwm_bytes == 131072i64 && result.virtual_bytes == 2097152i64 && zero);
+}
+
+function malformed(): test.TestOutcome {
+  let good = true;
+  for status in ["", "VmRSS: 1 kB", "VmSize: 10 kB\nVmRSS: 2 kB\nVmHWM: 1 kB",
+    "VmSize: 1 kB\nVmRSS: 2 kB\nVmHWM: 2 kB", "VmSize: 10 kB\nVmRSS: -1 kB\nVmHWM: 1 kB",
+    "VmSize: 10 kB\nVmRSS: abc kB\nVmHWM: 1 kB", "VmSize: 10 kB\nVmRSS: 1 MB\nVmHWM: 1 kB",
+    "VmSize: 10 kB\nVmRSS: 1 kB extra\nVmHWM: 1 kB", "VmSize: 10 kB\nVmRSS: 1 kB\nVmRSS: 1 kB\nVmHWM: 1 kB"] {
+    good = good && match (linux_rss.parse_status(status)) { Err(linux_rss.Malformed()) => true, _ => false };
+  }
+  return test.assert_true(good);
+}
+
+function overflow(): test.TestOutcome {
+  return test.assert_true(match (linux_rss.parse_status("VmSize: 9223372036854775807 kB\nVmRSS: 1 kB\nVmHWM: 1 kB")) {
+    Err(linux_rss.Overflow()) => true, _ => false
+  });
+}
+
+function main(): i32 {
+  let r = test.test_new("Linux RSS observation parser");
+  r = r.it("kernel fields convert KiB to checked byte counts", valid);
+  r = r.it("missing, duplicate, malformed, and inconsistent fields fail", malformed);
+  r = r.it("byte conversion rejects i64 overflow", overflow);
+  return r.finish();
+}
