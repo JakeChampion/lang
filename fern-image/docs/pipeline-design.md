@@ -71,7 +71,9 @@ A scheduler must enforce scratch budgets and release rows after their final cons
 Codec access patterns determine whether a node can request arbitrary regions.
 Sequential codecs cannot promise efficient arbitrary tile access.
 
-Cached tile integration, fusion, and decoder row providers remain future work.
+The [cached tile interface](regions.md) uses a row fold with explicit accumulator state.
+[Uncached nearest fusion](nearest-fusion.md) preserves intermediate coordinate rounding within the existing sample estimate.
+Fusion for cached requests and decoder row providers remain future work.
 PNG decoding still materializes its complete decoded image.
 The row interface does not assume that every codec supports efficient arbitrary regions.
 
