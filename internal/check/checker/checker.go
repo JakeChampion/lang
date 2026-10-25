@@ -1003,9 +1003,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
-	c.info.FuncSigs["__crc32_cksum_array"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.SliceType{Elem: ast.NumberType{Width: 8}}},
-		Result: ast.NumberType{Width: 32, Signed: true},
+	for _, name := range []string{"__crc32_cksum_array", "__crc32_ieee_array"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.SliceType{Elem: ast.NumberType{Width: 8}}},
+			Result: ast.NumberType{Width: 32, Signed: true},
+		}
 	}
 	c.info.FuncSigs["__bsd_sum_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
@@ -7878,13 +7880,15 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 }
 
 func (c *checker) errUnknownMethod(n *ast.FieldAccess, namespace string, recv ast.Type) {
-	e := &Error{Pos: n.P, Msg: c.unknownMethodMessage(namespace, n.Field, recv), Path: c.currentModule(), ErrCode: "E043"}
+	e := c.report(c.currentModule(), n.P, "E043", c.unknownMethodMessage(namespace, n.Field, recv))
+	if e == nil {
+		return
+	}
 	_, retired := retiredCollectionSpellings[namespace+"."+n.Field]
 	if suggestion := diag.Suggest(n.Field, c.methodsFor(namespace, recv)); suggestion != "" && !retired && n.FieldPos.Line > 0 {
 		e.Fix = &diag.Suggestion{Pos: n.FieldPos, Length: len(n.Field), Replacement: suggestion,
 			Title: fmt.Sprintf("replace `%s` with `%s`", n.Field, suggestion)}
 	}
-	c.errors = append(c.errors, e)
 }
 
 func hoistReceiver(fn *ast.FuncDecl) {
@@ -7971,7 +7975,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
 	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
-	"__crc32_cksum": true, "__crc32_cksum_array": true,
+	"__crc32_cksum": true, "__crc32_cksum_array": true, "__crc32_ieee_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
@@ -8138,13 +8142,11 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 	if r, ok := retiredNames[n.Name]; ok {
 		suggestion = r
 	}
-	e := &Error{
-		Pos:     n.P,
-		Span:    len(n.Name),
-		Msg:     fmt.Sprintf(format, args...),
-		Path:    c.currentModule(),
-		ErrCode: "E001",
+	e := c.report(c.currentModule(), n.P, "E001", fmt.Sprintf(format, args...))
+	if e == nil {
+		return
 	}
+	e.Span = len(n.Name)
 	if suggestion != "" {
 		e.Fix = &diag.Suggestion{
 			Pos:         n.P,
@@ -8153,7 +8155,6 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 			Title:       fmt.Sprintf("replace `%s` with `%s`%s", n.Name, suggestion, retiredHints[n.Name]),
 		}
 	}
-	c.errors = append(c.errors, e)
 }
 
 func (c *checker) errTypeParamAssoc(tid *ast.Ident, field string) {
@@ -8161,13 +8162,9 @@ func (c *checker) errTypeParamAssoc(tid *ast.Ident, field string) {
 	if bounds := c.typeParamDecl(tid.Name).Bounds[tid.Name]; len(bounds) > 0 {
 		why = fmt.Sprintf("its bound %s declares none", demangle(strings.Join(bounds, " + ")))
 	}
-	c.errors = append(c.errors, &Error{
-		Pos:     tid.P,
-		Span:    len(tid.Name),
-		Msg:     fmt.Sprintf("type parameter %s has no associated function %q: %s", tid.Name, field, why),
-		Path:    c.currentModule(),
-		ErrCode: "E001",
-	})
+	if e := c.report(c.currentModule(), tid.P, "E001", fmt.Sprintf("type parameter %s has no associated function %q: %s", tid.Name, field, why)); e != nil {
+		e.Span = len(tid.Name)
+	}
 }
 
 func (c *checker) unknownVariantHint(name string, ed *ast.EnumDecl) string {
@@ -8230,11 +8227,9 @@ func (c *checker) errUnknownMember(pos, namePos ast.Position, structName, noun, 
 		c.errfCode(pos, "E043", "%s", c.unknownMethodMessage(structName, field, ast.StructType{Name: structName}))
 		return
 	}
-	e := &Error{
-		Pos:     pos,
-		Msg:     fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field),
-		Path:    c.currentModule(),
-		ErrCode: "E043",
+	e := c.report(c.currentModule(), pos, "E043", fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field))
+	if e == nil {
+		return
 	}
 	if s := diag.Suggest(field, declared); s != "" && namePos.Line > 0 {
 		e.Fix = &diag.Suggestion{
@@ -8244,7 +8239,6 @@ func (c *checker) errUnknownMember(pos, namePos ast.Position, structName, noun, 
 			Title:       fmt.Sprintf("replace `%s` with `%s`", field, s),
 		}
 	}
-	c.errors = append(c.errors, e)
 }
 
 func (c *checker) collectNames(s *scope) []string {

@@ -8,13 +8,21 @@ function i64c(v: string): string {
   return "(i64.const " + v + ")";
 }
 
+// A view is an array (tag 0), a string (tag 2) or a frame window holding
+// {data, len} (tag 3).
 function view_funcs(): string {
   return "  (func $__fern_aes_view_data (param $v i32) (result i32)\n"
     + "    (if (result i32) (i32.and (local.get $v) (i32.const 2))\n"
-    + "      (then (i32.add (local.get $v) (i32.const 2)))\n"
+    + "      (then (if (result i32) (i32.and (local.get $v) (i32.const 1))\n"
+    + "        (then (i32.load (i32.sub (local.get $v) (i32.const 3))))\n"
+    + "        (else (i32.add (local.get $v) (i32.const 2)))))\n"
     + "      (else (i32.add (local.get $v) (i32.const 8)))))\n"
     + "  (func $__fern_aes_view_len (param $v i32) (result i32)\n"
-    + "    (i32.load (i32.and (local.get $v) (i32.const -3))))\n"
+    + "    (if (result i32) (i32.and (local.get $v) (i32.const 2))\n"
+    + "      (then (if (result i32) (i32.and (local.get $v) (i32.const 1))\n"
+    + "        (then (i32.load (i32.add (local.get $v) (i32.const 1))))\n"
+    + "        (else (i32.load (i32.sub (local.get $v) (i32.const 2))))))\n"
+    + "      (else (i32.load (local.get $v)))))\n"
     + "  (func $__fern_aes_bytes (param $n i32) (result i32) (local $a i32)\n"
     + "    (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n"
     + "    (i32.store (local.get $a) (local.get $n))\n"

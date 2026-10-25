@@ -1,0 +1,17 @@
+11:6: error[E048]: cannot assign to field "n": fields are immutable after construction; rebuild with `T { ...old, n: value }`
+11:9: error[E003]: assignment: expected i32, got string
+12:8: error[E048]: cannot assign to field "q": fields are immutable after construction; rebuild with `T { ...old, q: value }`
+12:11: error[E003]: assignment: expected i32, got boolean
+13:6: error[E048]: cannot assign to field "i": fields are immutable after construction; rebuild with `T { ...old, i: value }`
+13:9: error[E003]: assignment: expected In, got i32
+14:6: error[E048]: cannot assign to field "name": fields are immutable after construction; rebuild with `T { ...old, name: value }`
+14:12: error[E009]: operator "+" requires an integer type, got string
+15:6: error[E048]: cannot assign to field "n": fields are immutable after construction; rebuild with `T { ...old, n: value }`
+15:11: error[E047]: literal 5000000000 does not fit in i32
+16:6: error[E048]: cannot assign to field "n": fields are immutable after construction; rebuild with `T { ...old, n: value }`
+18:6: error[E048]: cannot assign to field "v": fields are immutable after construction; rebuild with `T { ...old, v: value }`
+18:9: error[E003]: assignment: expected i32, got string
+20:6: error[E048]: cannot assign to field "1": fields are immutable after construction; rebuild with `T { ...old, 1: value }`
+20:9: error[E003]: assignment: expected string, got i32
+22:10: error[E048]: cannot assign to field "n": fields are immutable after construction; rebuild with `T { ...old, n: value }`
+22:13: error[E003]: assignment: expected i32, got string

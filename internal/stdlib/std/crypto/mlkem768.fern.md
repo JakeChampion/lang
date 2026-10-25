@@ -408,11 +408,11 @@ function __decompress(own f: i32[], d: i32): i32[] {
 }
 
 function __h(b: [u8]): u8[] {
-  return crypto.sha3_256_new().update(b).final_bytes();
+  return crypto.sha3_256(b);
 }
 
 function __g(a: [u8], b: [u8]): u8[] {
-  return crypto.sha3_512_new().update(a).update(b).final_bytes();
+  return crypto.sha3_512_new().update(a).update(b).finish();
 }
 ```
 

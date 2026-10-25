@@ -206,8 +206,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   let errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
   errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
   errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
-  if (errs.len() > 0) {
-    eprint(util.format_diags_in(errs, files));
+  if (report_diags(errs, files)) {
     return 1;
   }
   let desc: platforms.Descriptor = platforms.for_target(target);
@@ -231,6 +230,9 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   let sub: ircore.Sub = semlower.target_substitution(typed, target, semlower.build_opts(false, false, true, semarrayreport.off()));
+  if (report_diags(sub.refused, files)) {
+    return 1;
+  }
   let out: string = "";
   if (target == "x86-64-linux") {
     out = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);

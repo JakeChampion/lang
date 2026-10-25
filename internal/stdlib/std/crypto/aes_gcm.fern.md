@@ -4,7 +4,7 @@ This module provides AES-128-GCM and AES-256-GCM authenticated encryption.
 
 ## Model
 
-A prepared key retains the AES round keys and the GCM authentication subkey. Convenience functions accept raw key bytes and construct that state.
+A key is built once from its 16 or 32 bytes and retains the AES round keys and the GCM authentication subkey. Sealing and opening a message pair that key with the message's nonce.
 
 ## Contracts
 
@@ -24,11 +24,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function key(bytes: [u8]): Result[Key, aead.AeadError]>>
 
-<<5 function __prepared(bytes: [u8], nonce: [u8]): Result[Key, aead.AeadError]>>
+<<5 const ZERO_BLOCK: u8[]>>
 
-<<6 const ZERO_BLOCK: u8[]>>
-
-<<7 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>
+<<6 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>
 ```
 
 ### `module introduction`
@@ -65,42 +63,22 @@ pub function key(bytes: [u8]): Result[Key, aead.AeadError] {
 }
 ```
 
-### `5 function __prepared(bytes: [u8], nonce: [u8]): Result[Key, aead.AeadError]`
+### `5 const ZERO_BLOCK: u8[]`
 
 ```fern
-<<5 function __prepared(bytes: [u8], nonce: [u8]): Result[Key, aead.AeadError]>>=
-function __prepared(bytes: [u8], nonce: [u8]): Result[Key, aead.AeadError] {
-  if (nonce.len() != 12) {
-    return Err(aead.NonceLength(nonce.len()));
-  }
-  return key(bytes);
-}
-```
-
-### `6 const ZERO_BLOCK: u8[]`
-
-```fern
-<<6 const ZERO_BLOCK: u8[]>>=
+<<5 const ZERO_BLOCK: u8[]>>=
 const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 ```
 
-### `7 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]`
+### `6 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]`
 
 ```fern
-<<7 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
-pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
-  return __prepared(key, nonce)?.seal(nonce, plaintext, aad);
-}
-
+<<6 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   if (nonce.len() != 12) {
     return Err(aead.NonceLength(nonce.len()));
   }
   return Ok(__aes_gcm_seal(k.rk, k.h, nonce, aad, plaintext));
-}
-
-pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
-  return __prepared(key, nonce)?.open(nonce, sealed, aad);
 }
 
 pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {

@@ -22,6 +22,7 @@ Each checkpoint has a 16 MiB limit. Both success and failure paths close their d
 import "std/result";
 import "std/option";
 import "std/crypto";
+import "std/hex";
 import "std/string";
 import "std/array";
 
@@ -45,7 +46,7 @@ pub function load(directory: string, name: string): Result[Option[string], strin
   }
   let record = read_file(path).map_err((e: IoError): string => e.message())?;
   let fields = record.splitn("\n", 2);
-  if (fields.len() != 2 || fields[0] != crypto.sha256_new().update(fields[1].as_bytes()).final_hex()) {
+  if (fields.len() != 2 || fields[0] != hex.encode(crypto.sha256_new().update(fields[1].as_bytes()).finish())) {
     return Err("Saved project checksum does not match.");
   }
   return Ok(Some(fields[1]));
@@ -60,7 +61,7 @@ pub function save(directory: string, name: string, payload: string): Result[void
   }
   create_dir_all(directory).map_err((e: IoError): string => e.message())?;
   let path = directory + "/" + name + ".json";
-  let record = crypto.sha256_new().update(payload.as_bytes()).final_hex() + "\n" + payload;
+  let record = hex.encode(crypto.sha256_new().update(payload.as_bytes()).finish()) + "\n" + payload;
   let writer = open_writer(path + ".next").map_err((e: IoError): string => e.message())?;
   if let Err(error) = writer.write(record) {
     let closed = writer.close();

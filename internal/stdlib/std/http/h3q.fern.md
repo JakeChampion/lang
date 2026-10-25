@@ -69,7 +69,7 @@ pub enum Event { Requested(i64, HttpRequest), Responded(i64, HttpResponse), Stre
 
 struct Partial { id: i64, fields: qpack.Field[], body: u8[], trailers: qpack.Field[] }
 
-pub struct Conn { quic: conn.Conn, session: h3.Session, started: boolean, stopping: boolean, max_body: i64, partials: Partial[], next: i64, parked: i64[], events: Event[] }
+pub struct Conn { quic: conn.Conn, session: h3.Session, started: boolean, stopping: boolean, max_body: i64, partials: Partial[], next: i64, parked: i64[], events: Event[], date: string }
 ```
 
 ### `4 pub function transport(c: conn.Config): conn.Config`
@@ -81,15 +81,20 @@ pub function transport(c: conn.Config): conn.Config {
 }
 
 pub function server(q: conn.Conn, c: h3.Config): Conn {
-  return Conn { quic: q, session: h3.server(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, parked: [], events: [] };
+  return Conn { quic: q, session: h3.server(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, parked: [], events: [], date: "" };
 }
 
 pub function client(q: conn.Conn, c: h3.Config): Conn {
-  return Conn { quic: q, session: h3.client(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, parked: [], events: [] };
+  return Conn { quic: q, session: h3.client(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, parked: [], events: [], date: "" };
 }
 
 pub function (c: Conn) with_max_body(n: i64): Conn {
   return Conn { ...c, max_body: n };
+}
+
+// with_date sets the date field a response is sent with when it has none.
+pub function (c: Conn) with_date(date: string): Conn {
+  return Conn { ...c, date: date };
 }
 
 pub function (c: Conn) quic(): conn.Conn {
@@ -385,17 +390,22 @@ function __map(fields: qpack.Field[]): HeaderMap {
   return hs;
 }
 
-function __response_fields(resp: HttpResponse, length: i64): qpack.Field[] {
-  let fs: qpack.Field[] = [qpack.field(":status", int.int_to_string(resp.status))];
+function __response_fields(resp: HttpResponse, length: i64, date: string): qpack.Field[] {
+  let fs: qpack.Field[] = [qpack.status(resp.status)];
   let has_length: boolean = false;
+  let has_date: boolean = false;
   let i: i32 = 0;
   while (i < resp.headers.names.len()) {
     let name: string = resp.headers.names[i].to_lower();
     has_length = has_length || name == "content-length";
+    has_date = has_date || name == "date";
     if (!__connection_specific(name)) {
       fs = fs.append(qpack.field(name, resp.headers.values[i]));
     }
     i = i + 1;
+  }
+  if (!has_date && date.len() > 0) {
+    fs = fs.append(qpack.field("date", date));
   }
   if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
     fs = fs.append(qpack.field("content-length", length.to_string()));
@@ -446,13 +456,16 @@ pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
   if (http.http_bodiless(resp.status)) {
     body = [];
   }
-  let head: Conn = c.respond_head(id, resp, body.len() as i64);
-  let w: Conn = head.write(id, body);
-  return w.end(id, resp.trailers);
+  let whole: boolean = resp.trailers.names.len() == 0;
+  let sent: Conn = Conn { ...c, session: c.session.send_response(id, __response_fields(resp, body.len() as i64, c.date), body, whole) }.__applied(0 as i64);
+  if (whole) {
+    return sent;
+  }
+  return sent.end(id, resp.trailers);
 }
 
 pub function (c: Conn) respond_head(id: i64, resp: HttpResponse, length: i64): Conn {
-  return Conn { ...c, session: c.session.send_headers(id, __response_fields(resp, length), false) }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.send_headers(id, __response_fields(resp, length, c.date), false) }.__applied(0 as i64);
 }
 
 pub function (c: Conn) write(id: i64, bytes: [u8]): Conn {
