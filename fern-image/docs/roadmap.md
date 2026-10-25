@@ -1,6 +1,7 @@
 # Roadmap and proposed issues
 
-M0 is the only implemented milestone.
+M0 and M1 are implemented.
+M1 provides scalar pixel operations, whole-image RGB/RGBA conversion, and explicit alpha flattening.
 These issue proposals are local documents. No GitHub issues were created.
 
 ## M1: Color primitives
