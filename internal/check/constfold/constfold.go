@@ -1,6 +1,8 @@
 package constfold
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"unicode/utf8"
 
@@ -32,11 +34,12 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 
 func FoldWith(prog *ast.Program, in Inputs) error {
 	values := map[string]ast.Expr{}
-	types := map[string]ast.Type{}
+	earlier := map[string]bool{}
+	var deferred []*ast.ConstDecl
 	var errs []error
 
 	for _, cd := range prog.Consts {
-		if _, dup := values[cd.Name]; dup {
+		if earlier[cd.Name] {
 			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", cd.Name), ErrCode: "E006"})
 			continue
 		}
@@ -44,21 +47,28 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 			errs = append(errs, rangeErrs...)
 			continue
 		}
-		val, err := evalConstTyped(cd.Value, cd.Type, values, types, in.Assets)
-		if err != nil {
-			errs = append(errs, constError(cd, err))
+		if msg := constExprErr(cd.Value, earlier); msg != "" {
+			errs = append(errs, constError(cd, errors.New(msg)))
 			continue
 		}
-		gotT := litType(val)
-		if cd.Type != nil {
-			if err := settleConstLit(cd.Type, val); err != nil {
-				errs = append(errs, constError(cd, err))
-				continue
-			}
-			gotT = cd.Type
+		val, err := evalConstTyped(cd.Value, cd.Type, values, in.Assets)
+		if err == nil && cd.Type != nil {
+			err = settleConstLit(cd.Type, val)
 		}
-		values[cd.Name] = val
-		types[cd.Name] = gotT
+		var definite *Error
+		switch {
+		case errors.As(err, &definite):
+			errs = append(errs, constError(cd, err))
+			continue
+		case err == errDeferredOperand:
+			deferred = append(deferred, cd)
+		case err != nil:
+			cd.FoldErr = "const " + cd.Name + ": " + err.Error()
+			deferred = append(deferred, cd)
+		default:
+			values[cd.Name] = val
+		}
+		earlier[cd.Name] = true
 	}
 
 	if len(errs) > 0 {
@@ -72,12 +82,15 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		}
 	}
 	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS, targetArch: in.TargetArch}
-	foldFunc := func(fn *ast.FuncDecl) {
+	inModule := func(module string) {
 		sub.values = values
-		sub.module = fn.BodyModule()
-		if body := fn.BodyModule(); body != "" && body != prog.EntryModule {
+		sub.module = module
+		if module != "" && module != prog.EntryModule {
 			sub.values = libValues
 		}
+	}
+	foldFunc := func(fn *ast.FuncDecl) {
+		inModule(fn.BodyModule())
 		w := ast.ScopeWalker{Visit: sub.visit, AfterStmt: foldIfCond}
 		w.WalkFunc(fn)
 	}
@@ -92,27 +105,117 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 			}
 		}
 	}
-	prog.Consts = nil
+	for _, cd := range deferred {
+		inModule(cd.SourceModule)
+		w := ast.ScopeWalker{Visit: sub.visit}
+		w.WalkExpr(&cd.Value)
+	}
+	prog.Consts = deferred
 	if len(sub.errs) > 0 {
 		return diag.Errors(sub.errs)
 	}
 	return nil
 }
 
-func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
+// errDeferredOperand marks an initializer that reads a const which was itself
+// deferred to the checker; that const's own diagnostic covers both.
+var errDeferredOperand = errors.New("reads a const that did not fold")
+
+const notConstant = "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)"
+
+// constExprErr reports why e is outside the constant-expression grammar, or ""
+// when it is inside it. Whether it is well-typed is the checker's question.
+func constExprErr(e ast.Expr, earlier map[string]bool) string {
+	switch n := e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
+		return ""
+	case *ast.Ident:
+		if earlier[n.Name] {
+			return ""
+		}
+		return fmt.Sprintf("%q is not a constant (must reference an earlier `const` declaration)", n.Name)
+	case *ast.Unary:
+		return constExprErr(n.Operand, earlier)
+	case *ast.ArrayLit:
+		return constElemsErr(n.Elems, earlier)
+	case *ast.TupleLit:
+		return constElemsErr(n.Elems, earlier)
+	case *ast.StructLit:
+		if n.Base != nil {
+			return notConstant
+		}
+		for _, f := range n.Fields {
+			if msg := constExprErr(f.Value, earlier); msg != "" {
+				return msg
+			}
+		}
+		return ""
+	case *ast.Binary:
+		switch n.Op {
+		case "+|", "-|", "*|", "<<|", "+?", "-?", "*?", "/?", "%?", "<<?", ">>?":
+			return fmt.Sprintf("operator `%s` not allowed in integer constant expressions", n.Op)
+		}
+		if msg := constExprErr(n.Left, earlier); msg != "" {
+			return msg
+		}
+		return constExprErr(n.Right, earlier)
+	case *ast.Call:
+		if isAssetCall(n) || isAssetsCall(n) {
+			return ""
+		}
+	}
+	return notConstant
+}
+
+func constElemsErr(elems []ast.Expr, earlier map[string]bool) string {
+	for _, el := range elems {
+		if msg := constExprErr(el, earlier); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+// firstErr picks the error an initializer reports: the first definite one
+// (a *Error, such as a zero divisor), else the first of any kind.
+func firstErr(errs ...error) error {
+	var first error
+	for _, err := range errs {
+		var definite *Error
+		if errors.As(err, &definite) {
+			return err
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func evalElems(elems []ast.Expr, elemT func(int) ast.Type, values map[string]ast.Expr, assets *embed.Set) ([]ast.Expr, error) {
+	out := make([]ast.Expr, len(elems))
+	errs := make([]error, len(elems))
+	for i, el := range elems {
+		out[i], errs[i] = evalConstTyped(el, elemT(i), values, assets)
+	}
+	return out, firstErr(errs...)
+}
+
+func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, assets *embed.Set) (ast.Expr, error) {
+	if _, ok := want.(ast.FloatType); ok {
+		if settled, ok := intLitsAsFloat(e); ok {
+			e = settled
+		}
+	}
 	switch n := e.(type) {
 	case *ast.ArrayLit:
 		var elemT ast.Type
 		if at, ok := want.(ast.ArrayType); ok {
 			elemT = at.Elem
 		}
-		elems := make([]ast.Expr, len(n.Elems))
-		for i, el := range n.Elems {
-			v, err := evalConstTyped(el, elemT, values, types, assets)
-			if err != nil {
-				return nil, err
-			}
-			elems[i] = v
+		elems, err := evalElems(n.Elems, func(int) ast.Type { return elemT }, values, assets)
+		if err != nil {
+			return nil, err
 		}
 		return &ast.ArrayLit{P: n.P, Elems: elems, ElemType: n.ElemType}, nil
 	case *ast.TupleLit:
@@ -120,31 +223,29 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types
 		if tt, ok := want.(ast.TupleType); ok && len(tt.Elems) == len(n.Elems) {
 			elemTs = tt.Elems
 		}
-		elems := make([]ast.Expr, len(n.Elems))
-		for i, el := range n.Elems {
-			var et ast.Type
-			if elemTs != nil {
-				et = elemTs[i]
+		elems, err := evalElems(n.Elems, func(i int) ast.Type {
+			if elemTs == nil {
+				return nil
 			}
-			v, err := evalConstTyped(el, et, values, types, assets)
-			if err != nil {
-				return nil, err
-			}
-			elems[i] = v
+			return elemTs[i]
+		}, values, assets)
+		if err != nil {
+			return nil, err
 		}
 		return &ast.TupleLit{P: n.P, Elems: elems}, nil
 	case *ast.StructLit:
-		if n.Base != nil {
-			break
+		inits := make([]ast.Expr, len(n.Fields))
+		for i, f := range n.Fields {
+			inits[i] = f.Value
+		}
+		vals, err := evalElems(inits, func(int) ast.Type { return nil }, values, assets)
+		if err != nil {
+			return nil, err
 		}
 		fields := make([]ast.FieldInit, len(n.Fields))
 		for i, f := range n.Fields {
-			v, err := evalConstTyped(f.Value, nil, values, types, assets)
-			if err != nil {
-				return nil, err
-			}
 			fields[i] = f
-			fields[i].Value = v
+			fields[i].Value = vals[i]
 		}
 		return &ast.StructLit{P: n.P, TypeName: n.TypeName, Fields: fields, TypeArgs: n.TypeArgs}, nil
 	case *ast.Call:
@@ -159,46 +260,73 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types
 			return cloneLit(v, n.P), nil
 		}
 	}
-	return evalConst(e, declaredWidth(want), values, types, assets)
+	return evalConst(e, declaredWidth(want), values, assets)
 }
 
-func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
+// intLitsAsFloat rewrites a tree of unsuffixed integer literals under unary -
+// and binary + - * / with float literals, as the checker settles it for a float type.
+func intLitsAsFloat(e ast.Expr) (ast.Expr, bool) {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.Width != 0 {
+			return nil, false
+		}
+		return &ast.FloatLit{P: x.P, Value: float64(uint64(x.Value)), Raw: x.Raw}, true
+	case *ast.Unary:
+		if x.Op != "-" {
+			return nil, false
+		}
+		operand, ok := intLitsAsFloat(x.Operand)
+		if !ok {
+			return nil, false
+		}
+		return &ast.Unary{P: x.P, Op: x.Op, Operand: operand}, true
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/":
+		default:
+			return nil, false
+		}
+		left, lok := intLitsAsFloat(x.Left)
+		right, rok := intLitsAsFloat(x.Right)
+		if !lok || !rok {
+			return nil, false
+		}
+		return &ast.Binary{P: x.P, Op: x.Op, Left: left, Right: right}, true
+	}
+	return nil, false
+}
+
+func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
 		return n, nil
 	case *ast.Call:
 		if isAssetsCall(n) || (isAssetCall(n) && assetBytes(n)) {
-			return nil, fmt.Errorf("%s() builds an array, which an operator cannot take in a constant expression", calleeName(n))
-		}
-		if !isAssetCall(n) {
-			return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
+			return nil, &Error{Pos: n.P, Msg: fmt.Sprintf("%s() builds an array, which an operator cannot take in a constant expression", calleeName(n))}
 		}
 		return resolveAsset(n, assets)
 	case *ast.Ident:
 		v, ok := values[n.Name]
 		if !ok {
-			return nil, fmt.Errorf("%q is not a constant (must reference an earlier `const` declaration)", n.Name)
+			return nil, errDeferredOperand
 		}
 		return v, nil
 	case *ast.Unary:
-		operand, err := evalConst(n.Operand, w, values, types, assets)
+		operand, err := evalConst(n.Operand, w, values, assets)
 		if err != nil {
 			return nil, err
 		}
 		return foldUnary(n, w, operand)
 	case *ast.Binary:
-		left, err := evalConst(n.Left, w, values, types, assets)
-		if err != nil {
-			return nil, err
-		}
-		right, err := evalConst(n.Right, w, values, types, assets)
-		if err != nil {
+		left, lerr := evalConst(n.Left, w, values, assets)
+		right, rerr := evalConst(n.Right, w, values, assets)
+		if err := firstErr(lerr, rerr); err != nil {
 			return nil, err
 		}
 		return foldBinary(n, w, left, right)
-	default:
-		return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
 	}
+	return nil, errors.New(notConstant)
 }
 
 func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
@@ -222,6 +350,17 @@ func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 }
 
 func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, error) {
+	left, right = byteAsNumber(left), byteAsNumber(right)
+	if lc, lok := left.(*ast.CharLit); lok {
+		rc, rok := right.(*ast.CharLit)
+		if !rok {
+			return nil, fmt.Errorf("binary `%s` between char and non-char is not a constant expression", n.Op)
+		}
+		if v, ok := compare(n.Op, lc.Value, rc.Value); ok {
+			return &ast.BoolLit{P: n.P, Value: v}, nil
+		}
+		return nil, fmt.Errorf("operator `%s` not allowed on chars in constant expressions", n.Op)
+	}
 	if ls, lok := left.(*ast.StringLit); lok {
 		rs, rok := right.(*ast.StringLit)
 		if !rok {
@@ -230,10 +369,9 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		switch n.Op {
 		case "+":
 			return &ast.StringLit{P: n.P, Value: ls.Value + rs.Value}, nil
-		case "==":
-			return &ast.BoolLit{P: n.P, Value: ls.Value == rs.Value}, nil
-		case "!=":
-			return &ast.BoolLit{P: n.P, Value: ls.Value != rs.Value}, nil
+		}
+		if v, ok := compare(n.Op, ls.Value, rs.Value); ok {
+			return &ast.BoolLit{P: n.P, Value: v}, nil
 		}
 		return nil, fmt.Errorf("operator `%s` not allowed on strings in constant expressions", n.Op)
 	}
@@ -270,6 +408,32 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		return nil, fmt.Errorf("binary `%s` operands aren't both numbers", n.Op)
 	}
 	return foldNumberBinary(n, w, ln.Value, rn.Value)
+}
+
+// byteAsNumber gives a byte literal the u8 value it stands for.
+func byteAsNumber(e ast.Expr) ast.Expr {
+	if c, ok := e.(*ast.CharLit); ok && c.IsByte {
+		return &ast.NumberLit{P: c.P, Value: c.Value, Width: 8, IsUnsigned: true}
+	}
+	return e
+}
+
+func compare[T cmp.Ordered](op string, l, r T) (bool, bool) {
+	switch op {
+	case "==":
+		return l == r, true
+	case "!=":
+		return l != r, true
+	case "<":
+		return l < r, true
+	case "<=":
+		return l <= r, true
+	case ">":
+		return l > r, true
+	case ">=":
+		return l >= r, true
+	}
+	return false, false
 }
 
 type intWidth struct {
@@ -321,7 +485,7 @@ func foldNumberBinary(n *ast.Binary, w intWidth, l, r int64) (ast.Expr, error) {
 		return num(l * r)
 	case "/":
 		if r == 0 {
-			return nil, fmt.Errorf("division by zero in constant expression")
+			return nil, &Error{Pos: n.P, Msg: "division by zero in constant expression"}
 		}
 		if w.unsigned() {
 			return num(int64(uint64(l) / uint64(r)))
@@ -329,7 +493,7 @@ func foldNumberBinary(n *ast.Binary, w intWidth, l, r int64) (ast.Expr, error) {
 		return num(l / r)
 	case "%":
 		if r == 0 {
-			return nil, fmt.Errorf("modulo by zero in constant expression")
+			return nil, &Error{Pos: n.P, Msg: "modulo by zero in constant expression"}
 		}
 		if w.unsigned() {
 			return num(int64(uint64(l) % uint64(r)))
@@ -386,7 +550,7 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 		return &ast.FloatLit{P: n.P, Value: l * r}, nil
 	case "/":
 		if r == 0 {
-			return nil, fmt.Errorf("division by zero in constant expression")
+			return nil, &Error{Pos: n.P, Msg: "division by zero in constant expression"}
 		}
 		return &ast.FloatLit{P: n.P, Value: l / r}, nil
 	case "==":

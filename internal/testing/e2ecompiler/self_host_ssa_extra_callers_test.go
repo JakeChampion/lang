@@ -12,19 +12,25 @@ import (
 	"testing"
 )
 
+// The colored fixture takes enough parameters that one right-hand operand
+// spills while rcx holds the result.
+const extraCallerParams = 16
+
 var extraCallerCoefficients = []uint64{3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73}
 
 func extraCallerSource(n int, colored bool) string {
 	var out strings.Builder
 	out.WriteString("import \"std/u64\";\n@noinline\nfunction combine(seed: u64")
 	if colored {
-		out.WriteString(", a:u64, b:u64, c:u64, d:u64, e:u64")
+		for p := range extraCallerParams {
+			fmt.Fprintf(&out, ", %c:u64", 'a'+p)
+		}
 	}
 	out.WriteString("): u64 {\n")
 	for i, c := range extraCallerCoefficients[:n] {
 		fmt.Fprintf(&out, "let v%d = seed * %du64", i, c)
 		if colored {
-			fmt.Fprintf(&out, " ^ %c", 'a'+i%5)
+			fmt.Fprintf(&out, " ^ %c", 'a'+i%extraCallerParams)
 		}
 		out.WriteString(";\n")
 	}
@@ -37,11 +43,17 @@ func extraCallerSource(n int, colored bool) string {
 	}
 	out.WriteString(")")
 	if colored {
-		out.WriteString(" + a + b + c + d + e")
+		for p := range extraCallerParams {
+			fmt.Fprintf(&out, " + %c", 'a'+p)
+		}
 	}
 	out.WriteString(";\n}\nfunction main(): i32 { let seed = args().len() as u64;\n")
 	if colored {
-		out.WriteString("print(combine(seed, seed+1u64, seed+2u64, seed+3u64, seed+4u64, seed+5u64).to_string());\n")
+		out.WriteString("print(combine(seed")
+		for p := range extraCallerParams {
+			fmt.Fprintf(&out, ", seed+%du64", p+1)
+		}
+		out.WriteString(").to_string());\n")
 	} else {
 		out.WriteString("print(combine(seed).to_string()); print(combine(seed*17u64).to_string()); print(combine(18446744073709551615u64).to_string());\n")
 	}
@@ -55,12 +67,12 @@ func extraCallerWant(n int, colored bool, argc uint64) string {
 		for i, c := range extraCallerCoefficients[:n] {
 			v := seed * c
 			if colored {
-				v ^= seed + 1 + uint64(i%5)
+				v ^= seed + 1 + uint64(i%extraCallerParams)
 			}
 			result ^= v
 		}
 		if colored {
-			for i := uint64(1); i <= 5; i++ {
+			for i := uint64(1); i <= extraCallerParams; i++ {
 				result += seed + i
 			}
 		}

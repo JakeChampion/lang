@@ -260,7 +260,7 @@ function test_open(): test.TestOutcome {
 function test_seal_open_flight(): test.TestOutcome {
   match (server_handshake_write().seal(record.Handshake, server_flight(), 0)) {
     Ok(s) => {
-      if (crypto.sha256_new().update(s.record).final_hex() != "6c9225306ee6904ab39f8365c45ca9ce95f6a8443a9de5f21592a02cb27973d6") {
+      if (hex.encode(crypto.sha256_new().update(s.record).finish()) != "6c9225306ee6904ab39f8365c45ca9ce95f6a8443a9de5f21592a02cb27973d6") {
         return test.fail("sealed");
       }
       return test.assert_eq(opened(server_handshake_write().open(one(s.record))), "22 " + hex.encode(server_flight()));
@@ -311,7 +311,10 @@ function test_open_empty(): test.TestOutcome {
 function test_open_inner_overflow(): test.TestOutcome {
   let p: record.Protection = client_write();
   let header: u8[] = __codec_bytes(hex.decode("1703034012"));
-  match (chacha20poly1305.seal(p.key, p.iv, cat(filled(16385, 1), filled(1, 23)), header)) {
+  let Ok(k) = chacha20poly1305.key(p.key) else {
+    return test.fail("key");
+  };
+  match (k.seal(p.iv, cat(filled(16385, 1), filled(1, 23)), header)) {
     Ok(ct) => {
       return test.assert_eq(opened(p.open(record.Record { content_type: record.ApplicationData, version: 0x0303, fragment: ct })), "tls record: 16386 bytes is over the record size limit");
     },
@@ -392,7 +395,7 @@ function test_aes_128_gcm_trace(): test.TestOutcome {
   let flight: record.Protection = record.protection(keyschedule.Aes128GcmSha256, __codec_bytes(hex.decode("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38")));
   match (flight.seal(record.Handshake, server_flight(), 0)) {
     Ok(s) => {
-      if (s.record.len() != 679 || crypto.sha256_new().update(s.record).final_hex() != "a073d654259fa22ebda69c8b1207c06498a2619e8176e09575ff769dbe779f1e") {
+      if (s.record.len() != 679 || hex.encode(crypto.sha256_new().update(s.record).finish()) != "a073d654259fa22ebda69c8b1207c06498a2619e8176e09575ff769dbe779f1e") {
         return test.fail("handshake flight");
       }
       return test.assert_eq(opened(flight.open(one(s.record))), "22 " + hex.encode(server_flight()));

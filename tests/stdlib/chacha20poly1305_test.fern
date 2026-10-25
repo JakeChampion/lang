@@ -5,6 +5,18 @@ import "std/string";
 import "std/crypto/aead";
 import "std/crypto/chacha20poly1305";
 
+function seal_bytes(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  return chacha20poly1305.key(key)?.seal(nonce, plaintext, aad);
+}
+
+function open_bytes(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  return chacha20poly1305.key(key)?.open(nonce, sealed, aad);
+}
+
+function xor_bytes(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError] {
+  return chacha20poly1305.key(key)?.chacha20_xor(nonce, counter, data);
+}
+
 function shown(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
@@ -46,14 +58,14 @@ function rfc_sealed(): string {
 function test_block(): test.TestOutcome {
   let zeros: u8[] = __codec_bytes(hex.decode("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
   return test.assert_eq(
-    shown(chacha20poly1305.chacha20_xor(key_seq(0), __codec_bytes(hex.decode("000000090000004a00000000")), 1 as u32, zeros)),
+    shown(xor_bytes(key_seq(0), __codec_bytes(hex.decode("000000090000004a00000000")), 1 as u32, zeros)),
     "10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e",
   );
 }
 
 function test_cipher(): test.TestOutcome {
   return test.assert_eq(
-    shown(chacha20poly1305.chacha20_xor(key_seq(0), __codec_bytes(hex.decode("000000000000004a00000000")), 1 as u32, sunscreen())),
+    shown(xor_bytes(key_seq(0), __codec_bytes(hex.decode("000000000000004a00000000")), 1 as u32, sunscreen())),
     "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d",
   );
 }
@@ -81,16 +93,16 @@ function test_poly1305_reduces(): test.TestOutcome {
 }
 
 function test_seal(): test.TestOutcome {
-  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(128), aead_nonce(), sunscreen(), aead_aad())), rfc_sealed());
+  return test.assert_eq(shown(seal_bytes(key_seq(128), aead_nonce(), sunscreen(), aead_aad())), rfc_sealed());
 }
 
 function test_open(): test.TestOutcome {
-  return test.assert_eq(shown(chacha20poly1305.open(key_seq(128), aead_nonce(), __codec_bytes(hex.decode(rfc_sealed())), aead_aad())), hex.encode(sunscreen()));
+  return test.assert_eq(shown(open_bytes(key_seq(128), aead_nonce(), __codec_bytes(hex.decode(rfc_sealed())), aead_aad())), hex.encode(sunscreen()));
 }
 
 function test_seal_empty(): test.TestOutcome {
   let none: u8[] = [];
-  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(128), aead_nonce(), none, none)), "a0784d7a4716f3feb4f64e7f4b39bf04");
+  return test.assert_eq(shown(seal_bytes(key_seq(128), aead_nonce(), none, none)), "a0784d7a4716f3feb4f64e7f4b39bf04");
 }
 
 function long_plaintext(): u8[] {
@@ -118,11 +130,11 @@ function long_sealed(): string {
 }
 
 function test_seal_long(): test.TestOutcome {
-  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(128), aead_nonce(), long_plaintext(), long_aad())), long_sealed());
+  return test.assert_eq(shown(seal_bytes(key_seq(128), aead_nonce(), long_plaintext(), long_aad())), long_sealed());
 }
 
 function test_open_long(): test.TestOutcome {
-  return test.assert_eq(shown(chacha20poly1305.open(key_seq(128), aead_nonce(), __codec_bytes(hex.decode(long_sealed())), long_aad())), hex.encode(long_plaintext()));
+  return test.assert_eq(shown(open_bytes(key_seq(128), aead_nonce(), __codec_bytes(hex.decode(long_sealed())), long_aad())), hex.encode(long_plaintext()));
 }
 
 function forged(r: Result[u8[], aead.AeadError]): boolean {
@@ -147,16 +159,16 @@ function forged(r: Result[u8[], aead.AeadError]): boolean {
 function test_open_refuses(): test.TestOutcome {
   let sealed: u8[] = __codec_bytes(hex.decode(rfc_sealed()));
   let last: i32 = sealed.len() - 1;
-  if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), sealed.with(last, sealed[last] ^ 1 as u8), aead_aad()))) {
+  if (!forged(open_bytes(key_seq(128), aead_nonce(), sealed.with(last, sealed[last] ^ 1 as u8), aead_aad()))) {
     return test.fail("a flipped tag bit opened");
   }
-  if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), sealed.with(0, sealed[0] ^ 128 as u8), aead_aad()))) {
+  if (!forged(open_bytes(key_seq(128), aead_nonce(), sealed.with(0, sealed[0] ^ 128 as u8), aead_aad()))) {
     return test.fail("a flipped ciphertext bit opened");
   }
-  if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), sealed, "other".bytes()))) {
+  if (!forged(open_bytes(key_seq(128), aead_nonce(), sealed, "other".bytes()))) {
     return test.fail("other additional data opened");
   }
-  if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), __codec_bytes(hex.decode("00112233")), aead_aad()))) {
+  if (!forged(open_bytes(key_seq(128), aead_nonce(), __codec_bytes(hex.decode("00112233")), aead_aad()))) {
     return test.fail("a message shorter than a tag opened");
   }
   return test.pass();
@@ -164,10 +176,38 @@ function test_open_refuses(): test.TestOutcome {
 
 function test_lengths(): test.TestOutcome {
   let none: u8[] = [];
-  if (shown(chacha20poly1305.seal(__codec_bytes(hex.decode("0011")), aead_nonce(), none, none)) != "aead: the key is 2 bytes, the wrong length for this cipher") {
+  if (shown(seal_bytes(__codec_bytes(hex.decode("0011")), aead_nonce(), none, none)) != "aead: the key is 2 bytes, the wrong length for this cipher") {
     return test.fail("a short key was not refused by its length");
   }
-  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(0), __codec_bytes(hex.decode("00")), none, none)), "aead: the nonce is 1 bytes, want 12");
+  return test.assert_eq(shown(seal_bytes(key_seq(0), __codec_bytes(hex.decode("00")), none, none)), "aead: the nonce is 1 bytes, want 12");
+}
+
+function test_key_built_once(): test.TestOutcome {
+  let Ok(k) = chacha20poly1305.key(key_seq(128)) else {
+    return test.fail("a 32-byte key was refused");
+  };
+  if (shown(k.seal(aead_nonce(), sunscreen(), aead_aad())) != rfc_sealed()) {
+    return test.fail("the key sealed differently");
+  }
+  if (shown(k.open(aead_nonce(), __codec_bytes(hex.decode(rfc_sealed())), aead_aad())) != hex.encode(sunscreen())) {
+    return test.fail("the key opened differently");
+  }
+  let none: u8[] = [];
+  if (shown(k.seal(aead_nonce(), none, none)) != "a0784d7a4716f3feb4f64e7f4b39bf04") {
+    return test.fail("the key sealed a second message differently");
+  }
+  if (shown(k.seal(__codec_bytes(hex.decode("00")), none, none)) != "aead: the nonce is 1 bytes, want 12") {
+    return test.fail("the key took a 1-byte nonce");
+  }
+  match (chacha20poly1305.key(key_seq(0)[0:31])) {
+    Ok(_) => {
+      return test.fail("a 31-byte key was built");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "aead: the key is 31 bytes, the wrong length for this cipher");
+    }
+  }
+  return test.fail("unreachable");
 }
 
 // RFC 8439 section 2.8.2 in place: iv 07000000 with the sequence number 4041424344454647 folded in is the
@@ -196,13 +236,18 @@ function rfc_seq(): u64 {
 
 // Seals the laid-out section under seal_seq, flips byte flip of the result when it is not negative, and opens it
 // under open_seq.
+function sealed_in_place(seq: u64): Result[u8[], aead.AeadError] {
+  let n: i32 = sunscreen().len();
+  return chacha20poly1305.key(key_seq(128))?.seal_in_place(rfc_iv(), seq, laid(), n + 16, 12, 0, n);
+}
+
 function round_trip(seal_seq: u64, flip: i32, open_seq: u64): Result[u8[], aead.AeadError] {
   let n: i32 = sunscreen().len();
-  let sealed: u8[] = chacha20poly1305.seal_in_place(key_seq(128), rfc_iv(), seal_seq, laid(), n + 16, 12, 0, n)?;
+  let sealed: u8[] = sealed_in_place(seal_seq)?;
   if (flip >= 0) {
     sealed = sealed.with(flip, sealed[flip] ^ 1 as u8);
   }
-  return chacha20poly1305.open_in_place(key_seq(128), rfc_iv(), open_seq, sealed, n + 16, 12, 0, n);
+  return chacha20poly1305.key(key_seq(128))?.open_in_place(rfc_iv(), open_seq, sealed, n + 16, 12, 0, n);
 }
 
 function opened(r: Result[u8[], aead.AeadError]): string {
@@ -219,7 +264,7 @@ function opened(r: Result[u8[], aead.AeadError]): string {
 
 function test_in_place(): test.TestOutcome {
   let n: i32 = sunscreen().len();
-  if (shown(chacha20poly1305.seal_in_place(key_seq(128), rfc_iv(), rfc_seq(), laid(), n + 16, 12, 0, n)) != rfc_sealed() + hex.encode(aead_aad())) {
+  if (shown(sealed_in_place(rfc_seq())) != rfc_sealed() + hex.encode(aead_aad())) {
     return test.fail("seal_in_place");
   }
   let forged: string = "aead: the message does not verify";
@@ -249,6 +294,7 @@ function main(): i32 {
   r = r.it("open, several blocks", test_open_long);
   r = r.it("open refuses a forgery", test_open_refuses);
   r = r.it("key and nonce lengths", test_lengths);
+  r = r.it("a key built once", test_key_built_once);
   r = r.it("seal and open in place, RFC 8439 under a sequence number", test_in_place);
   return r.finish();
 }

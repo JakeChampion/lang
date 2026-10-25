@@ -4,11 +4,11 @@ This module provides ChaCha20-Poly1305 authenticated encryption.
 
 ## Model
 
-ChaCha20 generates the byte stream for encryption. Poly1305 authenticates the additional data and ciphertext. The public helpers also expose these primitives separately.
+A key is built once from its 32 bytes and holds them as the eight little-endian words ChaCha20 starts from. Sealing and opening a message pair that key with the message's nonce. ChaCha20 generates the byte stream for encryption, and Poly1305 authenticates the additional data and ciphertext. The key also exposes the raw ChaCha20 stream, and `poly1305` takes its own one-time key.
 
 ## Contracts
 
-Key and nonce lengths are part of the cipher contract. Open returns an error when authentication fails. The caller supplies the nonce for each message.
+Building a key checks its length, and each message checks its nonce length. Open returns an error when authentication fails. The caller supplies the nonce for each message.
 
 ## Module assembly
 
@@ -20,15 +20,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 struct Key>>
+<<3 pub struct Key>>
 
 <<4 function __le32(b: [u8], at: i32): u32>>
 
 <<5 function __xor_block(own out: u8[], at: i32, len: i32, k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u...>>
 
-<<6 function __xor_into(k: Key, counter: u32, own out: u8[], from: i32, len: i32): u8[]>>
+<<6 function __xor_into(k: Stream, counter: u32, own out: u8[], from: i32, len: i32): u8[]>>
 
-<<7 pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]>>
+<<7 pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]>>
 
 <<8 struct Poly>>
 
@@ -38,9 +38,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<11 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>
 
-<<12 function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[]>>
+<<12 function __aead_tag(k: Stream, aad: [u8], ct: [u8], from: i32, len: i32): u8[]>>
 
-<<13 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>
+<<13 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>
 ```
 
 ### `module introduction`
@@ -57,11 +57,13 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/crypto/aead";
 ```
 
-### `3 struct Key`
+### `3 pub struct Key`
 
 ```fern
-<<3 struct Key>>=
-struct Key { k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u32, k6: u32, k7: u32, n0: u32, n1: u32, n2: u32 }
+<<3 pub struct Key>>=
+pub struct Key { k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u32, k6: u32, k7: u32 }
+
+struct Stream { k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u32, k6: u32, k7: u32, n0: u32, n1: u32, n2: u32 }
 ```
 
 ### `4 function __le32(b: [u8], at: i32): u32`
@@ -80,25 +82,26 @@ function __xor_word(own out: u8[], at: i32, w: u32): u8[] {
   return out.with(at, out[at] ^ (w & 255) as u8).with(at + 1, out[at + 1] ^ (w >> 8 & 255) as u8).with(at + 2, out[at + 2] ^ (w >> 16 & 255) as u8).with(at + 3, out[at + 3] ^ (w >> 24 & 255) as u8);
 }
 
-function __key(key: [u8], nonce: [u8]): Result[Key, aead.AeadError] {
-  if (key.len() != 32) {
-    return Err(aead.KeyLength(key.len()));
+pub function key(bytes: [u8]): Result[Key, aead.AeadError] {
+  if (bytes.len() != 32) {
+    return Err(aead.KeyLength(bytes.len()));
   }
+  return Ok(Key { k0: __le32(bytes, 0), k1: __le32(bytes, 4), k2: __le32(bytes, 8), k3: __le32(bytes, 12), k4: __le32(bytes, 16), k5: __le32(bytes, 20), k6: __le32(bytes, 24), k7: __le32(bytes, 28) });
+}
+
+function __stream(k: Key, nonce: [u8]): Result[Stream, aead.AeadError] {
   if (nonce.len() != 12) {
     return Err(aead.NonceLength(nonce.len()));
   }
-  return __key_seq(key, nonce, 0 as u64);
+  return __stream_seq(k, nonce, 0 as u64);
 }
 
 // The nonce is iv with seq folded into its last eight bytes, as TLS 1.3 and QUIC build a record's.
-function __key_seq(key: [u8], iv: [u8], seq: u64): Result[Key, aead.AeadError] {
-  if (key.len() != 32) {
-    return Err(aead.KeyLength(key.len()));
-  }
+function __stream_seq(k: Key, iv: [u8], seq: u64): Result[Stream, aead.AeadError] {
   if (iv.len() != 12) {
     return Err(aead.NonceLength(iv.len()));
   }
-  return Ok(Key { k0: __le32(key, 0), k1: __le32(key, 4), k2: __le32(key, 8), k3: __le32(key, 12), k4: __le32(key, 16), k5: __le32(key, 20), k6: __le32(key, 24), k7: __le32(key, 28), n0: __le32(iv, 0), n1: __le32(iv, 4) ^ __be_word(seq >> 32 as u64), n2: __le32(iv, 8) ^ __be_word(seq) });
+  return Ok(Stream { k0: k.k0, k1: k.k1, k2: k.k2, k3: k.k3, k4: k.k4, k5: k.k5, k6: k.k6, k7: k.k7, n0: __le32(iv, 0), n1: __le32(iv, 4) ^ __be_word(seq >> 32 as u64), n2: __le32(iv, 8) ^ __be_word(seq) });
 }
 
 // The low 32 bits of v as big-endian bytes read little-endian.
@@ -275,12 +278,12 @@ function __xor_block(own out: u8[], at: i32, len: i32, k0: u32, k1: u32, k2: u32
 }
 ```
 
-### `6 function __xor_into(k: Key, counter: u32, own out: u8[], from: i32, len: i32): u8[]`
+### `6 function __xor_into(k: Stream, counter: u32, own out: u8[], from: i32, len: i32): u8[]`
 
 ```fern
-<<6 function __xor_into(k: Key, counter: u32, own out: u8[], from: i32, len: i32): u8[]>>=
+<<6 function __xor_into(k: Stream, counter: u32, own out: u8[], from: i32, len: i32): u8[]>>=
 // XORs the key stream from block counter over out[from:from + len] in place.
-function __xor_into(k: Key, counter: u32, own out: u8[], from: i32, len: i32): u8[] {
+function __xor_into(k: Stream, counter: u32, own out: u8[], from: i32, len: i32): u8[] {
   let at: i32 = 0;
   let block: u32 = counter;
   while (at < len) {
@@ -296,13 +299,13 @@ function __xor_into(k: Key, counter: u32, own out: u8[], from: i32, len: i32): u
 }
 ```
 
-### `7 pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]`
+### `7 pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]`
 
 ```fern
-<<7 pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]>>=
-pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError] {
-  let k: Key = __key(key, nonce)?;
-  return Ok(__xor_into(k, counter, __bytes_into(__alloc_u8(data.len()), 0, data, 0, data.len()), 0, data.len()));
+<<7 pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]>>=
+pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError] {
+  let st: Stream = __stream(k, nonce)?;
+  return Ok(__xor_into(st, counter, __bytes_into(__alloc_u8(data.len()), 0, data, 0, data.len()), 0, data.len()));
 }
 ```
 
@@ -488,11 +491,11 @@ pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
 }
 ```
 
-### `12 function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[]`
+### `12 function __aead_tag(k: Stream, aad: [u8], ct: [u8], from: i32, len: i32): u8[]`
 
 ```fern
-<<12 function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[]>>=
-function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
+<<12 function __aead_tag(k: Stream, aad: [u8], ct: [u8], from: i32, len: i32): u8[]>>=
+function __aead_tag(k: Stream, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
   let zero: u8[] = __alloc_u8(32);
   let i: i32 = 0;
   while (i < 32) {
@@ -513,46 +516,46 @@ function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
 }
 ```
 
-### `13 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]`
+### `13 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]`
 
 ```fern
-<<13 pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
-pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+<<13 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
+pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   let n: i32 = plaintext.len();
   let a: i32 = aad.len();
   let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, plaintext, 0, n), n + 16, aad, 0, a);
-  buf = seal_in_place(key, nonce, 0 as u64, buf, n + 16, a, 0, n)?;
+  buf = k.seal_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
   __arr_set_len(buf, n + 16);
   return Ok(buf);
 }
 
-pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   if (sealed.len() < 16) {
-    __key(key, nonce)?;
+    __stream(k, nonce)?;
     return Err(aead.Forged);
   }
   let n: i32 = sealed.len() - 16;
   let a: i32 = aad.len();
   let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, sealed, 0, n + 16), n + 16, aad, 0, a);
-  buf = open_in_place(key, nonce, 0 as u64, buf, n + 16, a, 0, n)?;
+  buf = k.open_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
   __arr_set_len(buf, n);
   return Ok(buf);
 }
 
 // Seals buf[at:at + n] in place under the nonce iv ^ seq, authenticating buf[aad_at:aad_at + aad_n], with the
 // tag at buf[at + n:at + n + 16]: the in-place form std/crypto/aes_gcm's Key.seal_in_place has.
-pub function seal_in_place(key: [u8], iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
-  let k: Key = __key_seq(key, iv, seq)?;
-  buf = __xor_into(k, 1, buf, at, n);
-  let tag: u8[] = __aead_tag(k, buf[aad_at:aad_at + aad_n], buf, at, n);
+pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
+  let st: Stream = __stream_seq(k, iv, seq)?;
+  buf = __xor_into(st, 1, buf, at, n);
+  let tag: u8[] = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, n);
   return Ok(__bytes_into(buf, at + n, tag, 0, 16));
 }
 
 // Opens buf[at:at + n] in place, the tag at buf[at + n:at + n + 16]; a tag that does not verify returns Forged
 // before anything is decrypted.
-pub function open_in_place(key: [u8], iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
-  let k: Key = __key_seq(key, iv, seq)?;
-  let want: u8[] = __aead_tag(k, buf[aad_at:aad_at + aad_n], buf, at, n);
+pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
+  let st: Stream = __stream_seq(k, iv, seq)?;
+  let want: u8[] = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, n);
   let diff: u8 = 0;
   for i in 0..16 {
     diff = diff | want[i] ^ buf[at + n + i];
@@ -562,6 +565,6 @@ pub function open_in_place(key: [u8], iv: [u8], seq: u64, own buf: u8[], aad_at:
   if (want[0] != 0) {
     return Err(aead.Forged);
   }
-  return Ok(__xor_into(k, 1, buf, at, n));
+  return Ok(__xor_into(st, 1, buf, at, n));
 }
 ```

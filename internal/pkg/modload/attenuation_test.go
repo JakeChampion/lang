@@ -46,8 +46,8 @@ pub function one(): i32 { return b.one(); }`,
 	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error:\ngot  %q\nwant substring %q", got, want)
 	}
-	if !strings.Contains(err.Error(), filepath.Join(root, "a", "fern.toml")) {
-		t.Errorf("error should name the granting manifest: %v", err)
+	if at := filepath.Join(root, "a", "fern.toml") + ":5:1: error[E088]: "; !strings.HasPrefix(err.Error(), at) {
+		t.Errorf("error should be E088 at the dependency's line in the granting manifest, %q: %v", at, err)
 	}
 }
 
@@ -156,9 +156,9 @@ pub function one(): i32 { return b.one() + c.one(); }`,
 		t.Fatal("expected amplification errors, got none")
 	}
 	manPath := filepath.Join(root, "a", "fern.toml")
-	want := manPath + `: dependency "b" of "a" is granted 'env' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
-		manPath + `: dependency "b" of "a" is granted 'net' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
-		manPath + `: dependency "c" of "a" is granted 'fs' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)`
+	want := manPath + `:5:1: error[E088]: dependency "b" of "a" is granted 'env' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
+		manPath + `:5:1: error[E088]: dependency "b" of "a" is granted 'net' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
+		manPath + `:6:1: error[E088]: dependency "c" of "a" is granted 'fs' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)`
 	if got := err.Error(); got != want {
 		t.Errorf("violations:\ngot  %q\nwant %q", got, want)
 	}

@@ -15,7 +15,7 @@ function __seq(start: i32): u8[] {
 }
 
 function __h(b: [u8]): string {
-  return crypto.sha3_256_new().update(b).final_hex();
+  return hex.encode(crypto.sha3_256_new().update(b).finish());
 }
 
 function __flip(b: [u8], at: i32, bit: u8): u8[] {

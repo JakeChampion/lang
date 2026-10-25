@@ -811,7 +811,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     if (f > 0) {
       fname = "__ev" + util.i32_to_string(f);
     }
-    fields = fields.append(parser.StructFieldDecl { name: fname, type_name: "", fn_ret: "", fn_param_types: "" });
+    fields = fields.append(parser.bare_field(fname, ""));
     f = f + 1;
   }
   return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
@@ -5205,7 +5205,17 @@ function variant_simple_name(name: string): string {
   return name;
 }
 
-function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[]): parser.TypeAlias[] {
+function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
+  for ed in enums {
+    if (ed.name == name) {
+      return ed.type_params;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+
+function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
   let out: parser.TypeAlias[] = aliases;
   let base: i32 = aliases.len();
   let i: i32 = 0;
@@ -5217,7 +5227,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
         k = k + 1;
       }
       if (k == out.len()) {
-        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: [], line: 0, col: 0, is_pub: true, is_package: false, module: "" });
+        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: enum_type_params(enums, owner), line: 0, col: 0, is_pub: true, is_package: false, module: "" });
       } else {
         out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
       }
@@ -5307,10 +5317,15 @@ function applied_in_ref(r: parser.TypeRef, base: string): string {
   return "";
 }
 
-function struct_type_params(decls: parser.StructDecl[], name: string): string[] {
+function decl_type_params(decls: parser.StructDecl[], aliases: parser.TypeAlias[], name: string): string[] {
   for d in decls {
     if (d.name == name) {
       return d.type_params;
+    }
+  }
+  for a in aliases {
+    if (a.name == name) {
+      return a.type_params;
     }
   }
   let none: string[] = [];
@@ -5330,7 +5345,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
   let tps: string[] = fd.type_params;
   if (tps.len() == 0) {
-    tps = struct_type_params(type_decls, util.base_type_name(type_name));
+    tps = decl_type_params(type_decls, aliases, util.base_type_name(type_name));
   }
   let t: i32 = 0;
   while (t < tps.len() && t < targs.len()) {
@@ -6121,37 +6136,61 @@ function call_aes_gcm(name: string, args: Value[]): Value {
   return byte_value(aesref.ctr32(bs[0], bs[1], bs[2]));
 }
 
-function call_crc32_cksum_array(args: Value[]): Value {
+function crc32_cksum_byte(crc: i32, b: i32): i32 {
+  crc = crc ^ b << 24;
+  let k: i32 = 0;
+  while (k < 8) {
+    if (crc < 0) {
+      crc = crc << 1 ^ 0x04c11db7;
+    } else {
+      crc = crc << 1;
+    }
+    k = k + 1;
+  }
+  return crc;
+}
+
+function crc32_ieee_byte(crc: i32, b: i32): i32 {
+  let c: u32 = (crc ^ b) as u32;
+  let k: i32 = 0;
+  while (k < 8) {
+    if ((c & 1) != 0) {
+      c = c >> 1 ^ 0xedb88320;
+    } else {
+      c = c >> 1;
+    }
+    k = k + 1;
+  }
+  return c as i32;
+}
+
+function call_crc32_array(name: string, args: Value[]): Value {
   if (args.len() != 2) {
-    return v_err("__crc32_cksum_array: expected 2 args");
+    return v_err(name + ": expected 2 args");
   }
   if (!is_i32_arg(args[0])) {
-    return v_err("__crc32_cksum_array: crc must be an integer");
+    return v_err(name + ": crc must be an integer");
   }
   if let VArr(a) = args[1] {
     let crc: i32 = vint_bits(args[0]);
+    let ieee: boolean = name == "__crc32_ieee_array";
     for element in arr_els(a) {
       if (!is_i32_arg(element)) {
-        return v_err("__crc32_cksum_array: elements must be u8");
+        return v_err(name + ": elements must be u8");
       }
       let b: i32 = vint_bits(element);
       if (b < 0 || b > 255) {
-        return v_err("__crc32_cksum_array: elements must be u8");
+        return v_err(name + ": elements must be u8");
       }
-      crc = crc ^ b << 24;
-      let k: i32 = 0;
-      while (k < 8) {
-        if (crc < 0) {
-          crc = crc << 1 ^ 0x04c11db7;
-        } else {
-          crc = crc << 1;
-        }
-        k = k + 1;
+      if (ieee) {
+        crc = crc32_ieee_byte(crc, b);
+      } else {
+        crc = crc32_cksum_byte(crc, b);
       }
     }
     return v_int(crc);
   }
-  return v_err("__crc32_cksum_array: second arg must be an array");
+  return v_err(name + ": second arg must be an array");
 }
 
 function call_scale_f64(args: Value[]): Value {
@@ -6935,8 +6974,8 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
   if (name == "__sum_bytes_array" || name == "__bsd_sum_bytes") {
     return call_byte_reduction(name, args);
   }
-  if (name == "__crc32_cksum_array") {
-    return call_crc32_cksum_array(args);
+  if (name == "__crc32_cksum_array" || name == "__crc32_ieee_array") {
+    return call_crc32_array(name, args);
   }
   if (name == "__scan_set_bytes" || name == "__count_runs_bytes") {
     return call_byte_set_scan(name, args);
@@ -7193,16 +7232,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
         let crc: i32 = vint_bits(args[0]);
         let ci: i32 = 0;
         while (ci < s.v.len()) {
-          crc = crc ^ s.v[ci] as i32 << 24;
-          let bk: i32 = 0;
-          while (bk < 8) {
-            if (crc < 0) {
-              crc = crc << 1 ^ 0x04c11db7;
-            } else {
-              crc = crc << 1;
-            }
-            bk = bk + 1;
-          }
+          crc = crc32_cksum_byte(crc, s.v[ci] as i32);
           ci = ci + 1;
         }
         return v_int(crc);
@@ -7960,7 +7990,7 @@ function bind_element(env: Env, header: string, elem: Value, elem_ty: string): E
 }
 
 function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
-  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "" };
+  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "", builtin: false };
   let subject: ast.Expr = held;
   if (!receiver_has_method(env.funcs, iv, "next")) {
     if (!receiver_has_method(env.funcs, iv, "iter")) {
@@ -8065,7 +8095,7 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   set_args(argv);
   let mod: parser.Module = lowered(raw_mod);
   let all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
-  let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants);
+  let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants, mod.enums);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == "main") {
@@ -8127,7 +8157,7 @@ pub function (s: Session) declare(m: parser.Module): Session {
   let decls: parser.Module = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
   let mod: parser.Module = lowered(decls);
   let types: parser.StructDecl[] = module_type_decls(mod.structs);
-  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types), type_decls: types } };
+  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
 }
 
 function declares_func(m: parser.Module, name: string): boolean {

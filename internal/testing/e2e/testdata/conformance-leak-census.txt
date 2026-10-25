@@ -91,6 +91,8 @@ array_sort                                           0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
 arrpush                                              0
+assert_fails_with_shadowing_exit                     0
+assert_todo_ignore_shadowing_names                   0
 associated_functions                                 0
 audit_core_builtins                                  0
 audit_env_time_random                                0
@@ -120,6 +122,7 @@ bool_to_string_receivers                             0
 boolean_logic                                        0
 boolean_scalar_dispatch                              0
 both_arms_read_p                                     0
+bound_generic_parameter_takes_a_string_literal       0
 break_continue                                       0
 byte_slice_after_set_len_regrows                     0
 byte_stream_and_async_channel                       0
@@ -160,15 +163,18 @@ codec_errors                                         0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
+const_char_comparison                                0
 const_composite                                      0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
 const_folds_at_declared_width                        0
+const_integer_literals_settle_to_float               0
 const_param_functions                                0
 const_settles_across_modules                         0
 const_settles_where_it_is_read                       0
 const_shadowed_by_binder                             0
 const_shadowed_by_pattern_binder                     0
+const_string_ordering                                0
 const_struct_literal                                 0
 const_struct_negative_fields                         0
 const_without_a_type                                 0
@@ -209,6 +215,7 @@ defer_control_flow                                   0
 defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
+derive_default_generic_enum                          0
 derive_default_generic_primitive                     0
 derive_from_json                                     0
 derive_from_json_i64                                 0
@@ -303,6 +310,7 @@ generic_enum_method_at_two_instantiations            0
 generic_enum_method_builds_a_variant                 0
 generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
+generic_enum_payload_settles_its_parameter           0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
@@ -1053,6 +1061,7 @@ three_arms_bind_p                                    0
 time_leap                                            0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
+todo_reached_with_shadowing_exit                     0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0

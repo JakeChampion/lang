@@ -8,14 +8,24 @@ import (
 )
 
 func TestSelfHostArm64Crc32CksumKeepsCalleeSavedRegisters(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	src := writeTempFern(t, t.TempDir(), "crc32",
+	checkArm64KernelKeepsCalleeSaved(t, "__fern_crc32_cksum",
 		`function main(): i32 { return __crc32_cksum(0, "abcdefghijklmnopqrstuvwxyz0123456789"); }`)
+}
+
+func TestSelfHostArm64Crc32IEEEKeepsCalleeSavedRegisters(t *testing.T) {
+	checkArm64KernelKeepsCalleeSaved(t, "__fern_crc32_ieee",
+		`function main(): i32 { let b: u8[] = [1u8, 2u8, 3u8]; return __crc32_ieee_array(0, b); }`)
+}
+
+func checkArm64KernelKeepsCalleeSaved(t *testing.T, name, program string) {
+	t.Helper()
+	cli := buildSelfHostCLI(t)
+	src := writeTempFern(t, t.TempDir(), "crc32", program)
 	asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := kernelBody(t, string(asm), "__fern_crc32_cksum")
+	body := kernelBody(t, string(asm), name)
 	bad := regexp.MustCompile(`\b[xw](1[89]|2[0-8])\b`)
 	var hits []string
 	for _, line := range strings.Split(body, "\n") {
@@ -24,9 +34,9 @@ func TestSelfHostArm64Crc32CksumKeepsCalleeSavedRegisters(t *testing.T) {
 		}
 	}
 	if len(hits) > 0 {
-		t.Errorf("__fern_crc32_cksum touches %d callee-saved or platform register(s) with no save/restore pair; "+
+		t.Errorf("%s touches %d callee-saved or platform register(s) with no save/restore pair; "+
 			"a caller holding a live value there is silently corrupted:\n  %s",
-			len(hits), strings.Join(hits, "\n  "))
+			name, len(hits), strings.Join(hits, "\n  "))
 	}
 }
 

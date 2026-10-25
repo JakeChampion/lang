@@ -285,7 +285,7 @@ function scale_map_call(e: ast.Expr, trusted: util.NameIndex): ast.Expr {
         }
         return ast.ExprCall {
           ...c, type_args: [],
-          callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "" },
+          callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "", builtin: false },
           args: [c.args[0], got.k],
         };
       }
@@ -370,7 +370,7 @@ pub function all_runtime_need_roots(): string[] {
     "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task", "vdso",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
     "str_repeat", "str_replace",
-    "str_split", "str_trim", "buf",
+    "str_split", "str_trim", "buf", "memcpy",
     "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
     "getxattr_bytes_u8", "lgetxattr_bytes_u8", "setxattr_bytes_u8", "lsetxattr_bytes_u8",
@@ -382,7 +382,7 @@ pub function all_runtime_need_roots(): string[] {
     "termios_get", "termios_set", "set_extproc",
     "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "reader_copy_range", "fd_flags",
     "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
-    "writer_write", "write_some", "splice_forever", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes", "utf8_blocks", "aes_gcm", "sha256", "sha1",
+    "writer_write", "write_some", "splice_forever", "writer_truncate", "subprocess", "crc32_cksum", "crc32_ieee", "sum_bytes", "utf8_blocks", "aes_gcm", "sha256", "sha1",
     "alloc_bytes", "arr_push_u8", "buf_u8", "buf_take_bytes", "buf_take_bytes_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
     "str_from_bytes_range", "str_from_bytes_range_u8",
     "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_text",
@@ -450,11 +450,12 @@ pub struct Sub {
   records: parser.StructDecl[],
   checked: boolean,
   switches: asmcore.Switches,
+  refused: util.Diag[],
 }
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
-  return Sub { bodies: [], extra: [], contracts: [], physical_contracts: [], physical_records: semrecords.no_records(), physical_enums: [], physical_finalizers: [], physical_origins: physicalbody.no_origins(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
+  return Sub { bodies: [], extra: [], contracts: [], physical_contracts: [], physical_records: semrecords.no_records(), physical_enums: [], physical_finalizers: [], physical_origins: physicalbody.no_origins(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches(), refused: [] };
 }
 
 pub function sub_lifted(sub: Sub, annotated: parser.Module): parser.Module {
@@ -1008,34 +1009,35 @@ function splice_leaf_body(leaf: irtables.LowerResult, base: i32, ret: i32, words
   return SpliceBody { ops: out, words: words, scalar_words: scalar_words };
 }
 
-pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irtables.LowerResult[]): void {
-  let diags: util.Diag[] = [];
-  let hh: i32 = hi;
-  if (hh < 0 || hh > funcs.len()) {
-    hh = funcs.len();
+// refuse_claims stops an emit the typed lowering refused; the CLI reports
+// the same verdicts, with their file, before it reaches a backend.
+pub function refuse_claims(refused: util.Diag[]): void {
+  if (refused.len() > 0) {
+    eprint(util.format_diags(refused));
+    exit(1);
   }
-  let i: i32 = lo;
-  while (i < hh) {
+}
+
+pub function fip_claim_diags(funcs: parser.FuncDecl[], bodies: irtables.LowerResult[]): util.Diag[] {
+  let diags: util.Diag[] = [];
+  let i: i32 = 0;
+  while (i < funcs.len() && i < bodies.len()) {
     if (funcs[i].fip || funcs[i].fbip) {
-      diags = fip_claim_diags(funcs[i], produced(cache, i, funcs[i]), diags);
+      diags = fn_fip_claim_diags(funcs[i], bodies[i], diags);
     }
     i = i + 1;
   }
-  if (diags.len() == 0) {
-    return;
-  }
-  eprint(util.format_diags(diags));
-  exit(1);
+  return diags;
 }
 
-function fip_claim_diags(fn: parser.FuncDecl, r: irtables.LowerResult, acc: util.Diag[]): util.Diag[] {
+function fn_fip_claim_diags(fn: parser.FuncDecl, r: irtables.LowerResult, acc: util.Diag[]): util.Diag[] {
   let claim: irfipverify.FipClaim = irfipverify.FipClaim {
     fn_name: fn.name, is_fip: fn.fip, is_fbip: fn.fbip, allowance: fn.fip_allowance,
   };
   let res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
   let out: util.Diag[] = acc;
   for p in res.problems {
-    out = out.append(util.Diag { related: [], length: 0, code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col, fix: None });
+    out = out.append(util.Diag { related: [], length: 0, code: p.kind, message: p.msg, line: fn.line, col: fn.col, fix: None });
   }
   return out;
 }

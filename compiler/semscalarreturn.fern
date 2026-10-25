@@ -5,20 +5,55 @@ import "./typeinfo";
 import "./util";
 
 pub function eligible(f: ssasem.Func, ty: typeinfo.Type): boolean {
-  let at: i32 = semrecords.find(f.records, ty);
-  if (at < 0 || ssasem.has_finalizer(f, ty)) {
+  let parts: Parts = parts_of(f, ty);
+  if (parts.types.len() == 0 || parts.types.len() > 4 || ssasem.has_finalizer(f, ty)) {
     return false;
   }
-  let fields: semrecords.Field[] = f.records.list[at].fields;
-  if (fields.len() == 0 || fields.len() > 4) {
-    return false;
-  }
-  for field in fields {
-    if (!scalar(field.ty)) {
+  for t in parts.types {
+    if (!scalar(t)) {
       return false;
     }
   }
   return true;
+}
+
+// The fields of a record, or the elements of a tuple the two-word pair
+// return cannot carry.
+struct Parts { types: typeinfo.Type[], names: string[], tuple: boolean }
+
+function parts_of(f: ssasem.Func, ty: typeinfo.Type): Parts {
+  if let typeinfo.TypeTuple(tup) = ty {
+    let e: typeinfo.Type[] = tup.elements;
+    if (e.len() > 2 || e.len() == 2 && (ssasem.is_wide(e[1]) || ssasem.is_float(e[1]))) {
+      return Parts { types: e, names: [], tuple: true };
+    }
+    return Parts { types: [], names: [], tuple: true };
+  }
+  let at: i32 = semrecords.find(f.records, ty);
+  if (at < 0) {
+    return Parts { types: [], names: [], tuple: false };
+  }
+  let types: typeinfo.Type[] = [];
+  let names: string[] = [];
+  for field in f.records.list[at].fields {
+    types = types.append(field.ty);
+    names = names.append(field.name);
+  }
+  return Parts { types: types, names: names, tuple: false };
+}
+
+function part_get(parts: Parts, v: i32, whole: i32, i: i32): ssa.SInst {
+  if (parts.tuple) {
+    return ssa.SInst { kind_tag: ssasem.tuple_get(), result: v, args: [whole], imm: i, str: "" };
+  }
+  return ssa.SInst { kind_tag: ssasem.record_get(), result: v, args: [whole], imm: i, str: parts.names[i] };
+}
+
+function built(parts: Parts): i32 {
+  if (parts.tuple) {
+    return ssasem.tuple_new();
+  }
+  return ssasem.record_new();
 }
 
 function scalar(t: typeinfo.Type): boolean {
@@ -74,32 +109,31 @@ function call(b: Build, name: string, arg: i32, from: typeinfo.Type, to: typeinf
   return Build { f: f, result: v, insts: b.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [arg], imm: 0, str: name }) };
 }
 
-function lower_return(f: ssasem.Func, b: ssa.SBlock, fields: semrecords.Field[]): Build {
+function lower_return(f: ssasem.Func, b: ssa.SBlock, parts: Parts): Build {
   let out: Build = Build { f: f, insts: b.insts, result: 0 - 1 };
   let primary: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < fields.len()) {
+  for i in 0..parts.types.len() {
+    let t: typeinfo.Type = parts.types[i];
     let v: i32 = out.f.values.len();
-    out = Build { ...out, f: value(out.f, fields[i].ty), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: v, args: [b.term.value], imm: i, str: fields[i].name }) };
-    out = call(out, conversion(bits_name(), fields[i].ty), v, fields[i].ty, word_type());
+    out = Build { ...out, f: value(out.f, t), insts: out.insts.append(part_get(parts, v, b.term.value, i)) };
+    out = call(out, conversion(bits_name(), t), v, t, word_type());
     if (i == 0) {
       primary = out.result;
     } else {
       out = call(out, set_prefix() + util.i32_to_string(i - 1), out.result, word_type(), dummy_type());
     }
-    i = i + 1;
   }
   return Build { ...out, result: primary };
 }
 
 pub function callee(f0: ssasem.Func): ssasem.Func {
-  let fields: semrecords.Field[] = f0.records.list[semrecords.find(f0.records, f0.result)].fields;
+  let parts: Parts = parts_of(f0, f0.result);
   let f: ssasem.Func = f0;
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[bi];
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
-      let out: Build = lower_return(f, b, fields);
+      let out: Build = lower_return(f, b, parts);
       let block: ssa.SBlock = ssa.SBlock { ...b, insts: out.insts, term: ssa.STerm { ...b.term, value: out.result } };
       f = ssasem.Func { ...out.f, graph: ssa.SFunc { ...out.f.graph, blocks: out.f.graph.blocks.with(bi, block) } };
     }
@@ -116,34 +150,31 @@ pub function capture_count(imm: i32): i32 {
   return ssasem.scalar_capture_count(imm);
 }
 
-function rebuilt(f: ssasem.Func, call_ins: ssa.SInst, fields: semrecords.Field[]): Build {
+function rebuilt(f: ssasem.Func, call_ins: ssa.SInst, parts: Parts): Build {
   let first: i32 = f.values.len();
   let out: Build = Build { f: f, insts: [], result: first };
-  for field in fields {
+  for t in parts.types {
     out = Build { ...out, f: value(out.f, word_type()) };
   }
-  let count: i32 = fields.len() - 1;
+  let count: i32 = parts.types.len() - 1;
   out = Build { ...out, insts: [ssa.SInst { ...call_ins, result: first, imm: 0 - ((first + 1) * 4 + count) }] };
   let args: i32[] = [];
-  let i: i32 = 0;
-  while (i < fields.len()) {
+  for i in 0..parts.types.len() {
     let lane: i32 = first + i;
     if (i > 0) {
       let name: string = word_prefix() + util.i32_to_string(i - 1);
       out = Build { ...out, f: contract(out.f, name, word_type(), word_type()), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [first], imm: 0, str: name }) };
     }
-    out = call(out, conversion(as_name(), fields[i].ty), lane, word_type(), fields[i].ty);
+    out = call(out, conversion(as_name(), parts.types[i]), lane, word_type(), parts.types[i]);
     args = args.append(out.result);
-    i = i + 1;
   }
-  return Build { ...out, insts: out.insts.append(ssa.SInst { kind_tag: ssasem.record_new(), result: call_ins.result, args: args, imm: 0, str: "" }) };
+  return Build { ...out, insts: out.insts.append(ssa.SInst { kind_tag: built(parts), result: call_ins.result, args: args, imm: 0, str: "" }) };
 }
 
 pub function caller(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
   let b: ssa.SBlock = f.graph.blocks[bi];
   let ins: ssa.SInst = b.insts[k];
-  let fields: semrecords.Field[] = callee.records.list[semrecords.find(callee.records, callee.result)].fields;
-  let out: Build = rebuilt(f, ins, fields);
+  let out: Build = rebuilt(f, ins, parts_of(callee, callee.result));
   let insts: ssa.SInst[] = [];
   let p: i32 = 0;
   while (p < b.insts.len()) {
@@ -193,7 +224,7 @@ function kept_fields(g: ssa.SFunc, whole: boolean[]): i32[] {
   let out: i32[] = [];
   for b in g.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.record_new() && whole[ins.result]) {
+      if ((ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.tuple_new()) && whole[ins.result]) {
         for a in ins.args {
           out = out.append(a);
         }
@@ -204,7 +235,7 @@ function kept_fields(g: ssa.SFunc, whole: boolean[]): i32[] {
 }
 
 function donation_edges(reference: boolean, kind: i32): boolean {
-  return !reference || kind == 7 || kind == 8 || kind == ssasem.record_new();
+  return !reference || kind == 7 || kind == 8 || kind == ssasem.record_new() || kind == ssasem.tuple_new();
 }
 
 pub function lanes_of(t: typeinfo.Type): typeinfo.Type[] {

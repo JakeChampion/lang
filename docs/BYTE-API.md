@@ -14,7 +14,7 @@ import "std/crypto" as crypto;
 function main(): i32 {
   let bytes: [u8] = "abc".as_bytes();
   let encoded: string = hex.encode(bytes);
-  let digest: u8[] = crypto.sha256_new().update(bytes).final_bytes();
+  let digest: u8[] = crypto.sha256_new().update(bytes).finish();
   print(encoded);
   print(hex.encode(digest));
   return 0;
@@ -34,9 +34,9 @@ Use `hmac_sha256(key, message)` for a raw HMAC. Both arguments are views.
 PBKDF2 also takes views for the password and salt. These inputs can contain
 any byte value.
 
-Output names describe their encoding: `final_bytes` and `final_hex`, or
-`sha256_bytes` and `sha256_hex`, return different representations. The byte
-form owns its array. The hex form owns its text.
+Digests, MACs and KDFs return bytes only: `finish()` on a state, or the
+one-shot named for the algorithm (`sha256(bytes)`, `hmac_sha256(key, msg)`).
+The result owns its array. Text output is `hex.encode` of that array.
 
 `string.at`, `first` and `last` return `Option[u8]`. Byte searches, counts
 and replacements take `u8`. Indices, lengths and counts use `i32`.

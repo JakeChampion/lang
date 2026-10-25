@@ -105,7 +105,7 @@ pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolea
 ```fern
 <<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>=
 pub function config(id: identity.Identity, ticket_key: [u8]): Config {
-  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: crypto.sha256_new().update(ticket_key).final_bytes(), client_roots: None };
+  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: crypto.sha256_new().update(ticket_key).finish(), client_roots: None };
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
@@ -488,9 +488,14 @@ function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64)
   }
   let ticket_nonce: u8[] = __copy(entropy[4:16]);
   let sealed: u8[] = [];
-  match (chacha20poly1305.seal(config.ticket_key, ticket_nonce, body, TICKET_AAD.bytes())) {
-    Ok(b) => {
-      sealed = b;
+  match (chacha20poly1305.key(config.ticket_key)) {
+    Ok(k) => {
+      match (k.seal(ticket_nonce, body, TICKET_AAD.bytes())) {
+        Ok(b) => {
+          sealed = b;
+        },
+        Err(_) => {}
+      }
     },
     Err(_) => {}
   }
@@ -515,7 +520,10 @@ function __open_ticket(config: Config, offer: handshake.Offer, id: [u8], now: i6
   if (id.len() < 12) {
     return None;
   }
-  match (chacha20poly1305.open(config.ticket_key, __copy(id[0:12]), __copy(id[12:id.len()]), TICKET_AAD.bytes())) {
+  let Ok(k) = chacha20poly1305.key(config.ticket_key) else {
+    return None;
+  };
+  match (k.open(__copy(id[0:12]), __copy(id[12:id.len()]), TICKET_AAD.bytes())) {
     Ok(body) => {
       return __usable_ticket(body, offer, now);
     },

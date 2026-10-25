@@ -29,6 +29,14 @@ func TestSelfHostManifestErrorIsE088(t *testing.T) {
 			"sub/fern.toml": "[dependencies]\n",
 			"sub/lib.fern":  "pub function one(): i32 { return 1; }\n",
 		}, "sub/fern.toml", ":1:1: error[E088]: missing [package] name", "[dependencies]"},
+		{"grant beyond what the package holds", map[string]string{
+			"fern.toml":   "[package]\nname = \"app\"\n[dependencies]\na = { path = \"a\", capabilities = [\"fs\"] }\n",
+			"main.fern":   "import \"a\";\nfunction main(): i32 { return a.one(); }\n",
+			"a/fern.toml": "[package]\nname = \"a\"\n[dependencies]\nb = { path = \"../b\", capabilities = [\"env\"] }\n",
+			"a/lib.fern":  "import \"b\";\npub function one(): i32 { return b.one(); }\n",
+			"b/fern.toml": "[package]\nname = \"b\"\n",
+			"b/lib.fern":  "pub function one(): i32 { return 1; }\n",
+		}, "a/fern.toml", `:4:1: error[E088]: dependency "b" of "a" is granted 'env' but "a" itself holds only [fs] (attenuation: a dependency may grant at most what it holds)`, `b = { path = "../b", capabilities = ["env"] }`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()

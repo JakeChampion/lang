@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"math/bits"
@@ -1289,7 +1290,7 @@ func New() *Interp {
 	}}
 	i.Builtins["__outer_mul_f64"] = &Builtin{Fn: builtinOuterMulF64}
 	i.Builtins["__inner_mul_add_f64"] = &Builtin{Fn: builtinInnerMulAddF64}
-	for _, name := range []string{"__crc32_cksum", "__crc32_cksum_array"} {
+	for _, name := range []string{"__crc32_cksum", "__crc32_cksum_array", "__crc32_ieee_array"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			if len(args) != 2 {
 				return nil, fmt.Errorf("%s: expected 2 args, got %d", name, len(args))
@@ -1299,7 +1300,7 @@ func New() *Interp {
 				return nil, fmt.Errorf("%s: expected a number crc, got %T", name, args[0])
 			}
 			var data []byte
-			if name == "__crc32_cksum_array" {
+			if name != "__crc32_cksum" {
 				a, ok := args[1].(Array)
 				if !ok {
 					return nil, fmt.Errorf("%s: expected an array, got %T", name, args[1])
@@ -1320,6 +1321,9 @@ func New() *Interp {
 				data = []byte(string(s))
 			}
 			crc := uint32(int32(n))
+			if name == "__crc32_ieee_array" {
+				return Number(int32(^crc32.Update(^crc, crc32.IEEETable, data))), nil
+			}
 			for _, c := range data {
 				crc ^= uint32(c) << 24
 				for k := 0; k < 8; k++ {
@@ -7201,7 +7205,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
-		if v, ok := env.get(id.Name); ok {
+		if v, ok := env.get(id.Name); ok && !id.Builtin {
 			switch fv := v.(type) {
 			case Func:
 				return i.callFunc(fv.Decl, args)

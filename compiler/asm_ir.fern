@@ -1534,6 +1534,180 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// This kernel updates the raw reflected IEEE CRC-32 register. The caller inverts the register.
+// Four lanes fold 64 bytes at a time, then one lane folds 16 bytes at a time.
+// A Barrett reduction gives the register. A byte table then takes the last 15 bytes or fewer.
+function emit_rt_crc32_ieee(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write("    .align 16\n");
+  s = s.write(".Lcrc32_ieee_k12:\n");
+  s = s.write("    .quad 0x0000000154442bd4\n");
+  s = s.write("    .quad 0x00000001c6e41596\n");
+  s = s.write(".Lcrc32_ieee_k34:\n");
+  s = s.write("    .quad 0x00000001751997d0\n");
+  s = s.write("    .quad 0x00000000ccaa009e\n");
+  s = s.write(".Lcrc32_ieee_k5:\n");
+  s = s.write("    .quad 0x0000000163cd6124\n");
+  s = s.write("    .quad 0x0000000000000000\n");
+  s = s.write(".Lcrc32_ieee_pmu:\n");
+  s = s.write("    .quad 0x00000001db710641\n");
+  s = s.write("    .quad 0x00000001f7011641\n");
+  s = s.write(".Lcrc32_ieee_table:\n");
+  s = s.write(crc32_ieee_table_rows());
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_crc32_ieee\n");
+  s = s.write("    .globl __fern_crc32_ieee_data\n");
+  s = s.write("    .type __fern_crc32_ieee, @function\n");
+  s = s.write("__fern_crc32_ieee:\n");
+  s = s.write("    movq 8(%rsi), %rdx\n");
+  s = s.write("    movq (%rsi), %rsi\n");
+  s = s.write("__fern_crc32_ieee_data:\n");
+  s = s.write("    movl %edi, %eax\n");
+  s = s.write("    cmpq $16, %rdx\n");
+  s = s.write("    jb .Lcrc32_ieee_tail\n");
+  s = s.write("    movd %eax, %xmm1\n");
+  s = s.write("    movdqu (%rsi), %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movdqa .Lcrc32_ieee_k34(%rip), %xmm4\n");
+  s = s.write("    cmpq $64, %rdx\n");
+  s = s.write("    jae .Lcrc32_ieee_wide\n");
+  s = s.write("    addq $16, %rsi\n");
+  s = s.write("    subq $16, %rdx\n");
+  s = s.write("    jmp .Lcrc32_ieee_fold1\n");
+  s = s.write(".Lcrc32_ieee_wide:\n");
+  s = s.write("    movdqu 16(%rsi), %xmm1\n");
+  s = s.write("    movdqu 32(%rsi), %xmm2\n");
+  s = s.write("    movdqu 48(%rsi), %xmm3\n");
+  s = s.write("    movdqa .Lcrc32_ieee_k12(%rip), %xmm5\n");
+  s = s.write("    addq $64, %rsi\n");
+  s = s.write("    subq $64, %rdx\n");
+  s = s.write("    cmpq $64, %rdx\n");
+  s = s.write("    jb .Lcrc32_ieee_combine\n");
+  s = s.write(".Lcrc32_ieee_fold4:\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm6\n");
+  s = s.write("    movdqu (%rsi), %xmm10\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm10, %xmm0\n");
+  s = s.write("    movdqa %xmm1, %xmm7\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm1\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm7\n");
+  s = s.write("    movdqu 16(%rsi), %xmm11\n");
+  s = s.write("    pxor %xmm7, %xmm1\n");
+  s = s.write("    pxor %xmm11, %xmm1\n");
+  s = s.write("    movdqa %xmm2, %xmm8\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm2\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm8\n");
+  s = s.write("    movdqu 32(%rsi), %xmm12\n");
+  s = s.write("    pxor %xmm8, %xmm2\n");
+  s = s.write("    pxor %xmm12, %xmm2\n");
+  s = s.write("    movdqa %xmm3, %xmm9\n");
+  s = s.write("    pclmulqdq $0x00, %xmm5, %xmm3\n");
+  s = s.write("    pclmulqdq $0x11, %xmm5, %xmm9\n");
+  s = s.write("    movdqu 48(%rsi), %xmm13\n");
+  s = s.write("    pxor %xmm9, %xmm3\n");
+  s = s.write("    pxor %xmm13, %xmm3\n");
+  s = s.write("    addq $64, %rsi\n");
+  s = s.write("    subq $64, %rdx\n");
+  s = s.write("    cmpq $64, %rdx\n");
+  s = s.write("    jae .Lcrc32_ieee_fold4\n");
+  s = s.write(".Lcrc32_ieee_combine:\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm2, %xmm0\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm3, %xmm0\n");
+  s = s.write(".Lcrc32_ieee_fold1:\n");
+  s = s.write("    cmpq $16, %rdx\n");
+  s = s.write("    jb .Lcrc32_ieee_reduce\n");
+  s = s.write("    movdqa %xmm0, %xmm6\n");
+  s = s.write("    pclmulqdq $0x00, %xmm4, %xmm0\n");
+  s = s.write("    pclmulqdq $0x11, %xmm4, %xmm6\n");
+  s = s.write("    movdqu (%rsi), %xmm1\n");
+  s = s.write("    pxor %xmm6, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    addq $16, %rsi\n");
+  s = s.write("    subq $16, %rdx\n");
+  s = s.write("    jmp .Lcrc32_ieee_fold1\n");
+  s = s.write(".Lcrc32_ieee_reduce:\n");
+  s = s.write("    movdqa %xmm0, %xmm1\n");
+  s = s.write("    pclmulqdq $0x10, %xmm4, %xmm1\n");
+  s = s.write("    psrldq $8, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movd %xmm0, %ecx\n");
+  s = s.write("    movd %ecx, %xmm1\n");
+  s = s.write("    movdqa .Lcrc32_ieee_k5(%rip), %xmm2\n");
+  s = s.write("    pclmulqdq $0x00, %xmm2, %xmm1\n");
+  s = s.write("    psrldq $4, %xmm0\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    movd %xmm0, %ecx\n");
+  s = s.write("    movd %ecx, %xmm1\n");
+  s = s.write("    movdqa .Lcrc32_ieee_pmu(%rip), %xmm2\n");
+  s = s.write("    pclmulqdq $0x10, %xmm2, %xmm1\n");
+  s = s.write("    movd %xmm1, %ecx\n");
+  s = s.write("    movd %ecx, %xmm1\n");
+  s = s.write("    pclmulqdq $0x00, %xmm2, %xmm1\n");
+  s = s.write("    pxor %xmm1, %xmm0\n");
+  s = s.write("    psrldq $4, %xmm0\n");
+  s = s.write("    movd %xmm0, %eax\n");
+  s = s.write(".Lcrc32_ieee_tail:\n");
+  s = s.write("    testq %rdx, %rdx\n");
+  s = s.write("    jz .Lcrc32_ieee_ret\n");
+  s = s.write("    leaq .Lcrc32_ieee_table(%rip), %r8\n");
+  s = s.write(".Lcrc32_ieee_byte:\n");
+  s = s.write("    movzbl (%rsi), %ecx\n");
+  s = s.write("    xorl %eax, %ecx\n");
+  s = s.write("    movzbl %cl, %ecx\n");
+  s = s.write("    shrl $8, %eax\n");
+  s = s.write("    xorl (%r8,%rcx,4), %eax\n");
+  s = s.write("    addq $1, %rsi\n");
+  s = s.write("    subq $1, %rdx\n");
+  s = s.write("    jnz .Lcrc32_ieee_byte\n");
+  s = s.write(".Lcrc32_ieee_ret:\n");
+  s = s.write("    ret\n");
+  s = s.write("    .size __fern_crc32_ieee, .-__fern_crc32_ieee\n");
+  return s;
+}
+
+function crc32_ieee_table_rows(): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < 256) {
+    let c: u32 = i as u32;
+    let k: i32 = 0;
+    while (k < 8) {
+      if ((c & 1) != 0) {
+        c = c >> 1 ^ 0xedb88320;
+      } else {
+        c = c >> 1;
+      }
+      k = k + 1;
+    }
+    if (i % 8 == 0) {
+      out = out + "    .long ";
+    } else {
+      out = out + ",";
+    }
+    out = out + util.i32_to_string(c as i32);
+    if (i % 8 == 7) {
+      out = out + "\n";
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "hostname", "uname_field",
@@ -1885,7 +2059,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
 }
 
 function emit_runtime_memcpy(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_memcpy:\n");
+  s = s.write("    .globl __fern_memcpy\n__fern_memcpy:\n");
   s = s.write("    movq %rdi, %rax\n");
   s = s.write("    cmpq $8, %rdx\n");
   s = s.write("    jb .Lmcp_lt8\n");
@@ -3009,7 +3183,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leave\n");
     s = s.write("    ret\n");
   }
-  if (s.has_need("buf")) {
+  if (s.has_need("memcpy")) {
     s = emit_runtime_memcpy(s);
   }
   if (s.has_need("buf")) {
@@ -4427,13 +4601,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $1, %r9\n    jmp " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
   }
-  if (o.kind_tag == 309 || o.kind_tag == 373) {
-    s = s.need("crc32_cksum");
-    s = s.write("    popq %rsi\n    popq %rdi\n");
-    if (o.kind_tag == 373) {
-      s = s.write("    movq (%rsi), %rdx\n    addq $8, %rsi\n    call __fern_crc32_cksum_data\n");
+  if (ir.is_crc32_op(o.kind_tag)) {
+    let kernel: string = "crc32_cksum";
+    if (o.kind_tag >= 480) {
+      kernel = "crc32_ieee";
+      s = s.need("crc32_ieee");
     } else {
-      s = s.write("    call __fern_crc32_cksum\n");
+      s = s.need("crc32_cksum");
+    }
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    if (o.kind_tag == 373 || o.kind_tag == 481) {
+      s = s.write("    movq (%rsi), %rdx\n    addq $8, %rsi\n    call __fern_" + kernel + "_data\n");
+    } else {
+      s = s.write("    call __fern_" + kernel + "\n");
     }
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
@@ -6733,7 +6913,22 @@ function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmc
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
-function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// An instruction whose caller registers are saved around its call.
+function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, saves: SlowSaves, own s: asmcore.EmitState): asmcore.EmitState {
+  if (saves.mask != 0 && ssa_inline_rc_dec(blk.insts[ii], s)) {
+    return ssa_rc_dec(blk.insts[ii], reg_of, lp, saves, ssa_x0_forget(s));
+  }
+  s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
+  s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
+  return ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
+}
+
+// A release whose count test is inline, so only its freeing call is slow.
+function ssa_inline_rc_dec(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  return ins.kind_tag == 11 && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && ins.imm != 5;
+}
+
+function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   if (ins.imm == 5) {
     return ssa_helper_entry(ins, reg_of, ".u", s);
   }
@@ -6754,7 +6949,9 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), J_JG, dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), J_JS, kept);
+  s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
   s = ssa_helper_entry(ins, reg_of, ".u", s);
+  s = ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
   s = ssa_branch(s, J_JMP, done).lab_def(dec);
   s = ssa_alu_im(s, 5, 32, 1, p, 0 - 8).lab_def(kept);
   s = ssa_store(reg_of, ins.result, p, s);
@@ -6767,7 +6964,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   }
   s = ssa_x0_forget(s);
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
-    return ssa_rc_dec(ins, reg_of, lp, s);
+    return ssa_rc_dec(ins, reg_of, lp, SlowSaves { mask: 0, base: 0, save: 0 }, s);
   }
   if (s.ssa_trap_suffix != "" && ins.args.len() == 0 && util.has_str(ssa_called_traps(), ins.str)) {
     return ssa_call_sym(helper_call_needs(ins.str, s.need(ins.str + ".c")), ins.str + ".c");
@@ -7141,7 +7338,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
 }
 
 function ir_memcpy_asm(): string {
-  return "    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n";
+  return "    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_memcpy\n    pushq $0\n";
 }
 
 function ir_memset_asm(): string {
@@ -8768,10 +8965,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
         tailed = true;
       } else {
         s = ssa_prepared_loc(prepared.source.values, ins.result, s);
-        let around: i32 = cold.by_pos[pos + ii];
-        s = ssa_cold_save(s, around, fr.cold_base, save, false);
-        s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
-        s = ssa_cold_save(s, around, fr.cold_base, save, true);
+        s = ssa_saved_inst(blk, ii, reg_of, lp, fr, r, SlowSaves { mask: cold.by_pos[pos + ii], base: fr.cold_base, save: save }, s);
       }
       ii = ii + 1;
     }
@@ -9145,7 +9339,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
   } else if (o.kind_tag == 441) {
     s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n").need("heap");
   } else if (o.kind_tag == 74) {
-    s = s.write(ir_memcpy_asm());
+    s = s.write(ir_memcpy_asm()).need("memcpy");
   } else if (o.kind_tag == 75) {
     s = s.write(ir_memset_asm());
   } else if (o.kind_tag == 78) {
@@ -9966,14 +10160,11 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   return asmcore.EmitState { ...s, reg_entries: previous_regs, leaves: previous_leaves, float_abi: previous_float.names, float_abi_masks: previous_float.masks };
 }
 
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, check_claims: boolean): asmcore.EmitState {
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
-  }
-  if (check_claims) {
-    ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   }
   let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
@@ -10015,7 +10206,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], physical: physicalbody.Collection): string[] {
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, retain_prepared: false, memo: irverifygate.open_memo("x86-64") }, all_funcs);
-  s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical, false);
+  s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical);
   irverifygate.close_memo(s.memo);
   s.release();
   return s.needed;
@@ -10039,6 +10230,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub, recs:
       return "";
     }
   }
+  ircore.refuse_claims(sub.refused);
   let lm: parser.Module = ircore.sub_lifted(sub, tm);
   let g: string = emit_module_ir_gated_sub(lm, sub, recs);
   if (g != "") {
@@ -10083,7 +10275,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
   }
-  s = emit_module_funcs(mod, all_funcs, s, globl_defs, lo, hi, cache, physical, true);
+  s = emit_module_funcs(mod, all_funcs, s, globl_defs, lo, hi, cache, physical);
   let en: i32 = 0;
   while (en < extra_needs.len()) {
     s = s.need(extra_needs[en]);
@@ -10373,6 +10565,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("crc32_cksum")) {
     s = emit_rt_crc32_cksum(s);
+  }
+  if (s.has_need("crc32_ieee")) {
+    s = emit_rt_crc32_ieee(s);
   }
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
