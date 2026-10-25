@@ -1,0 +1,12 @@
+// `One(1)` settles none of P's parameters, so it leaves `T` uninferred, as
+// `N` or `[]` would. Two(1, 2) settles T, and `g[i32]` writes it.
+
+enum P[T] { Two(i32, T), One(i32), N }
+
+function g[T](p: P[T]): i32 {
+    return 1;
+}
+
+function main(): i32 {
+    return g(One(1)) + g(Two(1, 2)) + g[i32](One(3));
+}

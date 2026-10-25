@@ -42,19 +42,6 @@ func foldAssets(t *testing.T, src string, set *embed.Set) *ast.Program {
 	return prog
 }
 
-func foldAssetsErr(t *testing.T, src string, set *embed.Set) string {
-	t.Helper()
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := Fold(prog, set); err != nil {
-		return err.Error()
-	}
-	t.Fatal("expected a fold error but got none")
-	return ""
-}
-
 func firstStringLit(t *testing.T, prog *ast.Program) string {
 	t.Helper()
 	var found *ast.StringLit
@@ -193,7 +180,7 @@ func TestAssetTextRefusesInvalidUTF8(t *testing.T) {
 		`function main(): i32 { let s: string = __fern_asset("img/favicon.png"); return 0; }`,
 		`const S: string = __fern_asset("img/favicon.png"); function main(): i32 { return 0; }`,
 	} {
-		got := foldAssetsErr(t, src, set)
+		got := foldCheckErr(t, src, set)
 		for _, want := range []string{`"img/favicon.png"`, "is not valid UTF-8", "__fern_asset_bytes"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("error %q should contain %q", got, want)
@@ -277,7 +264,7 @@ func TestAssetErrors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := foldAssetsErr(t, tc.src, tc.set)
+			got := foldCheckErr(t, tc.src, tc.set)
 			if !strings.Contains(got, tc.want) {
 				t.Fatalf("error was %q,\nwant it to contain %q", got, tc.want)
 			}
@@ -391,7 +378,7 @@ func TestAssetsBytesCarriesBinaryBytes(t *testing.T) {
 
 func TestAssetsTextRefusesInvalidUTF8(t *testing.T) {
 	set := assetSet(t, map[string]string{"a.txt": "AAA", "font.woff2": "wOF2\xc0\x00"})
-	got := foldAssetsErr(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)
+	got := foldCheckErr(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)
 	for _, want := range []string{`"font.woff2"`, "is not valid UTF-8", "__fern_assets_bytes"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("error %q should contain %q", got, want)
@@ -441,7 +428,7 @@ func TestAssetsErrors(t *testing.T) {
 			name: "a const of the wrong type",
 			src:  `const A: string = __fern_assets(); function main(): i32 { return 0; }`,
 			set:  set,
-			want: "declared type string does not match initialiser type (string, string)[]",
+			want: "const A: expected string, got (string, string)[]",
 		},
 		{
 			name: "bytes enumeration arguments are rejected",
@@ -458,7 +445,7 @@ func TestAssetsErrors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := foldAssetsErr(t, tc.src, tc.set)
+			got := foldCheckErr(t, tc.src, tc.set)
 			if !strings.Contains(got, tc.want) {
 				t.Fatalf("error was %q,\nwant it to contain %q", got, tc.want)
 			}

@@ -1,0 +1,7 @@
+// `-` takes integers; on two strings it is one E009 at the operator, not
+// one per operand.
+const S: string = "a" - "b";
+
+function main(): i32 {
+    return S.len() as i32;
+}

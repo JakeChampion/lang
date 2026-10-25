@@ -2758,6 +2758,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.computeResultBorrows(prog)
 
 	c.rewriteAssocConstReads(prog)
+	c.checkConsts(prog)
 	for _, fn := range prog.Funcs {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -5796,6 +5797,9 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		params := typeParamSet(impl.TypeParams)
 		c.checkTypeKnown(impl.Type, params, impl.P)
 	}
+	for _, cd := range prog.Consts {
+		c.checkTypeKnown(cd.Type, nil, cd.P)
+	}
 }
 
 func (c *checker) validateMapKeyTypes(prog *ast.Program) {
@@ -6997,7 +7001,7 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 	}
 	if e, ok := expected.(ast.ArrayType); ok {
 		a, ok := actual.(ast.ArrayType)
-		return ok && c.unifyType(e.Elem, a.Elem, sub)
+		return ok && (a.Elem == nil || c.unifyType(e.Elem, a.Elem, sub))
 	}
 	if e, ok := expected.(ast.SliceType); ok {
 		a, ok := actual.(ast.SliceType)
@@ -7431,9 +7435,8 @@ func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[strin
 	if c.unifyType(want, got, sub) {
 		return true
 	}
-	// A parameter whose type parameters are all bound takes what a parameter written with that type takes.
-	if bound := substituteType(want, sub); !containsParamType(bound) && c.argAssignable(bound, got, own) {
-		return true
+	if resolved := substituteType(want, sub); !containsParamType(resolved) {
+		return c.argOK(arg, resolved, got, own)
 	}
 	if own {
 		return false
@@ -8369,6 +8372,14 @@ func (c *checker) identValueBinding(name string, s *scope) (ast.Type, bool) {
 		return t, true
 	}
 	return c.capturedType(name, s)
+}
+
+// calleeBinding is identValueBinding for a callee, which a Builtin ident never names.
+func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
+	if id.Builtin {
+		return nil, false
+	}
+	return c.identValueBinding(id.Name, s)
 }
 
 type cellStore struct {
@@ -9538,7 +9549,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return false
 			}
 			id, ok := n.(*ast.Ident)
-			if !ok || !owned[id.Name] {
+			if !ok || id.Builtin || !owned[id.Name] {
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
@@ -11997,7 +12008,7 @@ func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
 	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen || !c.funcVisibleHere(id.Name) {
 		return false
 	}
-	_, bound := c.identValueBinding(id.Name, s)
+	_, bound := c.calleeBinding(id, s)
 	return !bound
 }
 
@@ -12339,20 +12350,45 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	c.restampLitCaptures(fn.Captures, outer)
 }
 
+// checkConsts type-checks the initializers constfold left in prog.Consts,
+// reporting the folder's E093 for one only when it is well-typed.
+func (c *checker) checkConsts(prog *ast.Program) {
+	for _, cd := range prog.Consts {
+		before := len(c.errors)
+		c.constType(cd)
+		if len(c.errors) == before && cd.FoldErr != "" {
+			c.report(cd.SourceModule, cd.P, "E093", cd.FoldErr)
+		}
+	}
+}
+
 func (c *checker) constType(cd *ast.ConstDecl) ast.Type {
 	if t, ok := c.constTypes[cd.Name]; ok {
 		return t
-	}
-	if cd.Type != nil {
-		c.constTypes[cd.Name] = cd.Type
-		return cd.Type
 	}
 	if c.constBusy[cd.Name] {
 		c.errfCode(cd.P, "E001", "const %s is defined in terms of itself", cd.Name)
 		return nil
 	}
 	c.constBusy[cd.Name] = true
-	t := c.checkExpr(cd.Value, newScope(nil))
+	prev := c.current
+	c.current = &ast.FuncDecl{P: cd.P, SourceModule: cd.SourceModule}
+	c.setElemHintFor(cd.Value, cd.Type)
+	c.expectedType = cd.Type
+	s := newScope(nil)
+	t := c.checkExpr(cd.Value, s)
+	c.expectedType = nil
+	c.elemHint = nil
+	if cd.Type != nil {
+		c.settleNumeric(cd.Value, cd.Type)
+		t = c.postSettleType(cd.Value, t)
+		t = c.maybeWrapForUnion(cd.Type, &cd.Value, t, s)
+		if t != nil && !c.assignable(cd.Type, t) {
+			c.errfCode(cd.P, "E002", "const %s: expected %s, got %s%s", cd.Name, cd.Type, t, assignHint(cd.Type, t))
+		}
+		t = cd.Type
+	}
+	c.current = prev
 	delete(c.constBusy, cd.Name)
 	c.constTypes[cd.Name] = t
 	return t
@@ -12544,13 +12580,13 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.FloatType{Polymorphic: true}
 	case *ast.Ident:
-		if t, ok := s.lookup(n.Name); ok {
+		if t, ok := s.lookup(n.Name); ok && !n.Builtin {
 			n.Local = true
 			n.ConstParam = s.binder(n.Name).consts[n.Name]
 			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
-		if len(c.captureChain) > 0 {
+		if len(c.captureChain) > 0 && !n.Builtin {
 			for i := len(c.captureChain) - 1; i >= 0; i-- {
 				ent := c.captureChain[i]
 				if ent.scope == nil {
@@ -12988,7 +13024,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
 				}
 				for i, a := range n.Args {
-					if i < len(resolvedPayloads) {
+					if i < len(resolvedPayloads) && !containsParamType(resolvedPayloads[i]) {
 						c.settleNumeric(a, resolvedPayloads[i])
 					}
 				}
@@ -13161,7 +13197,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		intrinsic := IntrinsicNone
 		if id, direct := n.Callee.(*ast.Ident); direct {
-			if _, local := c.identValueBinding(id.Name, s); !local {
+			if _, local := c.calleeBinding(id, s); !local {
 				intrinsic = c.intrinsicSigs[ft]
 			}
 		}
@@ -13215,7 +13251,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
-				if _, isValue := c.identValueBinding(id.Name, s); isValue {
+				if _, isValue := c.calleeBinding(id, s); isValue {
 					c.shadowedGenericCalls[n] = true
 				}
 			}
@@ -13269,7 +13305,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		calleeName := ""
 		if cid, ok := n.Callee.(*ast.Ident); ok {
 			calleeName = cid.Name
-			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
+			if _, isValue := c.calleeBinding(cid, s); isValue {
 				calleeIsValue = true
 			} else {
 				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
@@ -14124,11 +14160,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if vt == nil {
 				continue
 			}
-			if containsParamType(fieldExpected) {
-				if at, ok := vt.(ast.ArrayType); ok && at.Elem == nil {
-					continue
-				}
-			} else {
+			if !containsParamType(fieldExpected) {
 				c.settleNumeric(f.Value, fieldExpected)
 				vt = c.postSettleType(f.Value, vt)
 			}
@@ -14147,7 +14179,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				c.stampStructTypeArgs(f.Value, expected)
-				if unifyIfArms(expected, vt) == nil && !c.assignable(expected, vt) {
+				if !c.assignable(expected, vt) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
 			}

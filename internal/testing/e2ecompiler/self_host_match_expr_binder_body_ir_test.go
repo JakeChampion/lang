@@ -8,10 +8,42 @@ import (
 	"testing"
 )
 
-var matchExprBinderBodyCases = []struct {
+var computedScrutineeCases = []struct {
 	name string
 	src  string
 }{
+	{"computed_scrutinee_if_let", `function input(): Option[string] { return Some("payload"); }
+function main(): i32 {
+    let result = if let Some(text) = input() { text } else { "empty" };
+    return result.len();
+}`},
+	{"computed_scrutinee_unannotated", `function value(): i32 { return 17; }
+function pick(key: string): i32 {
+    let keys: string[] = [key];
+    let result = match (keys[0]) { "a" => value(), _ => { return 2; } };
+    return result;
+}
+function main(): i32 { return pick("a") + pick("b"); }`},
+	{"computed_scrutinee_wide_payload", `enum Item { Number(i64), Empty }
+function main(): i32 {
+    let items: Item[] = [Number(5000000000i64)];
+    let result = match (items[0]) { Number(n) => n, Empty => 0i64 };
+    if (result != 5000000000i64) { return 29; }
+    return (result % 97i64) as i32;
+}`},
+	{"computed_scrutinee_single_evaluation", `function next(calls: Cell[i32]): string {
+    calls.set(calls.get() + 1);
+    return "payload";
+}
+function main(): i32 {
+    let calls = cell_new(0);
+    let result = match (next(calls)) { "other" => "wrong", _ => "correct" };
+    if (calls.get() != 1 || result != "correct") { return 30; }
+    return result.len();
+}`},
+}
+
+var matchExprBinderBodyCases = append(computedScrutineeCases, []struct{ name, src string }{
 	{"tuple_string_binder", `function main(): i32 {
     let t: (string, i32) = ("elem", 4);
     let got: string = match (t) { (q, n) => q };
@@ -144,6 +176,46 @@ function main(): i32 {
     if (s != "err") { return 24; }
     return s.len() as i32;
 }`},
+}...)
+
+func TestSelfHostComputedScrutineeCheck(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range computedScrutineeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(path, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("-check: %v\n%s", err, out)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, src, code string }{
+		{"inferred_string_rejects_integer_destination", `function main(): i32 {
+    let keys: string[] = ["a"];
+    let result = match (keys[0]) { "a" => "text", _ => "other" };
+    let bad: i32 = result;
+    return bad;
+}`, "E003"},
+		{"incompatible_arms_remain_invalid", `function main(): i32 {
+    let keys: string[] = ["a"];
+    let result = match (keys[0]) { "a" => "text", _ => 7 };
+    return 0;
+}`, "E031"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(path, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib).CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "error["+tc.code+"]") || strings.Contains(string(out), "error: internal:") {
+				t.Fatalf("want %s, got %v\n%s", tc.code, err, out)
+			}
+		})
+	}
 }
 
 func TestSelfHostMatchExprBinderBodyX86_64(t *testing.T) {
