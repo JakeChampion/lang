@@ -94,6 +94,55 @@ function main(): i32 {
   if (patchbay.sample(10, 0, 69, 0, 0.1, -1.0) != 0.0 || patchbay.drive(1000.0, 8.0) >= 1.0) {
     return 21;
   }
+  for a in 0..16 {
+    for b in 0..16 {
+      if ((circuit.alu(2, a, b) & 15) != (a + b) % 16 || circuit.alu(2, a, b) >> 4 != (a + b) / 16 || circuit.alu(3, a, b) != (a ^ b) || circuit.alu(4, a, b) != (a & b)) {
+        return 23;
+      }
+    }
+  }
+  let cpu = circuit.cpu(17, 0, 0);
+  cpu = circuit.cpu(34, cpu & 15, cpu >> 4 & 15);
+  cpu = circuit.cpu(35, cpu & 15, cpu >> 4 & 15);
+  cpu = circuit.cpu(112, cpu & 15, cpu >> 4 & 15);
+  if ((cpu & 15) != 6 || (cpu & 512) == 0 || (circuit.cpu(128, 6, 4) & 256) == 0) {
+    return 24;
+  }
+  let machines: i32[] = __alloc_i32(32);
+  machines = machines.with(0, 1).with(1, 2).with(2, 7).with(3, 2).with(4, 6).with(10, 10).with(18, 8);
+  let powered = foundry.configure(machines, foundry.factory(32), 8);
+  if (powered.powered[2] != 1) {
+    return 25;
+  }
+  for tick in 0..512 {
+    powered = foundry.step(machines, powered, 8);
+  }
+  let units = 0i64;
+  for cargo in powered.cargo {
+    units = units + foundry.units(cargo) as i64;
+  }
+  if (powered.refined == 0 || powered.consumed == 0 || powered.produced != powered.consumed + units) {
+    return 26;
+  }
+  machines = machines.with(10, 0);
+  let disconnected = foundry.configure(machines, foundry.factory(32), 8);
+  for tick in 0..256 {
+    disconnected = foundry.step(machines, disconnected, 8);
+  }
+  if (disconnected.refined != 0 || disconnected.powered[2] != 0) {
+    return 27;
+  }
+  let rails: i32[] = [1, 11, 9, 9, 9, 9, 11, 6];
+  let freight = foundry.factory(8);
+  for tick in 0..128 {
+    freight = foundry.step(rails, freight, 8);
+  }
+  if (freight.consumed == 0 || foundry.rail_path(9, 0, 9, 11)) {
+    return 28;
+  }
+  if ((patchbay.sample_hz(20, 48000, patchbay.frequency(69, 48000), 0, 0.01, -1.0) - patchbay.sample(20, 48000, 69, 0, 0.01, -1.0)).abs() > 0.000000001) {
+    return 29;
+  }
   let pixel = prism.pixel(10, 10, 32, 20, 0, 6324352, 0.0);
   if (pixel < 0 || pixel != prism.pixel(10, 10, 32, 20, 0, 6324352, 0.0)) {
     return 22;

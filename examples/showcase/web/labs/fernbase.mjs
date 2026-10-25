@@ -8,6 +8,7 @@ import {
   bindRoom,
   request,
   download,
+  fileInput,
   measures,
 } from "./shell.mjs";
 shell(
@@ -25,7 +26,6 @@ let revision = 0,
   draft = null,
   transactionRevision = 0,
   busy = false,
-  stopped = false,
   latest;
 function table(rows) {
   $("results").replaceChildren();
@@ -201,12 +201,36 @@ $("seed").onclick = async () => {
 };
 action("Refresh", refresh);
 action("Export rows", async () => {
-  let data = await request(endpoint("state"));
-  if (data.total > 200)
-    throw Error(
-      "The table view exports the first 200 rows. Use the SQL view to select specific keys.",
-    );
-  download("fernbase.json", JSON.stringify(data.rows, null, 2));
+  const data = await request(endpoint("export"));
+  download("fernbase.json", JSON.stringify(data, null, 2));
 });
+fileInput(".json", async (file) => {
+  if (file.size > 8388608) throw Error("Database import exceeds 8 MiB.");
+  const data = JSON.parse(await file.text()),
+    rows = Array.isArray(data) ? data : data.rows;
+  if (!Array.isArray(rows) || rows.length > 10000)
+    throw Error("Expected a database export with at most 10000 rows.");
+  for (const row of rows)
+    if (
+      typeof row.key !== "string" ||
+      typeof row.value !== "string" ||
+      new TextEncoder().encode(row.key).length > 128 ||
+      new TextEncoder().encode(row.value).length > 4096
+    )
+      throw Error("Invalid database row.");
+  for (const row of rows) {
+    const state = await request(endpoint("state"));
+    const quote = (value) => "'" + value.replaceAll("'", "''") + "'";
+    const result = await request(endpoint("query"), {
+      sql: `INSERT INTO entries VALUES (${quote(row.key)},${quote(row.value)});`,
+      revision: state.revision,
+      preview: false,
+    });
+    revision = result.revision;
+  }
+  await refresh();
+  notice(`${rows.length} rows imported. Each row used an atomic transaction.`);
+});
+
 transaction();
 refresh().catch(error);

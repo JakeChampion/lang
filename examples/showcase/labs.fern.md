@@ -19,6 +19,8 @@ The server admits twelve rooms. File, document, query, and transaction limits bo
 ```fern
 <<Application routes>>=
 import "std/http";
+import "std/png";
+import "std/f64";
 import "std/json";
 import "std/array";
 import "std/result";
@@ -34,7 +36,7 @@ struct SavedArchive { revision: i64, documents: lantern.Document[] }
 
 pub struct Room { name: string, database: fernbase.Database, archive: lantern.Index, revision: i64, fault: string }
 
-pub struct State { directory: string, rooms: Cell[Room[]] }
+pub struct State { directory: string, rooms: Cell[Room[]], preview: Cell[Option[u8[]]] }
 
 @derive(json.FromJson)
 struct Query { sql: string, revision: i64, preview: boolean }
@@ -55,7 +57,7 @@ struct ArchiveStatus { revision: i64, documents: i32, terms: i32, words: i32, pe
 struct SearchResult { revision: i64, result: lantern.Results, server_us: i64 }
 
 pub function state(): State {
-  return State { directory: env("FERN_LABS_DATA").unwrap_or(""), rooms: cell_new([] as Room[]) };
+  return State { directory: env("FERN_LABS_DATA").unwrap_or(""), rooms: cell_new([] as Room[]), preview: cell_new(None as Option[u8[]]) };
 }
 
 function failure(message: string): http.HttpError {
@@ -138,13 +140,13 @@ function persist(state: State, at: i32, name: string, value: string): Result[voi
 }
 
 pub function handle(state: State, application: string, action: string, request: HttpRequest): Result[HttpResponse, http.HttpError] {
-  if (application == "fernbase" && action != "state" && action != "query" && action != "recover") {
+  if (application == "fernbase" && action != "state" && action != "query" && action != "recover" && action != "export") {
     return Err(http.fail(404, "Unknown database operation."));
   }
-  if (application == "lantern" && action != "state" && action != "search" && action != "import" && action != "recover") {
+  if (application == "lantern" && action != "state" && action != "search" && action != "import" && action != "recover" && action != "export") {
     return Err(http.fail(404, "Unknown archive operation."));
   }
-  let started = now_ns();
+  let started = monotonic_ns();
   let at = room(state, request)?;
   let current = state.rooms.get()[at];
   if (action == "recover") {
@@ -157,6 +159,9 @@ pub function handle(state: State, application: string, action: string, request: 
     state.rooms.set(state.rooms.get().with(at, current));
   }
   if (application == "fernbase") {
+    if (action == "export") {
+      return Ok(http.json_of(current.database).with_header("Cache-Control", "no-store"));
+    }
     if (action == "query") {
       let input = http.body_json[Query](request).map_err((e: http.BodyError): http.HttpError => http.fail(400, "Invalid query JSON."))?;
       if (input.preview && input.revision != current.database.revision) {
@@ -177,9 +182,16 @@ pub function handle(state: State, application: string, action: string, request: 
         persist(state, at, "fernbase-" + current.name, checkpoint)?;
         state.rooms.set(state.rooms.get().with(at, Room { ...current, database: result.database }));
       }
-      return Ok(http.json_of(QueryResult { revision: result.database.revision, result: result.output, rows: result.database.rows.len(), persistent: state.directory != "", server_us: (now_ns() - started) / 1000 }).with_header("Cache-Control", "no-store"));
+      return Ok(http.json_of(QueryResult { revision: result.database.revision, result: result.output, rows: result.database.rows.len(), persistent: state.directory != "", server_us: (monotonic_ns() - started) / 1000 }).with_header("Cache-Control", "no-store"));
     }
     return Ok(http.json_of(DatabaseStatus { revision: current.database.revision, rows: current.database.rows.take(200), total: current.database.rows.len(), persistent: state.directory != "", fault: current.fault }).with_header("Cache-Control", "no-store"));
+  }
+  if (action == "export") {
+    let text = "";
+    for document in current.archive.documents {
+      text = text + document.to_json() + "\n";
+    }
+    return Ok(http.ok(text).with_header("Content-Type", "application/x-ndjson").with_header("Cache-Control", "no-store"));
   }
   if (action == "import") {
     if (current.fault != "") {
@@ -197,7 +209,7 @@ pub function handle(state: State, application: string, action: string, request: 
   }
   if (action == "search") {
     let results = lantern.search(current.archive, common.query(request, "q", ""));
-    return Ok(http.json_of(SearchResult { revision: current.revision, result: results, server_us: (now_ns() - started) / 1000 }).with_header("Cache-Control", "no-store"));
+    return Ok(http.json_of(SearchResult { revision: current.revision, result: results, server_us: (monotonic_ns() - started) / 1000 }).with_header("Cache-Control", "no-store"));
   }
   return Ok(http.json_of(ArchiveStatus { revision: current.revision, documents: current.archive.documents.len(), terms: current.archive.terms.len(), words: current.archive.words, persistent: state.directory != "", fault: current.fault }).with_header("Cache-Control", "no-store"));
 }
@@ -211,13 +223,50 @@ pub function reference(request: HttpRequest): Result[HttpResponse, http.HttpErro
   let sample = common.integer(request, "sample", 0, 0, 127)?;
   let scene = common.integer(request, "scene", 6324352, 0, 16777215)?;
   let angle = common.integer(request, "angle", 0, -180, 180)?;
-  let started = now_ns();
+  let started = monotonic_ns();
   let pixels: i32[] = [];
   for y in 0..height {
     for x in 0..width {
       pixels = pixels.append(trace.pixel(x, y, width, height, sample, scene, angle as f64 * 3.141592653589793 / 180.0));
     }
   }
-  return Ok(http.json_of(Reference { pixels: pixels, width: width, height: height, server_us: (now_ns() - started) / 1000 }).with_header("Cache-Control", "no-store"));
+  return Ok(http.json_of(Reference { pixels: pixels, width: width, height: height, server_us: (monotonic_ns() - started) / 1000 }).with_header("Cache-Control", "no-store"));
+}
+
+pub function preview(state: State): Result[HttpResponse, http.HttpError] {
+  let bytes: u8[] = [];
+  if let Some(cached) = state.preview.get() {
+    bytes = cached;
+  } else {
+    bytes = thumbnail()?;
+    state.preview.set(Some(bytes));
+  }
+  return Ok(http.bytes(200, bytes).with_content_type("image/png").with_header("Cache-Control", "public, max-age=3600"));
+}
+
+pub function thumbnail(): Result[u8[], http.HttpError] {
+  let width = 320;
+  let height = 200;
+  let rgb: u8[] = __alloc_u8(width * height * 3);
+  for y in 0..height {
+    for x in 0..width {
+      let red = 0.0;
+      let green = 0.0;
+      let blue = 0.0;
+      for sample in 0..8 {
+        let value = trace.pixel(x, y, width, height, sample, 6324352, 0.0);
+        red = red + (value >> 20 & 1023) as f64;
+        green = green + (value >> 10 & 1023) as f64;
+        blue = blue + (value & 1023) as f64;
+      }
+      let r = red / 8.0 / 255.0 * 1.5;
+      let g = green / 8.0 / 255.0 * 1.5;
+      let b = blue / 8.0 / 255.0 * 1.5;
+      let at = (y * width + x) * 3;
+      rgb = rgb.with(at, ((r / (1.0 + r)).sqrt() * 255.0) as u8).with(at + 1, ((g / (1.0 + g)).sqrt() * 255.0) as u8).with(at + 2, ((b / (1.0 + b)).sqrt() * 255.0) as u8);
+    }
+  }
+  let bytes = png.encode_rgb8(width, height, rgb).map_err((e: png.EncodeError): http.HttpError => http.fail(500, "Cannot encode the scene preview."))?;
+  return Ok(bytes);
 }
 ```

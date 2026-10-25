@@ -20,7 +20,22 @@ function main(): i32 {
  if (sample.filter() != 7 || filter(21) != 42) { return 1; }
  return 0;
 }`
-	wat := cli.emit(t, "wasm32-wasi", source)
+	formattedPath := filepath.Join(t.TempDir(), "formatted.fern")
+	if err := os.WriteFile(formattedPath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	format := runX86_64Bin(cli.runner, cli.bin, "-fmt", "-w", formattedPath)
+	if output, err := format.CombinedOutput(); err != nil {
+		t.Fatalf("format export and method: %v\n%s", err, output)
+	}
+	formatted, err := os.ReadFile(formattedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(formatted), "@export(") != 1 {
+		t.Fatalf("formatter attached the export to another declaration:\n%s", formatted)
+	}
+	wat := cli.emit(t, "wasm32-wasi", string(formatted))
 	path := filepath.Join(t.TempDir(), "collision.wat")
 	if err := os.WriteFile(path, []byte(wat), 0o644); err != nil {
 		t.Fatal(err)

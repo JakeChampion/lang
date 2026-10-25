@@ -62,9 +62,10 @@ pub function state(binary_bytes: i64, version: string): State {
   let renderer: fractal.Stats = fractal.stats(common.token().take(8), now_unix_ms(), binary_bytes, version);
   let arena = gather.state(renderer.instance);
   let voxels = blockyard.state(renderer.instance);
-  let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels);
+  let studios = studio.state();
+  let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels, studios);
   return State {
-    studios: studio.state(), labs: labs.state(), voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
+    studios: studios, labs: labs.state(), voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
     fractal: renderer,
   };
 }
@@ -83,7 +84,7 @@ pub function files(): string[] {
     "fractal/web/app.js", "fractal/web/delivery.mjs", "fractal/web/fullscreen.mjs", "fractal/web/style.css", "fractal/web/index.html",
     "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md", "showcase/live.fern.md", "showcase/swarm.fern.md", "showcase/gather.fern.md", "showcase/voxel.fern.md", "showcase/blockyard.fern.md", "showcase/blockyard_world.fern.md", "showcase/blockyard_store.fern.md",
     "showcase/foundry.fern.md", "showcase/patchbay.fern.md", "showcase/prism.fern.md", "showcase/fernbase.fern.md", "showcase/circuit.fern.md", "showcase/lantern.fern.md", "showcase/studio.fern.md", "showcase/labs.fern.md", "showcase/labs_store.fern.md",
-    "showcase/web/foundry/index.html", "showcase/web/patchbay/index.html", "showcase/web/prism/index.html", "showcase/web/fernbase/index.html", "showcase/web/circuit/index.html", "showcase/web/lantern/index.html", "showcase/web/labs/lantern.mjs", "showcase/web/labs/patchbay.mjs", "showcase/web/labs/prism-worker.mjs", "showcase/web/labs/simulation-worker.mjs", "showcase/web/labs/circuit.mjs", "showcase/web/labs/prism.mjs", "showcase/web/labs/session.mjs", "showcase/web/labs/foundry.mjs", "showcase/web/labs/patchbay-worklet.mjs", "showcase/web/labs/style.css", "showcase/web/labs/shell.mjs", "showcase/web/labs/fernbase.mjs",
+    "showcase/web/foundry/index.html", "showcase/web/patchbay/index.html", "showcase/web/prism/index.html", "showcase/web/fernbase/index.html", "showcase/web/circuit/index.html", "showcase/web/lantern/index.html", "showcase/web/labs/lantern.mjs", "showcase/web/labs/patchbay.mjs", "showcase/web/labs/prism-worker.mjs", "showcase/web/labs/simulation-worker.mjs", "showcase/web/labs/circuit.mjs", "showcase/web/labs/prism.mjs", "showcase/web/labs/session.mjs", "showcase/web/labs/foundry.mjs", "showcase/web/labs/patchbay-worklet.mjs", "showcase/web/labs/style.css", "showcase/web/labs/previews.mjs", "showcase/web/labs/shell.mjs", "showcase/web/labs/fernbase.mjs",
     "showcase/web/index.html", "showcase/web/home.mjs", "showcase/web/shared/showcase.css", "showcase/web/shared/ui.mjs", "showcase/web/shared/wasm.mjs",
     "showcase/web/blockyard/index.html", "showcase/web/blockyard/style.css", "showcase/web/blockyard/app.mjs", "showcase/web/blockyard/protocol.mjs", "showcase/web/blockyard/mesh.mjs", "showcase/web/blockyard/mesh-worker.mjs", "showcase/web/blockyard/renderer.mjs",
     "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/rally/prediction.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",
@@ -142,14 +143,22 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   app = app.get("/blockyard/status", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(blockyard.status(state.voxels, req)?));
   app = app.get("/blockyard/chunk", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(blockyard.chunk(state.voxels, req)?));
   app = app.get("/blockyard/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => blockyard.socket(state.voxels, req));
+  app = app.get("/prism/preview.png", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
+    let prepared = static.serve(req, static.dir(root + "/showcase/web"), plat);
+    if (prepared.status != 404) {
+      return Ok(prepared);
+    }
+    return Ok(labs.preview(state.labs)?);
+  });
   app = app.get("/prism/reference", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.reference(req)?));
   for name in ["foundry", "patchbay", "circuit"] {
     let application = name;
+    app = app.post("/" + name + "/checkpoint", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(studio.checkpoint(state.studios, application, req)?));
     app = app.get("/" + name + "/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => studio.socket(state.studios, application, req));
   }
   for name in ["fernbase", "lantern"] {
     let application = name;
-    for verb in ["state", "search"] {
+    for verb in ["state", "search", "export"] {
       let action = verb;
       app = app.get("/" + name + "/" + verb, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.handle(state.labs, application, action, req)?));
     }
@@ -298,6 +307,10 @@ A separate build script compresses these immutable bytes with three standard enc
 <<Prepare lesson assets>>=
 function prepare(root: string, destination: string): Result[void, string] {
   let pages: source.Page[] = source.load_files(root, files())?;
+  let preview_directory = util.dir_of(destination) + "/prism";
+  create_dir_all(preview_directory).map_err((e: IoError): string => "Cannot create preview directory.")?;
+  let preview = labs.thumbnail().map_err((e: http.HttpError): string => e.detail)?;
+  write_file_bytes(preview_directory + "/preview.png", preview).map_err((e: IoError): string => "Cannot write preview image.")?;
   for page in pages {
     let path: string = destination + "/" + page.name + ".html";
     create_dir_all(util.dir_of(path)).map_err((e: IoError): string => "cannot create lesson directory")?;

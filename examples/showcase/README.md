@@ -10,12 +10,12 @@ The application modules use literate Fern. Named sections explain the code that 
 | Mosaic | `/mosaic/` | Shared pixel boards, atomic WebSocket strokes, immediate revision push, PNG export |
 | Gather | `/gather/` | Shared arena for 512 participants, binary WebSocket snapshots, authoritative collection |
 | Blockyard | `/blockyard/` | Shared voxel worlds, 512 participants, spatial WebSocket updates, Fern Wasm terrain and collision, optional durable journal |
-| Foundry | `/foundry/` | Factory transport and a shared layout |
-| Patchbay | `/patchbay/` | A shared music studio |
-| Prism | `/prism/` | Progressive path tracing |
+| Foundry | `/foundry/` | Authoritative factory simulation, power, refining, freight rails, shared layouts |
+| Patchbay | `/patchbay/` | Shared sequencer, Fern Wasm AudioWorklet, filters, delay, audio export |
+| Prism | `/prism/` | Progressive path tracer, worker pool, native and Wasm comparison |
 | Fernbase | `/fernbase/` | Transactions and recovery |
-| Circuit | `/circuit/` | Logic circuits and feedback |
-| Lantern | `/lantern/` | A searchable document archive |
+| Circuit | `/circuit/` | Shared wiring, feedback, four-bit processor, 100,000-gate workload |
+| Lantern | `/lantern/` | Unicode documents, inverted index, BM25, streamed NDJSON import |
 | Swarm | `/swarm/` | Browser Wasm particle field and PCM synthesis, WebGL, Web Audio, worker |
 | Wave lab | `/wave/` | Sixteen-step sequencer, four oscillators, native PCM WAV synthesis |
 | Guestbook | `/notes/` | HTML forms without JavaScript, signed tokens, 303 redirects, Atom feed |
@@ -30,6 +30,10 @@ make build
 bin/fern -target x86-64-linux -O -o build/showcase examples/showcase/server.fern.md
 bin/fern -target wasm32-wasi -emit core-module -O -o examples/showcase/web/swarm/kernel.wasm examples/showcase/swarm.fern.md
 bin/fern -target wasm32-wasi -emit core-module -O -o examples/showcase/web/blockyard/kernel.wasm examples/showcase/voxel.fern.md
+for kernel in foundry patchbay prism circuit; do
+  bin/fern -target wasm32-wasi -emit core-module -O \
+    -o "examples/showcase/web/labs/$kernel.wasm" "examples/showcase/$kernel.fern.md"
+done
 ./build/showcase examples
 ```
 
@@ -87,12 +91,21 @@ The current compiler builds the showcase and browser Wasm module. The script the
 
 ## State and measurements
 
-Each server process owns its rooms and notes. A restart clears them. Blockyard can retain block edits on a persistent volume.
+Each server process owns its rooms and notes. A restart clears temporary state.
+Blockyard can retain block edits through `FERN_BLOCKYARD_DATA`.
+The six new applications use `FERN_LABS_DATA` for optional persistent checkpoints.
+Fernbase and Lantern synchronize each successful mutation before publication.
+Foundry, Patchbay, and Circuit retain a project when you select Save checkpoint.
+Their checkpoints include factory cargo, power, pause state, and processor programs.
+Recovery validates a version and checksum. A storage error blocks further writes until recovery succeeds.
+
+The Netlify demonstration uses temporary state.
+Use one process per data directory on a persistent volume.
 
 Rally keeps at most 16 rooms. Mosaic keeps at most 32 boards and 256 changes per board.
 
 The guestbook keeps 80 notes. Request bodies have a 16 KiB limit.
-Multiple instances require process affinity for a shared room. Only Blockyard provides optional durable storage.
+Multiple instances require process affinity for a shared room. A checkpoint does not synchronize independent server processes.
 
 Pulse reports the process that answers the request. Linux procfs supplies RSS, peak RSS, virtual bytes, swap, and CPU time.
 
@@ -109,7 +122,7 @@ Public rooms allow any visitor with the room URL to participate.
 ## Validation
 
 ```sh
-go test ./internal/testing/e2ecompiler -run 'TestSelfHost(Showcase|ImportedCastTypes|FractalSource|FractalBrowser)'
+go test ./internal/testing/e2ecompiler -run 'TestSelfHost(Showcase|Labs|ExportNameCollision|ImportedCastTypes|FractalSource|FractalBrowser)'
 node --test examples/showcase/tests/prepare.test.mjs examples/fractal/tests/delivery.test.mjs
 ```
 
@@ -148,7 +161,7 @@ Pause and hidden tabs stop the animation loop. Reduced-motion preferences select
 
 ## Fullscreen and touch controls
 
-Fractal, Rally, Mosaic, Wave, Swarm, Pulse, Gather, and Blockyard have fullscreen controls.
+Fractal, Rally, Mosaic, Wave, Swarm, Pulse, Gather, Blockyard, and the six new applications have fullscreen controls.
 Browsers without the Fullscreen API use an expanded view with a visible exit button.
 Canvas coordinates account for any space around the rendered image after a resize.
 
@@ -241,3 +254,74 @@ The browser gate checks two participants, shared touch edits, movement, flight, 
 PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
   node examples/showcase/tests/blockyard.browser.mjs http://localhost:8080
 ```
+
+## Simulation, audio, and renderer workloads
+
+Foundry owns a 256 × 256 factory on the native server. Mines supply ore, powered smelters produce ingots, and depots collect material.
+Conveyors transfer cargo one cell per tick. Freight rails transfer cargo four cells per move.
+The server reserves destination capacity before it applies moves. Ore equivalents remain constant except at mines, depots, and explicit edits.
+
+A shared 10 Hz clock advances active factories. Delta snapshots carry changed cells. Slow peers receive a full snapshot.
+Paused factories and projects without subscribers need no simulation timer.
+
+Foundry, Patchbay, and Circuit share 256 live subscription slots across at most 24 loaded projects.
+Each project retains 128 revision events. Reconnects receive a full snapshot if their cursor precedes this history.
+Browser edits appear immediately and remain in a bounded queue until the server confirms them.
+
+Patchbay runs four Fern oscillators inside an AudioWorklet. The host prepares pitch and filter coefficients once per block.
+The studio caps local polyphony at 64 voices. Its stress control starts that workload explicitly.
+Filters, delay, and soft clipping use reusable buffers. Audio export uses the browser MediaRecorder.
+
+Each listener must enable audio. Clock offset estimates align sequencers, but network jitter still affects live notes.
+The displayed quantum budget and processing gaps help compare devices.
+
+Prism runs the same five-bounce ray kernel on the native server and in browser Wasm.
+One, two, or four workers render disjoint image stripes. Each worker owns an isolated 1 MiB Wasm memory.
+The host accumulates linear samples before tone mapping. A worker count change preserves the image for identical samples.
+
+Resolution stops at 640 × 400. Sample count stops at 128. Cancel stops cooperative work between short slices.
+The native reference control compares raw channels before tone mapping.
+
+Circuit shares wiring and a 16-word processor program. Each browser runs its own simulation.
+The four-bit processor supports load, add, XOR, AND, jumps, output, and halt.
+The 100,000-gate control measures a generated workload. It does not represent 100,000 editable visual nodes.
+Touch controls select gates, connect inputs, edit instructions, and advance the processor.
+
+## Database and archive limits
+
+Fernbase implements a documented SQL subset over one key/value table. It does not implement full SQLite SQL.
+Its primary index uses a sorted array and binary search.
+Transactions evaluate a private candidate. A revision check protects commit from concurrent changes.
+
+BEGIN previews remain private. ROLLBACK discards the draft. COMMIT publishes one revision after durable storage succeeds.
+
+The table holds at most 10,000 rows and an 8 MiB serialized checkpoint.
+Keys contain 1–128 bytes. Values contain at most 4096 bytes.
+Each batch permits 128 statements and 12,000 SQL bytes.
+
+Lantern indexes lowercase Unicode terms with punctuation separators. It does not perform stemming or language-specific word segmentation.
+BM25 uses term frequency and document length. Queries visit posting lists and avoid a full scan of document bodies.
+The archive holds at most 4096 documents, 4 MiB of text, 262,144 tokens, and 65,536 distinct terms.
+
+Each document permits an 8192-byte body and a 256-byte title.
+An NDJSON import sends one document at a time. Stop waits for the current request and preserves prior commits.
+Search results use text nodes even when documents contain HTML.
+
+## Six-application validation
+
+The Labs gates cover native, ARM64, and Wasm kernels, allocation balance, checksummed recovery, storage failures, and compiler export identity.
+The HTTP gate opens 256 actual WebSocket connections. It checks capacity refusal, cargo conservation, shared state, and descriptor cleanup.
+The browser gate checks touch edits, live audio, audio export, worker parity, transaction conflicts, imports, mobile widths, and fullscreen.
+
+```sh
+node examples/showcase/tests/labs-kernels.test.mjs examples/showcase/web/labs
+node examples/showcase/tests/labs-server.test.mjs http://localhost:8080
+node examples/showcase/tests/labs.load.mjs http://localhost:8080 256 3
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
+  node examples/showcase/tests/labs.browser.mjs http://localhost:8080
+```
+
+An optimized x86-64 Linux loopback run sustained 10 factory updates per second with 256 actual connections.
+Acknowledgement latency was 2.96 ms at the median and 4.79 ms at p95. Server RSS was 22.3 MiB.
+The three-second sample transferred 1.03 MiB of factory data across all peers.
+These measurements exclude Internet latency and hosting limits. Use the load command to measure another machine.

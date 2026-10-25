@@ -11,17 +11,31 @@ import { instantiateCore } from "/assets/wasm.mjs";
 shell(
   "Prism",
   "Move a sphere, turn the camera, and watch light converge. Every pixel sample comes from Fern.",
-  `<label>Image width<select id="width"><option>160</option><option selected>320</option><option>640</option></select></label><label>Samples per pixel<select id="samples"><option>1</option><option>8</option><option selected>32</option><option>128</option></select></label><label>Camera angle<input id="angle" type="range" min="-150" max="150" value="0"></label><h2>Move the green sphere</h2><label>X<input id="sphere-x" type="range" min="64" max="192" value="128"></label><label>Y<input id="sphere-y" type="range" min="128" max="176" value="128"></label><label>Z<input id="sphere-z" type="range" min="64" max="176" value="96"></label><label>Exposure<input id="exposure" type="range" min="25" max="300" value="150"></label><button id="reference">Compare native and Wasm</button><p class="hint">Drag the image to orbit. The worker cancels old renders as soon as a scene changes. More samples reduce noise and increase work.</p>`,
+  `<label>Image width<select id="width"><option>160</option><option selected>320</option><option>640</option></select></label><label>Render workers<select id="workers"><option>1</option><option>2</option><option>4</option></select></label><label>Samples per pixel<select id="samples"><option>1</option><option>8</option><option selected>32</option><option>128</option></select></label><label>Camera angle<input id="angle" type="range" min="-150" max="150" value="0"></label><h2>Move the green sphere</h2><label>X<input id="sphere-x" type="range" min="64" max="192" value="128"></label><label>Y<input id="sphere-y" type="range" min="128" max="176" value="128"></label><label>Z<input id="sphere-z" type="range" min="64" max="176" value="96"></label><label>Exposure<input id="exposure" type="range" min="25" max="300" value="150"></label><button id="reference">Compare native and Wasm</button><output id="reference-result" class="hint"></output><p class="hint">Drag the image to orbit. The worker cancels old renders as soon as a scene changes. More samples reduce noise and increase work.</p>`,
 );
 $("lesson").textContent =
   "Fern traces diffuse and mirror bounces through four spheres, including the floor. Samples contain linear light in three 10-bit channels. The worker accumulates samples, then applies exposure and tone mapping for the display.";
 const canvas = $("view"),
-  context = canvas.getContext("2d"),
-  worker = new Worker("/labs/prism-worker.mjs", { type: "module" });
+  context = canvas.getContext("2d");
 canvas.style.height = "auto";
 canvas.style.minHeight = "0";
 canvas.style.aspectRatio = "8 / 5";
 $("stage").style.minHeight = "0";
+const workers = [];
+let laneFrames = new Map(),
+  renderStarted = 0;
+function postAll(data) {
+  for (const worker of workers) worker.postMessage(data);
+}
+function pool(count) {
+  while (workers.length > count) workers.pop().terminate();
+  while (workers.length < count) {
+    const worker = new Worker("/labs/prism-worker.mjs", { type: "module" });
+    worker.onmessage = receive;
+    workers.push(worker);
+  }
+}
+let requestID = 0;
 let renderTimer,
   lastImage,
   completed = 0,
@@ -32,22 +46,40 @@ const scene = () =>
   (Number($("sphere-z").value) << 16);
 function render() {
   notice("Render in progress.");
-  worker.postMessage({
-    kind: "render",
-    width: Number($("width").value),
-    samples: Number($("samples").value),
-    scene: scene(),
-    angle: (Number($("angle").value) * Math.PI) / 180,
-    exposure: Number($("exposure").value) / 100,
-  });
+  canvas.dataset.progress = "0";
+  canvas.dataset.samples = "0";
+  const count = Number($("workers").value);
+  pool(count);
+  laneFrames = new Map();
+  renderStarted = performance.now();
+  lastImage = null;
+  const id = ++requestID;
+  const width = Number($("width").value);
+  canvas.width = width;
+  canvas.height = Math.round(width * 0.625);
+  for (let lane = 0; lane < count; lane++)
+    workers[lane].postMessage({
+      kind: "render",
+      requestID: id,
+      lane,
+      lanes: count,
+      width,
+      samples: Number($("samples").value),
+      scene: scene(),
+      angle: (Number($("angle").value) * Math.PI) / 180,
+      exposure: Number($("exposure").value) / 100,
+    });
 }
 function schedule() {
-  worker.postMessage({ kind: "cancel" });
+  canvas.dataset.progress = "0";
+  requestID++;
+  postAll({ kind: "cancel" });
   clearTimeout(renderTimer);
   renderTimer = setTimeout(render, 80);
 }
 for (const id of [
   "width",
+  "workers",
   "samples",
   "angle",
   "sphere-x",
@@ -56,33 +88,57 @@ for (const id of [
   "exposure",
 ])
   $(id).oninput = schedule;
-worker.onmessage = ({ data }) => {
+function receive({ data }) {
   if (data.kind === "error") {
     error(Error(data.message));
     return;
   }
-  if (data.kind !== "image") return;
-  canvas.width = data.width;
-  canvas.height = data.height;
+  if (data.kind !== "image" || data.requestID !== requestID) return;
+  if (canvas.width !== data.width || canvas.height !== data.imageHeight) {
+    canvas.width = data.width;
+    canvas.height = data.imageHeight;
+  }
   lastImage = new ImageData(data.bytes, data.width, data.height);
-  context.putImageData(lastImage, 0, 0);
-  canvas.dataset.samples = data.samples;
-  canvas.dataset.progress = data.progress;
+  context.putImageData(lastImage, 0, data.row);
+  laneFrames.set(data.lane, data);
+  const all = [...laneFrames.values()],
+    count = Number($("workers").value),
+    totalPixels = data.width * data.imageHeight;
+  const progress = all.reduce(
+      (sum, part) =>
+        sum + (part.progress * part.width * part.height) / totalPixels,
+      0,
+    ),
+    done = all.length === count && all.every((part) => part.done);
+  canvas.dataset.samples =
+    all.length === count ? Math.min(...all.map((part) => part.samples)) : 0;
+  canvas.dataset.progress = progress;
   measures({
-    "Samples / pixel": data.samples,
-    Progress: (data.progress * 100).toFixed(1) + "%",
-    "Camera rays": data.rays.toLocaleString(),
-    "Worker CPU": data.cpu.toFixed(1) + " ms",
-    "Wall time": (data.elapsed / 1000).toFixed(2) + " s",
-    "Compute slice p95": data.p95.toFixed(2) + " ms",
-    "Wasm memory": (data.memory / 1048576).toFixed(2) + " MiB",
-    "Host buffers": (data.hostBytes / 1048576).toFixed(2) + " MiB",
+    Workers: count,
+    "Samples / pixel": canvas.dataset.samples,
+    Progress: (progress * 100).toFixed(1) + "%",
+    "Camera rays": all
+      .reduce((sum, part) => sum + part.rays, 0)
+      .toLocaleString(),
+    "Compute time (sum)":
+      all.reduce((sum, part) => sum + part.cpu, 0).toFixed(1) + " ms",
+    "Wall time": ((performance.now() - renderStarted) / 1000).toFixed(2) + " s",
+    "Slowest slice p95":
+      Math.max(...all.map((part) => part.p95)).toFixed(2) + " ms",
+    "Wasm memory":
+      (all.reduce((sum, part) => sum + part.memory, 0) / 1048576).toFixed(2) +
+      " MiB",
+    "Render buffers":
+      (all.reduce((sum, part) => sum + part.hostBytes, 0) / 1048576).toFixed(
+        2,
+      ) + " MiB",
   });
-  if (data.done) {
+  if (done) {
     completed++;
     notice("Render complete.");
   }
-};
+}
+
 canvas.onpointerdown = (e) => {
   dragX = e.clientX;
   canvas.setPointerCapture(e.pointerId);
@@ -100,7 +156,8 @@ canvas.onpointermove = (e) => {
 canvas.onpointerup = canvas.onpointercancel = () => (dragX = undefined);
 action("Render", render);
 action("Cancel", () => {
-  worker.postMessage({ kind: "cancel" });
+  requestID++;
+  postAll({ kind: "cancel" });
   notice("Render cancelled.");
 });
 action("Save PNG", () => {
@@ -149,13 +206,18 @@ $("reference").onclick = async () => {
         }
       }
     const ms = performance.now() - at;
-    notice(
-      `640 rays compared. Largest channel difference: ${max}/1023. Native ${native.server_us / 1000} ms, browser ${ms.toFixed(2)} ms. ${different} differing channels.`,
-    );
+    $("reference-result").textContent =
+      `640 rays compared. Largest channel difference: ${max}/1023. Native ${native.server_us / 1000} ms, browser ${ms.toFixed(2)} ms. ${different} differing channels.`;
     $("reference").dataset.maxDifference = max;
   } catch (e) {
     error(e);
   }
 };
-addEventListener("pagehide", () => worker.terminate(), { once: true });
+addEventListener(
+  "pagehide",
+  () => {
+    for (const worker of workers) worker.terminate();
+  },
+  { once: true },
+);
 render();

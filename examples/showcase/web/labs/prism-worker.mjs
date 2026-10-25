@@ -20,8 +20,12 @@ onmessage = async ({ data }) => {
     const width = Math.max(32, Math.min(640, data.width | 0)),
       height = Math.round(width * 0.625),
       target = Math.max(1, Math.min(128, data.samples | 0)),
-      sums = new Float32Array(width * height * 3),
-      counts = new Uint16Array(width * height),
+      lane = Math.max(0, Math.min(3, data.lane || 0)),
+      lanes = Math.max(1, Math.min(4, data.lanes || 1)),
+      row = Math.floor((height * lane) / lanes),
+      stripeHeight = Math.floor((height * (lane + 1)) / lanes) - row,
+      sums = new Float32Array(width * stripeHeight * 3),
+      counts = new Uint16Array(width * stripeHeight),
       times = [];
     const state = {
       id,
@@ -43,7 +47,7 @@ onmessage = async ({ data }) => {
     };
     active = state;
     function publish(done) {
-      const bytes = new Uint8ClampedArray(width * height * 4);
+      const bytes = new Uint8ClampedArray(width * stripeHeight * 4);
       for (let i = 0; i < counts.length; i++) {
         for (let c = 0; c < 3; c++) {
           const light =
@@ -56,9 +60,14 @@ onmessage = async ({ data }) => {
       postMessage(
         {
           kind: "image",
+          requestID: data.requestID,
           job: id,
           width,
-          height,
+          height: stripeHeight,
+          imageHeight: height,
+          row,
+          lane,
+          lanes,
           bytes,
           samples: state.sample,
           progress: (state.sample + state.at / counts.length) / target,
@@ -84,7 +93,7 @@ onmessage = async ({ data }) => {
           packed =
             pixel(
               i % width,
-              Math.floor(i / width),
+              Math.floor(i / width) + row,
               width,
               height,
               state.sample,

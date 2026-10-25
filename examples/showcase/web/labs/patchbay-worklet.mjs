@@ -16,6 +16,8 @@ class FernStudio extends AudioWorkletProcessor {
     this.times = [];
     this.expected = null;
     this.gaps = 0;
+    this.overruns = 0;
+    this.notes = Int32Array.from([48, 50, 52, 55, 57, 60, 62, 64]);
     this.polyphony = 16;
     this.port.onmessage = async ({ data }) => {
       try {
@@ -40,10 +42,15 @@ class FernStudio extends AudioWorkletProcessor {
         else if (data.kind === "play") {
           this.playing = data.value;
           this.step = -1;
-          this.sequence = 0;
+          this.sequence = Math.max(0, data.frame || 0);
         } else if (data.kind === "note") {
           this.voices.push({
             note: data.note,
+            hz:
+              this.api?.["fern:showcase/patchbay#frequency"](
+                data.note,
+                sampleRate,
+              ) || 0,
             start: currentFrame,
             release: null,
             id: data.id,
@@ -68,14 +75,18 @@ class FernStudio extends AudioWorkletProcessor {
       return true;
     }
     const at = Date.now(),
-      sample = this.api["fern:showcase/patchbay#sample"],
-      filter = this.api["fern:showcase/patchbay#filter"],
+      sample = this.api["fern:showcase/patchbay#sample-hz"],
+      filter = this.api["fern:showcase/patchbay#filter-step"],
       drive = this.api["fern:showcase/patchbay#drive"];
     if (this.expected !== null && currentFrame !== this.expected) this.gaps++;
     this.expected = currentFrame + frames;
-    const notes = [48, 50, 52, 55, 57, 60, 62, 64],
+    const notes = this.notes,
       tempo = Math.max(40, Math.min(240, this.cells[128] || 110)),
-      stepFrames = (sampleRate * 60) / tempo / 4;
+      stepFrames = (sampleRate * 60) / tempo / 4,
+      coefficient = this.api["fern:showcase/patchbay#coefficient"](
+        this.cells[130] || 6000,
+        sampleRate,
+      );
     for (let i = 0; i < frames; i++) {
       const frame = currentFrame + i;
       if (this.playing) {
@@ -86,6 +97,10 @@ class FernStudio extends AudioWorkletProcessor {
             if (this.cells[step * 8 + row])
               this.voices.push({
                 note: notes[row],
+                hz: this.api["fern:showcase/patchbay#frequency"](
+                  notes[row],
+                  sampleRate,
+                ),
                 start: frame,
                 release: frame + stepFrames * 0.7,
                 id: null,
@@ -104,18 +119,13 @@ class FernStudio extends AudioWorkletProcessor {
         value += sample(
           frame - voice.start,
           sampleRate,
-          voice.note,
+          voice.hz,
           this.cells[129] || 0,
           age,
           release,
         );
       }
-      this.filter = filter(
-        value,
-        this.filter,
-        this.cells[130] || 6000,
-        sampleRate,
-      );
+      this.filter = filter(value, this.filter, coefficient);
       const delayFrames = Math.round(sampleRate * 0.25),
         read =
           (this.delayAt - delayFrames + this.delay.length) % this.delay.length,
@@ -129,12 +139,19 @@ class FernStudio extends AudioWorkletProcessor {
       this.delayAt = (this.delayAt + 1) % this.delay.length;
       for (const channel of output) channel[i] = value;
     }
-    this.voices = this.voices.filter(
-      (v) =>
+    let retained = 0;
+    for (let i = 0; i < this.voices.length; i++) {
+      const v = this.voices[i];
+      if (
         (currentFrame + frames - v.start) / sampleRate < 5 &&
-        (v.release === null || (currentFrame - v.release) / sampleRate < 0.5),
-    );
-    this.times.push(Date.now() - at);
+        (v.release === null || (currentFrame - v.release) / sampleRate < 0.5)
+      )
+        this.voices[retained++] = v;
+    }
+    this.voices.length = retained;
+    const duration = Date.now() - at;
+    if (duration > (frames / sampleRate) * 1000) this.overruns++;
+    this.times.push(duration);
     if (this.times.length > 256) this.times.shift();
     if (++this.blocks % 64 === 0) {
       const t = [...this.times].sort((a, b) => a - b);
@@ -145,6 +162,7 @@ class FernStudio extends AudioWorkletProcessor {
         p99: t[Math.floor(t.length * 0.99)] || 0,
         deadline: (frames / sampleRate) * 1000,
         gaps: this.gaps,
+        overruns: this.overruns,
         step: this.step,
         memory: this.api.memory.buffer.byteLength,
       });

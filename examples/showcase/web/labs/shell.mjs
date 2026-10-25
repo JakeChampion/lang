@@ -16,7 +16,13 @@ export function action(label, fn, id) {
   const b = document.createElement("button");
   b.textContent = label;
   if (id) b.id = id;
-  b.onclick = () => Promise.resolve(fn()).catch(error);
+  b.onclick = async () => {
+    try {
+      await fn();
+    } catch (problem) {
+      error(problem);
+    }
+  };
   $("actions").append(b);
   return b;
 }
@@ -116,4 +122,22 @@ export function fileInput(accept, load) {
   };
   $("actions").append(i);
   return i;
+}
+
+export function checkpoint(app) {
+  const button = action(
+    "Save checkpoint",
+    async () => {
+      const data = await request(
+        `/${app}/checkpoint?room=${encodeURIComponent(room())}`,
+        {},
+      );
+      notice(`Saved revision ${data.revision}.`);
+    },
+    "checkpoint",
+  );
+  button.disabled = true;
+  button.title =
+    "Checkpoint storage requires a persistent server volume. Export works in every mode.";
+  return button;
 }

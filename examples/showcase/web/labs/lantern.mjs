@@ -188,3 +188,9 @@ action("Refresh index", async () => {
   await search();
 });
 state().then(search).catch(error);
+
+action("Export archive", async () => {
+  const response = await fetch(endpoint("export"));
+  if (!response.ok) throw Error("Archive export failed.");
+  download("lantern.ndjson", await response.blob(), "application/x-ndjson");
+});

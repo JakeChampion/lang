@@ -28,3 +28,5 @@ __pycache__/
 /examples/showcase/web/labs/*.wasm.br
 /examples/showcase/web/labs/*.wasm.gz
 /examples/showcase/web/labs/*.wasm.zst
+
+/examples/showcase/web/prism/preview.png

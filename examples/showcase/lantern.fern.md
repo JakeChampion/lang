@@ -1,22 +1,35 @@
-# Lantern: an inverted document index
+# Lantern: an inverted index with BM25 ranking
 
-The archive stores Unicode text and an inverted index. Each term maps to document IDs and occurrence counts.
-A query visits the matching posting lists. BM25 scores account for term rarity and document length.
-A bounded top-20 selection uses document ID as the tie breaker.
+The archive stores Unicode documents and an inverted index. A term points to document IDs and occurrence counts.
+A query visits only the matching posting lists. Results include the number of entries that it visited.
+
+Imports use one bounded transaction per document. NDJSON files stream from the browser with network backpressure.
+Set `FERN_LABS_DATA` to retain the archive on a persistent volume.
 
 ```fern
 <<*>>=
-<<Search engine>>
+<<Implementation>>
 ```
 
-## Search engine
+## Read the program
 
-Unicode lowercase conversion precedes punctuation and whitespace tokenization. CJK text without spaces remains one term.
-The index accepts 4096 documents. Each document contains at most 8192 bytes of text.
-Queries contain at most 16 distinct terms. Results report the actual number of posting entries visited.
+The named sections form one Fern module. The surrounding HTTP application calls these functions directly.
 
 ```fern
-<<Search engine>>=
+<<Implementation>>=
+<<Documents and postings>>
+<<Unicode tokenization>>
+<<Build the index>>
+<<Rank a query>>
+```
+
+## Documents and postings
+
+Document IDs are stable array positions. Each posting stores an ID and term frequency.
+Lengths include the title and body. The index also retains byte and token counts.
+
+```fern
+<<Documents and postings>>=
 import "std/array";
 import "std/string";
 import "std/result";
@@ -41,7 +54,16 @@ pub struct Results { hits: Hit[], documents: i32, terms: i32, postings_read: i32
 pub function empty(): Index {
   return Index { documents: [], lengths: [], terms: map_new(128), words: 0, bytes: 0 };
 }
+```
 
+## Unicode tokenization
+
+Unicode lowercase conversion precedes punctuation and whitespace tokenization.
+Terms contain at most 128 UTF-8 bytes. CJK text without spaces remains one term.
+The implementation shares this exact tokenizer between documents and queries.
+
+```fern
+<<Unicode tokenization>>=
 pub function tokenize(text: string): string[] {
   let clean = text.to_lower();
   for separator in ["\n", "\r", "\t", ".", ",", ";", ":", "!", "?", "(", ")", "[", "]", "{", "}", "\"", "'", "/", "\\", "-", "—", "　"] {
@@ -55,7 +77,16 @@ pub function tokenize(text: string): string[] {
   }
   return terms;
 }
+```
 
+## Build the index
+
+A new document first builds its term counts. Each distinct term then adds one posting.
+The candidate index remains a private value until the HTTP layer confirms storage.
+The archive holds at most 4096 documents, 4 MiB of text, 262144 tokens, and 65536 distinct terms.
+
+```fern
+<<Build the index>>=
 pub function add(index: Index, document: Document): Result[Index, string] {
   if (index.documents.len() >= 4096 || document.id != index.documents.len() || document.title.len() == 0 || document.title.len() > 256 || document.text.len() > 8192) {
     return Err("Each document needs a title and at most 8192 bytes of text. The archive holds 4096 documents.");
@@ -80,7 +111,16 @@ pub function add(index: Index, document: Document): Result[Index, string] {
   }
   return Ok(Index { documents: index.documents.append(document), lengths: index.lengths.append(words.len()), terms: terms, words: index.words + words.len(), bytes: index.bytes + document.title.len() + document.text.len() });
 }
+```
 
+## Rank a query
+
+BM25 uses k1 = 1.2 and b = 0.75. Inverse document frequency rewards rare terms.
+Length normalization reduces the advantage of a long document. Repeated query terms count once.
+A bounded selection retains twenty hits. Equal scores use document ID as the tie breaker.
+
+```fern
+<<Rank a query>>=
 pub function search(index: Index, query: string): Results {
   let output: Hit[] = [];
   let seen: Map[string, boolean] = map_new(16);
@@ -126,5 +166,19 @@ pub function search(index: Index, query: string): Results {
     output = next.take(20);
   }
   return Results { hits: output, documents: index.documents.len(), terms: index.terms.len(), postings_read: visits, query_terms: terms };
+}
+```
+
+## Check the behavior
+
+Run this example with `fern -doctest`. It uses the implementation above.
+
+```fern test name=lantern-example
+<<Implementation>>
+function main(): i32 {
+ let Ok(index)=add(empty(),Document {id:0,title:"A café",text:"Fern and 東京"}) else{return 1;};
+ let result=search(index,"CAFÉ");
+ if(result.hits.len()!=1 || result.hits[0].id!=0 || result.postings_read!=1){return 2;}
+ return 0;
 }
 ```

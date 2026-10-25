@@ -1,25 +1,36 @@
-# Fernbase: transactions and an ordered primary index
+# Fernbase: atomic SQL batches and an ordered index
 
 This small SQL engine owns one table: `entries(key, value)`. Both columns contain text.
-A sorted array supplies the primary index. Equality queries use binary search. Inserts preserve key order.
-This design makes comparison counts visible without an external database engine.
+A request evaluates its complete batch on a private database value. An error discards that value.
 
-A request executes its complete statement batch on a private value. Any error discards the batch.
-The HTTP layer compares revisions before a commit. An optional journal synchronizes the commit before publication.
+The HTTP layer compares revisions before a write. A configured volume retains a synchronized checkpoint before publication.
+A private draft uses the same engine without publication. Another commit makes that draft stale.
 
 ```fern
 <<*>>=
-<<SQL engine>>
+<<Implementation>>
 ```
 
-## SQL engine
+## Read the program
 
-The lexer preserves quoted Unicode text and doubled single quotes. Keywords use ASCII case folding.
-The parser accepts a documented SQL subset. Unsupported syntax returns a Result error.
-Queries return at most 200 rows. Database size and transaction size have separate limits.
+The named sections form one Fern module. The surrounding HTTP application calls these functions directly.
 
 ```fern
-<<SQL engine>>=
+<<Implementation>>=
+<<Database values>>
+<<The primary index>>
+<<SQL tokens>>
+<<Parse one statement>>
+<<Commit a batch>>
+```
+
+## Database values
+
+Rows remain in primary-key order. Revisions identify committed batches.
+The output separates selected rows, the query plan, comparison counts, and a change flag.
+
+```fern
+<<Database values>>=
 import "std/array";
 import "std/result";
 import "std/option";
@@ -42,7 +53,16 @@ pub struct Execution { database: Database, output: Output }
 pub function initial(): Database {
   return Database { revision: 0, rows: [] };
 }
+```
 
+## The primary index
+
+Binary search returns an insertion position and a comparison count. An absent key is an ordinary position.
+An insert preserves key order. An update replaces one row. Duplicate inserts return a Result error.
+Keys compare in UTF-8 byte order. The database holds at most 10000 rows.
+
+```fern
+<<The primary index>>=
 pub function lower_bound(rows: Row[], key: string): (i32, i32) {
   let lo = 0;
   let hi = rows.len();
@@ -59,6 +79,45 @@ pub function lower_bound(rows: Row[], key: string): (i32, i32) {
   return (lo, comparisons);
 }
 
+function put(rows: Row[], row: Row, insert_only: boolean): Result[Row[], string] {
+  if (row.key.len() == 0 || row.key.len() > 128 || row.value.len() > 4096) {
+    return Err("A key needs 1 to 128 bytes. A value has at most 4096 bytes.");
+  }
+  let (at, comparisons) = lower_bound(rows, row.key);
+  if (at < rows.len() && rows[at].key == row.key) {
+    if (insert_only) {
+      return Err("The primary key already exists.");
+    }
+    return Ok(rows.with(at, row));
+  }
+  if (!insert_only) {
+    return Err("The primary key does not exist.");
+  }
+  if (rows.len() >= 10000) {
+    return Err("This database already has 10000 rows.");
+  }
+  let result: Row[] = [];
+  let i = 0;
+  while (i < at) {
+    result = result.append(rows[i]);
+    i = i + 1;
+  }
+  result = result.append(row);
+  while (i < rows.len()) {
+    result = result.append(rows[i]);
+    i = i + 1;
+  }
+  return Ok(result);
+}
+```
+
+## SQL tokens
+
+The lexer preserves quoted Unicode text and doubled single quotes. A semicolon inside quoted text remains text.
+Bare keywords use ASCII lowercase conversion. The lexer rejects an incomplete quote and input beyond 12000 bytes.
+
+```fern
+<<SQL tokens>>=
 pub function tokens(sql: string): Result[string[], string] {
   if (sql.len() > 12000) {
     return Err("SQL exceeds 12000 bytes.");
@@ -119,38 +178,16 @@ function literal(token: string): Result[string, string] {
   }
   return Ok(token.drop(1));
 }
+```
 
-function put(rows: Row[], row: Row, insert_only: boolean): Result[Row[], string] {
-  if (row.key.len() == 0 || row.key.len() > 128 || row.value.len() > 4096) {
-    return Err("A key needs 1 to 128 bytes. A value has at most 4096 bytes.");
-  }
-  let (at, comparisons) = lower_bound(rows, row.key);
-  if (at < rows.len() && rows[at].key == row.key) {
-    if (insert_only) {
-      return Err("The primary key already exists.");
-    }
-    return Ok(rows.with(at, row));
-  }
-  if (!insert_only) {
-    return Err("The primary key does not exist.");
-  }
-  if (rows.len() >= 10000) {
-    return Err("This database already has 10000 rows.");
-  }
-  let result: Row[] = [];
-  let i = 0;
-  while (i < at) {
-    result = result.append(rows[i]);
-    i = i + 1;
-  }
-  result = result.append(row);
-  while (i < rows.len()) {
-    result = result.append(rows[i]);
-    i = i + 1;
-  }
-  return Ok(result);
-}
+## Parse one statement
 
+The parser accepts SELECT *, an equality WHERE clause, INSERT, UPDATE, DELETE, and EXPLAIN SELECT.
+Unsupported syntax returns a Result error. EXPLAIN uses a private evaluation and never publishes a change.
+A scan returns the first 200 rows. The export route returns the complete database.
+
+```fern
+<<Parse one statement>>=
 function statement(db: Database, t: string[]): Result[Execution, string] {
   let output = Output { rows: [] as Row[], plan: "", comparisons: 0, changed: false };
   if (t.len() == 0) {
@@ -198,7 +235,16 @@ function statement(db: Database, t: string[]): Result[Execution, string] {
   }
   return Err("Use SELECT, EXPLAIN SELECT, INSERT, UPDATE, or DELETE on entries(key, value).");
 }
+```
 
+## Commit a batch
+
+Each statement receives the private value from the previous statement. The original database remains unchanged.
+The function publishes no state itself. It returns a candidate and increments its revision once for a changed batch.
+The HTTP layer checks the revision and storage result before it installs that candidate.
+
+```fern
+<<Commit a batch>>=
 pub function execute(database: Database, sql: string): Result[Execution, string] {
   let input = tokens(sql)?;
   let current: string[] = [];
@@ -227,5 +273,20 @@ pub function execute(database: Database, sql: string): Result[Execution, string]
     db = Database { ...db, revision: database.revision + 1 };
   }
   return Ok(Execution { database: db, output: Output { ...last, changed: changed } });
+}
+```
+
+## Check the behavior
+
+Run this example with `fern -doctest`. It uses the implementation above.
+
+```fern test name=fernbase-example
+<<Implementation>>
+function main(): i32 {
+ let original=initial();
+ let Ok(result)=execute(original,"INSERT INTO entries VALUES ('fern','hello'); SELECT * FROM entries WHERE key='fern';") else { return 1; };
+ if(original.rows.len()!=0 || result.output.rows.len()!=1 || result.database.revision!=1){return 2;}
+ if(execute(result.database,"INSERT INTO entries VALUES ('other','draft'); INSERT INTO entries VALUES ('fern','duplicate');").is_ok()){return 3;}
+ return 0;
 }
 ```

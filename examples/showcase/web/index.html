@@ -179,19 +179,15 @@
           <a class="example" href="/foundry/" data-categories="live media"
             ><div
               class="example-preview"
-              style="
-                display: grid;
-                place-content: center;
-                background: linear-gradient(135deg, #12273c, #245342);
-                color: #a7e7bc;
-                font:
-                  clamp(24px, 4vw, 44px) ui-monospace,
-                  monospace;
-                min-height: 210px;
-              "
-              aria-hidden="true"
+              style="background: #102438; min-height: 210px"
             >
-              → ▣ → ▣
+              <canvas
+                data-lab-preview="foundry"
+                width="660"
+                height="280"
+                style="width: 100%; height: 100%"
+                aria-label="Foundry preview"
+              ></canvas>
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -210,19 +206,15 @@
           <a class="example" href="/patchbay/" data-categories="live media"
             ><div
               class="example-preview"
-              style="
-                display: grid;
-                place-content: center;
-                background: linear-gradient(135deg, #12273c, #245342);
-                color: #a7e7bc;
-                font:
-                  clamp(24px, 4vw, 44px) ui-monospace,
-                  monospace;
-                min-height: 210px;
-              "
-              aria-hidden="true"
+              style="background: #102438; min-height: 210px"
             >
-              ∿ ⌁ ∿
+              <canvas
+                data-lab-preview="patchbay"
+                width="660"
+                height="280"
+                style="width: 100%; height: 100%"
+                aria-label="Patchbay preview"
+              ></canvas>
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -239,19 +231,16 @@
           <a class="example" href="/prism/" data-categories="media"
             ><div
               class="example-preview"
-              style="
-                display: grid;
-                place-content: center;
-                background: linear-gradient(135deg, #12273c, #245342);
-                color: #a7e7bc;
-                font:
-                  clamp(24px, 4vw, 44px) ui-monospace,
-                  monospace;
-                min-height: 210px;
-              "
-              aria-hidden="true"
+              style="background: #102438; min-height: 210px"
             >
-              ◉ ◯ ◉
+              <img
+                src="/prism/preview.png"
+                width="320"
+                height="200"
+                loading="lazy"
+                alt="A scene rendered by native Fern"
+                style="width: 100%; height: 100%; object-fit: cover"
+              />
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -268,19 +257,15 @@
           <a class="example" href="/fernbase/" data-categories="live html"
             ><div
               class="example-preview"
-              style="
-                display: grid;
-                place-content: center;
-                background: linear-gradient(135deg, #12273c, #245342);
-                color: #a7e7bc;
-                font:
-                  clamp(24px, 4vw, 44px) ui-monospace,
-                  monospace;
-                min-height: 210px;
-              "
-              aria-hidden="true"
+              style="background: #102438; min-height: 210px"
             >
-              BEGIN → COMMIT
+              <canvas
+                data-lab-preview="fernbase"
+                width="660"
+                height="280"
+                style="width: 100%; height: 100%"
+                aria-label="Fernbase preview"
+              ></canvas>
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -300,19 +285,15 @@
           <a class="example" href="/circuit/" data-categories="live media"
             ><div
               class="example-preview"
-              style="
-                display: grid;
-                place-content: center;
-                background: linear-gradient(135deg, #12273c, #245342);
-                color: #a7e7bc;
-                font:
-                  clamp(24px, 4vw, 44px) ui-monospace,
-                  monospace;
-                min-height: 210px;
-              "
-              aria-hidden="true"
+              style="background: #102438; min-height: 210px"
             >
-              ⊕ ∧ ¬
+              <canvas
+                data-lab-preview="circuit"
+                width="660"
+                height="280"
+                style="width: 100%; height: 100%"
+                aria-label="Circuit preview"
+              ></canvas>
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -331,19 +312,15 @@
           <a class="example" href="/lantern/" data-categories="live html"
             ><div
               class="example-preview"
-              style="
-                display: grid;
-                place-content: center;
-                background: linear-gradient(135deg, #12273c, #245342);
-                color: #a7e7bc;
-                font:
-                  clamp(24px, 4vw, 44px) ui-monospace,
-                  monospace;
-                min-height: 210px;
-              "
-              aria-hidden="true"
+              style="background: #102438; min-height: 210px"
             >
-              Aa → ▤
+              <canvas
+                data-lab-preview="lantern"
+                width="660"
+                height="280"
+                style="width: 100%; height: 100%"
+                aria-label="Lantern preview"
+              ></canvas>
             </div>
             <div class="example-body">
               <div class="example-meta">
@@ -636,5 +613,6 @@
       </footer>
     </main>
     <script type="module" src="/home.mjs"></script>
+    <script type="module" src="/labs/previews.mjs"></script>
   </body>
 </html>

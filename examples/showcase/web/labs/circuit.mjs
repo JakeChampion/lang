@@ -1,5 +1,6 @@
 import {
   shell,
+  checkpoint,
   $,
   action,
   error,
@@ -15,7 +16,7 @@ import { Session } from "./session.mjs";
 shell(
   "Circuit",
   "Wire a logic circuit. Watch signals propagate one generation at a time, or run a hundred thousand gates.",
-  `${roomControls()}<h2>Selected gate <span id="selected">0</span></h2><label>Gate type<select id="kind"><option value="8">Input OFF</option><option value="9">Input ON</option><option value="1">Wire</option><option value="2">NOT</option><option value="3">AND</option><option value="4">OR</option><option value="5">XOR</option><option value="6">NAND</option><option value="7">NOR</option><option value="0">Latch</option></select></label><div class="buttons"><button id="source-a">Connect A</button><button id="source-b">Connect B</button><button id="toggle">Toggle input</button></div><p id="wires" class="hint"></p><label>Visible page<input id="page" type="range" min="0" max="340" value="0"></label><h2>Push it</h2><label>Gate count<select id="count"><option value="64">64</option><option value="1024">1024</option><option value="10000">10000</option><option value="100000">100000</option></select></label><button id="adder">Load a full adder</button><button id="oscillator">Load a ring oscillator</button><p class="hint">Tap a gate to select it. Choose Connect A or B, then tap its input gate. An input button needs no keyboard. Large workloads extend the editable circuit with a generated gate chain.</p>`,
+  `${roomControls()}<h2>Selected gate <span id="selected">0</span></h2><label>Gate type<select id="kind"><option value="8">Input OFF</option><option value="9">Input ON</option><option value="1">Wire</option><option value="2">NOT</option><option value="3">AND</option><option value="4">OR</option><option value="5">XOR</option><option value="6">NAND</option><option value="7">NOR</option><option value="0">Latch</option></select></label><div class="buttons"><button id="source-a">Connect A</button><button id="source-b">Connect B</button><button id="toggle">Toggle input</button></div><p id="wires" class="hint"></p><output id="signal">LOW</output><label>Visible page<input id="page" type="range" min="0" max="340" value="0"></label><h2>Push it</h2><label>Gate count<select id="count"><option value="64">64</option><option value="1024">1024</option><option value="10000">10000</option><option value="100000">100000</option></select></label><button id="adder">Load a full adder</button><button id="oscillator">Load a ring oscillator</button><p class="hint">Tap a gate to select it. Choose Connect A or B, then tap its input gate. An input button needs no keyboard. Large workloads extend the editable circuit with a generated gate chain.</p>`,
 );
 $("lesson").textContent =
   "Fern evaluates every gate from the previous generation. The worker swaps input and output buffers after a complete pass. This gives feedback loops a defined propagation delay.";
@@ -50,12 +51,25 @@ const session = new Session("circuit", (cells) => {
   draw();
 });
 worker.onmessage = ({ data }) => {
+  if (data.kind === "ready") {
+    for (const id of ["cpu-step", "cpu-run", "cpu-reset"])
+      $(id).disabled = false;
+    return;
+  }
   if (data.kind === "error") {
     error(Error(data.message));
     return;
   }
+  if (data.kind === "cpu") {
+    $("cpu-state").textContent =
+      `PC ${data.pc} · accumulator ${data.accumulator} · output ${data.output} · ${data.steps} instructions · ${data.halted ? "HALTED" : "ready"} · carry ${Number(data.carry)}`;
+    $("cpu-state").dataset.output = data.output;
+    $("cpu-state").dataset.halted = String(data.halted);
+    return;
+  }
   if (data.kind !== "frame") return;
   frame = data;
+  signal();
   draw();
   measures({
     Gates: data.count,
@@ -70,10 +84,17 @@ worker.onmessage = ({ data }) => {
 };
 const canvas = $("view"),
   ctx = canvas.getContext("2d");
+function signal() {
+  if ($("signal"))
+    $("signal").textContent = frame?.values[selected] ? "HIGH" : "LOW";
+}
 function refresh() {
   if (!session.cells) return;
+  signal();
   $("selected").textContent = selected;
-  $("kind").value = String(session.cells[selected * 3] || 0);
+  $("kind").value = String(
+    session.draft.get(selected * 3) ?? session.cells[selected * 3] ?? 0,
+  );
   $("wires").textContent =
     `A ← gate ${session.cells[selected * 3 + 1] || 0} · B ← gate ${session.cells[selected * 3 + 2] || 0}`;
 }
@@ -166,7 +187,10 @@ action("Single generation", () => worker.postMessage({ kind: "step" }));
 action("Export circuit", () =>
   download(
     "circuit.json",
-    JSON.stringify({ app: "circuit", cells: Array.from(session.cells || []) }),
+    JSON.stringify({
+      app: "circuit",
+      cells: Array.from(session.currentCells()),
+    }),
   ),
 );
 $("adder").onclick = () => {
@@ -217,3 +241,79 @@ fileInput(".json", async (file) => {
   }
 });
 addEventListener("pagehide", () => worker.terminate(), { once: true });
+
+const cpuPanel = document.createElement("details");
+cpuPanel.open = true;
+cpuPanel.innerHTML =
+  '<summary>Program a four-bit processor</summary><p class="hint">This processor uses a fixed Fern ALU built from logic gates. The editable gate canvas is a separate circuit.</p><div id="program" class="table-wrap"></div><div class="buttons"><button id="cpu-step">Step instruction</button><button id="cpu-run">Run program</button><button id="cpu-reset">Reset processor</button></div><output id="cpu-state">PC 0 · accumulator 0 · output 0</output>';
+$("stage").after(cpuPanel);
+cpuPanel.className = "readout";
+cpuPanel.style.display = "block";
+const program = Uint8Array.from([
+    0x11,
+    0x22,
+    0x23,
+    0x70,
+    0x80,
+    ...Array(11).fill(0x80),
+  ]),
+  ops = [
+    "NOP",
+    "LOAD",
+    "ADD",
+    "XOR",
+    "AND",
+    "JUMP IF ZERO",
+    "JUMP",
+    "OUTPUT",
+    "HALT",
+  ];
+for (let i = 0; i < 16; i++) {
+  const row = document.createElement("div");
+  row.className = "buttons";
+  row.style.marginBottom = "5px";
+  const label = document.createElement("span");
+  label.textContent = String(i).padStart(2, "0");
+  const operation = document.createElement("select"),
+    operand = document.createElement("select");
+  operation.setAttribute("aria-label", `Instruction ${i}`);
+  operation.dataset.slot = i;
+  operand.setAttribute("aria-label", `Operand ${i}`);
+  operand.dataset.slot = i;
+  ops.forEach((name, k) => operation.add(new Option(name, k)));
+  for (let n = 0; n < 16; n++) operand.add(new Option(String(n), n));
+  operation.value = program[i] >>> 4;
+  operand.value = program[i] & 15;
+  operation.onchange = operand.onchange = () => {
+    program[i] = (Number(operation.value) << 4) | Number(operand.value);
+    session.command("program", [i], [program[i]]);
+    worker.postMessage({ kind: "program", program });
+  };
+  row.append(label, operation, operand);
+  $("program").append(row);
+}
+$("cpu-step").onclick = () => worker.postMessage({ kind: "cpu-step" });
+$("cpu-run").onclick = () =>
+  worker.postMessage({ kind: "cpu-run", value: true });
+$("cpu-reset").onclick = () => worker.postMessage({ kind: "program", program });
+
+for (const id of ["cpu-step", "cpu-run", "cpu-reset"]) $(id).disabled = true;
+
+checkpoint("circuit");
+
+session.onProgram = (values) => {
+  if (values.length !== 16) return;
+  for (let i = 0; i < 16; i++) {
+    program[i] = values[i];
+    $("program").querySelector(`select[aria-label="Instruction ${i}"]`).value =
+      String(values[i] >>> 4);
+    $("program").querySelector(`select[aria-label="Operand ${i}"]`).value =
+      String(values[i] & 15);
+  }
+  worker.postMessage({ kind: "program", program });
+};
+
+session.onDraft = () => {
+  refresh();
+  draw();
+};

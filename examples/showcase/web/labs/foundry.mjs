@@ -1,5 +1,6 @@
 import {
   shell,
+  checkpoint,
   $,
   action,
   notice,
@@ -15,7 +16,7 @@ import { Session } from "./session.mjs";
 shell(
   "Foundry",
   "Turn ore into a working supply line. Build a factory together, then fill the grid and measure the cost.",
-  `${roomControls()}<h2>Build</h2><div class="palette" id="tools"></div><label>View zoom<input id="zoom" type="range" min="6" max="36" value="18"></label><label>View column<input id="pan-x" type="range" min="0" max="230" value="0"></label><label>View row<input id="pan-y" type="range" min="0" max="230" value="0"></label><h2>Push it</h2><label>Execution<select id="execution"><option value="native">Shared native simulation</option><option value="wasm">Local Wasm comparison</option></select></label><label>Active grid<select id="size"><option value="4096">4096 cells</option><option value="16384">16384 cells</option><option value="65536" selected>65536 cells</option></select></label><button id="populate">Build a busy factory</button><p class="hint">Tap or drag to place machines. Erase removes a machine. The native server owns the shared cargo. The local Wasm comparison restarts after a layout revision.</p>`,
+  `${roomControls()}<h2>Build</h2><div class="palette" id="tools"></div><label>View zoom<input id="zoom" type="range" min="6" max="36" value="18"></label><label>View column<input id="pan-x" type="range" min="0" max="230" value="8"></label><label>View row<input id="pan-y" type="range" min="0" max="230" value="8"></label><h2>Push it</h2><label>Execution<select id="execution"><option value="native">Shared native simulation</option><option value="wasm">Local Wasm comparison</option></select></label><label>Active grid<select id="size"><option value="4096">4096 cells</option><option value="16384">16384 cells</option><option value="65536" selected>65536 cells</option></select></label><button id="populate">Build a busy factory</button><p class="hint">Tap or drag to place machines. Erase removes a machine. Smelters need a generator connected by power cables. Two ore units become one ingot after eight powered ticks. Rails move cargo four cells every fourth tick. The native server owns the shared cargo. The local Wasm comparison restarts after a layout revision.</p>`,
 );
 $("lesson").textContent =
   "The native server reserves destination capacity, advances the shared cargo, and broadcasts compact binary snapshots. The browser can run the same rules in a worker for comparison.";
@@ -28,6 +29,11 @@ const names = [
     "Belt ←",
     "Belt ↑",
     "Depot",
+    "Smelter",
+    "Generator",
+    "Freight rail",
+    "Power cable",
+    "Rail station",
   ],
   colors = [
     "#152437",
@@ -37,12 +43,16 @@ const names = [
     "#719fb1",
     "#719fb1",
     "#89d6a6",
+    "#e38f72",
+    "#79cce6",
+    "#b0a8cf",
+    "#67d8e6",
+    "#d9bc7b",
   ];
 let tool = 2,
   frame,
   paused = false,
-  drag = false,
-  queued = false;
+  drag = false;
 for (let i = 0; i < names.length; i++) {
   const b = document.createElement("button");
   b.textContent = names[i];
@@ -86,8 +96,9 @@ session.onFactory = (data) => {
     "Step p50": p.p50.toFixed(2) + " ms",
     p95: p.p95.toFixed(2) + " ms",
     p99: p.p99.toFixed(2) + " ms",
-    "Ore produced": data.produced,
-    Delivered: data.consumed,
+    "Ore units produced": data.produced,
+    "Ore units delivered": data.consumed,
+    "Ingots refined": data.refined,
     "Removed by edits": data.removed,
     Snapshot: data.packetBytes + " B",
     "Network p95": session.latencies.length
@@ -111,8 +122,9 @@ worker.onmessage = ({ data }) => {
     p99: data.p99.toFixed(2) + " ms",
     Cells: data.count,
     Tick: data.tick,
-    "Ore produced": data.produced,
-    Delivered: data.consumed,
+    "Ore units produced": data.produced,
+    "Ore units delivered": data.consumed,
+    "Ingots refined": data.refined,
     "Wasm memory": (data.memory / 1048576).toFixed(2) + " MiB",
     "Host arrays": (data.hostBytes / 1048576).toFixed(2) + " MiB",
     "Network p95": rtt.p95.toFixed(1) + " ms",
@@ -144,8 +156,10 @@ function draw() {
     for (let x = 0; x < cols; x++) {
       const index = (y + oy) * 256 + x + ox;
       if (x + ox >= 256 || y + oy >= 256) continue;
-      const kind = session.cells[index] || 0,
-        cargo = frame?.values[index] || 0;
+      const kind = session.draft.get(index) ?? session.cells[index] ?? 0,
+        state = frame?.values[index] || 0,
+        cargo = state & 15,
+        ingots = (state >>> 4) & 15;
       ctx.strokeStyle = "#203148";
       ctx.strokeRect(x * scale, y * scale, scale, scale);
       if (kind > 0 && kind < colors.length) {
@@ -156,9 +170,24 @@ function draw() {
           ctx.font = `${Math.min(16, scale - 5)}px system-ui`;
           ctx.textAlign = "center";
           ctx.fillText(
-            ["", "⛏", "→", "↓", "←", "↑", "▣"][kind],
+            ["", "M", ">", "v", "<", "^", "D", "S", "G", "=", "+", "R"][kind],
             (x + 0.5) * scale,
             (y + 0.72) * scale,
+          );
+        }
+        if (frame?.powered?.[index]) {
+          ctx.strokeStyle = "#62e0ef";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x * scale + 2, y * scale + 2, scale - 4, scale - 4);
+          ctx.lineWidth = 1;
+        }
+        if (ingots) {
+          ctx.fillStyle = "#78d9e9";
+          ctx.fillRect(
+            (x + 0.12) * scale,
+            (y + 0.12) * scale,
+            Math.min(6, scale * 0.3),
+            Math.min(6, scale * 0.3),
           );
         }
         if (cargo) {
@@ -227,7 +256,10 @@ action("Reset cargo", () => {
 action("Export layout", () =>
   download(
     "foundry.json",
-    JSON.stringify({ app: "foundry", cells: Array.from(session.cells || []) }),
+    JSON.stringify({
+      app: "foundry",
+      cells: Array.from(session.currentCells()),
+    }),
   ),
 );
 async function edits(points, values) {
@@ -281,7 +313,7 @@ fileInput(".json", async (file) => {
     data.app !== "foundry" ||
     !Array.isArray(data.cells) ||
     data.cells.length !== 65536 ||
-    data.cells.some((x) => !Number.isInteger(x) || x < 0 || x > 6)
+    data.cells.some((x) => !Number.isInteger(x) || x < 0 || x > 11)
   )
     throw Error("Invalid Foundry layout.");
   await edits(
@@ -290,3 +322,7 @@ fileInput(".json", async (file) => {
   );
 });
 addEventListener("pagehide", () => worker.terminate(), { once: true });
+
+checkpoint("foundry");
+
+session.onDraft = draw;
