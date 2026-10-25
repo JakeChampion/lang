@@ -6898,6 +6898,35 @@ function main(): i32 { return describe(Circle { r: 5 }); }`,
 	}
 }
 
+func TestArrayLiteralFitsViewField(t *testing.T) {
+	const decls = "struct H { xs: [i32] }\nstruct G[T] { xs: [T] }\n"
+	for _, src := range []string{
+		`function f(): i32 { let h: H = H { xs: [1, 2] }; return h.xs[1]; }`,
+		`function f(): i32 { let g: G[i32] = G { xs: [1, 2] }; return g.xs.len() as i32; }`,
+		`function f(): i32 { let h: H = H { xs: [] }; return h.xs.len() as i32; }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(): i32 { let arr: i32[] = [1]; let h: H = H { xs: arr }; return 0; }`,
+		`function f(): i32 { let h: H = H { xs: ["a"] }; return 0; }`,
+	} {
+		if err := checkSource(t, decls+src); err == nil || !hasCode(err, "E043") {
+			t.Errorf("%q: want E043, got %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(): H[] { return [H { xs: [1, 2] }]; }`,
+		`function f(): Option[H] { let v: [i32] = [1]; return Some(H { xs: v }); }`,
+	} {
+		if err := checkSource(t, decls+src); err == nil || !hasCode(err, "E063") {
+			t.Errorf("%q: want E063, got %v", src, err)
+		}
+	}
+}
+
 func TestSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,

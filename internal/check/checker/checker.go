@@ -14366,6 +14366,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.settleNumeric(f.Value, fieldExpected)
 				vt = c.postSettleType(f.Value, vt)
 			}
+			if _, isLit := f.Value.(*ast.ArrayLit); isLit && isArrayViewLend(fieldExpected, vt) {
+				c.lendArrayAsView(&n.Fields[i].Value, fieldExpected, vt, false)
+				vt = fieldExpected
+			}
 			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
 			dynFieldOK := false
 			if _, ok := fieldExpected.(ast.DynTraitType); ok {
