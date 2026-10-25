@@ -147,6 +147,21 @@ them grouped by signature (`scripts/nightly-findings.mjs`), with a count and
 the first seeds of each. One fault failing two hundred seeds is one row, and
 the same row on consecutive nights is the same bug.
 
+The rows are in Furthest-Point-First order. The largest group comes first.
+Each next row is the row least like all the rows above it, so different bugs
+come before more rows of one bug. The distance between two rows is the mean
+of up to four parts, each from 0 to 1:
+
+- the classes are different
+- the passes are different
+- the Jaccard distance of the two seed sets
+- the Jaccard distance of the token pairs of the two repros, when both rows
+  have one
+
+The leg is not a part, because one fault often fails the same seeds on more
+than one leg. A row nearer than 1/3 to an earlier row names that row in its
+`like` column.
+
 The legs also shrink a failed seed (`diffLeg.shrink`): first its recorded
 corpus, then its source, keeping each step after which the program still
 fails the same way. A refused program must stay refused for the same reason;
@@ -340,7 +355,8 @@ built. Citations are to the paper that introduced the technique.
     Furthest-Point-First (Chen et al., PLDI 2013), with each reduced repro
     promoted to a regression test. Done: the signature (leg, failure class,
     bisected pass), the grouped nightly table, and each signature's shrunk
-    repro, which the fix commits as its regression test. Next is the ranking.
+    repro, which the fix commits as its regression test, and the
+    Furthest-Point-First order of the table.
 
 ## Roadmap
 
@@ -348,4 +364,3 @@ In order:
 
 1. Mutation-score floor in CI once the score is measured over enough mutants
    to be stable, and the survivors worked down.
-2. Rank the nightly signatures (Furthest-Point-First).
