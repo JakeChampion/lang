@@ -12477,7 +12477,8 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
   for efn in mod.funcs {
     if (in_focus(focus, efn)) {
       for param in efn.params {
-        out = util.append_diags(out, lanes_inside_diags(type_from_spelling(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn), efn.line, efn.col));
+        let (pl, pc) = param_pos(param, efn.line, efn.col);
+        out = util.append_diags(out, lanes_inside_diags(type_from_spelling(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn), pl, pc));
       }
       out = util.append_diags(out, lanes_inside_diags(type_from_spelling(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), tn), efn.line, efn.col));
       for an in collect_annots(efn.body) {
@@ -12489,7 +12490,8 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
     for field in esd.fields {
       let ft: typeinfo.Type = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
       if (holds_lanes(ft)) {
-        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
+        let (fl, fc) = field_pos(field, esd.line, esd.col);
+        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", fl, fc));
       }
     }
   }
@@ -19438,7 +19440,8 @@ function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
         return acc;
       }
       for param in lm.params {
-        acc = acc.append(Annot { type_name: e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), line: lm.line, col: lm.col });
+        let (pl, pc) = param_pos(param, lm.line, lm.col);
+        acc = acc.append(Annot { type_name: e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), line: pl, col: pc });
       }
       return acc.append(Annot { type_name: e064_decl_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types), line: lm.line, col: lm.col });
     },
@@ -19752,16 +19755,35 @@ function e057_struct_diags(sd: parser.StructDecl, enums: parser.EnumDecl[], s: S
   }
   let out: util.Diag[] = [];
   for field in sd.fields {
-    out = util.append_diags(out, e057_annot_diags(field.type_name, tps, s, line, col));
+    let (fl, fc) = field_pos(field, line, col);
+    out = util.append_diags(out, e057_annot_diags(field.type_name, tps, s, fl, fc));
   }
   return out;
+}
+
+// field_pos and param_pos are where a field's or a parameter's own
+// diagnostic points: its name, or `line:col` for one the source did not
+// spell (a variant's payload, a receiver).
+function field_pos(f: parser.StructFieldDecl, line: i32, col: i32): (i32, i32) {
+  if (f.line > 0) {
+    return (f.line, f.col);
+  }
+  return (line, col);
+}
+
+function param_pos(p: ast.ParamDecl, line: i32, col: i32): (i32, i32) {
+  if (p.line > 0) {
+    return (p.line, p.col);
+  }
+  return (line, col);
 }
 
 function e057_fn_diags(fd: parser.FuncDecl, s: Scope): util.Diag[] {
   let tps: string[] = e064_fn_tparams(fd);
   let out: util.Diag[] = [];
   for param in fd.params {
-    out = util.append_diags(out, e057_annot_diags(param.type_name, tps, s, fd.line, fd.col));
+    let (pl, pc) = param_pos(param, fd.line, fd.col);
+    out = util.append_diags(out, e057_annot_diags(param.type_name, tps, s, pl, pc));
   }
   out = util.append_diags(out, e057_annot_diags(fd.ret_type, tps, s, fd.line, fd.col));
   for elem in collect_annots(fd.body) {
@@ -22111,7 +22133,8 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       for param in efn.params {
         let pu: string = e064_unknown_name(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), e064_tn, e064_extra, efn_tps);
         if (pu.len() > 0) {
-          signature_diags = signature_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(pu) + "\" in this scope" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
+          let (pl, pc) = param_pos(param, efn.line, efn.col);
+          signature_diags = signature_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(pu) + "\" in this scope" + unknown_type_hint(pu, e064_traits), pl, pc));
         }
       }
       let ru: string = e064_unknown_name(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), e064_tn, e064_extra, efn_tps);
@@ -22200,7 +22223,8 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     }
     let xsc: Scope = build_func_scope(xfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
     for param in xfn.params {
-      body_diags = util.append_diags(body_diags, e045_annot_diags(param.type_name, xfn.line, xfn.col, xsc));
+      let (pl, pc) = param_pos(param, xfn.line, xfn.col);
+      body_diags = util.append_diags(body_diags, e045_annot_diags(param.type_name, pl, pc, xsc));
     }
     body_diags = util.append_diags(body_diags, e045_annot_diags(xfn.ret_type, xfn.line, xfn.col, xsc));
     for an in lambda_annots(xfn.body) {
@@ -22216,7 +22240,8 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let fld_scope: Scope = new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
   for esd in mod.structs {
     for field in esd.fields {
-      body_diags = util.append_diags(body_diags, e045_annot_diags(field.type_name, esd.line, esd.col, fld_scope));
+      let (fl, fc) = field_pos(field, esd.line, esd.col);
+      body_diags = util.append_diags(body_diags, e045_annot_diags(field.type_name, fl, fc, fld_scope));
     }
   }
   for esd in mod.structs {
@@ -22224,7 +22249,8 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       for field in esd.fields {
         let fu: string = e064_unknown_name(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
+          let (fl, fc) = field_pos(field, esd.line, esd.col);
+          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), fl, fc));
         }
       }
     }

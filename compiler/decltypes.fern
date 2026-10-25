@@ -53,7 +53,7 @@ function retained_type(t: typeinfo.Type): typeinfo.Type {
 }
 
 function declined(name: string): ast.ParamDecl {
-  return ast.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "" };
+  return ast.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
 }
 
 pub function param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
@@ -79,7 +79,7 @@ pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamD
     ptys = ptys + tys[i];
     i = i + 1;
   }
-  return ast.ParamDecl { name: name, type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: ret, fn_param_types: ptys };
+  return ast.ParamDecl { name: name, type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: ret, fn_param_types: ptys, line: 0, col: 0 };
 }
 
 pub function fn_param_from_spelling(name: string, sp: string): ast.ParamDecl {
