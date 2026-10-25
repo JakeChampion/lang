@@ -8,6 +8,7 @@ import "./semrecords";
 import "./sempair";
 import "./semdead";
 import "./ownership";
+import "./ssabytes";
 
 function max_leaf_insts(): i32 {
   return 40;
@@ -563,6 +564,46 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
   return false;
 }
 
+// A scalar element or word read borrows its array or view and carries no
+// ownership units.
+function leaf_element_read(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.result < 0 || !scalar(f.values[ins.result]) && !ssasem.is_usize(f.values[ins.result])) {
+    return false;
+  }
+  if (ins.kind_tag == ssasem.array_get()) {
+    return ins.args.len() == 2;
+  }
+  return ins.kind_tag == ssasem.call() && word_read(ins.str);
+}
+
+// A view parameter that only element and word reads use ends its borrow
+// inside the leaf, so the leaf may be spliced.
+function read_view_param(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != ssasem.param()) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    for reader in b.insts {
+      let k: i32 = 0;
+      while (k < reader.args.len()) {
+        if (reader.args[k] == ins.result && (k != 0 || !leaf_element_read(f, reader))) {
+          return false;
+        }
+        k = k + 1;
+      }
+    }
+    if (b.term.value == ins.result && b.term.kind_tag == 1 || b.term.cond == ins.result && b.term.kind_tag == 3) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function word_read(name: string): boolean {
+  return name == ssabytes.word_name(4) || name == ssabytes.word_name(8) || name == ssabytes.swap_name(4) || name == ssabytes.swap_name(8)
+    || name == "__raw_arr_ptr" || name == "__load_i32" || name == "__load_i64";
+}
+
 // Scalar fields carry no ownership units. Keep finalizers out of this rule.
 function leaf_record_build(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag != ssasem.record_new() || ins.result < 0 || !scalar_record(f, f.values[ins.result])) {
@@ -791,7 +832,7 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
         let t: typeinfo.Type = f.values[ins.result];
         if (record(t)) {
           records = records + 1;
-        } else if (!leaf_word(f, t) && !void_type(t)) {
+        } else if (!leaf_word(f, t) && !void_type(t) && !read_view_param(f, ins)) {
           return 0 - 1;
         }
       }
@@ -827,7 +868,7 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
     }
     returns = returns || b.term.kind_tag == 1;
     for ins in b.insts {
-      if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !leaf_record_build(f, ins) && !leaf_record_call(f, ins) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
+      if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !leaf_element_read(f, ins) && !leaf_record_build(f, ins) && !leaf_record_call(f, ins) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
         return false;
       }
       if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !scalar(f.values[ins.result])) {
