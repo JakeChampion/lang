@@ -93,7 +93,7 @@ strings, booleans — and `assert_lt` and friends on any `cmp.Ord` type.
 | Golden files | `assert_matches_golden(path, actual)` (writes a missing file) / `assert_matches_golden_strict(...)` (fails on one)     |
 | Process      | `assert_exit`, `assert_exit_zero`, `assert_stdout_eq`, `assert_stderr_eq`, `assert_stdout_contains`, `assert_stderr_contains`, `assert_process` |
 | Environment  | `assert_env_set`, `assert_env_unset`, `assert_env_eq`                                                                 |
-| Timing       | `assert_elapsed_lt_ms`, `assert_elapsed_lt_us`                                                                        |
+| Timing       | `assert_elapsed_lt(start, limit)`, `assert_close_to_now(t, max_skew)`                                                 |
 | Free-form    | `pass()`, `fail(msg)`                                                                                                 |
 
 The [`std/test` reference](../../stdlib/test/) lists every helper with
@@ -385,5 +385,5 @@ in the repo:
   the round-trip property tests
   (`exp(log(x)) == x`, `sin² + cos² = 1`)
 - `timing_test.fern` — `monotonic_ns()` / `now_unix_ms()` /
-  `sleep_ms()` builtins + `assert_elapsed_lt_ms` for
+  `sleep_ms()` builtins + `assert_elapsed_lt` for
   benchmark-style "completes within N ms" assertions

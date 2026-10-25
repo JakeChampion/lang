@@ -5,6 +5,7 @@ import "std/codec";
 import "std/tls/pem";
 import "std/tls/verify";
 import "std/tls/x509";
+import "std/time";
 
 function ec_root(): u8[] {
   return __codec_bytes(hex.decode("308201433081eaa003020102020101300a06082a8648ce3d04030230193117301506035504030c0e4665726e205465737420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a30193117301506035504030c0e4665726e205465737420526f6f743059301306072a8648ce3d020106082a8648ce3d030107034200040dcc7648c78a3118f2612866fe83ef19f40304f623399e1211a10f2b3d1c05cf30e8027677bcb912943e99ff71140ea9bc24713be1b75c31ff4054724c4f9d00a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300a06082a8648ce3d0403020348003045022051b74a89e235c981464cae54764206d65f11184dc5e78a5298441305ef3e72db022100d538cc2287d10ead1e561d7ecc33bf752db02620f12924df9728d20b5b4bd863"));
@@ -48,7 +49,7 @@ function test_bundle_file(dir: string): test.TestOutcome {
       if (r.certs.len() != 2) {
         return test.fail("two roots");
       }
-      return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], r, "example.com", 1780000000 as i64)), "ok example.com");
+      return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], r, "example.com", time.timestamp_from_unix(1780000000))), "ok example.com");
     },
     Err(e) => {
       return test.fail(e.message());

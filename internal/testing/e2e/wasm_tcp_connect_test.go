@@ -32,7 +32,8 @@ func TestWasmTcpConnectOutbound(t *testing.T) {
 		_, _ = conn.Write([]byte(body))
 	}()
 
-	src := `import "std/net";
+	src := `import "std/time";
+import "std/net";
 
 function port_from_env(): i32 {
     match (env("PORT")) {
@@ -58,7 +59,7 @@ function main(): i32 {
         Err(_) => { return 1; },
     };
     match (net.write(c, [71u8, 69u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8, 13u8, 10u8, 13u8, 10u8])) { Err(_) => { return 2; }, Ok(_) => {} }
-    match (net.read_watched(c, 4096, 5000i64, 1)) {
+    match (net.read_watched(c, 4096, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { print(string_from_bytes_unchecked(b)); },
         _ => { return 3; },
     }

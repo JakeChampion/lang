@@ -62,7 +62,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<23 function run_task_call[A, B, T](id: i32, f: (A, B)>>
 
-<<24 pub function park_tokens(toks: i32[], timeout_ms: i32): i32>>
+<<24 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32>>
 
 <<25 struct __Child[T]>>
 
@@ -94,6 +94,7 @@ import "std/i32";
 import "core/int";
 import "std/string";
 import "std/time";
+import "std/clock";
 ```
 
 ### `3 pub enum Future[T]`
@@ -106,9 +107,9 @@ pub enum Future[T] {
 }
 
 pub trait Driver {
-  function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
-  function now_ns(self: Self): i64;
-  function timer(self: Self, ns: i64): i32;
+  function poll_ready(self: Self, toks: i32[], timeout: Option[Duration]): i32;
+  function now(self: Self): Instant;
+  function timer(self: Self, after: Duration): i32;
   function drop_token(self: Self, tok: i32): i32;
   function watch(self: Self, fd: i32, interest: i32): i32;
   function unwatch(self: Self, fd: i32): i32;
@@ -118,9 +119,9 @@ pub trait Driver {
   function keeps(self: Self): boolean {
     return false;
   }
-  function wait_into(self: Self, own events: i32[], timeout_ms: i32): i32[];
-  function wait(self: Self, max: i32, timeout_ms: i32): i32[] {
-    let got: i32[] = self.wait_into(event_room(max), timeout_ms);
+  function wait_into(self: Self, own events: i32[], timeout: Option[Duration]): i32[];
+  function wait(self: Self, max: i32, timeout: Option[Duration]): i32[] {
+    let got: i32[] = self.wait_into(event_room(max), timeout);
     return got.take(ready_pairs(got) * 2);
   }
   function watch_signal(self: Self, sig: i32): i32;
@@ -346,17 +347,17 @@ pub function (d: RealDriver) handle(): i32 {
 ```fern
 <<13 impl Driver for RealDriver>>=
 impl Driver for RealDriver {
-  function poll_ready(self: RealDriver, toks: i32[], timeout_ms: i32): i32 {
+  function poll_ready(self: RealDriver, toks: i32[], timeout: Option[Duration]): i32 {
     if (__task_cur() != 0) {
-      return park_tokens(toks, timeout_ms);
+      return park_tokens(toks, timeout);
     }
-    return poll(toks, timeout_ms);
+    return poll(toks, time.timeout_millis(timeout));
   }
-  function now_ns(self: RealDriver): i64 {
-    return monotonic_ns();
+  function now(self: RealDriver): Instant {
+    return clock.instant();
   }
-  function timer(self: RealDriver, ns: i64): i32 {
-    return __timer_pollable(ns);
+  function timer(self: RealDriver, after: Duration): i32 {
+    return __timer_pollable(after.as_nanos());
   }
   function drop_token(self: RealDriver, tok: i32): i32 {
     return drop_pollable(tok);
@@ -376,10 +377,11 @@ impl Driver for RealDriver {
     }
     return __real_ctl(self, 2, fd, 0);
   }
-  function wait_into(self: RealDriver, own events: i32[], timeout_ms: i32): i32[] {
+  function wait_into(self: RealDriver, own events: i32[], timeout: Option[Duration]): i32[] {
     if (self.ring.get() < 0 as i64 && __real_reactor(self) < 0 || events.len() < 2) {
       return end_pairs(events, 0);
     }
+    let timeout_ms: i32 = time.timeout_millis(timeout);
     let deadline: i64 = monotonic_ns() + timeout_ms as i64 * (1000000 as i64);
     let n: i32 = __real_wait(self, events, timeout_ms);
     while (n == 0 - __eintr()) {
@@ -516,7 +518,7 @@ pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: 
       }
       i = i + 1;
     }
-    let ready: i32 = drv.poll_ready(fds, -1);
+    let ready: i32 = drv.poll_ready(fds, None);
     if (ready < 0) {
       let dl: i32 = __drop_losers(drv, fs, -1);
       break;
@@ -611,7 +613,7 @@ pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i3
     if (fds.len() == 0) {
       return (-1, none_val);
     }
-    let ready: i32 = drv.poll_ready(fds, -1);
+    let ready: i32 = drv.poll_ready(fds, None);
     if (ready < 0) {
       let de: i32 = __drop_losers(drv, fs, -1);
       return (-1, none_val);
@@ -644,9 +646,7 @@ pub function with_deadline[T](deadline: Duration, fs_in: Future[T][]): Option[T]
 
 pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: Future[T][]): Option[T][] {
   let fs: Future[T][] = fs_in;
-  let start_ns: i64 = drv.now_ns();
-  let ns_per_ms: i64 = 1000000;
-  let deadline_ns: i64 = deadline.as_nanos();
+  let until: Instant = drv.now().add(deadline);
   while (true) {
     if (__all_ready(fs)) {
       break;
@@ -664,18 +664,14 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
       }
       i = i + 1;
     }
-    let remaining_ns: i64 = deadline_ns - (drv.now_ns() - start_ns);
-    if (remaining_ns <= 0) {
+    let remaining: Duration = until.since(drv.now());
+    if (remaining.is_negative() || remaining.is_zero()) {
       break;
     }
-    let remaining_ms: i32 = (remaining_ns / ns_per_ms) as i32;
-    if (remaining_ms <= 0) {
-      remaining_ms = 1;
-    }
     let nfds: i32 = fds.len();
-    let timer: i32 = drv.timer(remaining_ns);
+    let timer: i32 = drv.timer(remaining);
     let pollset: i32[] = fds.append(timer);
-    let ready: i32 = drv.poll_ready(pollset, remaining_ms);
+    let ready: i32 = drv.poll_ready(pollset, Some(remaining));
     if (ready < 0) {
       let dpe: i32 = drv.drop_token(timer);
       break;
@@ -717,7 +713,8 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
 <<18 pub enum TaskStatus[T]>>=
 pub enum TaskStatus[T] { Done(T), Suspended(Wait), Cancelled }
 
-pub struct Wait { task: i32, set: i32[], timeout_ms: i32 }
+// `timeout` is how long the task waits for `set` before it resumes anyway; None waits without a limit.
+pub struct Wait { task: i32, set: i32[], timeout: Option[Duration] }
 
 pub struct Task[T] { id: i32, entry: () => T }
 ```
@@ -787,7 +784,7 @@ function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
   let v: T = t.entry();
   let m: i32 = __task_leave();
   if (m == 1) {
-    return Suspended(Wait { task: t.id, set: __task_wait(t.id), timeout_ms: __task_timeout(t.id) });
+    return Suspended(Wait { task: t.id, set: __task_wait(t.id), timeout: time.millis_timeout(__task_timeout(t.id)) });
   }
   return Done(v);
 }
@@ -851,17 +848,17 @@ function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32):
   let v: T = f(a, b);
   let m: i32 = __task_leave();
   if (m == 1) {
-    return Suspended(Wait { task: id, set: __task_wait(id), timeout_ms: __task_timeout(id) });
+    return Suspended(Wait { task: id, set: __task_wait(id), timeout: time.millis_timeout(__task_timeout(id)) });
   }
   return Done(v);
 }
 ```
 
-### `24 pub function park_tokens(toks: i32[], timeout_ms: i32): i32`
+### `24 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32`
 
 ```fern
-<<24 pub function park_tokens(toks: i32[], timeout_ms: i32): i32>>=
-pub function park_tokens(toks: i32[], timeout_ms: i32): i32 {
+<<24 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32>>=
+pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32 {
   let set: i32[] = [];
   let idxs: i32[] = [];
   let i: i32 = 0;
@@ -873,7 +870,7 @@ pub function park_tokens(toks: i32[], timeout_ms: i32): i32 {
     }
     i = i + 1;
   }
-  let r: i32 = __task_park(set, timeout_ms);
+  let r: i32 = __task_park(set, time.timeout_millis(timeout));
   if (r < 0) {
     return r;
   }
@@ -900,10 +897,10 @@ function __no_due(): i64 {
 function __child_due[T](st: TaskStatus[T], now: i64): i64 {
   match (st) {
     Suspended(w) => {
-      if (w.timeout_ms < 0) {
+      let Some(t) = w.timeout else {
         return __no_due();
-      }
-      return now + w.timeout_ms as i64 * (1000000 as i64);
+      };
+      return now + t.as_nanos();
     },
     Done(v) => {
       return __no_due();
@@ -1063,7 +1060,7 @@ function __children_drive[T](kids_in: __Child[T][], until_ns: i64, first: boolea
       due = until_ns;
     }
     let u: __Union = __children_union(kids);
-    let woke: i32 = wait_any(u.set, __ms_until(due, now));
+    let woke: i32 = wait_any(u.set, time.millis_timeout(__ms_until(due, now)));
     if (woke == cancelled()) {
       return __children_cancel(kids);
     }
@@ -1143,7 +1140,8 @@ pub function with_deadline_tasks[T](deadline: Duration, entries: (() => T)[]): O
   return out;
 }
 
-pub function wait_any(set: i32[], timeout_ms: i32): i32 {
+pub function wait_any(set: i32[], timeout: Option[Duration]): i32 {
+  let timeout_ms: i32 = time.timeout_millis(timeout);
   if (__task_cur() != 0) {
     return __task_park(set, timeout_ms);
   }
@@ -1207,7 +1205,7 @@ function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
     let watched: i32 = drv.watch(set[i * 2], interest_bits(set[i * 2 + 1]));
     i = i + 1;
   }
-  let woke: i32[] = drv.wait(n, timeout_ms);
+  let woke: i32[] = drv.wait(n, time.millis_timeout(timeout_ms));
   i = 0;
   while (i < n) {
     let unwatched: i32 = drv.unwatch(set[i * 2]);

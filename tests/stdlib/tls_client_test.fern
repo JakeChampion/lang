@@ -11,6 +11,7 @@ import "std/tls/message";
 import "std/tls/pem";
 import "std/tls/record";
 import "std/tls/verify";
+import "std/time";
 
 const ROOT: string = "3082011b3081cea003020102020165300506032b657030243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f74302a300506032b6570032100d54207da194977dcf46adbfec2bc2e75b52d5a8a42184fedfdc00024f0e3e8daa3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b657003410049ecb5759f87f254129a83d895dda7f57627948c65bc15a9de6034f727fc203ff87eb86fd535211cba0506d7f6f0d267cf6f55e5e9edd493b9b3122e2beeb408";
 
@@ -47,7 +48,7 @@ function leaf_seed(): u8[] {
 struct Pair { session: client.Session, server: handshake.Server }
 
 function begin(cfg: client.Config, now: i64): Result[client.Step, tls.TlsError] {
-  return client.start(cfg, random_bytes(client.entropy(cfg)), now);
+  return client.start(cfg, random_bytes(client.entropy(cfg)), time.timestamp_from_unix_millis(now));
 }
 
 function connect(cfg: client.Config, alpn: string[], forge: boolean): Result[Pair, tls.TlsError] {
@@ -90,7 +91,7 @@ function rd(s: client.Session, input: u8[]): Result[client.Step, tls.TlsError] {
 }
 
 function rd_at(s: client.Session, input: u8[], now: i64): Result[client.Step, tls.TlsError] {
-  match (s.read(input, now)) {
+  match (s.read(input, time.timestamp_from_unix_millis(now))) {
     Ok(step) => {
       return Ok(step);
     },
@@ -265,7 +266,7 @@ function refusal_alert(): Result[string, tls.TlsError] {
     }
   }
   let s2: handshake.ServerStep = srv(s1.server.signature(sig))?;
-  match (start.session.read(cat(s1.output, s2.output), WALL_MS)) {
+  match (start.session.read(cat(s1.output, s2.output), time.timestamp_from_unix_millis(WALL_MS))) {
     Ok(step) => {
       return Ok("accepted");
     },
@@ -420,7 +421,7 @@ function test_resumption(): test.TestOutcome {
       match (issued(p)) {
         Ok(got) => {
           let t: client.Ticket = got.0;
-          if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || t.lifetime != 7200 as u32 || hex.encode(t.psk) != hex.encode(got.1)) {
+          if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || !t.lifetime.eq(time.duration_seconds(7200)) || hex.encode(t.psk) != hex.encode(got.1)) {
             return test.fail("the ticket kept");
           }
           match (connect_resumed(client.config("tls.example", roots(OTHER_ROOT)).with_ticket(t), got.1)) {
@@ -436,7 +437,7 @@ function test_resumption(): test.TestOutcome {
           if (outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)) != "tls handshake: no ticket offered called out of turn") {
             return test.fail("another name: " + outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)));
           }
-          let stale: client.Ticket = client.Ticket { ...t, received_ms: t.received_ms - 7200 as i64 * (1000 as i64) };
+          let stale: client.Ticket = client.Ticket { ...t, received: t.received.sub(time.duration_seconds(7200)) };
           return test.assert_eq(outcome(connect_resumed(client.config("tls.example", roots(ROOT)).with_ticket(stale), got.1)), "tls handshake: no ticket offered called out of turn");
         },
         Err(e) => {
@@ -484,7 +485,7 @@ function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
     Some(v) => {
       shown = "chain " + v.chain.len().to_string();
       if (v.chain.len() > 0) {
-        match (verify.verify_client(v.chain, roots(IDENTITY_ROOT), 1700000000 as i64)) {
+        match (verify.verify_client(v.chain, roots(IDENTITY_ROOT), time.timestamp_from_unix(1700000000))) {
           Ok(leaf) => {
             if (verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
               shown = shown + " verified";

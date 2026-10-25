@@ -1,13 +1,14 @@
 package e2eharness
 
-const TaskSchedulerProgram = `import "std/async";
+const TaskSchedulerProgram = `import "std/time";
+import "std/async";
 import "std/i32";
 
 // leaf parks twice: once per call. mid calls it inside a loop and a branch;
 // top holds a string across the whole thing.
 function leaf(n: i32): i32 {
   let set: i32[] = [timer_fd(1), 1];
-  let r: i32 = async.wait_any(set, 0 - 1);
+  let r: i32 = async.wait_any(set, None);
   return r + n;
 }
 
@@ -44,7 +45,7 @@ function main(): i32 {
       Done(v) => { out = v; going = false; },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, 7);
       },
       Cancelled => { out = 0 - 2; going = false; }

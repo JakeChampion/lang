@@ -24,6 +24,7 @@ base=fixtures['rgb0']
 for name,kind in [('transparency',b'tRNS'),('profile',b'iCCP'),('animation',b'acTL'),('critical',b'ABCD')]:
  fixtures[name]=base[:33]+chunk(kind,b'')+base[33:]
 fixtures['short_scanline']=sig+base[8:33]+chunk(b'IDAT',zlib.compress(b'\0'))+chunk(b'IEND',b'')
+fixtures['bad_final_filter']=sig+base[8:33]+chunk(b'IDAT',zlib.compress(b'\0'+rgb[:6]+b'\5'+rgb[6:]))+chunk(b'IEND',b'')
 text='// Fixtures generated offline with Python zlib and PNG filter equations.\n'
 for name,data in fixtures.items():text+='pub function '+name+'(): u8[] { return ['+', '.join(str(x)+' as u8' for x in data)+']; }\n'
 for name,data in [('rgb_bytes',rgb),('rgba_bytes',rgba)]:text+='pub function '+name+'(): u8[] { return ['+', '.join(str(x)+' as u8' for x in data)+']; }\n'

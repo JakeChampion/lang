@@ -5979,7 +5979,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   return ty_unknown();
 }
 
-function top_level_fn(name: string, s: EmitState): i32 {
+pub function top_level_fn(name: string, s: EmitState): i32 {
   let fi: i32 = s.funcs_ix.chain(name);
   while (fi >= 0) {
     if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {

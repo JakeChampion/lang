@@ -3,11 +3,29 @@ import "std/quic/recovery";
 import "std/quic/frames";
 import "std/i64";
 import "core/int";
+import "std/time";
 
 const MS: i64 = 1000000;
 
+const START: Instant = Instant { sec: 0, nsec: 0 };
+
+function at_ns(ns: i64): Instant {
+  return START.add(time.duration_nanos(ns));
+}
+
+function due_ns(r: recovery.Recovery): i64 {
+  match (r.timer()) {
+    Some(at) => {
+      return at.since(START).as_nanos();
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+}
+
 function sent(pn: i64, at: i64): recovery.Sent {
-  return recovery.Sent { pn: pn, at: at, size: 1200, ack_eliciting: true, in_flight: true, resend: [] };
+  return recovery.Sent { pn: pn, at: at_ns(at), size: 1200, ack_eliciting: true, in_flight: true, resend: [] };
 }
 
 function ack(low: i64, high: i64): frames.Ack {
@@ -33,35 +51,35 @@ function sending(r: recovery.Recovery, from: i64, to: i64, at: i64): recovery.Re
 }
 
 function acked(r: recovery.Recovery, a: frames.Ack, now: i64, largest: i64): recovery.Recovery {
-  return r.on_ack(recovery.APPLICATION, a, 0 as i64, now, largest);
+  return r.on_ack(recovery.APPLICATION, a, time.DURATION_ZERO, at_ns(now), largest);
 }
 
 function test_rtt(): test.TestOutcome {
   let r: recovery.Recovery = recovery.new(1200, true).confirmed();
-  let before: string = (r.pto(recovery.INITIAL) / MS).to_string();
+  let before: string = r.pto(recovery.INITIAL).as_millis().to_string();
   r = sending(r, 0 as i64, 0 as i64, 0 as i64);
   r = acked(r, ack(0 as i64, 0 as i64), 100 * MS, 0 as i64);
-  let first: string = (r.smoothed() / MS).to_string() + "/" + (r.pto(recovery.INITIAL) / MS).to_string();
+  let first: string = r.smoothed().as_millis().to_string() + "/" + r.pto(recovery.INITIAL).as_millis().to_string();
   r = sending(r, 1 as i64, 1 as i64, 100 * MS);
   r = acked(r, ack(0 as i64, 1 as i64), 300 * MS, 1 as i64);
-  return test.assert_eq(before + " | " + first + " | " + (r.smoothed() / MS).to_string(), "999 | 100/300 | 112");
+  return test.assert_eq(before + " | " + first + " | " + r.smoothed().as_millis().to_string(), "999 | 100/300 | 112");
 }
 
 function test_thresholds(): test.TestOutcome {
   let r: recovery.Recovery = sending(recovery.new(1200, true).confirmed(), 0 as i64, 4 as i64, 0 as i64);
   let o: recovery.Recovery = acked(r, ack(4 as i64, 4 as i64), 10 * MS, 4 as i64);
-  let timer: i64 = o.timer();
-  let later: recovery.Recovery = o.on_timeout(timer);
+  let timer: i64 = due_ns(o);
+  let later: recovery.Recovery = o.on_timeout(at_ns(timer));
   let taken: recovery.Recovery = later.outcome_taken();
   return test.assert_eq("acked " + pns(o.acked) + " lost " + pns(o.lost) + " timer " + (timer / 1000).to_string() + "us then acked " + pns(later.acked) + " lost " + pns(later.lost) + "; taken " + pns(taken.acked) + pns(taken.lost), "acked 4, lost 0,1, timer 11250us then acked  lost 2,3,; taken ");
 }
 
 function test_probe_timeout(): test.TestOutcome {
   let r: recovery.Recovery = recovery.new(1200, true).on_sent(recovery.INITIAL, sent(0 as i64, 0 as i64));
-  let t1: i64 = r.timer();
-  let o: recovery.Recovery = r.on_timeout(t1);
-  let t2: i64 = o.timer();
-  let early: recovery.Recovery = r.on_timeout(t1 - 1);
+  let t1: i64 = due_ns(r);
+  let o: recovery.Recovery = r.on_timeout(at_ns(t1));
+  let t2: i64 = due_ns(o);
+  let early: recovery.Recovery = r.on_timeout(at_ns(t1 - 1));
   return test.assert_eq((t1 / MS).to_string() + "ms probe " + int.int_to_string(o.probe) + ", then " + (t2 / MS).to_string() + "ms; early " + int.int_to_string(early.probe), "999ms probe 0, then 1998ms; early -1");
 }
 
@@ -84,7 +102,7 @@ function test_window(): test.TestOutcome {
 
 function test_refusal_and_discard(): test.TestOutcome {
   let r: recovery.Recovery = sending(recovery.new(1200, false), 0 as i64, 1 as i64, 0 as i64);
-  let refused: recovery.Recovery = r.on_ack(recovery.APPLICATION, ack(0 as i64, 5 as i64), 0 as i64, MS, 1 as i64);
+  let refused: recovery.Recovery = r.on_ack(recovery.APPLICATION, ack(0 as i64, 5 as i64), time.DURATION_ZERO, at_ns(MS), 1 as i64);
   let bad: string = refused.refused.to_string() + " " + pns(refused.acked) + "/" + refused.outcome_taken().refused.to_string();
   let in_flight: string = r.in_flight().to_string() + " " + r.window().to_string();
   let d: recovery.Recovery = r.discard(recovery.APPLICATION);

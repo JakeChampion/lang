@@ -2,6 +2,7 @@ import "./ssa";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
+import "./rtbytecopy";
 import "./sourcepos";
 
 pub struct Rewritten { func: ssasem.Func, changed: boolean }
@@ -346,8 +347,19 @@ function body_escapes(b: ssa.SBlock, ix: Index, body: i32): boolean {
   return (b.term.kind_tag == 1 || b.term.kind_tag == 3) && v >= 0 && ix.homes[v] == body;
 }
 
+// A function in a module that defines a helper's name keeps its loops, since
+// the call would reach that function.
+function shadows_helper(f: ssasem.Func): boolean {
+  for name in f.shadows {
+    if (rtbytecopy.is_helper(name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
-  if (!may_have_copy_loop(f.graph) || !any_byte_update(f)) {
+  if (!may_have_copy_loop(f.graph) || !any_byte_update(f) || shadows_helper(f)) {
     return Rewritten { func: f, changed: false };
   }
   let out = f;

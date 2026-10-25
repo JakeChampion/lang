@@ -2,9 +2,9 @@ import "std/test";
 import "std/format" as format;
 
 function ms_of(s: string): i64 {
-  match (format.parse_duration_ms(s)) {
+  match (format.parse_duration(s)) {
     Some(v) => {
-      return v;
+      return v.as_millis();
     },
     None => {
       return -(1 as i64);
@@ -13,7 +13,7 @@ function ms_of(s: string): i64 {
 }
 
 function is_none(s: string): boolean {
-  match (format.parse_duration_ms(s)) {
+  match (format.parse_duration(s)) {
     Some(v) => {
       return false;
     },
@@ -70,7 +70,7 @@ function test_rejections(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/format parse_duration_ms");
+  let r: test.TestRunner = test.test_new("std/format parse_duration");
   r = r.it("single units", test_single_units);
   r = r.it("multi part", test_multi_part);
   r = r.it("beyond i32", test_beyond_i32);
