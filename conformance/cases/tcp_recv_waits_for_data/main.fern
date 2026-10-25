@@ -1,0 +1,30 @@
+// tcp_recv_into on a blocking socket waits for data, so a receive straight
+// after the peer's send gets its bytes on every target (#13310). Switched to
+// non-blocking, a socket with nothing queued answers -EAGAIN at once instead,
+// and switched back, its next receive waits again. At the end of the stream a
+// receive answers 0.
+import "std/string";
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: i32 = tcp_accept(ls);
+  let buf: u8[] = __alloc_u8(8);
+
+  print(f"send: {tcp_send_bytes(c, "ABC".bytes())}");
+  let n: i32 = tcp_recv_into(s, buf);
+  print(f"received {n}: {buf[0]} {buf[1]} {buf[2]}");
+
+  print(f"non-blocking: {tcp_socket_ctl(s, 3, 1)}");
+  print(f"nothing queued: {tcp_recv_into(s, buf) < 0}");
+  print(f"blocking: {tcp_socket_ctl(s, 3, 0)}");
+  print(f"send: {tcp_send_bytes(c, "DE".bytes())}");
+  n = tcp_recv_into(s, buf);
+  print(f"received {n}: {buf[0]} {buf[1]}");
+
+  print(f"shutdown: {tcp_socket_ctl(c, 4, 1)}");
+  print(f"end of stream: {tcp_recv_into(s, buf)}");
+  print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)}");
+  return 0;
+}

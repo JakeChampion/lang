@@ -122,23 +122,10 @@ function main(): i32 {
     let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
     if (c < 0) { return fail(2); }
     let a: i32 = tcp_accept(ln);
-    let tries: i32 = 0;
-    while (a < 0 && tries < 200) {
-        sleep_ms(5 as i64);
-        a = tcp_accept(ln);
-        tries = tries + 1;
-    }
     if (a < 0) { return fail(3); }
     if (tcp_send_bytes(c, [98u8, 121u8, 116u8, 101u8, 115u8]) != 5) { return fail(4); }
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-    let n: i32 = tcp_recv_into(a, buf);
-    tries = 0;
-    while (n < 0 && tries < 200) {
-        sleep_ms(5 as i64);
-        n = tcp_recv_into(a, buf);
-        tries = tries + 1;
-    }
-    if (n != 5) { return fail(5); }
+    if (tcp_recv_into(a, buf) != 5) { return fail(5); }
     if (buf[0] != 98u8 || buf[4] != 115u8) { return fail(6); }
     tcp_close(a);
     tcp_close(c);

@@ -77,4 +77,4 @@ These values exclude metadata, allocator overhead, source retention, and consume
 
 Six additional cases cover exact admission, RGB/RGBA crops across cache sizes, cancellation, tile isolation, and generic fold state with heap errors.
 The original uncached row and tile interfaces keep their existing contracts.
-Fusion, decoder row providers, isolated workers, and aggregate memory qualification remain separate work under #13215.
+Fusion for cached requests, decoder row providers, isolated workers, and aggregate memory qualification remain separate work under #13215.

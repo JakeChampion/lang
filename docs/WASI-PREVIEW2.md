@@ -149,20 +149,22 @@ left are TCP (handled in step 4) plus args / env (step 5 or 6).
    bound to 0.0.0.0:port.
 4. `start-listen` + `finish-listen` flip the socket into listen
    mode.
-5. `tcp_accept` calls `tcp-socket.subscribe` + `pollable.block`
-   to wait for a connection, then `tcp-socket.accept` returns
+5. `tcp_accept` on a blocking listener calls `tcp-socket.subscribe` +
+   `pollable.block` to wait for a connection, then `tcp-socket.accept` returns
    `(tcp-socket, input-stream, output-stream)` — a 16-byte
    canonical-ABI result that needs a dynamically-allocated retptr
    since the static 12-byte slot at memory[92] doesn't fit.
 
 The user-facing builtins keep their preview-1 shape for
 backward compatibility — every "fd" the program sees from
-`tcp_listen` / `tcp_accept` is now a heap pointer to a 12-byte
-struct `(tcp_socket, input_stream, output_stream)`. Listener
-structs leave the two stream slots zero. `tcp_recv_into` /
+`tcp_listen` / `tcp_accept` is now a heap pointer to a 20-byte
+record `(tcp_socket, input_stream, output_stream, kind, nonblocking)`,
+where `nonblocking` is what `tcp_socket_ctl` op 3 last set. Listener
+records leave the two stream slots zero. `tcp_recv_into` /
 `tcp_send_bytes` / `tcp_close` consume that struct: a receive reads the
-input-stream slot without blocking (-EAGAIN while it is empty, 0 at the end
-of the stream, -EIO on a stream error), a send chunks through the
+input-stream slot (while it is empty, a blocking socket waits on the
+stream's pollable and reads again, and a non-blocking one answers -EAGAIN;
+0 at the end of the stream, -EIO on a stream error), a send chunks through the
 output-stream, and close drops streams
 first then the parent socket (the canonical-ABI rejects parent
 drops with live children).
