@@ -106,6 +106,10 @@ pub function need(needs: string[], name: string): boolean {
   return util.index_of_str(needs, name) >= 0;
 }
 
+function need_tcp_send(needs: string[]): boolean {
+  return need_any(needs, ["tcp_send_bytes", "tcp_send_buf"]);
+}
+
 function need_udp_socket(needs: string[]): boolean {
   return need_any(needs, ["udp_bind", "udp_connect"]);
 }
@@ -3730,64 +3734,94 @@ pub function udp_recvfrom_func(): string {
   return o;
 }
 
-pub function wasi_stream_io_imports(): string {
+pub function wasi_io_error_drop_import(): string {
+  return "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $__fern_wasi_io_error_drop (param i32)))\n";
+}
+
+pub function wasi_stream_send_imports(): string {
   let o: string = "";
-  o = o + "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $__fern_wasi_io_error_drop (param i32)))\n";
   o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $__fern_wasi_stream_write (param i32 i32 i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.check-write\" (func $__fern_wasi_stream_check_write (param i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.write\" (func $__fern_wasi_stream_write_nb (param i32 i32 i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.flush\" (func $__fern_wasi_stream_flush (param i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-flush\" (func $__fern_wasi_stream_blocking_flush (param i32 i32)))\n";
   return o;
 }
 
-pub function tcp_send_bytes_func(): string {
-  let o: string = "  (func $__fern_tcp_send_bytes (param $c i32) (param $a i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32)\n";
-  o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $ret (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
-  o = o + "    (block $done (loop $more\n";
-  o = o + "      (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
-  o = o + "      (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
-  o = o + "      (if (i32.gt_u (local.get $n) (i32.const 4096)) (then (local.set $n (i32.const 4096))))\n";
-  o = o + "      (call $__fern_wasi_stream_write (local.get $st) (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $off)) (local.get $n) (local.get $ret))\n";
-  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
-  o = o + "        (if (i32.gt_u (local.get $off) (i32.const 0)) (then (return (local.get $off))))\n";
-  o = o + "        (return (i32.const -1))))\n";
-  o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n))) (br $more)))\n";
-  o = o + "    (local.get $len))\n";
+// The stream-error at $err: a failed operation (its error dropped) is -EIO,
+// a closed stream -EPIPE, in the WASI numbering.
+function tcp_stream_failed_func(): string {
+  let o: string = "  (func $__fern_tcp_stream_failed (param $err i32) (result i32)\n";
+  o = o + "    (if (i32.load8_u (local.get $err)) (then (return (i32.const -64))))\n";
+  o = o + "    (call $__fern_wasi_io_error_drop (i32.load offset=4 (local.get $err)))\n";
+  o = o + "    (i32.const -29))\n";
   return o;
 }
 
-pub function tcp_send_buf_func(): string {
-  let o: string = "  (func $__fern_tcp_send_buf (param $c i32) (param $h i32) (param $from i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32) (local $p i32)\n";
+// A non-blocking socket writes what check-write permits now and starts its
+// flush, -EAGAIN when it permits nothing; a blocking one writes it all.
+function tcp_write_func(): string {
+  let o: string = "  (func $__fern_tcp_write (param $c i32) (param $p i32) (param $len i32) (result i32)\n";
+  o = o + "    (local $st i32) (local $ret i32) (local $off i32) (local $n i32)\n";
   o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
-  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $len (i32.sub (i32.load offset=4 (local.get $h)) (local.get $from)))\n";
-  o = o + "    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $p (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $from)))\n";
   o = o + "    (local.set $ret (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
+  o = o + "    (if (i32.load offset=16 (local.get $c)) (then\n";
+  o = o + "      (call $__fern_wasi_stream_check_write (local.get $st) (local.get $ret))\n";
+  o = o + "      (if (i32.load8_u (local.get $ret)) (then (return (call $__fern_tcp_stream_failed (i32.add (local.get $ret) (i32.const 8))))))\n";
+  o = o + "      (if (i64.lt_u (i64.load offset=8 (local.get $ret)) (i64.extend_i32_u (local.get $len))) (then (local.set $len (i32.wrap_i64 (i64.load offset=8 (local.get $ret))))))\n";
+  o = o + "      (if (i32.eqz (local.get $len)) (then (return (i32.const -6))))\n";
+  o = o + "      (call $__fern_wasi_stream_write_nb (local.get $st) (local.get $p) (local.get $len) (local.get $ret))\n";
+  o = o + "      (if (i32.eqz (i32.load8_u (local.get $ret))) (then (call $__fern_wasi_stream_flush (local.get $st) (local.get $ret))))\n";
+  o = o + "      (if (i32.load8_u (local.get $ret)) (then (return (call $__fern_tcp_stream_failed (i32.add (local.get $ret) (i32.const 4))))))\n";
+  o = o + "      (return (local.get $len))))\n";
   o = o + "    (block $done (loop $more\n";
   o = o + "      (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
   o = o + "      (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
   o = o + "      (if (i32.gt_u (local.get $n) (i32.const 4096)) (then (local.set $n (i32.const 4096))))\n";
   o = o + "      (call $__fern_wasi_stream_write (local.get $st) (i32.add (local.get $p) (local.get $off)) (local.get $n) (local.get $ret))\n";
   o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+  o = o + "        (local.set $n (call $__fern_tcp_stream_failed (i32.add (local.get $ret) (i32.const 4))))\n";
   o = o + "        (if (i32.gt_u (local.get $off) (i32.const 0)) (then (return (local.get $off))))\n";
-  o = o + "        (return (i32.const -1))))\n";
+  o = o + "        (return (local.get $n))))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n))) (br $more)))\n";
   o = o + "    (local.get $len))\n";
   return o;
 }
 
-pub function tcp_close_func(udp: boolean): string {
+pub function tcp_send_helpers(): string {
+  return tcp_stream_failed_func() + tcp_write_func();
+}
+
+pub function tcp_send_bytes_func(): string {
+  let o: string = "  (func $__fern_tcp_send_bytes (param $c i32) (param $a i32) (result i32)\n";
+  o = o + "    (if (i32.eqz (i32.load (local.get $a))) (then (return (i32.const 0))))\n";
+  o = o + "    (call $__fern_tcp_write (local.get $c) (i32.add (local.get $a) (i32.const 8)) (i32.load (local.get $a))))\n";
+  return o;
+}
+
+pub function tcp_send_buf_func(): string {
+  let o: string = "  (func $__fern_tcp_send_buf (param $c i32) (param $h i32) (param $from i32) (result i32)\n";
+  o = o + "    (local $len i32)\n";
+  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (return (i32.const 0))))\n";
+  o = o + "    (local.set $len (i32.sub (i32.load offset=4 (local.get $h)) (local.get $from)))\n";
+  o = o + "    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const 0))))\n";
+  o = o + "    (call $__fern_tcp_write (local.get $c) (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $from)) (local.get $len)))\n";
+  return o;
+}
+
+// With sends linked, a connection's output stream is flushed before it is
+// dropped: wasmtime cancels a write still in flight when its stream drops.
+pub function tcp_close_func(udp: boolean, sends: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
   if (udp) {
     o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (call $__fern_udp_close (local.get $c)))))\n";
   }
   o = o + "    (if (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 1)) (then\n";
+  if (sends) {
+    o = o + "      (call $__fern_wasi_stream_blocking_flush (i32.load offset=8 (local.get $c)) (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
+    o = o + "      (if (i32.load8_u (i32.const " + util.i32_to_string(io_ret_addr()) + ")) (then (drop (call $__fern_tcp_stream_failed (i32.const " + util.i32_to_string(io_ret_addr() + 4) + ")))))\n";
+  }
   o = o + "      (call $__fern_wasi_input_stream_drop (i32.load offset=4 (local.get $c)))\n";
   o = o + "      (call $__fern_wasi_output_stream_drop (i32.load offset=8 (local.get $c)))))\n";
   o = o + "    (call $__fern_wasi_tcp_socket_drop (i32.load (local.get $c)))\n";
@@ -9393,7 +9427,10 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
     parts = parts.append(wasi_sockets_imports());
   }
   if (need_any(needs, ["tcp_send_bytes", "tcp_send_buf", "tcp_recv_into"])) {
-    parts = parts.append(wasi_stream_io_imports());
+    parts = parts.append(wasi_io_error_drop_import());
+  }
+  if (need_tcp_send(needs)) {
+    parts = parts.append(wasi_stream_send_imports());
   }
   if (need(needs, "reactor_ctl")) {
     parts = parts.append(wasi_stream_subscribe_imports());
@@ -9865,7 +9902,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(pollable_drop_func());
   }
   if (need(needs, "tcp_close")) {
-    parts = parts.append(tcp_close_func(need_udp_socket(needs)));
+    parts = parts.append(tcp_close_func(need_udp_socket(needs), need_tcp_send(needs)));
+  }
+  if (need_tcp_send(needs)) {
+    parts = parts.append(tcp_send_helpers());
   }
   if (need(needs, "tcp_send_bytes")) {
     parts = parts.append(tcp_send_bytes_func());

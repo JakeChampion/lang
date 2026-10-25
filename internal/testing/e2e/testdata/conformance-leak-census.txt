@@ -1061,6 +1061,7 @@ target_os_wasi                                       0
 tasks_agree_without_a_scheduler                      7
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
+tcp_send_nonblocking_partial                         0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0
