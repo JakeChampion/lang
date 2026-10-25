@@ -1,3 +1,7 @@
+# Re-pinned 2026-10-25 (#13177), aarch64 rows from Perf run 40168342835. The
+# word-refill decoder and the hash-chain matcher cut deflate_decode.ir by 36% and
+# deflate_encode.ir by 40%. The map rows are 2-4% faster. Splicing and word reads
+# add 1-9% `.text` to deflate, http_hello and utf8_ingest.
 # Re-pinned 2026-10-25 (#13143) from Perf run 40108312430. The LZ77 copy helper
 # and the byte-view mismatch cut deflate_decode.ir by 19-23% and deflate_encode.ir
 # by 9-11%. The new runtime helper adds 2-6% `.text` to deflate_decode,
@@ -358,26 +362,26 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
-aarch64/deflate_decode.ir	73591740
-aarch64/deflate_decode.text	12926
-aarch64/deflate_encode.ir	97921398
-aarch64/deflate_encode.text	8262
+aarch64/deflate_decode.ir	46997989
+aarch64/deflate_decode.text	14061
+aarch64/deflate_encode.ir	58528654
+aarch64/deflate_encode.text	8508
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
-aarch64/http_hello.text	17704
+aarch64/http_hello.text	18604
 aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
 aarch64/map_int.text	5921
-aarch64/map_int.ir	37209199
+aarch64/map_int.ir	35711954
 aarch64/map_probe_chain.text	5932
-aarch64/map_probe_chain.ir	352799209
+aarch64/map_probe_chain.ir	340503732
 aarch64/map_string.text	7013
-aarch64/map_string.ir	63040321	2
+aarch64/map_string.ir	61661591	2
 aarch64/ordmap_insert.text	3184
 aarch64/ordmap_insert.ir	114034987
 aarch64/pmap_insert.text	2936
-aarch64/pmap_insert.ir	65826289
+aarch64/pmap_insert.ir	64018618
 aarch64/pvec_with.text	3086
 aarch64/pvec_with.ir	59217299
 aarch64/record_update.text	1483
@@ -404,9 +408,9 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	7675
+aarch64/utf8_ingest_unchecked.text	7802
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	8919
+aarch64/utf8_ingest_validated.text	9049
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
