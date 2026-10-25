@@ -247,7 +247,7 @@ function main(): i32 {
     Some(pem) => {
       match (identity.from_pem(pem, pem)) {
         Ok(id) => {
-          opts = opts.with_tls(server.config(id));
+          opts = opts.with_tls(server.config(id, random_bytes(32)));
         },
         Err(e) => {
           eprint(e.message());
@@ -297,7 +297,7 @@ function main(): i32 {
     Some(pem) => {
       match (identity.from_pem(pem, pem)) {
         Ok(id) => {
-          opts = opts.with_tls(server.config(id));
+          opts = opts.with_tls(server.config(id, random_bytes(32)));
         },
         Err(e) => {
           eprint(e.message());
