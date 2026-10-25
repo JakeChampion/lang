@@ -17,10 +17,10 @@ name: Test e2e other
 #   - test_runner_test.go     (TestRunner*)
 #   - interp_script_test.go   (TestInterpScript*)
 #   - check_test.go           (TestCheck*)
-#   - cross_module_variant_test.go (TestCrossModule*; the arch
-#     siblings SKIP on the foreign runner via toolchain detection,
-#     so the matrix-per-arch fan-out gives us native coverage of
-#     both.)
+#   - cross_module_variant_test.go (TestCrossModule*. The arm64
+#     sibling runs under qemu through the cross toolchain the
+#     shards install. FERN_REQUIRE_ARM64_TOOLING fails a missing
+#     toolchain instead of skipping it.)
 #   - float_semantics_test.go (TestFloat*)
 #   (TestDifferential* lives in its own workflow —
 #    test-e2e-differential.yml — because the 2048-seed sweep is
@@ -119,8 +119,8 @@ jobs:
         # Process isolation is what the package needs — tests here mutate
         # compiler globals, so `t.Parallel` is not an option — and one serial
         # test process leaves most of a four-core runner idle. Each
-        # architecture keeps two workers per shard; the matrix above
-        # controls how many disjoint selections share that work.
+        # shard runs two workers. The matrix above controls how many
+        # disjoint selections share that work.
         #
         # The partition is scripts/shard-tests, the same greedy LPT the
         # self-host lane uses — it reads names on stdin and is not specific to

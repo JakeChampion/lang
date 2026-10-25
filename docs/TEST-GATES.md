@@ -16,8 +16,9 @@ the single path filter both events read (`TestGateLanesRunOnMain`,
 A pull request runs the fast tier: `Lint`, the `changes` job that picks the
 lanes, and `Preflight` (`.github/workflows/preflight.yml`). Preflight runs the
 fixture corpus through the self-host compiler, one leg per target plus the
-front-end leg. It also calls the unit, e2e, wasm, differential and coreutils
-lanes with `hosts: x86_64`, which runs their x86-64 legs alone. That is about 110
+front-end leg. It also calls the x86-64 e2e, wasm and differential lanes, and
+the unit and coreutils lanes with `hosts: x86_64`, which runs their x86-64 legs
+alone. That is about 110
 runner-minutes and ten minutes of wall against a pool of about 40 runners, so
 it never queues. A red job cancels the run through `reap-preflight`.
 
@@ -1479,13 +1480,15 @@ Worth knowing so you do not assume coverage you do not have:
    NOT fixed lane-wide — the other lanes still hide passes — so on any question
    of the form "is this test running in CI" read the test's own output, not the
    lane's colour, and add the output if it is not there.
-13. **A test that needs TWO backends on one host runs on neither single-backend
-   lane.** `TestF64TranscendentalBackendsAgree` had compared nothing since it was
-   written: the catch-all `test-e2e-other` lane owns its name, and each of that
-   lane's arches has one of the two toolchains. It now runs on
+13. **A test that needs TWO backends on one host needs a job that REQUIRES
+   both.** `TestF64TranscendentalBackendsAgree` compared nothing from the day it
+   was written: the catch-all `test-e2e-other` lane owned its name, and each of
+   that lane's arches had one of the two toolchains. It runs on
    `test-e2e-arm64.yml`'s `cross-host` job (x86 host + aarch64 cross toolchain +
    qemu-user), which sets `FERN_REQUIRE_CROSS_BACKENDS=1` so a lane that loses a
-   toolchain goes RED instead of quietly back to skipping.
+   toolchain goes RED instead of quietly back to skipping. The catch-all x86
+   shards now install both toolchains and run the test too. They do not require
+   the pair, so `cross-host` stays the job that goes red.
 
 14. **Pick the gate by the fixture's SHAPE, not by the test's NAME.**
    `internal/testing/e2ecompiler` holds ~1980 test functions, and the ones pinning a

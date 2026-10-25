@@ -12,13 +12,13 @@ name: Test e2e differential
 #
 # Split via the `DIFF_ORACLE_SHARD=I/N` env var the tests honour: each
 # shard claims `seed % N == I`, so at N=1 one job sweeps the whole
-# corpus. Crossed with the per-arch matrix.
+# corpus.
 #
-# ONE SHARD per arch. Splitting a fixed corpus costs no coverage at any N:
+# ONE SHARD. Splitting a fixed corpus costs no coverage at any N:
 # every seed is claimed by exactly one bucket, and at N=1 that bucket is
 # the sweep. So the count trades wall-clock for runner slots and nothing
-# else. The sweep is about 6 minutes of tests per arch after setup, and two
-# shards each ran about 3 minutes after the same setup while the pool queued
+# else. The sweep was about 6 minutes of tests per host after setup. Two
+# shards each ran about 3 minutes after the same setup, while the pool queued
 # jobs for 20 minutes or more (docs/ci-log/2026-10-25-pr-ci-queue.md).
 # Raise it if the sweep grows toward the suite's longest jobs; nshard rides
 # the matrix, so the denominator moves with the job count.
@@ -80,8 +80,9 @@ jobs:
           FERN_REQUIRE_Z3: "1"
         # -timeout is EXPLICIT because Go's default is 10 minutes, which
         # sits inside this lane's own headroom: the sweep is ~9.5 min at
-        # one shard against a 25-minute job budget, so a slightly slow
-        # runner panics at Go's default long before the budget is spent.
+        # one shard before the arm64 legs under qemu, against a 35-minute
+        # job budget, so a slightly slow runner panics at Go's default long
+        # before the budget is spent.
         # That does not read as a timeout — the panic dumps every in-flight
         # subtest as a failure with no reason, so one slow run reported 391
         # phantom seed failures next to 638 genuine passes at exactly
