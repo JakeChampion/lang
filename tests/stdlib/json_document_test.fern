@@ -50,7 +50,7 @@ function idx(v: Option[i32]): i32 {
 }
 
 function dom_error(text: string): string {
-  match (json.json_parse_result(text)) {
+  match (json.parse(text)) {
     Ok(_) => {
       return "ok";
     },
@@ -86,7 +86,7 @@ function nested(n: i32): string {
   return s;
 }
 
-function test_to_value_matches_json_parse(): test.TestOutcome {
+function test_to_value_matches_parse(): test.TestOutcome {
   let texts: string[] = [
     "null", "true", "false", "0", "-0.5e+10", "\"\"", "[]", "{}",
     " [ 1 , [ ] , { } , \"a\\u00e9\\n\" ] ",
@@ -96,7 +96,7 @@ function test_to_value_matches_json_parse(): test.TestOutcome {
   ];
   let i: i32 = 0;
   while (i < texts.len()) {
-    let want: string = json.json_encode(json.json_parse(texts[i]).unwrap_or(JString("<unparsed>")));
+    let want: string = json.json_encode(json.parse(texts[i]).unwrap_or(JString("<unparsed>")));
     let d: json.Document = doc(texts[i]);
     if (d.tape.len() == 0) {
       return test.fail("parse_document rejected " + texts[i]);
@@ -110,7 +110,7 @@ function test_to_value_matches_json_parse(): test.TestOutcome {
   return test.pass();
 }
 
-function test_errors_match_json_parse_result(): test.TestOutcome {
+function test_errors_match_parse(): test.TestOutcome {
   let texts: string[] = [
     "", " ", "[", "]", "{", "{\"a\"", "{\"a\":}", "{\"a\" 1}", "{1: 2}",
     "[1,]", "[1 2]", "{\"a\":1,}", "01", "-", "1.", "1e", "1e+", "tru",
@@ -260,8 +260,8 @@ function test_kinds(): test.TestOutcome {
 
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/json document");
-  r = r.it("to_value matches json_parse", test_to_value_matches_json_parse);
-  r = r.it("errors match json_parse_result", test_errors_match_json_parse_result);
+  r = r.it("to_value matches parse", test_to_value_matches_parse);
+  r = r.it("errors match parse", test_errors_match_parse);
   r = r.it("walk an array", test_walk_array);
   r = r.it("walk an object", test_walk_object);
   r = r.it("empty containers", test_empty_containers);

@@ -7,8 +7,8 @@ function doc(): string {
 }
 
 function test_get_string(): test.TestOutcome {
-  match (json.json_parse(doc())) {
-    Some(obj) => {
+  match (json.parse(doc())) {
+    Ok(obj) => {
       match (json.json_get_string(obj, "name")) {
         Some(v) => {
           return test.assert_eq(v, "fern");
@@ -18,15 +18,15 @@ function test_get_string(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_i32(): test.TestOutcome {
-  match (json.json_parse(doc())) {
-    Some(obj) => {
+  match (json.parse(doc())) {
+    Ok(obj) => {
       match (json.json_get_i32(obj, "age")) {
         Some(v) => {
           return test.assert_eq(v, 3);
@@ -36,15 +36,15 @@ function test_get_i32(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_bool(): test.TestOutcome {
-  match (json.json_parse(doc())) {
-    Some(obj) => {
+  match (json.parse(doc())) {
+    Ok(obj) => {
       match (json.json_get_bool(obj, "active")) {
         Some(v) => {
           return test.assert_true(v);
@@ -54,15 +54,15 @@ function test_get_bool(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_missing(): test.TestOutcome {
-  match (json.json_parse(doc())) {
-    Some(obj) => {
+  match (json.parse(doc())) {
+    Ok(obj) => {
       match (json.json_get_string(obj, "nope")) {
         Some(v) => {
           return test.fail("expected None for missing key");
@@ -72,15 +72,16 @@ function test_get_missing(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_wrong_type(): test.TestOutcome {
-  match (json.json_parse(doc())) {
-    Some(obj) => {
+  // "name" is a string → json_get_i32 must return None, not coerce.
+  match (json.parse(doc())) {
+    Ok(obj) => {
       match (json.json_get_i32(obj, "name")) {
         Some(v) => {
           return test.fail("expected None for non-number");
@@ -90,15 +91,15 @@ function test_get_wrong_type(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_is_null(): test.TestOutcome {
-  match (json.json_parse(doc())) {
-    Some(obj) => {
+  match (json.parse(doc())) {
+    Ok(obj) => {
       match (json.json_get(obj, "meta")) {
         Some(v) => {
           return test.assert_true(json.json_is_null(v));
@@ -108,15 +109,15 @@ function test_is_null(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_array(): test.TestOutcome {
-  match (json.json_parse(doc())) {
-    Some(obj) => {
+  match (json.parse(doc())) {
+    Ok(obj) => {
       match (json.json_get_array(obj, "tags")) {
         Some(arr) => {
           return test.assert_true(arr.len() == 2 && json.json_encode(arr[0]) == "\"a\"");
@@ -126,18 +127,19 @@ function test_get_array(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_encode_array_round_trip(): test.TestOutcome {
-  match (json.json_parse("[1,2,3]")) {
-    Some(v) => {
+  // Array order is deterministic, so the round-trip is exact.
+  match (json.parse("[1,2,3]")) {
+    Ok(v) => {
       return test.assert_eq(json.json_encode(v), "[1,2,3]");
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
@@ -145,27 +147,27 @@ function test_encode_array_round_trip(): test.TestOutcome {
 
 function test_encode_scalars(): test.TestOutcome {
   let ok: boolean = true;
-  match (json.json_parse("true")) {
-    Some(v) => {
+  match (json.parse("true")) {
+    Ok(v) => {
       ok = ok && json.json_encode(v) == "true";
     },
-    None => {
+    Err(_) => {
       return test.fail("parse true failed");
     }
   }
-  match (json.json_parse("null")) {
-    Some(v) => {
+  match (json.parse("null")) {
+    Ok(v) => {
       ok = ok && json.json_encode(v) == "null";
     },
-    None => {
+    Err(_) => {
       return test.fail("parse null failed");
     }
   }
-  match (json.json_parse("42")) {
-    Some(v) => {
+  match (json.parse("42")) {
+    Ok(v) => {
       ok = ok && json.json_encode(v) == "42";
     },
-    None => {
+    Err(_) => {
       return test.fail("parse 42 failed");
     }
   }
@@ -173,11 +175,12 @@ function test_encode_scalars(): test.TestOutcome {
 }
 
 function test_encode_string_escape(): test.TestOutcome {
-  match (json.json_parse("\"a\\\"b\"")) {
-    Some(v) => {
+  // A quote inside the string must re-escape on encode.
+  match (json.parse("\"a\\\"b\"")) {
+    Ok(v) => {
       return test.assert_eq(json.json_encode(v), "\"a\\\"b\"");
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
@@ -185,22 +188,22 @@ function test_encode_string_escape(): test.TestOutcome {
 
 function test_encode_string_escape_all(): test.TestOutcome {
   let j: string = "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\"";
-  match (json.json_parse(j)) {
-    Some(v) => {
+  match (json.parse(j)) {
+    Ok(v) => {
       return test.assert_eq(json.json_encode(v), j);
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function __reencode(input: string): string {
-  match (json.json_parse(input)) {
-    Some(v) => {
+  match (json.parse(input)) {
+    Ok(v) => {
       return json.json_encode(v);
     },
-    None => {
+    Err(_) => {
       return "PARSE_FAIL";
     }
   }
@@ -221,29 +224,30 @@ function test_parse_string_decode_paths(): test.TestOutcome {
 
 function test_encode_nested_round_trip(): test.TestOutcome {
   let j: string = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
-  match (json.json_parse(j)) {
-    Some(v) => {
+  match (json.parse(j)) {
+    Ok(v) => {
       return test.assert_eq(json.json_encode(v), j);
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_parse_invalid(): test.TestOutcome {
-  match (json.json_parse("{\"a\":1} trailing")) {
-    Some(v) => {
+  // Trailing garbage → None.
+  match (json.parse("{\"a\":1} trailing")) {
+    Ok(v) => {
       return test.fail("expected None for trailing garbage");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
 }
 
 function test_parse_error_byte_render(): test.TestOutcome {
-  match (json.json_parse_result("é")) {
+  match (json.parse("é")) {
     Ok(v) => {
       return test.fail("expected a parse error");
     },
@@ -253,7 +257,7 @@ function test_parse_error_byte_render(): test.TestOutcome {
       }
     }
   }
-  match (json.json_parse_result("x")) {
+  match (json.parse("x")) {
     Ok(v) => {
       return test.fail("expected a parse error");
     },
@@ -268,7 +272,7 @@ function test_parse_unescaped_control(): test.TestOutcome {
   let want: i32[] = [2, 8, 3, 4];
   let i: i32 = 0;
   while (i < raw.len()) {
-    match (json.json_parse_result(raw[i])) {
+    match (json.parse(raw[i])) {
       Ok(_) => {
         return test.fail("accepted a raw control byte: case " + i.to_string());
       },
@@ -280,11 +284,11 @@ function test_parse_unescaped_control(): test.TestOutcome {
     }
     i = i + 1;
   }
-  match (json.json_parse("\"a\\tb\"")) {
-    Some(v) => {
+  match (json.parse("\"a\\tb\"")) {
+    Ok(v) => {
       return test.assert_eq(json.json_encode(v), "\"a\\tb\"");
     },
-    None => {
+    Err(_) => {
       return test.fail("rejected an escaped tab");
     }
   }
@@ -306,30 +310,30 @@ function nest(n: i32): string {
 }
 
 function test_depth_ok(): test.TestOutcome {
-  match (json.json_parse(nest(50))) {
-    Some(v) => {
+  match (json.parse(nest(50))) {
+    Ok(v) => {
       return test.pass();
     },
-    None => {
+    Err(_) => {
       return test.fail("50-deep array should parse");
     }
   }
 }
 
 function test_depth_limit(): test.TestOutcome {
-  match (json.json_parse(nest(500))) {
-    Some(v) => {
+  match (json.parse(nest(500))) {
+    Ok(v) => {
       return test.fail("500-deep array should be rejected");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
 }
 
 function test_get_f64(): test.TestOutcome {
-  match (json.json_parse("{\"x\":3.5}")) {
-    Some(v) => {
+  match (json.parse("{\"x\":3.5}")) {
+    Ok(v) => {
       match (json.json_get_f64(v, "x")) {
         Some(f) => {
           let d: f64 = f - 3.5;
@@ -343,15 +347,15 @@ function test_get_f64(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_f64_exp(): test.TestOutcome {
-  match (json.json_parse("{\"x\":1.5e3}")) {
-    Some(v) => {
+  match (json.parse("{\"x\":1.5e3}")) {
+    Ok(v) => {
       match (json.json_get_f64(v, "x")) {
         Some(f) => {
           let d: f64 = f - 1500.0;
@@ -365,15 +369,15 @@ function test_get_f64_exp(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_i32_overflow(): test.TestOutcome {
-  match (json.json_parse("{\"x\":2147483648}")) {
-    Some(v) => {
+  match (json.parse("{\"x\":2147483648}")) {
+    Ok(v) => {
       match (json.json_get_i32(v, "x")) {
         Some(x) => {
           return test.fail("expected None on i32 overflow");
@@ -383,15 +387,15 @@ function test_get_i32_overflow(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function test_get_i64_overflow(): test.TestOutcome {
-  match (json.json_parse("{\"x\":99999999999999999999}")) {
-    Some(v) => {
+  match (json.parse("{\"x\":99999999999999999999}")) {
+    Ok(v) => {
       match (json.json_get_i64(v, "x")) {
         Some(x) => {
           return test.fail("expected None on i64 overflow");
@@ -401,15 +405,15 @@ function test_get_i64_overflow(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
 }
 
 function __i64_get(lit: string): string {
-  match (json.json_parse("{\"x\":" + lit + "}")) {
-    Some(v) => {
+  match (json.parse("{\"x\":" + lit + "}")) {
+    Ok(v) => {
       match (json.json_get_i64(v, "x")) {
         Some(n) => {
           return n.to_string();
@@ -419,7 +423,7 @@ function __i64_get(lit: string): string {
         }
       }
     },
-    None => {
+    Err(_) => {
       return "<parse>";
     }
   }
@@ -472,8 +476,8 @@ function test_pretty_scalars_and_empties(): test.TestOutcome {
 }
 
 function test_pretty_structure(): test.TestOutcome {
-  match (json.json_parse("{\"a\":1,\"b\":[10,20]}")) {
-    Some(v) => {
+  match (json.parse("{\"a\":1,\"b\":[10,20]}")) {
+    Ok(v) => {
       let p: string = json.json_encode_pretty(v, 2);
       if (!p.contains("\n")) {
         return test.fail("no newline");
@@ -486,7 +490,7 @@ function test_pretty_structure(): test.TestOutcome {
       }
       return test.pass();
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
@@ -494,18 +498,18 @@ function test_pretty_structure(): test.TestOutcome {
 
 function test_pretty_roundtrip(): test.TestOutcome {
   let src: string = "{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{}}";
-  match (json.json_parse(src)) {
-    Some(v) => {
-      match (json.json_parse(json.json_encode_pretty(v, 4))) {
-        Some(v2) => {
+  match (json.parse(src)) {
+    Ok(v) => {
+      match (json.parse(json.json_encode_pretty(v, 4))) {
+        Ok(v2) => {
           return test.assert_eq(json.json_encode(v2), json.json_encode(v));
         },
-        None => {
+        Err(_) => {
           return test.fail("pretty did not re-parse");
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }

@@ -34,7 +34,7 @@ function is_alpha(b: u8): boolean {
   return b >= 97 && b <= 122 || b >= 65 && b <= 90 || b == 95;
 }
 
-function is_alnum(b: u8): boolean {
+function is_alphanumeric(b: u8): boolean {
   return is_alpha(b) || is_digit(b);
 }
 
@@ -45,9 +45,9 @@ function ident_end(src: string, i: i32): i32 {
   }
   while (j < src.len()) {
     let b: u8 = src[j];
-    if (is_alnum(b) || b == 46) {
+    if (is_alphanumeric(b) || b == 46) {
       j = j + 1;
-    } else if (b == 45 && j + 1 < src.len() && is_alnum(src[j + 1])) {
+    } else if (b == 45 && j + 1 < src.len() && is_alphanumeric(src[j + 1])) {
       j = j + 1;
     } else {
       return j;
@@ -84,7 +84,7 @@ function match_unit(src: string, i: i32, units: string[]): string {
     let unit: string = units[u];
     let e: i32 = i + unit.len();
     if (e <= src.len() && slice_unchecked(src, i, e) == unit) {
-      if (e == src.len() || !is_alnum(src[e])) {
+      if (e == src.len() || !is_alphanumeric(src[e])) {
         return unit;
       }
     }

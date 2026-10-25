@@ -48,6 +48,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module applies CORS policies to HTTP requests and responses.
+
+import "std/unicode";
+// This module applies CORS policies to HTTP requests and responses.
 ```
 
 ### `dependencies 2`

@@ -1,25 +1,29 @@
-
-
-
-
-
-
-
 import "core/int";
 import "std/json";
 import "std/string";
+
 function main(): i32 {
-    let bad: i32 = 0;
-    match (json.json_parse("{\"a\":[1,2,3],\"b\":\"hi\"}")) {
-        Some(v) => {
-            match (v) {
-                JObject(m) => { if (m.len() != 2) { bad = bad + 1; } },
-                _ => { bad = bad + 10; }
-            }
+  let bad: i32 = 0;
+  match (json.parse("{\"a\":[1,2,3],\"b\":\"hi\"}")) {
+    Ok(v) => {
+      match (v) {
+        JObject(m) => {
+          if (m.len() != 2) {
+            bad = bad + 1;
+          }
         },
-        None => { bad = bad + 100; }
+        _ => {
+          bad = bad + 10;
+        }
+      }
+    },
+    Err(_) => {
+      bad = bad + 100;
     }
-    let arr: json.JsonValue[] = [JNumber("1"), JBool(true)];
-    if (json.json_encode(JArray(arr)) != "[1,true]") { bad = bad + 1000; }
-    return bad + __rc_underflow_count();
+  }
+  let arr: json.JsonValue[] = [JNumber("1"), JBool(true)];
+  if (json.json_encode(JArray(arr)) != "[1,true]") {
+    bad = bad + 1000;
+  }
+  return bad + __rc_underflow_count();
 }

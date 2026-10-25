@@ -1,0 +1,397 @@
+{
+  "source_commit": "63dc2c64b9cc4c20c42710ad6b298608c83e94f5",
+  "go_source": "a5aca3218a868c7b85492a12b9d563a6bd9fa44b",
+  "prior_public_head": "84644a66cbda19523833b497c127ad60a399def9",
+  "tests": [
+    {
+      "file": "go-regressions-final.jsonl",
+      "cases": 2461,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:38:06.755464722Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/cmd/floattablegen",
+          "Elapsed": 0.428
+        },
+        {
+          "Time": "2026-10-24T23:38:07.911033293Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/stdlib",
+          "Elapsed": 0.488
+        },
+        {
+          "Time": "2026-10-24T23:38:25.54726024Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/pkg/modload",
+          "Elapsed": 3.727
+        },
+        {
+          "Time": "2026-10-24T23:38:34.980782188Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/sourcelint",
+          "Elapsed": 8.568
+        },
+        {
+          "Time": "2026-10-24T23:38:59.671336166Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/check/checker",
+          "Elapsed": 21.367
+        }
+      ]
+    },
+    {
+      "file": "gnu-9.12-reference-complete.jsonl",
+      "cases": 5786,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:56:44.460852567Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/coreutils",
+          "Elapsed": 156.482
+        }
+      ]
+    },
+    {
+      "file": "buffer-writer-regressions.jsonl",
+      "cases": 10,
+      "skips": 1,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:39:28.052052225Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2e",
+          "Elapsed": 29.971
+        }
+      ]
+    },
+    {
+      "file": "affected-example-checks.jsonl",
+      "cases": 4,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:44:07.614006497Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/cmd/fern",
+          "Elapsed": 2.515
+        }
+      ]
+    },
+    {
+      "file": "fern-runner-regressions.jsonl",
+      "cases": 2,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:44:23.475447595Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2e",
+          "Elapsed": 15.122
+        }
+      ]
+    },
+    {
+      "file": "pr-final-timezone-regressions.jsonl",
+      "cases": 1194,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:52:52.459063456Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/coreutils",
+          "Elapsed": 4.767
+        }
+      ]
+    },
+    {
+      "file": "cross-target-callers.jsonl",
+      "cases": 20,
+      "skips": 0,
+      "packages": [
+        {
+          "Time": "2026-10-24T23:58:27.522623575Z",
+          "Action": "pass",
+          "Package": "github.com/jakechampion/lang/internal/testing/coreutils",
+          "Elapsed": 35.44
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "file": "committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    },
+    {
+      "file": "decimal-probe-results.json",
+      "commands": 10,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "all-coreutils-checks.json",
+      "commands": 212,
+      "balanced_censuses": 0
+    }
+  ],
+  "darwin_builds": 2,
+  "darwin_local_execution": false,
+  "native_certificate": {
+    "recorded_source": "489278fceebe29602589bddd221b4c8ae260ed2c",
+    "current_source": "63dc2c64b9cc4c20c42710ad6b298608c83e94f5",
+    "paths": [
+      "compiler",
+      "internal/stdlib",
+      "bootstrap/stage0.lock",
+      ".github/selfhost-driver-sizes.txt"
+    ],
+    "changed": [],
+    "compiler": "/workspace/scratch/lang-manifest-package/visibility-final-integration/bootstrap/stage3",
+    "compiler_sha256": "b72975f4d099ebec5b5354e0e48c0dabfe34c06e066d402085b63d437fd39a96"
+  },
+  "frontend_certificate": {
+    "recorded_source": "a5aca3218a868c7b85492a12b9d563a6bd9fa44b",
+    "current_source": "63dc2c64b9cc4c20c42710ad6b298608c83e94f5",
+    "paths": [
+      "cmd",
+      "internal",
+      "go.mod",
+      "go.sum"
+    ],
+    "changed": []
+  },
+  "binaries": {
+    "/workspace/scratch/lang-manifest-package/coreutils-caller-followup/oracle-current": {
+      "bytes": 27851964,
+      "sha256": "86eb92dd7a351f3f7f5532da3ef813ef68b00c116976348cfb9c713564394edb"
+    },
+    "/workspace/scratch/lang-manifest-package/visibility-final-integration/bootstrap/stage3": {
+      "bytes": 14466048,
+      "sha256": "b72975f4d099ebec5b5354e0e48c0dabfe34c06e066d402085b63d437fd39a96"
+    },
+    "/workspace/scratch/lang-manifest-package/coreutils-caller-followup/decimal-probe-x86-64-linux": {
+      "bytes": 12464,
+      "sha256": "5414a88f1b73fa642c35c44e23d330d046c66ba25775ffbbae878d39cb400468"
+    },
+    "/workspace/scratch/lang-manifest-package/coreutils-caller-followup/decimal-probe-arm64-linux": {
+      "bytes": 66560,
+      "sha256": "faaeb42507a47b5f3b25e6dbc4e6c0d1e3a57422fbc018eecdb265efad100d9c"
+    },
+    "/workspace/scratch/lang-manifest-package/coreutils-caller-followup/decimal-probe-wasm32-wasi": {
+      "bytes": 6946,
+      "sha256": "370082363046136115b87e721d9a1c2fc3270ceea75a9ec0beed8502a7345f9f"
+    },
+    "/workspace/scratch/lang-manifest-package/coreutils-caller-followup/buffered-writer-Go-arm64-darwin": {
+      "bytes": 66545,
+      "sha256": "973f3d8b43cf97cd49e49e77512e0a0c39e8b4fe555378c2710749e16e13c7cc"
+    },
+    "/workspace/scratch/lang-manifest-package/coreutils-caller-followup/buffered-writer-self-arm64-darwin": {
+      "bytes": 66545,
+      "sha256": "973f3d8b43cf97cd49e49e77512e0a0c39e8b4fe555378c2710749e16e13c7cc"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 2113,
+      "sha256": "047afecf67826edbf199baeb6a430070b09655f12b921e7aaa91456066489c65"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 18137,
+      "sha256": "adb069cf000445ecde5fad9af26737134c7308889e3d4cc90e5f68d1c16b4e99"
+    },
+    {
+      "path": "native-source-certificate.json.gz",
+      "bytes": 320,
+      "sha256": "7934de78069010de6bb8f1b4b9f2fab25fb3a4456f26a0d5b06bf0d4f0bd0146"
+    },
+    {
+      "path": "frontend-source-certificate.json.gz",
+      "bytes": 174,
+      "sha256": "1b4af6f9bdd30af87eb8dc515d8829d34b5346c1f9790edc34c8a56b241cf5de"
+    },
+    {
+      "path": "oracle-current-version.txt.gz",
+      "bytes": 386,
+      "sha256": "e34c1a63f362f806b6f84c3abd1a7a5cc3053afcf1d8013a2ddd888f84e4e14d"
+    },
+    {
+      "path": "go-regressions-final.jsonl.gz",
+      "bytes": 147084,
+      "sha256": "0b889ee0947c39e7bcf6f84141e2f372e544861a3b53679e34f62ff5762bd27b"
+    },
+    {
+      "path": "gnu-9.12-reference-complete.jsonl.gz",
+      "bytes": 308852,
+      "sha256": "dacd7a3da61d86c31bfef0d6d7dd766c2ceca139a09b741dd9a887771a1be20a"
+    },
+    {
+      "path": "buffer-writer-regressions.jsonl.gz",
+      "bytes": 993,
+      "sha256": "fe90780e3f87a1df6488f27b1787d6a78fc6651494bdd16023e67f80e5247560"
+    },
+    {
+      "path": "affected-example-checks.jsonl.gz",
+      "bytes": 685,
+      "sha256": "9854b75aa9e93ac1ecc336a0b9683df6edab1fb30480ce5401f94833baf4642d"
+    },
+    {
+      "path": "fern-runner-regressions.jsonl.gz",
+      "bytes": 514,
+      "sha256": "95cf3d653576efcb226f5b05f7cccb7c596aadb66252d13aceea9c2bd469109d"
+    },
+    {
+      "path": "pr-final-timezone-regressions.jsonl.gz",
+      "bytes": 61991,
+      "sha256": "54badb4c2d495cb952affc9f652da9028e8cb90ce09ecf1cc2ce74801bbcebfb"
+    },
+    {
+      "path": "cross-target-callers.jsonl.gz",
+      "bytes": 1535,
+      "sha256": "be6d09b7a5eb1d57da02aa6df9b64c3db187f6d9167ffefde756dd848cdb0f8c"
+    },
+    {
+      "path": "timezone-oracle-setup.json.gz",
+      "bytes": 489,
+      "sha256": "2286fc3ca273c4173ab4791bc5d54d368435256308e2a658caeb2fc1503b5504"
+    },
+    {
+      "path": "all-coreutils-checks.json.gz",
+      "bytes": 1815,
+      "sha256": "3327880c9697987f451c3b34ce4537bd008ed40122d24d587f18831a85cd2e42"
+    },
+    {
+      "path": "all-coreutils-final-checks.log.gz",
+      "bytes": 438,
+      "sha256": "9c56d79f28ef22bb35a32cbb346037402f41ec0d69149040b22d06c3ab8de5de"
+    },
+    {
+      "path": "check-all-coreutils.py.gz",
+      "bytes": 685,
+      "sha256": "b1f104b5b5cf933dd7df3c9d7cc21d598ce6b93f708818c2d2d9e30cbd8d87d7"
+    },
+    {
+      "path": "decimal-probe.fern.gz",
+      "bytes": 402,
+      "sha256": "ca3d240a272aaef6377d25a2134d991bfa944431046527d9cb1c7a2c98e3490a"
+    },
+    {
+      "path": "check-decimal-probe.py.gz",
+      "bytes": 949,
+      "sha256": "3ac708d00b923135265785c174033237cb5842932197ddf0ba3f34044bd3cf6f"
+    },
+    {
+      "path": "decimal-probe-results.json.gz",
+      "bytes": 665,
+      "sha256": "16795d8841c9823a21ea4f670b95644fc1d08c255b9d858c085617c722ef734c"
+    },
+    {
+      "path": "decimal-probe.log.gz",
+      "bytes": 104,
+      "sha256": "a914a295be2d09062c90523534c5b59e6c6a03531da94b6f07e7ae5c1d91ffa7"
+    },
+    {
+      "path": "buffered-writer.fern.gz",
+      "bytes": 1014,
+      "sha256": "a5548fda67856ef7af1ac9dfb1ecebc563b58606ab54f4f34f7024728239a945"
+    },
+    {
+      "path": "buffered-writer-darwin-builds.json.gz",
+      "bytes": 411,
+      "sha256": "471ca21e369f5bd230d2a1e9cd51dde42f0298706f0d531e5801cb662fff9664"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "format-check.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body.md.gz",
+      "bytes": 1250,
+      "sha256": "4cecd1d59164e45f65bfdeb3a50171f4e1915b9dd8c9cddb90bb1c68244421e1"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 2505,
+      "sha256": "de3a6b12229ab50a248cf1da0d795428817d1488c692122ecae554c990f1b1c3"
+    },
+    {
+      "path": "committed-matrix-final.py.gz",
+      "bytes": 1492,
+      "sha256": "87d9e8dc7b2b0211905058b71a8afafa4cb7e1cd839bbb68745ed29b04711731"
+    },
+    {
+      "path": "committed-matrix-final-results.json.gz",
+      "bytes": 4484,
+      "sha256": "12d1b478c2ccf71b609562f319d681f9ec28f0eb17298c9769aa8afd11800832"
+    },
+    {
+      "path": "committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-project-matrix-final.py.gz",
+      "bytes": 1423,
+      "sha256": "1139d4b807c7b4c187555f665a0e2429f0e9621f062ed72aa396195f75f80050"
+    },
+    {
+      "path": "package-project-matrix-final-results.json.gz",
+      "bytes": 1198,
+      "sha256": "819bcfa16314624ae5b622c959038fb8576cb61008bd9685b36eba25c2f79ace"
+    },
+    {
+      "path": "package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "reexport-matrix-final.py.gz",
+      "bytes": 1478,
+      "sha256": "8b64b8125d182cb3325059299cd446ed22f41df0e8e20388796358fbd8dbec60"
+    },
+    {
+      "path": "reexport-matrix-final-results.json.gz",
+      "bytes": 2214,
+      "sha256": "8ec84992d9c80b25d2b96747faf17748c6808f0981385251f831104e81199844"
+    },
+    {
+      "path": "reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    }
+  ]
+}

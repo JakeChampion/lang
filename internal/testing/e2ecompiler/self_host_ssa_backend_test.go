@@ -262,7 +262,7 @@ function main(): i32 { return count(sieve(1000)); }
 import "core/cmp";
 import "std/json";
 function main(): i32 {
-    match (json.json_parse_result("[1, [2, 3], [], {\"k\": [4]}]")) {
+    match (json.parse("[1, [2, 3], [], {\"k\": [4]}]")) {
         Ok(v) => { return json.json_encode(v).len(); },
         Err(e) => { return 1; },
     }
@@ -532,7 +532,8 @@ function main(): i32 {
     return n % 251;
 }
 `},
-	{name: "strings", src: `
+	{name: "strings", src: `import "std/unicode";
+
 import "std/string";
 import "std/i32";
 import "std/i64";

@@ -1,37 +1,30 @@
-
-
-
-
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
   let r: i32 = 0;
-  if (require_regex_text(regex.regex_replace_all("a", "aaa", "bb")) == "bbbbbb") {
+  if (require_regex_text(match ({ let __checked_regex_7: regex.Regex = match (regex.compile("a")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_7.replace_all("aaa", "bb") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "bbbbbb") {  // multi-char repl grows output
     r = r + 1;
   }
-  if (require_regex_text(regex.regex_replace_all("", "abc", "-")) == "-a-b-c-") {
+  if (require_regex_text(match ({ let __checked_regex_6: regex.Regex = match (regex.compile("")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.replace_all("abc", "-") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "-a-b-c-") {  // empty pattern → between every byte
     r = r + 2;
   }
-  if (require_regex_text(regex.regex_replace_all("x*", "axbxc", "<>")) == "<>a<><>b<><>c<>") {
+  if (require_regex_text(match ({ let __checked_regex_5: regex.Regex = match (regex.compile("x*")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.replace_all("axbxc", "<>") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "<>a<><>b<><>c<>") {  // nullable star, zero-width carry
     r = r + 4;
   }
-  if (require_regex_text(regex.regex_replace_all(".", "hi", "")) == "") {
+  if (require_regex_text(match ({ let __checked_regex_4: regex.Regex = match (regex.compile(".")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.replace_all("hi", "") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "") {  // delete everything (empty repl)
     r = r + 8;
   }
-  if (require_regex_text(regex.regex_replace_all("^", "abc", ">")) == ">abc") {
+  if (require_regex_text(match ({ let __checked_regex_3: regex.Regex = match (regex.compile("^")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.replace_all("abc", ">") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == ">abc") {  // anchored, single zero-width at start
     r = r + 16;
   }
-  if (require_regex_text(regex.regex_replace_all("z", "abc", "Q")) == "abc") {
+  if (require_regex_text(match ({ let __checked_regex_2: regex.Regex = match (regex.compile("z")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.replace_all("abc", "Q") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "abc") {  // no match → unchanged
     r = r + 32;
   }
-  if (require_regex_text(regex.regex_replace_all("o", "foo bar boo", "0")) == "f00 bar b00") {
+  if (require_regex_text(match ({ let __checked_regex_1: regex.Regex = match (regex.compile("o")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.replace_all("foo bar boo", "0") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "f00 bar b00") {  // dense single-char
     r = r + 64;
   }
-  if (require_regex_text(regex.regex_replace_all("X", "aXbXc", "-")) == "a-b-c") {
+  if (require_regex_text(match ({ let __checked_regex_0: regex.Regex = match (regex.compile("X")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.replace_all("aXbXc", "-") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a-b-c") {  // trailing tail after last match
     r = r + 128;
   }
   return r;

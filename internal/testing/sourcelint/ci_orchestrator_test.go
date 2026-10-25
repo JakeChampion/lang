@@ -364,9 +364,12 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 			t.Errorf("%s: lane %q has needs=%q, want %q",
 				j.file, id, j.keys["needs"], wantNeeds)
 		}
-		if j.keys["if"] != want {
+		// A lane ci.yml runs itself may add an event guard in front of the row,
+		// as Preflight does to stay out of the runs that take the suite.
+		cond := j.keys["if"]
+		if cond != want && !(j.file == ciFile && strings.HasSuffix(cond, " && "+want)) {
 			t.Errorf("%s: lane %q is gated on `%s`, not on its own row `%s`",
-				j.file, id, j.keys["if"], want)
+				j.file, id, cond, want)
 		}
 	}
 	var stale []string

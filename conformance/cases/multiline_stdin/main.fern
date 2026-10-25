@@ -1,21 +1,27 @@
+import "std/i32";
 import "std/io";
 import "std/string";
 
-
 function main(): i32 {
-    let total: i32 = 0;
-    let done: boolean = false;
-    while (!done) {
-        match (io.read_line(stdin())) {
-            Ok(Some(line)) => {
-                match (line.trim().parse_int()) {
-                    Some(n) => { total = total + n; },
-                    None => { }
-                }
-            },
-            Ok(None()) => { done = true; },
-            Err(_) => { return 255; }
+  let total: i32 = 0;
+  let done: boolean = false;
+  while (!done) {
+    match (io.read_line(stdin())) {
+      Ok(Some(line)) => {
+        match (i32.parse_i32(line.trim())) {
+          Ok(n) => {
+            total = total + n;
+          },
+          Err(_) => {}
         }
+      },
+      Ok(None()) => {
+        done = true;
+      },
+      Err(_) => {
+        return 255;
+      }
     }
-    return total;
+  }
+  return total;
 }

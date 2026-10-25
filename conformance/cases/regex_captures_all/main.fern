@@ -1,81 +1,76 @@
-
-
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
   let r: i32 = 0;
 
-  let all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
-  if (all.len() == 2 && require_regex_text(all[0].group(1)) == "a" && require_regex_text(all[1].group(2)) == "d") {
+  let all: regex.Captures[] = { let __checked_regex_8: regex.Regex = match (regex.compile("(\\w+)@(\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_8.captures_all("a@b c@d") };
+  if (all.len() == 2 && require_regex_text(match (all[0].group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a" && require_regex_text(match (all[1].group(2)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "d") {
     r = r + 1;
   }
 
-  let nc: regex.RCaps = require_caps(regex.regex_captures("(?:ab)+(c)", "ababc"));
-  if (nc.group_count() == 1 && require_regex_text(nc.group(0)) == "ababc" && require_regex_text(nc.group(1)) == "c") {
+  let nc: regex.Captures = require_caps({ let __checked_regex_7: regex.Regex = match (regex.compile("(?:ab)+(c)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_7.captures("ababc") });
+  if (nc.group_count() == 1 && require_regex_text(match (nc.group(0)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "ababc" && require_regex_text(match (nc.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "c") {
     r = r + 2;
   }
 
-  let ci: regex.RCaps = require_caps(regex.regex_captures("(?i)(HEL+O)", "say hello"));
-  if (require_regex_text(ci.group(1)) == "hello") {
+  let ci: regex.Captures = require_caps({ let __checked_regex_6: regex.Regex = match (regex.compile("(?i)(HEL+O)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.captures("say hello") });
+  if (require_regex_text(match (ci.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "hello") {
     r = r + 4;
   }
 
-  match (regex.regex_captures("(x)(y)", "abc")) {
+  match ({ let __checked_regex_5: regex.Regex = match (regex.compile("(x)(y)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.captures("abc") }) {
     Some(_) => {},
     None => {
       r = r + 8;
     }
   }
 
-
-
-  let z: regex.RCaps = require_caps(regex.regex_captures("(a*)", "bbb"));
+  // (a*) matches empty AT position 0 of "bbb": participation with an
+  // empty span, not an unset group.
+  let z: regex.Captures = require_caps({ let __checked_regex_4: regex.Regex = match (regex.compile("(a*)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.captures("bbb") });
   if (z.has_group(1) && at(z.group_start(1), 0) && at(z.group_end(1), 0)) {
     r = r + 16;
   }
 
-
-  let nul: regex.RCaps = require_caps(regex.regex_captures("(a?)*b", "aaab"));
-  if (require_regex_text(nul.group(0)) == "aaab") {
+  // a star over a nullable body must terminate (epsilon-cycle dedup)
+  let nul: regex.Captures = require_caps({ let __checked_regex_3: regex.Regex = match (regex.compile("(a?)*b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.captures("aaab") });
+  if (require_regex_text(match (nul.group(0)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "aaab") {
     r = r + 32;
   }
 
-
-  let cr: regex.RCaps = require_caps(regex.regex_captures("(ab){2}", "abab"));
-  if (require_regex_text(cr.group(0)) == "abab" && require_regex_text(cr.group(1)) == "ab") {
+  // counted repetition duplicates the group node; the span is the last copy's
+  let cr: regex.Captures = require_caps({ let __checked_regex_2: regex.Regex = match (regex.compile("(ab){2}")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.captures("abab") });
+  if (require_regex_text(match (cr.group(0)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "abab" && require_regex_text(match (cr.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "ab") {
     r = r + 64;
   }
 
-
-
-  let caps: regex.RCaps = require_caps(regex.regex_captures("(a|ab)", "xab"));
-  let span: regex.RMatch = require_match(regex.regex_search("(a|ab)", "xab"));
-  if (at(caps.group_start(0), span.start) && at(caps.group_end(0), span.end) && require_regex_text(caps.group(1)) == "ab") {
+  // the capture engine reports the same leftmost-longest span the
+  // position-set matcher does
+  let caps: regex.Captures = require_caps({ let __checked_regex_1: regex.Regex = match (regex.compile("(a|ab)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.captures("xab") });
+  let span: regex.Match = require_match({ let __checked_regex_0: regex.Regex = match (regex.compile("(a|ab)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.find("xab") });
+  if (at(caps.group_start(0), span.start) && at(caps.group_end(0), span.end) && require_regex_text(match (caps.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "ab") {
     r = r + 128;
   }
 
   return r;
 }
 
-
-function require_caps(result: Option[regex.RCaps]): regex.RCaps {
+// require_caps and require_match are the match, exiting 1 when there is none.
+function require_caps(result: Option[regex.Captures]): regex.Captures {
   if let Some(c) = result {
     return c;
   }
   exit(1);
-  return regex.RCaps { text: "", starts: [], ends: [], names: [] };
+  return regex.Captures { text: "", starts: [], ends: [], names: [] };
 }
 
-function require_match(result: Option[regex.RMatch]): regex.RMatch {
+function require_match(result: Option[regex.Match]): regex.Match {
   if let Some(m) = result {
     return m;
   }
   exit(1);
-  return regex.RMatch { start: 0, end: 0 };
+  return regex.Match { start: 0, end: 0 };
 }
 
 function at(o: Option[i32], want: i32): boolean {

@@ -1,0 +1,180 @@
+import "std/json" as js;
+
+@derive(js.Json, js.FromJson)
+struct Person { name: string, age: Option[i32], nested: Option[Option[string]] }
+
+function main(): i32 {
+  let text: string = "[{\"name\":\"Ada\",\"age\":null,\"nested\":\"x\"},{\"name\":\"Grace\",\"age\":37}]";
+  let Ok(people) = js.decode_array[Person](text) else {
+    return 1;
+  };
+  if (people.len() != 2 || people[0].name != "Ada" || people[1].name != "Grace") {
+    return 2;
+  }
+  match (people[0].age) {
+    None => {},
+    Some(_) => {
+      return 3;
+    }
+  }
+  match (people[1].age) {
+    Some(n) => {
+      if (n != 37) {
+        return 4;
+      }
+    },
+    None => {
+      return 5;
+    }
+  }
+  match (people[0].nested) {
+    Some(inner) => {
+      match (inner) {
+        Some(s) => {
+          if (s != "x") {
+            return 6;
+          }
+        },
+        None => {
+          return 7;
+        }
+      }
+    },
+    None => {
+      return 8;
+    }
+  }
+  let Ok(roundtrip) = js.decode[Person](people[0].to_json()) else {
+    return 9;
+  };
+  match (roundtrip.age) {
+    None => {},
+    Some(_) => {
+      return 10;
+    }
+  }
+  match (roundtrip.nested) {
+    Some(inner) => {
+      match (inner) {
+        Some(s) => {
+          if (s != "x") {
+            return 11;
+          }
+        },
+        None => {
+          return 12;
+        }
+      }
+    },
+    None => {
+      return 13;
+    }
+  }
+  let Ok(absent) = js.decode[Option[i32]]("null") else {
+    return 14;
+  };
+  match (absent) {
+    None => {},
+    Some(_) => {
+      return 15;
+    }
+  }
+  let Ok(present) = js.decode[Option[i32]]("7") else {
+    return 16;
+  };
+  match (present) {
+    Some(n) => {
+      if (n != 7) {
+        return 17;
+      }
+    },
+    None => {
+      return 18;
+    }
+  }
+  let Ok(nested) = js.decode[Option[Option[i32]]]("7") else {
+    return 19;
+  };
+  match (nested) {
+    Some(inner) => {
+      match (inner) {
+        Some(n) => {
+          if (n != 7) {
+            return 20;
+          }
+        },
+        None => {
+          return 21;
+        }
+      }
+    },
+    None => {
+      return 22;
+    }
+  }
+  let Ok(options) = js.decode_array[Option[i32]]("[null,7]") else {
+    return 23;
+  };
+  if (options.len() != 2) {
+    return 24;
+  }
+  match (options[0]) {
+    None => {},
+    Some(_) => {
+      return 25;
+    }
+  }
+  match (options[1]) {
+    Some(n) => {
+      if (n != 7) {
+        return 26;
+      }
+    },
+    None => {
+      return 27;
+    }
+  }
+  let Ok(empty) = js.decode_array[Person]("[]") else {
+    return 28;
+  };
+  if (empty.len() != 0) {
+    return 29;
+  }
+  match (js.decode_array[Person]("{}")) {
+    Ok(_) => {
+      return 30;
+    },
+    Err(e) => {
+      if (e.message != "expected an array, got an object") {
+        return 31;
+      }
+    }
+  }
+  match (js.decode_array[Person]("[{\"name\":\"ok\"},{\"name\":\"bad\",\"age\":\"old\"}]")) {
+    Ok(_) => {
+      return 32;
+    },
+    Err(e) => {
+      if (e.message != "[1]: field \"age\": expected an integer, got a string" || e.offset != -1) {
+        return 33;
+      }
+    }
+  }
+  match (js.decode[Option[i32]]("\"bad\"")) {
+    Ok(_) => {
+      return 34;
+    },
+    Err(_) => {}
+  }
+  let bad: string = "[\n  ?]";
+  let Err(parsed) = js.parse(bad) else {
+    return 35;
+  };
+  let Err(decoded) = js.decode_array[Person](bad) else {
+    return 36;
+  };
+  if (decoded.offset != parsed.offset || decoded.line != parsed.line || decoded.col != parsed.col || decoded.message != parsed.message) {
+    return 37;
+  }
+  return 0;
+}

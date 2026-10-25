@@ -18,7 +18,7 @@ function test_is_digit(): test.TestOutcome {
 }
 
 function test_is_alpha(): test.TestOutcome {
-  return test.assert_true((65 as u8).is_ascii_alpha() && !(53 as u8).is_ascii_alpha());
+  return test.assert_true((65 as u8).is_ascii_letter() && !(53 as u8).is_ascii_letter());
 }
 
 function test_hex_value(): test.TestOutcome {

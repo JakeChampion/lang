@@ -12,14 +12,20 @@ var stdlibFuncCases = []struct {
 	name string
 	src  string
 }{
-	{"str-to-upper", `import "std/string";
+	{"str-to-upper", `import "std/unicode";
+import "std/string";
 function main(): i32 { let s = "hello"; if (s.to_upper() == "HELLO") { return 42; } return 0; }`},
-	{"str-methods", `import "std/string";
+	{"str-methods", `import "std/unicode";
+import "std/string";
 function main(): i32 { let s = "Hello, World"; let n = 0; if (s.to_lower() == "hello, world") { n = n + 1; } if (s.starts_with("Hello")) { n = n + 1; } if (s.len() == 12) { n = n + 1; } return n * 14; }`},
-	{"int-parse-dec", `import "core/int";
-function main(): i32 { match (int.parse_int_radix("42", 10)) { Some(n) => { return n; }, None => { return 0; } } }`},
-	{"int-parse-hex", `import "core/int";
-function main(): i32 { match (int.parse_int_radix("2a", 16)) { Some(n) => { return n; }, None => { return 0; } } }`},
+	// core/int's qualified module-free function parse_int_radix (decimal).
+	{"int-parse-dec", `import "std/i32";
+import "core/int";
+function main(): i32 { match (i32.parse_i32_radix("42", 10)) { Ok(n) => { return n; }, Err(_) => { return 0; } } }`},
+	// parse_int_radix base 16: "2a" → 42.
+	{"int-parse-hex", `import "std/i32";
+import "core/int";
+function main(): i32 { match (i32.parse_i32_radix("2a", 16)) { Ok(n) => { return n; }, Err(_) => { return 0; } } }`},
 }
 
 func TestSelfHostStdlibFuncsIR(t *testing.T) {

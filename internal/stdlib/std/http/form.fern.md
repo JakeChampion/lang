@@ -38,6 +38,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module reads and writes URL-encoded form fields.
+
+import "std/unicode";
+// This module reads and writes URL-encoded form fields.
 ```
 
 ### `dependencies 2`
