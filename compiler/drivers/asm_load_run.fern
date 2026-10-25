@@ -185,14 +185,14 @@ function main(): i32 {
     if (parts[pm_index].is_entry) {
       extra = pm_extra;
     }
-    let pd: semlower.Driven = lowered(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target, prune);
+    let pd: semlower.Driven = lowered(checked_or_exit(modloader.bundle(entry_path, entry_mod, loaded, target, root), prune, target), target, prune);
     let pg: ircore.Gated = semlower.program(pd);
     let pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
     write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pu.physical[pm_index], pd.sub.rt_lower, 0 as usize, asmcore.env_switches()));
     return 0;
   }
 
-  let merged: parser.Module = flatten.bundle(entry_mod, loaded, target);
+  let merged: parser.Module = modloader.bundle(entry_path, entry_mod, loaded, target, root);
 
   if (do_decide || probe) {
     let v: semlower.Verdict = decided(merged, prune, target);

@@ -274,33 +274,33 @@ function push_lineno(h: usize, n: i64, o: Opts): void {
   if (n < 0 as i64) {
     mag = 0 as u64 - mag;
   }
-  let len: i32 = io_buffered.buf_u64_len(mag);
+  let len: i32 = gnu.decimal_len(mag);
   if (n < 0 as i64) {
     len = len + 1;
   }
   if (len >= o.width) {
-    io_buffered.buf_push_i64(h, n);
+    gnu.push_signed_decimal(h, n);
     return;
   }
   let need: i32 = o.width - len;
   if (o.fmt == fmt_ln()) {
-    io_buffered.buf_push_i64(h, n);
+    gnu.push_signed_decimal(h, n);
     buf_push_range(h, o.pad, 0, need);
     return;
   }
   if (o.fmt == fmt_rn()) {
     buf_push_range(h, o.pad, 0, need);
-    io_buffered.buf_push_i64(h, n);
+    gnu.push_signed_decimal(h, n);
     return;
   }
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
     buf_push_range(h, o.zeros, 0, need);
-    io_buffered.buf_push_u64(h, mag);
+    gnu.push_decimal(h, mag);
     return;
   }
   buf_push_range(h, o.zeros, 0, need);
-  io_buffered.buf_push_u64(h, mag);
+  gnu.push_decimal(h, mag);
 }
 
 struct State { section: i32, line_no: i64, blanks: i64, over: boolean, status: i32 }
@@ -508,7 +508,7 @@ function fast_lines(buf: u8[], pos0: i32, st: State, o: Opts, w0: io_buffered.Bu
         }
         buf_push(h, field.head);
         let r: i32 = (line_no - base) as i32 * 2;
-        buf_push_range(h, io_buffered.digit_pairs(), r, r + 2);
+        buf_push_range(h, gnu.decimal_pairs(), r, r + 2);
         buf_push(h, field.tail);
       }
       line_no = nx.1;

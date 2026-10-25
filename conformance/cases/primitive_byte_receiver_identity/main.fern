@@ -1,0 +1,70 @@
+// #13082: bytes retain their namespace beside an i32 method of the same name.
+import "std/string";
+
+trait Kind {
+  function kind(self: Self): string;
+}
+
+impl Kind for i32 {
+  function kind(self: i32): string {
+    return "i32";
+  }
+}
+
+impl Kind for u8 {
+  function kind(self: u8): string {
+    return "u8";
+  }
+}
+
+function identify[T: Kind](x: T): string {
+  return x.kind();
+}
+
+function first[T: Kind](xs: T[]): string {
+  return identify(xs[0]);
+}
+
+function main(): i32 {
+  let b: u8 = 42;
+  if (b.kind() != "u8" || (42 as u8).kind() != "u8" || identify(b) != "u8") {
+    return 1;
+  }
+  let bs: u8[] = [42];
+  let view: [u8] = bs;
+  if (bs[0].kind() != "u8" || view[0].kind() != "u8" || first(bs) != "u8") {
+    return 2;
+  }
+  if ("abc"[0].kind() != "u8" || "abc".bytes()[0].kind() != "u8") {
+    return 3;
+  }
+  for byte in bs {
+    if (byte.kind() != "u8") {
+      return 4;
+    }
+  }
+  for byte in "abc" {
+    if (byte.kind() != "u8") {
+      return 5;
+    }
+  }
+  let next = (): string => {
+    b = (b + 1) as u8;
+    return b.kind();
+  };
+  if (next() != "u8" || b.kind() != "u8") {
+    return 6;
+  }
+  let c: Cell[u8] = cell_new(41 as u8);
+  c.set(42 as u8);
+  if (c.get().kind() != "u8") {
+    return 7;
+  }
+  let pair: Cell[(u8, i32)] = cell_new((42 as u8, 42));
+  let restored = pair.get();
+  if (restored.0.kind() != "u8" || restored.1.kind() != "i32") {
+    return 8;
+  }
+  print("byte receivers ok");
+  return 0;
+}

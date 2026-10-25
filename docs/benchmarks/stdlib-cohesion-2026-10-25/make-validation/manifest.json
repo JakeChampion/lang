@@ -1,0 +1,54 @@
+{
+  "tested_commit": "17026ba64eef1f544128f4cec4c30ce4be83e140",
+  "source_commit": "97f686adeee9baa851df24b6b3d7ee2621fcc910",
+  "commands": [
+    "make bootstrap",
+    "make distcheck"
+  ],
+  "production_source_identical": true,
+  "fixedpoint": true,
+  "stage0": {
+    "path": "/workspace/scratch/lang-stage0-9eddfb5/fern-selfhost-x86-64-linux",
+    "sha256": "a4d655b3ce09712582951702c8fce5d0cba0dbe58736c7da95ef2a60a9b3674f"
+  },
+  "stages": [
+    {
+      "stage": 1,
+      "path": "/tmp/lang-stdlib-cohesion-integration/build/bootstrap/stage1",
+      "sha256": "3263ddd0d129c1112f1debdf63dae7c08423dbb7dfc66337c74ecf59c17d2bbb",
+      "bytes": 14541008,
+      "mode": "0o755"
+    },
+    {
+      "stage": 2,
+      "path": "/tmp/lang-stdlib-cohesion-integration/build/bootstrap/stage2",
+      "sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68",
+      "bytes": 14545088,
+      "mode": "0o755"
+    },
+    {
+      "stage": 3,
+      "path": "/tmp/lang-stdlib-cohesion-integration/build/bootstrap/stage3",
+      "sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68",
+      "bytes": 14545088,
+      "mode": "0o755"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "make-bootstrap.log.gz",
+      "bytes": 328,
+      "sha256": "8349c8221032e285f912e8add6e5c636085f547e441ecb3e7008dd09d812784e"
+    },
+    {
+      "path": "make-distcheck.log.gz",
+      "bytes": 367,
+      "sha256": "8bcebb8a604e0687551d4b0cf05c665337856478b4ec825f913d8865d49bfcff"
+    },
+    {
+      "path": "distcheck-report.txt.gz",
+      "bytes": 157,
+      "sha256": "28aac8eace0e3114c447c955ada86f490ba83f68da9853aeb88ffb1e49a381b8"
+    }
+  ]
+}

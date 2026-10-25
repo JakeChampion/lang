@@ -1,0 +1,6 @@
+import "core/int";
+
+function main(): i32 {
+  int.parse_int_radix("1", 10);
+  return 0;
+}

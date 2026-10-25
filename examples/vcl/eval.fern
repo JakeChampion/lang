@@ -1,3 +1,21 @@
+// examples/vcl/eval.fern — the VCL evaluator: expressions and statements.
+//
+// Everything threads a `Txn` through and returns a new one, so the whole
+// evaluator is a pure function of (program, transaction, subroutine) and
+// nothing hides in a mutable cell. That is not a Fern workaround — it is
+// what makes the state machine in `machine.fern` able to hand a
+// transaction to one subroutine, take the result, and hand it to the
+// next, with the intermediate states still in hand for the log.
+//
+// Two VCL details drive the shape here:
+//
+//   * `~` is overloaded. Against a string it is a regex match; against an
+//     ACL name it is a subnet membership test. They are distinguished
+//     SYNTACTICALLY — an identifier naming an `acl` block — because there
+//     is no value that could tell them apart afterwards.
+//   * A bare identifier can be a variable, a backend name, or an ACL
+//     name, and only the program can say which.
+import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
@@ -123,11 +141,11 @@ pub function parse_ipv4(s: string): Option[i64] {
   let acc: i64 = 0;
   let i: i32 = 0;
   while (i < 4) {
-    match (parts[i].parse_int()) {
-      None => {
+    match (i32.parse_i32(parts[i])) {
+      Err(_) => {
         return None;
       },
-      Some(n) => {
+      Ok(n) => {
         if (n < 0 || n > 255) {
           return None;
         }
@@ -161,11 +179,11 @@ function entry_matches(e: ast.AclEntry, ip: i64): EntryHit {
     Some(base) => {
       let bits: i32 = 32;
       if (e.mask != "") {
-        match (e.mask.parse_int()) {
-          Some(b) => {
+        match (i32.parse_i32(e.mask)) {
+          Ok(b) => {
             bits = b;
           },
-          None => {
+          Err(_) => {
             return EntryHit { covers: false, bits: 0, ok: false, err: "ACL mask '" + e.mask + "' is not a number" };
           }
         }
@@ -268,11 +286,11 @@ function call_text_builtin(name: string, args: value.Value[]): Option[value.Valu
     return Some(VString(arg_str(args, 0).to_ascii_upper()));
   }
   if (name == "std.integer") {
-    match (arg_str(args, 0).parse_int()) {
-      Some(n) => {
+    match (i32.parse_i32(arg_str(args, 0))) {
+      Ok(n) => {
         return Some(VInt(n as i64));
       },
-      None => {
+      Err(_) => {
         if (args.len() > 1) {
           return Some(args[1]);
         }
@@ -285,18 +303,20 @@ function call_text_builtin(name: string, args: value.Value[]): Option[value.Valu
 
 pub function call_builtin(t: runtime.Txn, name: string, args: value.Value[]): EvalOut {
   if (name == "regsub" || name == "regsuball") {
-    let result: Option[string] = None;
-    if (name == "regsub") {
-      result = regex.regex_replace_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)));
-    } else {
-      result = regex.regex_replace_all_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)));
-    }
-    match (result) {
-      Some(text) => {
-        return eok(t, VString(text));
+    match (regex.compile(arg_str(args, 1))) {
+      Err(e) => {
+        return eerr(t, e.to_string());
       },
-      None => {
-        return eerr(t, name + " produced invalid UTF-8");
+      Ok(pattern) => {
+        let result: Result[string, regex.TextError] = if (name == "regsub") { pattern.replace_groups(arg_str(args, 0), vcl_template(arg_str(args, 2))) } else { pattern.replace_all_groups(arg_str(args, 0), vcl_template(arg_str(args, 2))) };
+        match (result) {
+          Ok(text) => {
+            return eok(t, VString(text));
+          },
+          Err(e) => {
+            return eerr(t, name + ": " + e.to_string());
+          }
+        }
       }
     }
   }
@@ -320,31 +340,31 @@ pub function call_builtin(t: runtime.Txn, name: string, args: value.Value[]): Ev
 
 function number_of(text: string): Result[value.Value, string] {
   if (text.contains(".")) {
-    match (text.parse_float()) {
-      Some(f) => {
+    match (f64.parse_f64(text)) {
+      Ok(f) => {
         return Ok(VReal(f));
       },
-      None => {
+      Err(_) => {
         return Err("malformed real '" + text + "'");
       }
     }
   }
-  match (text.parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(text)) {
+    Ok(n) => {
       return Ok(VInt(n as i64));
     },
-    None => {
+    Err(_) => {
       return Err("malformed integer '" + text + "'");
     }
   }
 }
 
 function qty_number(text: string): f64 {
-  match (text.parse_float()) {
-    Some(f) => {
+  match (f64.parse_f64(text)) {
+    Ok(f) => {
       return f;
     },
-    None => {
+    Err(_) => {
       return 0.0;
     }
   }
@@ -421,8 +441,15 @@ function eval_match(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): Eval
   if (!right.ok) {
     return right;
   }
-  let hit: boolean = regex.regex_match(value.to_str(right.val), value.to_str(left.val));
-  return eok(right.txn, VBool(hit != negate));
+  match (match_pattern(value.to_str(right.val), value.to_str(left.val), negate)) {
+    Ok(result) => {
+      return eok(right.txn, result);
+    },
+    Err(message) => {
+      return eerr(right.txn, message);
+    }
+  }
+  return eerr(right.txn, "invalid regex");
 }
 
 function eval_logical(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
@@ -801,4 +828,18 @@ pub function run_sub(ctx: Ctx, t: runtime.Txn, name: string): ExecOut {
       return exec_block(ctx, t, name, body, 0);
     }
   }
+}
+
+// Match errors use the evaluator's existing error channel.
+pub function match_pattern(pattern: string, text: string, negate: boolean): Result[value.Value, string] {
+  match (regex.compile(pattern)) {
+    Ok(compiled) => {
+      let hit: boolean = compiled.is_match(text);
+      return Ok(VBool(hit != negate));
+    },
+    Err(e) => {
+      return Err(e.to_string());
+    }
+  }
+  return Err("invalid regex");
 }

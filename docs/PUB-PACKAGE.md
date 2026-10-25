@@ -17,32 +17,36 @@ pub function api(n: i32): i32 { return helper(n) * 2; }
 
 ## What is a "package"?
 
-A package is a **directory**. Two modules are in the same package iff
-they live in the same directory. The whole embedded standard library
-(`std/…` + `core/…`) is treated as **one** package.
+A package contains the files governed by the nearest `fern.toml`.
+Subdirectories share that package until a nested manifest starts another package.
+The manifest path determines identity. Two manifests with the same package
+name still define different packages.
 
-This needs no package-manifest or package-manager concept: the boundary
-falls out of the filesystem layout that already determines module
-identity.
+Without a manifest, a package is one directory. A subdirectory then defines
+a different package. The standard library (`std/…` and `core/…`) is one
+package across its directories.
+
+For example, `app/main.fern` can call a `pub(package)` helper in
+`app/lib/parse.fern` when `app/fern.toml` governs both files.
+A separate `app/lib/fern.toml` prevents that access.
 
 ## Why
 
-`pub` was binary — a decl was either module-private or world-public. That
-forced internal helpers to be fully `pub` just so a sibling module could
-use them, leaking implementation detail into the public surface. The
-clearest example is the stdlib: `core/int.fern` exports `__`-prefixed
-helpers like `__int_to_string_u64` purely so other stdlib modules can call
-them. With `pub(package)` those can be visible across the stdlib without
-being exported to user programs. (Migrating the stdlib to use it is a
-follow-up; this change adds the capability.)
+The two original visibility levels forced shared internal helpers to use `pub`.
+For example, other library modules call `core/int.__int_to_string_u64`.
+The `pub(package)` level permits those calls without a public declaration.
 
-`pub(package)` pairs with `pub use` re-exports: a module keeps its
-internals `pub(package)` and re-exports only a curated set of names.
+`pub use` can re-export public declarations. It cannot expose a
+`pub(package)` declaration through a public facade.
+An enum variant stays under its enum when that enum is re-exported.
+Both loaders check every directive before they combine module declarations.
+Unused names and chains receive the same checks.
+Invalid directives report E087 at the source directive.
 
 ## Errors
 
-Referencing a `pub(package)` decl from a different package is a load-time
-error:
+A reference to a `pub(package)` declaration from another package causes a
+load-time error:
 
 ```
 helpers.helper is `pub(package)` — only modules in the same package as helpers may use it
@@ -50,22 +54,26 @@ helpers.helper is `pub(package)` — only modules in the same package as helpers
 
 ## Implementation
 
-- `ast`: every declaration kind gains `PackageScoped bool` (mutually
-  exclusive with `Public`).
-- Parser: `pub(package) <decl>` sets `PackageScoped`; `pub` still sets
-  `Public`. `pub(<anything-else>)` is a parse error.
-- `modload`: each module records its `pub(package)` names
-  (`module.packageScoped`); the cross-module visibility gates
-  (`checkPublicFunc` / `checkPublicStruct` / `checkPublicValue`) allow a
-  package-scoped name when `samePackage(importer, target)` holds —
-  directory equality, or both inside the stdlib.
-- Printer: `fern -fmt` round-trips `pub(package)`.
+- Both parsers and checkers support `pub(package)`.
+- Each loader records the package identity before it changes symbol names.
+- Visibility checks compare cached identities without another manifest search
+  for each reference.
+- Enum constructors and qualified patterns follow the visibility of their enum.
+- `fern -fmt` preserves `pub(package)`.
 
-## Follow-ups
+## Standard library
 
-- Migrate the stdlib's `__`-prefixed cross-module helpers from `pub` to
-  `pub(package)` and drop them from the public surface.
-- Self-host compiler support (the self-host parser doesn't parse
-  `pub(package)` yet; no stdlib uses it, so the bootstrap is unaffected).
-- Finer scopes (`pub(super)` / explicit package roots) if a user-facing
-  package system later lands.
+The Map runtime helpers, integer conversion helpers, UTF-8 helpers, JSON
+derive helpers, and `pvec.VNode` use `pub(package)`.
+Library modules can share these declarations. User programs cannot name them
+through a library qualifier.
+
+Compiler-generated `FromJson` methods retain access to the JSON derive helpers.
+Source-written methods follow the normal visibility rule.
+
+The `f64.pow10_*` tables, decimal buffer writers, `digit_pairs`, and
+`io_buffered.BufBlock` also use `pub(package)`.
+The table test runs within the library package and checks all 619 entries.
+Public writer methods provide buffered output.
+The `OrdNode`, `HNode`, and `OrdSplit` declarations no longer form a public
+surface in the current library.

@@ -117,19 +117,19 @@ function main(): i32 {
   }
   let capacity: i32 = 0;
   let turns: i32 = 0;
-  match (argv[1].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[1])) {
+    Ok(n) => {
       capacity = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }
-  match (argv[2].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[2])) {
+    Ok(n) => {
       turns = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }

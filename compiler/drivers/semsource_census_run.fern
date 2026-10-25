@@ -214,7 +214,7 @@ function main(): i32 {
       if (modloader.report_unresolved(missing, "semsource_census_run")) {
         return 2;
       }
-      let merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
+      let merged: parser.Module = modloader.bundle(entry_path, entry, loaded, "arm64-linux", "");
       merged = modloader.merge_builtins(dir, merged);
       let desc: platforms.Descriptor = platforms.for_target("arm64-linux");
       merged = constfold.fold_target_name(merged, desc.environment, desc.isa);

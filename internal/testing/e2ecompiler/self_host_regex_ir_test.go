@@ -13,25 +13,48 @@ var regexModuleIRCases = []struct {
 	src  string
 }{
 	{"alt-match", `import "std/regex";
-function main(): i32 { if (regex.regex_match("a|b", "b")) { return 42; } return 0; }`},
+import "std/result";
+function main(): i32 { if ({ let __checked_regex_0: regex.Regex = match (regex.compile("a|b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("b") }) { return 42; } return 0; }`},
+	// Alternation negative: "a|b" does not match "c".
 	{"alt-nomatch", `import "std/regex";
-function main(): i32 { if (!regex.regex_match("a|b", "c")) { return 42; } return 0; }`},
+import "std/result";
+function main(): i32 { if (!{ let __checked_regex_0: regex.Regex = match (regex.compile("a|b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("c") }) { return 42; } return 0; }`},
+	// #6049: alternation whose branches are SEQUENCES — RAlt(RSeq[]) — the
+	// shape that separated the six failing regex fixtures from the passing
+	// ones. `__rx_alt` builds its branches array out of `RParse.node` field
+	// reads, so the un-duped RSeq box was freed by the enclosing `first`'s
+	// struct drop and the freelist handed the block back for the RGroup that
+	// wraps it: a tree pointing at itself, and `__rx_match` alternated between
+	// its RGroup and RAlt arms until the stack ran out. A bare `a|b` (RAlt of
+	// RChar) never allocated a branch box, which is why it always passed.
 	{"alt-of-seq", `import "std/regex";
-function main(): i32 { if (regex.regex_match("(ab|cd)", "xxcdyy")) { return 42; } return 0; }`},
+import "std/result";
+function main(): i32 { if ({ let __checked_regex_0: regex.Regex = match (regex.compile("(ab|cd)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("xxcdyy") }) { return 42; } return 0; }`},
+	// #6049 sibling: anchored multi-way alternation, and a SEARCH that re-enters
+	// __rx_match once per start position — the second entry is where the swept
+	// enum-payload array binding (`RSeq(xs)` / `RAlt(xs)`) had already taken the
+	// buffer's count to zero.
 	{"anchored-alt", `import "std/regex";
+import "std/result";
 function main(): i32 {
-    if (!regex.regex_match("^(cat|dog|bird)$", "dog")) { return 0; }
-    if (!regex.regex_match("(foo|barbaz)qux", "aaaa barbazqux")) { return 0; }
+    if (!{ let __checked_regex_1: regex.Regex = match (regex.compile("^(cat|dog|bird)$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.is_match("dog") }) { return 0; }
+    if (!{ let __checked_regex_0: regex.Regex = match (regex.compile("(foo|barbaz)qux")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("aaaa barbazqux") }) { return 0; }
     return 42;
 }`},
 	{"class-plus", `import "std/regex";
-function main(): i32 { if (regex.regex_match("[abc]+", "cab")) { return 42; } return 0; }`},
+import "std/result";
+function main(): i32 { if ({ let __checked_regex_0: regex.Regex = match (regex.compile("[abc]+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("cab") }) { return 42; } return 0; }`},
+	// Grouped repetition -> RSeq(RNode[]) under a repeat. "(ab)+c" matches "ababc".
 	{"group-plus", `import "std/regex";
-function main(): i32 { if (regex.regex_match("(ab)+c", "ababc")) { return 42; } return 0; }`},
+import "std/result";
+function main(): i32 { if ({ let __checked_regex_0: regex.Regex = match (regex.compile("(ab)+c")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("ababc") }) { return 42; } return 0; }`},
+	// Capturing groups -> RGroup + the compiled RInst capture program
+	// (Pike-VM thread simulation with RThread[] state).
 	{"captures", `import "std/regex";
+import "std/result";
 function main(): i32 {
-    let Some(m) = regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped") else { return 1; };
-    if (require_regex_text(m.group(1)) == "123" && require_regex_text(m.group(2)) == "456" && m.group_count() == 2) { return 42; }
+    let Some(m) = { let __checked_regex_0: regex.Regex = match (regex.compile("(\\d+)-(\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.captures("order 123-456 shipped") } else { return 1; };
+    if (require_regex_text({ match (m.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } } }) == "123" && require_regex_text({ match (m.group(2)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } } }) == "456" && m.group_count() == 2) { return 42; }
     return 0;
 }
 function require_regex_text(result: Option[string]): string {
@@ -43,10 +66,11 @@ function require_regex_text(result: Option[string]): string {
 }
 `},
 	{"captures-all", `import "std/regex";
+import "std/result";
 function main(): i32 {
-    let Some(nc) = regex.regex_captures("(?:ab)+(c)", "ababc") else { return 1; };
-    let all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
-    if (nc.group_count() == 1 && require_regex_text(nc.group(1)) == "c" && all.len() == 2 && require_regex_text(all[1].group(2)) == "d") { return 42; }
+    let Some(nc) = { let __checked_regex_1: regex.Regex = match (regex.compile("(?:ab)+(c)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.captures("ababc") } else { return 1; };
+    let all: regex.Captures[] = { let __checked_regex_0: regex.Regex = match (regex.compile("(\\w+)@(\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.captures_all("a@b c@d") };
+    if (nc.group_count() == 1 && require_regex_text({ match (nc.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } } }) == "c" && all.len() == 2 && require_regex_text({ match (all[1].group(2)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } } }) == "d") { return 42; }
     return 0;
 }
 function require_regex_text(result: Option[string]): string {
@@ -58,8 +82,9 @@ function require_regex_text(result: Option[string]): string {
 }
 `},
 	{"replace-groups", `import "std/regex";
+import "std/result";
 function main(): i32 {
-    if (require_regex_text(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1")) == "b@a d@c") { return 42; }
+    if (require_regex_text({ match ({ let __checked_regex_0: regex.Regex = match (regex.compile("(\\w+)@(\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.replace_all_groups("a@b c@d", "$2@$1") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } } }) == "b@a d@c") { return 42; }
     return 0;
 }
 function require_regex_text(result: Option[string]): string {
@@ -71,10 +96,11 @@ function require_regex_text(result: Option[string]): string {
 }
 `},
 	{"named-groups", `import "std/regex";
+import "std/result";
 function main(): i32 {
-    let Some(m) = regex.regex_captures("(?<y>\\d+)-(?<m>\\d+)", "12-34") else { return 1; };
-    let t: string = require_regex_text(regex.regex_replace_groups("(?<w>\\w+)", "hi", "[${w}]"));
-    if (require_regex_text(m.group_named("y")) == "12" && index_is(m.group_index("m"), 2) && t == "[hi]") { return 42; }
+    let Some(m) = { let __checked_regex_1: regex.Regex = match (regex.compile("(?<y>\\d+)-(?<m>\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.captures("12-34") } else { return 1; };
+    let t: string = require_regex_text({ match ({ let __checked_regex_0: regex.Regex = match (regex.compile("(?<w>\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.replace_groups("hi", "[${w}]") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } } });
+    if (require_regex_text({ match (m.group_named("y")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } } }) == "12" && index_is(m.group_index("m"), 2) && t == "[hi]") { return 42; }
     return 0;
 }
 function index_is(o: Option[i32], want: i32): boolean {

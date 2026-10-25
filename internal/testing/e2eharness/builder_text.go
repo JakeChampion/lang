@@ -59,7 +59,7 @@ function check(bytes: u8[], want: string): boolean {
   let empty: string = buf_take(h);
   buf_free(h);
   if (first != want || second != want || reused != "again" || empty != "") { return false; }
-  if (!utf8.is_valid_utf8(first) || !utf8.is_valid_utf8(second)) { return false; }
+  if (!utf8.is_valid(first) || !utf8.is_valid(second)) { return false; }
   if (raw.len() != bytes.len()) { return false; }
   let i: i32 = 0;
   while (i < raw.len()) {

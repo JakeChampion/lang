@@ -13,7 +13,7 @@ function main(): i32 {
 	let before: i64 = __heap_alloc_count();
 	let i: i32 = 0;
 	while (i < 100) {
-		if (unicode.to_lower(lower) != lower || unicode.to_upper(upper) != upper || unicode.to_lower("") != "") {
+		if ((lower).to_lower() != lower || (upper).to_upper() != upper || ("").to_lower() != "") {
 			return 10;
 		}
 		i = i + 1;
@@ -23,7 +23,7 @@ function main(): i32 {
 	}
 	let mixed: string = "Content-Length";
 	before = __heap_alloc_count();
-	if (unicode.to_lower(mixed) != "content-length") {
+	if ((mixed).to_lower() != "content-length") {
 		return 30;
 	}
 	if (__heap_alloc_count() - before <= (0 as i64)) {

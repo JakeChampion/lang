@@ -50,7 +50,7 @@ package; "host" means delegated to the deployment host.
 
 | stack | HTTP/1.1 | HTTP/2 | HTTP/3 | TLS | DNS | WebSocket | I/O model | multicore | sockets-free testing | deterministic sim |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Fern today | partial (no keep-alive, no chunked) | no | no | no | no | no | blocking loop, `poll` per wait | fork supervisor only | `sim.Net` for the client | seed-replayable client fan-out |
+| Fern today | partial (no keep-alive, no chunked) | no | no | no | no | no | blocking loop, `poll` per wait | fork supervisor only | `sim_fetch.Net` for the client | seed-replayable client fan-out |
 | Go net/http | own | own | no (`x/net/quic` not production) | own (14k + 7.7k lines) | own pure resolver, cgo fallback | deprecated `x/net`; libs | goroutine per conn, epoll/kqueue netpoller | shared heap + GC | `httptest` | no |
 | Rust hyper/axum + tokio | own | own | lib (`h3` over quinn/quiche/s2n) | lib (rustls 41k) | lib (hickory) | lib | futures on epoll/kqueue (mio); io_uring via monoio/tokio-uring | work-stealing or thread-per-core | `tower::ServiceExt::oneshot` | turmoil/madsim (libc hooks needed) |
 | Zig 0.16 std | own (slow per http.zig author) | no | no | client only, 4k lines, 3 open interop gaps | resolv.conf + A/AAAA, no TCP fallback | no | `std.Io` value: Threaded shipped, Evented experimental | threads | any `Io` impl | possible by design, none shipped |

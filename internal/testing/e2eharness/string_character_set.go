@@ -16,9 +16,11 @@ function check_malformed(s: string, set: string): boolean {
     let chars = set.chars();
     let positions: i32[] = [0];
     let pos: i32 = 0;
-    while (pos < s.len()) {
-        pos = pos + str.__utf8_step(s, pos, s.len());
+    let unit: i32 = 0;
+    while (unit < units.len()) {
+        pos = pos + utf8.substring(s, unit, unit + 1).len();
         positions = positions.append(pos);
+        unit = unit + 1;
     }
     let low: i32 = 0;
     let high: i32 = units.len();
@@ -60,10 +62,10 @@ function main(): i32 {
     for s in samples {
         for set in sets {
             let filtered: string = s.without_chars(set);
-            if (!utf8.is_valid_utf8(filtered)) { return 15; }
-            if (!utf8.is_valid_utf8(s.trim_chars(set))) { return 16; }
-            if (!utf8.is_valid_utf8(s.trim_start_chars(set))) { return 17; }
-            if (!utf8.is_valid_utf8(s.trim_end_chars(set))) { return 18; }
+            if (!utf8.is_valid(filtered)) { return 15; }
+            if (!utf8.is_valid(s.trim_chars(set))) { return 16; }
+            if (!utf8.is_valid(s.trim_start_chars(set))) { return 17; }
+            if (!utf8.is_valid(s.trim_end_chars(set))) { return 18; }
             if (filtered.codepoint_count() + s.count_chars_in(set) != s.codepoint_count()) { return 19; }
             if (s.contains_only(set) != (filtered.len() == 0)) { return 20; }
         }

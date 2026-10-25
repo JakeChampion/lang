@@ -29,9 +29,9 @@ func TestStdlibConstsCheckBeforeFolding(t *testing.T) {
 	prog, _, err := modload.LoadSource(`import "std/string";
 import "std/f64";
 function main(): i32 {
-    match ("1.5".parse_float()) {
-        Some(v) => { return v.to_string().len(); },
-        None => { return 0; }
+    match (f64.parse_f64("1.5")) {
+        Ok(v) => { return v.to_string().len(); },
+        Err(_) => { return 0; }
     }
 }
 `)

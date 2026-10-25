@@ -6,12 +6,14 @@ import (
 )
 
 const parseIntOrSrc = `
+import "std/i32";
+import "std/result";
 import "std/string";
 function main(): i32 {
-    let a: i32 = "42".parse_int_or(0);
-    let b: i32 = "nope".parse_int_or(7);
-    let c: i32 = "".parse_int_or(5);
-    let d: i32 = "99999999999".parse_int_or(9);
+    let a: i32 = i32.parse_i32("42").unwrap_or(0);
+    let b: i32 = i32.parse_i32("nope").unwrap_or(7);
+    let c: i32 = i32.parse_i32("").unwrap_or(5);
+    let d: i32 = i32.parse_i32("99999999999").unwrap_or(9);
     return a + b + c + d;
 }`
 

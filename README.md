@@ -24,6 +24,7 @@ reaches.
 ```fern
 import "std/string";
 import "std/i32";
+import "std/number_parse";
 
 enum Shape { Circle(i32), Rect(i32, i32) }
 
@@ -34,11 +35,11 @@ function (s: Shape) area(): i32 {
   }
 }
 
-// `?` unwraps Some and returns None early.
-function parse_pair(a: string, b: string): Option[i32] {
-  let w: i32 = a.parse_int()?;
-  let h: i32 = b.parse_int()?;
-  return Some(Rect(w, h).area());
+// `?` unwraps Ok and returns a typed Err early.
+function parse_pair(a: string, b: string): Result[i32, number_parse.ParseNumberError] {
+  let w: i32 = i32.parse_i32(a)?;
+  let h: i32 = i32.parse_i32(b)?;
+  return Ok(Rect(w, h).area());
 }
 
 function main(): i32 {
@@ -49,8 +50,8 @@ function main(): i32 {
   }
   print(total.to_string());               // 24
   match (parse_pair("6", "7")) {
-    Some(n) => { print(n.to_string()); }, // 42
-    None => { print("bad input"); },
+    Ok(n) => { print(n.to_string()); }, // 42
+    Err(_) => { print("bad input"); },
   }
   return 0;
 }
