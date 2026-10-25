@@ -1110,6 +1110,9 @@ type Ident struct {
 	EnumName   string
 	Local      bool
 	ConstParam bool
+	// Builtin names the builtin itself, so no binding in scope can capture it.
+	// The parser sets it on the calls a desugar writes (assert, todo).
+	Builtin bool
 }
 type ArrayLit struct {
 	P        Position
