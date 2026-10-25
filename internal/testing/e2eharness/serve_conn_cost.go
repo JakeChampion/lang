@@ -34,7 +34,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello");
 }
 function main(): i32 {
-    return serve.run(0, serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, keep_alive_requests: 1000000000 }, handle);
+    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, keep_alive_requests: 1000000000 }, handle));
 }
 `
 }

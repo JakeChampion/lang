@@ -146,12 +146,14 @@ past the source — was readable. Backends abort exactly as for an
 index: natives exit 134 (the IR routes construction through the
 `__slice_range(lo, hi, len)` helper), wasm traps, the interpreter
 prints the slice cause line and exits 134.
-The self-host backends check inside their copying
-helpers (`__fern_arr_slice` / `$__fern_substr`) and the inline
-`str_slice` view emit. The inline emit branches to
-`__fern_str_oob_abort`; the native `__fern_arr_slice` is a Fern
-helper (#2649, `asmcore.rt_src_arr_slice`) and calls
-`__fern_slice_abort`, declared to it as a raw-floor signature. Both
+The self-host backends check an array slice in its view helper
+(`ssabytes.slice` / `slice_frame`), which aborts through
+`__fern_slice_abort`, and a string slice in `$__fern_substr` and the
+inline `str_slice` view emit. The inline emit branches to
+`__fern_str_oob_abort`; the native `__fern_arr_slice` that copies a
+shared array before a write is a Fern helper (#2649,
+`asmcore.rt_src_arr_slice`) and calls `__fern_slice_abort`, declared
+to it as a raw-floor signature. Both
 are traps into the self-host's `__fern_report`, which prints the
 same cause lines and backtrace as the natives' (#11405), honouring
 the same `-backtrace` / `FERN_BACKTRACE=0` opt-out. Same status, same

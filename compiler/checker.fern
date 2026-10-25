@@ -1623,10 +1623,6 @@ function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
   return recv != "" && s.lookup_method("cmp", recv).name.len() > 0;
 }
 
-function (s: Scope) orders_alike(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  return type_eq(a, b) && s.has_ord_cmp(a);
-}
-
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
   return s.overload_ret(ast.operator_method(op), lt);
 }
@@ -6211,22 +6207,7 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
     return t_unknown("shift operands must both be integers");
   }
   if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-    if (is_integer(lt) && is_integer(rt)) {
-      return t_bool();
-    }
-    if (type_eq(lt, t_char()) && type_eq(rt, t_char())) {
-      return t_bool();
-    }
-    if (float_operands_agree(lt, rt)) {
-      return t_bool();
-    }
-    if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
-      return t_bool();
-    }
-    if (s.orders_alike(lt, rt)) {
-      return t_bool();
-    }
-    return t_unknown("comparison op `" + b.op + "` requires matching i32, f64, string or `Ord` operands");
+    return t_bool();
   }
   if (b.op == "==" || b.op == "!=") {
     if (float_operands_agree(lt, rt)) {
@@ -16474,7 +16455,7 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = util.append_diags([], const_init_diags(mod));
+  let out: util.Diag[] = [];
   out = util.append_diags(out, handler_state_diags(mod));
   out = util.append_diags(out, e078_diags(mod));
   out = util.append_diags(out, e079_diags(mod));

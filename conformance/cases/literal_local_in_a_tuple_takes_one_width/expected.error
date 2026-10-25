@@ -1,0 +1,4 @@
+main.fern:7:5: error[E003]: variable "b": expected (i32, i32), got (i64, i32)
+main.fern:10:5: error[E003]: variable "d": expected i32[], got i64[]
+main.fern:13:5: error[E003]: variable "f": expected Option[(i32, i32)], got Option[(i64, i32)]
+main.fern:16:5: error[E003]: variable "h": expected (i32, (i64, i32)), got (i32, (i64, u8))

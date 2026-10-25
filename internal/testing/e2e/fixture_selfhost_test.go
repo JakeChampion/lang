@@ -34,6 +34,16 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 				return
 			}
 			run := exec.Command("wasmtime", "run", watPath)
+			if wat, err := os.ReadFile(watPath); err == nil && bytes.Contains(wat, []byte("wasi:sockets/")) {
+				// Sockets are reachable only from a component, which reports
+				// just success or failure, so these cases must exit 0.
+				compPath := filepath.Join(t.TempDir(), "prog.wasm")
+				if out, err := fixtureCompile(fernBin, "-target", "wasm32-wasi", "-o", compPath, f.mainPath, stdlibRoot).CombinedOutput(); err != nil {
+					failf("self-host component compile failed: %v\n%s", err, out)
+					return
+				}
+				run = exec.Command("wasmtime", "run", "-S", "inherit-network", compPath)
+			}
 			out, _ := run.CombinedOutput()
 			exit := run.ProcessState.ExitCode()
 

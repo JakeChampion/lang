@@ -5276,6 +5276,7 @@ type checker struct {
 	litLocalOf        map[*ast.Var]*litLocal
 	litIdents         map[*ast.Ident]*litLocal
 	litCompositeOf    map[*ast.Var][]*litLocal
+	litNestedOf       map[*ast.Var][]*litLocal
 	litFields         map[*ast.FieldAccess]*litLocal
 	litCompositeReads map[*ast.Ident]*ast.Var
 	current           *ast.FuncDecl
@@ -10166,6 +10167,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if et, ok := n.Type.(ast.EnumType); ok && unannotated {
 			c.beginLitCompositeLocal(n, et.Args, s)
 		}
+		if unannotated {
+			c.beginLitNestedLocal(n, s)
+		}
 	case *ast.Destructure:
 		got := c.checkExpr(n.Init, s)
 		if n.Fields != nil {
@@ -13688,6 +13692,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				n.IsStringOrd = true
 				return ast.BoolType{}
 			}
+			if !(isInteger(lt) && isInteger(rt) || isFloat(lt) && isFloat(rt)) {
+				c.errfCode(n.P, "E009", "operator %q requires matching numeric or string operands, got %s and %s", n.Op, lt, rt)
+				return ast.BoolType{}
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
@@ -16239,7 +16247,7 @@ func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	default:
 		serveCall = serveRef(entry("supervise", "run"), portCall, opts, ident("handle"))
 	}
-	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
+	stmts = append(stmts, &ast.Return{P: pos, Value: serveRef("exit_code", serveCall)})
 	return &ast.FuncDecl{
 		P:                        pos,
 		Name:                     "main",

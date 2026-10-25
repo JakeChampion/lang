@@ -130,7 +130,7 @@ func TestLiterateMultiFileTopLevelErrorRemapsThroughItsModule(t *testing.T) {
 		t.Fatalf("expected -check to fail\nstdout: %s", out.String())
 	}
 	msg := errb.String()
-	if !strings.Contains(msg, "does not match") {
+	if !strings.Contains(msg, "error[E002]: const helper.BAD: expected i32, got string") {
 		t.Errorf("diagnostic should describe the type mismatch, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "buggy.fern.md:9:") {

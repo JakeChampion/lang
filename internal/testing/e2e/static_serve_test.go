@@ -88,7 +88,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function main(): i32 {
-  return serve.run(0, @CONFIG@, handle);
+  return serve.exit_code(serve.run(0, @CONFIG@, handle));
 }
 `
 
