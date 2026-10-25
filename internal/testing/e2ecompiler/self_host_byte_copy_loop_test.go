@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -112,6 +113,10 @@ func TestSelfHostByteCopyLoops(t *testing.T) {
 				for _, name := range []string{"__fern_bytes_append_range", "__fern_bytes_write_range", "__fern_bytes_append_back"} {
 					if !strings.Contains(string(assembly), name) {
 						t.Errorf("loop did not reach %s", name)
+					}
+					call := regexp.MustCompile(`(?m)^\s+(?:call|bl|jmp|b) L?__fn_` + name + `\.r\s*$`)
+					if target != "wasm32-wasi" && !call.MatchString(string(assembly)) {
+						t.Errorf("call to %s does not use its register entry", name)
 					}
 				}
 				if target == "wasm32-wasi" {

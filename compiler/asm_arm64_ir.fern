@@ -11,6 +11,7 @@ import "./irtables";
 import "./irverifygate";
 import "./lexer";
 import "./ircore";
+import "./rtbytecopy";
 import "./ssa";
 import "./ssafixed";
 import "./ssa_lift";
@@ -2894,6 +2895,14 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
   return ssa_helper_entry(ins, reg_of, ".r", s);
 }
 
+// A compiled Fern helper takes the arguments of its call in reverse order.
+function helper_arg_reg(ins: ssa.SInst, a: i32): i32 {
+  if (rtbytecopy.is_helper(ins.str)) {
+    return ins.args.len() - 1 - a;
+  }
+  return a;
+}
+
 function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs(ins.str, s);
   let hsrc: i32[] = [];
@@ -2901,7 +2910,7 @@ function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmc
   let ha: i32 = 0;
   while (ha < ins.args.len()) {
     hsrc = hsrc.append(reg_of[ins.args[ha]]);
-    hdst = hdst.append(ha);
+    hdst = hdst.append(helper_arg_reg(ins, ha));
     ha = ha + 1;
   }
   s = ssa_parallel_moves(hsrc, hdst, s);
@@ -2968,7 +2977,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
     return ssa_rc_dec(ins, reg_of, lp, 0, 0, s);
   }
-  if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
+  if (ircore.is_fern_helper(ins.str) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
     return ssa_helper_call(ins, reg_of, s);
   }
   let rr: string = "x0";
