@@ -4777,9 +4777,11 @@ function ssa_cold_saves(f: ssa.SFunc, alloc: ssa.Alloc): ColdSaves {
   let by_pos: i32[] = __alloc_i32(ssa.position_count(f) + 1);
   let by_val: i32[] = __alloc_i32(f.nvals);
   let any: boolean = false;
-  let pos: i32 = 0;
+  let first: i32 = 0;
   for b in f.blocks {
-    for ins in b.insts {
+    for k in 0..b.insts.len() {
+      let ins: ssa.SInst = b.insts[k];
+      let pos: i32 = first + k;
       if (pos < alloc.cold.len() && (alloc.cold[pos] == ssa.COLD_SLOW || alloc.cold[pos] == ssa.COLD_BRANCH)) {
         let mask: i32 = ssa_live_caller_regs(alloc, pos, ins.result);
         any = any || mask != 0;
@@ -4789,22 +4791,19 @@ function ssa_cold_saves(f: ssa.SFunc, alloc: ssa.Alloc): ColdSaves {
           by_pos = by_pos.with(pos, mask);
         }
       }
-      pos = pos + 1;
     }
-    pos = pos + 1;
+    first = first + b.insts.len() + 1;
   }
   return ColdSaves { by_pos: by_pos, by_val: by_val, any: any };
 }
 
 function ssa_live_caller_regs(alloc: ssa.Alloc, at: i32, result: i32): i32 {
   let mask: i32 = 0;
-  let v: i32 = 0;
-  while (v < alloc.reg_of.len()) {
+  for v in 0..alloc.reg_of.len() {
     let r: i32 = alloc.reg_of[v];
     if (v != result && r >= 0 && r < ssa_nregs() && alloc.lo[v] < at && alloc.hi[v] > at) {
       mask = mask | 1 << r;
     }
-    v = v + 1;
   }
   return mask - (mask & COLD_CLOBBERS);
 }
@@ -4817,14 +4816,12 @@ function ssa_cold_mask(fr: SsaFrame, ins: ssa.SInst): i32 {
 }
 
 function ssa_cold_save(s: asmcore.EmitState, mask: i32, base: i32, save: i32, load: boolean): asmcore.EmitState {
-  let k: i32 = 0;
   let j: i32 = 0;
-  while (k < ssa_nregs()) {
+  for k in 0..ssa_nregs() {
     if ((mask & 1 << k) != 0) {
       s = ssa_mov_rm(s, 64, load, ssa_caller_reg(k), "%rbp", ssa_slot_disp(base + j, save));
       j = j + 1;
     }
-    k = k + 1;
   }
   return s;
 }
@@ -8440,14 +8437,12 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
     return false;
   }
   let tail: i32 = h.insts.len() - ssa_fuse(fr, h).n;
-  let k: i32 = 0;
-  while (k < tail) {
+  for k in 0..tail {
     let ins: ssa.SInst = h.insts[k];
     let imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3 || ins.kind_tag == 46) && fr.imm.is_imm[ins.result];
     if (ins.kind_tag != 8 && !imm) {
       return false;
     }
-    k = k + 1;
   }
   return true;
 }

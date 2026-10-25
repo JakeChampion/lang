@@ -484,10 +484,11 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
     }
     let inner: i32[] = assume.append(x);
     let all: boolean = d.args.len() > 0;
-    let k: i32 = 0;
-    while (all && k < d.args.len()) {
-      all = below(g, edge_block(g, x, k, d.args[k]), d.args[k], base, inner, steps - 1);
-      k = k + 1;
+    for k in 0..d.args.len() {
+      if (!below(g, edge_block(g, x, k, d.args[k]), d.args[k], base, inner, steps - 1)) {
+        all = false;
+        break;
+      }
     }
     if (all) {
       return true;
@@ -560,10 +561,11 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     }
     let inner: i32[] = assume.append(x);
     let all: boolean = d.args.len() > 0;
-    let k: i32 = 0;
-    while (all && k < d.args.len()) {
-      all = nonneg(g, edge_block(g, x, k, d.args[k]), d.args[k], inner, steps - 1);
-      k = k + 1;
+    for k in 0..d.args.len() {
+      if (!nonneg(g, edge_block(g, x, k, d.args[k]), d.args[k], inner, steps - 1)) {
+        all = false;
+        break;
+      }
     }
     if (all) {
       return true;
@@ -642,13 +644,11 @@ function plus_fits(g: Graph, b: i32, d: ssa.SInst, base: i32): boolean {
   }
   let c: i32 = g.up[b];
   while (c >= 0) {
-    let i: i32 = g.first[c];
-    while (i < g.first[c] + g.count[c]) {
+    for i in g.first[c]..g.first[c] + g.count[c] {
       let r: Rel = g.rels[i];
       if (same(g, r.lo, a) && length_minus(g, r.hi, base) - (if (r.strict) { 0 } else { 1 }) >= k) {
         return true;
       }
-      i = i + 1;
     }
     c = g.above[c];
   }
@@ -747,8 +747,7 @@ function length_at_least(g: Graph, b: i32, base: i32, n: i32): boolean {
   }
   let c: i32 = g.up[b];
   while (c >= 0) {
-    let k: i32 = g.first[c];
-    while (k < g.first[c] + g.count[c]) {
+    for k in g.first[c]..g.first[c] + g.count[c] {
       let r: Rel = g.rels[k];
       let low: i64 = folded(g, r.lo, 4);
       if (low != NOT_FOLDED && is_length_of(g, r.hi, base)) {
@@ -756,7 +755,6 @@ function length_at_least(g: Graph, b: i32, base: i32, n: i32): boolean {
           return true;
         }
       }
-      k = k + 1;
     }
     c = g.above[c];
   }
