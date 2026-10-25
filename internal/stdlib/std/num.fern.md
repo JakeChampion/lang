@@ -187,7 +187,7 @@ impl Div for f64 {
 
 impl Neg for f64 {
   function neg(self: f64): f64 {
-    return 0.0 - self;
+    return -self;
   }
 }
 
@@ -231,7 +231,7 @@ impl Div for f32 {
 
 impl Neg for f32 {
   function neg(self: f32): f32 {
-    return 0.0 - self;
+    return -self;
   }
 }
 
