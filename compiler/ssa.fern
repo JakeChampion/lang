@@ -958,7 +958,7 @@ function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_w
   let best_len: i32 = 1;
   let i: i32 = 0;
   while (i < act_val.len()) {
-    if (act_reg[i] >= nregs == need_saved && act_reg[i] != forbidden && ssafixed.allows(fixed, act_reg[i], now, until)) {
+    if ((act_reg[i] >= nregs || !need_saved) && act_reg[i] != forbidden && ssafixed.allows(fixed, act_reg[i], now, until)) {
       let w: i32 = chain_weight(act_val[i], shared_with, weight, hi, now);
       let len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo, hi, now) + 1;
       let cmp: i32 = cmp_spill_cost(w, len, best_w, best_len);
