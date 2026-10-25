@@ -1929,6 +1929,7 @@ type EnumDecl struct {
 	Public        bool
 	PackageScoped bool
 	SourceModule  string
+	VisibleFrom   map[string]bool
 }
 
 type EnumVariant struct {

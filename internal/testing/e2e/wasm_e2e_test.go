@@ -1364,7 +1364,8 @@ function main(): i32 {
 }
 
 func TestWASMStringMethodsExtra(t *testing.T) {
-	src := `
+	src := `import "std/unicode";
+
 import "std/string";
 import "std/option";
 function main(): i32 {
@@ -1722,50 +1723,51 @@ function main(): i32 {
 
 func TestWASMParseInt(t *testing.T) {
 	src := `
+import "std/i32";
 import "std/string";
 function main(): i32 {
 		// Successes:
-		match ("42".parse_int()) {
-			Some(v) => { if (v != 42) { return 1; } },
-			None => { return 2; }
+		match (i32.parse_i32("42")) {
+			Ok(v) => { if (v != 42) { return 1; } },
+			Err(_) => { return 2; }
 		}
-		match ("0".parse_int()) {
-			Some(v) => { if (v != 0) { return 3; } },
-			None => { return 4; }
+		match (i32.parse_i32("0")) {
+			Ok(v) => { if (v != 0) { return 3; } },
+			Err(_) => { return 4; }
 		}
-		match ("-7".parse_int()) {
-			Some(v) => { if (v != -7) { return 5; } },
-			None => { return 6; }
+		match (i32.parse_i32("-7")) {
+			Ok(v) => { if (v != -7) { return 5; } },
+			Err(_) => { return 6; }
 		}
 		// 2^31 - 1 (max i32).
-		match ("2147483647".parse_int()) {
-			Some(v) => { if (v != 2147483647) { return 7; } },
-			None => { return 8; }
+		match (i32.parse_i32("2147483647")) {
+			Ok(v) => { if (v != 2147483647) { return 7; } },
+			Err(_) => { return 8; }
 		}
 		// -2^31 (min i32). The literal -2147483648 isn't
 		// directly expressible (the lexer reads the minus
 		// separately, leaving the positive literal one past
 		// i32 max), so verify via arithmetic:
 		// v + 2147483647 must equal -1.
-		match ("-2147483648".parse_int()) {
-			Some(v) => { if (v + 2147483647 != -1) { return 9; } },
-			None => { return 10; }
+		match (i32.parse_i32("-2147483648")) {
+			Ok(v) => { if (v + 2147483647 != -1) { return 9; } },
+			Err(_) => { return 10; }
 		}
 
 		// Failures: each must come back None.
-		match ("".parse_int()) { Some(_) => { return 20; }, None => {} }
-		match ("-".parse_int()) { Some(_) => { return 21; }, None => {} }
-		match ("abc".parse_int()) { Some(_) => { return 22; }, None => {} }
-		match ("12 34".parse_int()) { Some(_) => { return 23; }, None => {} }
-		match ("12a".parse_int()) { Some(_) => { return 24; }, None => {} }
+		match (i32.parse_i32("")) { Ok(_) => { return 20; }, Err(_) => {} }
+		match (i32.parse_i32("-")) { Ok(_) => { return 21; }, Err(_) => {} }
+		match (i32.parse_i32("abc")) { Ok(_) => { return 22; }, Err(_) => {} }
+		match (i32.parse_i32("12 34")) { Ok(_) => { return 23; }, Err(_) => {} }
+		match (i32.parse_i32("12a")) { Ok(_) => { return 24; }, Err(_) => {} }
 		// Overflow (2^31 is one past i32 max).
-		match ("2147483648".parse_int()) { Some(_) => { return 25; }, None => {} }
+		match (i32.parse_i32("2147483648")) { Ok(_) => { return 25; }, Err(_) => {} }
 		// Underflow.
-		match ("-2147483649".parse_int()) { Some(_) => { return 26; }, None => {} }
+		match (i32.parse_i32("-2147483649")) { Ok(_) => { return 26; }, Err(_) => {} }
 		// Way out of range.
-		match ("99999999999999".parse_int()) { Some(_) => { return 27; }, None => {} }
+		match (i32.parse_i32("99999999999999")) { Ok(_) => { return 27; }, Err(_) => {} }
 		// Plus sign not accepted.
-		match ("+1".parse_int()) { Some(_) => { return 28; }, None => {} }
+		match (i32.parse_i32("+1")) { Ok(n) => { if (n != 1) { return 28; } }, Err(_) => { return 29; } }
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -1775,6 +1777,7 @@ function main(): i32 {
 
 func TestWASMParseFloat(t *testing.T) {
 	src := `
+import "std/f64";
 import "std/string";
 function near(actual: f64, expected: f64, eps: f64): boolean {
 		let diff: f64 = actual - expected;
@@ -1787,54 +1790,54 @@ function near(actual: f64, expected: f64, eps: f64): boolean {
 	}
 	function main(): i32 {
 		// Successes — integer / fraction / exponent shapes.
-		match ("3.14".parse_float()) {
-			Some(v) => { if (!near(v, 3.14, 0.001)) { return 1; } },
-			None => { return 2; }
+		match (f64.parse_f64("3.14")) {
+			Ok(v) => { if (!near(v, 3.14, 0.001)) { return 1; } },
+			Err(_) => { return 2; }
 		}
-		match ("0".parse_float()) {
-			Some(v) => { if (v != 0.0) { return 3; } },
-			None => { return 4; }
+		match (f64.parse_f64("0")) {
+			Ok(v) => { if (v != 0.0) { return 3; } },
+			Err(_) => { return 4; }
 		}
-		match ("-2.5".parse_float()) {
-			Some(v) => { if (!near(v, -2.5, 0.001)) { return 5; } },
-			None => { return 6; }
+		match (f64.parse_f64("-2.5")) {
+			Ok(v) => { if (!near(v, -2.5, 0.001)) { return 5; } },
+			Err(_) => { return 6; }
 		}
-		match (".5".parse_float()) {
-			Some(v) => { if (!near(v, 0.5, 0.001)) { return 7; } },
-			None => { return 8; }
+		match (f64.parse_f64(".5")) {
+			Ok(v) => { if (!near(v, 0.5, 0.001)) { return 7; } },
+			Err(_) => { return 8; }
 		}
-		match ("42.".parse_float()) {
-			Some(v) => { if (!near(v, 42.0, 0.001)) { return 9; } },
-			None => { return 10; }
+		match (f64.parse_f64("42.")) {
+			Ok(v) => { if (!near(v, 42.0, 0.001)) { return 9; } },
+			Err(_) => { return 10; }
 		}
-		match ("1e3".parse_float()) {
-			Some(v) => { if (!near(v, 1000.0, 0.001)) { return 11; } },
-			None => { return 12; }
+		match (f64.parse_f64("1e3")) {
+			Ok(v) => { if (!near(v, 1000.0, 0.001)) { return 11; } },
+			Err(_) => { return 12; }
 		}
-		match ("1.5e2".parse_float()) {
-			Some(v) => { if (!near(v, 150.0, 0.001)) { return 13; } },
-			None => { return 14; }
+		match (f64.parse_f64("1.5e2")) {
+			Ok(v) => { if (!near(v, 150.0, 0.001)) { return 13; } },
+			Err(_) => { return 14; }
 		}
-		match ("2.5E-2".parse_float()) {
-			Some(v) => { if (!near(v, 0.025, 0.0001)) { return 15; } },
-			None => { return 16; }
+		match (f64.parse_f64("2.5E-2")) {
+			Ok(v) => { if (!near(v, 0.025, 0.0001)) { return 15; } },
+			Err(_) => { return 16; }
 		}
-		match ("1e+5".parse_float()) {
-			Some(v) => { if (!near(v, 100000.0, 0.001)) { return 17; } },
-			None => { return 18; }
+		match (f64.parse_f64("1e+5")) {
+			Ok(v) => { if (!near(v, 100000.0, 0.001)) { return 17; } },
+			Err(_) => { return 18; }
 		}
 
 		// Failures — bad shapes must come back None.
-		match ("".parse_float()) { Some(_) => { return 30; }, None => {} }
-		match ("-".parse_float()) { Some(_) => { return 31; }, None => {} }
-		match (".".parse_float()) { Some(_) => { return 32; }, None => {} }
-		match ("abc".parse_float()) { Some(_) => { return 33; }, None => {} }
-		match ("1.2.3".parse_float()) { Some(_) => { return 34; }, None => {} }
-		match ("1e".parse_float()) { Some(_) => { return 35; }, None => {} }
-		match ("1ex".parse_float()) { Some(_) => { return 36; }, None => {} }
-		match ("1e-".parse_float()) { Some(_) => { return 37; }, None => {} }
-		match ("1.5x".parse_float()) { Some(_) => { return 38; }, None => {} }
-		match ("+1".parse_float()) { Some(_) => { return 39; }, None => {} }
+		match (f64.parse_f64("")) { Ok(_) => { return 30; }, Err(_) => {} }
+		match (f64.parse_f64("-")) { Ok(_) => { return 31; }, Err(_) => {} }
+		match (f64.parse_f64(".")) { Ok(_) => { return 32; }, Err(_) => {} }
+		match (f64.parse_f64("abc")) { Ok(_) => { return 33; }, Err(_) => {} }
+		match (f64.parse_f64("1.2.3")) { Ok(_) => { return 34; }, Err(_) => {} }
+		match (f64.parse_f64("1e")) { Ok(_) => { return 35; }, Err(_) => {} }
+		match (f64.parse_f64("1ex")) { Ok(_) => { return 36; }, Err(_) => {} }
+		match (f64.parse_f64("1e-")) { Ok(_) => { return 37; }, Err(_) => {} }
+		match (f64.parse_f64("1.5x")) { Ok(_) => { return 38; }, Err(_) => {} }
+		match (f64.parse_f64("+1")) { Ok(v) => { if (v != 1.0) { return 39; } }, Err(_) => { return 40; } }
 
 		return 0;
 	}`
@@ -5509,64 +5512,64 @@ func TestWASMJsonParse(t *testing.T) {
 import "std/json";
 function main(): i32 {
 		// Primitives.
-		match (json.json_parse("null")) {
-			Some(v) => { match (v) { JNull => {}, JBool(_) => { return 1; }, JNumber(_) => { return 1; }, JString(_) => { return 1; }, JArray(_) => { return 1; }, JObject(_) => { return 1; } } },
-			None => { return 2; }
+		match (json.parse("null")) {
+			Ok(v) => { match (v) { JNull => {}, JBool(_) => { return 1; }, JNumber(_) => { return 1; }, JString(_) => { return 1; }, JArray(_) => { return 1; }, JObject(_) => { return 1; } } },
+			Err(_) => { return 2; }
 		}
-		match (json.json_parse("true")) {
-			Some(v) => { match (v) {
+		match (json.parse("true")) {
+			Ok(v) => { match (v) {
 				JBool(b) => { if (!b) { return 3; } },
 				JNull => { return 4; }, JNumber(_) => { return 4; }, JString(_) => { return 4; }, JArray(_) => { return 4; }, JObject(_) => { return 4; }
 			} },
-			None => { return 5; }
+			Err(_) => { return 5; }
 		}
-		match (json.json_parse("false")) {
-			Some(v) => { match (v) {
+		match (json.parse("false")) {
+			Ok(v) => { match (v) {
 				JBool(b) => { if (b) { return 6; } },
 				JNull => { return 7; }, JNumber(_) => { return 7; }, JString(_) => { return 7; }, JArray(_) => { return 7; }, JObject(_) => { return 7; }
 			} },
-			None => { return 8; }
+			Err(_) => { return 8; }
 		}
-		match (json.json_parse("42")) {
-			Some(v) => { match (v) {
+		match (json.parse("42")) {
+			Ok(v) => { match (v) {
 				JNumber(n) => { if (n != "42") { return 10; } },
 				JNull => { return 11; }, JBool(_) => { return 11; }, JString(_) => { return 11; }, JArray(_) => { return 11; }, JObject(_) => { return 11; }
 			} },
-			None => { return 12; }
+			Err(_) => { return 12; }
 		}
-		match (json.json_parse("-3.14")) {
-			Some(v) => { match (v) {
+		match (json.parse("-3.14")) {
+			Ok(v) => { match (v) {
 				JNumber(n) => { if (n != "-3.14") { return 13; } },
 				JNull => { return 14; }, JBool(_) => { return 14; }, JString(_) => { return 14; }, JArray(_) => { return 14; }, JObject(_) => { return 14; }
 			} },
-			None => { return 15; }
+			Err(_) => { return 15; }
 		}
-		match (json.json_parse("\"hi\"")) {
-			Some(v) => { match (v) {
+		match (json.parse("\"hi\"")) {
+			Ok(v) => { match (v) {
 				JString(s) => { if (s != "hi") { return 20; } },
 				JNull => { return 21; }, JBool(_) => { return 21; }, JNumber(_) => { return 21; }, JArray(_) => { return 21; }, JObject(_) => { return 21; }
 			} },
-			None => { return 22; }
+			Err(_) => { return 22; }
 		}
 		// String with escapes.
-		match (json.json_parse("\"a\\nb\\\"c\"")) {
-			Some(v) => { match (v) {
+		match (json.parse("\"a\\nb\\\"c\"")) {
+			Ok(v) => { match (v) {
 				JString(s) => { if (s != "a\nb\"c") { return 30; } },
 				JNull => { return 31; }, JBool(_) => { return 31; }, JNumber(_) => { return 31; }, JArray(_) => { return 31; }, JObject(_) => { return 31; }
 			} },
-			None => { return 32; }
+			Err(_) => { return 32; }
 		}
 		// Empty array.
-		match (json.json_parse("[]")) {
-			Some(v) => { match (v) {
+		match (json.parse("[]")) {
+			Ok(v) => { match (v) {
 				JArray(arr) => { if (arr.len() != 0) { return 40; } },
 				JNull => { return 41; }, JBool(_) => { return 41; }, JNumber(_) => { return 41; }, JString(_) => { return 41; }, JObject(_) => { return 41; }
 			} },
-			None => { return 42; }
+			Err(_) => { return 42; }
 		}
 		// Heterogeneous array.
-		match (json.json_parse("[1,\"two\",true,null]")) {
-			Some(v) => { match (v) {
+		match (json.parse("[1,\"two\",true,null]")) {
+			Ok(v) => { match (v) {
 				JArray(arr) => {
 					if (arr.len() != 4) { return 50; }
 					match (arr[0]) { JNumber(n) => { if (n != "1") { return 51; } }, JNull => { return 52; }, JBool(_) => { return 52; }, JString(_) => { return 52; }, JArray(_) => { return 52; }, JObject(_) => { return 52; } }
@@ -5574,19 +5577,19 @@ function main(): i32 {
 				},
 				JNull => { return 55; }, JBool(_) => { return 55; }, JNumber(_) => { return 55; }, JString(_) => { return 55; }, JObject(_) => { return 55; }
 			} },
-			None => { return 56; }
+			Err(_) => { return 56; }
 		}
 		// Empty object.
-		match (json.json_parse("{}")) {
-			Some(v) => { match (v) {
+		match (json.parse("{}")) {
+			Ok(v) => { match (v) {
 				JObject(m) => { if (m.len() != 0) { return 60; } },
 				JNull => { return 61; }, JBool(_) => { return 61; }, JNumber(_) => { return 61; }, JString(_) => { return 61; }, JArray(_) => { return 61; }
 			} },
-			None => { return 62; }
+			Err(_) => { return 62; }
 		}
 		// Object with string keys, mixed values.
-		match (json.json_parse("{\"a\":1,\"b\":\"two\"}")) {
-			Some(v) => { match (v) {
+		match (json.parse("{\"a\":1,\"b\":\"two\"}")) {
+			Ok(v) => { match (v) {
 				JObject(m) => {
 					if (m.len() != 2) { return 70; }
 					match (m.get("a")) {
@@ -5596,25 +5599,25 @@ function main(): i32 {
 				},
 				JNull => { return 74; }, JBool(_) => { return 74; }, JNumber(_) => { return 74; }, JString(_) => { return 74; }, JArray(_) => { return 74; }
 			} },
-			None => { return 75; }
+			Err(_) => { return 75; }
 		}
 		// Whitespace tolerance.
-		match (json.json_parse("  [ 1 , 2 ] ")) {
-			Some(v) => { match (v) {
+		match (json.parse("  [ 1 , 2 ] ")) {
+			Ok(v) => { match (v) {
 				JArray(arr) => { if (arr.len() != 2) { return 80; } },
 				JNull => { return 81; }, JBool(_) => { return 81; }, JNumber(_) => { return 81; }, JString(_) => { return 81; }, JObject(_) => { return 81; }
 			} },
-			None => { return 82; }
+			Err(_) => { return 82; }
 		}
 		// Garbage -> None.
-		match (json.json_parse("xyz")) { Some(_) => { return 90; }, None => {} }
-		match (json.json_parse("[1,]")) { Some(_) => { return 91; }, None => {} }
-		match (json.json_parse("{")) { Some(_) => { return 92; }, None => {} }
-		match (json.json_parse("")) { Some(_) => { return 93; }, None => {} }
+		match (json.parse("xyz")) { Ok(_) => { return 90; }, Err(_) => {} }
+		match (json.parse("[1,]")) { Ok(_) => { return 91; }, Err(_) => {} }
+		match (json.parse("{")) { Ok(_) => { return 92; }, Err(_) => {} }
+		match (json.parse("")) { Ok(_) => { return 93; }, Err(_) => {} }
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("WASM json_parse: exit = %d, want 0", got)
+		t.Errorf("WASM parse: exit = %d, want 0", got)
 	}
 }
 
@@ -5623,8 +5626,8 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"import \"std/json\";\n" +
 		"function main(): i32 {\n" +
 		"    // Astral pair: \\uD83D\\uDE00 = U+1F600 = F0 9F 98 80.\n" +
-		"    match (json.json_parse(\"\\\"\\\\uD83D\\\\uDE00\\\"\")) {\n" +
-		"        Some(v) => { match (v) {\n" +
+		"    match (json.parse(\"\\\"\\\\uD83D\\\\uDE00\\\"\")) {\n" +
+		"        Ok(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
 		"                if (s.len() != 4) { return 1; }\n" +
 		"                if ((s[0] as i32) != 240) { return 2; }\n" +
@@ -5634,11 +5637,11 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"            },\n" +
 		"            JNull => { return 6; }, JBool(_) => { return 6; }, JNumber(_) => { return 6; }, JArray(_) => { return 6; }, JObject(_) => { return 6; }\n" +
 		"        } },\n" +
-		"        None => { return 7; }\n" +
+		"        Err(_) => { return 7; }\n" +
 		"    }\n" +
 		"    // Lone high surrogate: emits U+FFFD = EF BF BD.\n" +
-		"    match (json.json_parse(\"\\\"\\\\uD800x\\\"\")) {\n" +
-		"        Some(v) => { match (v) {\n" +
+		"    match (json.parse(\"\\\"\\\\uD800x\\\"\")) {\n" +
+		"        Ok(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
 		"                if (s.len() != 4) { return 8; }\n" +
 		"                if ((s[0] as i32) != 239) { return 9; }\n" +
@@ -5648,11 +5651,11 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"            },\n" +
 		"            JNull => { return 13; }, JBool(_) => { return 13; }, JNumber(_) => { return 13; }, JArray(_) => { return 13; }, JObject(_) => { return 13; }\n" +
 		"        } },\n" +
-		"        None => { return 14; }\n" +
+		"        Err(_) => { return 14; }\n" +
 		"    }\n" +
 		"    // Lone low surrogate: emits U+FFFD too.\n" +
-		"    match (json.json_parse(\"\\\"\\\\uDC00\\\"\")) {\n" +
-		"        Some(v) => { match (v) {\n" +
+		"    match (json.parse(\"\\\"\\\\uDC00\\\"\")) {\n" +
+		"        Ok(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
 		"                if (s.len() != 3) { return 15; }\n" +
 		"                if ((s[0] as i32) != 239) { return 16; }\n" +
@@ -5661,12 +5664,12 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"            },\n" +
 		"            JNull => { return 19; }, JBool(_) => { return 19; }, JNumber(_) => { return 19; }, JArray(_) => { return 19; }, JObject(_) => { return 19; }\n" +
 		"        } },\n" +
-		"        None => { return 20; }\n" +
+		"        Err(_) => { return 20; }\n" +
 		"    }\n" +
 		"    return 0;\n" +
 		"}"
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("json_parse surrogate pairs: exit = %d, want 0", got)
+		t.Errorf("parse surrogate pairs: exit = %d, want 0", got)
 	}
 }
 
@@ -5695,20 +5698,20 @@ function main(): i32 {
 		if (g.to_string() != "1.5") { return 21; }
 
 		// Round-trip through parse_float (f64 domain) for tolerance check.
-		match ("3.14".parse_float()) {
-			Some(x) => {
+		match (f64.parse_f64("3.14")) {
+			Ok(x) => {
 				// x.to_string() should produce something that
 				// parses back to ≈ 3.14.
-				match (x.to_string().parse_float()) {
-					Some(y) => {
+				match (f64.parse_f64(x.to_string())) {
+					Ok(y) => {
 						let diff: f64 = y - 3.14;
 						if (diff < 0.0) { diff = 0.0 - diff; }
 						if (diff > 0.001) { return 30; }
 					},
-					None => { return 31; }
+					Err(_) => { return 31; }
 				}
 			},
-			None => { return 32; }
+			Err(_) => { return 32; }
 		}
 
 		return 0;

@@ -397,7 +397,7 @@ function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {
 
 function lends_view(f: ssasem.Func): boolean {
   for p in f.params {
-    if (ssasem.holds_view(f, p)) {
+    if (ssasem.holds_view(f, p) && !ssasem.is_view(p)) {
       return true;
     }
   }

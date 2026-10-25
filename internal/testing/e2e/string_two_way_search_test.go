@@ -91,7 +91,7 @@ function main(): i32 {
                         q = q + 1;
                     }
                     if (hay.count(nee) != want.len()) { return 5; }
-                    if (hay.count_matches(nee) != want.len()) { return 6; }
+                    if (hay.count(nee) != want.len()) { return 6; }
 
                     // split: piece count is matches+1, and rejoining on the
                     // separator must reproduce the input byte for byte.
@@ -111,7 +111,7 @@ function main(): i32 {
                     if (rep.len() != hay.len() + want.len() * (2 - nlen)) { return 9; }
                     if (rep.replace("XY", nee) != hay) { return 10; }
                     if (hay.replace_n(nee, "XY", 100) != rep) { return 11; }
-                    if (hay.replacen(nee, "XY", 100) != rep) { return 12; }
+                    if (hay.replace_n(nee, "XY", 100) != rep) { return 12; }
                     if (want.len() > 0) {
                         let one: string = hay.replace_n(nee, "XY", 1);
                         if (one != slice_unchecked(hay, 0, want[0]) + "XY" + slice_unchecked(hay, want[0] + nlen, hay.len())) { return 13; }
@@ -146,7 +146,7 @@ function main(): i32 {
     if ((a30 + a30 + "b").index_of(a30 + "b").unwrap_or(-1) != 30) { return 22; }
     if ("abababababab".index_of("ababab").unwrap_or(-1) != 0) { return 23; }
     if ("xabababababab".index_of("bababa").unwrap_or(-1) != 2) { return 24; }
-    if ("mississippi".count_matches("ss") != 2) { return 25; }
+    if ("mississippi".count("ss") != 2) { return 25; }
     if ("mississippi".replace("ss", "SS") != "miSSiSSippi") { return 26; }
 
     // Empty-needle contracts, unchanged by the Two-Way rewrite.

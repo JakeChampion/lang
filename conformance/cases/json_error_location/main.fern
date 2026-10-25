@@ -1,62 +1,93 @@
-
-
-
-
-
-
-
-
-
-
-
 import "std/json";
 
 function located(doc: string, line: i32, col: i32): boolean {
-    match (json.json_parse_result(doc)) {
-        Ok(_) => { return false; },
-        Err(e) => { return e.line == line && e.col == col; },
+  match (json.parse(doc)) {
+    Ok(_) => {
+      return false;
+    },
+    Err(e) => {
+      return e.line == line && e.col == col;
     }
+  }
 }
 
 function rejected(doc: string): boolean {
-    match (json.json_parse(doc)) {
-        Some(_) => { return false; },
-        None => { return true; },
+  match (json.parse(doc)) {
+    Ok(_) => {
+      return false;
+    },
+    Err(_) => {
+      return true;
     }
+  }
 }
 
 function accepted(doc: string): boolean {
-    match (json.json_parse(doc)) {
-        Some(_) => { return true; },
-        None => { return false; },
+  match (json.parse(doc)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {
+      return false;
     }
+  }
 }
 
 function main(): i32 {
+  // The error is on line 3, at the comma standing where a value belongs.
+  if (!located("{\n  \"a\": 1,\n  \"b\": ,\n}", 3, 8)) {
+    return 1;
+  }
+  // Trailing content is located at the first byte past the value.
+  if (!located("{\"a\": 1} trailing", 1, 10)) {
+    return 2;
+  }
+  // A single-line document still reports line 1.
+  if (!located("[1, 2,]", 1, 7)) {
+    return 3;
+  }
 
-    if (!located("{\n  \"a\": 1,\n  \"b\": ,\n}", 3, 8)) { return 1; }
+  // RFC 8259 number grammar: these are not numbers.
+  if (!rejected("1.")) {
+    return 4;
+  }
+  if (!rejected("01")) {
+    return 5;
+  }
+  if (!rejected("1e")) {
+    return 6;
+  }
+  if (!rejected("1e+")) {
+    return 7;
+  }
+  if (!rejected(".5")) {
+    return 8;
+  }
+  if (!rejected("-")) {
+    return 9;
+  }
 
-    if (!located("{\"a\": 1} trailing", 1, 10)) { return 2; }
+  // ...and these are.
+  if (!accepted("1")) {
+    return 10;
+  }
+  if (!accepted("-0")) {
+    return 11;
+  }
+  if (!accepted("0.5")) {
+    return 12;
+  }
+  if (!accepted("1.0e5")) {
+    return 13;
+  }
+  if (!accepted("[1, 2, [3, {\"a\": null}]]")) {
+    return 14;
+  }
 
-    if (!located("[1, 2,]", 1, 7)) { return 3; }
-
-
-    if (!rejected("1.")) { return 4; }
-    if (!rejected("01")) { return 5; }
-    if (!rejected("1e")) { return 6; }
-    if (!rejected("1e+")) { return 7; }
-    if (!rejected(".5")) { return 8; }
-    if (!rejected("-")) { return 9; }
-
-
-    if (!accepted("1")) { return 10; }
-    if (!accepted("-0")) { return 11; }
-    if (!accepted("0.5")) { return 12; }
-    if (!accepted("1.0e5")) { return 13; }
-    if (!accepted("[1, 2, [3, {\"a\": null}]]")) { return 14; }
-
-
-
-    if (!accepted("{\n  \"a\": 1,\n  \"b\": [true, false]\n}")) { return 15; }
-    return 0;
+  // A well-formed document must still parse through the Option API,
+  // which now delegates to the Result one.
+  if (!accepted("{\n  \"a\": 1,\n  \"b\": [true, false]\n}")) {
+    return 15;
+  }
+  return 0;
 }

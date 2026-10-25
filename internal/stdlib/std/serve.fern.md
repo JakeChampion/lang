@@ -188,6 +188,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "std/async";
 import "std/platform";
 import "std/fetch";
@@ -369,13 +370,13 @@ function __listen_failed(l: __Listen): i32 {
 function __listener_of(port: i32, opts: Config): __Listen {
   match (env("LISTEN_FDS")) {
     Some(n) => {
-      match (int.parse_int_radix(n, 10)) {
-        Some(count) => {
+      match (i32.parse_i32_radix(n, 10)) {
+        Ok(count) => {
           if (count >= 1) {
             return __Listen { fd: 3, addr: "" };
           }
         },
-        None => {}
+        Err(_) => {}
       }
     },
     None => {}

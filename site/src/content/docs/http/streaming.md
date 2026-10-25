@@ -218,6 +218,8 @@ import "std/http";
 import "std/serve";
 import "std/time";
 import "std/http/sse";
+import "std/i32";
+import "std/result";
 import "std/option";
 import "std/platform";
 
@@ -226,7 +228,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         return http.html("<script>new EventSource('/events').onmessage = e => document.body.append(e.data + ' ')</script>");
     }
     // A reconnecting browser says where it got to.
-    let from: i32 = sse.last_event_id(req).unwrap_or("-1").parse_int_or(0 - 1) + 1;
+    let from: i32 = i32.parse_i32(sse.last_event_id(req).unwrap_or("-1")).unwrap_or(0 - 1) + 1;
     let ticks: (i32) => Option[sse.Event] = (i: i32): Option[sse.Event] => {
         let n: i32 = from + i;
         if (n >= 100) {

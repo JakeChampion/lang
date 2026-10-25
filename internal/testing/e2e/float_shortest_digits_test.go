@@ -5,9 +5,14 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func shortestDigitsWant(v float64, bits int) (string, int) {
@@ -76,7 +81,24 @@ func TestFloatPow10Table(t *testing.T) {
 	b.WriteString("import \"std/f64\";\nfunction main(): i32 {\n    let k: i32 = 0 - 292;\n    while (k <= 326) {\n")
 	b.WriteString("        write(f64.pow10_hi(k).to_string()); write(\" \"); write(f64.pow10_lo(k).to_string()); write(\" \"); write(f64.pow10_log2(k).to_string()); write(\"\\n\");\n")
 	b.WriteString("        k = k + 1;\n    }\n    return 0;\n}\n")
-	out, code := compileAndRunX86_64(t, b.String())
+	stdlib := t.TempDir()
+	if err := os.CopyFS(stdlib, os.DirFS(e2eharness.SelfHostStdlibRoot(t))); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(stdlib, "std", "pow10_table_probe.fern")
+	if err := os.WriteFile(entry, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "table-probe")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", "x86-64-linux", "-o", binary, entry, stdlib)
+	cmd.Env = e2eharness.SelfHostChildEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile package table probe: %v\n%s", err, output)
+	}
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runBin(runX86_64Bin(e2eharness.X86_64Runner(t), binary), "")
 	if code != 0 {
 		t.Fatalf("exit = %d\noutput:\n%s", code, out)
 	}

@@ -80,7 +80,7 @@ is the point).
 - `sim.future_at(ns, v)` — a `Future[T]` that resolves to `v` at
   virtual time `ns` (token + resume closure returning `Ready(v)`).
 - `sim.future_chain(...)` — multi-step pending chains, for testing
-  re-suspension shapes like `__fetch_drain`.
+  re-suspension shapes like a read loop that parks on each chunk.
 - `poll_ready(toks, timeout_ms)`: find the earliest ready-at among
   `toks` (and the timeout, when `>= 0`); **advance the virtual clock
   to it**; return its index (or the timeout sentinel per the real
@@ -109,28 +109,23 @@ results.
 
 ### Later slices (not slice 1)
 
-- **SimNet**: scripted request/response endpoints shaped like
-  `fetch_future` (connect/send/readable/chunked reads), so handler
-  fan-out logic tests against scripted upstreams with injected
-  latency.
+- **SimNet**: scripted upstreams for the real client — `std/sim_fetch`'s
+  `Net` is a `fetch.Transport` whose routes answer with injected
+  latency and chunking — so handler fan-out logic, run as tasks under
+  `sim.run_tasks`, tests against them in virtual time.
 - **Fault injection**: seed-driven timeout/error/partial-read
   schedules; the failure report prints the seed; a `--seed` rerun
   replays it.
 
-  **Status: shipped (#5360 slice 3).** Per-endpoint fault modes on
-  `sim.Net`, value-returning like `serve`: `fault_fail` (immediate
-  `""`, the real connect failure), `fault_stall` (never resolves — a
-  never-ready token, dropped by `with_deadline_on` at the exact
-  virtual deadline), `fault_partial(k)` (the first `min(k, #chunks)`
-  chunks arrive on schedule, then silence — never resolves), and
-  `fault_flaky(p)` (wraps the endpoint's fault mode, default fail;
-  each fetch consumes exactly one sim-PRNG draw in program order, the
-  fault firing on `draw < p`). `sim.sweep_seeds(n, prop)` is the
-  seed-replay workflow in miniature (first failing seed, 0 if all
-  pass) and `Sim.rng_state()` supports lockstep assertions. Suite:
-  `tests/stdlib/sim_fault_test.fern` (incl. a pinned cross-backend
-  flaky(50) golden) with interp/native/wasm gates in
-  `internal/testing/e2e/sim_fault_test.go`.
+  **Status: shipped.** Faults are scripted answers on `sim_fetch.Net`
+  routes: `reset()` (the connection closes with nothing sent),
+  `silent()` (never answers; the client's timeout or a cancellation
+  ends the fetch) and `in_chunks(size, every_ms)` with `held()` (a
+  prefix, then silence). `sim.sweep_seeds(n, prop)` is the seed-replay
+  workflow in miniature (first failing seed, 0 if all pass) and
+  `Sim.rng_state()` supports lockstep assertions. Suites:
+  `tests/stdlib/sim_fetch_test.fern`, `tests/stdlib/sim_platform_test.fern`
+  and `tests/stdlib/sim_driver_test.fern` (incl. a pinned PRNG golden).
 - **fernsmith integration**: random combinator programs × random
   seeds, differential across backends — extends the existing
   numeric-property harness pattern to concurrency.
@@ -139,13 +134,13 @@ results.
   harness (and unlike `internal/testing/fernsmith`, which generates scalar
   control-flow programs with no stdlib surface), the generator is a
   dedicated one in `internal/testing/e2e/sim_property_test.go`: each program
-  builds a seeded `Sim` + `Net` with 1–3 scripted endpoints (random
-  latencies / chunk schedules, ~half faulted incl. flaky with random
-  p), runs 1–3 random `gather_on` / `race_on` / `with_deadline_on`
-  stages over mixes of `future_at` / `future_chain` / `fetch_future`,
-  and prints a digest of everything observable (results, winner
-  indices, `None` slots, final `now_ns`, `rng_state`, per-endpoint
-  hits). Interp, native x86-64, and wasm must produce byte-identical
+  builds a seeded `Sim` with 1–3 scripted upstream futures (random
+  latencies / chunk schedules, ~half faulted — fail, stall or partial,
+  some flaky with random p drawn from the sim PRNG), runs 1–3 random
+  `gather_on` / `race_on` / `with_deadline_on` stages over mixes of
+  `future_at` / `future_chain` / those upstreams, and prints a digest
+  of everything observable (results, winner indices, `None` slots,
+  final `now_ns`, `rng_state`). Interp, native x86-64, and wasm must produce byte-identical
   stdout — any divergence is a miscompile or a nondeterminism leak,
   and the failing subtest prints the whole program for replay.
   `TestSimProperty` is the bounded 25-seed CI sweep,

@@ -1,3 +1,8 @@
+// Compile the same source with and without FERN_NO_SCALE_KERNEL=1.
+// Input size and round count are runtime parameters. Both builds must print
+// the same checksum. Counters include the handle's metadata, not just data.
+import "std/i32";
+import "std/result";
 import "std/ndarray";
 import "std/string";
 
@@ -22,10 +27,10 @@ function main(): i32 {
   let n: i32 = 1000;
   let rounds: i32 = 2;
   if (argv.len() > 1) {
-    n = argv[1].parse_int_or(n);
+    n = i32.parse_i32(argv[1]).unwrap_or(n);
   }
   if (argv.len() > 2) {
-    rounds = argv[2].parse_int_or(rounds);
+    rounds = i32.parse_i32(argv[2]).unwrap_or(rounds);
   }
   if (n < 1 || rounds < 1) {
     return 1;

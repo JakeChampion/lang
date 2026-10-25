@@ -23,11 +23,11 @@ function slurp(path: string): string {
 
 function leading_int(s: string): i32 {
   let t: str = s.trim_start();
-  match (t.parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(t)) {
+    Ok(n) => {
       return n;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }

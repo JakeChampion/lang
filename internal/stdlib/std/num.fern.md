@@ -26,14 +26,12 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 pub function sum_with[T: Add](xs: T[], zero: T): T>>
 ```
-
 ### `module introduction`
 
 ```fern
 <<module introduction>>=
 // This module defines arithmetic traits for numeric types.
 ```
-
 ### `2 pub trait Add`
 
 ```fern
@@ -174,7 +172,6 @@ impl Mul for f64 {
   }
 }
 ```
-
 ### `3 impl Div for f64`
 
 ```fern
@@ -311,7 +308,6 @@ impl Mul for f32x4 {
   }
 }
 ```
-
 ### `4 impl Div for f32x4`
 
 ```fern
@@ -418,7 +414,6 @@ impl One for u64 {
 
 impl Num for u64 {}
 ```
-
 ### `5 pub function sum_with[T: Add](xs: T[], zero: T): T`
 
 ```fern
@@ -484,4 +479,82 @@ pub function adjacent_diff[T: Sub](xs: T[]): T[] {
   }
   return out;
 }
+
+// ---- u8 ----
+impl Add for u8 {
+  function add(self: u8, o: u8): u8 {
+    return self + o;
+  }
+}
+
+impl Sub for u8 {
+  function sub(self: u8, o: u8): u8 {
+    return self - o;
+  }
+}
+
+impl Mul for u8 {
+  function mul(self: u8, o: u8): u8 {
+    return self * o;
+  }
+}
+
+impl Div for u8 {
+  function div(self: u8, o: u8): u8 {
+    return self / o;
+  }
+}
+
+impl Zero for u8 {
+  function zero(): u8 {
+    return 0 as u8;
+  }
+}
+
+impl One for u8 {
+  function one(): u8 {
+    return 1 as u8;
+  }
+}
+
+impl Num for u8 {}
+
+// ---- usize ----
+impl Add for usize {
+  function add(self: usize, o: usize): usize {
+    return self + o;
+  }
+}
+
+impl Sub for usize {
+  function sub(self: usize, o: usize): usize {
+    return self - o;
+  }
+}
+
+impl Mul for usize {
+  function mul(self: usize, o: usize): usize {
+    return self * o;
+  }
+}
+
+impl Div for usize {
+  function div(self: usize, o: usize): usize {
+    return self / o;
+  }
+}
+
+impl Zero for usize {
+  function zero(): usize {
+    return 0 as usize;
+  }
+}
+
+impl One for usize {
+  function one(): usize {
+    return 1 as usize;
+  }
+}
+
+impl Num for usize {}
 ```

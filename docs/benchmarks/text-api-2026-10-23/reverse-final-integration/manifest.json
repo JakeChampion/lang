@@ -1,0 +1,610 @@
+{
+  "source_commit": "c2f3af1b24b65d908f895f8f2ac8598bd02ed932",
+  "baseline_commit": "0e9d56bda5dfbe2fda224f7e6c5b68599d34f531",
+  "issues": [
+    12718,
+    13086
+  ],
+  "tests": [
+    {
+      "file": "generator-tests.jsonl",
+      "cases": 16,
+      "packages": 1,
+      "skipped": 0
+    },
+    {
+      "file": "go-regressions-final.jsonl",
+      "cases": 2495,
+      "packages": 6,
+      "skipped": 0
+    },
+    {
+      "file": "library-regressions.jsonl",
+      "cases": 67,
+      "packages": 1,
+      "skipped": 0
+    },
+    {
+      "file": "native-final-regressions.jsonl",
+      "cases": 4586,
+      "packages": 1,
+      "skipped": 0
+    }
+  ],
+  "matrices": [
+    {
+      "file": "final-matrix/results.json",
+      "commands": 40,
+      "balanced_censuses": 6
+    },
+    {
+      "file": "contracts-matrix-results.json",
+      "commands": 144,
+      "balanced_censuses": 24
+    },
+    {
+      "file": "verified-negative.json",
+      "commands": 6,
+      "balanced_censuses": 0
+    },
+    {
+      "file": "package-compatibility/committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-compatibility/package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "package-compatibility/reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    }
+  ],
+  "embedded_commands": 33,
+  "balanced_trace_events": 792,
+  "darwin_builds": 2,
+  "darwin_local_execution": false,
+  "profiles": {
+    "source_commit": "c2f3af1b24b65d908f895f8f2ac8598bd02ed932",
+    "rows": [
+      {
+        "probe": "phase1-probe",
+        "version": "before",
+        "source_sha256": "d20cc61dd9644c559eceec735a4fca6fbc10c5b5a8e238bc8b9bbc62820a320d",
+        "source_commit": "0e9d56bda5dfbe2fda224f7e6c5b68599d34f531",
+        "compiler_sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94",
+        "binary_sha256": "99d03b3512457c98edd4e8aede6f85f7e3a99874f98b5144c19a23f9381c516a",
+        "bytes": 20016,
+        "build_args": [
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe-before",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe.fern",
+          "/tmp/lang-text-profile-baseline/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe-before.callgrind",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe-before"
+        ],
+        "instructions": 1184346,
+        "stdout": "8059\n3644007220\n12288\n359374277\n4115\n"
+      },
+      {
+        "probe": "phase1-probe",
+        "version": "after",
+        "source_sha256": "d20cc61dd9644c559eceec735a4fca6fbc10c5b5a8e238bc8b9bbc62820a320d",
+        "source_commit": "c2f3af1b24b65d908f895f8f2ac8598bd02ed932",
+        "compiler_sha256": "8d174fa691d49128a4b2f2b2a9442f94787fa0f0164e025a8bc5945e98d8d5a5",
+        "binary_sha256": "c9f79f6690962abf118e9d2b799897198afc971aa10934bd251e21b7dcf2ff0f",
+        "bytes": 20016,
+        "build_args": [
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe-after",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe.fern",
+          "/tmp/lang-text-api-cohesion-publish/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe-after.callgrind",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/phase1-probe-after"
+        ],
+        "instructions": 1203945,
+        "stdout": "8059\n3644007220\n12288\n359374277\n4\n",
+        "instruction_ratio": 1.0165483735327345
+      },
+      {
+        "probe": "unicode-loop-baseline",
+        "version": "before",
+        "source_sha256": "fe8c5314fd62d0fb403ff22eb5bde94326690dcde06b7c959c897af062ef5b26",
+        "source_commit": "0e9d56bda5dfbe2fda224f7e6c5b68599d34f531",
+        "compiler_sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94",
+        "binary_sha256": "7f8a7d4eb4a74a08575b2194d50235b3c7055cc244fe4c7333b5644826e56a75",
+        "bytes": 49488,
+        "build_args": [
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline-before",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline.fern",
+          "/tmp/lang-text-profile-baseline/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline-before.callgrind",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline-before"
+        ],
+        "instructions": 64439868,
+        "stdout": "2216760773\n2539308485\n799411653\n3099168197\n1595315653\n90162\n"
+      },
+      {
+        "probe": "unicode-loop-baseline",
+        "version": "after",
+        "source_sha256": "fe8c5314fd62d0fb403ff22eb5bde94326690dcde06b7c959c897af062ef5b26",
+        "source_commit": "c2f3af1b24b65d908f895f8f2ac8598bd02ed932",
+        "compiler_sha256": "8d174fa691d49128a4b2f2b2a9442f94787fa0f0164e025a8bc5945e98d8d5a5",
+        "binary_sha256": "3871638787eb98ab354d2deffb8b29ad8129b7edef720c221670bdf84b2c142a",
+        "bytes": 49520,
+        "build_args": [
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline-after",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline.fern",
+          "/tmp/lang-text-api-cohesion-publish/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline-after.callgrind",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/unicode-loop-baseline-after"
+        ],
+        "instructions": 58657442,
+        "stdout": "2216760773\n2539308485\n799411653\n3099168197\n1595315653\n72\n",
+        "instruction_ratio": 0.9102663276715589
+      },
+      {
+        "probe": "reverse-clusters",
+        "version": "before",
+        "source_sha256": "0da6232126ba34b2e104ae32825df58345cc231cef605ecf7762e4c0e1d12cf0",
+        "source_commit": "0e9d56bda5dfbe2fda224f7e6c5b68599d34f531",
+        "compiler_sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94",
+        "binary_sha256": "6ad841fc6d21823d87f7bacecbb518ed48d7171184a3d62273f2b06ea73fa30c",
+        "bytes": 36256,
+        "build_args": [
+          "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters-before",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters.fern",
+          "/tmp/lang-text-profile-baseline/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters-before.callgrind",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters-before"
+        ],
+        "instructions": 33961693,
+        "stdout": "2581266885\n7168\n529\n3831064005\n14336\n1043\n244723141\n28672\n2069\n"
+      },
+      {
+        "probe": "reverse-clusters",
+        "version": "after",
+        "source_sha256": "0da6232126ba34b2e104ae32825df58345cc231cef605ecf7762e4c0e1d12cf0",
+        "source_commit": "c2f3af1b24b65d908f895f8f2ac8598bd02ed932",
+        "compiler_sha256": "8d174fa691d49128a4b2f2b2a9442f94787fa0f0164e025a8bc5945e98d8d5a5",
+        "binary_sha256": "7ed430e0bfb207bf0da541c83593ed116b753f5f20ec6b3d6ea1be8c5fd20172",
+        "bytes": 36256,
+        "build_args": [
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/bootstrap/stage3",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters-after",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters.fern",
+          "/tmp/lang-text-api-cohesion-publish/internal/stdlib"
+        ],
+        "profile_args": [
+          "valgrind",
+          "--tool=callgrind",
+          "--callgrind-out-file=/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters-after.callgrind",
+          "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/profiles/reverse-clusters-after"
+        ],
+        "instructions": 33375766,
+        "stdout": "2581266885\n7168\n13\n3831064005\n14336\n14\n244723141\n28672\n15\n",
+        "instruction_ratio": 0.9827474148594418
+      }
+    ]
+  },
+  "compiler": {
+    "path": "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/bootstrap/stage3",
+    "sha256": "8d174fa691d49128a4b2f2b2a9442f94787fa0f0164e025a8bc5945e98d8d5a5",
+    "bytes": 14495200
+  },
+  "oracle": {
+    "path": "/workspace/scratch/lang-text-api-cohesion/reverse-final-integration/oracle",
+    "sha256": "71669e8034d7ccf882cc30be6eb12da223f70e6106c9c2b9a321659119aef1b4"
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 2434,
+      "sha256": "4e014683709a69781d20a407810ddb948834dc880ebafdc50b337ad098e2d8f2"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 58934,
+      "sha256": "51241ce7fef2992bb63383bf5cc9b8190509ffb3ba8a7b9306d70ab80ab20960"
+    },
+    {
+      "path": "bootstrap__bootstrap.json.gz",
+      "bytes": 395,
+      "sha256": "419a22a98d6f3899a04ae0c6895a5210d2db1dc07965cf185fc8347c8681567a"
+    },
+    {
+      "path": "bootstrap__completed-intermediates.json.gz",
+      "bytes": 263,
+      "sha256": "4b75dd33ea6775c2b3b5080f96a198a2d571a8a351f1c846a62ffcb9f9c2f17b"
+    },
+    {
+      "path": "bootstrap__cross-scope-identical-images.json.gz",
+      "bytes": 223,
+      "sha256": "46b9cf8da1e6f1a8912af613b49626933223abae69cb9992f8212ae55002ad2b"
+    },
+    {
+      "path": "bootstrap__stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap__stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap__stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 378,
+      "sha256": "690ef0ffa231e88fb79b75aae1e20cb31bbb08477eae5ef7ea4e406e1245cb7e"
+    },
+    {
+      "path": "generator-tests.jsonl.gz",
+      "bytes": 1300,
+      "sha256": "d3e21b05252dd336d0b66566533935b1438571de9248631136f47f848b524682"
+    },
+    {
+      "path": "go-regressions-final.jsonl.gz",
+      "bytes": 149234,
+      "sha256": "106a0bcaa918a192592b62ac1d8b978463d99369ccf7df70233326a6823eac03"
+    },
+    {
+      "path": "library-regressions.jsonl.gz",
+      "bytes": 4820,
+      "sha256": "034678cac29b69f708ffc509c1171a7ed9e02d6d03375242949c9269c3fc5d34"
+    },
+    {
+      "path": "native-final-regressions.jsonl.gz",
+      "bytes": 274417,
+      "sha256": "b75b15438ce9cc6940683a9ed3cab61e5e6365fb0018a93adf8e29e4e1ab65ff"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 91809,
+      "sha256": "43a654b1451e4f8453d63aec84d5e355a28b6f12ad31974212d2d6bd83b74e41"
+    },
+    {
+      "path": "check-matrix.py.gz",
+      "bytes": 1657,
+      "sha256": "88305383a9764456aa81043d854625bd6ac65c51c539e4a2d76d92fd857443f6"
+    },
+    {
+      "path": "final-matrix__results.json.gz",
+      "bytes": 4430,
+      "sha256": "48bd7184e163c41d45cb654ff8cc08c13c920ac33758f5572612cd7f4657939d"
+    },
+    {
+      "path": "final-matrix__identity.json.gz",
+      "bytes": 207,
+      "sha256": "4f96fcba0ef3f861696ebd84743a9ac11f7936d368a5c9cf1e03c2e6c942aacf"
+    },
+    {
+      "path": "contracts-matrix.py.gz",
+      "bytes": 1456,
+      "sha256": "99706c79c9f42e8cffd6a882f47146aa98e3b59e303dc1fc4e9a6a1a9b80eae2"
+    },
+    {
+      "path": "contracts-matrix-results.json.gz",
+      "bytes": 4829,
+      "sha256": "ca50ccc8fc438edab5a5243234a327b4ff34727cea94576364425f5578c12a9a"
+    },
+    {
+      "path": "verified-negative.py.gz",
+      "bytes": 725,
+      "sha256": "b449357b36249755942a201a617ccba8f26201eb9ff7cccacc489215c744e8c6"
+    },
+    {
+      "path": "verified-negative.json.gz",
+      "bytes": 800,
+      "sha256": "77ccae8ac873af86d98a6276ba20c2eebb751922366cc1a74a65e89aac4f3c38"
+    },
+    {
+      "path": "embedded-results.json.gz",
+      "bytes": 5680,
+      "sha256": "b14284e05de15e354e8f8e43b08add2d66b980f8cd9dedaad2228b04dfa827fe"
+    },
+    {
+      "path": "embedded-results-final.log.gz",
+      "bytes": 46,
+      "sha256": "a149913263b3a9d47f9727084fa4b2282e0e0e08f86836745d15a0c643da3e46"
+    },
+    {
+      "path": "reverse-darwin-builds.json.gz",
+      "bytes": 484,
+      "sha256": "3b037cb3e2c982b4de60cb4feb91631ee464869cd1df4ef6a2fa6d236587f233"
+    },
+    {
+      "path": "final-driver-builds.json.gz",
+      "bytes": 1043,
+      "sha256": "28a9e4a420cd4eda0f85fb12e00969579dc3630966e9a04b70ab8bc6de5c09f3"
+    },
+    {
+      "path": "final-driver-sizes.txt.gz",
+      "bytes": 165,
+      "sha256": "74a131d51781f3d67326aef4691db31eefc402b918e9b133decab5c53f84bd78"
+    },
+    {
+      "path": "final-driver-gate.log.gz",
+      "bytes": 351,
+      "sha256": "847018d2875c2415e11acbc3edb3aafb1c89476f2071a5c9742969360b553c38"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 901,
+      "sha256": "17abbb6438ce0325aaeb814aecdc3a272333f2b6df3c83678a089277b3381f57"
+    },
+    {
+      "path": "format-final.json.gz",
+      "bytes": 137,
+      "sha256": "35b1f40aec1c5ff8d70fdc4903d50228d05a03fc229b5174d2aa81c6e17f8c3d"
+    },
+    {
+      "path": "format-check.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "profile-kernels.py.gz",
+      "bytes": 1284,
+      "sha256": "bc3467d14960b73e09a01b669711281bddc94573be0c7e21db270649eada5c33"
+    },
+    {
+      "path": "kernel-profile-results.json.gz",
+      "bytes": 1350,
+      "sha256": "f9f12f8fcbde38f5189b2c4c87364864c99398c29e05e9ac3fdf3aa778c77cee"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 2757,
+      "sha256": "aeaaea1f2d660c5ef7f2cbf36250b34816087fef5e3c6432323082e5a2f7829f"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final.py.gz",
+      "bytes": 1490,
+      "sha256": "0a4a60b1b073522caad3b533f7327bf62d5391699190a092349c82aa969f37d2"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final-results.json.gz",
+      "bytes": 4470,
+      "sha256": "4a6ebf9b515a48255d80036155437f1499097a83f51f29758a7b8b1e148d2684"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final.py.gz",
+      "bytes": 1426,
+      "sha256": "3d1b5b2a04d71b40cbd884adecdfb9f7ae67da69c91ef5fe8151aa57a406b289"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final-results.json.gz",
+      "bytes": 1215,
+      "sha256": "2dc5d5cfd7f3fd38f28862603480132d7ac8b0ea214f35ea6df31e5bde68a660"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final.py.gz",
+      "bytes": 1474,
+      "sha256": "678ca3b5595f0c3d267fdd7279e234313a7e18389223e04da54eb53622fc04ea"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final-results.json.gz",
+      "bytes": 2199,
+      "sha256": "878ffefe9c05d06b3d59052ead8a41262e1296775daacc52db40f82e3ae3783d"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    },
+    {
+      "path": "profiles__phase1-probe.fern.gz",
+      "bytes": 400,
+      "sha256": "5c5a91d6bc11449ff162cb5b13599ae99c3e2f9f81800049e2aa759411f94e94"
+    },
+    {
+      "path": "profiles__phase1-probe-before.callgrind.gz",
+      "bytes": 1267,
+      "sha256": "46afd2f218ee5a67d0d45cbc85010519b0c920f444391e147923b0dc4454c2dc"
+    },
+    {
+      "path": "profiles__phase1-probe-before.log.gz",
+      "bytes": 331,
+      "sha256": "db0603102491fa65ec859941818a4639f2ebe378d53a515b94e4663d1d8ed929"
+    },
+    {
+      "path": "profiles__phase1-probe-before.stdout.gz",
+      "bytes": 52,
+      "sha256": "6c886c567939d57065b4a4834d4fb55e2f953020820b6e2bb79fb84537d8d178"
+    },
+    {
+      "path": "profiles__phase1-probe-before-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__phase1-probe-after.callgrind.gz",
+      "bytes": 1004,
+      "sha256": "9f2e9727e19918f9e08a35692aa6c3284e186ae10999b8cfb99df062eb9cd384"
+    },
+    {
+      "path": "profiles__phase1-probe-after.log.gz",
+      "bytes": 329,
+      "sha256": "16d36041aa0e3149e8831113edfd54ec9ae61d5e551c06cdb1d3d340f1a2e56a"
+    },
+    {
+      "path": "profiles__phase1-probe-after.stdout.gz",
+      "bytes": 51,
+      "sha256": "ce3c38337c6f6ad34d595db050ad40ac22970304c6f62836583cdee609692985"
+    },
+    {
+      "path": "profiles__phase1-probe-after-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline.fern.gz",
+      "bytes": 252,
+      "sha256": "b9ddd464222b06cf66d46fff786aa1db5f24fce604f9c96d100684eb48006c73"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-before.callgrind.gz",
+      "bytes": 1816,
+      "sha256": "8ba32ef1a07f039539040149532f2a524b4a153655254007a0bd50597c745f0c"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-before.log.gz",
+      "bytes": 339,
+      "sha256": "d18e6c745bc5b30ce6e9b7054178eeb99ccda1fa9e4428485b045ff4bd04148a"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-before.stdout.gz",
+      "bytes": 64,
+      "sha256": "fd9e7219dc6091101fc6d9705f755033d3f454aee63499fae013b7d2e2ec3269"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-before-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-after.callgrind.gz",
+      "bytes": 1652,
+      "sha256": "246589d1d9649408dd7dd706c0567d7340d3bf84a2726470dcc3a3d5280380d5"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-after.log.gz",
+      "bytes": 337,
+      "sha256": "285594ba26b2a81eb611c04696546b2b4d5718f37a779d9683fe118a248ebf77"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-after.stdout.gz",
+      "bytes": 63,
+      "sha256": "9c601e9b4aa7a7a5cdae59af37f9c6148a97e5f8db6cdf391f2bc9f8d5264342"
+    },
+    {
+      "path": "profiles__unicode-loop-baseline-after-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__reverse-clusters.fern.gz",
+      "bytes": 294,
+      "sha256": "0dfd0359038e9002462577745345a7fce1d920b44a757f98a8b81d1b706a92c8"
+    },
+    {
+      "path": "profiles__reverse-clusters-before.callgrind.gz",
+      "bytes": 1089,
+      "sha256": "a853c154eb49cb0b1337364790273f726037b1b2892e0cd93623d4f0c2a59daa"
+    },
+    {
+      "path": "profiles__reverse-clusters-before.log.gz",
+      "bytes": 332,
+      "sha256": "295852030943736108c01956eb0153d5050bb707d4837f77c3cc30d58058f585"
+    },
+    {
+      "path": "profiles__reverse-clusters-before.stdout.gz",
+      "bytes": 64,
+      "sha256": "c524462408e89ee9617c06c2ede1594fcd25228191034c192b2f688b5a207afc"
+    },
+    {
+      "path": "profiles__reverse-clusters-before-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__reverse-clusters-after.callgrind.gz",
+      "bytes": 1103,
+      "sha256": "5d9f2d6e55b3642ffa644c9574ce7818dac45b94558665a1d8c8e9a41911620b"
+    },
+    {
+      "path": "profiles__reverse-clusters-after.log.gz",
+      "bytes": 331,
+      "sha256": "77fe2a264e79ac4fd6885422219d2128401694b296b7d4b6e22cc90d32ea66b1"
+    },
+    {
+      "path": "profiles__reverse-clusters-after.stdout.gz",
+      "bytes": 62,
+      "sha256": "72475574ef7037aafed53c4f1569bf6bce3bdf5a23362cadb19646fe0cba6661"
+    },
+    {
+      "path": "profiles__reverse-clusters-after-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "check-embedded.py.gz",
+      "bytes": 1452,
+      "sha256": "db4841a62b5a70e37394592b93e31014716cc4543cd3ef1abded1f60bf63893c"
+    }
+  ]
+}

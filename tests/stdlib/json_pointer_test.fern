@@ -47,7 +47,7 @@ function ptr_str(doc: json.JsonValue, ptr: string): string {
 }
 
 function doc_main(): json.JsonValue {
-  return json.json_parse("{\"user\":{\"id\":42,\"tags\":[\"a\",\"b\",\"c\"]}}").unwrap_or(JNull);
+  return json.parse("{\"user\":{\"id\":42,\"tags\":[\"a\",\"b\",\"c\"]}}").unwrap_or(JNull);
 }
 
 function test_whole_doc(): test.TestOutcome {
@@ -108,7 +108,8 @@ function test_must_start_with_slash(): test.TestOutcome {
 }
 
 function test_escaped_keys(): test.TestOutcome {
-  let d: json.JsonValue = json.json_parse("{\"a/b\":1,\"m~n\":2}").unwrap_or(JNull);
+  // Key "a/b" is written "/a~1b"; key "m~n" is "/m~0n".
+  let d: json.JsonValue = json.parse("{\"a/b\":1,\"m~n\":2}").unwrap_or(JNull);
   if (ptr_num(d, "/a~1b") != "1") {
     return test.fail("~1 (slash) escape");
   }
@@ -116,12 +117,15 @@ function test_escaped_keys(): test.TestOutcome {
 }
 
 function test_empty_key(): test.TestOutcome {
-  let d: json.JsonValue = json.json_parse("{\"\":7}").unwrap_or(JNull);
+  // "/" refers to the value at the empty-string key.
+  let d: json.JsonValue = json.parse("{\"\":7}").unwrap_or(JNull);
   return test.assert_eq(ptr_num(d, "/"), "7");
 }
 
 function test_multibyte_key_with_escape(): test.TestOutcome {
-  let d: json.JsonValue = json.json_parse("{\"é/ü\":3}").unwrap_or(JNull);
+  // Multibyte bytes around a ~1 escape pass through the byte-level
+  // unescape intact: token "é~1ü" decodes to the key "é/ü".
+  let d: json.JsonValue = json.parse("{\"é/ü\":3}").unwrap_or(JNull);
   return test.assert_eq(ptr_num(d, "/é~1ü"), "3");
 }
 

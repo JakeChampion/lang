@@ -1,51 +1,47 @@
-
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
   let r: i32 = 0;
 
-
-  if (require_regex_text(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1")) == "b@a d@c") {
+  // swap two groups in every match
+  if (require_regex_text(match ({ let __checked_regex_8: regex.Regex = match (regex.compile("(\\w+)@(\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_8.replace_all_groups("a@b c@d", "$2@$1") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "b@a d@c") {
     r = r + 1;
   }
 
-
-  if (require_regex_text(regex.regex_replace_all_groups("\\d+", "a1b22", "<$0>")) == "a<1>b<22>") {
+  // $0 is the whole match
+  if (require_regex_text(match ({ let __checked_regex_7: regex.Regex = match (regex.compile("\\d+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_7.replace_all_groups("a1b22", "<$0>") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a<1>b<22>") {
     r = r + 2;
   }
 
-
-  if (require_regex_text(regex.regex_replace_all_groups("(\\d+)", "x5", "$$$1")) == "x$5") {
+  // $$ escapes to a literal dollar
+  if (require_regex_text(match ({ let __checked_regex_6: regex.Regex = match (regex.compile("(\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.replace_all_groups("x5", "$$$1") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "x$5") {
     r = r + 4;
   }
 
-
-  if (require_regex_text(regex.regex_replace_all_groups("a(b)?c", "ac abc", "[$1]")) == "[] [b]") {
+  // an unmatched optional group expands to ""
+  if (require_regex_text(match ({ let __checked_regex_5: regex.Regex = match (regex.compile("a(b)?c")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.replace_all_groups("ac abc", "[$1]") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "[] [b]") {
     r = r + 8;
   }
 
-
-  if (require_regex_text(regex.regex_replace_groups("(\\d)", "1 2 3", "[$1]")) == "[1] 2 3") {
+  // regex_replace_groups replaces only the first match
+  if (require_regex_text(match ({ let __checked_regex_4: regex.Regex = match (regex.compile("(\\d)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.replace_groups("1 2 3", "[$1]") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "[1] 2 3") {
     r = r + 16;
   }
 
-
-  if (require_regex_text(regex.regex_replace_groups("(x)", "abc", "$1")) == "abc") {
+  // no match returns the text unchanged
+  if (require_regex_text(match ({ let __checked_regex_3: regex.Regex = match (regex.compile("(x)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.replace_groups("abc", "$1") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "abc") {
     r = r + 32;
   }
 
-
-  if (require_regex_text(regex.regex_replace_all_groups("b", "abc", "$z$")) == "a$z$c") {
+  // a $ before a non-digit / at the end is a literal $
+  if (require_regex_text(match ({ let __checked_regex_2: regex.Regex = match (regex.compile("b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.replace_all_groups("abc", "$z$") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a$z$c") {
     r = r + 64;
   }
 
-
-  let viaGroups: string = require_regex_text(regex.regex_replace_all_groups("a*", "bc", "<$0>"));
-  let viaLiteral: string = require_regex_text(regex.regex_replace_all("a*", "bc", "<>"));
+  // zero-width matches: same shape regex_replace_all produces
+  let viaGroups: string = require_regex_text(match ({ let __checked_regex_1: regex.Regex = match (regex.compile("a*")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.replace_all_groups("bc", "<$0>") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } });
+  let viaLiteral: string = require_regex_text(match ({ let __checked_regex_0: regex.Regex = match (regex.compile("a*")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.replace_all("bc", "<>") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } });
   if (viaGroups == viaLiteral && viaGroups == "<>b<>c<>") {
     r = r + 128;
   }

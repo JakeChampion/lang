@@ -1,3 +1,21 @@
+// examples/array_pipeline/filter_map_reduce.fern — pipeline 2 of #9728.
+//
+// `xs.filter(p).map(g).reduce(h)` against the hand-written `while` loop. The
+// difference from pipeline 1 is variable cardinality: the first stage's output
+// length is not known before the traversal runs, and there is a branch per
+// element. A fusion scheme that assumes a fixed trip count breaks here, which
+// is why this shape is measured separately rather than assumed to behave like
+// the same-cardinality one.
+//
+// The predicate keeps one element in three, so the `map` stage sees a third of
+// the input and the intermediate that a fusion pass would remove is a third of
+// the size pipeline 1's is. If the pipeline cost tracked the input length
+// rather than the intermediate's, that would show up here as the same slowdown
+// as pipeline 1 instead of a smaller one.
+//
+// Variants and checksum agreement work exactly as in map_map_reduce.fern.
+import "std/i32";
+import "std/result";
 import "core/cmp";
 import "std/bench";
 import "std/string";
@@ -169,11 +187,11 @@ function main(): i32 {
 
   let n: i32 = 4096;
   if (argv.len() > 2) {
-    n = argv[2].parse_int_or(4096);
+    n = i32.parse_i32(argv[2]).unwrap_or(4096);
   }
   let rounds: i32 = 200;
   if (argv.len() > 3) {
-    rounds = argv[3].parse_int_or(200);
+    rounds = i32.parse_i32(argv[3]).unwrap_or(200);
   }
 
   let sel: i32 = 0;

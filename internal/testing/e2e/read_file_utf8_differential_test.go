@@ -27,7 +27,7 @@ function accepted(bytes: u8[]): i32 {
 
 function agree(bytes: u8[]): boolean {
     let want: i32 = 0;
-    if (utf8.is_valid_utf8(string_from_bytes_unchecked(bytes))) { want = 1; }
+    if (utf8.is_valid(string_from_bytes_unchecked(bytes))) { want = 1; }
     return accepted(bytes) == want;
 }
 

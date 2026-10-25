@@ -1,3 +1,6 @@
+// The static server the soak lane holds under load: one five-byte body,
+// so what grows is the loop's own.
+import "std/i32";
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -10,11 +13,11 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function port(): i32 {
   match (env("PORT")) {
     Some(p) => {
-      match (int.parse_int_radix(p, 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(p, 10)) {
+        Ok(n) => {
           return n;
         },
-        None => {
+        Err(_) => {
           return 8080;
         }
       }
