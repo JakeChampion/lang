@@ -101,22 +101,24 @@ func TestSelfHostInnerMulAddGeometry(t *testing.T) {
 
 func TestSelfHostInnerMulAddEmissionAndShadow(t *testing.T) {
 	gcc, runner, driver := buildModloadDriverX86(t)
-	asm, _ := compileSourceModload(t, runner, driver, innerMulAddSource())
-	// The std/array wrapper is inlined, so the kernel lands in its caller.
-	bodies := bodiesContaining(asm, "mulpd")
-	if len(bodies) == 0 {
-		t.Fatalf("no function body carries the inner kernel's mulpd:\n%s", asm)
+	// A @noinline wrapper keeps the kernel in a body of its own: the
+	// std/array wrapper itself is inlined into its caller.
+	const kernelSrc = `import "std/array";
+@noinline function kernel(a: f64[], b: f64[], rows: i32, extent: i32, columns: i32, init: f64): f64[] { return array.inner_mul_add_f64(a, b, rows, extent, columns, init); }
+function main(): i32 { return kernel([1.0, 2.0], [3.0, 4.0], 1, 2, 1, 0.0).len() - 1; }`
+	asm, _ := compileSourceModload(t, runner, driver, kernelSrc)
+	body := emittedBody(t, asm, "__fn_kernel")
+	if strings.Contains(body, "call __fn_array__inner_mul_add_f64") {
+		body = emittedBody(t, asm, "__fn_array__inner_mul_add_f64")
 	}
-	for _, body := range bodies {
-		for _, op := range []string{"addpd", "mulsd", "addsd", "__fern_oob_abort"} {
-			if !strings.Contains(body, op) {
-				t.Fatalf("inner kernel missing %s:\n%s", op, body)
-			}
+	for _, op := range []string{"mulpd", "addpd", "mulsd", "addsd", "__fern_oob_abort"} {
+		if !strings.Contains(body, op) {
+			t.Fatalf("inner kernel missing %s:\n%s", op, body)
 		}
-		for _, op := range []string{"fmadd", "hadd", "dppd"} {
-			if strings.Contains(body, op) {
-				t.Fatalf("inner kernel changes reduction order with %s:\n%s", op, body)
-			}
+	}
+	for _, op := range []string{"fmadd", "hadd", "dppd"} {
+		if strings.Contains(body, op) {
+			t.Fatalf("inner kernel changes reduction order with %s:\n%s", op, body)
 		}
 	}
 	const shadow = `function __inner_mul_add_f64(a: f64[], b: f64[], rows: i32, extent: i32, columns: i32, init: f64): f64[] { return [99.0]; }
@@ -130,27 +132,4 @@ function main(): i32 {
 	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
 		t.Fatalf("inner builtin shadow: %v\n%s", err, out)
 	}
-}
-
-// bodiesContaining returns every function body of asm, label to .cfi_endproc,
-// that contains needle.
-func bodiesContaining(asm, needle string) []string {
-	var out []string
-	lines := strings.Split(asm, "\n")
-	start := -1
-	for i, ln := range lines {
-		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "__fn_") && strings.HasSuffix(t, ":") {
-			start = i
-			continue
-		}
-		if start >= 0 && strings.HasSuffix(t, ".cfi_endproc") {
-			body := strings.Join(lines[start:i+1], "\n")
-			if strings.Contains(body, needle) {
-				out = append(out, body)
-			}
-			start = -1
-		}
-	}
-	return out
 }
