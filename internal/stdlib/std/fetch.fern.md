@@ -162,6 +162,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides an HTTP client.
+
+import "std/i32";
+import "std/unicode";
+// This module provides an HTTP client.
 ```
 
 ### `dependencies 2`
@@ -1653,13 +1657,13 @@ function __allow_port(s: string): i32 {
   if (s.len() == 0 || s.len() > 5 || s.starts_with("0") || !s.contains_only("0123456789")) {
     return 0 - 1;
   }
-  match (s.parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(s)) {
+    Ok(n) => {
       if (n <= 65535) {
         return n;
       }
     },
-    None => {}
+    Err(_) => {}
   }
   return 0 - 1;
 }
@@ -3241,11 +3245,11 @@ function __block_of(block: string): __Match {
     return Nothing;
   };
   let bits: i32 = -1;
-  match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
-    Some(n) => {
+  match (i32.parse_i32_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
+    Ok(n) => {
       bits = n;
     },
-    None => {}
+    Err(_) => {}
   }
   match (__canonical_ip(slice_unchecked(block, 0, slash).to_owned())) {
     Some(p) => {
@@ -3339,14 +3343,14 @@ function __rule_port(rest: string): i32 {
   if (!rest.starts_with(":")) {
     return -1;
   }
-  match (int.parse_int_radix(slice_unchecked(rest, 1, rest.len()).to_owned(), 10)) {
-    Some(n) => {
+  match (i32.parse_i32_radix(slice_unchecked(rest, 1, rest.len()).to_owned(), 10)) {
+    Ok(n) => {
       if (n > 0 && n < 65536) {
         return n;
       }
       return -1;
     },
-    None => {
+    Err(_) => {
       return -1;
     }
   }

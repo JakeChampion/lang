@@ -153,7 +153,7 @@ parity) any implementation must clear.
 Shipped as designed with one API adjustment: the `Pattern` enum
 variants ARE the construction API (no wrapper functions needed —
 `PSeq([PLit("("), PRef("b"), …])`), plus class helpers
-(`peg_digit()` etc.). The matcher threads its state functionally
+(`digit()` etc.). The matcher threads its state functionally
 (struct fields are immutable — E048), which makes PEG
 backtracking undo-free: a failed alternative resumes from the
 pre-attempt state binding, and only the furthest-failure
@@ -170,7 +170,7 @@ slice 1: pattern constructors as an enum tree (`Lit`, `CharSet`,
 grammar `Map[string, Pattern]`, position + named **captures**
 (the thing regex.fern lacks), and error position reporting.
 API sketch: `peg.compile(rules) -> Grammar`,
-`g.parse(input) -> Result[Match, PegError]`,
+`g.parse(input) -> Result[Match, ParseError]`,
 `match.capture("name") -> Option[string]`. Bounded: no
 left-recursion support (documented), packrat memoisation deferred
 until a real workload needs it. Tests: std-test-runner suite

@@ -7,6 +7,7 @@ import "./typeinfo";
 import "./decltypes";
 import "./semtypes";
 import "./stdlib_methods";
+import "./consteval";
 
 function t_i32(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
@@ -3535,6 +3536,73 @@ function retired_collection_spelling(ns: string, method: string): string {
   return "";
 }
 
+function scalar_integer_module(lb: string): string {
+  if (lb == "u64" || lb == "usize") {
+    return "std/u64";
+  }
+  if (lb == "u8") {
+    return "std/i32";
+  }
+  if (lb == "u32" || lb == "u16") {
+    return "std/u32";
+  }
+  if (lb == "i64") {
+    return "std/i64";
+  }
+  if (lb == "char") {
+    return "";
+  }
+  return "std/i32";
+}
+
+// scalar_module_for: the stdlib module carrying a scalar type's method surface,
+// "" for a type whose methods are not in one. u8 uses std/i32, not std/u32 —
+// every `pub function (b: u8) …` in the stdlib is declared there, so naming
+// std/u32 made the hint unfollowable.
+function scalar_module_for(t: typeinfo.Type): string {
+  match (t) {
+    typeinfo.TypeI32(it) => {
+      return scalar_integer_module(int_label(it));
+    },
+    typeinfo.TypeFloat(_) => {
+      return "std/f64";
+    },
+    typeinfo.TypeString(_) => {
+      return "std/string";
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function scalar_method_available(recv: string, method: string): boolean {
+  if (recv == "i32" && (method == "to_string_radix" || method == "to_string_padded" || method == "to_string_with_sep")
+    || recv == "i64" && method == "to_string_radix"
+    || (recv == "f32" || recv == "f64") && method == "to_string_prec") {
+    return true;
+  }
+  return false;
+}
+
+// scalar_method_module: scalar_module_for narrowed to the names that module
+// actually defines for every scalar. to_string is the f-string desugar target
+// and the case that motivates this; keeping the set tight is what stops the
+// hint naming a module that would not help.
+function scalar_method_module(t: typeinfo.Type, method: string): string {
+  let mod: string = scalar_module_for(t);
+  if (mod.len() == 0) {
+    return "";
+  }
+  if (scalar_method_available(display_dispatch_name(t), method)) {
+    return mod;
+  }
+  return "";
+}
+
+// module_imported: `path` is in the program's import list. For a single module
+// that is its own imports; for a bundle it is the closure flatten.bundle keeps.
 function (s: Scope) module_imported(path: string): boolean {
   return util.index_of_str(s.imports.paths, path) >= 0;
 }
@@ -4362,6 +4430,16 @@ function builtin_sigs(): string[] {
     "__method_boolean_to_string(boolean): string",
     "__method_string_as_bytes(string): [u8]",
     "__method_string_len(string): i32",
+    "__primitive_char_to_string(char): string",
+    "__primitive_f32_to_string(f32): string",
+    "__primitive_f64_to_string(f64): string",
+    "__primitive_i32_to_string(i32): string",
+    "__primitive_i64_to_string(i64): string",
+    "__primitive_string_to_string(string): string",
+    "__primitive_u32_to_string(u32): string",
+    "__primitive_u64_to_string(u64): string",
+    "__primitive_u8_to_string(u8): string",
+    "__primitive_usize_to_string(usize): string",
     "access(string, i32): Result[void, IoError]",
     "args(): string[]",
     "buf_clear(usize): void",
@@ -4581,8 +4659,19 @@ pub function builtin_sig(name: string): typeinfo.Type {
   return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()) + ""));
 }
 
+// Primitive display signatures are completed by private runtime source bodies.
+function is_primitive_display_builtin(name: string): boolean {
+  return util.str_has_prefix(name, "__primitive_") && builtin_row(name).len() > 0;
+}
+
+// builtin_method_sig is a builtin method's callable without its receiver, or
+// unknown when `recv_name` has no builtin method `name`.
 pub function builtin_method_sig(recv_name: string, name: string): typeinfo.Type {
-  if let typeinfo.TypeFunc(bm) = builtin_sig("__method_" + recv_name + "_" + name) {
+  let builtin_name: string = "__method_" + recv_name + "_" + name;
+  if (name == "to_string" && recv_name != "boolean") {
+    builtin_name = "__primitive_" + recv_name + "_to_string";
+  }
+  if let typeinfo.TypeFunc(bm) = builtin_sig(builtin_name) {
     let params: typeinfo.Type[] = [];
     let i: i32 = 1;
     while (i < bm.param_types.len()) {
@@ -5223,6 +5312,13 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
 function declared_method_diags(c: ast.ExprCall, recv_ty: typeinfo.Type, recv: string, method: string, s: Scope): util.Diag[] {
   let msig: MethodSig = s.lookup_method(method, recv);
   if (msig.name.len() == 0) {
+    let builtin: typeinfo.Type = builtin_method_sig(recv, method);
+    if let typeinfo.TypeFunc(f) = builtin {
+      if (c.args.len() != f.param_types.len()) {
+        return [dg_at("E004", util.arity_message("method \"" + method + "\"", f.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
+      }
+      return callable_arg_diags(c, builtin, s);
+    }
     return uninferred_method_diags(c, recv, method, msig, s);
   }
   if (c.args.len() != msig.param_types.len()) {
@@ -10666,11 +10762,54 @@ function match_stmt_own_lambdas(st: ast.Stmt, structs: StructTable, unions: Unio
   return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_into_lambda);
 }
 
-function sugar_unreachable_diags(sg: ast.MatchSugar): util.Diag[] {
+function sugar_unreachable_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): util.Diag[] {
   if (sg.origin != "") {
     return [];
   }
-  return util.append_diags(tuple_unreachable_diags(sg.tup), struct_unreachable_diags(sg.strct));
+  let out: util.Diag[] = util.append_diags(tuple_unreachable_diags(sg.tup), struct_unreachable_diags(sg.strct));
+  return util.append_diags(out, variant_unreachable_diags(sg.arms, t, s));
+}
+
+function variant_unreachable_diags(arms: ast.MatchArm[], t: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if let typeinfo.TypeUnion(_) = t {
+    let covered: string[] = [];
+    let all: boolean = false;
+    for arm in arms {
+      if (all) {
+        out = out.append(dg_at("E026", "arm is unreachable — a preceding arm matches every value", arm.line, arm.col));
+        continue;
+      }
+      match (arm.pattern) {
+        ast.PatWildcard(_) => {
+          if (!arm.has_guard) {
+            all = true;
+          }
+        },
+        ast.PatVariant(pv) => {
+          let p: CoverPat = typed_pattern_cover(arm.pattern, t, s);
+          if (util.has_str(covered, p.ctor)) {
+            out = out.append(dg_at("E028", "variant \"" + shown_variant_in(s.structs, pv.type_name) + "\" already covered earlier in this match", arm.line, arm.col));
+          } else if (!arm.has_guard && cover_binders_only(p.args)) {
+            covered = covered.append(p.ctor);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function cover_binders_only(args: CoverPat[]): boolean {
+  for p in args {
+    if (p.opaque || p.ctor.len() > 0 && p.ctor != "()" && p.ctor != "{}") {
+      return false;
+    }
+    if (!cover_binders_only(p.args)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function tuple_unreachable_diags(arms: ast.TupArm[]): util.Diag[] {
@@ -12300,7 +12439,7 @@ function callable_arg_diags(c: ast.ExprCall, ft: typeinfo.Type, s: Scope): util.
   return out;
 }
 
-function display_dispatch_name(t: typeinfo.Type): string {
+function scalar_receiver_name(t: typeinfo.Type): string {
   match (t) {
     typeinfo.TypeI32(it) => {
       return int_label(it);
@@ -12314,6 +12453,19 @@ function display_dispatch_name(t: typeinfo.Type): string {
     typeinfo.TypeFloat(f) => {
       return float_label(f);
     },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function display_dispatch_name(t: typeinfo.Type): string {
+  let scalar: string = scalar_receiver_name(t);
+  if (scalar.len() > 0) {
+    return scalar;
+  }
+  match (t) {
     typeinfo.TypeStruct(sd) => {
       return sd.name;
     },
@@ -12744,9 +12896,6 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
         typeinfo.TypeString(_) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
-            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", 0, c.args.len(), "argument"), c.line, c.col));
           }
           out = util.append_diags(out, declared_method_diags(c, recv, "string", mfa.field, s));
         },
@@ -13999,19 +14148,11 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
 }
 
 function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean {
+  let scalar: string = scalar_receiver_name(recv);
+  if (scalar.len() > 0) {
+    return s.visible_method(field, scalar).name.len() == 0 && is_unknown(builtin_method_sig(scalar, field));
+  }
   match (recv) {
-    typeinfo.TypeI32(it) => {
-      return s.visible_method(field, int_label(it)).name.len() == 0;
-    },
-    typeinfo.TypeFloat(f) => {
-      return s.visible_method(field, float_label(f)).name.len() == 0;
-    },
-    typeinfo.TypeBool(_) => {
-      return s.visible_method(field, "boolean").name.len() == 0 && is_unknown(builtin_method_sig("boolean", field));
-    },
-    typeinfo.TypeString(_) => {
-      return field != "len" && field != "as_bytes" && s.visible_method(field, "string").name.len() == 0;
-    },
     typeinfo.TypeArray(array) => {
       let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with");
       return !builtin && !s.has_array_recv_method(field, array.view);
@@ -14307,6 +14448,52 @@ function cover_opaque(): CoverPat {
   return CoverPat { ctor: "", opaque: true, args: [] };
 }
 
+function cover_shape_diags(p: CoverPat, t: typeinfo.Type, s: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (p.ctor == "()") {
+    match (t) {
+      typeinfo.TypeTuple(tuple) => {
+        if (p.args.len() != tuple.elements.len()) {
+          return [dg_at("E035", "tuple pattern has " + util.i32_to_string(p.args.len()) + " elements, but scrutinee tuple has " + util.i32_to_string(tuple.elements.len()), line, col)];
+        }
+      },
+      typeinfo.TypeUnknown(_) => {},
+      _ => {
+        return [dg_at("E035", "tuple pattern needs a tuple value, got " + type_label(t), line, col)];
+      }
+    }
+  }
+  if (p.args.len() == 0) {
+    return out;
+  }
+  let types: typeinfo.Type[] = cover_arg_types(t, p.ctor, p.args.len(), s);
+  for i in 0..p.args.len() {
+    if (i >= types.len()) {
+      break;
+    }
+    out = util.append_diags(out, cover_shape_diags(p.args[i], types[i], s, line, col));
+  }
+  return out;
+}
+
+function sugar_shape_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  for arm in sg.arms {
+    out = util.append_diags(out, cover_shape_diags(typed_pattern_cover(arm.pattern, t, s), t, s, arm.line, arm.col));
+  }
+  for arm in sg.tup {
+    if (!arm.is_wild) {
+      out = util.append_diags(out, cover_shape_diags(tuple_cover(arm.elem_kinds, arm.lits, arm.elem_pats), t, s, arm.line, arm.col));
+    }
+  }
+  for arm in sg.strct {
+    if (!arm.is_wild) {
+      out = util.append_diags(out, cover_shape_diags(struct_cover(arm, t, s), t, s, arm.line, arm.col));
+    }
+  }
+  return out;
+}
+
 function sugar_exhaustive_diags(sg: ast.MatchSugar, s: Scope): util.Diag[] {
   if (sg.origin != "" || sg.tup.len() + sg.strct.len() + sg.arms.len() == 0) {
     return [];
@@ -14325,7 +14512,11 @@ function sugar_exhaustive_diags(sg: ast.MatchSugar, s: Scope): util.Diag[] {
     }
     valid = ast.MatchSugar { ...sg, tup: arms };
   }
-  out = util.append_diags(out, sugar_unreachable_diags(valid));
+  out = util.append_diags(out, sugar_shape_diags(valid, t, s));
+  if (out.len() > 0) {
+    return out;
+  }
+  out = util.append_diags(out, sugar_unreachable_diags(valid, t, s));
   if (is_unknown(t)) {
     return out;
   }
@@ -14910,6 +15101,10 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       ast.StmtMatch(m) => {
         out = util.append_diags(out, call_diags(m.scrutinee, cur));
         let mst: typeinfo.Type = check_expr(m.scrutinee, cur);
+        if (m.sugar.len() > 0) {
+          let written: ast.MatchSugar = ast.MatchSugar { ...parser.no_match_sugar(), scrut: m.scrutinee, arms: m.sugar, line: m.line, col: m.col, origin: m.origin };
+          out = util.append_diags(out, sugar_exhaustive_diags(written, cur));
+        }
         if (m.origin == "if_let" || m.origin == "let_else") {
           let src_is_enum: boolean = false;
           let src_unknown_enum: boolean = false;
@@ -15008,7 +15203,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                   }
                 }
               }
-              if (!saw_wild) {
+              if (!saw_wild && m.sugar.len() == 0) {
                 let lit_rows: CoverPat[][] = literal_payload_rows(m.arms);
                 for variant in usig.variants {
                   if (!util.has_str(covered, variant) && !rows_cover(lit_rows, mst, variant, cur)) {
@@ -15228,6 +15423,19 @@ function init_fits(init: ast.Expr, t: typeinfo.Type, declared: typeinfo.Type, s:
 }
 
 function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
+  return stmts_assign_diags_mode(stmts, s, unions, false);
+}
+
+function var_pattern_diags(v: ast.StmtVar, s: Scope, tuple_pattern: boolean): util.Diag[] {
+  let out: util.Diag[] = struct_destr_diags(v, s);
+  let positions: string[] = split_pattern_names(v.name);
+  if (!tuple_pattern && positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
+    out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, s), positions.len(), v.line, v.col));
+  }
+  return out;
+}
+
+function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], tuple_pattern: boolean): util.Diag[] {
   let out: util.Diag[] = [];
   let cur: Scope = s;
   for st in stmts {
@@ -15253,11 +15461,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         if (v.type_name.len() == 0 && int_literal_tree(v.init)) {
           out = util.append_diags(out, int_range_diags(v.init, "i64", false));
         }
-        out = util.append_diags(out, struct_destr_diags(v, cur));
-        let positions: string[] = split_pattern_names(v.name);
-        if (positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
-          out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, cur), positions.len(), v.line, v.col));
-        }
+        out = util.append_diags(out, var_pattern_diags(v, cur, tuple_pattern));
       },
       ast.StmtAssign(a) => {
         out = util.append_diags(out, assign_diags(a, cur, unions));
@@ -15267,7 +15471,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         if (!is_unknown(ic) && !type_eq(ic, t_bool())) {
           out = out.append(dg_at("E008", "if condition must be boolean, got " + type_label(ic), expr_line(f.cond), expr_col(f.cond)));
         }
-        out = util.append_diags(out, stmts_assign_diags(f.then_body, cur, unions));
+        out = util.append_diags(out, stmts_assign_diags_mode(f.then_body, cur, unions, f.sugar.tup.len() > 0));
         out = util.append_diags(out, stmts_assign_diags(f.else_body, cur, unions));
       },
       ast.StmtWhile(w) => {
@@ -15587,6 +15791,8 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
 function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
+  let evaluated_names: string[] = [];
+  let values: consteval.Value[] = [];
   for fd in mod.funcs {
     if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
@@ -15595,6 +15801,19 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
             let msg: string = const_expr_err(r.value, earlier);
             if (msg.len() > 0) {
               out = out.append(dg_at("E093", "const " + fd.name + ": " + msg, fd.line, fd.col));
+              continue;
+            }
+            let ranges: util.Diag[] = util.append_diags(suffix_range_stmts(fd.body), int_range_diags(r.value, fd.ret_type, false));
+            if (ranges.len() > 0) {
+              out = util.append_diags(out, ranges);
+              continue;
+            }
+            let value: consteval.Value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
+            if (value.error.len() > 0) {
+              out = out.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col));
+            } else {
+              evaluated_names = evaluated_names.append(fd.name);
+              values = values.append(value);
             }
           },
           _ => {}
@@ -15755,6 +15974,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 
 function registered_intrinsics(): string[] {
   return [
+    "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open", "__aes_gcm_seal", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
@@ -15786,7 +16006,9 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  if (f2.receiver_type.len() == 0 && (builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
+  // A free function named like a builtin or an intrinsic redeclares it, as
+  // native's pre-registered signature makes it there.
+  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
     earlier = true;
   }
   return earlier;
@@ -18126,6 +18348,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
+    "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority",
     "setgid", "setuid",
@@ -18804,7 +19027,7 @@ function e049_type_reaches_fn(ty: string, tparams: string[], mod: parser.Module,
   let start: i32 = 0 - 1;
   let i: i32 = 0;
   while (i <= ty.len()) {
-    let word: boolean = i < ty.len() && lexer.is_alnum(ty[i] as i32);
+    let word: boolean = i < ty.len() && lexer.is_alphanumeric(ty[i] as i32);
     if (word && start < 0) {
       start = i;
     }
@@ -20416,6 +20639,16 @@ function derive_import_unloaded(mod: parser.Module, tr: string): boolean {
   return false;
 }
 
+function fromjson_field_shape(elem: string): boolean {
+  if (elem.len() == 0 || parser.fromjson_container(elem) == "array") {
+    return false;
+  }
+  if (elem[0] == b'(') {
+    return false;
+  }
+  return !(elem.len() > 3 && slice_unchecked(elem, 0, 3) == "fn(");
+}
+
 function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): util.Diag[] {
   let kind: string = parser.derive_simple_name(tr);
   let tidx: i32 = derive_trait_idx(tr, mod.trait_reqs);
@@ -20437,7 +20670,7 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     let ei: i32 = 0;
     while (ei < ftys.len()) {
       let elem: string = parser.fromjson_elem(ftys[ei]);
-      if (parser.fromjson_container(elem).len() > 0 || elem.len() == 0 || elem[0] == b'(' || elem.len() > 3 && slice_unchecked(elem, 0, 3) == "fn(") {
+      if (!fromjson_field_shape(elem)) {
         return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[ei] + " has type " + ftys[ei] + "; FromJson decodes a field of a FromJson type, an array of one or an Option of one", ln, cl)];
       }
       ctys = ctys.append(elem);

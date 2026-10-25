@@ -1,3 +1,8 @@
+// An HTTP/3 client over UDP: a GET of /hello and a POST of SIZE bytes to
+// /upload on one connection, each response printed with its trailers,
+// then a close; exits 0 when both were answered.
+//   h3_client PORT NAME CA.pem SIZE
+import "std/i32";
 import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
@@ -133,7 +138,7 @@ function main(): i32 {
   let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
-  let Some(size) = argv[4].parse_int() else {
+  let Ok(size) = i32.parse_i32(argv[4]) else {
     return 2;
   };
   let Some(o) = opened(argv) else {

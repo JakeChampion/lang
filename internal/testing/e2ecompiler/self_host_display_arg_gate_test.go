@@ -40,16 +40,8 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 			"function main(): i32 {\n    let b: u8[] = [72 as u8, 105 as u8];\n    eprint(b);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("eprint", "u8[]")},
 		},
-		{
-			"write-i32",
-			"function main(): i32 {\n    let n: i32 = 5;\n    write(n);\n    return 0;\n}\n",
-			[]string{"E038", noDisplay("write", "i32"), "`import \"core/cmp\";`"},
-		},
-		{
-			"print-f64",
-			"function main(): i32 {\n    let v: f64 = 1.5;\n    print(v);\n    return 0;\n}\n",
-			[]string{"E038", noDisplay("print", "f64")},
-		},
+		// An array stays refused with the import: nothing gives `i32[]` a
+		// to_string.
 		{
 			"print-i32-array-with-cmp-imported",
 			"import \"core/cmp\";\nfunction main(): i32 {\n    let xs: i32[] = [1, 2];\n    print(xs);\n    return 0;\n}\n",
@@ -96,8 +88,9 @@ function main(): i32 {
     return 0;
 }
 `
-	const primitivesSrc = `import "core/cmp";
-function main(): i32 {
+	// All numeric and boolean arguments use the default display floor without
+	// source imports, including local values and arithmetic results.
+	const primitivesSrc = `function main(): i32 {
     let a: i32 = 7; let b: i64 = 7i64; let c: u32 = 7 as u32; let d: u64 = 7 as u64;
     let e: f64 = 1.5; let f: boolean = true; let g: u8 = 65 as u8;
     print(a); print(b); print(c); print(d); print(e); print(f); print(g);

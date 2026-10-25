@@ -237,7 +237,7 @@ function test_good_documents_agree(): test.TestOutcome {
       return test.fail("scanner rejected good doc " + i.to_string()
         + " at offset " + loc.offset.to_string());
     }
-    match (json.json_parse_result(xs[i])) {
+    match (json.parse(xs[i])) {
       Ok(_) => {},
       Err(e) => {
         return test.fail("std/json rejected good doc " + i.to_string()
@@ -255,7 +255,7 @@ function test_bad_documents_agree_on_the_offset(): test.TestOutcome {
     if (loc.offset < 0) {
       return test.fail("scanner accepted bad doc " + i.to_string());
     }
-    match (json.json_parse_result(xs[i])) {
+    match (json.parse(xs[i])) {
       Ok(_) => {
         return test.fail("std/json accepted bad doc " + i.to_string());
       },
@@ -274,7 +274,7 @@ function test_bad_documents_agree_on_the_offset(): test.TestOutcome {
 function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
   let xs: string[] = bad_docs();
   for i in 0..xs.len() {
-    match (json.json_parse_result(xs[i])) {
+    match (json.parse(xs[i])) {
       Ok(_) => {
         return test.fail("bad doc " + i.to_string() + " parsed");
       },
@@ -299,7 +299,7 @@ function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
 
 function test_the_reported_line_is_the_offending_one(): test.TestOutcome {
   let doc: string = "{\n  \"a\": 1,\n  \"b\": ,\n}";
-  match (json.json_parse_result(doc)) {
+  match (json.parse(doc)) {
     Ok(_) => {
       return test.fail("malformed document parsed");
     },
@@ -315,23 +315,24 @@ function test_the_reported_line_is_the_offending_one(): test.TestOutcome {
   return test.pass();
 }
 
-function test_json_parse_still_agrees(): test.TestOutcome {
+// The independent scanner and the library parser agree on acceptance.
+function test_parse_still_agrees(): test.TestOutcome {
   let good: string[] = good_docs();
   for i in 0..good.len() {
-    match (json.json_parse(good[i])) {
-      Some(_) => {},
-      None => {
-        return test.fail("json_parse rejected good doc " + i.to_string());
+    match (json.parse(good[i])) {
+      Ok(_) => {},
+      Err(_) => {
+        return test.fail("parse rejected good doc " + i.to_string());
       }
     }
   }
   let bad: string[] = bad_docs();
   for j in 0..bad.len() {
-    match (json.json_parse(bad[j])) {
-      Some(_) => {
-        return test.fail("json_parse accepted bad doc " + j.to_string());
+    match (json.parse(bad[j])) {
+      Ok(_) => {
+        return test.fail("parse accepted bad doc " + j.to_string());
       },
-      None => {}
+      Err(_) => {}
     }
   }
   return test.pass();
@@ -341,7 +342,7 @@ function main(): i32 {
   eprint("json_locate — locating the first syntax error in a document");
   let xs: string[] = bad_docs();
   for i in 0..xs.len() {
-    match (json.json_parse_result(xs[i])) {
+    match (json.parse(xs[i])) {
       Ok(_) => {
         eprint("  doc " + i.to_string() + ": parsed");
       },
@@ -357,6 +358,6 @@ function main(): i32 {
   r = r.it("bad documents agree on the offset", test_bad_documents_agree_on_the_offset);
   r = r.it("line and column are derived from the offset", test_line_and_column_are_derived_from_the_offset);
   r = r.it("the reported line is the offending one", test_the_reported_line_is_the_offending_one);
-  r = r.it("json_parse still agrees", test_json_parse_still_agrees);
+  r = r.it("parse still agrees", test_parse_still_agrees);
   return r.finish();
 }

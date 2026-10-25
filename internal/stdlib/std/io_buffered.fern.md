@@ -76,7 +76,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/mem";
-import "std/io_outcome";
 import "std/string";
 import "std/utf8" as utf8;
 ```
@@ -314,7 +313,7 @@ pub function (b: BufWriter) flush(): BufWriter {
 pub function (b: BufWriter) close(): Result[void, IoError] {
   let pending: i32 = buf_len(b.buf.h);
   let flushed: BufWriter = b.flush();
-  if let Some(e) = b.w.close().failure() {
+  if let Err(e) = b.w.close() {
     return Err(e);
   }
   if (pending > 0) {
@@ -356,7 +355,7 @@ function __buf_writer_put(b: BufWriter, s: string): BufWriter {
     },
     None => {}
   }
-  if let Some(e) = b.w.write(s).failure() {
+  if let Err(e) = b.w.write(s) {
     return BufWriter { ...b, err: Some(e) };
   }
   return b;
@@ -369,7 +368,7 @@ function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
     },
     None => {}
   }
-  if let Some(e) = b.w.write_bytes(bytes).failure() {
+  if let Err(e) = b.w.write_bytes(bytes) {
     return BufWriter { ...b, err: Some(e) };
   }
   return b;

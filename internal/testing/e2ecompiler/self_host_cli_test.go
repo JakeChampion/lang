@@ -654,7 +654,7 @@ function main(): i32 {
 			t.Fatalf("abs stdlib root: %v", err)
 		}
 		srcPath := filepath.Join(dir, "derived_assoc.fern")
-		src := "import \"std/json\";\n@derive(json.FromJson) struct User { id: i32 }\nfunction main(): i32 { let r: Result[User, string] = User.from_json(\"{\\\"id\\\":7}\"); match (r) { Ok(u) => { return u.id; }, Err(e) => { return 1; } } }\n"
+		src := "import \"std/json\";\n@derive(json.FromJson) struct User { id: i32 }\nfunction main(): i32 { let r: Result[User, json.JsonError] = User.from_json(\"{\\\"id\\\":7}\"); match (r) { Ok(u) => { return u.id; }, Err(e) => { return 1; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}

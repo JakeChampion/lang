@@ -125,7 +125,7 @@ func TestStdlibPackageHelpersArePrivate(t *testing.T) {
 		`import "std/io_buffered"; function inspect(b: io_buffered.BufBlock): void {} function main(): i32 { return 0; }`,
 
 		`import "std/string"; function main(): i32 { let b = string.__is_ascii_ws(32); return 0; }`,
-		`import "std/string"; function main(): i32 { return string.__utf8_step("a", 0, 1); }`,
+		`import "core/utf8_scalar"; function main(): i32 { return utf8_scalar.step("a", 0, 1); }`,
 		`import "core/int"; function main(): i32 { return int.__radix_digit(48); }`,
 		`import "core/map"; function main(): i32 { return map.__map_pow2_ceil(3); }`,
 		`import "std/json"; function main(): i32 { let x = json.from_json_field(json.JNull, "x"); return 0; }`,

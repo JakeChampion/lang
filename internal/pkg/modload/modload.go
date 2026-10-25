@@ -62,6 +62,16 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit, mans); err != nil {
 		return nil, srcs, lit, err
 	}
+	if _, present := loaded[stdlibPrefix+"core/primitive_text.fern"]; !present {
+		for _, mod := range loaded {
+			if needsPrimitiveDisplay(mod.prog) {
+				if err := loadRecursive(stdlibPrefix+"core/primitive_text.fern", loaded, stack, srcs, overrides, lit, mans); err != nil {
+					return nil, srcs, lit, err
+				}
+				break
+			}
+		}
+	}
 	resolveCyclicImports(loaded)
 	prog, err := combine(loaded, entryAbs)
 	if err != nil {
@@ -1046,6 +1056,9 @@ func resolveReexports(loaded map[string]*module) error {
 }
 
 func isRuntimeHelperName(name string) bool {
+	if strings.HasPrefix(name, "__primitive_") {
+		return true
+	}
 	if strings.HasPrefix(name, "__method_") {
 		return true
 	}
@@ -1580,6 +1593,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 					}
 					r.checkPublicFunc(mod, fa.Field, fa.P)
 					mangled := prefix + fa.Field
+					if strings.HasPrefix(fa.Field, "__primitive_") {
+						mangled = fa.Field
+					}
+					// A `pub use`-re-exported name resolves to its original
+					// module's mangled name, not this module's prefix.
 					if rx, ok := mod.reexports[fa.Field]; ok {
 						mangled = rx
 					}
@@ -1632,6 +1650,9 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				}
 				r.checkPublicValue(mod, x.Field, x.P)
 				target := prefix + x.Field
+				if strings.HasPrefix(x.Field, "__primitive_") {
+					target = x.Field
+				}
 				if rx, ok := mod.reexports[x.Field]; ok {
 					target = rx
 				}

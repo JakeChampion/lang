@@ -269,11 +269,11 @@ function answer(c: server.Connection, line: string): Result[server.Connection, s
   let conn: server.Connection = c;
   if (line.starts_with("big ")) {
     let n: i32 = 0;
-    match (line.drop(4).parse_int()) {
-      Some(v) => {
+    match (i32.parse_i32(line.drop(4))) {
+      Ok(v) => {
         n = v;
       },
-      None => {}
+      Err(_) => {}
     }
     let body: u8[] = pattern(n);
     reply = body.append(10 as u8);
@@ -523,22 +523,22 @@ function dial(port: i32): i32 {
 function main(): i32 {
   let argv: string[] = args();
   if (argv.len() >= 2 && argv[argv.len() - 2] == "client") {
-    match (argv[argv.len() - 1].parse_int()) {
-      Some(port) => {
+    match (i32.parse_i32(argv[argv.len() - 1])) {
+      Ok(port) => {
         return dial(port);
       },
-      None => {
+      Err(_) => {
         return 6;
       }
     }
   }
   let count: i32 = 1;
   if (argv.len() >= 1) {
-    match (argv[argv.len() - 1].parse_int()) {
-      Some(n) => {
+    match (i32.parse_i32(argv[argv.len() - 1])) {
+      Ok(n) => {
         count = n;
       },
-      None => {}
+      Err(_) => {}
     }
   }
   return serve(count);

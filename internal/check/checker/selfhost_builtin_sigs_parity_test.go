@@ -51,7 +51,7 @@ func nativeBuiltinSigRows(t *testing.T) map[string]string {
 	}
 	names := nativeBuiltinNames(t)
 	for name, sig := range info.FuncSigs {
-		if strings.HasPrefix(name, "__method_") && !sigNamesTypeParam(sig) || strings.HasPrefix(name, "__c_call") {
+		if strings.HasPrefix(name, "__method_") && !sigNamesTypeParam(sig) || strings.HasPrefix(name, "__c_call") || isScalarBuiltinMethod(name) {
 			names = append(names, name)
 		}
 	}

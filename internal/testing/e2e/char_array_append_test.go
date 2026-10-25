@@ -2,7 +2,8 @@ package e2e
 
 import "testing"
 
-const charArrayAppendSrc = `import "std/string";
+const charArrayAppendSrc = `import "std/utf8";
+import "std/string";
 function mk(n: i32): char[] {
     let out: char[] = [];
     let i: i32 = 0;

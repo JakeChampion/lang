@@ -86,7 +86,7 @@ function main(): i32 {
   }
   match (Message.from_json("{\"Pair\":[42,3]}")) {
     Err(why) => {
-      if (why != "variant \"Pair\": [1]: expected a string, got a number") {
+      if (why.to_string() != "variant \"Pair\": [1]: expected a string, got a number") {
         return 12;
       }
     },

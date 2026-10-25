@@ -95,10 +95,10 @@ function valid(own data: u8[], name: string, rule: string): boolean {
   match (parsed) {
     Some(zone) => {
       if (zone.first_abbr != name || zone.abbrs.len() != 2 || zone.rule.std_name != rule) { return false; }
-      if (!utf8.is_valid_utf8(zone.first_abbr) || !utf8.is_valid_utf8(zone.rule.std_name) || !utf8.is_valid_utf8(zone.rule.dst_name)) { return false; }
+      if (!utf8.is_valid(zone.first_abbr) || !utf8.is_valid(zone.rule.std_name) || !utf8.is_valid(zone.rule.dst_name)) { return false; }
       let i: i32 = 0;
       while (i < zone.abbrs.len()) {
-        if (zone.abbrs[i] != name || !utf8.is_valid_utf8(zone.abbrs[i])) { return false; }
+        if (zone.abbrs[i] != name || !utf8.is_valid(zone.abbrs[i])) { return false; }
         i = i + 1;
       }
       return true;

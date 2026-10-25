@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	floatFern      = "../../internal/stdlib/std/f64.fern.md"
-	stringFern     = "../../internal/stdlib/std/string.fern.md"
+	floatFern      = "../../internal/stdlib/core/f64_text.fern.md"
+	parseFern      = "../../internal/stdlib/std/number_parse.fern.md"
 	longDoubleFern = "../../coreutils/lib/cached_powers.fern"
 )
 
@@ -58,7 +58,7 @@ func abs(x int) int {
 }
 
 func TestCommittedFileIsUpToDate(t *testing.T) {
-	for _, path := range []string{floatFern, stringFern, longDoubleFern} {
+	for _, path := range []string{floatFern, parseFern, longDoubleFern} {
 		src, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -69,7 +69,7 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 		}
 		if out != string(src) {
 			t.Errorf("%s is out of date; regenerate with:\n\tgo run ./cmd/floattablegen %s %s %s",
-				path, floatFern, stringFern, longDoubleFern)
+				path, floatFern, parseFern, longDoubleFern)
 		}
 	}
 }
@@ -84,7 +84,7 @@ func committedTable(t *testing.T, path, name string) []uint64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`(?s)const ` + name + `: u64\[\] = \[(.*?)\];`)
+	re := regexp.MustCompile(`(?ms)^const ` + name + `: u64\[\] = \[(.*?)\];`)
 	m := re.FindStringSubmatch(string(src))
 	if m == nil {
 		t.Fatalf("could not find `const %s: u64[]` in %s", name, path)
@@ -164,7 +164,7 @@ func TestPow5RoundingConvention(t *testing.T) {
 }
 
 func TestCommittedPow5MatchesTable(t *testing.T) {
-	checkTable(t, "EL_POW5", committedTable(t, stringFern, "EL_POW5"), flat(Pow5()))
+	checkTable(t, "EL_POW5", committedTable(t, parseFern, "EL_POW5"), flat(Pow5()))
 }
 
 func TestDragonboxAndPow5TablesDiffer(t *testing.T) {

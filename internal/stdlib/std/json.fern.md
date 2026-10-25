@@ -8,7 +8,7 @@ Tree values represent JSON data as enums and ordered objects. A document instead
 
 ## Contracts
 
-Result-based parsers retain a concrete parse error. Optional parsers provide a simpler success test. Typed conversion reports field, index, or variant context.
+Parsing and typed decoding return typed errors. Syntax errors retain their source positions. Shape errors retain field, index, or variant context.
 
 ## Executable example
 
@@ -84,7 +84,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<28 function __json_message(s: string, off: i32): string>>
 
-<<29 pub function json_parse_result(s: string): Result[JsonValue, JsonError]>>
 
 <<30 pub struct Document>>
 
@@ -106,7 +105,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<39 pub function json_get(obj: JsonValue, key: string): Option[JsonValue]>>
 
-<<40 function __json_number_i32(s: string): Option[i32]>>
 
 <<41 pub function json_get_i64(obj: JsonValue, key: string): Option[i64]>>
 
@@ -126,7 +124,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<48 pub trait FromJson>>
 
-<<Container JSON decoders>>
 
 <<49 pub function json_kind(v: JsonValue): string>>
 
@@ -134,9 +131,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<51 impl FromJson for boolean>>
 
-<<52 pub function decode[T: FromJson](text: string): Result[T, string]>>
+<<52 pub function decode[T: FromJson](text: string): Result[T, JsonError]>>
 
 <<53 pub(package) function from_json_payload(v: JsonValue): JsonValue>>
+<<typed decode errors>>
+<<array and optional decoding>>
 ```
 
 ### `dependencies 1`
@@ -144,12 +143,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module encodes and decodes JSON values.
+import "std/result";
 import "core/map";
 import "std/string";
 import "std/i32";
 import "std/i64";
 import "std/u32";
 import "std/u64";
+// Float `to_string` for the `impl Json for f32 / f64` serialisers.
+import "std/f32";
 import "std/f64";
 import "std/error";
 import "core/cmp";
@@ -1260,6 +1262,9 @@ impl cmp.Display for JsonError {}
 ```fern
 <<27 pub function (e: JsonError) to_string(): string>>=
 pub function (e: JsonError) to_string(): string {
+  if (e.offset < 0) {
+    return e.message;
+  }
   return e.line.to_string() + ":" + e.col.to_string() + ": " + e.message;
 }
 ```
@@ -1283,48 +1288,6 @@ function __json_message(s: string, off: i32): string {
 }
 ```
 
-### `29 pub function json_parse_result(s: string): Result[JsonValue, JsonError]`
-
-```fern
-<<29 pub function json_parse_result(s: string): Result[JsonValue, JsonError]>>=
-pub function json_parse_result(s: string): Result[JsonValue, JsonError] {
-  let at: Cell[i32] = cell_new(0);
-  let v: JsonValue = __json_p_value(s, at, 0);
-  let end: i32 = at.get();
-  if (end < 0) {
-    let off: i32 = -1 - end;
-    let (ln, cl) = __json_line_col(s, off);
-    return Err(JsonError {
-      message: __json_message(s, off),
-      offset: off,
-      line: ln,
-      col: cl,
-    });
-  }
-  end = __json_ws(s, end);
-  if (end < s.len()) {
-    let (ln2, cl2) = __json_line_col(s, end);
-    return Err(JsonError {
-      message: "trailing content after the top-level value",
-      offset: end,
-      line: ln2,
-      col: cl2,
-    });
-  }
-  return Ok(v);
-}
-
-pub function json_parse(s: string): Option[JsonValue] {
-  match (json_parse_result(s)) {
-    Ok(v) => {
-      return Some(v);
-    },
-    Err(_) => {
-      return None;
-    }
-  }
-}
-```
 
 ### `30 pub struct Document`
 
@@ -1759,7 +1722,7 @@ pub function (d: Document) as_f64(n: i32): Option[f64] {
   if (__json_t_kind(d.tape, n) != JSON_T_NUMBER) {
     return None;
   }
-  return slice_unchecked(d.text, __json_t_a(d, n), __json_t_b(d, n)).parse_float();
+  return f64.parse_f64(slice_unchecked(d.text, __json_t_a(d, n), __json_t_b(d, n))).ok();
 }
 
 pub function (d: Document) as_i64(n: i32): Option[i64] {
@@ -1864,7 +1827,7 @@ pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
     Some(v) => {
       match (v) {
         JNumber(s) => {
-          return __json_number_i32(s);
+          return i32.parse_i32(s).ok();
         },
         _ => {
           return None;
@@ -1879,45 +1842,6 @@ pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
 }
 ```
 
-### `40 function __json_number_i32(s: string): Option[i32]`
-
-```fern
-<<40 function __json_number_i32(s: string): Option[i32]>>=
-function __json_number_i32(s: string): Option[i32] {
-  let acc: i64 = 0;
-  let i: i32 = 0;
-  let neg: boolean = false;
-  let nlen: i32 = s.len();
-  if (nlen == 0) {
-    return None;
-  }
-  if (s[0] == 45) {
-    neg = true;
-    i = 1;
-  }
-  if (i >= nlen) {
-    return None;
-  }
-  while (i < nlen) {
-    let b: i32 = s[i] as i32;
-    if (b < 48 || b > 57) {
-      return None;
-    }
-    acc = acc * 10 + (b - 48) as i64;
-    if (acc > 2147483648) {
-      return None;
-    }
-    i = i + 1;
-  }
-  if (neg) {
-    return Some((0 - acc) as i32);
-  }
-  if (acc > 2147483647) {
-    return None;
-  }
-  return Some(acc as i32);
-}
-```
 
 ### `41 pub function json_get_i64(obj: JsonValue, key: string): Option[i64]`
 
@@ -1928,7 +1852,7 @@ pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
     Some(v) => {
       match (v) {
         JNumber(s) => {
-          return __json_number_i64(s);
+          return i64.parse_i64(s).ok();
         },
         _ => {
           return None;
@@ -1947,10 +1871,6 @@ pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
 
 ```fern
 <<42 function __json_number_i64(s: string): Option[i64]>>=
-function __json_number_i64(s: string): Option[i64] {
-  return __json_range_i64(s, 0, s.len());
-}
-
 // Accumulates negatively so that -2^63 fits.
 function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
   let i: i32 = start;
@@ -1983,31 +1903,6 @@ function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
   }
   return Some(0 - acc);
 }
-
-function __json_number_u64(s: string): Option[u64] {
-  let n: u64 = 0;
-  let i: i32 = 0;
-  let nlen: i32 = s.len();
-  if (nlen == 0) {
-    return None;
-  }
-  while (i < nlen) {
-    let b: i32 = s[i] as i32;
-    if (b < 48 || b > 57) {
-      return None;
-    }
-    let d: u64 = (b - 48) as u64;
-    if (n > 1844674407370955161) {
-      return None;
-    }
-    if (n == 1844674407370955161 && d > 5) {
-      return None;
-    }
-    n = n * 10 + d;
-    i = i + 1;
-  }
-  return Some(n);
-}
 ```
 
 ### `43 pub function json_get_f64(obj: JsonValue, key: string): Option[f64]`
@@ -2019,7 +1914,7 @@ pub function json_get_f64(obj: JsonValue, key: string): Option[f64] {
     Some(v) => {
       match (v) {
         JNumber(s) => {
-          return s.parse_float();
+          return f64.parse_f64(s).ok();
         },
         _ => {
           return None;
@@ -2331,32 +2226,7 @@ impl[T: Json] Json for Option[T] {
 ```fern
 <<48 pub trait FromJson>>=
 pub trait FromJson {
-  function from_json_value(v: JsonValue): Result[Self, string];
-}
-```
-
-## Container JSON decoders
-
-Arrays decode each element with its own codec. Missing optional fields and explicit JSON null both decode to None.
-
-```fern
-<<Container JSON decoders>>=
-pub function decode_array[T: FromJson](text: string): Result[T[], string] {
-  match (json_parse_result(text)) {
-    Ok(value) => {
-      return from_json_array[T](value);
-    },
-    Err(error) => {
-      return Err("invalid JSON: " + error.to_string());
-    }
-  }
-  return Err("invalid JSON");
-}
-
-impl[T: FromJson] FromJson for Option[T] {
-  function from_json_value(v: JsonValue): Result[Option[T], string] {
-    return from_json_option[T](Some(v));
-  }
+  function from_json_value(v: JsonValue): Result[Self, JsonError];
 }
 ```
 
@@ -2394,131 +2264,128 @@ pub function json_kind(v: JsonValue): string {
 ```fern
 <<50 impl FromJson for i32>>=
 impl FromJson for i32 {
-  function from_json_value(v: JsonValue): Result[i32, string] {
+  function from_json_value(v: JsonValue): Result[i32, JsonError] {
     match (v) {
       JNumber(s) => {
-        match (__json_number_i32(s)) {
-          Some(n) => {
+        match (i32.parse_i32(s)) {
+          Ok(n) => {
             return Ok(n);
           },
-          None => {
-            return Err("expected an integer in the i32 range, got " + s);
+          Err(_) => {
+            return Err(error("expected an integer in the i32 range, got " + s));
           }
         }
       },
       _ => {
-        return Err("expected an integer, got " + json_kind(v));
+        return Err(error("expected an integer, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 
 impl FromJson for i64 {
-  function from_json_value(v: JsonValue): Result[i64, string] {
+  function from_json_value(v: JsonValue): Result[i64, JsonError] {
     match (v) {
       JNumber(s) => {
-        match (__json_number_i64(s)) {
-          Some(n) => {
+        match (i64.parse_i64(s)) {
+          Ok(n) => {
             return Ok(n);
           },
-          None => {
-            return Err("expected an integer in the i64 range, got " + s);
+          Err(_) => {
+            return Err(error("expected an integer in the i64 range, got " + s));
           }
         }
       },
       _ => {
-        return Err("expected an integer, got " + json_kind(v));
+        return Err(error("expected an integer, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 
 impl FromJson for u32 {
-  function from_json_value(v: JsonValue): Result[u32, string] {
+  function from_json_value(v: JsonValue): Result[u32, JsonError] {
     match (v) {
       JNumber(s) => {
-        match (__json_number_i64(s)) {
-          Some(n) => {
-            if (n < 0 || n > 4294967295) {
-              return Err("expected an integer in the u32 range, got " + s);
-            }
-            return Ok(n as u32);
+        match (u32.parse_u32(s)) {
+          Ok(n) => {
+            return Ok(n);
           },
-          None => {
-            return Err("expected an integer in the u32 range, got " + s);
+          Err(_) => {
+            return Err(error("expected an integer in the u32 range, got " + s));
           }
         }
       },
       _ => {
-        return Err("expected an integer, got " + json_kind(v));
+        return Err(error("expected an integer, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 
 impl FromJson for u64 {
-  function from_json_value(v: JsonValue): Result[u64, string] {
+  function from_json_value(v: JsonValue): Result[u64, JsonError] {
     match (v) {
       JNumber(s) => {
-        match (__json_number_u64(s)) {
-          Some(n) => {
+        match (u64.parse_u64(s)) {
+          Ok(n) => {
             return Ok(n);
           },
-          None => {
-            return Err("expected an integer in the u64 range, got " + s);
+          Err(_) => {
+            return Err(error("expected an integer in the u64 range, got " + s));
           }
         }
       },
       _ => {
-        return Err("expected an integer, got " + json_kind(v));
+        return Err(error("expected an integer, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 
 impl FromJson for f64 {
-  function from_json_value(v: JsonValue): Result[f64, string] {
+  function from_json_value(v: JsonValue): Result[f64, JsonError] {
     match (v) {
       JNumber(s) => {
-        match (s.parse_float()) {
-          Some(f) => {
+        match (f64.parse_f64(s)) {
+          Ok(f) => {
             return Ok(f);
           },
-          None => {
-            return Err("expected a number, got " + s);
+          Err(_) => {
+            return Err(error("expected a number, got " + s));
           }
         }
       },
       _ => {
-        return Err("expected a number, got " + json_kind(v));
+        return Err(error("expected a number, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 
 impl FromJson for f32 {
-  function from_json_value(v: JsonValue): Result[f32, string] {
+  function from_json_value(v: JsonValue): Result[f32, JsonError] {
     match (v) {
       JNumber(s) => {
-        match (s.parse_float()) {
-          Some(f) => {
-            return Ok(f as f32);
+        match (f32.parse_f32(s)) {
+          Ok(f) => {
+            return Ok(f);
           },
-          None => {
-            return Err("expected a number, got " + s);
+          Err(_) => {
+            return Err(error("expected a number, got " + s));
           }
         }
       },
       _ => {
-        return Err("expected a number, got " + json_kind(v));
+        return Err(error("expected a number, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 ```
@@ -2528,55 +2395,55 @@ impl FromJson for f32 {
 ```fern
 <<51 impl FromJson for boolean>>=
 impl FromJson for boolean {
-  function from_json_value(v: JsonValue): Result[boolean, string] {
+  function from_json_value(v: JsonValue): Result[boolean, JsonError] {
     match (v) {
       JBool(b) => {
         return Ok(b);
       },
       _ => {
-        return Err("expected a boolean, got " + json_kind(v));
+        return Err(error("expected a boolean, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 
 impl FromJson for string {
-  function from_json_value(v: JsonValue): Result[string, string] {
+  function from_json_value(v: JsonValue): Result[string, JsonError] {
     match (v) {
       JString(s) => {
         return Ok(s);
       },
       _ => {
-        return Err("expected a string, got " + json_kind(v));
+        return Err(error("expected a string, got " + json_kind(v)));
       }
     }
-    return Err("");
+    return Err(error(""));
   }
 }
 ```
 
-### `52 pub function decode[T: FromJson](text: string): Result[T, string]`
+### `52 pub function decode[T: FromJson](text: string): Result[T, JsonError]`
 
 ```fern
-<<52 pub function decode[T: FromJson](text: string): Result[T, string]>>=
-pub function decode[T: FromJson](text: string): Result[T, string] {
-  match (json_parse_result(text)) {
+<<52 pub function decode[T: FromJson](text: string): Result[T, JsonError]>>=
+pub function decode[T: FromJson](text: string): Result[T, JsonError] {
+  match (parse(text)) {
     Ok(v) => {
       return T.from_json_value(v);
     },
     Err(e) => {
-      return Err("invalid JSON: " + e.to_string());
+      return Err(e);
     }
   }
-  return Err("");
+  return Err(error(""));
 }
 
-pub(package) function from_json_elem[T: FromJson](v: JsonValue): Result[T, string] {
+pub(package) function from_json_elem[T: FromJson](v: JsonValue): Result[T, JsonError] {
   return T.from_json_value(v);
 }
 
-pub(package) function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
+pub(package) function from_json_array[T: FromJson](v: JsonValue): Result[T[], JsonError] {
   match (v) {
     JArray(xs) => {
       let out: T[] = [];
@@ -2595,13 +2462,13 @@ pub(package) function from_json_array[T: FromJson](v: JsonValue): Result[T[], st
       return Ok(out);
     },
     _ => {
-      return Err("expected an array, got " + json_kind(v));
+      return Err(error("expected an array, got " + json_kind(v)));
     }
   }
-  return Err("");
+  return Err(error(""));
 }
 
-pub(package) function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], string] {
+pub(package) function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], JsonError] {
   match (v) {
     Some(jv) => {
       if let JNull = jv {
@@ -2620,10 +2487,10 @@ pub(package) function from_json_option[T: FromJson](v: Option[JsonValue]): Resul
       return Ok(None);
     }
   }
-  return Err("");
+  return Err(error(""));
 }
 
-pub(package) function from_json_field(v: JsonValue, name: string): Result[JsonValue, string] {
+pub(package) function from_json_field(v: JsonValue, name: string): Result[JsonValue, JsonError] {
   match (v) {
     JObject(m) => {
       match (m.get(name)) {
@@ -2631,18 +2498,18 @@ pub(package) function from_json_field(v: JsonValue, name: string): Result[JsonVa
           return Ok(fv);
         },
         None => {
-          return Err("missing field \"" + name + "\"");
+          return Err(error("missing field \"" + name + "\""));
         }
       }
     },
     _ => {
-      return Err("expected an object, got " + json_kind(v));
+      return Err(error("expected an object, got " + json_kind(v)));
     }
   }
-  return Err("");
+  return Err(error(""));
 }
 
-pub(package) function from_json_optional_field(v: JsonValue, name: string): Result[Option[JsonValue], string] {
+pub(package) function from_json_optional_field(v: JsonValue, name: string): Result[Option[JsonValue], JsonError] {
   match (v) {
     JObject(m) => {
       match (m.get(name)) {
@@ -2662,36 +2529,36 @@ pub(package) function from_json_optional_field(v: JsonValue, name: string): Resu
       }
     },
     _ => {
-      return Err("expected an object, got " + json_kind(v));
+      return Err(error("expected an object, got " + json_kind(v)));
     }
   }
-  return Err("");
+  return Err(error(""));
 }
 
-pub(package) function from_json_at(name: string, why: string): string {
-  return "field \"" + name + "\": " + why;
+pub(package) function from_json_at(name: string, why: JsonError): JsonError {
+  return JsonError { ...why, message: "field \"" + name + "\": " + why.message };
 }
 
-pub(package) function from_json_index(i: i32, why: string): string {
-  return "[" + i.to_string() + "]: " + why;
+pub(package) function from_json_index(i: i32, why: JsonError): JsonError {
+  return JsonError { ...why, message: "[" + i.to_string() + "]: " + why.message };
 }
 
-pub(package) function from_json_variant(v: JsonValue): Result[string, string] {
+pub(package) function from_json_variant(v: JsonValue): Result[string, JsonError] {
   match (v) {
     JString(s) => {
       return Ok(s);
     },
     JObject(m) => {
       if (m.len() != 1) {
-        return Err("expected an object with one key, got " + m.len().to_string());
+        return Err(error("expected an object with one key, got " + m.len().to_string()));
       }
       return Ok(m.names[0]);
     },
     _ => {
-      return Err("expected a variant name or a one-key object, got " + json_kind(v));
+      return Err(error("expected a variant name or a one-key object, got " + json_kind(v)));
     }
   }
-  return Err("");
+  return Err(error(""));
 }
 ```
 
@@ -2711,33 +2578,33 @@ pub(package) function from_json_payload(v: JsonValue): JsonValue {
   return JNull;
 }
 
-pub(package) function from_json_in(variant: string, why: string): string {
-  return "variant \"" + variant + "\": " + why;
+pub(package) function from_json_in(variant: string, why: JsonError): JsonError {
+  return JsonError { ...why, message: "variant \"" + variant + "\": " + why.message };
 }
 
-pub(package) function from_json_unknown_variant(name: string): string {
-  return "unknown variant \"" + name + "\"";
+pub(package) function from_json_unknown_variant(name: string): JsonError {
+  return error("unknown variant \"" + name + "\"");
 }
 
-pub(package) function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonValue, string] {
+pub(package) function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonValue, JsonError] {
   if (n == 1) {
     return Ok(p);
   }
   match (p) {
     JArray(xs) => {
       if (xs.len() != n) {
-        return Err("expected an array of " + n.to_string() + ", got " + xs.len().to_string());
+        return Err(error("expected an array of " + n.to_string() + ", got " + xs.len().to_string()));
       }
       return Ok(xs[i]);
     },
     _ => {
-      return Err("expected an array, got " + json_kind(p));
+      return Err(error("expected an array, got " + json_kind(p)));
     }
   }
-  return Err("");
+  return Err(error(""));
 }
 
-pub(package) function from_json_optional_item(p: JsonValue, i: i32, n: i32): Result[Option[JsonValue], string] {
+pub(package) function from_json_optional_item(p: JsonValue, i: i32, n: i32): Result[Option[JsonValue], JsonError] {
   match (from_json_item(p, i, n)) {
     Ok(x) => {
       match (x) {
@@ -2753,6 +2620,84 @@ pub(package) function from_json_optional_item(p: JsonValue, i: i32, n: i32): Res
       return Err(why);
     }
   }
-  return Err("");
+  return Err(error(""));
+}
+```
+
+### Typed decode errors
+
+```fern
+<<typed decode errors>>=
+pub function error(message: string): JsonError {
+  return JsonError { message: message, offset: -1, line: 0, col: 0 };
+}
+
+pub function parse(s: string): Result[JsonValue, JsonError] {
+  let at: Cell[i32] = cell_new(0);
+  let v: JsonValue = __json_p_value(s, at, 0);
+  let end: i32 = at.get();
+  if (end < 0) {
+    let off: i32 = -1 - end;
+    let (ln, cl) = __json_line_col(s, off);
+    return Err(JsonError {
+      message: __json_message(s, off),
+      offset: off,
+      line: ln,
+      col: cl,
+    });
+  }
+  end = __json_ws(s, end);
+  if (end < s.len()) {
+    let (ln2, cl2) = __json_line_col(s, end);
+    return Err(JsonError {
+      message: "trailing content after the top-level value",
+      offset: end,
+      line: ln2,
+      col: cl2,
+    });
+  }
+  return Ok(v);
+}
+```
+
+### Array and optional decoding
+
+`decode_array` decodes every array element with `FromJson`.
+An invalid element retains its array index in the typed error.
+`Option` decodes JSON null as `None` and other values through its element type.
+
+```fern
+<<array and optional decoding>>=
+pub function decode_array[T: FromJson](text: string): Result[T[], JsonError] {
+  match (parse(text)) {
+    Ok(v) => {
+      return from_json_array[T](v);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+  return Err(error(""));
+}
+
+impl[T: FromJson] FromJson for Option[T] {
+  function from_json_value(v: JsonValue): Result[Self, JsonError] {
+    match (v) {
+      JNull => {
+        return Ok(None);
+      },
+      _ => {
+        match (T.from_json_value(v)) {
+          Ok(value) => {
+            return Ok(Some(value));
+          },
+          Err(e) => {
+            return Err(e);
+          }
+        }
+      }
+    }
+    return Err(error(""));
+  }
 }
 ```

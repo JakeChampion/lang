@@ -27,7 +27,8 @@ All byte fields use bytes. The UI chooses readable units.
 import "std/http";
 import "std/http/sse";
 import "std/json";
-import "std/parse";
+import "std/i64";
+import "std/number_parse";
 import "std/option";
 import "std/result";
 import "std/array";
@@ -141,7 +142,7 @@ pub function status_number(status: string, name: string, multiplier: i64): Optio
   for line in status.split("\n") {
     let parts: string[] = line.splitn(":", 2);
     if (parts.len() == 2 && parts[0] == name) {
-      let value: i64 = parse.int64(parts[1].trim().splitn(" ", 2)[0]).ok()?;
+      let value: i64 = i64.parse_i64(parts[1].trim().splitn(" ", 2)[0]).ok()?;
       if (value < 0 || value > 9223372036854775807 / multiplier) {
         return None;
       }
@@ -166,8 +167,8 @@ pub function cpu_ticks(stat: string): Option[i64] {
   if (fields.len() < 13) {
     return None;
   }
-  let user: i64 = parse.int64(fields[11]).ok()?;
-  let system: i64 = parse.int64(fields[12]).ok()?;
+  let user: i64 = i64.parse_i64(fields[11]).ok()?;
+  let system: i64 = i64.parse_i64(fields[12]).ok()?;
   if (user < 0 || system < 0 || user > 9223372036854775807 - system) {
     return None;
   }
@@ -185,7 +186,7 @@ Cache OS samples for half a second so many viewers do not multiply procfs work.
 <<Sample and cache>>=
 function file_number(primary: string, fallback: string): Option[i64] {
   let text: string = read_file(primary).unwrap_or_else((e: IoError): string => read_file(fallback).unwrap_or(""));
-  let value: i64 = parse.int64(text.trim()).ok()?;
+  let value: i64 = i64.parse_i64(text.trim()).ok()?;
   if (value < 0 || value > 1152921504606846976) {
     return None;
   }

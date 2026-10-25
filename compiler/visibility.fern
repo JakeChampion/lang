@@ -208,12 +208,130 @@ function package_keys(loaded: flatten.LoadedModule[]): string[] {
   return out;
 }
 
-// package-scoped keys, and the cached package identities.
+// Index declarations once. Member checks do not scan a module at each use.
+function declared_keys(loaded: flatten.LoadedModule[]): string[] {
+  let out: string[] = [];
+  for lm in loaded {
+    let prefix = module_key(lm) + ".";
+    for f in lm.mod.funcs {
+      if (f.receiver_name.len() == 0) {
+        out = out.append(prefix + f.name);
+      }
+    }
+    for sd in lm.mod.structs {
+      out = out.append(prefix + sd.name);
+    }
+    for en in lm.mod.enums {
+      out = out.append(prefix + en.name);
+    }
+    for al in lm.mod.aliases {
+      out = out.append(prefix + al.name);
+    }
+    for im in lm.mod.imports {
+      if (im.is_reexport) {
+        for name in im.reexport_names {
+          out = out.append(prefix + name);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function member_name_after(a: string, b: string): boolean {
+  return a > b;
+}
+
+function member_quote(value: string): string {
+  return "\"" + value + "\"";
+}
+
+function member_closest(name: string, candidates: string[]): string {
+  let best = "";
+  let distance = name.len() / 3 + 1;
+  for candidate in util.sorted_by(candidates, member_name_after) {
+    let d = util.levenshtein(name, candidate);
+    if (d <= distance && (best.len() == 0 || d < distance)) {
+      best = candidate;
+      distance = d;
+    }
+  }
+  return best;
+}
+
+function enum_exported(mod: parser.Module, name: string): boolean {
+  for en in mod.enums {
+    if (en.name == name) {
+      return en.is_pub;
+    }
+  }
+  return false;
+}
+
+function struct_exported(mod: parser.Module, sd: parser.StructDecl): boolean {
+  return sd.is_pub || sd.enum_owner.len() > 0 && enum_exported(mod, sd.enum_owner);
+}
+
+function member_candidates(mod: parser.Module, methods: boolean): string[] {
+  let out: string[] = [];
+  for f in mod.funcs {
+    if (f.is_pub && f.receiver_name.len() > 0 == methods) {
+      out = out.append(f.name);
+    }
+  }
+  if (methods) {
+    return out;
+  }
+  for sd in mod.structs {
+    if (struct_exported(mod, sd)) {
+      out = out.append(sd.name);
+    }
+  }
+  for en in mod.enums {
+    if (en.is_pub) {
+      out = out.append(en.name);
+    }
+  }
+  for im in mod.imports {
+    if (im.is_reexport) {
+      out = util.append_all(out, im.reexport_names);
+    }
+  }
+  return out;
+}
+
+function missing_member(mod: parser.Module, name: string, r: astwalk.QualRef): util.Diag {
+  let methods = member_candidates(mod, true);
+  let hint = "";
+  let message = "";
+  if (r.call && util.has_str(methods, r.name)) {
+    message = name + "." + r.name + " is a method — call it on the value: `x." + r.name + "(…)`";
+  } else {
+    let closest = member_closest(r.name, member_candidates(mod, false));
+    if (closest.len() > 0) {
+      hint = " (did you mean " + member_quote(closest) + "?)";
+    } else {
+      let method = member_closest(r.name, methods);
+      if (method.len() > 0) {
+        hint = " — " + member_quote(method) + " is a method, call it on the value: `x." + method + "(…)`";
+      }
+    }
+    let kind = "function or const";
+    if (r.call) {
+      kind = "function";
+    }
+    message = "module " + member_quote(name) + " has no " + kind + " " + member_quote(r.name) + hint;
+  }
+  return util.Diag { length: 0, related: [], code: "E087", message: message, line: r.line, col: r.col, fix: None };
+}
+
+// Reference checks share the module declarations and package identities.
 struct VisCtx {
   src: parser.Module,
   quals: string[],
   loaded: flatten.LoadedModule[],
   priv: util.NameIndex,
+  declared: util.NameIndex,
   priv_consts: string[],
   pkg: util.NameIndex,
   src_pkg: string,
@@ -221,13 +339,13 @@ struct VisCtx {
   packages: string[],
 }
 
-function vis_ctx(src: parser.Module, src_ident: string, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: util.NameIndex, owners: util.NameIndex, packages: string[]): VisCtx {
+function vis_ctx(src: parser.Module, src_ident: string, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: util.NameIndex, declared: util.NameIndex, owners: util.NameIndex, packages: string[]): VisCtx {
   let at: i32 = owners.find(src_ident);
   let own: string = "";
   if (at >= 0 && at < packages.len()) {
     own = packages[at];
   }
-  return VisCtx { src: src, quals: import_quals(src), loaded: loaded, priv: priv, priv_consts: priv_consts, pkg: pkg, src_pkg: own, owners: owners, packages: packages };
+  return VisCtx { src: src, quals: import_quals(src), loaded: loaded, priv: priv, declared: declared, priv_consts: priv_consts, pkg: pkg, src_pkg: own, owners: owners, packages: packages };
 }
 
 function owner_ident(src: parser.Module, qual: string): string {
@@ -285,15 +403,21 @@ function module_diags(cx: VisCtx): util.Diag[] {
     return out;
   }
   for fd in cx.src.funcs {
-    let refs: astwalk.QualRef[] = [];
-    for st in fd.body {
-      refs = astwalk.collect_qualrefs_stmt(st, cx.quals, refs);
+    let bound: string[] = [];
+    for param in fd.params {
+      bound = astwalk.append_bound_name(bound, param.name);
     }
+    bound = astwalk.append_bound_name(bound, fd.receiver_name);
+    let refs = astwalk.collect_qualrefs_body(fd.body, cx.quals, bound, []);
     for r in refs {
       if (!derived_json_helper(cx, fd, r)) {
         out = ref_diag(cx, r, out);
       }
     }
+  }
+  let refs = astwalk.collect_qualrefs_body(cx.src.top_stmts, cx.quals, [], []);
+  for r in refs {
+    out = ref_diag(cx, r, out);
   }
   return out;
 }
@@ -322,6 +446,9 @@ function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[]
     return out;
   }
   let key: string = module_key(cx.loaded[mi]) + "." + r.name;
+  if (!cx.declared.has(key)) {
+    return out.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r));
+  }
   if (!cx.priv.has(key)) {
     return out;
   }
@@ -355,13 +482,14 @@ pub function export_diags(entry: parser.Module, entry_ident: string, loaded: fla
     idents = idents.append(lm.ident);
   }
   let owners: util.NameIndex = util.name_index(idents);
-  let ecx: VisCtx = vis_ctx(entry, entry_ident, loaded, priv, priv_consts, pkg, owners, packages);
+  let declared = util.name_index(declared_keys(loaded));
+  let ecx: VisCtx = vis_ctx(entry, entry_ident, loaded, priv, priv_consts, pkg, declared, owners, packages);
   let out: util.Diag[] = module_diags(ecx);
   for d in type_diags(ecx) {
     out = out.append(d);
   }
   for lm in loaded {
-    let cx: VisCtx = vis_ctx(lm.mod, lm.ident, loaded, priv, priv_consts, pkg, owners, packages);
+    let cx: VisCtx = vis_ctx(lm.mod, lm.ident, loaded, priv, priv_consts, pkg, declared, owners, packages);
     for d in module_diags(cx) {
       out = out.append(d);
     }

@@ -4,7 +4,8 @@ import "testing"
 
 // The byte predicate and public string operations must agree for every byte.
 // This checks the shared stdlib predicate without calling its private helper.
-const asciiWsProg = `import "std/i32";
+const asciiWsProg = `import "std/utf8";
+import "std/i32";
 import "std/string";
 
 function main(): i32 {
@@ -12,22 +13,22 @@ function main(): i32 {
     let ws: i32[] = [32, 9, 10, 13, 11, 12];
     let i: i32 = 0;
     while (i < ws.len()) {
-        if (!(ws[i] as u8).is_ascii_white_space()) { return 1; }
-        if (!string.string_from_codepoint(ws[i] as char).is_blank()) { return 2; }
+        if (!(ws[i] as u8).is_ascii_whitespace()) { return 1; }
+        if (!utf8.encode(ws[i] as char).is_blank()) { return 2; }
         i = i + 1;
     }
     // Boundaries either side of the 9..13 run and of SP must be false.
     let no: i32[] = [0, 8, 14, 31, 33, 48, 65, 97, 127, 255];
     let j: i32 = 0;
     while (j < no.len()) {
-        if ((no[j] as u8).is_ascii_white_space()) { return 3; }
-        if (string.string_from_codepoint(no[j] as char).is_blank()) { return 4; }
+        if ((no[j] as u8).is_ascii_whitespace()) { return 3; }
+        if (utf8.encode(no[j] as char).is_blank()) { return 4; }
         j = j + 1;
     }
     // Exhaustive: the two spellings agree on every byte value.
     let b: i32 = 0;
     while (b < 256) {
-        if ((b as u8).is_ascii_white_space() != string.string_from_codepoint(b as char).is_blank()) { return 5; }
+        if ((b as u8).is_ascii_whitespace() != utf8.encode(b as char).is_blank()) { return 5; }
         b = b + 1;
     }
     // The trim() / is_blank() family shares the same body.

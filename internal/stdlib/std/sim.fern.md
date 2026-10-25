@@ -77,6 +77,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "core/int";
 import "std/async";
 import "std/rand";
@@ -119,11 +120,11 @@ function __sim_rows(table: string): string[][] {
 }
 
 function __sim_field(row: string[], i: i32): i32 {
-  match (int.parse_int_radix(row[i], 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(row[i], 10)) {
+    Ok(v) => {
       return v;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }

@@ -5,16 +5,16 @@ import "testing"
 const stringReplacenProg = `
 import "std/string";
 function main(): i32 {
-    if ("aaaa".replacen("a", "b", 2) != "bbaa") { return 1; }
-    if ("aaaa".replacen("a", "b", 0) != "aaaa") { return 2; }
-    if ("aaaa".replacen("a", "b", 10) != "bbbb") { return 3; }
-    if ("a.b.c".replacen(".", "-", 1) != "a-b.c") { return 4; }
-    if ("hello".replacen("z", "x", 3) != "hello") { return 5; }
-    if ("xx".replacen("x", "yy", 1) != "yyx") { return 6; }          // multi-char replacement
-    if ("foofoofoo".replacen("foo", "bar", 2) != "barbarfoo") { return 7; }  // multi-char needle
-    if ("".replacen("a", "b", 3) != "") { return 8; }
-    if ("abc".replacen("", "x", 3) != "abc") { return 9; }           // empty needle -> unchanged
-    if ("aaa".replacen("a", "", 2) != "a") { return 10; }            // delete first two
+    if ("aaaa".replace_n("a", "b", 2) != "bbaa") { return 1; }
+    if ("aaaa".replace_n("a", "b", 0) != "aaaa") { return 2; }
+    if ("aaaa".replace_n("a", "b", 10) != "bbbb") { return 3; }
+    if ("a.b.c".replace_n(".", "-", 1) != "a-b.c") { return 4; }
+    if ("hello".replace_n("z", "x", 3) != "hello") { return 5; }
+    if ("xx".replace_n("x", "yy", 1) != "yyx") { return 6; }          // multi-char replacement
+    if ("foofoofoo".replace_n("foo", "bar", 2) != "barbarfoo") { return 7; }  // multi-char needle
+    if ("".replace_n("a", "b", 3) != "") { return 8; }
+    if ("abc".replace_n("", "x", 3) != "abc") { return 9; }           // empty needle -> unchanged
+    if ("aaa".replace_n("a", "", 2) != "a") { return 10; }            // delete first two
     return 42;
 }
 `

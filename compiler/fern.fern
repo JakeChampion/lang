@@ -1145,7 +1145,7 @@ function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRang
   };
 }
 
-struct ImportQueue { paths: string[], dirs: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string }
+struct ImportQueue { paths: string[], dirs: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string, display_queued: boolean }
 
 function queued(paths: string[], dirs: string[], ip: string, from_dir: string): boolean {
   let i: i32 = 0;
@@ -1158,6 +1158,21 @@ function queued(paths: string[], dirs: string[], ip: string, from_dir: string): 
   return false;
 }
 
+function queue_display(q: ImportQueue, mod: parser.Module, from_dir: string, root: string): ImportQueue {
+  if (root.len() == 0 || q.display_queued || !modloader.needs_primitive_display(mod)) {
+    return q;
+  }
+  return ImportQueue {
+    ...q,
+    paths: q.paths.append("core/primitive_text"),
+    dirs: q.dirs.append(from_dir),
+    lines: q.lines.append(0),
+    cols: q.cols.append(0),
+    stdlibs: q.stdlibs.append(true),
+    display_queued: true,
+  };
+}
+
 function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[], parent_stdlib: boolean): ImportQueue {
   let paths: string[] = q.paths;
   let dirs: string[] = q.dirs;
@@ -1165,9 +1180,13 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
   let cols: i32[] = q.cols;
   let stdlibs: boolean[] = q.stdlibs;
   let unrooted: string = q.unrooted;
+  let display_queued: boolean = q.display_queued;
   let i: i32 = 0;
   while (i < mod.imports.len()) {
     let ip: string = mod.imports[i].path;
+    if (ip == "core/primitive_text" || ip == "core/primitive_text.fern") {
+      display_queued = true;
+    }
     if (root.len() == 0 && unrooted.len() == 0 && util.is_stdlib_path(ip) && !util.should_load(ip, root, deps)) {
       unrooted = ip;
     }
@@ -1180,7 +1199,7 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
     }
     i = i + 1;
   }
-  return ImportQueue { paths: paths, dirs: dirs, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted };
+  return queue_display(ImportQueue { paths: paths, dirs: dirs, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted, display_queued: display_queued }, mod, from_dir, root);
 }
 
 function is_flag(a: string): boolean {
@@ -2520,7 +2539,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: no_files, maps: maps, srcs: srcs, err: missing.message, err_code: missing.code, err_line: missing.line, err_col: missing.col };
   }
 
-  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], lines: [], cols: [], stdlibs: [], unrooted: "" }, entry_mod, dir_slash, root, deps, false);
+  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], lines: [], cols: [], stdlibs: [], unrooted: "", display_queued: false }, entry_mod, dir_slash, root, deps, false);
   let loaded: flatten.LoadedModule[] = [];
   let files: string[] = [];
   let done_paths: string[] = [];

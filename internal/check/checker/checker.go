@@ -2110,7 +2110,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
 	registerStringMethod("len", nil, ast.NumberType{})
-	c.info.FuncSigs["__method_boolean_to_string"] = &ast.FuncType{Params: []ast.Type{ast.BoolType{}}, Result: ast.StringType{}}
+	// A scalar builtin method is a signature with no Methods entry, so a
+	// declared method of the name takes over the dispatch and the signature
+	// (builtinScalarMethod, isScalarBuiltinMethod).
+	for name, recv := range map[string]ast.Type{
+		"i32": ast.NumberType{}, "i64": ast.NumberType{Width: 64, Signed: true},
+		"u8": ast.NumberType{Width: 8}, "u32": ast.NumberType{Width: 32}, "u64": ast.NumberType{Width: 64},
+		"usize": ast.NumberType{Width: ast.WidthPtr}, "f32": ast.FloatType{Width: 32}, "f64": ast.FloatType{Width: 64},
+		"boolean": ast.BoolType{}, "char": ast.CharType{}, "string": ast.StringType{},
+	} {
+		method, _ := builtinScalarMethod(name, "to_string")
+		c.info.FuncSigs[method] = &ast.FuncType{Params: []ast.Type{recv}, Result: ast.StringType{}}
+	}
 
 	c.info.FuncSigs["string_from_bytes_unchecked"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
@@ -2288,6 +2299,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 
+	// First pass: gather all top-level signatures so functions can call
+	// each other in any order. Methods are hoisted to mangled
+	// top-level names (`__method_<Type>_<Name>`) with the receiver
+	// prepended to the parameter list, so codegen never has to know
+	// about methods.
+	declaredFunctions := make(map[string]bool, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
 			c.checkMainSignature(fn)
@@ -2374,10 +2391,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		} else if fn.MethodRecv != "" {
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
 		}
-		if _, dup := c.info.FuncSigs[fn.Name]; dup && !isScalarBuiltinMethod(fn.Name) {
+		if _, dup := c.info.FuncSigs[fn.Name]; dup && (!isScalarBuiltinMethod(fn.Name) || declaredFunctions[fn.Name]) {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
 			continue
 		}
+		declaredFunctions[fn.Name] = true
 		params := make([]ast.Type, len(fn.Params))
 		owns := make([]bool, len(fn.Params))
 		for i, p := range fn.Params {
@@ -2388,7 +2406,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		if fn.AssocConst {
 			c.info.AssocConsts[fn.Name] = true
 		}
-		if fn.MethodRecv == "" {
+		// Method dispatch already checks visibility, including calls from a
+		// trait default to methods on its implementing type. The trait's
+		// module need not import that type's module.
+		if fn.MethodRecv == "" && !isScalarBuiltinMethod(fn.Name) {
 			c.funcSources[fn.Name] = fn.SourceModule
 		}
 		if len(fn.TypeParams) > 0 {
@@ -3586,7 +3607,7 @@ func deriveKind(name string) string {
 
 func hasStdJson(prog *ast.Program) bool {
 	for _, pf := range prog.Funcs {
-		if pf.Name == "json__json_parse" {
+		if pf.Name == "json__parse" {
 			return true
 		}
 	}
@@ -3597,7 +3618,7 @@ func fromJsonFieldTypes(types []ast.Type) ([]ast.Type, int, bool) {
 	out := make([]ast.Type, len(types))
 	for i, t := range types {
 		e := fromJsonElem(t)
-		if _, nested := fromJsonContainer(e); nested {
+		if container, nested := fromJsonContainer(e); nested && container != "option" {
 			return nil, i, false
 		}
 		switch e.(type) {
@@ -4703,7 +4724,7 @@ func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       body,
 	}
 }
@@ -4738,13 +4759,13 @@ func synthEnumFromJsonValue(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 				{VariantName: "Err", Bindings: []string{"__fj_e"}, Body: fjReturn(fjVariant("Err", &ast.Ident{Name: "__fj_e"}))},
 			},
 		},
-		&ast.Return{Value: fjVariant("Err", &ast.StringLit{Value: ""})},
+		&ast.Return{Value: fjVariant("Err", fjCall("error", &ast.StringLit{Value: ""}))},
 	}}
 	return &ast.FuncDecl{
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       body,
 	}
 }
@@ -4857,7 +4878,7 @@ func synthFromJsonText(name string, recv ast.Type) *ast.FuncDecl {
 		Name:       "from_json",
 		AssocType:  name,
 		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: call}}},
 	}
 }
@@ -5203,15 +5224,29 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 func builtinScalarMethod(typeName, name string) (string, bool) {
-	if typeName == "boolean" && name == "to_string" {
-		return "__method_boolean_to_string", true
+	if name == "to_string" {
+		if typeName == "boolean" {
+			return "__method_boolean_to_string", true
+		}
+		switch typeName {
+		case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "string":
+			return "__primitive_" + typeName + "_to_string", true
+		}
 	}
 	return "", false
 }
 
 func isScalarBuiltinMethod(mangled string) bool {
-	return mangled == "__method_boolean_to_string"
+	if mangled == "__method_boolean_to_string" {
+		return true
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(mangled, "__primitive_"), "_to_string")
+	method, ok := builtinScalarMethod(name, "to_string")
+	return ok && method == mangled
 }
+
+// IsPrimitiveDisplayMethod lets the oracle replace a builtin with its source body.
+func IsPrimitiveDisplayMethod(name string) bool { return isScalarBuiltinMethod(name) }
 
 type checker struct {
 	entryModule string
@@ -8112,6 +8147,92 @@ func (c *checker) errTypeParamAssoc(tid *ast.Ident, field string) {
 		Path:    c.currentModule(),
 		ErrCode: "E001",
 	})
+}
+
+func builtinUnionModule(t ast.Type) string {
+	if e, ok := t.(ast.EnumType); ok {
+		switch e.Name {
+		case "Option":
+			return "std/option"
+		case "Result":
+			return "std/result"
+		}
+	}
+	return ""
+}
+
+// scalarMethodModule returns the stdlib module that defines `method` on the
+// scalar type `t`, or "" when there is no such pairing. It exists so a method
+// call on a scalar whose module was not imported gets a diagnostic naming the
+// import, rather than the raw "field access on non-struct value" E043 — which
+// describes the desugared shape rather than the user's code, and is especially
+// confusing for f-strings (`f"{n}"` becomes `n.to_string()`).
+//
+// Deliberately narrow: only method names these modules actually define on the
+// scalar receivers, so a typo'd method still gets the generic error rather than
+// a confidently wrong import suggestion. Since the auto-prelude was removed
+// (Phase 5) a program sees only what it imports, which is what makes this class
+// of confusion reachable at all. #5494.
+func scalarMethodModule(t ast.Type, method string) string {
+	mod := scalarModuleFor(t)
+	if mod == "" {
+		return ""
+	}
+	recv, _ := methodTypeName(t)
+	if recv == "i32" && (method == "to_string_radix" || method == "to_string_padded" || method == "to_string_with_sep") ||
+		recv == "i64" && method == "to_string_radix" ||
+		(recv == "f32" || recv == "f64") && method == "to_string_prec" {
+		return mod
+	}
+	return ""
+}
+
+// scalarModuleFor names the stdlib module that carries a scalar type's
+// method surface, or "" for a type whose methods aren't in one. Unlike
+// scalarMethodModule it does not check that the module actually defines
+// the method — callers that only want to say "if this method exists, it
+// comes from here" use this one.
+func scalarModuleFor(t ast.Type) string {
+	var mod string
+	switch x := t.(type) {
+	case ast.NumberType:
+		if !x.IsSigned() {
+			if x.NormalWidth() == 64 || x.IsPointerWidth() {
+				mod = "std/u64"
+			} else if x.NormalWidth() == 8 {
+				// u8's method surface lives in std/i32, not std/u32:
+				// every `pub function (b: u8) …` in the stdlib is
+				// declared there. Pointing at std/u32 made the hint
+				// unfollowable — importing it changed nothing and the
+				// identical error repeated, with no reason to try
+				// elsewhere. Bytes reach users constantly (indexing a
+				// string yields u8), so this is a common first error.
+				mod = "std/i32"
+			} else {
+				mod = "std/u32"
+			}
+		} else if x.NormalWidth() == 64 {
+			mod = "std/i64"
+		} else {
+			mod = "std/i32"
+		}
+	case ast.FloatType:
+		mod = "std/f64"
+	case ast.StringType:
+		mod = "std/string"
+	case ast.StrType:
+		// A `str` view shares the `string` method surface (methodTypeName maps
+		// it to "string"), so its methods come from the same module. Without
+		// this case the message fell through to the builtin list — "it has:
+		// as_bytes, len" — which is the outcome the comment above forbids, and
+		// it is reached by FOLLOWING another diagnostic: E043/E002/E003 on a
+		// `str` in an owned position all say "add `.to_owned()`", and
+		// `.to_owned()` is one of the methods that needs the import.
+		mod = "std/string"
+	default:
+		return ""
+	}
+	return mod
 }
 
 func (c *checker) unknownVariantHint(name string, ed *ast.EnumDecl) string {
@@ -12050,6 +12171,14 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if _, bound := c.identValueBinding(x.Name, s); bound {
 			return nil, false
 		}
+		// Contextual primitive names are identifier tokens too. A value
+		// binding above still wins over their type spelling.
+		if x.Name == "char" {
+			return ast.CharType{}, true
+		}
+		if x.Name == "str" {
+			return ast.StrType{}, true
+		}
 		_, isStruct := c.info.Structs[x.Name]
 		_, isEnum := c.info.Enums[x.Name]
 		_, isResource := c.info.Resources[x.Name]
@@ -12066,7 +12195,10 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if !ok {
 			return nil, false
 		}
-		st := head.(ast.StructType)
+		st, nominal := head.(ast.StructType)
+		if !nominal {
+			return nil, false
+		}
 		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
 	}
 	return nil, false
@@ -14339,7 +14471,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "f64x2", "f32x4", "string", "boolean":
+	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
 		return true
 	}
 	return false

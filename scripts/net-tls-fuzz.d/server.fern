@@ -1,3 +1,9 @@
+// The TLS server scripts/net-tls-fuzz runs tlsfuzzer against: everything a
+// connection sends is answered with one HTTP response, or echoed under
+// MODE=echo, until it ends. TLS_CERT and TLS_KEY are its identity,
+// TLS_CLIENT_CA the roots a client certificate must reach, when it is to
+// require one, and PORT where it listens on the loopback.
+import "std/i32";
 import "std/net";
 import "std/time";
 import "std/tls/identity";
@@ -114,11 +120,11 @@ function configured(): Result[server.Config, string] {
 
 function listening(): Result[i32, string] {
   let port: i32 = 0;
-  match (int.parse_int_radix(setting("PORT", "8443"), 10)) {
-    Some(n) => {
+  match (i32.parse_i32_radix(setting("PORT", "8443"), 10)) {
+    Ok(n) => {
       port = n;
     },
-    None => {
+    Err(_) => {
       return Err("PORT is not a number");
     }
   }

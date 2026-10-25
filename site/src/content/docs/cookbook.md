@@ -179,32 +179,38 @@ function main(): i32 {
 
 ## Match a regular expression
 
-`std/regex` searches by default; anchor with `^` and `$` to match the
-whole string. `regex_captures` returns the match with each group's span,
-and a group can be named.
+`regex.compile` validates a pattern once and returns a reusable `Regex`.
+Its search methods match anywhere; `is_full_match` matches the whole string.
+`captures` returns the match with each group's span, and a group can be named.
 
 ```fern
 import "std/regex";
+import "std/result";
 import "std/option";
 
 function main(): i32 {
-    let line: string = "2026-10-07 ERROR disk full on /dev/sda1";
-    let Some(m) = regex.regex_captures("^(?<date>\\d{4}-\\d{2}-\\d{2}) (?<level>[A-Z]+) (.*)$", line) else {
-        eprint("not a log line");
-        return 1;
+    let compiled = match (regex.compile("^(?<date>\\d{4}-\\d{2}-\\d{2}) (?<level>[A-Z]+) (.*)$")) {
+        Ok(value) => value,
+        Err(error) => { eprint(error.message()); return 1; }
     };
-    print(m.group_named("level").unwrap_or(""));   // ERROR
-    print(m.group(3).unwrap_or(""));               // disk full on /dev/sda1
-    let masked: string = regex.regex_replace_all("[0-9]", "call 555-0100", "#").unwrap_or("");
-    print(masked);                                 // call ###-####
+    let line: string = "2026-10-07 ERROR disk full on /dev/sda1";
+    let Some(m) = compiled.captures(line) else {
+        eprint("not a log line");
+        return 2;
+    };
+    let level = match (m.group_named("level")) {
+        Ok(text) => text.unwrap_or(""),
+        Err(error) => { eprint(error.message()); return 3; }
+    };
+    print(level); // ERROR
     return 0;
 }
 ```
 
-`regex_match`, `regex_find_all`, `regex_split` and `regex_count` cover
-the other common jobs. Offsets are byte indices, and the functions that
-return text return an `Option` because a match can split a UTF-8
-character.
+`is_match`, `find_all`, `split` and `count` cover the other common jobs.
+Offsets are byte indices. A missing capture is `None`, and a matched empty
+capture is `Some("")`. Text-producing methods return `Result` because a match
+can split a UTF-8 character; byte-producing methods preserve raw bytes.
 
 ## Parse JSON
 
@@ -215,13 +221,13 @@ import "std/i32";
 
 function main(): i32 {
     let text: string = "{\"name\": \"fern\", \"stars\": 42}";
-    match (json.json_parse(text)) {
-        Some(doc) => {
+    match (json.parse(text)) {
+        Ok(doc) => {
             print(json.json_get_string(doc, "name").unwrap_or("(anonymous)"));
             print(json.json_get_i32(doc, "stars").unwrap_or(0).to_string());
             return 0;
         },
-        None => { eprint("malformed JSON"); return 1; }
+        Err(_) => { eprint("malformed JSON"); return 1; }
     }
 }
 ```
@@ -266,9 +272,9 @@ function main(): i32 {
     while (i < rows.len()) {
         let row: string[] = rows[i];
         if (row.len() == 2) {
-            match (row[1].parse_int()) {
-                Some(n) => { total = total + n; },
-                None => { eprint("bad qty on row " + i.to_string()); return 1; },
+            match (i32.parse_i32(row[1])) {
+                Ok(n) => { total = total + n; },
+                Err(_) => { eprint("bad qty on row " + i.to_string()); return 1; },
             }
         }
         i = i + 1;
