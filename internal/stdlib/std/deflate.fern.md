@@ -1030,14 +1030,33 @@ pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] 
   return Ok(inflated.out);
 }
 
+// The sums take their modulus once for each 5552 bytes, zlib's NMAX: the
+// most bytes after which b cannot pass 2^32.
 pub function adler32(bs: [u8]): u32 {
   let a: u32 = 1;
   let b: u32 = 0;
+  let n: i32 = bs.len();
   let i: i32 = 0;
-  while (i < bs.len()) {
-    a = (a + bs[i] as u32) % 65521;
-    b = (b + a) % 65521;
-    i = i + 1;
+  while (i < n) {
+    let end: i32 = cmp.min(n, i + 5552);
+    while (i + 4 <= end) {
+      a = a + bs[i] as u32;
+      b = b + a;
+      a = a + bs[i + 1] as u32;
+      b = b + a;
+      a = a + bs[i + 2] as u32;
+      b = b + a;
+      a = a + bs[i + 3] as u32;
+      b = b + a;
+      i = i + 4;
+    }
+    while (i < end) {
+      a = a + bs[i] as u32;
+      b = b + a;
+      i = i + 1;
+    }
+    a = a % 65521;
+    b = b % 65521;
   }
   return b << 16 | a;
 }
