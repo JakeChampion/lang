@@ -1051,7 +1051,7 @@ func TestRunnerTLSClientExamplePasses(t *testing.T) {
 }
 
 func TestRunnerTLSServerExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_server", "std/tls/server", 16)
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 17)
 }
 
 func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
