@@ -1812,7 +1812,7 @@ function ssa_cold_fixed(cold: i32[]): ssafixed.Table {
     }
     masks = masks.append(mask);
   }
-  return ssafixed.table_inside(0, ssa_nregs(), masks);
+  return ssafixed.with_clobbers(ssafixed.none(), 0, ssa_nregs(), masks);
 }
 
 struct ColdSaves { by_pos: i32[], by_val: i32[], any: boolean }
