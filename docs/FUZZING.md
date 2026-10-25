@@ -111,6 +111,24 @@ The other generators are narrower: `genNumProgram` (numeric properties),
 `genSimProgram` (deterministic-simulation properties), and `std/fuzz` inside
 the language.
 
+**EMI mutants** (`fernsmith.EMI`) start from a real program, not a generated
+one. Each mutant is a conformance case with up to 8 changes that must not
+change its output or its exit code (Orion, PLDI 2014, and GraphicsFuzz, OOPSLA
+2017). A change is one of these:
+
+- dead: a block behind `emi_false()`, with a statement copied from the same
+  function
+- live: a statement in a block behind `emi_true()`, with a copied statement
+  in the else block
+- jump: a `break` or a `continue` behind `emi_false()` in a loop
+- once: a statement in a loop that breaks after one pass
+
+The two guards are `@noinline` functions, so the compiler cannot remove a
+guarded block before the passes under test see it. A change stays only if
+the program still checks. A copied statement never holds the block it goes
+into. A declaration and a `defer` never move into a new block, because the
+block changes their scope.
+
 ### Oracles
 
 | Oracle | Catches | Where |
@@ -123,6 +141,7 @@ the language.
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
 | Compiler self-checks | a lowering the compiler's own verifiers reject: the typed lowering refusing part of a program, the rc certifier showing unbalanced counts, the IR verifier finding malformed IR | every self-host leg and the coverage loop fail such a seed (`compilerRefused`) rather than skip it as a coverage gap; their compiles run with `FERN_IR_VERIFY=quiet` so the IR verifier is on |
 | Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
+| EMI mutants | a miscompile of a real program, in shapes that fernsmith does not write: the corpus cases' own types, stdlib calls and control flow, with dead and wrapped code around them. The interpreter must give the case's expected output first, so a fault in the mutator or the interpreter is a failure too | `TestDifferential_SelfHostEMIX86_64` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
 
 ### Bisecting a failure to one decision
@@ -146,6 +165,21 @@ legs append one JSON line per failed seed, and the nightly report posts
 them grouped by signature (`scripts/nightly-findings.mjs`), with a count and
 the first seeds of each. One fault failing two hundred seeds is one row, and
 the same row on consecutive nights is the same bug.
+
+The rows are in Furthest-Point-First order. The largest group comes first.
+Each next row is the row least like all the rows above it, so different bugs
+come before more rows of one bug. The distance between two rows is the mean
+of up to four parts, each from 0 to 1:
+
+- the classes are different
+- the passes are different
+- the Jaccard distance of the two seed sets
+- the Jaccard distance of the token pairs of the two repros, when both rows
+  have one
+
+The leg is not a part, because one fault often fails the same seeds on more
+than one leg. A row nearer than 1/3 to an earlier row names that row in its
+`like` column.
 
 The legs also shrink a failed seed (`diffLeg.shrink`): first its recorded
 corpus, then its source, keeping each step after which the program still
@@ -325,7 +359,9 @@ built. Citations are to the paper that introduced the technique.
 7. **EMI and semantics-preserving transformations** (Orion, PLDI 2014; Hermes,
    OOPSLA 2016; GraphicsFuzz, OOPSLA 2017): mutate real programs — the
    conformance corpus, coreutils, the compiler itself — in ways that must not
-   change their output.
+   change their output. Done for the conformance corpus at statement level,
+   on x86-64. Next are changes inside expressions, which need the checker's
+   types, and coreutils.
 8. **Type-checker fuzzing** (Hephaestus, PLDI 2022; Thalia, POPL 2024): erase
    annotations and overwrite types, and hold both checkers to one verdict.
    Done as the checker-mutant oracle, in the x86_64 `diff-selfhost` lane. It
@@ -340,7 +376,8 @@ built. Citations are to the paper that introduced the technique.
     Furthest-Point-First (Chen et al., PLDI 2013), with each reduced repro
     promoted to a regression test. Done: the signature (leg, failure class,
     bisected pass), the grouped nightly table, and each signature's shrunk
-    repro, which the fix commits as its regression test. Next is the ranking.
+    repro, which the fix commits as its regression test, and the
+    Furthest-Point-First order of the table.
 
 ## Roadmap
 
@@ -348,4 +385,3 @@ In order:
 
 1. Mutation-score floor in CI once the score is measured over enough mutants
    to be stable, and the survivors worked down.
-2. Rank the nightly signatures (Furthest-Point-First).

@@ -484,6 +484,7 @@ jobs:
         run: |
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
+          go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostEMIX86_64$' -v -timeout 20m
           go test ./internal/testing/e2e/ -run '^TestDifferential_CheckerMutants$' -v -timeout 20m
           go test ./internal/testing/e2e/ -run '^TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash$' -v -timeout 10m
       - name: x86_64 under -sanitize
