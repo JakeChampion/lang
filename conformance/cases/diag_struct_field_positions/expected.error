@@ -1,0 +1,3 @@
+main.fern:9:3: error[E064]: cannot find type "Nope" in this scope
+main.fern:10:3: error[E045]: map key type Key is not supported — a struct used as a key must derive Eq and Hash
+main.fern:11:3: error[E057]: Cell[Handler] is not allowed

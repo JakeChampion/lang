@@ -1,0 +1,29 @@
+import "core/map";
+
+struct Key { x: i32 }
+
+struct Handler { name: string, run: () => i32 }
+
+function unknown(a: i32,
+    b: Nope): i32 {
+  return a;
+}
+
+function keyed(own m: Map[Key, i32]): i32 {
+  return 0;
+}
+
+function cell(c: i32, h: Cell[Handler]): i32 {
+  return c;
+}
+
+function lanes(n: i32, v: f64x2[]): i32 {
+  return n;
+}
+
+function main(): i32 {
+  let f = (x: i32, y: Gone): i32 => x;
+  let g = (x: i32, m: Map[Key, i32]): i32 => x;
+  let h = (x: i32, c: Cell[Handler]): i32 => x;
+  return 0;
+}

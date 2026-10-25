@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**79 of 101** codes are pinned by a conformance case. The table
+**80 of 101** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -136,7 +136,7 @@ language does not have. It is deleted.
 | `E061` | block-expression has no trailing value | `diag_e061` |
 | `E062` | ambiguous method on a multi-trait object | — |
 | `E063` | returning a `[T]` slice that views function-local storage | `diag_e063` |
-| `E064` | unknown type | — |
+| `E064` | unknown type | `diag_struct_field_positions` |
 | `E065` | returning a `str` view of a function-local string | `diag_e065` |
 | `E066` | target does not provide a required capability | — |
 | `E067` | a `@must_consume` value was not consumed on every path | `diag_e067` |
