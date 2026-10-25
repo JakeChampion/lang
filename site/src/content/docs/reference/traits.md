@@ -74,6 +74,7 @@ too, and a `[T: Loud]` bound makes `Named`'s methods callable as well:
 
 ```fern
 import "std/string";
+import "std/unicode";
 
 trait Named {
     function name(self: Self): string;
