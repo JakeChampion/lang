@@ -383,31 +383,42 @@ function __seal(p: Protection, plaintext: [u8], aad: [u8]): Result[u8[], RecordE
       let Some(g) = p.gcm else {
         return Err(BadKeys(p.key.len(), p.iv.len()));
       };
-      return __sealed(p, g.seal(__nonce(p), plaintext, aad));
+      match (g.seal(__nonce(p), plaintext, aad)) {
+        Ok(sealed) => {
+          return Ok(sealed);
+        },
+        Err(e) => {
+          return Err(__seal_failed(p, e));
+        }
+      }
     },
     keyschedule.ChaCha20Poly1305 => {
-      return __sealed(p, chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad));
+      match (chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad)) {
+        Ok(sealed) => {
+          return Ok(sealed);
+        },
+        Err(e) => {
+          return Err(__seal_failed(p, e));
+        }
+      }
     }
   }
   return Err(BadKeys(p.key.len(), p.iv.len()));
 }
 
-function __sealed(p: Protection, r: Result[u8[], aead.AeadError]): Result[u8[], RecordError] {
-  match (r) {
-    Ok(sealed) => {
-      return Ok(sealed);
+function __seal_failed(p: Protection, e: aead.AeadError): RecordError {
+  match (e) {
+    aead.KeyLength(n) => {
+      return BadKeys(n, p.iv.len());
     },
-    Err(aead.KeyLength(n)) => {
-      return Err(BadKeys(n, p.iv.len()));
+    aead.NonceLength(n) => {
+      return BadKeys(p.key.len(), n);
     },
-    Err(aead.NonceLength(n)) => {
-      return Err(BadKeys(p.key.len(), n));
-    },
-    Err(aead.Forged()) => {
-      return Err(BadRecordMac);
+    aead.Forged => {
+      return BadRecordMac;
     }
   }
-  return Err(BadRecordMac);
+  return BadRecordMac;
 }
 
 function __open(p: Protection, sealed: [u8], aad: [u8]): Result[u8[], RecordError] {
@@ -431,14 +442,18 @@ function __open(p: Protection, sealed: [u8], aad: [u8]): Result[u8[], RecordErro
   return Err(BadRecordMac);
 }
 
-function __advance(p: Protection): Result[Protection, RecordError] {
+function __advanceable(p: Protection): Result[void, RecordError] {
   if (p.key.len() != p.suite.aead().key_len() || p.iv.len() != 12) {
     return Err(BadKeys(p.key.len(), p.iv.len()));
   }
   if (p.seq == 0xffffffffffffffff as u64) {
     return Err(SequenceExhausted);
   }
-  return Ok(Protection { ...p, seq: p.seq + 1 as u64 });
+  return Ok(());
+}
+
+function __advanced(p: Protection): Protection {
+  return Protection { ...p, seq: p.seq + 1 as u64 };
 }
 ```
 
@@ -462,21 +477,18 @@ pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): 
     return Err(RecordOverflow(content.len() + pad));
   }
   let checked: ContentType = __inner_type(t.code(), content.len())?;
-  let next: Protection = __advance(p)?;
+  __advanceable(p)?;
   let n: i32 = content.len() + 1 + pad;
-  let inner: u8[] = __alloc_u8(n);
-  inner = __put(inner, 0, content);
-  inner = inner.with(content.len(), t.code() as u8);
-  let i: i32 = content.len() + 1;
-  while (i < n) {
-    inner = inner.with(i, 0 as u8);
+  let out: u8[] = __header(__alloc_u8(5 + n + TAG_LEN), 0, 23, 0x0303, n + TAG_LEN);
+  out = __put(out, 5, content);
+  out = out.with(5 + content.len(), t.code() as u8);
+  let i: i32 = 5 + content.len() + 1;
+  while (i < 5 + n) {
+    out = out.with(i, 0 as u8);
     i = i + 1;
   }
-  let header: u8[] = __header(__alloc_u8(5), 0, 23, 0x0303, n + TAG_LEN);
-  let sealed: u8[] = __seal(p, inner, header)?;
-  let out: u8[] = __alloc_u8(5 + sealed.len());
-  out = __put(out, 0, header);
-  return Ok(Sealed { record: __put(out, 5, sealed), next: next });
+  let sealed: u8[] = __seal(p, out[5:5 + n], out[0:5])?;
+  return Ok(Sealed { record: __put(out, 5, sealed), next: __advanced(p) });
 }
 ```
 
@@ -498,13 +510,13 @@ pub function (p: Protection) open(r: Record): Result[Opened, RecordError] {
   if (r.fragment.len() > MAX_PROTECTED) {
     return Err(RecordOverflow(r.fragment.len()));
   }
-  let next: Protection = __advance(p)?;
+  __advanceable(p)?;
   let header: u8[] = __header(__alloc_u8(5), 0, 23, r.version, r.fragment.len());
   let inner: u8[] = __open(p, r.fragment, header)?;
   let end: i32 = __content_end(inner)?;
   let t: ContentType = __inner_type(inner[end] as i32, end)?;
   __arr_set_len(inner, end);
-  return Ok(Opened { content_type: t, content: inner, next: next });
+  return Ok(Opened { content_type: t, content: inner, next: __advanced(p) });
 }
 ```
 

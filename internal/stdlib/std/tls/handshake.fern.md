@@ -639,7 +639,11 @@ function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, H
     }
     match (p.seal(t, content[from:to], 0)) {
       Ok(s) => {
-        out = __cat(out, s.record);
+        if (out.len() == 0) {
+          out = s.record;
+        } else {
+          out = out.concat(s.record);
+        }
         p = s.next;
       },
       Err(e) => {
