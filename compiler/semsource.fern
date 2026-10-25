@@ -3370,9 +3370,13 @@ function declared_type_head(name: string, s: State): string {
   return "";
 }
 
+function literal_owner(s: State, whole: typeinfo.Type, head: string): boolean {
+  return union_name(whole) == head || union_name(enum_origin(whole, s)) == head;
+}
+
 function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Expr[], s: State, expected: typeinfo.Type): Value {
   let whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, args, s);
-  if (union_name(whole) != head || !names_variant(s, whole, name)) {
+  if (!literal_owner(s, whole, head) || !names_variant(s, whole, name)) {
     return refused(s, "unsupported qualified path: " + head + "." + name);
   }
   return variant(name, whole, args, s);
@@ -3380,7 +3384,7 @@ function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Ex
 
 function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
   let whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, c.args, s);
-  if (union_name(whole) == head && names_variant(s, whole, name)) {
+  if (literal_owner(s, whole, head) && names_variant(s, whole, name)) {
     return variant(name, whole, c.args, s);
   }
   let at: i32 = ssasem.find_contract(s.contracts, head + "." + name);

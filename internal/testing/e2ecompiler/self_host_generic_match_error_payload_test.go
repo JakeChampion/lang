@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,34 +37,47 @@ function main(): i32 {
 }
 `
 
+func genericMatchErrorSources() []struct{ name, source string } {
+	qualified := strings.NewReplacer("Err(Wrapped(error))", "Err(Failure.Wrapped(error))", "Err(User(error))", "Err(Failure.User(error))", "Err(Budget)", "Err(Failure.Budget)").Replace(genericMatchErrorPayloadSource)
+	return []struct{ name, source string }{{"unqualified", genericMatchErrorPayloadSource}, {"qualified", qualified}}
+}
+
 func TestSelfHostGenericMatchErrorPayloadX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
-	if got := interpExit(t, buildLangBinForInterp(t), genericMatchErrorPayloadSource); got != 42 {
-		t.Fatalf("interpreter = %d, want 42", got)
+	for _, tc := range genericMatchErrorSources() {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := interpExit(t, buildLangBinForInterp(t), tc.source); got != 42 {
+				t.Fatalf("interpreter = %d, want 42", got)
+			}
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.source)); code != 42 {
+				t.Fatalf("native exit %d, want 42", code)
+			}
+			bin := buildBin(t, cli.gcc, t.TempDir(), "census", cli.emit(t, "x86-64-linux", tc.source, "FERN_SANITIZE=1"))
+			stderr, code := runWithStdin(t, cli.runner, bin, nil)
+			if code != 42 {
+				t.Fatalf("native census exit %d, want 42\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
-	if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", genericMatchErrorPayloadSource)); code != 42 {
-		t.Fatalf("native exit %d, want 42", code)
-	}
-	bin := buildBin(t, cli.gcc, t.TempDir(), "census", cli.emit(t, "x86-64-linux", genericMatchErrorPayloadSource, "FERN_SANITIZE=1"))
-	stderr, code := runWithStdin(t, cli.runner, bin, nil)
-	if code != 42 {
-		t.Fatalf("native census exit %d, want 42\n%s", code, stderr)
-	}
-	assertBalancedCensus(t, stderr)
 }
 
 func TestSelfHostGenericMatchErrorPayloadWasm(t *testing.T) {
 	cli := newStrictCLI(t)
-	if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", genericMatchErrorPayloadSource)); code != 42 {
-		t.Fatalf("wasm exit %d, want 42", code)
+	for _, tc := range genericMatchErrorSources() {
+		t.Run(tc.name, func(t *testing.T) {
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.source)); code != 42 {
+				t.Fatalf("wasm exit %d, want 42", code)
+			}
+			path := filepath.Join(t.TempDir(), "census.wat")
+			if err := os.WriteFile(path, []byte(cli.emit(t, "wasm32-wasi", tc.source, "FERN_LEAKCHECK=1")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			stderr, code := runWasmCensus(t, path)
+			if code != 42 {
+				t.Fatalf("wasm census exit %d, want 42\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
-	path := filepath.Join(t.TempDir(), "census.wat")
-	if err := os.WriteFile(path, []byte(cli.emit(t, "wasm32-wasi", genericMatchErrorPayloadSource, "FERN_LEAKCHECK=1")), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	stderr, code := runWasmCensus(t, path)
-	if code != 42 {
-		t.Fatalf("wasm census exit %d, want 42\n%s", code, stderr)
-	}
-	assertBalancedCensus(t, stderr)
 }
