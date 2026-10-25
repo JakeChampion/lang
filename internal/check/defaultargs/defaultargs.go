@@ -87,7 +87,7 @@ func Fill(p *ast.Program) []Error {
 	}
 	funcs := map[string][]ast.Param{}
 	for _, f := range p.Funcs {
-		if f.Receiver == nil {
+		if f.Receiver == nil && f.AssocType == "" {
 			funcs[f.Name] = f.Params
 		}
 	}
