@@ -1,0 +1,9 @@
+watch: 0 0 0
+send: 3
+close while watched: 0 0
+close the listener while watched: 0
+idle wait: 0
+watch the new pair: 0
+send: 1
+reactor_wait: 1 fd true readable true
+close: 0 0 0

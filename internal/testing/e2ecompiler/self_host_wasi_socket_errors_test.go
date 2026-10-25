@@ -39,7 +39,7 @@ function main(): i32 {
   (func $__fern_alloc (param i32) (result i32) (i32.const 16))
   (func $__fern_raw_free (param $p i32) (param $n i32)
     (if (i32.ne (local.get $p) (i32.const 16)) (then unreachable))
-    (if (i32.ne (local.get $n) (i32.const 16)) (then unreachable))
+    (if (i32.ne (local.get $n) (i32.const 20)) (then unreachable))
     (i32.store offset=4 (local.get $p) (i32.const 255)))
   (func $__fern_network_handle (result i32) (i32.const 1))
   (func $__fern_wasi_create_tcp_socket (param i32) (param $ret i32)
