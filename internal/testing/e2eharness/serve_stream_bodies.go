@@ -81,7 +81,7 @@ func streamUploadSum(body []byte) int {
 
 func CheckStreamBodiesOverlap(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	body := StreamUploadBytes()
 	up := dialUpload(t, addr, "/sum", len(body))
 	defer up.Close()
@@ -114,7 +114,7 @@ func CheckStreamBodiesOverlap(t *testing.T, addr string) {
 
 func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	checkStreamBodiesBinary(t, addr)
 	conn := dialRaw(t, addr)
 	chunked := "POST /text HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\nX-Sum: 11\r\n\r\n" +

@@ -94,8 +94,8 @@ func TestMetricsSupervisedServeX86_64(t *testing.T) {
 
 func checkMetricsServe(t *testing.T, addr, metricsAddr string, workers int) {
 	t.Helper()
-	e2eharness.WaitServerReady(t, addr, 10*time.Second)
-	e2eharness.WaitServerReady(t, metricsAddr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr)
+	e2eharness.WaitServerReady(t, metricsAddr)
 	const gets, posts, misses = 5, 2, 3
 	for i := 0; i < gets; i++ {
 		if resp := e2eharness.HTTPRoundTrip(t, addr, "/hello", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {

@@ -104,7 +104,7 @@ function main(): i32 {
 
 func CheckServeAllocsTLS(t *testing.T, addr string, ceiling int64, rounds int, pool *x509.CertPool) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	total, seconds := serveAllocsRounds(t, KeepAliveGETTLS(t, addr, pool), rounds)
 	checkAllocsCeiling(t, "HTTP/1.1 TLS hello", total, seconds, rounds, ceiling)
 }
