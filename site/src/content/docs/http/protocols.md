@@ -37,7 +37,7 @@ function main(): i32 {
     };
     match (identity.from_pem(cert, key)) {
         Ok(id) => {
-            return serve.supervise(8443, serve.config().with_tls(server.config(id)), handle);
+            return serve.supervise(8443, serve.config().with_tls(server.config(id, random_bytes(32))), handle);
         },
         Err(e) => {
             eprint(e.message());
@@ -57,10 +57,11 @@ Keys may be P-256, P-384 or Ed25519, in PKCS#8 or SEC1 form; RSA keys
 are not accepted. The handshake counts against `recv_deadline`, so a
 client that never completes one is closed when it passes.
 
-`server.config(id)` turns on session tickets with a random key and a
-two-hour lifetime. Behind a load balancer, share the key so a client can
-resume on any instance — `with_ticket_key(bytes)` — or turn tickets off
-with `without_tickets()`.
+`server.config(id, key)` turns on session tickets sealed under `key`
+with a two-hour lifetime. A key from `random_bytes(32)` serves one
+process; behind a load balancer, give every instance the same key so a
+client can resume on any of them, or turn tickets off with
+`without_tickets()`.
 
 ### Mutual TLS
 
@@ -69,7 +70,7 @@ them against:
 
 ```fern
 let roots: verify.Roots = verify.roots_from_file("clients-ca.pem")?;
-let tls: server.Config = server.config(id).with_client_roots(roots);
+let tls: server.Config = server.config(id, random_bytes(32)).with_client_roots(roots);
 ```
 
 On the client side, `std/tls/client`'s `with_identity(id)` presents a

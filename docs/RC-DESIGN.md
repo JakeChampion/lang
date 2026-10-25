@@ -26,7 +26,10 @@ an earlier one.
 
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
-runs tail recursion modulo cons. It is a graph-to-graph pass; the stages
+runs tail recursion modulo cons. It splices a function declared `@inline` at
+every call, as it splices a function called once. The function must not be
+recursive, must have at most 400 instructions, and must only read its view
+parameters (`seminline.forced_spliceable`). It is a graph-to-graph pass; the stages
 below never see what it removed. Four more run last. `semthread.fern` sends
 a branch the path to it already decided straight to the side it takes: a
 branch on a constant (the done flag a nested pattern's arms test), and a
