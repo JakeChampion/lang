@@ -1854,7 +1854,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
       if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
       } else {
-        live = used_after(a, bi, pos, w) || has_id(args, w) && !used_after(a, bi, pos, s);
+        live = used_after(a, bi, pos, w) || (has_id(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
       }
       if (live) {
         out = out.append(w);
@@ -1863,6 +1863,20 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
     k = k + 1;
   }
   return out;
+}
+
+// lends_view_of says an argument of the call is a view anchored on w,
+// lent beside the record w was read from.
+function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32): boolean {
+  let k: i32 = a.anchored.start[w];
+  while (k < a.anchored.start[w + 1]) {
+    let x: i32 = a.anchored.at[k];
+    if (has_id(args, x) && ssasem.holds_view(f, f.values[x])) {
+      return true;
+    }
+    k = k + 1;
+  }
+  return false;
 }
 
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], sup: SupplyTable): boolean[] {
