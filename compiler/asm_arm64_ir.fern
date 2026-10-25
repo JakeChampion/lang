@@ -2895,6 +2895,15 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
   return ssa_helper_entry(ins, reg_of, ".r", s);
 }
 
+// A helper name that the module defines itself is an ordinary call.
+function ssa_is_helper(name: string, s: asmcore.EmitState): boolean {
+  return ircore.is_fern_helper(name) && !s.funcs_ix.has(name);
+}
+
+function ssa_inline_back(s: asmcore.EmitState): boolean {
+  return !s.size && !s.funcs_ix.has("__fern_bytes_append_back");
+}
+
 // A compiled Fern helper takes the arguments of its call in reverse order.
 function helper_arg_reg(ins: ssa.SInst, a: i32): i32 {
   if (rtbytecopy.is_helper(ins.str)) {
@@ -3015,7 +3024,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
     return ssa_rc_dec(ins, reg_of, lp, 0, 0, s);
   }
-  if (ircore.is_fern_helper(ins.str) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
+  if (ssa_is_helper(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
     return ssa_helper_call(ins, reg_of, s);
   }
   let rr: string = "x0";
@@ -3029,7 +3038,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (asmcore.has_lane_param(s.float_mask(asmcore.sanitize_label(ins.str)))) {
     ssa_lane_refuse("call of " + ins.str);
   }
-  let helper: boolean = ircore.is_fern_helper(ins.str);
+  let helper: boolean = ssa_is_helper(ins.str, s);
   if (helper) {
     s = helper_call_needs(ins.str, s);
   } else if (ircore.is_c_call(ins.str)) {
@@ -4013,7 +4022,7 @@ function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
 
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
-  if (ssa.back_copy_call(ins) && !s.size) {
+  if (ssa.back_copy_call(ins) && ssa_inline_back(s)) {
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
   }
   if (k == 11) {
@@ -4520,7 +4529,7 @@ function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
     return false;
   }
-  if (ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) {
+  if (ssa_is_helper(ins.str, s) || ircore.is_c_call(ins.str)) {
     return false;
   }
   return irtables.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(ins.str));
@@ -4539,7 +4548,7 @@ function ssa_float_calls(f: ssa.SFunc, s: asmcore.EmitState): boolean[] {
 }
 
 function ssa_f64_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
-  if (ins.kind_tag != 11 || ins.result < 0 || ssa.rc_inlined(ins) || ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) {
+  if (ins.kind_tag != 11 || ins.result < 0 || ssa.rc_inlined(ins) || ssa_is_helper(ins.str, s) || ircore.is_c_call(ins.str)) {
     return false;
   }
   return asmcore.float_result(s.float_mask(asmcore.sanitize_label(ins.str)));
@@ -4590,7 +4599,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
-  let call_kinds: i32[] = ssa.cold_positions(f, s.size);
+  let call_kinds: i32[] = ssa.cold_positions(f, s.size, ssa_inline_back(s));
   let alloc: ssa.Alloc = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(call_kinds), call_kinds);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";

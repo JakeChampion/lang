@@ -1,8 +1,8 @@
 # 2026-10-25 (#13302): three x86_64 .text rows from a local perf-bench run on the merge with main,
 # and aarch64 deflate_encode.text and utf8_ingest_validated.text from Perf run 40210493745.
 # Re-pinned 2026-10-25 (#13302) from Perf run 40205765929. The inline
-# back-reference copy cuts deflate_decode.ir by 14% on x86_64 and 20% on aarch64,
-# and adds 1% `.text` to x86_64 deflate_decode. The other aarch64 rows take the
+# back-reference copy cuts deflate_decode.ir by 14% on x86_64 and 13% on aarch64,
+# and adds 1% `.text` to deflate_decode on both targets. The other aarch64 rows take the
 # moves of #13251 and main that no PR re-pinned: deflate_encode.ir is 17% lower,
 # and the utf8_ingest_*.text rows take main's typed JSON decoding.
 # Re-pinned 2026-10-25 from Perf run 40200803636 (main at 127eb63c), the aarch64 rows

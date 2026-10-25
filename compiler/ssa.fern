@@ -462,7 +462,7 @@ pub const COLD_BRANCH: i32 = 2;
 
 pub const COLD_INLINE: i32 = 3;
 
-pub function cold_positions(f: SFunc, size: boolean): i32[] {
+pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
   let cold: boolean[] = cold_blocks(f);
   let out: i32[] = [];
   for bi in 0..f.blocks.len() {
@@ -470,7 +470,7 @@ pub function cold_positions(f: SFunc, size: boolean): i32[] {
     for k in 0..blk.insts.len() {
       let ins: SInst = blk.insts[k];
       let kind: i32 = COLD_NONE;
-      if (cold_call(ins) || !size && back_copy_call(ins)) {
+      if (cold_call(ins) || back && back_copy_call(ins)) {
         kind = COLD_SLOW;
       } else if (rc_inlined(ins)) {
         if (!size) {

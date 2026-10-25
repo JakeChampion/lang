@@ -182,6 +182,80 @@ function main(): i32 {
 	}
 }
 
+// A module may define a function with a byte-copy helper's name. Its calls
+// reach that function with their arguments in order, and its copy loops stay
+// loops.
+func TestSelfHostByteCopyShadowedHelpers(t *testing.T) {
+	programs := map[string]string{
+		"back": `@noinline function __fern_bytes_append_back(own a: i32[], dist: i32, n: i32): i32[] {
+  let z: i32[] = [a.len(), dist, n];
+  return z;
+}
+@noinline function grow(own u: u8[], n: i32, d: i32): u8[] {
+  let i = 0;
+  while (i < n) { u = u.append(u[u.len() - d]); i = i + 1; }
+  return u;
+}
+function main(): i32 {
+  let a: i32[] = [11, 22, 33, 44, 55, 66, 77, 88, 99, 111];
+  let b = __fern_bytes_append_back(a, 2, 1);
+  if (b.len() != 3 || b[0] != 10 || b[1] != 2 || b[2] != 1) { return 1; }
+  let u: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  u = grow(u, 20, 8);
+  if (u.len() != 29 || u[28] != u[20]) { return 2; }
+  return 0;
+}`,
+		"range": `@noinline function __fern_bytes_append_range(own a: i32[], src: i32[], from: i32, n: i32): i32[] {
+  let z: i32[] = [a.len(), src.len(), from, n];
+  return z;
+}
+@noinline function copy(own u: u8[], src: u8[], from: i32, n: i32): u8[] {
+  let i = 0;
+  while (i < n) { u = u.append(src[from + i]); i = i + 1; }
+  return u;
+}
+function main(): i32 {
+  let b = __fern_bytes_append_range([1, 2, 3], [4, 5], 1, 7);
+  if (b.len() != 4 || b[0] != 3 || b[1] != 2 || b[2] != 1 || b[3] != 7) { return 1; }
+  let u: u8[] = [1, 2];
+  let src: u8[] = [9, 8, 7, 6, 5];
+  u = copy(u, src, 1, 3);
+  if (u.len() != 5 || u[2] != 8u8 || u[4] != 6u8) { return 2; }
+  return 0;
+}`,
+		"write": `@noinline function __fern_bytes_write_range(own a: i32[], at: i32, src: i32[], from: i32, n: i32): i32[] {
+  let z: i32[] = [a.len(), at, src.len(), from, n];
+  return z;
+}
+@noinline function put(own a: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
+  let i = 0;
+  while (i < n) { a = a.with(at + i, src[from + i]); i = i + 1; }
+  return a;
+}
+function main(): i32 {
+  let b = __fern_bytes_write_range([1, 2, 3], 4, [5, 6], 7, 8);
+  if (b.len() != 5 || b[0] != 3 || b[1] != 4 || b[2] != 2 || b[3] != 7 || b[4] != 8) { return 1; }
+  let u: u8[] = [1, 2, 3, 4];
+  let src: u8[] = [9, 8, 7];
+  u = put(u, 1, src, 0, 2);
+  if (u[1] != 9u8 || u[2] != 8u8 || u[3] != 4u8) { return 2; }
+  return 0;
+}`,
+	}
+	cli := buildSelfHostCLI(t)
+	for name, program := range programs {
+		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+			t.Run(name+"/"+target, func(t *testing.T) {
+				stderr, code := cli.exitOf(t, program, target, "FERN_LEAKCHECK=1")
+				if code != 0 {
+					t.Fatalf("shadowed helper: exit %d, want 0\n%s", code, stderr)
+				}
+				assertBalancedCensus(t, stderr)
+			})
+		}
+	}
+}
+
 func TestSelfHostByteCopyLoopRefusalsAndIndex(t *testing.T) {
 	const program = byteCopyLoopFunctions + `
 @noinline function forward(own a: u8[]): u8[] {
