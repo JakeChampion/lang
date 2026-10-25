@@ -3378,7 +3378,15 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (at < 0) {
     return variant_call(e, name, c, s, expected);
   }
-  return direct_call(c, s.contracts.list[at], s, statement, expected);
+  return exiting(name, direct_call(c, s.contracts.list[at], s, statement, expected));
+}
+
+// The builtin exit never returns, so the block it ends has no successor.
+function exiting(name: string, v: Value): Value {
+  if (name != "exit" || !v.s.ok || util.has_str(v.s.shadows, name)) {
+    return v;
+  }
+  return Value { s: terminate(v.s, t_unreachable()), id: v.id };
 }
 
 function lane_memory_call(name: string, c: ast.ExprCall): boolean {

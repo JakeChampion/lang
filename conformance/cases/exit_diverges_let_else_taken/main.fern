@@ -1,0 +1,30 @@
+// The let-else else branch ends in exit, so it diverges and the binding is
+// defined past the statement. Here the else branch is taken: the program
+// prints what came before and exits with the branch's status, never
+// reaching the code after it.
+
+enum Opt { Has(i32), Nil }
+
+function find(xs: i32[], want: i32): Opt {
+  for x in xs {
+    if (x == want) {
+      return Has(x);
+    }
+  }
+  return Nil;
+}
+
+function main(): i32 {
+  let xs: i32[] = [1, 2, 5];
+  let Has(five) = find(xs, 5) else {
+    eprint("5 must be present");
+    exit(1);
+  };
+  print("found five");
+  let Has(seven) = find(xs, 7) else {
+    eprint("7 must be present");
+    exit(3);
+  };
+  print("unreachable");
+  return five + seven;
+}

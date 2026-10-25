@@ -1909,9 +1909,9 @@ function print_assert(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
   return (out + ");", g);
 }
 
-function print_todo(w: ast.StmtWhile, depth: i32, f: Fmt): (string, Fmt) {
-  if (w.body.len() > 0) {
-    if let ast.StmtExpr(se) = w.body[0] {
+function print_todo(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
+  if (body.len() > 0) {
+    if let ast.StmtExpr(se) = body[0] {
       if let ast.ExprCall(c) = se.value {
         if (c.args.len() > 0) {
           if let ast.ExprBinary(b) = c.args[0] {
@@ -2545,12 +2545,12 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       if (ifs.origin == parser.ORIGIN_ASSERT) {
         return print_assert(ifs, depth, f);
       }
+      if (ifs.origin == parser.ORIGIN_TODO) {
+        return print_todo(ifs.then_body, depth, f);
+      }
       return print_if_chain(ifs, depth, f);
     },
     ast.StmtWhile(w) => {
-      if (w.todo) {
-        return print_todo(w, depth, f);
-      }
       if (w.is_loop) {
         let (lb, lg) = print_block(w.body, depth, f);
         return (loop_label(w.label) + "loop " + lb, lg);

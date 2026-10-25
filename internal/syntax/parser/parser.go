@@ -3960,11 +3960,10 @@ func (p *parser) parseTodo() (ast.Stmt, error) {
 	}
 	eprintCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "eprint"}, Args: []ast.Expr{text}}
 	exitCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "exit"}, Args: []ast.Expr{&ast.NumberLit{P: pos, Value: 101}}}
-	body := &ast.Block{P: pos, Stmts: []ast.Stmt{
+	return &ast.Block{P: pos, Stmts: []ast.Stmt{
 		&ast.ExprStmt{P: pos, Expr: eprintCall},
 		&ast.ExprStmt{P: pos, Expr: exitCall},
-	}}
-	return &ast.Loop{P: pos, Body: body, IsTodo: true, TodoMsg: msg}, nil
+	}, IsTodo: true, TodoMsg: msg}, nil
 }
 
 func (p *parser) parseUse(parent *ast.Block) error {
