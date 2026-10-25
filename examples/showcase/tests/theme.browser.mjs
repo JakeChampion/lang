@@ -30,6 +30,7 @@ const routes = [
   "/json/",
   "/compress/",
   "/handshake/",
+  "/image/",
   "/fractal/",
   "/_src/",
   "/_src/showcase/rally.fern.md",

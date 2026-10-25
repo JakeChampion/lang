@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Resize, tone, and encode an image with Fern in WebAssembly. Your image stays in your browser, and the native server checks the same pipeline." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Image pipeline · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/bench/style.css" />
+  </head>
+  <body class="app-page image-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/" aria-label="Fern, in action home"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/imaging.fern.md">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow"><span>19</span>Pixels that stay on your device</div>
+          <h1>Image <em>pipeline.</em></h1>
+          <p>Resize an image, change its tone, and encode it as PNG with Fern compiled to WebAssembly. Your own image never leaves this page. Your browser's canvas runs the same steps beside it.</p>
+          <div class="tech-chips"><span>fern-image</span><span>Bilinear resize</span><span>PNG encoder</span><span>Canvas</span></div>
+        </section>
+        <div id="connection" class="status" role="status">Load the Fern kernel</div>
+      </div>
+      <form class="bench-controls" id="controls">
+        <label
+          >Image
+          <select id="source">
+            <option value="640x480">Generated test image · 640 × 480</option>
+            <option value="1280x960" selected>Generated test image · 1280 × 960</option>
+            <option value="file">Your own image · this browser only</option>
+          </select></label
+        ><label id="seed-field"
+          >Seed <input id="seed" type="number" min="0" max="1000000" value="1" /></label
+        ><label id="file-field" hidden
+          >File <input id="file" type="file" accept="image/*" /></label
+        ><label
+          >Width
+          <select id="target">
+            <option value="160">160 px</option>
+            <option value="320" selected>320 px</option>
+            <option value="640">640 px</option>
+          </select></label
+        ><label
+          >Filter
+          <select id="filter">
+            <option value="0" selected>Bilinear</option>
+            <option value="1">Nearest neighbor</option>
+          </select></label
+        ><label
+          >Tone
+          <select id="tone">
+            <option value="0" selected>Color</option>
+            <option value="1">Grayscale</option>
+          </select></label
+        ><div class="button-group">
+          <button class="button primary" id="run" type="submit">Run the pipeline ▶</button>
+        </div>
+      </form>
+      <p class="bench-summary" id="summary" role="status">
+        The server and this page draw the same test image from one Fern module.
+      </p>
+      <div class="image-pair">
+        <figure>
+          <canvas id="input" width="320" height="240" aria-label="Input image"></canvas>
+          <figcaption id="input-caption">Input</figcaption>
+        </figure>
+        <figure>
+          <img id="output" alt="Output of the Fern pipeline" hidden />
+          <figcaption><span id="output-caption">Fern output</span> <a id="download" download="fern-image.png" hidden>Download PNG</a></figcaption>
+        </figure>
+      </div>
+      <div class="table-scroll">
+        <table class="bench-table">
+          <thead>
+            <tr><th>Stage</th><th>Fern Wasm · this page</th><th>Native Fern · server</th><th>Browser canvas</th></tr>
+          </thead>
+          <tbody id="results">
+            <tr><td colspan="4">Run the pipeline to time each stage.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="bench-note" id="verdict">
+        For a generated image, this page compares the SHA-256 digest of its PNG with the server's.
+      </p>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          The pipeline comes from the fern-image packages: pixels checks each layout, resize scales with a bilinear
+          or nearest-neighbor filter, color converts to grayscale in linear light, and the PNG codec encodes the
+          result. The browser decodes your own image to RGBA pixels, and Fern does the rest in WebAssembly. For a
+          generated image, the native server runs the same stages, and the two PNG files must be identical.
+        </p>
+        <a href="/_src/showcase/imaging.fern.md">Read the pipeline ↗</a> · <a href="/_src/showcase/bench.fern.md">Read the endpoint ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

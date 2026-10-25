@@ -1,6 +1,6 @@
 # Fern, in action
 
-Eighteen web applications share one native Fern server. The homepage links each application and its source lesson.
+Nineteen web applications share one native Fern server. The homepage links each application and its source lesson.
 The application modules use literate Fern. Named sections explain the code that Fern compiles.
 
 | Application | URL | Server behavior |
@@ -23,6 +23,7 @@ The application modules use literate Fern. Named sections explain the code that 
 | JSON lab | `/json/` | Native Fern, Fern Wasm, and JSON.parse on identical generated JSON, tree and tape parsers |
 | Compression bench | `/compress/` | Fern gzip, Brotli, and zstd natively and in Wasm, browser gzip, browser decoders check Fern output |
 | Post-quantum handshake | `/handshake/` | ML-KEM-768 and X25519 hybrid key agreement, Fern Wasm client, native Fern server |
+| Image pipeline | `/image/` | fern-image resize, tone, and PNG encode in Fern Wasm on the visitor's image, native digest check |
 
 ## Run locally
 
@@ -165,8 +166,8 @@ Both applications report network round-trip time separately from server work. Ne
 
 ## Measured labs
 
-The JSON lab, the compression bench, and the post-quantum handshake run one Fern module on both sides.
-`measure.fern.md` and `handshake.fern.md` compile natively into the server and to the `web/bench` kernels.
+The JSON lab, the compression bench, the post-quantum handshake, and the image pipeline run one Fern module on both sides.
+`measure.fern.md`, `handshake.fern.md`, and `imaging.fern.md` compile natively into the server and to the `web/bench` kernels.
 The kernels take and return strings and byte lists through the canonical ABI.
 
 A deterministic generator produces each corpus from a seed and a size, so every engine reads identical bytes.
@@ -174,6 +175,10 @@ The server checks its checksum against the browser's checksum. Each benchmark pa
 A benchmark waits 1.5 seconds after the previous one, so it cannot hold up the game rooms.
 
 The handshake combines ML-KEM-768 and X25519. The browser supplies the client's random seed. The server draws its values from the operating system.
+
+The image pipeline uses the `fern-image` packages in this repository. The browser decodes the visitor's image to RGBA pixels, and Fern Wasm resizes, tones, and encodes it.
+The image does not go to the server. For a generated test image, the server runs the same stages natively, and the SHA-256 digests of the two PNG files must match.
+The server takes at most 1280 × 960 pixels and an output at most 640 pixels wide.
 
 ## Browser Wasm
 
