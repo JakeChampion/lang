@@ -1,14 +1,23 @@
 package sourcelint
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
+// The sweep is a composite action. reap-stale-runs.yml runs it on the cron as
+// the quiet-hours floor; main-housekeeping.yml (every push to main) and
+// cancel-on-merge.yml (every closed pull request) run it on the events.
 const reapFile = "reap-stale-runs.yml"
 
 func TestReapStaleRunsCancelsSafely(t *testing.T) {
-	src := workflowSource(t, reapFile)
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "actions", "reap-stale-runs", "action.yml"))
+	if err != nil {
+		t.Fatalf("read the reap action: %v", err)
+	}
+	src := string(b)
 
 	for _, want := range []struct{ needle, why string }{
 		{
@@ -67,24 +76,35 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
-	on, ok := onBlock(src)
-	if !ok {
-		t.Fatalf("%s has no `on:` block", reapFile)
-	}
-	if _, push := triggerBlock(on, "push"); !push {
-		if _, pr := triggerBlock(on, "pull_request"); !pr {
-			t.Errorf("%s is driven by the clock alone. Its cron did not fire for 69 "+
-				"minutes across three slots on the day it landed, because GitHub sheds "+
-				"scheduled runs under exactly the load this sweep is for. Keep a "+
-				"repository-event trigger (a merge, a closed pull request) as the "+
-				"mechanism and the cron as the quiet-hours floor", reapFile)
+	// The clock alone never carried the sweep: its cron did not fire for 69
+	// minutes across three slots on the day it landed, because GitHub sheds
+	// scheduled runs under exactly the load the sweep is for. A merge and a
+	// closed pull request are the events, each in the job that push already
+	// runs.
+	for file, event := range map[string]string{"main-housekeeping.yml": "push", "cancel-on-merge.yml": "pull_request"} {
+		wf := workflowSource(t, file)
+		if !strings.Contains(wf, "uses: ./.github/actions/reap-stale-runs") {
+			t.Errorf("%s does not run the reap action; the sweep loses its %s trigger", file, event)
+		}
+		on, ok := onBlock(wf)
+		if !ok {
+			t.Fatalf("%s has no `on:` block", file)
+		}
+		if _, ok := triggerBlock(on, event); !ok {
+			t.Errorf("%s no longer runs on %s", file, event)
 		}
 	}
 
-	if _, ok := topLevelBlock(src, "concurrency"); ok {
-		t.Errorf("%s has a concurrency group again. A pending run is not protected by "+
-			"`cancel-in-progress: false`: the newest pending run replaces it, so on a "+
-			"busy queue the sweep is cancelled before it ever starts. It went eight "+
-			"runs without completing once that way", reapFile)
+	floor := workflowSource(t, reapFile)
+	if !strings.Contains(floor, "uses: ./.github/actions/reap-stale-runs") || !strings.Contains(floor, "cron:") {
+		t.Errorf("%s is not the cron floor of the reap action", reapFile)
+	}
+	for _, file := range []string{reapFile, "main-housekeeping.yml"} {
+		if _, ok := topLevelBlock(workflowSource(t, file), "concurrency"); ok {
+			t.Errorf("%s has a concurrency group. A pending run is not protected by "+
+				"`cancel-in-progress: false`: the newest pending run replaces it, so on a "+
+				"busy queue the sweep is cancelled before it ever starts. It went eight "+
+				"runs without completing once that way", file)
+		}
 	}
 }

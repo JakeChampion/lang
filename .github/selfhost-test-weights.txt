@@ -16,6 +16,8 @@
 # Sixty-nine entries raised on 2026-10-18 from run 39087054640's audit (the
 # "Corrected weights" list scripts/ci-test-weights check prints: ceil of 1.5
 # times the measurement), after x86_64 shard 9 timed out on the stale ones.
+# Seven rows added on 2026-10-25 for the whole-compiler proofs that left
+# OWN_JOB_TESTS for the shards: ceil of 1.5 times run 40179239803's measurement.
 
 TestSelfHostASCIIByteText 2
 TestSelfHostAbortBacktraceOffArm64 2
@@ -258,6 +260,7 @@ TestSelfHostCCallFPShimsReturnInTheResultRegister 2
 TestSelfHostCLIBuildsForEveryNativeTarget 37
 TestSelfHostCLIByteViewEscape 4
 TestSelfHostCLIPrunesStdlibImportClosureX86_64 2
+TestSelfHostCLIStage2X86_64 73
 TestSelfHostCLIStderrIsOneLine 19
 TestSelfHostCLIX86_64 31
 TestSelfHostCRC32Array 2
@@ -341,6 +344,7 @@ TestSelfHostConstAggregateArm64PIE 2
 TestSelfHostConstArm64 2
 TestSelfHostConstExprFoldWasm 2
 TestSelfHostConstExprFoldX86_64 2
+TestSelfHostConstFuncGen2 78
 TestSelfHostConstGrammarX86_64 3
 TestSelfHostConstRefCheckX86_64 2
 TestSelfHostConstStringIR 2
@@ -907,6 +911,7 @@ TestSelfHostMixedStructReleaseWasm 2
 TestSelfHostMixedStructReleaseX86_64 2
 TestSelfHostMktempRetry 3
 TestSelfHostMockPlatformIR 2
+TestSelfHostModloadPerModuleWholeCompilerArm64 248
 TestSelfHostModloadPerModuleWholeCompilerX86_64 94
 TestSelfHostModuleNameMangle 17
 TestSelfHostModuleNameMangleCollision 12
@@ -1046,6 +1051,7 @@ TestSelfHostPerModuleClosureArgLinkX86_64 9
 TestSelfHostPerModuleCounterBSSLinkArm64 2
 TestSelfHostPerModuleCounterBSSLinkX86_64 2
 TestSelfHostPerModuleDynDispatchCrossModule 4
+TestSelfHostPerModuleEmitAllFixpointX86_64 204
 TestSelfHostPerModuleEmitAllObjectCacheX86_64 5
 TestSelfHostPerModuleFileBytes 3
 TestSelfHostPerModuleIncrementalCodegenX86_64 5
@@ -1226,6 +1232,7 @@ TestSelfHostSemanticSourcePrint 7
 TestSelfHostSemanticSourceRC 19
 TestSelfHostSemanticTailRecursion 33
 TestSelfHostSemanticTrmc 4
+TestSelfHostSemanticWholeCompilerX86_64 156
 TestSelfHostServeAcceptDistribution 13
 TestSelfHostServeAllocsPerRequest 11
 TestSelfHostServeAllocsPerRequestArm64 7
@@ -1303,6 +1310,7 @@ TestSelfHostSplitEmptySepIRX86_64 2
 TestSelfHostSplitEmptySepWasmIR 2
 TestSelfHostStage2Bootstrap 34
 TestSelfHostStage2Compiler 35
+TestSelfHostStage2FixpointArm64 139
 TestSelfHostStatBytes 3
 TestSelfHostStateMachineIR 2
 TestSelfHostStatementTerminators 25
@@ -1459,9 +1467,9 @@ TestSelfHostTraitsArm64 3
 TestSelfHostTraitsX86_64 4
 TestSelfHostTransitiveDepsDifferentialX86_64 2
 TestSelfHostTreeshakeBareNameKeepsFreeFunctionOnly 19
-TestSelfHostTreeshakeKeepsMapKeyMethodsX86_64 2
 TestSelfHostTreeshakeKeepsDisplayToStringX86_64 2
 TestSelfHostTreeshakeKeepsDropFinalizerX86_64 2
+TestSelfHostTreeshakeKeepsMapKeyMethodsX86_64 2
 TestSelfHostTreeshakeStdlibIR 13
 TestSelfHostTryBindingReclaimWasm 2
 TestSelfHostTryDefer 2
@@ -1646,6 +1654,7 @@ TestSelfHostWasmUDPGuestStorage 2
 TestSelfHostWasmUDPLifecycleCensus 2
 TestSelfHostWasmUnitsN2 11
 TestSelfHostWasmUnsupportedOpRefused 2
+TestSelfHostWasmWholeCompilerShardedLink 107
 TestSelfHostWatbinFlat 2
 TestSelfHostWatbinUndefinedReference 2
 TestSelfHostWatchParentGone 3

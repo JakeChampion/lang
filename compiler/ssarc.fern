@@ -1138,10 +1138,7 @@ function zero_local(own r: irtables.LowerResult, slot: i32): irtables.LowerResul
   return emit(r, ir.op_store_local(slot));
 }
 
-function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, carried: boolean, k: KnownFields): irtables.LowerResult {
-  if (!carried) {
-    return reuse_token(r, f, donor, k);
-  }
+function slot_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_store_local(token_slot(f)));
   return zero_local(r, donor);
@@ -1291,9 +1288,9 @@ function drop_fields_except(own r: irtables.LowerResult, slot: i32, fields: semr
   return r;
 }
 
-function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: ssaunits.Keeps, at: i32): irtables.LowerResult {
+function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: ssaunits.Keeps, at: i32, token: i32): irtables.LowerResult {
   if (ins.kind_tag == ssasem.tuple_new()) {
-    return reuse_tuple(r, f, ins);
+    return reuse_tuple(r, f, ins, token);
   }
   let fields: semrecords.Field[] = [];
   let shape: string = ins.str;
@@ -1311,7 +1308,7 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
   }
-  r = emit(r, ir.op_load_local(token_slot(f)));
+  r = emit(r, ir.op_load_local(token));
   r = emit(r, ir.op_const_i32(fields.len() + 1));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
@@ -1373,9 +1370,9 @@ function field_store(own r: irtables.LowerResult, fields: semrecords.Field[], i:
   return emit(r, ir.op_struct_set(i, load_width(fields[i].ty)));
 }
 
-function reuse_tuple(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+function reuse_tuple(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, token: i32): irtables.LowerResult {
   let elems: typeinfo.Type[] = tuple_elements(f.values[ins.result]);
-  r = emit(r, ir.op_load_local(token_slot(f)));
+  r = emit(r, ir.op_load_local(token));
   r = emit(r, ir.op_const_i32(elems.len()));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
@@ -3445,8 +3442,7 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   }
   r = emit(r, ir.op_store_local(ins.result));
   if (ins.kind_tag == ssasem.call() && ins.imm > 0) {
-    r = emit(r, ir.op_call_word());
-    r = emit(r, ir.op_store_local(ins.imm - 1));
+    r = capture_pair_words(r, ins.imm);
   }
   if (ins.kind_tag == ssasem.call() && ins.imm < 0) {
     r = capture_scalar_words(r, ins.imm);
@@ -4516,14 +4512,14 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 }
 
 function paired_op(name: string): boolean {
-  return scalar_op(name) || name == sempair.pair_word_name() || util.str_has_prefix(name, sempair.word_as_prefix()) || util.str_has_prefix(name, sempair.pair_set_prefix());
+  return scalar_op(name) || sempair.pair_word_slot(name) >= 0 || util.str_has_prefix(name, sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
 }
 
 function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (scalar_op(ins.str)) {
     return scalar_site(r, f, ins);
   }
-  if (ins.str == sempair.pair_word_name()) {
+  if (sempair.pair_word_slot(ins.str) >= 0) {
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_load_local(ins.result));
   }
@@ -4532,6 +4528,17 @@ function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   }
   r = emit(r, ir.op_drop());
   return emit(r, ir.op_const_i32(0));
+}
+
+function capture_pair_words(own r: irtables.LowerResult, imm: i32): irtables.LowerResult {
+  let base: i32 = ssasem.pair_capture_base(imm);
+  let slot: i32 = ssasem.pair_capture_count(imm) - 1;
+  while (slot >= 0) {
+    r = emit(r, ir.op_call_pair_word(slot));
+    r = emit(r, ir.op_store_local(base + slot));
+    slot = slot - 1;
+  }
+  return r;
 }
 
 function capture_scalar_words(own r: irtables.LowerResult, imm: i32): irtables.LowerResult {
@@ -4604,10 +4611,10 @@ function return_scalar_words(own r: irtables.LowerResult, b: ssa.SBlock): irtabl
   return r;
 }
 
-function pair_payload(b: ssa.SBlock): i32 {
+function pair_payload(b: ssa.SBlock, slot: i32): i32 {
   let found: i32 = 0 - 1;
   for ins in b.insts {
-    if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, sempair.pair_set_prefix())) {
+    if (ins.kind_tag == ssasem.call() && sempair.pair_set_slot(ins.str) == slot) {
       if (found >= 0) {
         return 0 - 2;
       }
@@ -5770,13 +5777,23 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       }
       r = supplies(r, f, p, step, defer0, built_kept, late);
       r = bracket_take(r, f, held);
+      let token: i32 = token_slot(f);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos), known_fields(f, p, b, pairs.selfs[pos]));
+        if (!ssaunits.carry_held_for(carry, b.id, pos)) {
+          r = reuse_token(r, f, pairs.selfs[pos], known_fields(f, p, b, pairs.selfs[pos]));
+        } else if (ssaunits.token_slot_held(keeps, pos)) {
+          token = pairs.selfs[pos];
+        } else {
+          r = slot_token(r, f, pairs.selfs[pos]);
+        }
       } else if (pairs.builds[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.builds[pos], true, known_fields(f, p, b, pairs.builds[pos]));
+        r = slot_token(r, f, pairs.builds[pos]);
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
-        r = reuse_construct(r, f, ins, keeps, kb);
+        r = reuse_construct(r, f, ins, keeps, kb, token);
+        if (token != token_slot(f)) {
+          r = zero_local(r, token);
+        }
       } else if (ins.result >= 0 && maps[ins.result]) {
         r = map_in_place(r, f, ins);
         step = ssaunits.Step { ...step, drops: without(step.drops, ins.args[0]) };
@@ -5879,14 +5896,18 @@ function set_return_words(own e: Emit, b: ssa.SBlock): Emit {
     return e;
   }
   e = Emit { ...e, r: return_scalar_words(e.r, b) };
-  let payload: i32 = pair_payload(b);
-  if (payload == 0 - 2) {
-    return Emit { ...e, why: "a paired return sets its word twice" };
-  }
-  if (payload >= 0) {
-    e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
-    e = Emit { ...e, r: emit(e.r, ir.op_ret_word()) };
-    e = Emit { ...e, r: emit(e.r, ir.op_drop()) };
+  let slot: i32 = 1;
+  while (slot >= 0) {
+    let payload: i32 = pair_payload(b, slot);
+    if (payload == 0 - 2) {
+      return Emit { ...e, why: "a paired return sets its word twice" };
+    }
+    if (payload >= 0) {
+      e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
+      e = Emit { ...e, r: emit(e.r, ir.op_ret_pair_word(slot)) };
+      e = Emit { ...e, r: emit(e.r, ir.op_drop()) };
+    }
+    slot = slot - 1;
   }
   return e;
 }

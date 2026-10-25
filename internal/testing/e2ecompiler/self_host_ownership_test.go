@@ -196,11 +196,12 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0\n%s", exit, stderr)
 		}
-		censusWithin(t, "modes-program", stderr, 7)
+		censusWithin(t, "modes-program", stderr, 22)
 	})
 }
 
-const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
+const inferredModesProgram = `import "std/crypto/chacha20poly1305";
+enum Node { Leaf(i32), Label(string), Empty }
 enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
 struct Cursor { toks: Node[], pos: i32 }
@@ -254,6 +255,17 @@ function view_keep(r: Rec, k: i32): Rec {
     if (text_view(r).len() > k) { return r; }
     return Rec { text: "x" + "", n: k };
 }
+struct Sealer { key: u8[], n: i32 }
+@noinline
+function sealed_len(s: Sealer, nonce: [u8]): i32 {
+    match (chacha20poly1305.seal(s.key, nonce, nonce, nonce)) { Ok(x) => { return x.len() + s.n; }, Err(_) => { return s.n; } }
+    return 0;
+}
+@noinline
+function sealer_or_new(s: Sealer, k: i32): Sealer {
+    if (k > 0) { return s; }
+    return Sealer { key: __alloc_u8(32), n: k };
+}
 @noinline
 function reads_only(n: Node): i32 {
     match (n) { Leaf(v) => { return v * 2; }, Label(s) => { return s.len(); }, Empty => { return 0; } }
@@ -297,6 +309,8 @@ function main(): i32 {
     let w: i32 = 0;
     while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
     if (w != 6) { return 6; }
+    let sl: Sealer = sealer_or_new(Sealer { key: __alloc_u8(32), n: 4 }, 1);
+    if (sealed_len(sl, __alloc_u8(12)) != 32) { return 11; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -411,6 +425,21 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(names, treeDrop) {
 		t.Errorf("names_of calls %s: a recursive walk whose result cannot hold the tree was inferred COUNTED through its own recursive call", treeDrop)
+	}
+	const sealerDrop = "__sem_release_Sealer"
+	fresh, ok := asmWholeFunc(string(asm), "sealer_or_new")
+	if !ok {
+		t.Fatal("no __fn_sealer_or_new in the emitted code")
+	}
+	if !strings.Contains(fresh, sealerDrop) {
+		t.Fatalf("sealer_or_new does not call %s — the marker this reads is gone, so the view-parameter assertion below proves nothing", sealerDrop)
+	}
+	sealing, ok := asmWholeFunc(string(asm), "sealed_len")
+	if !ok {
+		t.Fatal("no __fn_sealed_len in the emitted code")
+	}
+	if strings.Contains(sealing, sealerDrop) {
+		t.Errorf("sealed_len calls %s: a record whose field only reaches a callee's view parameter, which the callee never counts, was inferred COUNTED", sealerDrop)
 	}
 	const cursorDrop = "__sem_release_Cursor"
 	step, ok := asmWholeFunc(string(asm), "Cursor__advance")
