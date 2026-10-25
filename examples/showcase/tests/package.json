@@ -1,0 +1,10 @@
+{
+  "name": "fern-showcase-browser-tests",
+  "version": "0.0.0",
+  "description": "Browser suites for the Fern application showcase. ci-browser.sh runs them.",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

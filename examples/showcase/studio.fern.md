@@ -13,6 +13,7 @@ A project has at most 65536 integers. The server retains at most 24 projects and
 ```fern
 <<*>>=
 <<Project protocol>>
+<<Homepage preview>>
 ```
 
 ## Project protocol
@@ -527,5 +528,34 @@ function saved_project(state: State, app: string, name: string, initial: Project
     factory = foundry.configure(saved.cells, factory, 256);
   }
   return Ok(Project { ...initial, cells: saved.cells, revision: saved.revision, factory: factory, running: saved.running, program: saved.program });
+}
+```
+
+## Homepage preview
+
+The homepage draws each project of the commons room. A WebSocket subscription would take one of the 256 live slots.
+A plain request returns a small window instead: 32 × 16 factory cells, the 16 × 8 step grid, or the first 48 gates.
+
+```fern
+<<Homepage preview>>=
+@derive(json.Json)
+struct Preview { revision: i64, width: i32, cells: i32[] }
+
+pub function preview(state: State, app: string): Result[HttpResponse, http.HttpError] {
+  let target = room(state, app, "commons")?;
+  let p = state.projects.get()[target.at];
+  if (app == "foundry") {
+    let window: i32[] = [];
+    for y in 8..24 {
+      for x in 8..40 {
+        window = window.append(p.cells[y * 256 + x]);
+      }
+    }
+    return Ok(http.json_of(Preview { revision: p.revision, width: 32, cells: window }).with_header("Cache-Control", "no-store"));
+  }
+  if (app == "patchbay") {
+    return Ok(http.json_of(Preview { revision: p.revision, width: 8, cells: p.cells.take(128) }).with_header("Cache-Control", "no-store"));
+  }
+  return Ok(http.json_of(Preview { revision: p.revision, width: 3, cells: p.cells.take(144) }).with_header("Cache-Control", "no-store"));
 }
 ```
