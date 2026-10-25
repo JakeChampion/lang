@@ -39,6 +39,6 @@ function main(): i32 {
   print(f"byte view: {bytes[0]} {bytes[1]} {bytes[2]} len {bytes.len()}");
   print(f"view of a view: {tail[0]} {tail[1]} len {tail.len()}");
 
-  print(f"close: {reactor_ctl(r, 3, 0, 0)} {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)}");
+  print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)} {reactor_ctl(r, 3, 0, 0)}");
   return 0;
 }

@@ -231,9 +231,10 @@ connect under way through tcp-socket.subscribe, a connection through its
 input and output streams, a datagram socket through its datagram streams)
 and a wait polls them with a timer for a finite timeout. Two rules hold on
 every target: a host may report readiness spuriously (wasmtime does after a
-read that did not drain the socket), so a reader reads until -EAGAIN; and a
-socket is unwatched before it is closed, since on wasm the pollables a watch
-holds are children of its streams. Behind it, `tcp_recv_into(fd, buf)` is
+read that did not drain the socket), so a reader reads until -EAGAIN; and
+closing a socket stops every set watching it, as close(2) does for epoll and
+kqueue: on wasm, where the pollables a watch holds are children of the
+socket's streams, `tcp_close` unwatches it from each live set first. Behind it, `tcp_recv_into(fd, buf)` is
 the owned-buffer read: the bytes read into the caller's `u8[]`, 0 at EOF,
 -EAGAIN (wasi's 6) when nothing is queued and the socket is non-blocking,
 which on wasm is every socket, else -errno. A signal is a readiness event

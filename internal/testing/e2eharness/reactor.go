@@ -124,9 +124,7 @@ function main(): i32 {
     if (expect_ready(r, c, 1, 2000, 24) != 0) { return 24; }
     let got: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(c, got) != 2 || got[0] != 121u8) { return fail(25); }
-    // A socket is unwatched before it is closed: on wasm the pollables a
-    // watch holds are children of the socket's streams.
-    if (reactor_ctl(r, 2, c, 0) != 0) { return fail(26); }
+    // Closing a watched socket unwatches it.
     tcp_close(c);
     if (expect_ready(r, a, 1, 2000, 27) != 0) { return 27; }
     if (tcp_recv_into(a, buf) != 0) { return fail(28); }
