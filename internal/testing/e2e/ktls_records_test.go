@@ -57,6 +57,18 @@ import "std/string";
 import "std/tls/keyschedule";
 import "std/tls/record";
 
+// The one record raw holds; deframe is checked by the caller first.
+function only_record(raw: u8[]): record.Record {
+  match (record.deframe(raw)) {
+    Ok(d) => {
+      return d.records[0];
+    },
+    Err(_) => {
+      return record.Record { content_type: record.Alert, version: 0, fragment: [] };
+    }
+  }
+}
+
 // One suite both ways over a loopback pair: the kernel seals what a
 // writes and the record layer opens it at c, then the record layer seals
 // at c and the kernel opens it at a, each from sequence number 5, so
@@ -99,17 +111,17 @@ function suite(name: string, s: keyschedule.CipherSuite, ln: i32): string {
       if (d.records.len() != 1) {
         return name + " records " + d.records.len().to_string();
       }
-      match (out.open(d.records[0])) {
-        Ok(o) => {
-          opened = string_from_bytes_unchecked(o.content);
-        },
-        Err(e) => {
-          return name + " open " + e.message();
-        }
-      }
     },
     Err(e) => {
       return name + " deframe " + e.message();
+    }
+  }
+  match (out.open(only_record(raw))) {
+    Ok(o) => {
+      opened = string_from_bytes_unchecked(o.content);
+    },
+    Err(e) => {
+      return name + " open " + e.message();
     }
   }
   secret = secret.with(0, 200 as u8);
