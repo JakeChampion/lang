@@ -5558,12 +5558,14 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   let burst: __H3Burst = __H3Burst { reqs: [], touched: [] };
+  let buf: u8[] = cur.quic.buf;
+  let from: u8[] = cur.quic.from;
   let n: i32 = 0;
   while (n < __h3_burst()) {
-    let Ok(got) = net.recv_into(cur.quic.sock, cur.quic.buf, cur.quic.from) else {
+    let Ok(got) = net.recv_into(cur.quic.sock, buf, from) else {
       return (cur, fs, burst);
     };
-    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, cur.quic.buf[0:got], cur.quic.from, burst, opts, stop);
+    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, buf[0:got], from, burst, opts, stop);
     cur = r.0;
     fs = r.1;
     burst = r.2;
