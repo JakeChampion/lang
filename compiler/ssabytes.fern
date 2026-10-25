@@ -320,6 +320,26 @@ function string_copy(): irtables.LowerResult {
   return reader(string_name(), [ir.op_const_str(""), ir.op_str_concat()], [ir.packed(ir.op_str_from_bytes())], 1);
 }
 
+// A kernel helper serves one builtin. The view lowering calls the other helpers itself.
+pub function served_builtin(helper: string): string {
+  if (helper == crc32_name()) {
+    return "__crc32_cksum_array";
+  }
+  if (helper == crc32_ieee_name()) {
+    return "__crc32_ieee_array";
+  }
+  if (helper == mismatch_name()) {
+    return "__mismatch_bytes";
+  }
+  if (helper == sum_name()) {
+    return "__sum_bytes_array";
+  }
+  if (helper == bsd_name()) {
+    return "__bsd_sum_bytes";
+  }
+  return "";
+}
+
 pub function helpers(): irtables.LowerResult[] {
   return [length(), data(), slice(), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
 }

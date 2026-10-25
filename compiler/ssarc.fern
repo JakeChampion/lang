@@ -1910,7 +1910,8 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   let sc: SchemaScan = schema_scan(f);
   if (sc.bytes) {
     for h in ssabytes.helpers() {
-      if (!done.has(h.name)) {
+      let served: string = ssabytes.served_builtin(h.name);
+      if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0)) {
         out = Fresh { ...out, rows: out.rows.append(h) };
       }
     }
