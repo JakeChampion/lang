@@ -454,12 +454,23 @@ function __trailer_fields(t: HeaderMap): qpack.Field[] {
 ```fern
 <<8 pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn>>=
 pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
-  let body: u8[] = resp.body_bytes();
+  match (resp.body) {
+    BodyText(s) => {
+      return c.__respond_with(id, resp, s.as_bytes());
+    },
+    _ => {
+      return c.__respond_with(id, resp, resp.body_bytes());
+    }
+  }
+}
+
+function (c: Conn) __respond_with(id: i64, resp: HttpResponse, bytes: [u8]): Conn {
+  let n: i32 = bytes.len();
   if (http.http_bodiless(resp.status)) {
-    body = [];
+    n = 0;
   }
   let whole: boolean = resp.trailers.names.len() == 0;
-  let sent: Conn = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, body.len() as i64, c.date), body, whole) }.__applied(0 as i64);
+  let sent: Conn = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, n as i64, c.date), bytes[0:n], whole) }.__applied(0 as i64);
   if (whole) {
     return sent;
   }
