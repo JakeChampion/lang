@@ -335,6 +335,7 @@ generic_view_methods                                 0
 grow_past_capacity                                   0
 hash_struct_enum                                     0
 headers_map                                          0
+header_struct_literals                               0
 hello_world                                          0
 hex_literal                                          0
 hex_literal_width                                    0
