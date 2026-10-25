@@ -18,3 +18,15 @@ jobs:
       - run: ./fern-image/scripts/test.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+  wasm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+      - run: make build
+      - run: ./fern-image/scripts/test-wasm.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern

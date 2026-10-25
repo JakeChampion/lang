@@ -41,6 +41,8 @@ Cancellation checks occur before every node request, including hits, and during 
 Six cases verify exact output, admission, deterministic eviction, consumer errors, cancellation, and retained rows.
 They include a 64-node graph with 128 cache entries and cancellation of a partial row after cached inputs.
 Consumer-error cases retain rows after failure and propagate both heap strings and integer errors.
+The image CI workflow runs native checks and a separate Wasm job with the pinned toolchain.
+The Wasm sanitizer checks final live bytes. Its runtime does not provide the native use-after-free detectors.
 
 ## Allocator observations
 
