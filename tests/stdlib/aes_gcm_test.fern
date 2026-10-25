@@ -236,6 +236,81 @@ function test_prepared_key(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// GCM test case 4 in place: iv cafebabe with the sequence number facedbaddecaf888 folded in is the case's nonce,
+// and the aad sits ahead of the text in the one buffer.
+function laid4(): u8[] {
+  let buf: u8[] = __alloc_u8(20 + 60 + 16);
+  let aad: u8[] = aad3();
+  let pt: u8[] = p60();
+  for i in 0..20 {
+    buf = buf.with(i, aad[i]);
+  }
+  for i in 0..60 {
+    buf = buf.with(20 + i, pt[i]);
+  }
+  return buf;
+}
+
+function iv4(): u8[] {
+  return __codec_bytes(hex.decode("cafebabe0000000000000000"));
+}
+
+function seq4(): u64 {
+  return 0xfacedbaddecaf888 as u64;
+}
+
+// Seals the laid-out case under seal_seq, flips byte flip of the result when it is not negative, and opens it
+// under open_seq.
+function round_trip4(k: aes_gcm.Key, seal_seq: u64, flip: i32, open_seq: u64): Result[u8[], aead.AeadError] {
+  let sealed: u8[] = k.seal_in_place(iv4(), seal_seq, laid4(), 0, 20, 20, 60)?;
+  if (flip >= 0) {
+    sealed = sealed.with(flip, sealed[flip] ^ 1 as u8);
+  }
+  return k.open_in_place(iv4(), open_seq, sealed, 0, 20, 20, 60);
+}
+
+function opened4(r: Result[u8[], aead.AeadError]): string {
+  match (r) {
+    Ok(b) => {
+      return hex.encode(b[20:80]);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_in_place(): test.TestOutcome {
+  let Ok(k) = aes_gcm.key(__codec_bytes(hex.decode(k3()))) else {
+    return test.fail("key");
+  };
+  if (shown(k.seal_in_place(iv4(), seq4(), laid4(), 0, 20, 20, 60)) != hex.encode(aad3()) + sealed4()) {
+    return test.fail(shown(k.seal_in_place(iv4(), seq4(), laid4(), 0, 20, 20, 60)));
+  }
+  return test.assert_eq(opened4(round_trip4(k, seq4(), 0 - 1, seq4())), hex.encode(p60()));
+}
+
+function test_in_place_refuses(): test.TestOutcome {
+  let Ok(k) = aes_gcm.key(__codec_bytes(hex.decode(k3()))) else {
+    return test.fail("key");
+  };
+  let forged: string = "aead: the message does not verify";
+  if (opened4(round_trip4(k, seq4(), 0 - 1, seq4() + 1 as u64)) != forged) {
+    return test.fail("the next sequence number");
+  }
+  if (opened4(round_trip4(k, seq4(), 95, seq4())) != forged) {
+    return test.fail("a changed tag");
+  }
+  if (opened4(round_trip4(k, seq4(), 25, seq4())) != forged) {
+    return test.fail("a changed ciphertext byte");
+  }
+  if (opened4(round_trip4(k, seq4(), 3, seq4())) != forged) {
+    return test.fail("changed aad");
+  }
+  return test.assert_eq(shown(k.seal_in_place(zeros(8), seq4(), laid4(), 0, 20, 20, 60)), "aead: the nonce is 8 bytes, want 12");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/crypto/aes_gcm");
   r = r.it("aes-128 block, FIPS-197 C.1", test_block128);
@@ -257,6 +332,8 @@ function main(): i32 {
   r = r.it("open refuses a forgery", test_open_refuses);
   r = r.it("key and nonce lengths", test_lengths);
   r = r.it("a key prepared once", test_prepared_key);
+  r = r.it("seal and open in place, GCM test case 4 under a sequence number", test_in_place);
+  r = r.it("open in place refuses a forgery", test_in_place_refuses);
   return r.finish();
 }
 
