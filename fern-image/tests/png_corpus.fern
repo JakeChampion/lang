@@ -6,11 +6,43 @@ function error_name(error: png.PngError): string {
   return match (error) { png.Signature => "signature", png.Truncated => "truncated", png.Length => "length", png.Crc => "crc", png.Order => "order", png.Unsupported => "unsupported", png.Dimensions => "dimensions", png.Limit => "limit", png.Compressed => "compressed", png.Scanline => "scanline" };
 }
 
+function never_cancel(): boolean {
+  return false;
+}
+
+function row_bytes(data: [u8], first: i32, count: i32, limits: pixels.Limits): Result[u8[], png.RowError[string]] {
+  let seed: u8[] = [];
+  let consume = (bytes: u8[], row: pixels.Image): Result[u8[], string] => {
+    if (row.layout.height != 1 || row.layout.bytes != row.layout.stride || row.data.len() != row.layout.stride) {
+      return Err("row layout");
+    }
+    let bytes = bytes;
+    for byte in row.data {
+      bytes = bytes.append(byte);
+    }
+    return Ok(bytes);
+  };
+  let result = png.fold_rows(data, first, count, limits, png.default_row_limits(), never_cancel, seed, consume)?;
+  return Ok(result.value);
+}
+
+function rejected_rows(data: [u8], limits: pixels.Limits): string {
+  let consume = (value: i32, _row: pixels.Image): Result[i32, string] => Ok(value);
+  return match (png.fold_rows(data, 0, 1, limits, png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(error)) => error_name(error), _ => "unexpected" };
+}
+
 function inspect(path: string, index: i32): i32 {
   let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
   let prefix = "index=" + index.to_string();
   let limits = pixels.Limits { max_pixels: 65536, max_bytes: 262144 };
-  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => { print(prefix + " status=error error=" + error_name(e)); return 0; } };
+  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => { print(prefix + " status=error error=" + error_name(e) + " row_error=" + rejected_rows(data, limits)); return 0; } };
+  let rows = match (row_bytes(data, 0, image.layout.height, limits)) { Ok(v) => v, Err(_) => { return 6; } };
+  let first = image.layout.height / 2;
+  let count = image.layout.height - first;
+  if (count > 2) {
+    count = 2;
+  }
+  let selected = match (row_bytes(data, first, count, limits)) { Ok(v) => v, Err(_) => { return 7; } };
   let encoded = match (png.encode(image, 1048576)) { Ok(v) => v, Err(_) => { return 3; } };
   match (write_file_bytes(path + ".raw", image.data)) {
     Ok(_) => {},
@@ -24,8 +56,20 @@ function inspect(path: string, index: i32): i32 {
       return 5;
     }
   }
+  match (write_file_bytes(path + ".rows.raw", rows)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 8;
+    }
+  }
+  match (write_file_bytes(path + ".selected.raw", selected)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 9;
+    }
+  }
   print(prefix + " status=ok width=" + image.layout.width.to_string() + " height=" + image.layout.height.to_string()
-    + " channels=" + pixels.channels(image.layout.format).to_string());
+    + " channels=" + pixels.channels(image.layout.format).to_string() + " first=" + first.to_string() + " count=" + count.to_string());
   return 0;
 }
 

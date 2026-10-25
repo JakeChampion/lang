@@ -26,9 +26,9 @@ Bilinear nodes keep their interpolation and byte rounding before nearest coordin
 The graph depth limit remains 64 nodes.
 All graph validation completes before execution. The validation includes nodes that fusion skips during materialization.
 
-Cache contexts retain per-node execution and cache statistics. Zero cache payload bytes keep this behavior.
+Existing cached batch APIs retain per-node execution and cache statistics. Zero cache payload bytes keep this behavior.
 The optimization applies to uncached row requests and their use inside ordinary tile requests.
-Fusion for cached requests needs a separate accounting contract.
+The explicit [fused batch API](cached-fusion.md) has a separate cache accounting contract.
 
 ## Cancellation and ownership
 

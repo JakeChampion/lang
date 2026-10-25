@@ -8612,6 +8612,7 @@ func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 func (c *checker) checkEscapes(prog *ast.Program) {
 	c.checkSliceEscapes(prog)
 	c.checkStrEscapes(prog)
+	c.checkCompositeViewEscapes(prog)
 }
 
 type escapeEnv struct {

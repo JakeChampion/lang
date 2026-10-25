@@ -1,0 +1,4 @@
+main.fern:7:1: error[E063]: the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead
+main.fern:12:1: error[E063]: the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead
+main.fern:17:1: error[E063]: the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead
+main.fern:23:1: error[E065]: the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead
