@@ -22,10 +22,8 @@ function main(): i32 {
         None => {}
     }
 
-    // The digest pipes straight into an encoder — no intervening
-    // unchecked construction — and agrees with the _hex variant, which
-    // does still return text.
-    if (hex.encode(d) != hex.encode(crypto.sha256("abc".as_bytes()))) { return 4; }
+    // The one-shot digest agrees with the streaming hasher.
+    if (hex.encode(d) != hex.encode(crypto.sha256_new().update("abc".as_bytes()).finish())) { return 4; }
     if (hex.encode(d) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 5; }
 
     // The HMAC key and message borrow byte views.

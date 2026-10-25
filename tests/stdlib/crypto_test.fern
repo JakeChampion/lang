@@ -301,9 +301,9 @@ function main(): i32 {
   r = r.it("sha256 empty", test_sha256_empty);
   r = r.it("sha256 abc", test_sha256_abc);
   r = r.it("sha256 pangram", test_sha256_pangram);
-  r = r.it("sha256_bytes len", test_sha256_bytes_len);
+  r = r.it("sha256 len", test_sha256_bytes_len);
   r = r.it("hmac-sha256 vector", test_hmac_sha256);
-  r = r.it("hmac_bytes len", test_hmac_bytes_len);
+  r = r.it("hmac_sha256 len", test_hmac_bytes_len);
   r = r.it("consteq", test_consteq);
   r = r.it("hmac_verify", test_hmac_verify);
   r = r.it("hmac_verify_rejects_one_bit", test_hmac_verify_rejects_one_bit);

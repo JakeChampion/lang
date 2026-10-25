@@ -83,7 +83,7 @@ function main(): i32 {
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);
-  r = r.it("final_bytes len", test_bytes_len);
+  r = r.it("finish len", test_bytes_len);
   r = r.it("million a, 1000x1000", test_million_a_chunked);
   r = r.it("7-byte updates", test_seven_byte_updates);
   r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);
