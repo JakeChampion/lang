@@ -1643,6 +1643,19 @@ function lift_binding_param_is_fn(fd: parser.FuncDecl, vars: VarDecls, callee: s
   return binding_param_is_fn(fd, vars, callee, idx, mfuncs, 0);
 }
 
+function typed_callee_param_is_fn(callee: ast.Expr, idx: i32): boolean {
+  let tag = ast.expr_ty(callee);
+  if (tag.len() == 0 || tag == "fn") {
+    return false;
+  }
+  let signature = fn_param_from_spelling("", tag);
+  return signature.type_name == "fn" && spelled_param_is_fn(signature.fn_param_types, idx);
+}
+
+function named_callee_param_is_fn(fd: parser.FuncDecl, vars: VarDecls, callee: string, idx: i32, mfuncs: MFuncs): boolean {
+  return callee.len() > 0 && (lift_callee_param_is_fn(mfuncs, callee, idx) || lift_binding_param_is_fn(fd, vars, callee, idx, mfuncs));
+}
+
 function binding_param_is_fn(fd: parser.FuncDecl, vars: VarDecls, callee: string, idx: i32, mfuncs: MFuncs, depth: i32): boolean {
   for p in fd.params {
     if (p.name == callee) {
@@ -2320,7 +2333,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
           fs = vfr.funcs;
           ct = vfr.counter;
           nargs = nargs.append(vfr.expr);
-        } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_binding_param_is_fn(fd, vars, cnm, ai, mfuncs))) {
+        } else if (!is_mkclo && (typed_callee_param_is_fn(call.callee, ai) || named_callee_param_is_fn(fd, vars, cnm, ai, mfuncs))) {
           let fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, vars, fs, ct, gfns, mfuncs, structs);
           fs = fr.funcs;
           ct = fr.counter;
