@@ -134,7 +134,7 @@ function drawWave(buffer) {
     context = canvas.getContext("2d"),
     samples = (buffer.byteLength - 44) / 2;
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.strokeStyle = "#dce394";
+  context.strokeStyle = "#74c69d";
   context.lineWidth = 1.5;
   context.beginPath();
   for (let x = 0; x < canvas.width; x++) {

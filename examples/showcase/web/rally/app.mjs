@@ -218,7 +218,7 @@ function draw(now) {
     (canvas.width - 960 * scale) / 2,
     (canvas.height - 540 * scale) / 2,
   );
-  context.strokeStyle = "#abc79230";
+  context.strokeStyle = "#74c69d33";
   context.lineWidth = 1;
   context.setLineDash([5, 12]);
   context.beginPath();
@@ -229,8 +229,8 @@ function draw(now) {
   context.beginPath();
   context.arc(480, 270, 65, 0, Math.PI * 2);
   context.stroke();
-  context.font = "italic 25px Georgia";
-  context.fillStyle = "#b4cf981f";
+  context.font = '600 26px Fraunces, Georgia, serif';
+  context.fillStyle = "#74c69d26";
   context.textAlign = "center";
   context.fillText("fern", 480, 278);
   const game = frame?.game || {
@@ -250,17 +250,17 @@ function draw(now) {
     if (trail.length > 9) trail.shift();
   } else trail.length = 0;
   trail.forEach((point, i) => {
-    context.fillStyle = `rgba(209,232,167,${i / 90})`;
+    context.fillStyle = `rgba(157,220,188,${i / 90})`;
     context.beginPath();
     context.arc(point.x, point.y, 6, 0, Math.PI * 2);
     context.fill();
   });
-  context.fillStyle = "#dae8ac";
+  context.fillStyle = "#9ddcbc";
   context.beginPath();
   context.roundRect(51, left * 540 - 56, 10, 112, 5);
   context.roundRect(899, right * 540 - 56, 10, 112, 5);
   context.fill();
-  context.fillStyle = "#f4f3d6";
+  context.fillStyle = "#f2f7f3";
   context.beginPath();
   context.arc(x, y, 8, 0, Math.PI * 2);
   context.fill();

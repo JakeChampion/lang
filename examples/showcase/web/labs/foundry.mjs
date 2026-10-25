@@ -36,18 +36,18 @@ const names = [
     "Rail station",
   ],
   colors = [
-    "#152437",
-    "#e6b768",
-    "#719fb1",
-    "#719fb1",
-    "#719fb1",
-    "#719fb1",
-    "#89d6a6",
-    "#e38f72",
-    "#79cce6",
-    "#b0a8cf",
-    "#67d8e6",
-    "#d9bc7b",
+    "#0c1510",
+    "#d9b169",
+    "#6f9486",
+    "#6f9486",
+    "#6f9486",
+    "#6f9486",
+    "#74c69d",
+    "#d0876a",
+    "#8fc0b8",
+    "#b3a6c2",
+    "#7fb7c9",
+    "#c9b27a",
   ];
 let tool = 2,
   frame,
@@ -145,7 +145,7 @@ function draw() {
     canvas.height = Math.round(r.height * d);
   }
   ctx.setTransform(d, 0, 0, d, 0, 0);
-  ctx.fillStyle = "#0c1727";
+  ctx.fillStyle = "#0c1510";
   ctx.fillRect(0, 0, r.width, r.height);
   const scale = Number($("zoom").value),
     ox = Number($("pan-x").value),
@@ -160,14 +160,14 @@ function draw() {
         state = frame?.values[index] || 0,
         cargo = state & 15,
         ingots = (state >>> 4) & 15;
-      ctx.strokeStyle = "#203148";
+      ctx.strokeStyle = "#1f3027";
       ctx.strokeRect(x * scale, y * scale, scale, scale);
       if (kind > 0 && kind < colors.length) {
         ctx.fillStyle = colors[kind];
         ctx.fillRect(x * scale + 2, y * scale + 2, scale - 4, scale - 4);
         if (scale >= 14) {
-          ctx.fillStyle = "#122034";
-          ctx.font = `${Math.min(16, scale - 5)}px system-ui`;
+          ctx.fillStyle = "#0c1510";
+          ctx.font = `${Math.min(16, scale - 5)}px "IBM Plex Mono", monospace`;
           ctx.textAlign = "center";
           ctx.fillText(
             ["", "M", ">", "v", "<", "^", "D", "S", "G", "=", "+", "R"][kind],
@@ -176,13 +176,13 @@ function draw() {
           );
         }
         if (frame?.powered?.[index]) {
-          ctx.strokeStyle = "#62e0ef";
+          ctx.strokeStyle = "#9ddcbc";
           ctx.lineWidth = 2;
           ctx.strokeRect(x * scale + 2, y * scale + 2, scale - 4, scale - 4);
           ctx.lineWidth = 1;
         }
         if (ingots) {
-          ctx.fillStyle = "#78d9e9";
+          ctx.fillStyle = "#d8f3dc";
           ctx.fillRect(
             (x + 0.12) * scale,
             (y + 0.12) * scale,
@@ -191,7 +191,7 @@ function draw() {
           );
         }
         if (cargo) {
-          ctx.fillStyle = "#f5d68a";
+          ctx.fillStyle = "#f1ead6";
           ctx.beginPath();
           ctx.arc(
             (x + 0.73) * scale,

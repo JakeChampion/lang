@@ -2820,6 +2820,8 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { let p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
 		{"orphan-impl-imported-trait-builtin-type", "import \"core/cmp\";\nimpl cmp.Display for i32 {}\nfunction main(): i32 { return 0; }\n"},
+		{"orphan-impl-imported-trait-builtin-struct", "import \"core/cmp\";\nimpl cmp.Hash for Duration { function hash(self: Duration): i32 { return 0; } }\nfunction main(): i32 { return 0; }\n"},
+		{"orphan-impl-imported-trait-builtin-enum", "import \"core/cmp\";\nimpl cmp.Debug for IoError { function to_debug(self: IoError): string { return \"e\"; } }\nfunction main(): i32 { return 0; }\n"},
 		{"orphan-impl-clashing-with-builtin-inherent", "import \"core/cmp\";\nimpl cmp.Display for i32 { function to_string(self: i32): string { return \"x\"; } }\nfunction main(): i32 { return 0; }\n"},
 		{"e074-imported-trait-then-inherent", "import \"core/cmp\";\nstruct P { a: i32 }\nimpl cmp.Display for P { function to_string(self: P): string { return \"t\"; } }\nfunction (p: P) to_string(): string { return \"i\"; }\nfunction main(): i32 { return 0; }\n"},
 		{"e074-inherent-then-imported-trait", "import \"core/cmp\";\nstruct P { a: i32 }\nfunction (p: P) to_string(): string { return \"i\"; }\nimpl cmp.Display for P { function to_string(self: P): string { return \"t\"; } }\nfunction main(): i32 { return 0; }\n"},

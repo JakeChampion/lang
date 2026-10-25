@@ -4,15 +4,15 @@ import "std/http/cache";
 import "std/headers";
 import "std/time";
 
-function at(sec: i64): Instant {
-  return time.instant_from_unix(sec);
+function at(sec: i64): time.Timestamp {
+  return time.timestamp_from_unix(sec);
 }
 
-function changed(): Instant {
+function changed(): time.Timestamp {
   return at(784111777 as i64);
 }
 
-function now(): Instant {
+function now(): time.Timestamp {
   return at(1791768000 as i64);
 }
 
@@ -158,7 +158,7 @@ function test_evaluate_absent(): test.TestOutcome {
 
 function test_if_range(): test.TestOutcome {
   let v: cache.Validators = current();
-  let n: Instant = now();
+  let n: time.Timestamp = now();
   let out: string = cache.if_range(req("GET", ["Range", "bytes=0-1"]), v, n).to_string() + " ";
   out = out + cache.if_range(req("GET", ["If-Range", "\"v1\""]), v, n).to_string() + " ";
   out = out + cache.if_range(req("GET", ["If-Range", "W/\"v1\""]), v, n).to_string() + " ";
