@@ -101,6 +101,19 @@ pub trait Eq {
 
 pub trait Ord {
   function cmp(self: Self, other: Self): i32;
+
+  // Eight bytes from offset of an encoding whose byte order is the order of cmp, as a big-endian word.
+  // For a and b that share their first offset bytes, a.cmp(b) < 0 gives
+  // a.cmp_prefix(offset) <= b.cmp_prefix(offset), and equal values give equal words.
+  function cmp_prefix(self: Self, offset: i32): u64 {
+    return 0u64;
+  }
+
+  // The number of leading bytes that the encodings of self and other share. A type
+  // whose cmp_prefix ignores its offset keeps this default, so the offset is always 0.
+  function cmp_shared(self: Self, other: Self): i32 {
+    return 0;
+  }
 }
 
 pub trait Hash {
@@ -240,6 +253,13 @@ impl Ord for boolean {
     }
     return -1;
   }
+
+  function cmp_prefix(self: boolean, offset: i32): u64 {
+    if (self) {
+      return 1u64;
+    }
+    return 0u64;
+  }
 }
 ```
 ### `4 impl Ord for i32`
@@ -256,6 +276,10 @@ impl Ord for i32 {
     }
     return 0;
   }
+
+  function cmp_prefix(self: i32, offset: i32): u64 {
+    return (self as i64) as u64 ^ 1u64 << 63u64;
+  }
 }
 
 impl Ord for i64 {
@@ -267,6 +291,10 @@ impl Ord for i64 {
       return 1;
     }
     return 0;
+  }
+
+  function cmp_prefix(self: i64, offset: i32): u64 {
+    return self as u64 ^ 1u64 << 63u64;
   }
 }
 
@@ -280,6 +308,10 @@ impl Ord for u32 {
     }
     return 0;
   }
+
+  function cmp_prefix(self: u32, offset: i32): u64 {
+    return self as u64;
+  }
 }
 
 impl Ord for u64 {
@@ -291,6 +323,10 @@ impl Ord for u64 {
       return 1;
     }
     return 0;
+  }
+
+  function cmp_prefix(self: u64, offset: i32): u64 {
+    return self as u64;
   }
 }
 
@@ -304,6 +340,10 @@ impl Ord for usize {
     }
     return 0;
   }
+
+  function cmp_prefix(self: usize, offset: i32): u64 {
+    return self as u64;
+  }
 }
 
 impl Ord for u8 {
@@ -315,6 +355,10 @@ impl Ord for u8 {
       return 1;
     }
     return 0;
+  }
+
+  function cmp_prefix(self: u8, offset: i32): u64 {
+    return self as u64;
   }
 }
 
@@ -329,6 +373,10 @@ impl Ord for char {
       return 1;
     }
     return 0;
+  }
+
+  function cmp_prefix(self: char, offset: i32): u64 {
+    return (self as i32) as u64;
   }
 }
 
@@ -387,6 +435,27 @@ impl Ord for string {
       return 1;
     }
     return 0;
+  }
+
+  function cmp_prefix(self: string, offset: i32): u64 {
+    let w: u64 = 0u64;
+    let i: i32 = offset;
+    while (i < offset + 8) {
+      w = w << 8u64;
+      if (i < self.len()) {
+        w = w | self[i] as u64;
+      }
+      i = i + 1;
+    }
+    return w;
+  }
+
+  function cmp_shared(self: string, other: string): i32 {
+    let n: i32 = self.len();
+    if (other.len() < n) {
+      n = other.len();
+    }
+    return __mismatch(self, 0, other, 0, n);
   }
 }
 ```
