@@ -211,7 +211,7 @@ function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boo
   if (s.debug) {
     w = gnu.error_out(w, "output format: " + gnu.quote(s.format));
   }
-  let year: i64 = s.zone.local_fields(sec).year - 1900 as i64;
+  let year: i64 = timefmt.break_time(s.zone, sec).year - 1900 as i64;
   if (year > 2147483647 as i64 || year < 0 as i64 - 2147483648 as i64) {
     w = gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range");
     return (false, gnu.put(w, "\n"));

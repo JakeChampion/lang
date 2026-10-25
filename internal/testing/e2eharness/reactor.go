@@ -108,10 +108,7 @@ function main(): i32 {
     if (reactor_ctl(r, 1, c, 2) != 0) { return fail(18); }
     if (expect_ready(r, c, 2, 2000, 19) != 0) { return 19; }
     if (reactor_ctl(r, 1, c, 1) != 0) { return fail(20); }
-    // wasm has no non-blocking mode to switch on: its reads never block.
-    if (target_os() != "wasi") {
-        if (tcp_socket_ctl(a, 3, 1) != 0) { return fail(21); }
-    }
+    if (tcp_socket_ctl(a, 3, 1) != 0) { return fail(21); }
     // Reading until -EAGAIN is what clears a readiness the host reported
     // spuriously, so the idle wait after it must be quiet. A serve loop
     // drains every readable event this way, so the empty read must also

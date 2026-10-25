@@ -1,0 +1,68 @@
+import "std/test";
+import "std/time";
+import "std/clock";
+import "core/cmp";
+
+const I64_MAX: i64 = 9223372036854775807;
+
+function test_now_is_monotonic(): test.TestOutcome {
+  let a: Instant = clock.instant();
+  let b: Instant = clock.instant();
+  if (b.cmp(a) < 0 || b.since(a).is_negative()) {
+    return test.fail("the clock went backwards");
+  }
+  return test.assert_true(!clock.elapsed(a).is_negative());
+}
+
+function test_add_sub_since(): test.TestOutcome {
+  let start: Instant = Instant { sec: 100, nsec: 900000000 };
+  let deadline: Instant = start.add(time.duration_millis(250));
+  if (deadline.sec != 101 || deadline.nsec != 150000000) {
+    return test.fail("add did not carry");
+  }
+  if (!deadline.since(start).eq(time.duration_millis(250)) || !start.since(deadline).eq(time.duration_millis(0 - 250))) {
+    return test.fail("since");
+  }
+  return test.assert_true(deadline.sub(time.duration_millis(250)).eq(start));
+}
+
+function test_compare(): test.TestOutcome {
+  let a: Instant = Instant { sec: 5, nsec: 1 };
+  let b: Instant = Instant { sec: 5, nsec: 2 };
+  if (a.cmp(b) != 0 - 1 || b.cmp(a) != 1 || a.cmp(a) != 0 || !a.eq(Instant { sec: 5, nsec: 1 })) {
+    return test.fail("cmp or eq");
+  }
+  return test.assert_true(cmp.max(a, b).eq(b) && cmp.min(a, b).eq(a));
+}
+
+function test_arithmetic_saturates(): test.TestOutcome {
+  let late: Instant = Instant { sec: I64_MAX, nsec: 0 };
+  let sum: Instant = late.add(time.duration_seconds(1));
+  if (sum.sec != I64_MAX || sum.nsec != 999999999) {
+    return test.fail("add past the end");
+  }
+  let early: Instant = Instant { sec: 0 - I64_MAX, nsec: 0 };
+  return test.assert_true(late.since(early).eq(time.DURATION_MAX) && early.since(late).eq(time.DURATION_MIN));
+}
+
+function test_timestamp_arithmetic(): test.TestOutcome {
+  let t: time.Timestamp = time.timestamp_from_unix(1700000000);
+  let later: time.Timestamp = t.add(time.duration_millis(1500));
+  if (later.format_rfc3339() != "2023-11-14T22:13:21.500000000Z" || !later.since(t).eq(time.duration_millis(1500))) {
+    return test.fail("add or since");
+  }
+  if (later.cmp(t) != 1 || !later.sub(time.duration_millis(1500)).eq(t)) {
+    return test.fail("cmp or sub");
+  }
+  return test.assert_true(cmp.max(t, later).eq(later));
+}
+
+function main(): i32 {
+  let t: test.TestRunner = test.test_new("time instant");
+  t = t.it("now is monotonic", test_now_is_monotonic);
+  t = t.it("add, sub, and since", test_add_sub_since);
+  t = t.it("compare", test_compare);
+  t = t.it("arithmetic saturates", test_arithmetic_saturates);
+  t = t.it("timestamp arithmetic", test_timestamp_arithmetic);
+  return t.finish();
+}

@@ -60,6 +60,7 @@ The native script checks twenty-one executables with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
 The Linux-only RSS workload records its own procfs observations and runs only in the native script.
 See [RSS observations](docs/rss-observations.md) for the parent-memory control and measurement limits.
+The separate [worker qualification](docs/worker-isolation.md) tests cgroup OOM, deadlines, cancellation, and fresh-process recovery.
 
 Three negative probes confirm compiler restrictions.
 The formatter regression also passes before and after the format check.
@@ -75,6 +76,7 @@ See [resize semantics](docs/resize.md) for coordinate and alpha rules.
 
 The [native compression audit](docs/compression-audit.md) verifies prerequisites for PNG.
 See [PNG compatibility](docs/png.md) before use.
+The separate [PNG corpus](docs/png-qualification.md) compares 964 generated cases with an offline Pillow reference.
 PNG requires the static-append compiler fix in PR #13208.
 
 The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor or bilinear chains on demand.

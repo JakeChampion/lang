@@ -1,12 +1,12 @@
 import "std/test";
 import "std/time" as time;
 
-function now(): Instant {
-  return time.instant_from_unix(1000000 as i64);
+function now(): time.Timestamp {
+  return time.timestamp_from_unix(1000000 as i64);
 }
 
-function at(sec: i64): Instant {
-  return time.instant_from_unix(sec);
+function at(sec: i64): time.Timestamp {
+  return time.timestamp_from_unix(sec);
 }
 
 function rel(sec: i64): string {

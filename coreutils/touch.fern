@@ -4,6 +4,7 @@ import "std/errno";
 import "./lib/gnu";
 import "std/tz";
 import "./lib/datetime";
+import "./lib/timefmt";
 
 function opt_time(): i32 {
   return 1;
@@ -313,7 +314,7 @@ pub function main(): i32 {
       match (env("POSIXLY_CORRECT")) {
         Some(_) => {},
         None => {
-          let f: tz.Civil = zone.local_fields(pt.1);
+          let f: timefmt.Tm = timefmt.break_time(zone, pt.1);
           gnu.error("warning: 'touch " + operands[0] + "' is obsolete; use 'touch -t " + f.year.to_string() + pad2(f.month) + pad2(f.day) + pad2(f.hour) + pad2(f.min) + "." + pad2(f.sec) + "'");
         }
       }

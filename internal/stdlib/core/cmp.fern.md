@@ -62,6 +62,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<17 impl Display for bigint.BigInt>>
 
+<<time impls>>
+
 <<18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean>>
 ```
 ### `module introduction`
@@ -82,6 +84,7 @@ import "std/u64";
 import "std/f64";
 import "std/string";
 import "core/bigint";
+import "std/time";
 import "std/error";
 ```
 ### `3 pub trait Display`
@@ -1287,6 +1290,24 @@ impl Debug for bigint.BigInt {
     return self.to_string();
   }
 }
+```
+### `time impls`
+
+```fern
+<<time impls>>=
+impl Display for Duration {}
+
+impl Eq for Duration {}
+
+impl Ord for Duration {}
+
+impl Eq for Instant {}
+
+impl Ord for Instant {}
+
+impl Eq for time.Timestamp {}
+
+impl Ord for time.Timestamp {}
 ```
 ### `18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean`
 
