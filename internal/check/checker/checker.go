@@ -7435,6 +7435,9 @@ func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[strin
 	if c.unifyType(want, got, sub) {
 		return true
 	}
+	if resolved := substituteType(want, sub); !containsParamType(resolved) {
+		return c.argOK(arg, resolved, got, own)
+	}
 	if own {
 		return false
 	}
