@@ -147,7 +147,11 @@ function chain_op(d: ssa.SInst): boolean {
   if (d.kind_tag == ssasem.array_get()) {
     return d.imm != ssasem.check_only();
   }
-  return d.kind_tag == 9 && (d.str == "+" || d.str == "-" || d.str == "*" || d.str == "&" || d.str == "|" || d.str == "^");
+  return d.kind_tag == 9 && chain_binary(d.str);
+}
+
+function chain_binary(op: string): boolean {
+  return op == "+" || op == "-" || op == "*" || op == "&" || op == "|" || op == "^";
 }
 
 function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
@@ -209,6 +213,43 @@ function pure_body(b: ssa.SBlock, allowed: i32[]): boolean {
   return true;
 }
 
+// A read of the array the loop builds.
+function write_offset(ix: Index, update: ssa.SInst, write: boolean, l: Loop): i32 {
+  if (!write) {
+    return 0 - 1;
+  }
+  return offset(ix, update.args[1], l.counter.result, l.head, l.body);
+}
+
+function copy_values(update: ssa.SInst, read: ssa.SInst, inc: ssa.SInst, write: boolean): i32[] {
+  let allowed = [update.result, read.result, read.args[1], inc.result, inc.args[1]];
+  if (write) {
+    return allowed.append(update.args[1]);
+  }
+  return allowed;
+}
+
+function own_read(read: ssa.SInst, l: Loop): boolean {
+  return read.kind_tag == ssasem.array_get() && read.imm != ssasem.check_only() && read.args.len() == 2 && read.args[0] == l.array.result;
+}
+
+struct Tail { len: i32, distance: i32 }
+
+// An index `a.len() - distance` with an invariant distance: the length's
+// value and the distance, or a negative `len` when the index is not one.
+function tail_distance(ix: Index, l: Loop, index: i32): Tail {
+  let no = Tail { len: 0 - 1, distance: 0 - 1 };
+  let at = ix.defs[index];
+  if (at.kind_tag != 9 || at.str != "-" || at.args.len() != 2 || !invariant(ix, at.args[1], l.head, l.body)) {
+    return no;
+  }
+  let len = ix.defs[at.args[0]];
+  if (len.kind_tag != ssasem.length() || len.args.len() != 1 || len.args[0] != l.array.result) {
+    return no;
+  }
+  return Tail { len: len.result, distance: at.args[1] };
+}
+
 function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
   let no = no_loop();
   let back = 1 - l.outer;
@@ -228,10 +269,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
     return no;
   }
   let from = offset(ix, read.args[1], l.counter.result, l.head, l.body);
-  let at = 0 - 1;
-  if (write) {
-    at = offset(ix, update.args[1], l.counter.result, l.head, l.body);
-  }
+  let at = write_offset(ix, update, write, l);
   if (from < 0 - 1 || at < 0 - 1) {
     return no;
   }
@@ -239,11 +277,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
   if (!increment(ix, inc, l.counter.result)) {
     return no;
   }
-  let allowed = [update.result, read.result, read.args[1], inc.result, inc.args[1]];
-  if (write) {
-    allowed = allowed.append(update.args[1]);
-  }
-  if (!pure_body(f.graph.blocks[ix.blocks[l.body]], allowed)) {
+  if (!pure_body(f.graph.blocks[ix.blocks[l.body]], copy_values(update, read, inc, write))) {
     return no;
   }
   let out = Loop { ...l, update: update, src: read.args[0], from: from, at: at };
@@ -256,7 +290,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
 function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop {
   let no = no_loop();
   let read = ix.defs[update.args[1]];
-  if (read.kind_tag != ssasem.array_get() || read.imm == ssasem.check_only() || read.args.len() != 2 || read.args[0] != l.array.result) {
+  if (!own_read(read, l)) {
     return no;
   }
   let inc = ix.defs[l.counter.args[1 - l.outer]];
@@ -266,16 +300,13 @@ function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop 
   let allowed = [update.result, read.result, read.args[1], inc.result, inc.args[1]];
   let from = offset(ix, read.args[1], l.counter.result, l.head, l.body);
   let rebased = from >= 0 - 1;
-  let at = ix.defs[read.args[1]];
-  if (!rebased && at.kind_tag == 9 && at.str == "-" && at.args.len() == 2 && invariant(ix, at.args[1], l.head, l.body)) {
-    let len = ix.defs[at.args[0]];
-    if (len.kind_tag != ssasem.length() || len.args.len() != 1 || len.args[0] != l.array.result) {
+  if (!rebased) {
+    let tail = tail_distance(ix, l, read.args[1]);
+    if (tail.len < 0) {
       return no;
     }
-    from = at.args[1];
-    allowed = allowed.append(len.result);
-  } else if (!rebased) {
-    return no;
+    from = tail.distance;
+    allowed = allowed.append(tail.len);
   }
   if (!pure_body(f.graph.blocks[ix.blocks[l.body]], allowed)) {
     return no;
@@ -377,19 +408,21 @@ function outside(blk: ssa.SBlock, l: Loop, fresh: i32): ssa.SBlock {
   return ssa.SBlock { ...blk, insts: insts, term: ssa.STerm { ...blk.term, cond: replacement(blk.term.cond, l, fresh), value: replacement(blk.term.value, l, fresh) } };
 }
 
+// A negative offset is the counter's start.
+function or_start(v: i32, zero: i32): i32 {
+  if (v < 0) {
+    return zero;
+  }
+  return v;
+}
+
 function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.Func {
   let fresh = f.values.len();
   let values = f.values.append(f.values[l.counter.result]);
   let distance: ssa.SInst[] = [];
   let zero = l.counter.args[l.outer];
-  let from = l.from;
-  if (from < 0) {
-    from = zero;
-  }
-  let at = l.at;
-  if (at < 0) {
-    at = zero;
-  }
+  let from = or_start(l.from, zero);
+  let at = or_start(l.at, zero);
   let receiver = l.array.args[l.outer];
   let args = [receiver, l.src, from, l.count];
   let ci = 0;
