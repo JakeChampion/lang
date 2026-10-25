@@ -145,7 +145,7 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
 // resolved. A stdlib module belongs to the whole configured library root.
 pub function package_root(ident: string, root: string, owner: string): string {
   let lib: string = util.clean_path(root);
-  if (root.len() > 0 && (util.str_has_prefix(ident, lib + "/std/") || util.str_has_prefix(ident, lib + "/core/"))) {
+  if (util.str_has_prefix(ident, "stdlib://") || root.len() > 0 && (util.str_has_prefix(ident, lib + "/std/") || util.str_has_prefix(ident, lib + "/core/"))) {
     return "(stdlib)";
   }
   return util.clean_path(owner);

@@ -4,6 +4,7 @@ import "./flatten";
 import "./fern_toml";
 import "./literate";
 import "./util";
+import "./visibility";
 import "core/map";
 import "std/error";
 
@@ -534,14 +535,19 @@ function missing_line(ov: Overlay, imp: parser.Import, base: string, r: Resolved
   return util.pos_str(entry_path, files, imp.line, imp.col) + ": error[E086]: " + msg;
 }
 
-pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
-  let edir: string = dirname(entry_path);
+function graph_stdlib_dir(ov: Overlay, dir: string, root: string): string {
   let sroot: string = root;
   if (sroot.len() == 0) {
-    sroot = vendored_stdlib_dir(ov, edir);
+    sroot = vendored_stdlib_dir(ov, dir);
   } else if (sroot[sroot.len() - 1] != b'/') {
     sroot = sroot + "/";
   }
+  return sroot;
+}
+
+pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
+  let edir: string = dirname(entry_path);
+  let sroot: string = graph_stdlib_dir(ov, edir, root);
   let loaded: flatten.LoadedModule[] = [];
   let loaded_ids: string[] = [];
   let mod_dirs: string[] = [];
@@ -606,6 +612,15 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     i = i + 1;
   }
   return Graph { entry: stamp_imports(ov, entry, edir, sroot, keys, idents), loaded: stamped, files: files, missing: missing };
+}
+
+pub function bundle(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, stdlib: string): parser.Module {
+  let root: string = graph_stdlib_dir(no_overlay(), dirname(entry_path), stdlib);
+  let packages: string[] = [visibility.package_root(flatten.module_ident(entry_path), root, manifest_dir(dirname(entry_path)))];
+  for lm in loaded {
+    packages = packages.append(visibility.package_root(lm.ident, root, manifest_dir(dirname(lm.ident))));
+  }
+  return visibility.scope_enums(flatten.bundle(entry, loaded, target), flatten.assign_prefixes(loaded), packages);
 }
 
 pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
