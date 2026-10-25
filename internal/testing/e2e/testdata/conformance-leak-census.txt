@@ -91,6 +91,8 @@ array_sort                                           0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
 arrpush                                              0
+assert_fails_with_shadowing_exit                     0
+assert_todo_ignore_shadowing_names                   0
 associated_functions                                 0
 audit_core_builtins                                  0
 audit_env_time_random                                0
@@ -209,6 +211,7 @@ defer_control_flow                                   0
 defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
+derive_default_generic_enum                          0
 derive_default_generic_primitive                     0
 derive_from_json                                     0
 derive_from_json_i64                                 0
@@ -303,6 +306,8 @@ generic_enum_method_at_two_instantiations            0
 generic_enum_method_builds_a_variant                 0
 generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
+generic_enum_payload_settles_its_parameter           0
+generic_char_ordering                                0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
@@ -1053,6 +1058,7 @@ three_arms_bind_p                                    0
 time_leap                                            0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
+todo_reached_with_shadowing_exit                     0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0

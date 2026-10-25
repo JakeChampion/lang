@@ -1,6 +1,7 @@
 # Codec plan
 
-No image codec exists in M0.
+M0 contains no codec. The M3 slice now provides a restricted PNG implementation.
+See [PNG compatibility](png.md) for its exact support and release gate.
 No external codec or image engine enters the runtime.
 The first codec milestone targets a restricted PNG subset.
 
