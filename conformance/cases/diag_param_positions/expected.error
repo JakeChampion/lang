@@ -1,0 +1,7 @@
+main.fern:8:5: error[E064]: cannot find type "Nope" in this scope
+main.fern:12:20: error[E045]: map key type Key is not supported — a struct used as a key must derive Eq and Hash
+main.fern:16:23: error[E057]: Cell[Handler] is not allowed
+main.fern:20:24: error[E085]: f64x2[] holds a lane value inside another type
+main.fern:25:20: error[E064]: cannot find type "Gone" in this scope
+main.fern:26:20: error[E045]: map key type Key is not supported — a struct used as a key must derive Eq and Hash
+main.fern:27:20: error[E057]: Cell[Handler] is not allowed
