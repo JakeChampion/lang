@@ -36,7 +36,7 @@ pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
   let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
   let dot: i32 = member_dot(toks, line, col);
   if (dot >= 0) {
-    return sorted(members(v.types, toks, quals, m, dot));
+    return sorted(written_items(quals, members(v.types, toks, quals, m, dot)));
   }
   let items: Item[] = [];
   let f: i32 = lspquery.enclosing(v.types.mod, toks, m, line, col);
@@ -47,7 +47,15 @@ pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
   for kw in lexer.keywords() {
     items = items.append(Item { label: kw, kind: CI_KEYWORD, detail: "" });
   }
-  return sorted(items);
+  return sorted(written_items(quals, items));
+}
+
+function written_items(quals: flatten.Qualifiers, items: Item[]): Item[] {
+  let out: Item[] = [];
+  for it in items {
+    out = out.append(Item { ...it, detail: lspquery.written(quals, it.detail) });
+  }
+  return out;
 }
 
 function bound_items(bs: Bound[]): Item[] {
@@ -382,7 +390,7 @@ pub function signature_help(p: lspquery.Program, line: i32, col: i32): Signature
   if (!parts.found) {
     return none;
   }
-  return signature(name, parts, commas);
+  return signature(name, lspquery.Parts { ...parts, params: written_list(quals, parts.params), ret: lspquery.written(quals, parts.ret) }, commas);
 }
 
 function call_at(toks: lspquery.Tok[], line: i32, col: i32): (i32, i32) {
@@ -448,6 +456,14 @@ function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten
     }
   }
   return (t.text, lspquery.no_parts());
+}
+
+function written_list(quals: flatten.Qualifiers, labels: string[]): string[] {
+  let out: string[] = [];
+  for l in labels {
+    out = out.append(lspquery.written(quals, l));
+  }
+  return out;
 }
 
 function signature(name: string, parts: lspquery.Parts, commas: i32): Signature {
@@ -681,44 +697,11 @@ function func_hints(toks: lspquery.Tok[], quals: flatten.Qualifiers, bs: Bound[]
     if (b.let_line > 0 && visible(b.name) && known(b.t)) {
       let i: i32 = lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name);
       if (i >= 0 && (!b.annotated || i + 1 < toks.len() && toks[i + 1].text == "=") && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
-        out = out.append(Hint { line: toks[i].line, col: toks[i].col + b.name.len(), label: ": " + written(quals, type_text(b.t)) });
+        out = out.append(Hint { line: toks[i].line, col: toks[i].col + b.name.len(), label: ": " + lspquery.written(quals, type_text(b.t)) });
       }
     }
   }
   return out;
-}
-
-function written(q: flatten.Qualifiers, label: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < label.len()) {
-    let j: i32 = i;
-    while (j < label.len() && word_byte(label[j])) {
-      j = j + 1;
-    }
-    if (j == i) {
-      j = i + 1;
-    }
-    out = out + written_name(q, slice_unchecked(label, i, j) + "");
-    i = j;
-  }
-  return out;
-}
-
-function written_name(q: flatten.Qualifiers, name: string): string {
-  let k: i32 = 0;
-  while (k < q.prefixes.len()) {
-    let p: string = q.prefixes[k] + "__";
-    if (util.str_has_prefix(name, p)) {
-      return q.aliases[k] + "." + slice_unchecked(name, p.len(), name.len());
-    }
-    k = k + 1;
-  }
-  return lspquery.unprefixed(name, q.own);
-}
-
-function word_byte(b: u8): boolean {
-  return b == b'_' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b >= b'0' && b <= b'9';
 }
 
 function known(t: typeinfo.Type): boolean {

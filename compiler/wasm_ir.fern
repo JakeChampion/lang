@@ -2807,7 +2807,6 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
 }
 
 pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection): string {
-  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache);
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
   let ft: string[] = fn_value_table(ir_cache);
@@ -2841,6 +2840,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
 pub struct EmittedCore { wat: string, needs: string[] }
 
 pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): EmittedCore {
+  ircore.refuse_claims(sub.refused);
   let lm: parser.Module = ircore.with_records(route_normalized(mod), sub);
   let bad_import: string = wasm_unsupported_import(lm);
   if (bad_import.len() > 0) {
