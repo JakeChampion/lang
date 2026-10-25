@@ -4509,10 +4509,17 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   return eval_typed_binary(b.op, lv, rv, b.ty);
 }
 
-// An integer literal beside a float operand is a float, as the checker settles it.
+// An integer literal beside a float operand is a float of its width, as the
+// checker settles it.
 function float_operand(e: ast.Expr, other: Value): ast.Expr {
+  if (!parser.is_unsettled_int_literal(e)) {
+    return e;
+  }
   if let VFloat(_) = other {
-    return parser.settle_to_name(e, "f64");
+    return parser.settle_int_tree(e, "f64");
+  }
+  if let VFloat32(_) = other {
+    return parser.settle_int_tree(e, "f32");
   }
   return e;
 }
