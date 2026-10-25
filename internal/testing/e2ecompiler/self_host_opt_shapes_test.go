@@ -270,6 +270,17 @@ function main(): i32 {
 	{name: "be_word_view_u64", fn: "bigend64", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
+	{name: "register_shift_is_shiftx", fn: "shifts", exit: 28, src: shiftxSrc,
+		want:   map[string][]string{"x86-64-linux": {`shlxq %r\w+, `, `sarxq %r\w+, `, `shrxq %r\w+, `, `andl \$31, %r11d`}},
+		forbid: map[string][]string{"x86-64-linux": {`%cl`}}},
+	{name: "masked_index_behind_length_guard", fn: "lookup", exit: 0, src: guardedReadSrc,
+		forbid: map[string][]string{"x86-64-linux": {`oob_abort`}, "arm64-linux": {`oob_abort`}}},
+	{name: "word_run_behind_loop_bound", fn: "words", exit: 0, src: guardedReadSrc,
+		forbid: map[string][]string{"x86-64-linux": {`oob_abort`}, "arm64-linux": {`oob_abort`}}},
+	{name: "word_run_one_past_bound_kept", fn: "loose", exit: 0, src: guardedReadSrc,
+		want: map[string][]string{"x86-64-linux": {`oob_abort`}, "arm64-linux": {`oob_abort`}}},
+	{name: "word_run_unguarded_start_kept", fn: "unguarded", exit: 0, src: guardedReadSrc,
+		want: map[string][]string{"x86-64-linux": {`oob_abort`}, "arm64-linux": {`oob_abort`}}},
 	{name: "and_mask_branch_is_one_test", fn: "masked", exit: 66, src: maskTestSrc,
 		want:   map[string][]string{"x86-64-linux": {`testq \$256, %r\w+`}},
 		forbid: map[string][]string{"x86-64-linux": {`andq \$256`}}},
@@ -576,6 +587,67 @@ function main(): i32 {
     let y: u64 = bigend64(b[1:20], 3) ^ swapped(b, 11) as u64;
     let z: u32 = scrambled(b, 7) ^ header(b);
     return ((x ^ (y >> 13u64) as u32 ^ y as u32 ^ z) & 127u32) as i32;
+}
+`
+
+const shiftxSrc = `
+@noinline function shifts(x: i64, y: i32, n: i64, m: i32): i64 {
+    let u: u64 = x as u64 >> n as u64;
+    return (x << n) ^ (x >> n) ^ (y << m) as i64 ^ (y >> m) as i64 ^ u as i64;
+}
+function main(): i32 {
+    let k: i64 = args().len() as i64;
+    return (shifts(0x12345678i64 * k, 0 - 99, 3i64 * k, 37) & 63i64) as i32;
+}
+`
+
+const guardedReadSrc = `
+@inline
+function le64(d: [u8], at: i32): u64 {
+    return d[at] as u64 | d[at + 1] as u64 << 8 | d[at + 2] as u64 << 16 | d[at + 3] as u64 << 24
+      | d[at + 4] as u64 << 32 | d[at + 5] as u64 << 40 | d[at + 6] as u64 << 48 | d[at + 7] as u64 << 56;
+}
+@noinline function lookup(t: i32[], x: u64, n: i32): i32 {
+    if (t.len() < (1 << 10)) { return 0 - 1; }
+    let s: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { s = s + t[(x >> i as u64 & 1023u64) as i32]; i = i + 1; }
+    return s;
+}
+@noinline function words(d: [u8], start: i32): u64 {
+    if (start < 0) { return 0u64; }
+    let pos: i32 = start;
+    let fast: i32 = d.len() - 8;
+    let acc: u64 = 0u64;
+    while (pos <= fast) { acc = acc ^ le64(d, pos); pos = pos + ((acc as i32 ^ 3) & 7); }
+    return acc;
+}
+@noinline function loose(d: [u8], start: i32): u64 {
+    if (start < 0) { return 0u64; }
+    let pos: i32 = start;
+    let fast: i32 = d.len() - 7;
+    let acc: u64 = 0u64;
+    while (pos <= fast) { acc = acc ^ le64(d, pos); pos = pos + 8; }
+    return acc;
+}
+@noinline function unguarded(d: [u8], start: i32): u64 {
+    let pos: i32 = start;
+    let fast: i32 = d.len() - 8;
+    let acc: u64 = 0u64;
+    while (pos <= fast) { acc = acc ^ le64(d, pos); pos = pos + 8; }
+    return acc;
+}
+function main(): i32 {
+    let t: i32[] = [];
+    let b: u8[] = [];
+    let i: i32 = 0;
+    while (i < 1024) { t = t.append(i); b = b.append((i * 7) as u8); i = i + 1; }
+    if (lookup(t, 987654321u64, 12) != 6545) { return 1; }
+    if (lookup([1], 5u64, 3) != 0 - 1) { return 2; }
+    if (words(b[0:1000], 3) == 0u64) { return 3; }
+    if (unguarded(b[0:64], 0) == 0u64) { return 4; }
+    if (loose(b[0:64], 0) == 0u64) { return 5; }
+    return 0;
 }
 `
 
