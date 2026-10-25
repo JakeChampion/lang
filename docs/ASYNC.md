@@ -162,7 +162,9 @@ Everything nondeterministic the combinators do funnels through one seam: the
 combinator has an `*_on(drv, …)` sibling — `gather_on` / `race_on` /
 `with_deadline_on` — carrying the loop; the plain forms delegate to it with the
 real driver (whose methods are exactly the `poll` / `monotonic_ns` /
-`wasm_timer_pollable` / `wasm_pollable_drop` builtins).
+`wasm_timer_pollable` / `wasm_pollable_drop` builtins, the last two on the
+wasi targets only: elsewhere a timer is the wait's timeout and a drop does
+nothing).
 
 `std/sim` substitutes a virtual driver (`docs/DST-PLATFORM-BRIEF.md`): a
 virtual clock starting at 0 ns that advances only inside `poll_ready`, tokens
@@ -187,7 +189,7 @@ let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), 
 
 `sim.future_at(d, at_ns, v)` resolves to `v` at virtual time `at_ns`;
 `sim.future_chain(d, at_ns, step_ns, n, v)` re-suspends `n` times (the
-`__fetch_drain` shape) before resolving. See
+shape of a read loop that parks on each chunk) before resolving. See
 `tests/stdlib/sim_driver_test.fern`.
 
 ### Scripted upstreams: `std/sim_fetch`

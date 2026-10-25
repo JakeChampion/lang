@@ -258,6 +258,30 @@ function crc32(): irtables.LowerResult {
   ]);
 }
 
+// Views compare through the string kernel and arrays through the packed kernel.
+pub function mismatch_name(): string {
+  return "__sem_byte_view_mismatch";
+}
+
+function mismatch(): irtables.LowerResult {
+  let a: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
+  let b: ir.Op[] = [ir.op_load_local(2), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
+  let ops: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0)];
+  ops = joined(ops, [ir.op_load_local(2), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0)]);
+  ops = joined(ops, a);
+  ops = joined(ops, [ir.op_load_local(1)]);
+  ops = joined(ops, b);
+  ops = joined(ops, [ir.op_load_local(3), ir.op_load_local(4), ir.op_mismatch(), ir.op_return(), ir.op_end()]);
+  ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(3)]);
+  ops = joined(ops, a);
+  ops = joined(ops, [ir.op_load_local(1), ir.op_load_local(4), ir.packed(ir.op_mismatch_bytes_str()), ir.op_return(), ir.op_end()]);
+  ops = joined(ops, [ir.op_load_local(2), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0), ir.op_load_local(0), ir.op_load_local(1)]);
+  ops = joined(ops, b);
+  ops = joined(ops, [ir.op_load_local(3), ir.op_load_local(4), ir.packed(ir.op_mismatch_bytes_str()), ir.op_return(), ir.op_end()]);
+  ops = joined(ops, [ir.op_load_local(0), ir.op_load_local(1), ir.op_load_local(2), ir.op_load_local(3), ir.op_load_local(4)]);
+  return body(mismatch_name(), 5, 5, joined(ops, [ir.packed(ir.op_mismatch_bytes()), ir.op_return()]));
+}
+
 pub function sum_name(): string {
   return "__sem_byte_view_sum";
 }
@@ -285,5 +309,5 @@ function string_copy(): irtables.LowerResult {
 }
 
 pub function helpers(): irtables.LowerResult[] {
-  return [length(), data(), slice(), release(), crc32(), sum(), bsd(), string_copy()];
+  return [length(), data(), slice(), release(), crc32(), mismatch(), sum(), bsd(), string_copy()];
 }

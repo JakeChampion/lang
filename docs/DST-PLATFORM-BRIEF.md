@@ -80,7 +80,7 @@ is the point).
 - `sim.future_at(ns, v)` — a `Future[T]` that resolves to `v` at
   virtual time `ns` (token + resume closure returning `Ready(v)`).
 - `sim.future_chain(...)` — multi-step pending chains, for testing
-  re-suspension shapes like `__fetch_drain`.
+  re-suspension shapes like a read loop that parks on each chunk.
 - `poll_ready(toks, timeout_ms)`: find the earliest ready-at among
   `toks` (and the timeout, when `>= 0`); **advance the virtual clock
   to it**; return its index (or the timeout sentinel per the real
