@@ -1,3 +1,4 @@
+# 2026-10-25 (#13302): three x86_64 .text rows from a local perf-bench run on the merge with main.
 # Re-pinned 2026-10-25 (#13302) from Perf run 40205765929. The inline
 # back-reference copy cuts deflate_decode.ir by 14% on x86_64 and 20% on aarch64,
 # and adds 1% `.text` to x86_64 deflate_decode. The other aarch64 rows take the
@@ -109,10 +110,10 @@ x86_64/closure_call.ir	63018154
 x86_64/deflate_decode.ir	36384451
 x86_64/deflate_decode.text	12628
 x86_64/deflate_encode.ir	49965640
-x86_64/deflate_encode.text	7144
+x86_64/deflate_encode.text	7250
 x86_64/enum_match.text	994
 x86_64/enum_match.ir	48825085
-x86_64/http_hello.text	17206
+x86_64/http_hello.text	17393
 x86_64/http_hello.ir	23788438
 x86_64/int_loop.text	178
 x86_64/int_loop.ir	12000070
@@ -154,7 +155,7 @@ x86_64/tokenize.text	1104
 x86_64/tokenize.ir	37880086
 x86_64/utf8_ingest_unchecked.text	8288
 x86_64/utf8_ingest_unchecked.ir	2205771
-x86_64/utf8_ingest_validated.text	8802
+x86_64/utf8_ingest_validated.text	8893
 x86_64/utf8_ingest_validated.ir	5297772
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
