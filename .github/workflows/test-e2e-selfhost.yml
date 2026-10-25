@@ -20,7 +20,7 @@ name: Test e2e self-host
 # the closure-keyed disk cache (hashSelfHostSources), shared by a shard's two
 # worker processes. The edge costs the dependent jobs the warm job's wall time,
 # about five minutes on a miss, and saves a driver build or more in each of
-# some thirty jobs. This lane runs on main and on a `ci-full` pull request,
+# some twenty jobs. This lane runs on main and on a `ci-full` pull request,
 # where runner minutes count for more than a few minutes of latency. The
 # aarch64 shards build their own drivers; shard 0 saves the Linux ARM64 cache.
 #
@@ -80,11 +80,14 @@ env:
   # failure-annotation step names the failed tests from.
   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit"
-  # OWN_JOB_TESTS: heavy whole-compiler proofs that RUN in CI but in a job of
-  # their own, so their minutes do not lengthen whichever shard the LPT
-  # partition happens to drop them into. Excluded from shard selection by the
-  # same regex as the two lists above, and each has a matching job below.
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostCLIStage2X86_64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64|TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm"
+  # OWN_JOB_TESTS: the stdlib suites, each 800 to 1,400 seconds, half or more
+  # of a shard worker's budget, so no weight could place one without crowding
+  # its worker (#6667). They RUN in CI, in a job of their own each; excluded
+  # from shard selection by the same regex as the two lists above. A test
+  # under about three minutes belongs in the shards with a weight row, not
+  # here: the whole-compiler proofs (fixpoints, stage 2, the semantic and wasm
+  # self-builds) measure 50 to 165 seconds each and ride the shards.
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -230,78 +233,6 @@ jobs:
           FERN_CI_SIZE_GATE_STRICT: "1"
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
 
-  # WHOLE-COMPILER FIXPOINTS. OWN_JOB_TESTS-class proofs that each run the
-  # built compiler over the whole compiler source; they share one job because
-  # each is a few minutes and they share the fern.fern build.
-  #
-  # Two jobs, two proofs each: the four steps were 2.0 + 2.4 + 2.6 + 3.6
-  # minutes in one job, the fern.fern build they share coming from the
-  # driver cache either way. `fixpoints` holds the two gen0/gen1 proofs,
-  # `stage2` the two that run what stage 1 built.
-  selfhost-fixpoints:
-    needs: [driver-sizes]
-    name: selfhost-fixpoints-x86_64-${{ matrix.group }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [fixpoints, stage2]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-      - uses: ./.github/actions/selfhost-driver-cache
-      - name: aarch64 cross-gcc + qemu (the stage-2 leg is linked and RUN)
-        if: matrix.group == 'stage2'
-        uses: ./.github/actions/apt-cross-toolchain
-      - uses: ./.github/actions/build-e2e-binaries
-      - name: two-generation const_func eligibility check
-        if: ${{ !cancelled() && matrix.group == 'fixpoints' }}
-        env:
-          RUN_CONST_FUNC_GEN2: "1"
-        run: |
-          set -euo pipefail
-          chmod +x e2ecompiler.test
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostConstFuncGen2$' -test.v -test.timeout 28m
-      # FERN_STAGE2_SELF is deliberately NOT set: that case is gen2 recompiling
-      # the whole compiler under qemu, and it is left to a human with time
-      # rather than paid on every push.
-      - name: arm64 stage-2 fixpoint (gen1 == gen2, byte-identical)
-        if: ${{ !cancelled() && matrix.group == 'stage2' }}
-        run: |
-          set -euo pipefail
-          chmod +x e2ecompiler.test
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStage2FixpointArm64$' -test.v -test.timeout 22m
-      # The CLI rebuilding itself, and the result compiling real input
-      # (#7954). The fixpoints compare bytes; this runs what stage 1 built.
-      - name: x86-64 stage-2 CLI compiles lexer.fern and a program
-        if: ${{ !cancelled() && matrix.group == 'stage2' }}
-        run: |
-          set -euo pipefail
-          chmod +x e2ecompiler.test
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCLIStage2X86_64$' -test.v -test.timeout 20m
-      - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
-        if: ${{ !cancelled() && matrix.group == 'fixpoints' }}
-        run: |
-          set -euo pipefail
-          chmod +x e2ecompiler.test
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' -test.v -test.timeout 23m
-      - name: name the failed tests as annotations
-        if: failure()
-        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
-
   # STDLIB SUITES. The tests/stdlib runner suites compiled by the self-host
   # compiler, one job per leg: x86-64 and arm64 (under qemu), each plain and
   # TLS, plus the wasm leg of std/crypto and std/tls. Each measures 800 to
@@ -372,81 +303,6 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCryptoSuitesWasm$' -test.v -test.timeout 33m
-      - name: name the failed tests as annotations
-        if: failure()
-        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
-
-  wasm-wholecompiler-link:
-    needs: [driver-sizes]
-    name: wasm-wholecompiler-link-x86_64
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-        with:
-          wasmtime: "true" # the test t.Skips without BOTH wasm-tools and wasmtime
-      - uses: ./.github/actions/selfhost-driver-cache
-      - uses: ./.github/actions/build-e2e-binaries
-      - name: whole-compiler wasm link (15 modules, function-windowed, then run)
-        run: |
-          set -euo pipefail
-          chmod +x e2ecompiler.test
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostWasmWholeCompilerShardedLink$' -test.v -test.timeout 28m
-      - name: name the failed tests as annotations
-        if: failure()
-        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
-
-  arm64-permodule-wholecompiler:
-    needs: [driver-sizes]
-    name: arm64-permodule-wholecompiler-x86_64
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-      - uses: ./.github/actions/selfhost-driver-cache
-      - name: aarch64 cross-gcc + qemu
-        uses: ./.github/actions/apt-cross-toolchain
-      - uses: ./.github/actions/build-e2e-binaries
-      - name: arm64 per-module whole-compiler build + run
-        run: |
-          set -euo pipefail
-          chmod +x e2ecompiler.test
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostModloadPerModuleWholeCompilerArm64$' -test.v -test.timeout 33m
-      - name: name the failed tests as annotations
-        if: failure()
-        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
-
-  # The longest single test in the suite: gen1 (fern.fern compiled by the
-  # native-built driver through the semantic lowering) must compile the tree
-  # like the driver does and reproduce itself. Its phases run concurrently
-  # inside the test (see its header), so the job is bound by the two heaviest
-  # emits rather than their sum.
-  semantic-wholecompiler:
-    needs: [driver-sizes]
-    name: semantic-wholecompiler-x86_64
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-      - uses: ./.github/actions/selfhost-driver-cache
-      - uses: ./.github/actions/build-e2e-binaries
-      - name: semantic self-build and per-module diff
-        run: |
-          set -euo pipefail
-          chmod +x e2ecompiler.test
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostSemanticWholeCompilerX86_64$' -test.v -test.timeout 43m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -560,6 +416,8 @@ jobs:
           FERN_REQUIRE_ARM64_TOOLING: "${{ matrix.host == 'x86_64' && '1' || '' }}"
           FERN_REQUIRE_WASMTIME: "1"
           FERN_BUILD_MEM_BUDGET_MB: "6500"
+          # TestSelfHostConstFuncGen2 is opt-in locally; CI always runs it.
+          RUN_CONST_FUNC_GEN2: "1"
         run: |
           set -euo pipefail
           chmod +x e2ecompiler.test e2e.test
