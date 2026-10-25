@@ -1,4 +1,5 @@
 import "./ir";
+import "./rtbytecopy";
 import "./ssa";
 import "./ssasem";
 import "./ssadeps";
@@ -2947,7 +2948,7 @@ function moved_at(st: Step, v: i32, slot: i32): boolean {
 }
 
 function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
-  if (ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat()) {
+  if (ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.call() && rtbytecopy.is_helper(ins.str)) {
     return 0;
   }
   if (ins.kind_tag == ssasem.call() && fresh.through.len() > 0) {
@@ -3065,7 +3066,7 @@ function fresh_array(ins: ssa.SInst, consts: string[], fresh: FreshRows): boolea
     return ins.args.len() == 0 || consts[ins.result] == "";
   }
   if (ins.kind_tag == ssasem.call()) {
-    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || fresh_through(fresh, ins.str) == 0 - 1;
+    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == 0 - 1;
   }
   return ins.kind_tag == ssasem.array_reserve();
 }

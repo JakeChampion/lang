@@ -16,6 +16,7 @@ import "./ssaunits";
 import "./ownership";
 import "./util";
 import "./rtbytecopy";
+import "./semunique";
 import "./sembytecopy";
 import "./byteconst";
 import "./seminline";
@@ -7894,7 +7895,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   if (verify) {
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
-    all = prune_dead_constructions(reached_only(scale_ndarray_maps(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod)), names, mod, opts.array_report), names, mod, opts.whole));
+    all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
   instances = [];
@@ -7964,6 +7965,24 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 }
 
 struct Spliced { all: Produced[], spliced: boolean[] }
+
+function unique_loops(all: Produced[]): Produced[] {
+  let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
+  let contract = ssasem.Contract { name: semunique.name(), params: [bytes], modes: [ssaunits.counted_mode()], result: bytes };
+  let sw: optbisect.Switches = optbisect.switches();
+  let out: Produced[] = [];
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template) {
+      let h = semunique.hoisted(p.func, contract);
+      if (h.changed && optbisect.allowed_by(sw, "unique-loops", p.func.graph.name)) {
+        p = Produced { ...p, func: h.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
 
 function byte_copy_loops(all: Produced[]): Produced[] {
   let out: Produced[] = [];
