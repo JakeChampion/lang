@@ -28,6 +28,7 @@ import "std/array";
 import "std/string";
 import "std/json";
 import "std/crypto";
+import "std/hex";
 import "std/result";
 import "std/option";
 import "./voxel";
@@ -47,12 +48,12 @@ pub struct Recovered { blocks: Map[i32, i32], revision: i64, journal_bytes: i64 
 pub struct Store { directory: string, name: string, bytes: Cell[i64] }
 
 function envelope(payload: string): string {
-  return crypto.sha256_new().update(payload.as_bytes()).final_hex() + " " + payload + "\n";
+  return hex.encode(crypto.sha256(payload.as_bytes())) + " " + payload + "\n";
 }
 
 function payload(record: string): Result[string, string] {
   let fields = record.splitn(" ", 2);
-  if (fields.len() != 2 || fields[0].len() != 64 || fields[0] != crypto.sha256_new().update(fields[1].as_bytes()).final_hex()) {
+  if (fields.len() != 2 || fields[0].len() != 64 || fields[0] != hex.encode(crypto.sha256(fields[1].as_bytes()))) {
     return Err("World record checksum does not match.");
   }
   return Ok(fields[1]);

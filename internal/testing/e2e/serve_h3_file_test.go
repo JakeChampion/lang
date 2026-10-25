@@ -81,10 +81,10 @@ func checkServeH3Files(t *testing.T, target string, size int) {
 	if err := os.WriteFile(w.src, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	client := strings.Replace(serveH3ClientSource, "import \"std/net\";", "import \"std/net\";\nimport \"std/crypto\";", 1)
+	client := strings.Replace(serveH3ClientSource, "import \"std/net\";", "import \"std/net\";\nimport \"std/crypto\";\nimport \"std/hex\";", 1)
 	client = replaceH3FileSpan(t, client, "function summary(", "struct Asked", `function summary(method: string, resp: HttpResponse): string {
   let body: u8[] = resp.body_bytes();
-  return resp.status.to_string() + " bytes=" + body.len().to_string() + " sha256=" + crypto.sha256_new().update(body).final_hex() + " length=" + resp.headers.get("content-length").unwrap_or("-") + " trailer=" + resp.trailers.get("x-file").unwrap_or("-");
+  return resp.status.to_string() + " bytes=" + body.len().to_string() + " sha256=" + hex.encode(crypto.sha256_new().update(body).finish()) + " length=" + resp.headers.get("content-length").unwrap_or("-") + " trailer=" + resp.trailers.get("x-file").unwrap_or("-");
 }
 
 `)
