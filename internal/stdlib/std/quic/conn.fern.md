@@ -395,7 +395,6 @@ function __earliest(a: i64, b: i64): i64 {
   }
   return a;
 }
-
 ```
 
 ### `13 pub function (c: Conn) events_taken(): Conn`
