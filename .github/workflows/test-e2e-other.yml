@@ -38,9 +38,16 @@ name: Test e2e other
 #     silently, and this lane's green tells you nothing about them
 #     (see #4942 for the miscompile that shipped that way).
 #
-# Matrix per arch because the interp + checker paths are
-# arch-independent but TestRunner pulls in the stdlib (which has
-# arch-tagged unit tests transitively).
+# x86_64 shards only, with the aarch64 cross toolchain and qemu
+# installed, so the arm64 legs of the arch-split tests (the
+# TestCrossModule* siblings, the f64 ulp and numeric property
+# sweeps, everything behind LookupArm64Tooling) run under qemu
+# here. FERN_REQUIRE_ARM64_TOOLING=1 turns a missing toolchain into
+# a failure, not a skip. Two aarch64 shards used to run the whole
+# selection natively as well, 31 runner-minutes a run: the interp
+# and checker paths read nothing from the host, and the stdlib
+# suites the TestRunner cases pull in run as arm64 programs under
+# qemu in test-e2e-selfhost.yml's selfhost-stdtest-arm64 job.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -67,14 +74,11 @@ jobs:
           # The lane's selection measured 41.7 minutes in two workers on the
           # 4-core dev container on 2026-10-25, after the interpreter re-runs
           # of the stdtest suites left it (docs/ci-log/2026-10-25-pr-ci-queue.md).
-          # Three x86_64 shards and two aarch64 shards keep every worker well
-          # inside the 25m budget, with .github/other-test-weights.txt
-          # balancing the 64 tests above 10 s.
+          # Three shards keep every worker well inside the 25m budget, with
+          # .github/other-test-weights.txt balancing the 64 tests above 10 s.
           - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 0 }
           - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 1 }
           - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 2 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     steps:
@@ -92,6 +96,10 @@ jobs:
           # could catch it never ran anywhere in CI.
           wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
+      - name: aarch64 cross toolchain + qemu (the arm64 legs of the arch-split tests)
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
       - name: build the e2e test binary
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/testing/e2e/
@@ -129,6 +137,8 @@ jobs:
         # without anyone adding it anywhere. That property is why this lane
         # selects by exclusion rather than an allowlist, and sharding must not
         # cost it.
+        env:
+          FERN_REQUIRE_ARM64_TOOLING: "1"
         run: |
           set -euo pipefail
           W="$PWD/.github/other-test-weights.txt"
