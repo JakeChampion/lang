@@ -286,6 +286,7 @@ format_placeholders                                  0
 format_specs                                         0
 fresh_array_through_a_pass_through_callee            0
 fresh_local_return                                   0
+fresh_result_payload_is_owned                        0
 from_empty_bytes                                     0
 fstring_reassign_releases_old                        0
 function_array_element_returned                      0
@@ -560,6 +561,7 @@ own_param_assign_target                              0
 own_param_branch_transfer                            0
 own_param_last_use_local                             0
 own_param_payloadless_variant                        0
+own_parameter_compared_then_moved                    0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
 own_transfer                                         0

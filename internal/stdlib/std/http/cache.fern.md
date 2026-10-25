@@ -46,11 +46,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<9 pub enum Precondition>>
 
-<<10 pub function evaluate(req: HttpRequest, v: Validators, now: Instant): Precondition>>
+<<10 pub function evaluate(req: HttpRequest, v: Validators, now: time.Timestamp): Precondition>>
 
 <<11 function __safe(method: string): boolean>>
 
-<<12 pub function if_range(req: HttpRequest, v: Validators, now: Instant): boolean>>
+<<12 pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boolean>>
 
 <<13 function __carry(out: HttpResponse, from: HttpResponse, name: string): HttpResponse>>
 
@@ -162,7 +162,7 @@ pub function (a: ETag) weak_eq(b: ETag): boolean {
 
 ```fern
 <<7 pub struct Validators>>=
-pub struct Validators { etag: Option[ETag], last_modified: Option[Instant] }
+pub struct Validators { etag: Option[ETag], last_modified: Option[time.Timestamp] }
 ```
 
 ### `8 pub function validators(): Validators`
@@ -181,11 +181,11 @@ pub function validators(): Validators {
 pub enum Precondition { Proceed, NotModified, PreconditionFailed }
 ```
 
-### `10 pub function evaluate(req: HttpRequest, v: Validators, now: Instant): Precondition`
+### `10 pub function evaluate(req: HttpRequest, v: Validators, now: time.Timestamp): Precondition`
 
 ```fern
-<<10 pub function evaluate(req: HttpRequest, v: Validators, now: Instant): Precondition>>=
-pub function evaluate(req: HttpRequest, v: Validators, now: Instant): Precondition {
+<<10 pub function evaluate(req: HttpRequest, v: Validators, now: time.Timestamp): Precondition>>=
+pub function evaluate(req: HttpRequest, v: Validators, now: time.Timestamp): Precondition {
   if (req.headers.has("if-match")) {
     if (!__matches_strong(req.headers.get_list("if-match"), v)) {
       return PreconditionFailed;
@@ -263,7 +263,7 @@ function __tag_matches(member: string, v: Validators, strong_cmp: boolean): bool
   }
 }
 
-function __modified_after(h: HeaderMap, name: string, v: Validators, now: Instant): boolean {
+function __modified_after(h: HeaderMap, name: string, v: Validators, now: time.Timestamp): boolean {
   match (__field_date(h, name, now)) {
     Some(d) => {
       match (v.last_modified) {
@@ -281,7 +281,7 @@ function __modified_after(h: HeaderMap, name: string, v: Validators, now: Instan
   }
 }
 
-function __modified_by(h: HeaderMap, v: Validators, now: Instant): boolean {
+function __modified_by(h: HeaderMap, v: Validators, now: time.Timestamp): boolean {
   match (__field_date(h, "if-modified-since", now)) {
     Some(d) => {
       match (v.last_modified) {
@@ -299,7 +299,7 @@ function __modified_by(h: HeaderMap, v: Validators, now: Instant): boolean {
   }
 }
 
-function __field_date(h: HeaderMap, name: string, now: Instant): Option[Instant] {
+function __field_date(h: HeaderMap, name: string, now: time.Timestamp): Option[time.Timestamp] {
   let values: string[] = h.get_all(name);
   if (values.len() != 1) {
     return None;
@@ -308,11 +308,11 @@ function __field_date(h: HeaderMap, name: string, now: Instant): Option[Instant]
 }
 ```
 
-### `12 pub function if_range(req: HttpRequest, v: Validators, now: Instant): boolean`
+### `12 pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boolean`
 
 ```fern
-<<12 pub function if_range(req: HttpRequest, v: Validators, now: Instant): boolean>>=
-pub function if_range(req: HttpRequest, v: Validators, now: Instant): boolean {
+<<12 pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boolean>>=
+pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boolean {
   let values: string[] = req.headers.get_all("if-range");
   if (values.len() == 0) {
     return true;
@@ -341,7 +341,7 @@ pub function if_range(req: HttpRequest, v: Validators, now: Instant): boolean {
   }
 }
 
-pub function respond(req: HttpRequest, v: Validators, now: Instant, resp: HttpResponse): HttpResponse {
+pub function respond(req: HttpRequest, v: Validators, now: time.Timestamp, resp: HttpResponse): HttpResponse {
   if (resp.status < 200 || resp.status > 299) {
     return resp;
   }
@@ -359,7 +359,7 @@ pub function respond(req: HttpRequest, v: Validators, now: Instant, resp: HttpRe
   }
 }
 
-pub function (r: HttpResponse) with_validators(v: Validators, now: Instant): HttpResponse {
+pub function (r: HttpResponse) with_validators(v: Validators, now: time.Timestamp): HttpResponse {
   let out: HttpResponse = r;
   match (v.etag) {
     Some(e) => {
@@ -369,7 +369,7 @@ pub function (r: HttpResponse) with_validators(v: Validators, now: Instant): Htt
   }
   match (v.last_modified) {
     Some(lm) => {
-      let sent: Instant = lm;
+      let sent: time.Timestamp = lm;
       if (lm.sec > now.sec) {
         sent = now;
       }

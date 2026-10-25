@@ -1,10 +1,12 @@
 # Local time-zone rules
 
-This module resolves local time zones from TZif files and POSIX rules.
+This module provides the time-zone type and loads zones from the IANA database, from TZif files, and from POSIX rules.
 
 ## Model
 
 A zone combines recorded transitions with a fallback rule. TZif data and POSIX text provide the offsets, abbreviations, and seasonal clock policy.
+A fixed-offset zone has no transitions and no rule.
+A `Zoned` value pairs a `time.Timestamp` with a zone, and gives the local civil time there.
 
 ## Contracts
 
@@ -24,11 +26,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 function default_zone(): Zone>>
 
-<<5 pub function (z: Zone) offset_at(sec: i64): i32>>
+<<5 pub function (z: Zone) offset_at(t: time.Timestamp): i32>>
 
 <<6 pub struct Entry>>
 
-<<7 pub function (z: Zone) entry_at(sec: i64): Entry>>
+<<7 pub function (z: Zone) entry_at(t: time.Timestamp): Entry>>
 
 <<8 function (z: Zone) index_at(sec: i64): i32>>
 
@@ -56,12 +58,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<20 function epoch_day(year: i32, mon: i32, day: i32): i32>>
 
-<<21 pub function (z: Zone) civil(sec: i64): DateTime>>
-
-<<22 pub struct Civil>>
-
-<<23 pub function (z: Zone) local_fields(sec: i64): Civil>>
-
 <<24 function darwin_zone_from_tz(spec: string): Zone>>
 
 <<25 function darwin_name(s: string, p: i32): (string, i32)>>
@@ -73,11 +69,12 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 1>>=
-// This module resolves local time zones from TZif files and POSIX rules.
+// This module provides the time-zone type and loads zones from the IANA database, from TZif files, and from POSIX rules.
 import "std/string";
 import "std/array";
 import "std/time";
 import "std/utf8";
+import "std/i64";
 ```
 
 ### `2 pub struct Zone`
@@ -89,6 +86,8 @@ pub struct Zone { times: i64[], offs: i32[], abbrs: string[], dsts: boolean[], f
 pub struct Rule { valid: boolean, has_dst: boolean, std_off: i32, dst_off: i32, std_name: string, dst_name: string, start: DateRule, end: DateRule }
 
 pub struct DateRule { kind: i32, mon: i32, week: i32, day: i32, n: i32, time: i32 }
+
+pub struct Zoned { timestamp: time.Timestamp, zone: Zone }
 ```
 
 ### `3 pub function utc_rule(): Rule`
@@ -194,33 +193,16 @@ function zone_path(name: string): string {
 }
 ```
 
-### `5 pub function (z: Zone) offset_at(sec: i64): i32`
+### `5 pub function (z: Zone) offset_at(t: time.Timestamp): i32`
 
 ```fern
-<<5 pub function (z: Zone) offset_at(sec: i64): i32>>=
-pub function (z: Zone) offset_at(sec: i64): i32 {
-  let i: i32 = z.index_at(sec);
-  if (i == 0 - 1) {
-    return z.first;
-  }
-  if (i == 0 - 2) {
-    if (rule_dst(z.rule, sec)) {
-      return z.rule.dst_off;
-    }
-    return z.rule.std_off;
-  }
-  return z.offs[i];
+<<5 pub function (z: Zone) offset_at(t: time.Timestamp): i32>>=
+pub function (z: Zone) offset_at(t: time.Timestamp): i32 {
+  return z.entry_at(t).off;
 }
 
-pub function (z: Zone) is_dst_at(sec: i64): boolean {
-  let i: i32 = z.index_at(sec);
-  if (i == 0 - 1) {
-    return z.first_dst;
-  }
-  if (i == 0 - 2) {
-    return rule_dst(z.rule, sec);
-  }
-  return z.dsts[i];
+pub function (z: Zone) is_dst_at(t: time.Timestamp): boolean {
+  return z.entry_at(t).dst;
 }
 
 pub function (z: Zone) is_fixed(): boolean {
@@ -235,11 +217,12 @@ pub function (z: Zone) is_fixed(): boolean {
 pub struct Entry { off: i32, abbrev: string, dst: boolean }
 ```
 
-### `7 pub function (z: Zone) entry_at(sec: i64): Entry`
+### `7 pub function (z: Zone) entry_at(t: time.Timestamp): Entry`
 
 ```fern
-<<7 pub function (z: Zone) entry_at(sec: i64): Entry>>=
-pub function (z: Zone) entry_at(sec: i64): Entry {
+<<7 pub function (z: Zone) entry_at(t: time.Timestamp): Entry>>=
+pub function (z: Zone) entry_at(t: time.Timestamp): Entry {
+  let sec: i64 = t.sec;
   let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
     return Entry { off: z.first, abbrev: z.first_abbr, dst: z.first_dst };
@@ -253,23 +236,60 @@ pub function (z: Zone) entry_at(sec: i64): Entry {
   return Entry { off: z.offs[i], abbrev: z.abbrs[i], dst: z.dsts[i] };
 }
 
-pub function (z: Zone) at(sec: i64): TimeZone {
-  let e: Entry = z.entry_at(sec);
-  return TimeZone { name: e.abbrev, offset_seconds: e.off };
+pub function (z: Zone) abbrev_at(t: time.Timestamp): string {
+  return z.entry_at(t).abbrev;
 }
 
-pub function (z: Zone) abbrev_at(sec: i64): string {
-  let i: i32 = z.index_at(sec);
-  if (i == 0 - 1) {
-    return z.first_abbr;
+pub function (z: Zone) at(t: time.Timestamp): Zoned {
+  return Zoned { timestamp: t, zone: z };
+}
+
+// The local civil date and clock time.
+pub function (zt: Zoned) to_datetime(): DateTime {
+  return zt.local().to_datetime();
+}
+
+pub function (zt: Zoned) format_rfc3339(): string {
+  let off: i32 = zt.zone.offset_at(zt.timestamp);
+  let local: string = zt.local().format_rfc3339();
+  if (off == 0) {
+    return local;
   }
-  if (i == 0 - 2) {
-    if (rule_dst(z.rule, sec)) {
-      return z.rule.dst_name;
-    }
-    return z.rule.std_name;
+  return slice_unchecked(local, 0, local.len() - 1) + offset_text(off);
+}
+
+// The wall-clock reading of `zt` written as if it were UTC.
+function (zt: Zoned) local(): time.Timestamp {
+  return time.Timestamp { sec: zt.timestamp.sec + zt.zone.offset_at(zt.timestamp) as i64, nsec: zt.timestamp.nsec };
+}
+
+// `+hh:mm` or `-hh:mm`.
+function offset_text(off: i32): string {
+  let mag: i32 = off;
+  let sign: string = "+";
+  if (off < 0) {
+    mag = 0 - off;
+    sign = "-";
   }
-  return z.abbrs[i];
+  return sign + two_digits(mag / 3600) + ":" + two_digits(mag / 60 % 60);
+}
+
+function two_digits(n: i32): string {
+  if (n < 10) {
+    return "0" + n.to_string();
+  }
+  return n.to_string();
+}
+
+// A fixed zone for an RFC 3339 time with a `Z` or `±hh:mm` offset. A nonzero offset names the zone `UTC+hh:mm` or `UTC-hh:mm`.
+pub function zoned_parse_rfc3339(s: string): Option[Zoned] {
+  let Some(parsed) = time.timestamp_parse_rfc3339_offset(s) else {
+    return None;
+  };
+  if (parsed.1 == 0) {
+    return Some(utc_zone().at(parsed.0));
+  }
+  return Some(fixed_zone(parsed.1, "UTC" + offset_text(parsed.1)).at(parsed.0));
 }
 ```
 
@@ -937,14 +957,14 @@ function rule_instant(d: DateRule, year: i32): i64 {
 }
 
 function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
-  let first: i64 = days_from_civil(year as i64, mon, 1);
-  let wd: i32 = floor_mod(first + 4 as i64, 7 as i64) as i32;
+  let first: i64 = time.days_from_civil(year as i64, mon, 1);
+  let wd: i32 = (first + 4).rem_euclid(7) as i32;
   let dom: i32 = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
   let last: i32 = time.days_in_month(year, mon);
   while (dom > last) {
     dom = dom - 7;
   }
-  return (first + (dom - 1) as i64 - days_from_civil(year as i64, 1, 1)) as i32 + 1;
+  return (first + (dom - 1) as i64 - time.days_from_civil(year as i64, 1, 1)) as i32 + 1;
 }
 ```
 
@@ -953,93 +973,11 @@ function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
 ```fern
 <<20 function epoch_day(year: i32, mon: i32, day: i32): i32>>=
 function epoch_day(year: i32, mon: i32, day: i32): i32 {
-  return days_from_civil(year as i64, mon, day) as i32;
+  return time.days_from_civil(year as i64, mon, day) as i32;
 }
 
 function year_of(local_sec: i64): i32 {
-  return civil_from_days(floor_div(local_sec, 86400 as i64)).0 as i32;
-}
-```
-
-### `21 pub function (z: Zone) civil(sec: i64): DateTime`
-
-```fern
-<<21 pub function (z: Zone) civil(sec: i64): DateTime>>=
-pub function (z: Zone) civil(sec: i64): DateTime {
-  let off: i32 = z.offset_at(sec);
-  return time.instant_from_unix(sec).in_zone(time.timezone_fixed_offset(off)).to_datetime();
-}
-```
-
-### `22 pub struct Civil`
-
-```fern
-<<22 pub struct Civil>>=
-pub struct Civil { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32 }
-```
-
-### `23 pub function (z: Zone) local_fields(sec: i64): Civil`
-
-```fern
-<<23 pub function (z: Zone) local_fields(sec: i64): Civil>>=
-pub function (z: Zone) local_fields(sec: i64): Civil {
-  return civil_at(sec + z.offset_at(sec) as i64);
-}
-
-pub function civil_at(local: i64): Civil {
-  let days: i64 = floor_div(local, 86400 as i64);
-  let rem: i32 = (local - days * (86400 as i64)) as i32;
-  let ymd: (i64, i32, i32) = civil_from_days(days);
-  let wday: i32 = floor_mod(days + 4 as i64, 7 as i64) as i32;
-  let yday: i32 = (days - days_from_civil(ymd.0, 1, 1)) as i32;
-  return Civil { year: ymd.0, month: ymd.1, day: ymd.2, hour: rem / 3600, min: rem / 60 % 60, sec: rem % 60, wday: wday, yday: yday };
-}
-
-pub function floor_div(a: i64, b: i64): i64 {
-  let q: i64 = a / b;
-  if (a % b != 0 as i64 && a < 0 as i64 != b < 0 as i64) {
-    q = q - 1 as i64;
-  }
-  return q;
-}
-
-pub function floor_mod(a: i64, b: i64): i64 {
-  return a - floor_div(a, b) * b;
-}
-
-pub function days_from_civil(y: i64, m: i32, d: i32): i64 {
-  let yy: i64 = y;
-  if (m <= 2) {
-    yy = yy - 1 as i64;
-  }
-  let era: i64 = floor_div(yy, 400 as i64);
-  let yoe: i64 = yy - era * (400 as i64);
-  let mp: i32 = m + 9;
-  if (m > 2) {
-    mp = m - 3;
-  }
-  let doy: i64 = ((153 * mp + 2) / 5) as i64 + d as i64 - 1 as i64;
-  let doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy;
-  return era * (146097 as i64) + doe - 719468 as i64;
-}
-
-pub function civil_from_days(z_in: i64): (i64, i32, i32) {
-  let z: i64 = z_in + 719468 as i64;
-  let era: i64 = floor_div(z, 146097 as i64);
-  let doe: i64 = z - era * (146097 as i64);
-  let yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);
-  let y: i64 = yoe + era * (400 as i64);
-  let doy: i64 = doe - (365 as i64 * yoe + yoe / (4 as i64) - yoe / (100 as i64));
-  let mp: i64 = (5 as i64 * doy + 2 as i64) / (153 as i64);
-  let d: i32 = (doy - (153 as i64 * mp + 2 as i64) / (5 as i64) + 1 as i64) as i32;
-  let m: i32 = (mp + 3 as i64) as i32;
-  if (mp >= 10 as i64) {
-    m = (mp - 9 as i64) as i32;
-  }
-  if (m <= 2) {
-    y = y + 1 as i64;
-  }
-  return (y, m, d);
+  return time.civil_from_days(local_sec.div_euclid(86400)).0 as i32;
 }
 ```
 

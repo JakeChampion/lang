@@ -280,7 +280,7 @@ function draw(now) {
     (canvas.height - 640 * scale) / 2,
   );
   const cssScale = scale / Math.min(devicePixelRatio || 1, 2);
-  context.strokeStyle = "#285145";
+  context.strokeStyle = "#1f3027";
   context.lineWidth = 0.7;
   context.beginPath();
   for (let x = 0; x <= 1024; x += 128) {
@@ -309,7 +309,7 @@ function draw(now) {
     canvas.dataset.y = local.y.toFixed(2);
   }
   if (frame) {
-    context.fillStyle = "#e7c76c";
+    context.fillStyle = "#d9b169";
     for (const seed of frame.seeds)
       if (seed.active) {
         context.beginPath();
@@ -340,7 +340,7 @@ function draw(now) {
         context.strokeStyle = "#fff";
         context.lineWidth = 2;
         context.stroke();
-        context.font = `${Math.max(11, 11 / cssScale)}px monospace`;
+        context.font = `${Math.max(11, 11 / cssScale)}px "IBM Plex Mono", monospace`;
         context.textAlign = "center";
         context.fillStyle = "#fff";
         context.fillText("YOU", x, y - Math.max(14, 14 / cssScale));

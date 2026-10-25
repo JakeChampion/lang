@@ -89,7 +89,7 @@ function showTile(job, blob, info) {
   const frame = L.DomUtil.create("div", "tile-frame", job.wrap);
   const label = L.DomUtil.create("div", "tile-label", job.wrap);
   label.textContent = info.cached ? ((info.cached === "local" || info.cached === "browser") ? "Local cache" : "CDN cache") : fmtMs(info.ms);
-  label.style.color = info.cached ? "#7fd8ff" : heat(info.ms);
+  label.style.color = info.cached ? "#8fc0b8" : heat(info.ms);
   frame.title = `${info.iterations.toLocaleString()} executed work units`;
 }
 
@@ -114,7 +114,7 @@ function record(job, info) {
   li.innerHTML = `<span></span><span class="ms"></span><span class="sub"></span>`;
   li.children[0].textContent = where;
   li.children[1].textContent = info.cached ? ((info.cached === "local" || info.cached === "browser") ? "LOCAL" : "CDN") : fmtMs(info.ms);
-  li.children[1].style.color = info.cached ? "#7fd8ff" : heat(info.ms);
+  li.children[1].style.color = info.cached ? "#8fc0b8" : heat(info.ms);
   li.children[2].textContent = info.cached
     ? ((info.cached === "local" || info.cached === "browser") ? "reused from this browser’s tile cache" : "served from the Netlify edge cache")
     : `${fmtCount(info.iterations)} work units${info.containerTiles ? ` \u00b7 #${info.containerTiles.toLocaleString()} here` : ""}`;
@@ -144,15 +144,15 @@ function updateMetrics() {
   const w = c.width / 60;
   recent.forEach((sample, i) => {
     const h = Math.max(3, sample.elapsedMs / max * (c.height - 6));
-    g.fillStyle = sample.cached ? "#7fd8ff" : heat(sample.elapsedMs);
+    g.fillStyle = sample.cached ? "#8fc0b8" : heat(sample.elapsedMs);
     g.fillRect(i * w + 1, c.height - h, w - 2, h);
   });
 }
 
 function heat(ms) {
-  if (ms < 20) return "#3ddc97";
-  if (ms < 120) return "#ffb547";
-  return "#ff5d73";
+  if (ms < 20) return "#74c69d";
+  if (ms < 120) return "#d9b169";
+  return "#d98466";
 }
 
 const fmtMs = (ms) => (ms < 10 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(0)} ms`);

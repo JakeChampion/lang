@@ -1,0 +1,145 @@
+import "std/test";
+import "std/time";
+import "core/cmp";
+
+const I64_MAX: i64 = 9223372036854775807;
+
+const I64_MIN: i64 = 0 - 9223372036854775807 - 1;
+
+function parts(d: Duration, sec: i64, nsec: i32): boolean {
+  return d.sec == sec && d.nsec == nsec;
+}
+
+function test_constructors_normalize(): test.TestOutcome {
+  if (!parts(time.duration_hours(2), 7200, 0) || !parts(time.duration_minutes(3), 180, 0) || !parts(time.duration_seconds(5), 5, 0)) {
+    return test.fail("whole units");
+  }
+  if (!parts(time.duration_millis(2500), 2, 500000000) || !parts(time.duration_micros(1500001), 1, 500001000) || !parts(time.duration_nanos(1000000007), 1, 7)) {
+    return test.fail("fractional units");
+  }
+  return test.assert_true(parts(time.duration_millis(0 - 1500), 0 - 2, 500000000) && parts(time.duration_nanos(0 - 1), 0 - 1, 999999999));
+}
+
+function test_constructors_saturate(): test.TestOutcome {
+  if (!time.duration_hours(I64_MAX).eq(time.DURATION_MAX) || !time.duration_minutes(I64_MIN).eq(time.DURATION_MIN)) {
+    return test.fail("an out-of-range count did not saturate");
+  }
+  return test.assert_true(parts(time.duration_nanos(I64_MIN), 0 - 9223372037, 145224192));
+}
+
+function test_conversions(): test.TestOutcome {
+  let d: Duration = time.duration_hours(1).add(time.duration_minutes(2)).add(time.duration_millis(3004)).add(time.duration_nanos(5006));
+  if (d.as_hours() != 1 || d.as_minutes() != 62 || d.as_seconds() != 3723) {
+    return test.fail("hours, minutes, or seconds");
+  }
+  if (d.as_millis() != 3723004 || d.as_micros() != 3723004005 || d.as_nanos() != 3723004005006) {
+    return test.fail("millis, micros, or nanos");
+  }
+  return test.assert_true(time.duration_millis(2500).as_seconds_f64() == 2.5);
+}
+
+function test_conversions_truncate_toward_zero(): test.TestOutcome {
+  let d: Duration = time.duration_millis(0 - 1500);
+  if (d.as_seconds() != 0 - 1 || d.as_millis() != 0 - 1500 || d.as_micros() != 0 - 1500000 || d.as_nanos() != 0 - 1500000000) {
+    return test.fail("negative conversions");
+  }
+  if (time.duration_minutes(0 - 119).as_hours() != 0 - 1 || time.duration_seconds(0 - 59).as_minutes() != 0) {
+    return test.fail("negative hours or minutes");
+  }
+  return test.assert_true(time.duration_nanos(0 - 999999).as_millis() == 0 && time.duration_millis(0 - 1500).as_seconds_f64() == 0.0 - 1.5);
+}
+
+function test_conversions_saturate(): test.TestOutcome {
+  if (time.DURATION_MAX.as_nanos() != I64_MAX || time.DURATION_MIN.as_nanos() != I64_MIN) {
+    return test.fail("nanos of the bounds");
+  }
+  if (time.DURATION_MAX.as_seconds() != I64_MAX || time.DURATION_MIN.as_millis() != I64_MIN) {
+    return test.fail("seconds or millis of the bounds");
+  }
+  return test.assert_eq(time.duration_seconds(9223372037).as_nanos(), I64_MAX);
+}
+
+function test_add_sub(): test.TestOutcome {
+  let a: Duration = time.duration_millis(1750);
+  let b: Duration = time.duration_millis(500);
+  if (!parts(a.add(b), 2, 250000000) || !parts(a.sub(b), 1, 250000000) || !parts(b.sub(a), 0 - 2, 750000000)) {
+    return test.fail("carry or borrow");
+  }
+  return test.assert_eq(a.sub(a), time.DURATION_ZERO);
+}
+
+function test_add_sub_saturate(): test.TestOutcome {
+  let one: Duration = time.duration_nanos(1);
+  if (!time.DURATION_MAX.add(one).eq(time.DURATION_MAX) || !time.DURATION_MIN.sub(one).eq(time.DURATION_MIN)) {
+    return test.fail("a carry past a bound");
+  }
+  if (!time.DURATION_MAX.add(time.DURATION_MAX).eq(time.DURATION_MAX) || !time.DURATION_MIN.add(time.DURATION_MIN).eq(time.DURATION_MIN)) {
+    return test.fail("seconds past a bound");
+  }
+  return test.assert_true(time.DURATION_ZERO.sub(time.DURATION_MIN).eq(time.DURATION_MAX) && time.DURATION_MIN.sub(time.DURATION_MAX).eq(time.DURATION_MIN));
+}
+
+function test_mul(): test.TestOutcome {
+  let d: Duration = time.duration_millis(1500);
+  if (!parts(d.mul(3), 4, 500000000) || !parts(d.mul(0 - 3), 0 - 5, 500000000) || !d.mul(0).is_zero()) {
+    return test.fail("scaling");
+  }
+  if (!time.duration_seconds(I64_MAX / 2 + 1).mul(2).eq(time.DURATION_MAX) || !time.duration_seconds(I64_MAX).mul(0 - 2).eq(time.DURATION_MIN)) {
+    return test.fail("an overflowing product did not saturate");
+  }
+  return test.assert_eq(time.duration_nanos(999999999).mul(2147483647).as_seconds(), 2147483644);
+}
+
+function test_div(): test.TestOutcome {
+  if (!parts(time.duration_seconds(7).div(2), 3, 500000000) || !parts(time.duration_seconds(1).div(3), 0, 333333333)) {
+    return test.fail("positive quotients");
+  }
+  if (time.duration_seconds(0 - 7).div(2).as_millis() != 0 - 3500 || time.duration_seconds(7).div(0 - 2).as_millis() != 0 - 3500) {
+    return test.fail("negative quotients");
+  }
+  if (time.duration_nanos(0 - 7).div(2).as_nanos() != 0 - 3) {
+    return test.fail("a negative quotient did not truncate toward zero");
+  }
+  return test.assert_eq(time.duration_seconds(5).div(0), time.DURATION_ZERO);
+}
+
+function test_compare(): test.TestOutcome {
+  let a: Duration = time.duration_millis(999);
+  let b: Duration = time.duration_seconds(1);
+  if (a.cmp(b) != 0 - 1 || b.cmp(a) != 1 || a.cmp(time.duration_micros(999000)) != 0) {
+    return test.fail("cmp");
+  }
+  if (!cmp.max(a, b).eq(b) || !cmp.min(time.duration_millis(0 - 1), time.DURATION_ZERO).is_negative()) {
+    return test.fail("the Ord impl");
+  }
+  return test.assert_true(time.DURATION_MIN.cmp(time.DURATION_MAX) < 0 && time.DURATION_ZERO.is_zero() && !time.DURATION_ZERO.is_negative());
+}
+
+function test_sort(): test.TestOutcome {
+  let sorted: Duration[] = cmp.sort([time.duration_seconds(3), time.duration_millis(0 - 1), time.duration_nanos(5), time.duration_minutes(1)]);
+  return test.assert_eq(sorted[0].to_string() + " " + sorted[1].to_string() + " " + sorted[3].to_string(), "-1ms 0s 1m");
+}
+
+function test_to_string(): test.TestOutcome {
+  if (time.duration_seconds(3723).add(time.duration_millis(4)).to_string() != "1h2m3s4ms") {
+    return test.fail("positive");
+  }
+  return test.assert_eq(time.duration_millis(0 - 1500).to_string(), "-1s500ms");
+}
+
+function main(): i32 {
+  let t: test.TestRunner = test.test_new("time duration");
+  t = t.it("constructors normalize the nanosecond part", test_constructors_normalize);
+  t = t.it("constructors saturate", test_constructors_saturate);
+  t = t.it("conversions to every unit", test_conversions);
+  t = t.it("conversions truncate toward zero", test_conversions_truncate_toward_zero);
+  t = t.it("conversions saturate", test_conversions_saturate);
+  t = t.it("add and sub carry and borrow", test_add_sub);
+  t = t.it("add and sub saturate", test_add_sub_saturate);
+  t = t.it("mul scales and saturates", test_mul);
+  t = t.it("div truncates toward zero", test_div);
+  t = t.it("compare", test_compare);
+  t = t.it("sort by the Ord impl", test_sort);
+  t = t.it("to_string", test_to_string);
+  return t.finish();
+}

@@ -234,8 +234,8 @@ struct Rep { path: string, st: FileStat, coding: string }
 <<9 function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: platform.Platform): HttpResponse>>=
 function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: platform.Platform): HttpResponse {
   let rep: Rep = __representation(req, d.options.precompressed, Rep { path: path, st: st, coding: "" }, plat);
-  let now: Instant = time.instant_from_unix(plat.now_ms() / (1000 as i64));
-  let v: cache.Validators = cache.Validators { etag: Some(__etag(rep)), last_modified: Some(time.instant_from_unix(rep.st.mtime)) };
+  let now: time.Timestamp = time.timestamp_from_unix(plat.now_ms() / (1000 as i64));
+  let v: cache.Validators = cache.Validators { etag: Some(__etag(rep)), last_modified: Some(time.timestamp_from_unix(rep.st.mtime)) };
   let full: HttpResponse = __headed(rep, d.options, content_type(path)).with_validators(v, now);
   match (cache.evaluate(req, v, now)) {
     Proceed => {
@@ -336,7 +336,7 @@ function __file_body(path: string, start: i64, len: i64): Body {
 
 ```fern
 <<10 struct Ranging>>=
-struct Ranging { v: cache.Validators, now: Instant, max: i32 }
+struct Ranging { v: cache.Validators, now: time.Timestamp, max: i32 }
 ```
 
 ### `11 function __ranged(req: HttpRequest, full: HttpResponse, rep: Rep, g: Ranging, plat: platform.Platform): Htt...`

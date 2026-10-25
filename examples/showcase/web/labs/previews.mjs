@@ -3,35 +3,35 @@ for (const canvas of document.querySelectorAll("[data-lab-preview]")) {
     name = canvas.dataset.labPreview,
     w = canvas.width,
     h = canvas.height;
-  c.fillStyle = "#102438";
+  c.fillStyle = "#0c1510";
   c.fillRect(0, 0, w, h);
   c.lineWidth = 2;
-  c.font = "15px ui-monospace,monospace";
+  c.font = '15px "IBM Plex Mono",ui-monospace,monospace';
   if (name === "foundry") {
     for (let y = 0; y < 9; y++)
       for (let x = 0; x < 22; x++) {
-        c.strokeStyle = "#233d50";
+        c.strokeStyle = "#1f3027";
         c.strokeRect(x * 30, y * 30, 30, 30);
       }
     for (let row = 1; row < 8; row += 3)
       for (let x = 2; x < 20; x++) {
         c.fillStyle =
           x === 2
-            ? "#e7b765"
+            ? "#d9b169"
             : x === 19
-              ? "#79d2a0"
+              ? "#74c69d"
               : x === 10
-                ? "#df9276"
-                : "#507f8f";
+                ? "#d0876a"
+                : "#5f8574";
         c.fillRect(x * 30 + 2, row * 30 + 2, 26, 26);
-        c.fillStyle = "#152739";
+        c.fillStyle = "#0c1510";
         c.fillText(x === 10 ? "S" : ">", x * 30 + 9, row * 30 + 21);
         if (x % 3 === 0) {
-          c.fillStyle = "#f8d37b";
+          c.fillStyle = "#f1ead6";
           c.fillRect(x * 30 + 19, row * 30 + 5, 6, 6);
         }
       }
-    c.strokeStyle = "#74dce6";
+    c.strokeStyle = "#9ddcbc";
     c.beginPath();
     c.moveTo(315, 75);
     c.lineTo(315, 200);
@@ -40,10 +40,10 @@ for (const canvas of document.querySelectorAll("[data-lab-preview]")) {
   } else if (name === "patchbay") {
     for (let row = 0; row < 8; row++)
       for (let step = 0; step < 16; step++) {
-        c.fillStyle = (step * 3 + row) % 7 === 0 ? "#88dcb0" : "#213c50";
+        c.fillStyle = (step * 3 + row) % 7 === 0 ? "#74c69d" : "#1f3027";
         c.fillRect(18 + step * 39, 18 + row * 23, 34, 18);
       }
-    c.strokeStyle = "#f2cd7f";
+    c.strokeStyle = "#d9b169";
     c.beginPath();
     for (let x = 0; x < w; x++) {
       const y = 235 + Math.sin(x * 0.045) * 15 + Math.sin(x * 0.1) * 4;
@@ -60,7 +60,7 @@ for (const canvas of document.querySelectorAll("[data-lab-preview]")) {
       [425, 205],
       [575, 135],
     ];
-    c.strokeStyle = "#73cfa3";
+    c.strokeStyle = "#5f9c7e";
     for (const [a, b] of [
       [0, 2],
       [1, 2],
@@ -77,21 +77,21 @@ for (const canvas of document.querySelectorAll("[data-lab-preview]")) {
       c.stroke();
     }
     positions.forEach(([x, y], i) => {
-      c.fillStyle = i % 3 ? "#284b5d" : "#74cfa2";
+      c.fillStyle = i % 3 ? "#24332b" : "#74c69d";
       c.fillRect(x - 36, y - 20, 72, 40);
-      c.fillStyle = i % 3 ? "#d6ebde" : "#142c36";
+      c.fillStyle = i % 3 ? "#e0eae3" : "#0c1510";
       c.textAlign = "center";
       c.fillText(["A", "B", "XOR", "AND", "SUM", "AND", "OR"][i], x, y + 5);
     });
   } else if (name === "fernbase") {
-    c.fillStyle = "#89dcb0";
+    c.fillStyle = "#9ddcbc";
     c.fillText("BEGIN", 35, 40);
     c.fillText("INSERT → INDEX → COMMIT", 35, 75);
-    c.strokeStyle = "#50758c";
+    c.strokeStyle = "#384a3f";
     for (let i = 0; i < 6; i++) {
-      c.fillStyle = i % 2 ? "#1d374b" : "#172e42";
+      c.fillStyle = i % 2 ? "#15211b" : "#111c16";
       c.fillRect(30, 100 + i * 24, 600, 22);
-      c.fillStyle = i === 2 ? "#f0cf7b" : "#b8ccd3";
+      c.fillStyle = i === 2 ? "#d9b169" : "#b9c8be";
       c.fillText(
         String(i).padStart(3, "0") +
           "   " +
@@ -102,18 +102,18 @@ for (const canvas of document.querySelectorAll("[data-lab-preview]")) {
       );
     }
   } else {
-    c.fillStyle = "#213c50";
+    c.fillStyle = "#1f3027";
     c.fillRect(28, 22, 604, 42);
-    c.fillStyle = "#a4e1bd";
+    c.fillStyle = "#8ba394";
     c.fillText("Search the archive…", 44, 49);
     for (let i = 0; i < 3; i++) {
-      c.fillStyle = "#7fd6ac";
+      c.fillStyle = "#9ddcbc";
       c.fillText(
         ["A garden of sound", "Build a world", "Fern on the server"][i],
         34,
         99 + i * 66,
       );
-      c.fillStyle = "#829ba9";
+      c.fillStyle = "#384a3f";
       c.fillRect(34, 110 + i * 66, 490 - i * 55, 7);
       c.fillRect(34, 125 + i * 66, 350 + i * 35, 7);
     }

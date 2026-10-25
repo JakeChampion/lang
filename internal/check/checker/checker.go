@@ -354,20 +354,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		{
-			Name: "TimeZone",
-			Fields: []ast.Param{
-				{Name: "name", Type: ast.StringType{}},
-				{Name: "offset_seconds", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name: "Zoned",
-			Fields: []ast.Param{
-				{Name: "instant", Type: ast.StructType{Name: "Instant"}},
-				{Name: "zone", Type: ast.StructType{Name: "TimeZone"}},
-			},
-		},
-		{
 			Name: "Span",
 			Fields: []ast.Param{
 				{Name: "years", Type: ast.NumberType{}},

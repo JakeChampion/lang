@@ -21,10 +21,22 @@ jobs:
       - run: ./fern-image/scripts/qualify-workers.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
+      - run: ./fern-image/scripts/test-png-corpus.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/upload-artifact@v7
         with:
           name: image-worker-qualification
           path: fern-image/build/worker-qualification.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-png-corpus-native
+          path: fern-image/build/png-corpus-native.json
           if-no-files-found: error
   wasm:
     runs-on: ubuntu-24.04
@@ -38,3 +50,15 @@ jobs:
       - run: ./fern-image/scripts/test-wasm.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
+      - run: ./fern-image/scripts/test-png-corpus.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-png-corpus-wasm
+          path: fern-image/build/png-corpus-wasm.json
+          if-no-files-found: error

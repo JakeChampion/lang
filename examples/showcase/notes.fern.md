@@ -80,7 +80,7 @@ pub function document(state: State, req: HttpRequest, notice: string, status: i3
     token = signed(state, common.token());
   }
   let entries: Note[] = state.entries.get();
-  let html: string = "<section class=\"notes-intro app-intro\"><div class=\"eyebrow\">05 / THE HYPERTEXT WEB</div><h1><em>Guestbook.</em></h1>"
+  let html: string = "<section class=\"notes-intro app-intro\"><div class=\"eyebrow\"><span>05</span>The hypertext web</div><h1><em>Guestbook.</em></h1>"
     + "<p>Post a public note with an HTML form. The server validates submissions and adds them to an Atom feed.</p>"
     + "<div class=\"tech-chips\"><span>Server-rendered HTML</span><span>POST → 303 → GET</span><span>Signed cookies</span><a href=\"/notes/feed.xml\">Atom feed ↗</a></div></section>";
   if (notice != "") {
@@ -93,7 +93,7 @@ pub function document(state: State, req: HttpRequest, notice: string, status: i3
     + "<button class=\"button primary\" type=\"submit\">Post note</button><p class=\"fine-print\">Notes are public. This demo keeps the last 80 notes in server memory and resets on restart.</p></form>"
     + "<section class=\"note-wall\" aria-label=\"Guestbook notes\">";
   if (entries.len() == 0) {
-    html = html + "<article class=\"paper-note seed-note\"><span class=\"note-pin\"></span><p>No notes yet. Add the first one.</p><footer>Fern, in action <span>✳</span></footer></article>";
+    html = html + "<article class=\"paper-note seed-note\"><span class=\"note-pin\"></span><p>No notes yet. Add the first one.</p><footer>Fern, in action</footer></article>";
   }
   let at: i32 = entries.len() - 1;
   while (at >= 0) {
@@ -171,10 +171,10 @@ pub function feed(state: State): HttpResponse {
   if (entries.len() > 0) {
     updated_ms = entries[entries.len() - 1].timestamp;
   }
-  let updated: string = time.instant_from_unix(updated_ms / 1000).format_rfc3339();
+  let updated: string = time.timestamp_from_unix(updated_ms / 1000).format_rfc3339();
   let xml: string = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"><id>urn:fern:guestbook</id><title>The Fern guestbook</title><author><name>Fern community</name></author><updated>" + updated + "</updated>";
   for note in entries {
-    xml = xml + "<entry><id>urn:fern:note:" + note.id + "</id><author><name>" + common.escape(note.name) + "</name></author><title>" + common.escape(note.name) + "</title><updated>" + time.instant_from_unix(note.timestamp / 1000).format_rfc3339() + "</updated><content type=\"text\">" + common.escape(note.text) + "</content></entry>";
+    xml = xml + "<entry><id>urn:fern:note:" + note.id + "</id><author><name>" + common.escape(note.name) + "</name></author><title>" + common.escape(note.name) + "</title><updated>" + time.timestamp_from_unix(note.timestamp / 1000).format_rfc3339() + "</updated><content type=\"text\">" + common.escape(note.text) + "</content></entry>";
   }
   return http.text(200, xml + "</feed>").with_content_type("application/atom+xml; charset=utf-8").with_header("Cache-Control", "no-cache");
 }
