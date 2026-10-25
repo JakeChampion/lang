@@ -1,0 +1,15 @@
+import "../packages/codecs/png/png";
+import "../packages/pixels/pixels";
+import "../tests/fixtures/png" as fixtures;
+
+function main(): i32 {
+  let image = match (png.decode(fixtures.rgba4(), pixels.default_limits())) { Ok(v) => v, Err(_) => { return 1; } };
+  let bytes = match (png.encode(image, 10000)) { Ok(v) => v, Err(_) => { return 2; } };
+  match (write_file_bytes("build/encoded.png", bytes)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 3;
+    }
+  }
+  return 0;
+}
