@@ -70,6 +70,7 @@ array_first_last_get_module                          0
 array_first_last_get_none_cases                      0
 array_generic_reductions                             0
 array_join                                           0
+array_literal_binds_a_generic_view_field             0
 array_literal_into_a_view_field                      0
 array_literal_takes_its_sibling_float_width          0
 array_methods                                        0
