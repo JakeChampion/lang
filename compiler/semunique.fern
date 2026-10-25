@@ -26,8 +26,10 @@ pub function hoisted(f: ssasem.Func, contract: ssasem.Contract, modes: i32[]): H
     if (entry < 0 || !jumps_only_to(f.graph.blocks[at[h.preds[entry]]], h.id)) {
       continue;
     }
-    let k: i32 = 0;
-    while (k < h.insts.len() && h.insts[k].kind_tag == 8) {
+    for k in 0..h.insts.len() {
+      if (h.insts[k].kind_tag != 8) {
+        break;
+      }
       let phi: ssa.SInst = blocks[hi].insts[k];
       let e: i32 = phi.args[entry];
       if (wanted(f, phi, e, hi) && owned_entry(f, modes, e) && !used_after(f.graph, at, h.preds[entry], e, phi.result)) {
@@ -40,7 +42,6 @@ pub function hoisted(f: ssasem.Func, contract: ssasem.Contract, modes: i32[]): H
         blocks = blocks.with(hi, ssa.SBlock { ...hb, insts: hb.insts.with(k, ssa.SInst { ...phi, args: phi.args.with(entry, v) }) });
         changed = true;
       }
-      k = k + 1;
     }
   }
   if (!changed) {
@@ -62,10 +63,8 @@ function positions(g: ssa.SFunc): i32[] {
     }
   }
   let at: i32[] = __alloc_i32(top + 1);
-  let i: i32 = 0;
-  while (i < g.blocks.len()) {
+  for i in 0..g.blocks.len() {
     at = at.with(g.blocks[i].id, i);
-    i = i + 1;
   }
   return at;
 }
@@ -75,8 +74,7 @@ function positions(g: ssa.SFunc): i32[] {
 function entry_pred(at: i32[], h: ssa.SBlock, hi: i32): i32 {
   let entry: i32 = 0 - 1;
   let back: boolean = false;
-  let k: i32 = 0;
-  while (k < h.preds.len()) {
+  for k in 0..h.preds.len() {
     if (at[h.preds[k]] < hi) {
       if (entry >= 0) {
         return 0 - 1;
@@ -85,7 +83,6 @@ function entry_pred(at: i32[], h: ssa.SBlock, hi: i32): i32 {
     } else {
       back = true;
     }
-    k = k + 1;
   }
   if (!back) {
     return 0 - 1;
@@ -201,14 +198,12 @@ function successors(t: ssa.STerm): i32[] {
 // Whether a block from the header on grows the phi itself: an append, a
 // write, or a byte-copy helper whose receiver it is.
 function grown_in_loop(g: ssa.SFunc, phi: i32, hi: i32): boolean {
-  let i: i32 = hi;
-  while (i < g.blocks.len()) {
+  for i in hi..g.blocks.len() {
     for ins in g.blocks[i].insts {
       if (ins.args.len() > 0 && ins.args[0] == phi && grows(ins)) {
         return true;
       }
     }
-    i = i + 1;
   }
   return false;
 }
