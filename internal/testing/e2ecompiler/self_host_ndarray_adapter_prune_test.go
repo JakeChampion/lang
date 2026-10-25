@@ -30,9 +30,9 @@ function main(): i32 {
   if (!shared.bodies[1].superseded || shared.extra.len() != 3) { return 3; }
   let address = semndprune.unused_adapter(mod, bodies.with(0, body("", [ir.op_const_str("address:ndarray__inner_kernel;payload")])), extra);
   if (address.bodies[1].superseded) { return 4; }
-  let exported = parser.Module { ...mod, exports: [parser.ExportBinding { func_name: "ndarray__inner_kernel", iface: "", wit: "", c_abi: true }] };
+  let exported = parser.Module { ...mod, exports: [parser.ExportBinding { func_name: "ndarray__inner_kernel", iface: "", wit: "", c_abi: true, method: false }] };
   if (semndprune.unused_adapter(exported, bodies, extra).bodies[1].superseded) { return 5; }
-  let kept_child = parser.Module { ...mod, exports: [parser.ExportBinding { func_name: "ndarray__made", iface: "", wit: "", c_abi: true }] };
+  let kept_child = parser.Module { ...mod, exports: [parser.ExportBinding { func_name: "ndarray__made", iface: "", wit: "", c_abi: true, method: false }] };
   let kept = semndprune.unused_adapter(kept_child, bodies, extra);
   if (!kept.bodies[1].superseded || kept.extra.len() != 3) { return 6; }
   let implicit = [body("ndarray__Record.method", []), body("__runtime", [])];

@@ -452,11 +452,14 @@ not register pressure. The order to take that in:
    for 20-22% more compile time
    (`docs/ssa-log/2026-09-17-the-optimiser-costs-more-than-it-saves.md`).
 
-### Cold calls (arm64)
+### Cold calls
 
-On arm64 the allocator does not count every call as a call
-(`regalloc_linear_fixed` with a cold-position array). `ssa.cold_positions` sorts the
-call positions into four kinds:
+On arm64 and x86-64 the allocator does not count every call as a call
+(`regalloc_linear_fixed` with a cold-position array). A runtime abort
+(`ssa.never_returns`: `__fern_oob_abort` and the other traps) exits the
+process, so it is not a call at all, and a function whose only calls are
+aborts can be a leaf. `ssa.cold_positions` sorts the other call positions into
+four kinds:
 
 - An array push (`COLD_SLOW`) calls only on its slow path, to grow the array.
 - A call in a cold block (`COLD_BRANCH`) is inside a loop, in a block that
@@ -468,14 +471,17 @@ call positions into four kinds:
 
 An integer value live across only the first three kinds can sit in a caller
 register. The emitter keeps it there. A push's slow path stores the live
-caller registers to eight frame words and loads them back. A cold-branch
-call does the same around all of its code (`ssa_cold_save`).
+caller registers to frame words and loads them back: eight on arm64, four on
+x86-64. A cold-branch call does the same around all of its code
+(`ssa_cold_save`).
 
 The frame words keep sp fixed, so the spill slots inside the call keep their
 offsets. A fixed table
-(`ssafixed.table_inside`) keeps such values off x0 to x3 and x30, which the
-call writes. The table binds only values live across the position, so the
-call's operands and result can still use those registers.
+(`ssafixed.with_clobbers`) keeps such values off x0 to x3 and x30 on arm64,
+and off rax, rsi, rdi, rcx and rdx on x86-64, which the call writes. The
+table binds only values live across the position, so the call's operands and
+result can still use those registers. On x86-64 the same table also holds the
+per-instruction rows for rcx, rdx and r11, which bind a whole interval.
 
 Two rules stop the saves from costing more than they save:
 
@@ -485,7 +491,10 @@ Two rules stop the saves from costing more than they save:
 - A value takes a caller register only when a save and a load at each
   cold-branch call it spans, weighted by loop depth, cost less than its own
   weighted reads and writes (`hard_spans`). Otherwise it is treated as live
-  across a call.
+  across a call. When no callee-saved register is free and the value spans
+  no call that every iteration makes, it takes a caller register anyway: the
+  saves run on the cold paths, and a spill loads and stores on every one.
+  x86-64 has five callee-saved registers, so its loops reach this case.
 
 With `cold_calls`, a phi can be read far more than its entry operand
 (`weight` more than 4 times). Such a phi takes a register even when that
@@ -493,7 +502,9 @@ operand is spilled, and loads it on the entry edge.
 
 On the std/deflate decoder (#13074) this keeps the bit reader in registers,
 and decoding is 8 to 18% faster. The bench corpus does not move outside
-run-to-run noise (Apple M3 Pro, the median of 5 runs of each benchmark).
+run-to-run noise (Apple M3 Pro, the median of 5 runs of each benchmark). On
+x86-64 the decoder keeps `bitbuf` and `bitcnt` in r8 and r9, and decoding is
+5 to 9% faster (Xeon 2.1 GHz, the best of 5 runs on three local files).
 
 ### Lane values
 

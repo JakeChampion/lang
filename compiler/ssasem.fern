@@ -340,7 +340,7 @@ pub function call(): i32 {
 }
 
 pub function fresh_result_builtin(name: string): boolean {
-  return name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
+  return name == "__sem_bytes_unique" || name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
     || name == "__ghash" || name == "__aes_gcm_seal" || name == "__aes_gcm_open" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
 

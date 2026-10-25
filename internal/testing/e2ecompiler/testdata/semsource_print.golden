@@ -2046,7 +2046,7 @@ func bail {
     v3 = const_str
     v4 = call write v3
     v5 = call exit v0
-    br b3
+    unreachable
   b2:
     br b3
   b3:

@@ -56,7 +56,7 @@ function tls_config(cfg: serve.Config): Result[serve.Config, string] {
           }
           match (identity.from_pem(cert, key)) {
             Ok(id) => {
-              return Ok(cfg.with_tls(server.config(id)));
+              return Ok(cfg.with_tls(server.config(id, random_bytes(32))));
             },
             Err(e) => {
               return Err(e.message());

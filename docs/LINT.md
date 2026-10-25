@@ -63,7 +63,7 @@ The parser has desugared some forms by the time the linter sees them, and the
 score is of the source, not the desugar: a tuple, struct, literal or nested
 pattern match is scored by the arms recorded as written (the `sugar` the
 printer reprints from), a C-style `for` by the loop `printer.as_c_for`
-recovers, and the loop a `todo` lowers to not at all.
+recovers, and a `todo` not at all.
 
 | Construct | Adds |
 |---|---|
@@ -75,7 +75,7 @@ recovers, and the loop a `todo` lowers to not at all.
 | `&&`, `\|\|` | 1 each — short-circuiting is a branch |
 | `?` | 1 — an early return on the error path |
 | `assert(…)` | 0 — a precondition, not a second path, and `-O` deletes it |
-| `todo` | 0 — its loop is a stub marker |
+| `todo` | 0 — a stub marker |
 | `break`, `continue`, `return` | 0 — the fork that created the path already counted |
 
 A lambda's body counts INTO the function that spells it. An inline closure

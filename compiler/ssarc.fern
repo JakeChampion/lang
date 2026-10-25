@@ -3375,6 +3375,10 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
     r = append_push(r, f, p, ins, defer0, link);
     return emit(r, ir.op_store_local(ins.result));
   }
+  if (ins.kind_tag == ssasem.call() && ins.str == "__sem_bytes_unique") {
+    r = bytes_unique(r, f, ins);
+    return emit(r, ir.op_store_local(ins.result));
+  }
   if (ssaunits.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
     r = grow_or_concat(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
@@ -3660,6 +3664,24 @@ function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   if (ssasem.reference(elem)) {
     r = own_copied(r, elem, res, ins.args[0]);
   }
+  r = release(r, ins.args[0], f.values[ins.args[0]], f);
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_load_local(res));
+}
+
+// The array itself when its count is 1, or a copy of it and a release.
+function bytes_unique(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let res: i32 = scratch_base(f);
+  r = reserve(r, res + 1);
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_store_local(res));
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_call_direct("__fern_bytes_owned", 1));
+  r = emit(r, ir.op_store_local(res));
   r = release(r, ins.args[0], f.values[ins.args[0]], f);
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(res));
@@ -5890,6 +5912,16 @@ function set_return_words(own e: Emit, b: ssa.SBlock): Emit {
   return e;
 }
 
+// A block whose last instruction is the builtin exit has already left the
+// process, so its unreachable terminator needs no trap of its own.
+function ends_in_exit(f: ssasem.Func, b: ssa.SBlock): boolean {
+  if (b.insts.len() == 0) {
+    return false;
+  }
+  let last: ssa.SInst = b.insts[b.insts.len() - 1];
+  return last.kind_tag == ssasem.call() && last.str == "exit" && util.index_of_str(f.shadows, "exit") < 0;
+}
+
 function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
   let b: ssa.SBlock = f.graph.blocks[order[position]];
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
@@ -5899,7 +5931,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
     e = Emit { ...e, r: drops(e.r, ret, f, p, e.links) };
-    if (b.term.kind_tag == 4) {
+    if (b.term.kind_tag == 4 && !ends_in_exit(f, b)) {
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
     }

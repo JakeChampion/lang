@@ -1809,7 +1809,7 @@ function ssa_cold_fixed(cold: i32[]): ssafixed.Table {
     }
     masks = masks.append(mask);
   }
-  return ssafixed.table_inside(0, ssa_nregs(), masks);
+  return ssafixed.with_clobbers(ssafixed.none(), 0, ssa_nregs(), masks);
 }
 
 struct ColdSaves { by_pos: i32[], by_val: i32[], any: boolean }
@@ -2292,7 +2292,7 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
     return "    rev " + d + ", " + src + "\n";
   }
   if (what == "bswap:32") {
-    return "    rev " + w + ", " + ws + "\n";
+    return "    rev " + w + ", " + ws + "\n    sxtw " + d + ", " + w + "\n";
   }
   if (what == "clz:32") {
     return "    clz " + w + ", " + ws + "\n";
@@ -2330,7 +2330,7 @@ function ssa_bits_asm(what: string, d: string): string {
     return "    rev " + d + ", " + d + "\n";
   }
   if (what == "bswap:32") {
-    return "    rev " + w + ", " + w + "\n";
+    return "    rev " + w + ", " + w + "\n    sxtw " + d + ", " + w + "\n";
   }
   return "";
 }
@@ -3591,7 +3591,7 @@ function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boole
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false });
 }
 
 function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {

@@ -1336,6 +1336,9 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
       if (sid >= 0 && sid < w.at.len()) {
         si = w.at[sid];
       }
+      if (si >= 0 && token_zero_edge(w, b, e, boxed)) {
+        si = -1;
+      }
       if (si >= 0) {
         edge = took_edge(edge, b * 2 + e);
       }
@@ -1356,6 +1359,23 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
     }
   }
   return Paths { escapes: false, edge: edge };
+}
+
+// The edge a test of a boxed token takes when the token is zero. A token stays
+// boxed only while every walked edge into it carries the shell, so no walked
+// path takes this edge.
+function token_zero_edge(w: Walk, b: i32, e: i32, boxed: boolean[]): boolean {
+  let t: ssa.STerm = w.f.blocks[b].term;
+  if (t.kind_tag != 3 || t.t == t.f) {
+    return false;
+  }
+  let tt: Tested = tested(w, t.cond);
+  return tt.word >= 0 && boxed_token(w, boxed, tt.word) && e == 1 == tt.on_true;
+}
+
+function boxed_token(w: Walk, boxed: boolean[], v: i32): boolean {
+  let r: i32 = w.root[v];
+  return r >= 0 && r < boxed.len() && boxed[r];
 }
 
 function edge_flags(w: Walk, edges: boolean): boolean[] {
@@ -1488,12 +1508,16 @@ function settles_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32, mode: i
     if (mode == 1 && (d.kind_tag == 41 || d.kind_tag == 43) && d.args.len() >= 2 && w.root[d.args[0]] == base && store_key(w, d) == load_key(w, ld) && d.kind_tag == 41 == (ld.kind_tag == 40)) {
       return true;
     }
-    if (mode == 2 && (is_shell(w, d) && w.root[d.args[0]] == base || reuses(w, d, base, boxed) && writes_slot(w, mb, i, d.result, ld))) {
+    if (mode == 2 && (is_shell(w, d) && w.root[d.args[0]] == base || reuses(w, d, base, boxed) && writes_slot(w, mb, i, d.result, ld) || frees_token(w, d, boxed))) {
       return true;
     }
     i = i + 1;
   }
   return false;
+}
+
+function frees_token(w: Walk, d: ssa.SInst, boxed: boolean[]): boolean {
+  return is_call(d, "__fern_rc_dec") && d.args.len() == 1 && boxed_token(w, boxed, d.args[0]);
 }
 
 function store_key(w: Walk, st: ssa.SInst): i32 {
