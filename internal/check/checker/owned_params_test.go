@@ -702,6 +702,29 @@ function f(): string {
 	}
 }
 
+func TestOwnGuardAllowsABuiltinVariantConstruction(t *testing.T) {
+	const keepers = `
+function keepR(own r: Result[i32[], string]): i32 { return 0; }
+function keepO(own o: Option[i32[]]): i32 { return 0; }
+`
+	for _, tc := range []struct{ name, body string }{
+		{"ok", `function f(): i32 { return keepR(Ok([1])); }`},
+		{"err", `function f(): i32 { return keepR(Err("e")); }`},
+		{"some", `function f(): i32 { return keepO(Some([1])); }`},
+		{"none", `function f(): i32 { return keepO(None); }`},
+		{"scrutinee", `
+function f(): i32 {
+    match (Some([1])) {
+        Some(xs) => { return consume(xs); },
+        None => { return 0; }
+    }
+    return 0;
+}`},
+	} {
+		wantOK(t, "builtin-variant-"+tc.name, freshResultPrelude+keepers+tc.body)
+	}
+}
+
 func TestOwnGuardRejectsAResultPayloadThatMayBorrow(t *testing.T) {
 	wantE051(t, "result-payload-through-a-borrowing-callee", freshResultPrelude+`
 function relay(r: Result[i32[], string]): Result[i32[], string] { return r; }

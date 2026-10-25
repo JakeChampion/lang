@@ -16725,6 +16725,11 @@ function ow_variant_known(ctx: OwnCtx, name: string, owner: string): boolean {
   return false;
 }
 
+// Option's and Result's variants are not among the module's declarations.
+function ow_builtin_variant(ctx: OwnCtx, name: string): boolean {
+  return is_builtin_variant(name) && !ctx.ofuncs.funcs.has(name) && !util.has_str(ctx.bound, name);
+}
+
 function ow_struct_names(structs: parser.StructDecl[]): string[] {
   let names: string[] = [];
   for sd in structs {
@@ -16746,7 +16751,7 @@ function ow_scalar_literal(e: ast.Expr): boolean {
 function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(cid) = c.callee {
-      if (ctx.ofuncs.ctors.has(cid.name)) {
+      if (ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
       return util.has_str(ctx.fresh_scrut, cid.name);
@@ -16786,7 +16791,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (util.has_str(ctx.last_use, lu_key(id.line, id.col))) {
         return true;
       }
-      if (ow_variant_known(ctx, id.name, "")) {
+      if (ow_variant_known(ctx, id.name, "") || ow_builtin_variant(ctx, id.name)) {
         return true;
       }
       if (!util.has_str(ctx.bound, id.name) && !ctx.scope.is_bound(id.name) && ctx.scope.lookup_sig(id.name).is_const) {
@@ -16803,7 +16808,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return ctx.ofuncs.ctors.has(cid.name) || util.has_str(ctx.fresh, cid.name);
+          return ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
           for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
