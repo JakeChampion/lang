@@ -2265,23 +2265,25 @@ function concat_kernel(name: string, c: ast.ExprCall, s: State): boolean {
   }
   let t: typeinfo.Type = checked(c.args[0], s);
   if let typeinfo.TypeArray(a) = t {
-    return !a.view && !ssasem.reference(a.elem) && semtypes.concrete(a.elem, false) && semtypes.equal(checked(c.args[1], s), t);
+    return !a.view && !ssasem.reference(a.elem) && semtypes.concrete(a.elem, false) && ssasem.same_elements(checked(c.args[1], s), t);
   }
   return false;
 }
 
+// The second operand is an array or a view of one; a view is read in place.
 function builtin_concat(c: ast.ExprCall, s: State): Value {
   let t: typeinfo.Type = checked(c.args[0], s);
   let a: Value = expr(c.args[0], s, t);
   if (!a.s.ok) {
     return a;
   }
-  let b: Value = expr(c.args[1], a.s, t);
+  let tb: typeinfo.Type = checked(c.args[1], s);
+  let b: Value = expr(c.args[1], a.s, tb);
   s = b.s;
   if (!s.ok) {
     return b;
   }
-  if (!semtypes.equal(s.values[a.id], t) || !semtypes.equal(s.values[b.id], t)) {
+  if (!semtypes.equal(s.values[a.id], t) || !ssasem.same_elements(s.values[b.id], t)) {
     return refused(s, "concat operand type");
   }
   return define(s, ssasem.arr_concat(), [a.id, b.id], 0, "", t);

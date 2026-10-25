@@ -1718,11 +1718,21 @@ function arr_helper_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   return arr_join_error(ins, f, result);
 }
 
+// same_elements: `t` is an array or a view with the elements of array `arr`.
+pub function same_elements(t: typeinfo.Type, arr: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    if let typeinfo.TypeArray(b) = arr {
+      return semtypes.equal(a.elem, b.elem);
+    }
+  }
+  return false;
+}
+
 function arr_concat_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "array concat arity";
   }
-  if (!semtypes.equal(f.values[ins.args[0]], result) || !semtypes.equal(f.values[ins.args[1]], result)) {
+  if (!semtypes.equal(f.values[ins.args[0]], result) || !same_elements(f.values[ins.args[1]], result)) {
     return "array concat operand type";
   }
   if let typeinfo.TypeArray(a) = result {
