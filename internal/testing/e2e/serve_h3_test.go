@@ -145,7 +145,7 @@ function main(): i32 {
   let Ok(id) = identity.from_pem(cert, key) else {
     return 4;
   };
-  return serve.run(0, @CONFIG@.with_tls(server.config(id)).with_h3(), handle);
+  return serve.run(0, @CONFIG@.with_tls(server.config(id, random_bytes(32))).with_h3(), handle);
 }
 `
 
