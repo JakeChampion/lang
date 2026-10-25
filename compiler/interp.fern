@@ -4483,12 +4483,12 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
       _ => {}
     }
   }
-  let rv: Value = eval_expr(float_operand(b.right, lv), env);
+  let rv: Value = eval_expr(float_operand(b.right, b.left, lv), env);
   if (is_err(rv)) {
     return rv;
   }
   if (parser.is_unsettled_int_literal(b.left)) {
-    lv = eval_expr(float_operand(b.left, rv), env);
+    lv = eval_expr(float_operand(b.left, b.right, rv), env);
   }
   let overload: string = struct_op_method(b.op, lv);
   if (overload.len() > 0) {
@@ -4509,16 +4509,17 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   return eval_typed_binary(b.op, lv, rv, b.ty);
 }
 
-// An integer literal beside a float operand is a float of its width, as the
-// checker settles it.
-function float_operand(e: ast.Expr, other: Value): ast.Expr {
-  if (!parser.is_unsettled_int_literal(e)) {
+// An integer literal beside a typed float operand is a float of its width, as
+// the checker settles it. Beside a float literal it keeps its integer type,
+// and the mixed operation is the error the checker reports.
+function float_operand(e: ast.Expr, other: ast.Expr, value: Value): ast.Expr {
+  if (!parser.is_unsettled_int_literal(e) || parser.float_literal_tree(other)) {
     return e;
   }
-  if let VFloat(_) = other {
+  if let VFloat(_) = value {
     return parser.settle_int_tree(e, "f64");
   }
-  if let VFloat32(_) = other {
+  if let VFloat32(_) = value {
     return parser.settle_int_tree(e, "f32");
   }
   return e;
@@ -9166,6 +9167,26 @@ function check_floats(): i32 {
     VErr(_) => {},
     _ => {
       return 550;
+    }
+  }
+
+  let r55b: Value = run_source("return 2.5 + 1;");
+  match (r55b) {
+    VErr(_) => {},
+    _ => {
+      return 551;
+    }
+  }
+
+  let r55c: Value = run_source("let f: f64 = 1.5; return f + 1 / 2;");
+  match (r55c) {
+    VFloat(f) => {
+      if (f.v < 1.99 || f.v > 2.01) {
+        return 552;
+      }
+    },
+    _ => {
+      return 553;
     }
   }
 
