@@ -265,6 +265,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "count_byte_bytes")) {
     out = out.append("@uses_count_byte_bytes");
   }
+  if (module_emits_op_cached(cache, "count_below_u64")) {
+    out = out.append("@uses_count_below_u64");
+  }
   if (module_emits_op_cached(cache, "sum_bytes_array")) {
     out = out.append("@uses_sum_bytes_array");
   }
@@ -4851,6 +4854,9 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 359) {
     return "    call $__fern_count_byte_bytes\n";
   }
+  if (o.kind_tag == 482) {
+    return "    call $__fern_count_below_u64\n";
+  }
   if (o.kind_tag == 368) {
     return "    call $__fern_sum_bytes_array\n";
   }
@@ -6379,6 +6385,27 @@ pub function count_byte_bytes_helper(): string {
   o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $scan)))\n    (local.get $count))\n";
+  return o;
+}
+
+// i64x2.lt_s is a signed compare. Both sides have their top bit flipped, so it gives the unsigned order.
+pub function count_below_u64_helper(): string {
+  let o: string = "  (func $__fern_count_below_u64 (param $a i32) (param $w i64) (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32) (local $count i32) (local $bias v128) (local $t v128)\n";
+  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+  o = o + "    (local.set $bias (i64x2.splat (i64.shl (i64.const 1) (i64.const 63))))\n";
+  o = o + "    (local.set $t (v128.xor (i64x2.splat (local.get $w)) (local.get $bias)))\n";
+  o = o + "    (block $vd (loop $vc\n";
+  o = o + "      (br_if $vd (i32.gt_s (i32.add (local.get $i) (i32.const 2)) (local.get $len)))\n";
+  o = o + "      (local.set $count (i32.add (local.get $count) (i32.popcnt (i64x2.bitmask (i64x2.lt_s\n";
+  o = o + "        (v128.xor (v128.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (local.get $i) (i32.const 3)))) (local.get $bias))\n";
+  o = o + "        (local.get $t))))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 2)))\n";
+  o = o + "      (br $vc)))\n";
+  o = o + "    (if (i32.lt_s (local.get $i) (local.get $len)) (then\n";
+  o = o + "      (if (i64.lt_u (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (local.get $i) (i32.const 3)))) (local.get $w))\n";
+  o = o + "        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))))\n";
+  o = o + "    (local.get $count))\n";
   return o;
 }
 
@@ -9580,6 +9607,9 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   }
   if (need(needs, "@uses_count_byte_bytes")) {
     parts = parts.append(count_byte_bytes_helper());
+  }
+  if (need(needs, "@uses_count_below_u64")) {
+    parts = parts.append(count_below_u64_helper());
   }
   if (need(needs, "@uses_sum_bytes_array")) {
     parts = parts.append(byte_reduction_helper(false));

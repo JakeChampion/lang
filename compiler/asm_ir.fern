@@ -4103,6 +4103,39 @@ function set_entry_test(o: ir.Op, idx: string): string {
   return "cmpq $0, 8(%rdx," + idx + ",8)";
 }
 
+// AVX2 has only a signed 64-bit compare. Both sides have their top bit flipped,
+// so the signed compare gives the unsigned order. Four words go in each step.
+// Every vector instruction is VEX-encoded: a legacy SSE write after vbroadcastsd
+// pays the SSE/AVX transition on each call.
+function emit_count_below_u64(s: asmcore.EmitState): asmcore.EmitState {
+  let lo1: asmcore.LabelOut = asmcore.fresh_label(s);
+  let c_vec: string = lo1.name;
+  let lo2: asmcore.LabelOut = asmcore.fresh_label(lo1.state);
+  let c_tail: string = lo2.name;
+  let lo3: asmcore.LabelOut = asmcore.fresh_label(lo2.state);
+  let c_next: string = lo3.name;
+  let lo4: asmcore.LabelOut = asmcore.fresh_label(lo3.state);
+  let c_done: string = lo4.name;
+  let lo5: asmcore.LabelOut = asmcore.fresh_label(lo4.state);
+  let c_vec_done: string = lo5.name;
+  s = lo5.state;
+  s = s.write("    popq %rcx\n    popq %rax\n");
+  s = s.write("    movq (%rax), %r8\n    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
+  s = s.write("    movabsq $-9223372036854775808, %r9\n    vmovq %r9, %xmm2\n    vbroadcastsd %xmm2, %ymm2\n");
+  s = s.write("    movq %rcx, %r11\n    xorq %r9, %r11\n    vmovq %r11, %xmm1\n    vbroadcastsd %xmm1, %ymm1\n");
+  s = s.write("    leaq -4(%r8), %r9\n");
+  s = s.write(c_vec + ":\n    cmpq %r9, %rdx\n    jg " + c_vec_done + "\n");
+  s = s.write("    vpxor 8(%rax,%rdx,8), %ymm2, %ymm0\n    vpcmpgtq %ymm0, %ymm1, %ymm0\n");
+  s = s.write("    vmovmskpd %ymm0, %r11d\n    popcntl %r11d, %r11d\n    addq %r11, %r10\n");
+  s = s.write("    addq $4, %rdx\n    jmp " + c_vec + "\n");
+  s = s.write(c_vec_done + ":\n    vzeroupper\n");
+  s = s.write(c_tail + ":\n    cmpq %r8, %rdx\n    jge " + c_done + "\n");
+  s = s.write("    movq 8(%rax,%rdx,8), %r11\n    cmpq %rcx, %r11\n    jae " + c_next + "\n");
+  s = s.write("    addq $1, %r10\n");
+  s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_tail + "\n");
+  return s.write(c_done + ":\n    pushq %r10\n");
+}
+
 function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
   let lb: string = mlo.name;
@@ -4424,6 +4457,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_tail + "\n");
     s = s.write(c_done + ":\n    pushq %r10\n");
     return s;
+  }
+  if (o.kind_tag == 482) {
+    return emit_count_below_u64(s);
   }
   if (o.kind_tag == 322) {
     let flo: asmcore.LabelOut = asmcore.fresh_label(s);

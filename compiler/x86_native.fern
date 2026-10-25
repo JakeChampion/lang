@@ -3594,6 +3594,17 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
   if (mnem == "vmovupd" || mnem == "vmovdqu") {
     return x86_gas_vex_move(a, mnem, src, dst);
   }
+  if (mnem == "vmovq") {
+    let qd: i32 = x86_gas_xmm(dst);
+    let qs: i32 = x86_gas_reg(src);
+    if (qd < 0 || qs < 0) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    x86_push_arr(a.code, x86_vex([], qd >= 8, false, qs >= 8, 1, true, 0, false, 1));
+    buf_push_byte(a.code, 110);
+    buf_push_byte(a.code, x86_modrm(3, qd & 7, qs & 7));
+    return a;
+  }
   if (mnem == "vbroadcasti128") {
     let id: i32 = x86_gas_ymm(dst);
     if (id < 0 || !x86_gas_has_paren(src)) {
@@ -3630,6 +3641,11 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
   }
   let ys: i32 = vs & 15;
   x86_push_arr(a.code, x86_vex([], rd >= 8, false, ys >= 8, 1, false, 0, vs >= 16, 1));
+  if (mnem == "vmovmskpd") {
+    buf_push_byte(a.code, 80);
+    buf_push_byte(a.code, x86_modrm(3, rd, ys));
+    return a;
+  }
   buf_push_byte(a.code, 215);
   buf_push_byte(a.code, x86_modrm(3, rd, ys));
   return a;
@@ -3664,7 +3680,7 @@ function x86_vex_store_delta(mnem: string): i32 {
 }
 
 function x86_gas_is_vex_two(mnem: string): boolean {
-  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vbroadcastsd" || mnem == "vbroadcasti128" || mnem == "vpmovmskb";
+  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vbroadcastsd" || mnem == "vbroadcasti128" || mnem == "vpmovmskb" || mnem == "vmovmskpd" || mnem == "vmovq";
 }
 
 function x86_vex_three_op(mnem: string): i32 {
@@ -3715,6 +3731,9 @@ function x86_vex_three_op(mnem: string): i32 {
     },
     "vpshufb" => {
       return 512;
+    },
+    "vpcmpgtq" => {
+      return 512 + 55;
     },
     _ => {
       return 0 - 1;
