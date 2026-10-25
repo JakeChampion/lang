@@ -116,9 +116,9 @@ func dirEntriesValue(i *Interp, args []Value, raw bool) (Value, error) {
 			return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
 		}
 		if raw {
-			out.E[k] = byteArray([]byte(e.Name()))
+			out.Elems()[k] = byteArray([]byte(e.Name()))
 		} else {
-			out.E[k] = String(e.Name())
+			out.Elems()[k] = String(e.Name())
 		}
 	}
 	return resultOk(out), nil
