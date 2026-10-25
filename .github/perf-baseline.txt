@@ -1,3 +1,5 @@
+# Re-pinned 2026-10-25 (#13276): x86_64/utf8_ingest_unchecked.text 8288 to 8196 and
+# utf8_ingest_validated.text 8802 to 8710, from a local perf-bench run on e5f90a40.
 # Re-pinned 2026-10-25 (#13251), x86_64 rows from a local perf-bench run on
 # f2a9fbef. The runtime word copy cuts byte_copy_*.ir by 73-74%, and the
 # register and release changes cut deflate_encode.ir by 18% and enum_match.ir
@@ -143,9 +145,9 @@ x86_64/struct_drop.text	2327
 x86_64/struct_drop.ir	205020574
 x86_64/tokenize.text	1104
 x86_64/tokenize.ir	37880086
-x86_64/utf8_ingest_unchecked.text	8288
+x86_64/utf8_ingest_unchecked.text	8196
 x86_64/utf8_ingest_unchecked.ir	2205771
-x86_64/utf8_ingest_validated.text	8802
+x86_64/utf8_ingest_validated.text	8710
 x86_64/utf8_ingest_validated.ir	5297772
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
