@@ -76,7 +76,7 @@ func TestAsyncCombinatorsRealFd(t *testing.T) {
 
 	gatherSrc := fmt.Sprintf(`import "std/async";
 
-function fetch_future(conn: i32): async.Future[i32] {
+function read_future(conn: i32): async.Future[i32] {
     function resume(woken_fd: i32): async.Future[i32] {
         let resp: u8[] = __alloc_u8(4096);
         if (tcp_recv_into(woken_fd, resp) > 0) { return Ready(1); }
@@ -92,7 +92,7 @@ function main(): i32 {
     if (c2 < 0) { return 82; }
     if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
     if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
-    let fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
+    let fs: async.Future[i32][] = [read_future(c1), read_future(c2)];
     let r: i32[] = async.gather(fs, -1);
     if (r[0] == 1 && r[1] == 1) { return 42; }
     return 85;
@@ -100,7 +100,7 @@ function main(): i32 {
 
 	raceSrc := fmt.Sprintf(`import "std/async";
 
-function fetch_future(conn: i32): async.Future[i32] {
+function read_future(conn: i32): async.Future[i32] {
     function resume(woken_fd: i32): async.Future[i32] {
         if (woken_fd == async.cancelled()) { return Ready(0); }
         let resp: u8[] = __alloc_u8(4096);
@@ -117,7 +117,7 @@ function main(): i32 {
     if (c2 < 0) { return 82; }
     if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
     if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
-    let fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
+    let fs: async.Future[i32][] = [read_future(c1), read_future(c2)];
     let (winner, result) = async.race(fs, -1);
     if (winner >= 0 && result == 1) { return 42; }
     return 86;

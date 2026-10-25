@@ -27,7 +27,7 @@ and `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
 > the component-model-async host scheduler (`docs/ASYNC-REDESIGN.md` PR5).
 
 The patterns shown here are exercised by `tests/stdlib/async_combinators_test.fern`
-and the Go e2e suite (`async_combinators_test.go`, `async_fetch_future_test.go`).
+and the Go e2e suite (`async_combinators_test.go`, `async_task_fetch_test.go`).
 
 ---
 
@@ -80,36 +80,37 @@ pub enum Future[T] {
 }
 ```
 
-You rarely construct a `Future` by hand — the I/O primitives return them
-(`fetch.fetch_future`, below). `Ready(v)` is occasionally useful for a value
-that's already available (and it resolves on every backend, including interp /
-wasm). A `Pending` future resolves when its file descriptor becomes readable,
-driven by the OS `poll` on native.
+A `Pending` future wraps one wait of your own — a socket read, a timer — and
+resolves when its file descriptor becomes readable, driven by the OS `poll` on
+native. `Ready(v)` is a value that's already available (and it resolves on every
+backend, including interp / wasm). HTTP is not a future: `fetch.send` waits on
+DNS, the connect, TLS and each read under its own timeouts, and runs
+concurrently under the task combinators instead (§7).
 
-`Future[T]` is **generic over `T`** — `Future[string]` for response bodies,
-`Future[i32]` for status codes, etc.
+`Future[T]` is **generic over `T`** — `Future[string]`, `Future[i32]`, etc.
 
 ---
 
 ## 3. `gather` — fan out and await all
 
-`gather` issues every future's I/O concurrently and returns all results in input
-order. This is the canonical edge fan-out: hit a cache and a primary, take both.
+`gather` waits on every future at once and returns all results in input
+order.
 
 ```fern
 import "std/async";
-import "std/fetch";
-import "std/net";
 
-function handle(): i32 {
-    let cache: net.SocketAddr   = net.socket_addr(net.ipv4(10, 0, 0, 1), 80);
-    let primary: net.SocketAddr = net.socket_addr(net.ipv4(10, 0, 0, 2), 80);
-    let none: u8[] = [];
-    let bodies: u8[][] = async.gather([
-        fetch.fetch_future(cache,   "/key"),
-        fetch.fetch_future(primary, "/key"),
-    ], none);                     // the fallback for a future that can't complete
-    return bodies.len();          // both fetches overlapped on one thread
+// later resolves to v once its timer fires.
+function later(ms: i32, v: i32): async.Future[i32] {
+    return Pending(timer_fd(ms), (woken: i32) => mk(v));
+}
+
+function mk(v: i32): async.Future[i32] {
+    return Ready(v);
+}
+
+function main(): i32 {
+    let got: i32[] = async.gather([later(60, 4), later(20, 5)], 0 - 1);
+    return got[0] + got[1];       // 9, after ~60ms: both timers waited at once
 }
 ```
 
@@ -123,28 +124,14 @@ With a blocking native `poll`, live futures always make progress.
 
 `race` runs the futures until the **first** resolves, returns `(winnerIndex,
 value)`, and cancels the rest (happy-eyeballs / first-wins). A loser is
-resumed once more, with `async.cancelled()`, and releases what it holds:
-`fetch_future` closes its socket. A future of your own handles `cancelled()`
-the same way, by cleaning up and returning `Ready` without waiting on
-anything. Under a task, a wait in that path could rewind into it and release
-the same resource twice; `fetch_future`'s close is a bare `close(2)` and is
-not safe to repeat.
+resumed once more, with `async.cancelled()`, and releases what it holds: a
+future over a socket closes it. A future of your own handles `cancelled()` by
+cleaning up and returning `Ready` without waiting on anything. Under a task, a
+wait in that path could rewind into it and release the same resource twice.
 
 ```fern
-import "std/async";
-import "std/fetch";
-import "std/net";
-
-function fastest(a: net.SocketAddr, b: net.SocketAddr): u8[] {
-    let none: u8[] = [];
-    let fs: async.Future[u8[]][] = [
-        fetch.fetch_future(a, "/k"),
-        fetch.fetch_future(b, "/k"),
-    ];
-    let (winner, body) = async.race(fs, none);
-    // `winner` is the index that finished first; `body` its result.
-    return body;
-}
+let (winner, v) = async.race([later(400, 1), later(20, 2)], 0 - 1);
+// `winner` is the index that finished first (1); `v` its result (2).
 ```
 
 (It's spelled `race`; the older `race { … }` keyword block was removed in favour
@@ -160,10 +147,10 @@ whatever answers within `deadline` (a `Duration`, built with
 stragglers (their slots come back `None`).
 
 ```fern
-let bodies: Option[u8[]][] = async.with_deadline(time.duration_millis(250), [
-    fetch.fetch_future(cache,   "/k"),
-    fetch.fetch_future(primary, "/k"),
-]);   // any upstream slower than 250ms lands as None
+let got: Option[i32][] = async.with_deadline(time.duration_millis(250), [
+    later(20, 1),
+    later(900, 2),
+]);   // [Some(1), None]: the 900ms timer missed the budget
 ```
 
 ---
@@ -203,99 +190,83 @@ let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), 
 `__fetch_drain` shape) before resolving. See
 `tests/stdlib/sim_driver_test.fern`.
 
-### SimNet — scripted upstreams
+### Scripted upstreams: `std/sim_fetch`
 
-`sim.Net` is the sim sibling of `fetch.fetch_future`: register scripted
-endpoints (host/port, optional path — `""` is a host:port wildcard — body,
-first-byte latency, chunking schedule), then fetch them through the
-combinators. The futures honour the real fetch contract's SCHEDULING: the
-body on success, an empty body immediately for an unregistered (dead)
-upstream, one re-suspension per scheduled chunk with the accumulated body
-resolving at the last chunk's virtual time. Registration is value-returning
-(`n = n.serve(...)`); each endpoint carries a shared `hits` counter for
-call assertions.
-
-Bodies stay `string` here where the real `fetch_future` resolves to `u8[]`:
-a scripted body is a program value, well-formed by construction, and the
-combinator timing this exists to pin reads better against text.
+`sim_fetch.Net` is a `fetch.Transport` under the sim clock: names, listeners
+and routes whose scripted answers carry a first-byte latency, a chunking
+schedule and a close policy. The real client runs against it unchanged
+(`fetch.send_on`, or `plat.http` over a `sim_platform.SimPlatform`), and
+`sim.run_tasks(drv, entries, cancel_at_ms)` (§8) drives a fan-out of such
+fetches in virtual time.
 
 ```fern
+// UP is the upstream's address; fetch_via(plat, path) answers the body of
+// plat.http(fetch.get("http://up.test" + path)).
 let d: sim.Sim = sim.new(1);
-let n: sim.Net = sim.net(d);
-n = n.serve(1, 80, "/k", "primary", 30000000);          // one chunk at 30ms
-n = n.serve_chunked(2, 80, "/big", "abcdefghij",
-        5000000, 5000000, sim.chunks_of(10, 4));        // [4,4,2] at 5/10/15ms
-let fs: async.Future[string][] = [
-    n.fetch_future(1, 80, "/k"),
-    n.fetch_future(2, 80, "/big"),
-    n.fetch_future(9, 80, "/k")                          // unregistered -> Ready("")
-];
-let got: string[] = async.gather_on(d, fs, "");
-// got == ["primary", "abcdefghij", ""], d.now_ns() == exactly 30000000,
-// n.hits(1, 80, "/k") == 1
+let n: sim_fetch.Net = sim_fetch.net(d).host("up.test", [UP]).listen(UP, 80, 5)
+    .route(UP, 80, "/a", [sim_fetch.reply(200, "alpha").after(30)])
+    .route(UP, 80, "/b", [sim_fetch.reply(200, "beta").after(10)]);
+let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+let entries: (() => string)[] = [() => fetch_via(plat, "/a"), () => fetch_via(plat, "/b")];
+let got: async.TaskStatus[string][] = sim.run_tasks(d, entries, [0 - 1, 0 - 1]);
+// /b answers at 15ms of virtual time and /a at 35ms
 ```
 
-See `tests/stdlib/sim_net_test.fern`.
-
-### Fault injection — seed-driven flaky upstreams
-
-Registered endpoints take injected faults, value-returning like `serve`
-(a fault registration for an unknown endpoint is a no-op; faulted
-fetches still count as hits):
-
-- `n.fault_fail(host, port, path)` — every fetch resolves immediately to
-  `""`, the real fetch's connect/send failure.
-- `n.fault_stall(host, port, path)` — every fetch suspends on a
-  never-ready token and never resolves: `gather_on` fills the slot with
-  `on_incomplete`, `with_deadline_on` drops it with `None` at exactly
-  the virtual deadline.
-- `n.fault_partial(host, port, path, k)` — the half-dead connection:
-  the first `min(k, #chunks)` scheduled chunks arrive at their normal
-  virtual times, then the upstream goes silent and the future never
-  resolves (even `k >= #chunks` withholds the terminating close;
-  `k <= 0` stalls before the first byte).
-- `n.fault_flaky(host, port, path, p_percent)` — probabilistic wrapper
-  over the endpoint's fault mode (defaulting it to fail): every fetch
-  of a flaky endpoint consumes exactly one draw from the sim PRNG, in
-  program order, and the fault fires when the draw lands below
-  `p_percent`.
-
-Because the flaky draws come from the same seeded PRNG as `poll_ready`'s
-tie-breaks, a whole flaky fan-out is a pure function of `sim.new(seed)`
-and the call order — a failure is a seed you replay, not a flake.
-`sim.sweep_seeds(n, prop)` is that workflow in miniature: run
-`prop(seed)` over seeds `1..n` and return the first failing seed (0 if
-all pass), with `Sim.rng_state()` available for lockstep assertions.
-See `tests/stdlib/sim_fault_test.fern`.
+Faults are scripted answers: `sim_fetch.reset()` closes the connection with
+nothing sent, `silent()` never answers (the client's timeout or a
+cancellation ends the fetch), and `in_chunks(size, every_ms)` with `held()`
+delivers a prefix and then goes quiet. `sim.sweep_seeds(n, prop)` runs
+`prop(seed)` over seeds `1..n` and returns the first failing seed (0 if all
+pass), with `Sim.rng_state()` available for lockstep assertions. See
+`tests/stdlib/sim_fetch_test.fern` and `tests/stdlib/sim_platform_test.fern`.
 
 That purity claim is itself property-tested: the harness in
 `internal/testing/e2e/sim_property_test.go` generates random sim programs —
-scripted endpoints with random latencies, chunk schedules, and fault
-modes, driven through random `gather_on` / `race_on` /
-`with_deadline_on` pipelines — and requires interp, native x86-64,
-and wasm to print byte-identical digests (results, winners, `None`
-slots, `now_ns`, `rng_state`, hits). Any backend divergence on a sim
+scripted upstream futures with random latencies, chunk schedules, and
+faults (fail, stall, partial, and flaky ones that draw on the sim PRNG),
+driven through random `gather_on` / `race_on` / `with_deadline_on`
+pipelines — and requires interp, native x86-64, and wasm to print
+byte-identical digests (results, winners, `None` slots, `now_ns`,
+`rng_state`). Any backend divergence on a sim
 program is a real bug, never a flake; a failure prints the whole
 program and its generator seed for replay
 (`TestSimProperty` / `TestSimProperty_Regressions` /
 `FuzzSimProperty`).
 
-## 7. The awaitable fetch: `fetch.fetch_future`
+## 7. HTTP fan-out: `fetch.send` under the task combinators
+
+There is one HTTP client, `fetch.send`, and it is how concurrent fetches are
+written too. Each entry of `async.gather_tasks` / `race_tasks` /
+`with_deadline_tasks` runs as a task, the client's waits park it (§8), and
+the combinator waits on all of them at once:
 
 ```fern
-pub function fetch_future(addr: net.SocketAddr, path: string): async.Future[u8[]]
+import "std/async";
+import "std/fetch";
+
+function status_of(url: string): i32 {
+    match (fetch.send(fetch.get(url))) {
+        Ok(resp) => { return resp.status; },
+        Err(e) => { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+
+function main(): i32 {
+    let both: (() => i32)[] = [
+        () => status_of("http://cache.internal/key"),
+        () => status_of("http://primary.internal/key"),
+    ];
+    let statuses: i32[] = async.gather_tasks(both, 0 - 2);
+    return statuses.len();        // both fetches overlapped on one thread
+}
 ```
 
-Opens the connection and sends the request **non-blocking**, then returns a
-`Pending` future that resolves to the response **body** once the socket is
-readable. Drive several through `gather` / `race` / `with_deadline` and their
-reads overlap on one thread. A connect/send failure resolves immediately to the
-empty body so a dead upstream never stalls the fan-out.
-
-The body is `u8[]`, not `string`: an upstream serves whatever bytes it likes, so
-a text-typed response would be a `string` that is not well-formed UTF-8
-(`docs/STRINGS-SOTA.md`, D9). Decode where you need text —
-`utf8.from_bytes(body)` is `None` when the bytes are not valid UTF-8.
+Every fetch keeps the whole client: DNS, TLS, redirects, the request's
+timeouts, content decoding, a `Host` header naming the URL's authority, and a
+typed `FetchError` for each failure. `race_tasks` answers the first to finish
+and cancels the rest, whose fetches end as `FetchError.Cancelled` after
+closing their sockets.
 
 ---
 
@@ -400,9 +371,9 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
 - `Pending` futures resolve on **native** (fd-backed, via poll(2)/ppoll(2)),
   on **wasm** (pollable-backed, via wasi:io/poll — `poll` forwards to it) and
   on the **interpreter** (a reactor over the handles). The wait token is
-  portable: `fetch_future` uses `tcp_pollable(c)`, which is the raw fd on
-  native and a real wasi:io/poll pollable handle on wasm, so an overlapping
-  `gather([fetch_future, …])` works everywhere.
+  portable: `tcp_pollable(c)` is the raw fd on native and a real wasi:io/poll
+  pollable handle on wasm, so a future over a socket overlaps under `gather`
+  everywhere.
 - A task parks only in compiled code (§8), on x86-64, arm64 and wasm alike.
   Under the interpreter the task combinators and `sim.run_tasks` run their
   entries one after another.
@@ -422,10 +393,6 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
   first, since on wasm it is a child of its socket and wasmtime traps with
   "resource has children" otherwise, and then its continuation is resumed with
   `cancelled()` and closes the socket.
-- `fetch_future` reads the **whole** response: its continuation re-suspends per
-  chunk (`__fetch_drain`), accumulating across reads until EOF, so a body larger
-  than one `recv` buffer / spread over TCP segments comes back in full while
-  staying overlapped with the other futures in a `gather`/`race`.
 - `std/async` is now the **single** reactor — the legacy `std/task`, `std/reactor`,
   and `std/wasm_reactor` modules it was distilled from have all been deleted.
   `gather` / `race` / `with_deadline` over `Future[T]` cover the native (fd) and

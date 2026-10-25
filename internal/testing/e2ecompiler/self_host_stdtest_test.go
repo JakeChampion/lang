@@ -270,8 +270,6 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_websocket", langSrcAbs(t, "tests/stdlib/http_websocket_test.fern"), ""},
 		{"mock_platform_canned", langSrcAbs(t, "tests/stdlib/mock_platform_canned_test.fern"), ""},
 		{"sim_fetch", langSrcAbs(t, "tests/stdlib/sim_fetch_test.fern"), ""},
-		{"sim_net", langSrcAbs(t, "tests/stdlib/sim_net_test.fern"), ""},
-		{"sim_fault", langSrcAbs(t, "tests/stdlib/sim_fault_test.fern"), ""},
 		{"sim_platform", langSrcAbs(t, "tests/stdlib/sim_platform_test.fern"), ""},
 		{"async_combinators", langSrcAbs(t, "tests/stdlib/async_combinators_test.fern"), ""},
 		{"http_body", langSrcAbs(t, "tests/stdlib/http_body_test.fern"), ""},
