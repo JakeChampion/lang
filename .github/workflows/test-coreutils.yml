@@ -31,6 +31,15 @@ name: Test coreutils
 # stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
+    inputs:
+      hosts:
+        description: >
+          The hosts whose matrix legs run, as a space-separated list of
+          x86_64 and aarch64. The suite runs both; the Preflight tier runs
+          x86_64 alone.
+        required: false
+        type: string
+        default: x86_64 aarch64
   workflow_dispatch:
 
 env:
@@ -45,11 +54,14 @@ jobs:
       matrix:
         host: [x86_64, aarch64]
         shard: [0, 1, 2, 3]
-        include:
-          - { host: x86_64,  runner: ubuntu-24.04 }
-          - { host: aarch64, runner: ubuntu-24.04-arm }
+        # The Preflight tier calls this lane with `hosts: x86_64`; the suite
+        # calls it with both hosts and this excludes nothing. The runner is
+        # derived from the host below: an `include` that adds it would become
+        # a job of its own once its host is excluded.
+        exclude:
+          - host: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
     name: test-coreutils-${{ matrix.host }}-shard${{ matrix.shard }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     env:
       GNU_COREUTILS_VERSION: "9.12"
       NSHARD: "4"
