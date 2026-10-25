@@ -1,0 +1,19 @@
+// An array literal lent to a `[T]` field is storage the function owns, so a returned value may not hold it.
+struct H { xs: [i32] }
+
+function listed(): H[] {
+  return [H { xs: [1, 2] }];
+}
+
+function maybe(): Option[H] {
+  let v: [i32] = [1];
+  return Some(H { xs: v });
+}
+
+function kept(xs: [i32]): H[] {
+  return [H { xs: xs }];
+}
+
+function main(): i32 {
+  return 0;
+}
