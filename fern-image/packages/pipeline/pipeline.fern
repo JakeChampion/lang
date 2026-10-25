@@ -133,6 +133,11 @@ pub function required_scratch(graph: Graph, limits: Limits): Result[i32, Pipelin
   return Ok(cost.scratch as i32);
 }
 
+pub function required_samples(graph: Graph, limits: Limits): Result[i32, PipelineError] {
+  let cost = analyze(graph, limits)?;
+  return Ok(cost.samples as i32);
+}
+
 function fill_row(node: Node, limits: Limits, cancelled: () => boolean, sample: (i32) => Result[pixels.Pixel, PipelineError]): Result[pixels.Image, PipelineError] {
   let row_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_row_bytes };
   let row = match (pixels.create(node.width, 1, node.width * pixels.channels(node.format), node.format, row_limits)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
