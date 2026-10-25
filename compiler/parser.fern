@@ -163,7 +163,7 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
 
 pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, col: i32 }
 
-pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean }
+pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean, method: boolean }
 
 pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
 
@@ -500,6 +500,8 @@ pub const ORIGIN_ASSERT: string = "assert";
 
 pub const ORIGIN_BLOCK: string = "block";
 
+pub const ORIGIN_TODO: string = "todo";
+
 pub const ORIGIN_MATCH_EXPR: string = "match_expr";
 
 pub const ORIGIN_PATTERN_PROBE: string = "pattern_probe";
@@ -551,7 +553,7 @@ function s_block(body: ast.Stmt[]): ast.Stmt {
 }
 
 function s_while(cond: ast.Expr, body: ast.Stmt[]): ast.Stmt {
-  return ast.StmtWhile { cond: cond, body: body, label: "", line: 0, is_loop: false, todo: false };
+  return ast.StmtWhile { cond: cond, body: body, label: "", line: 0, is_loop: false };
 }
 
 function s_for(var_name: string, iter: ast.Expr, body: ast.Stmt[]): ast.Stmt {
@@ -564,7 +566,7 @@ function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
   }
   match (st) {
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: w.cond, body: w.body, label: label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: w.cond, body: w.body, label: label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
       return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label, line: fr.line, col: fr.col };
@@ -582,7 +584,7 @@ function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
             relabelled = relabelled.append(f.then_body[i]);
             i = i + 1;
           }
-          relabelled = relabelled.append(ast.StmtWhile { cond: w2.cond, body: w2.body, label: label, line: w2.line, is_loop: w2.is_loop, todo: w2.todo });
+          relabelled = relabelled.append(ast.StmtWhile { cond: w2.cond, body: w2.body, label: label, line: w2.line, is_loop: w2.is_loop });
           return ast.StmtIf { ...f, cond: f.cond, then_body: relabelled, else_body: f.else_body };
         },
         _ => {
@@ -684,7 +686,7 @@ function rewrite_builder_stmt(s: ast.Stmt, b: string): ast.Stmt {
       return ast.StmtIf { ...f, cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
       return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label, line: fr.line, col: fr.col };
@@ -1066,7 +1068,7 @@ function resolve_labels_stmt(st: ast.Stmt, labels: string[]): ast.Stmt {
       return ast.StmtContinue { tag: d2, line: c.line, col: c.col, label: c.label };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: rl_expr(w.cond, labels), body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: rl_expr(w.cond, labels), body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
       return ast.StmtFor { var_name: fr.var_name, iter: rl_expr(fr.iter, labels), body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line, col: fr.col };
@@ -3699,6 +3701,9 @@ function stmt_exits(st: ast.Stmt, loops: boolean): boolean {
     ast.StmtReturn(_) => {
       return true;
     },
+    ast.StmtExpr(x) => {
+      return calls_exit(x.value);
+    },
     ast.StmtBreak(_) => {
       return true;
     },
@@ -3729,6 +3734,16 @@ function stmt_exits(st: ast.Stmt, loops: boolean): boolean {
     },
     _ => {
       return false;
+    }
+  }
+  return false;
+}
+
+// A call to `exit` by name: the parser has no scopes, so a call through a local named `exit` matches too.
+pub function calls_exit(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      return id.name == "exit";
     }
   }
   return false;
@@ -5552,7 +5567,7 @@ pub function stmts_mention(stmts: ast.Stmt[], name: string): boolean {
 function parse_loop_stmt(p: Par): (ast.Stmt, Par) {
   let p2: Par = p.advance();
   let (lb_body, lb_p) = parse_block(p2);
-  return (ast.StmtWhile { cond: e_bool(true), body: lb_body, label: "", line: 0, is_loop: true, todo: false }, lb_p);
+  return (ast.StmtWhile { cond: e_bool(true), body: lb_body, label: "", line: 0, is_loop: true }, lb_p);
 }
 
 function parse_for_stmt(p: Par): (ast.Stmt, Par) {
@@ -5718,7 +5733,7 @@ function with_stmt_line(st: ast.Stmt, line: i32): ast.Stmt {
       return ast.StmtIf { ...f, line: line };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: line, is_loop: w.is_loop };
     },
     ast.StmtFor(fo) => {
       return ast.StmtFor { var_name: fo.var_name, iter: fo.iter, body: fo.body, label: fo.label, line: line, col: fo.col };
@@ -6268,7 +6283,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       let td_xargs: ast.Expr[] = [];
       td_xargs = td_xargs.append(e_number("101", "", false));
       td_body = td_body.append(s_expr(e_call(e_ident("exit"), td_xargs)));
-      return (ast.StmtWhile { cond: e_bool(true), body: td_body, label: "", line: 0, is_loop: false, todo: true }, Par { ...tdp, todos: tdp.todos.append(td_site) });
+      return (s_if_tagged(td_body, ORIGIN_TODO), Par { ...tdp, todos: tdp.todos.append(td_site) });
     }
   }
   let kw: string = p.peek_keyword();
@@ -11309,7 +11324,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
     ast.StmtWhile(w) => {
       let cv: RExpr = mono_expr(w.cond, env, funcs, ins);
       let wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins, ret_ty);
-      return RStmtOne { rstmt: ast.StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo }, renv: env, rins2: wb.rins3 };
+      return RStmtOne { rstmt: ast.StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop }, renv: env, rins2: wb.rins3 };
     },
     ast.StmtFor(fr) => {
       let it: RExpr = mono_expr(fr.iter, env, funcs, ins);
@@ -11605,7 +11620,7 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
         out = out.append(ast.StmtIf { ...f, cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) });
       },
       ast.StmtWhile(w) => {
-        out = out.append(ast.StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo });
+        out = out.append(ast.StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label, line: w.line, is_loop: w.is_loop });
       },
       ast.StmtFor(fr) => {
         out = out.append(ast.StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label, line: fr.line, col: fr.col });
@@ -13943,7 +13958,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
     ast.StmtWhile(w) => {
       let cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
       let wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins, ret_ty);
-      return RStmtOne { rstmt: ast.StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo }, renv: env, rins2: wb.rins3 };
+      return RStmtOne { rstmt: ast.StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop }, renv: env, rins2: wb.rins3 };
     },
     ast.StmtFor(fr) => {
       let it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
@@ -15546,7 +15561,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
     ast.StmtWhile(w) => {
       let cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);
       let wb: RStmts = me_stmts(w.body, env, ret_ty, enums, structs, funcs, cv.rins);
-      return RStmtOne { rstmt: ast.StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo }, renv: env, rins2: wb.rins3 };
+      return RStmtOne { rstmt: ast.StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop }, renv: env, rins2: wb.rins3 };
     },
     ast.StmtFor(fr) => {
       let it: RExpr = me_expr(fr.iter, "", env, enums, structs, funcs, ins);
@@ -16518,7 +16533,7 @@ function map_expr_kids(e: ast.Expr, f: (ast.Expr) => ast.Expr): ast.Expr {
 }
 
 function dl_while(w: ast.StmtWhile, body: ast.Stmt[]): ast.Stmt {
-  return ast.StmtWhile { cond: w.cond, body: body, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+  return ast.StmtWhile { cond: w.cond, body: body, label: w.label, line: w.line, is_loop: w.is_loop };
 }
 
 function dl_for(fr: ast.StmtFor, body: ast.Stmt[]): ast.Stmt {
@@ -16682,7 +16697,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
       ast.StmtWhile(w) => {
         let wce: DeferEdgeExpr = dl_edges_expr(w.cond, actions, flags, start, armed, label, own_level);
         armed = wce.armed;
-        let wl: ast.StmtWhile = ast.StmtWhile { cond: wce.expr, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+        let wl: ast.StmtWhile = ast.StmtWhile { cond: wce.expr, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
         let wr: DeferEdges = dl_expand_loop_edges(w.body, actions, flags, start, armed, label, false);
         if (wr.armed > armed) {
           armed = wr.armed;
@@ -16824,7 +16839,7 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
       let cw: DeferExprAcc = dl_collect_expr(w.cond, actions, flags);
       let wstart: i32 = cw.actions.len();
       let br: DeferAcc = dl_collect_stmts(w.body, cw.actions, cw.flags);
-      let wl: ast.StmtWhile = ast.StmtWhile { cond: cw.expr, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      let wl: ast.StmtWhile = ast.StmtWhile { cond: cw.expr, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
       let one: ast.Stmt[] = [dl_while(wl, dl_loop_body(br.stmts, br.actions, br.flags, wstart, w.label))];
       return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
     },
@@ -17022,7 +17037,7 @@ function dl_expand_return_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[], 
       return one;
     },
     ast.StmtWhile(w) => {
-      let wl: ast.StmtWhile = ast.StmtWhile { cond: dl_return_expr(w.cond, actions, flags, armed), body: w.body, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      let wl: ast.StmtWhile = ast.StmtWhile { cond: dl_return_expr(w.cond, actions, flags, armed), body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
       let one: ast.Stmt[] = [dl_while(wl, dl_expand_returns(w.body, actions, flags, dl_armed_after_expr(w.cond, armed)))];
       return one;
     },
@@ -18535,7 +18550,7 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
       return [ast.StmtIf { ...f, cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
     },
     ast.StmtWhile(w) => {
-      return [ast.StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo }];
+      return [ast.StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop }];
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
@@ -18610,7 +18625,7 @@ pub function iterator_loop(fr: ast.StmtFor, subject: ast.Expr, col: i32): ast.St
     ast.MatchArm { pattern: p_variant("None", ""), body: [s_break()], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false },
   ];
   let pull: ast.Stmt = s_match(e_call(e_field_access(e_ident(it), "next"), []), arms);
-  let walk: ast.Stmt = ast.StmtWhile { cond: e_bool(true), body: [pull], label: fr.label, line: fr.line, is_loop: false, todo: false };
+  let walk: ast.Stmt = ast.StmtWhile { cond: e_bool(true), body: [pull], label: fr.label, line: fr.line, is_loop: false };
   return s_block([s_var(it, "", subject), walk]);
 }
 
@@ -18820,7 +18835,7 @@ function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
       return ast.StmtIf { ...f, cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs), sugar: rvf_sugar(f.sugar, structs) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtAssign(a) => {
       return ast.StmtAssign { target: a.target, value: rvf_expr(a.value, structs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
@@ -20290,7 +20305,7 @@ function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
       return ast.StmtIf { ...f, cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
       return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line, col: fr.col };
@@ -20316,7 +20331,7 @@ function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
 }
 
 function elb_try_while(w: ast.StmtWhile, stmts: ast.Stmt[], p: i32): ast.Stmt {
-  let same: ast.Stmt = ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+  let same: ast.Stmt = ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
   let m: LenLoopMatch = elb_loop_match(w.cond);
   if (!m.ok) {
     return same;
@@ -20355,7 +20370,7 @@ function elb_try_while(w: ast.StmtWhile, stmts: ast.Stmt[], p: i32): ast.Stmt {
     i = i + 1;
   }
   let cond: ast.Expr = elb_mark_cond(w.cond, m, lp.path).e;
-  return ast.StmtWhile { cond: cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+  return ast.StmtWhile { cond: cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop };
 }
 
 function elb_loop_match(cond: ast.Expr): LenLoopMatch {
@@ -20614,7 +20629,7 @@ function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
       return ast.StmtIf { ...f, cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
       return ast.StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line, col: fr.col };
@@ -24271,7 +24286,7 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
       return ast.StmtIf { ...f, cond: settle_expr(f.cond, names, types, fns, structs), then_body: settle_block(f.then_body, ret_type, names, types, fns, structs), else_body: settle_block(f.else_body, ret_type, names, types, fns, structs) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: settle_expr(w.cond, names, types, fns, structs), body: settle_block(w.body, ret_type, names, types, fns, structs), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: settle_expr(w.cond, names, types, fns, structs), body: settle_block(w.body, ret_type, names, types, fns, structs), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
       return ast.StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, names, types, fns, structs), body: settle_block(fr.body, ret_type, names, types, fns, structs), label: fr.label, line: fr.line, col: fr.col };
@@ -24606,7 +24621,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
       }
       if (attr.name == "export") {
-        exports = exports.append(ExportBinding { func_name: fr_func.name, iface: attr.iface, wit: attr.wit, c_abi: false });
+        exports = exports.append(ExportBinding { func_name: fr_func.name, iface: attr.iface, wit: attr.wit, c_abi: false, method: fr_func.receiver_name.len() > 0 });
       }
       let fr_out: FuncDecl = fr_pub;
       if (decl_fip || decl_fbip) {
@@ -24921,7 +24936,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
   let xi: i32 = 0;
   while (xi < from.exports.len()) {
     let xb: ExportBinding = from.exports[xi];
-    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit, c_abi: xb.c_abi });
+    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit, c_abi: xb.c_abi, method: xb.method });
     xi = xi + 1;
   }
   let nimpls: ImplInfo[] = into.impls;
