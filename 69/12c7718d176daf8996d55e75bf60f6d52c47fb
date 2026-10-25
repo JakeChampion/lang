@@ -251,3 +251,7 @@ net/h2o-h3/c64m32.server_sys_us_per_req	1.54
 net/fern/held.bytes_per_connection	1008
 net/fern/held.bytes_per_suspended_handler	6117
 net/fern/held.bytes_per_stream	5693
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	31064824
+x86_64/checker.cliff_count	276351
