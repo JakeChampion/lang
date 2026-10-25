@@ -16,7 +16,7 @@ import "std/platform";
 import "std/serve";
 
 function main(): i32 {
-  return serve.run(0, serve.config(), (req: HttpRequest, plat: platform.Host): HttpResponse => http.ok("hello"));
+  return serve.exit_code(serve.run(0, serve.config(), (req: HttpRequest, plat: platform.Host): HttpResponse => http.ok("hello")));
 }
 `
 

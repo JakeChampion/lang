@@ -1,4 +1,4 @@
-# 2026-10-25 (#13302): Perf run 40205765929. checker.fern grew with the day's merges: +10.2% allocations.
+# 2026-10-25: Perf run 40200803636 (main at 127eb63c). checker.fern grew with today's merges (#13153, #13242, #13261): +10.2% allocations.
 # 2026-10-23: combined source 160186731f, Perf run 40026009089. The receiver checks and FIP table add compiler source.
 # Allocation baselines for the self-host compiler compiling one real module,
 # checked against every run by scripts/ci-check-perf.

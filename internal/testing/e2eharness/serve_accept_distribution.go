@@ -18,10 +18,10 @@ import "std/platform";
 function main(): i32 {
     let id: Cell[i64] = cell_new(0 as i64);
     let opts: serve.Config = serve.Config { ...serve.config(), workers: %d, max_connections: 16384, max_connections_per_ip: 0 };
-    return serve.supervise(0, opts, (req: HttpRequest, plat: platform.Host): HttpResponse => {
+    return serve.exit_code(serve.supervise(0, opts, (req: HttpRequest, plat: platform.Host): HttpResponse => {
         if (id.get() == (0 as i64)) { id.set(monotonic_ns()); }
         return http.ok(id.get().to_string());
-    });
+    }));
 }
 `, workers)
 }

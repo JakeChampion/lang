@@ -88,6 +88,7 @@ array_rotate_module                                  0
 array_rotate_right_basic                             0
 array_rotate_wrap_and_negative                       0
 array_sort                                           0
+array_views_see_builtin_writes                       0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
 arrpush                                              0
@@ -168,6 +169,7 @@ const_composite                                      0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
 const_folds_at_declared_width                        0
+const_integer_literals_beside_a_typed_float          0
 const_integer_literals_settle_to_float               0
 const_param_functions                                0
 const_settles_across_modules                         0
@@ -393,6 +395,8 @@ int_saturating_ops                                   0
 int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
+integer_literals_beside_a_float                      0
+integer_literals_beside_an_f32                       0
 io_and_fetch_errors_box_into_dyn_error               0
 io_error_other_closed_stdout                         0
 io_error_other_is_a_directory                        0
@@ -1128,5 +1132,6 @@ wasi_http_error_code_names                           0
 while_sum                                            0
 wide_array_append_grow                               0
 wide_shift_by_variable                               0
+wider_use_settles_a_nested_payload_literal           0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0

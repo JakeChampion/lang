@@ -82,7 +82,7 @@ function tls_config(cfg: serve.Config): Result[serve.Config, string] {
 function main(): i32 {
   match (tls_config(serve.config().with_h2())) {
     Ok(cfg) => {
-      return serve.run(port(), cfg, handle);
+      return serve.exit_code(serve.run(port(), cfg, handle));
     },
     Err(message) => {
       eprint(message);
