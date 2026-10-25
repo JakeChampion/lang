@@ -34,9 +34,7 @@ func TestSelfHostConstEvaluationErrors(t *testing.T) {
 		{"mixed-operands", `const A: i32 = 1 + true;`, "operands aren't both numbers", "E093"},
 		{"string-subtract", `const A: string = "a" - "b";`, "not allowed on strings", "E093"},
 		{"bool-operator", `const A: boolean = true + false;`, "not allowed on bools", "E093"},
-		{"string-operator", `const A: boolean = "a" < "b";`, "not allowed on strings", "E093"},
 		{"float-operator", `const A: f64 = 1.0 % 2.0;`, "not allowed in float", "E093"},
-		{"numeric-family", `const A: f64 = 1 / 2;`, "declared type f64 does not match initialiser type i32", "E093"},
 		{"literal-priority", `const A: i32 = 2147483648 / 0;`, "literal 2147483648 does not fit in i32", "E047"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,6 +85,9 @@ func TestSelfHostConstEvaluationValid(t *testing.T) {
 		{"boolean-string", `const S: string = "a" + "b"; const B: boolean = S == "ab" && !false; function main(): i32 { if (B) { return 0; } return 1; }`},
 		{"float-fold-precision", `const D: f32 = 1e-30 * 1e-30; const A: f64 = 1.0 / D; function main(): i32 { return 0; }`},
 		{"float-suffix-fold-precision", `const D: f32 = 1e-50f32; const A: f64 = 1.0 / D; function main(): i32 { return 0; }`},
+		{"integer-literals-settle-to-float", `const A: f64 = 1 / 2; const N: f64 = -0; const F: f32 = 5; function main(): i32 { if (A == 0.5 && 1.0 / N < 0.0 && F == 5.0) { return 0; } return 1; }`},
+		{"string-order", `const B: boolean = "ab" < "b" && "b" >= "b" && !("b" <= "ab"); function main(): i32 { if (B) { return 0; } return 1; }`},
+		{"char-order", `const B: boolean = 'a' < 'b' && 'z' >= 'z' && b'a' + 1 == b'b'; function main(): i32 { if (B) { return 0; } return 1; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
