@@ -65,6 +65,40 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 20},
+	{"variant-rebuilt-past-a-branch", `struct S { xs: i32[], n: i32 }
+enum E { A(S), B }
+struct C { es: E[], k: i32 }
+@noinline
+function step(s: S): Result[S, i32] {
+    if (s.n < 0) { return Err(s.n); }
+    return Ok(S { ...s, n: s.n + 1 });
+}
+@noinline
+function send(c: C, at: i32): C {
+    match (c.es[at]) {
+        A(s) => {
+            c = C { ...c, es: c.es.with(at, B) };
+            match (step(s)) {
+                Ok(s2) => { return C { ...c, es: c.es.with(at, A(s2)) }; },
+                Err(_) => { return c; }
+            }
+        },
+        _ => {}
+    }
+    return c;
+}
+function main(): i32 {
+    let c: C = C { es: [A(S { xs: [1, 2], n: 0 }), B], k: 0 };
+    let i: i32 = 0;
+    while (i < 1000) { c = send(c, 0); i = i + 1; }
+    if let A(s) = c.es[0] {
+        if (s.n != 1000 || s.xs.len() != 2) { return 1; }
+    } else {
+        return 2;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 10},
 	{"element-take-across-a-branch", `import "std/array";
 struct Frames { buf: u8[], left: i64 }
 struct Req { id: i64, frames: Frames, fin: boolean }

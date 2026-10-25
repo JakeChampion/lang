@@ -229,7 +229,7 @@ for every plan ownership inference tries):
   the construction spends (`ReusePairs.tokens` where it is taken,
   `.builds` where it is spent, `.selfs` for a value dying at the
   construction itself). A value dying after its block's last construction
-  may be **carried** to a construction in a later block (`Carry`): the
+  of its own slot count may be **carried** to a construction in a later block (`Carry`): the
   blocks holding it, the constructions it is handed to, the edges leaving
   its ways that free it, and the edges on which it arrives null because the
   donor died there as a box of another count. A construction that reads a
@@ -240,7 +240,9 @@ for every plan ownership inference tries):
   whose payloads a block takes and which dies in the block with no such
   construction is **classified** (a keep with no construction, `built` -1):
   its takes and its death follow one uniqueness read. The
-  routes and the one-token-slot discipline are decided here, once; the
+  routes and the one-token-slot discipline are decided here, once (a
+  carried construction reads its token from the donor's local, so it holds
+  no slot); the
   lowering only emits what the tables say. `FERN_SELFHOST_NO_REUSE=1`
   (`reuse_layer_disabled`) plans no token, and the program's behaviour is
   unchanged.
