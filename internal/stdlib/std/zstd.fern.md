@@ -1506,8 +1506,9 @@ function __chain(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32, rep
   let best_gain: i32 = __gain(best_len, best_off, rep);
   let stop: i32 = cmp.max(pos - window, 0 - 1);
   let mask: i32 = window - 1;
+  let most: i32 = cmp.min(256, limit - pos);
   let depth: i32 = 32;
-  while (cand > stop && depth > 0 && best_len < 256 && pos + best_len < limit) {
+  while (cand > stop && depth > 0 && best_len < most) {
     if (input[cand + best_len] == input[pos + best_len]) {
       let len: i32 = __mismatch_bytes(input, cand, input, pos, limit - pos);
       let gain: i32 = __gain(len, pos - cand, rep);
