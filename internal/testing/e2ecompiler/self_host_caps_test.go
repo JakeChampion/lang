@@ -90,11 +90,11 @@ func writeCapsProject(t *testing.T, dir, depEntry, helperBody string) string {
 }
 
 func capsDiagnostics(out string) []string {
-	re := regexp.MustCompile(`(?:(\S+\.fern):(\d+):(\d+): )?(error\[E070\]|warning): package "([^"]+)" reaches '([^']+)' \(([^)]+)\)[^:]*: ([^;]+);`)
+	re := regexp.MustCompile(`(?:(\S+\.fern):(\d+):(\d+): )?(error\[E070\]|warning\[W002\]): package "([^"]+)" reaches '([^']+)' \(([^)]+)\)[^:]*: ([^;]+);`)
 	var got []string
 	for _, m := range re.FindAllStringSubmatch(out, -1) {
 		severity := "error"
-		if m[4] == "warning" {
+		if m[4] == "warning[W002]" {
 			severity = "warning"
 		}
 		at := "-"

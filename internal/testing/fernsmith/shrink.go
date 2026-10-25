@@ -1,6 +1,9 @@
 package fernsmith
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 type span struct{ count, start, end int }
 
@@ -135,4 +138,74 @@ func ShrinkMainBytes(data []byte, fails func([]byte) bool) []byte {
 		}
 	}
 	return cur
+}
+
+// ShrinkSource deletes the program's lines, and the statements inside each
+// line, one at a time, last first, keeping each deletion after which fails
+// still holds, until no deletion does. It reaches what ShrinkMainBytes cannot:
+// the declarations every program's prelude carries whatever its corpus.
+func ShrinkSource(src string, fails func(string) bool) string {
+	lines := strings.Split(src, "\n")
+	try := func(i int, line string, drop bool) bool {
+		cand := append([]string{}, lines[:i]...)
+		if !drop {
+			cand = append(cand, line)
+		}
+		cand = append(cand, lines[i+1:]...)
+		if !fails(strings.Join(cand, "\n")) {
+			return false
+		}
+		lines = cand
+		return true
+	}
+	for shrunk := true; shrunk; {
+		shrunk = false
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.TrimSpace(lines[i]) == "" {
+				continue
+			}
+			if !strings.HasPrefix(lines[i], "function main(") && try(i, "", true) {
+				shrunk = true
+				continue
+			}
+			cuts := stmtCuts(lines[i])
+			for k := len(cuts) - 2; k >= 0; k-- {
+				line := lines[i]
+				if try(i, line[:cuts[k]]+line[cuts[k+1]:], false) {
+					shrunk = true
+				}
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// stmtCuts is where each statement of line's outermost body starts, then where
+// the last one ends: after its opening brace and after each `; ` at depth one.
+func stmtCuts(line string) []int {
+	var cuts []int
+	depth := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '(', '[', '{':
+			depth++
+			if depth == 1 && line[i] == '{' && cuts == nil {
+				cuts = append(cuts, skipSpace(line, i+1))
+			}
+		case ')', ']', '}':
+			depth--
+		case ';':
+			if depth == 1 && cuts != nil {
+				cuts = append(cuts, skipSpace(line, i+1))
+			}
+		}
+	}
+	return cuts
+}
+
+func skipSpace(s string, i int) int {
+	if i < len(s) && s[i] == ' ' {
+		return i + 1
+	}
+	return i
 }

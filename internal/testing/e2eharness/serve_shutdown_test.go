@@ -11,7 +11,11 @@ import (
 	"time"
 )
 
-const helperServeEnv = "FERN_E2EHARNESS_HELPER_SERVE"
+const (
+	helperServeEnv = "FERN_E2EHARNESS_HELPER_SERVE"
+	// Milliseconds the helper sleeps before it first accepts.
+	helperDelayEnv = "FERN_E2EHARNESS_HELPER_DELAY_MS"
+)
 
 func TestMain(m *testing.M) {
 	if os.Getenv(helperServeEnv) != "" {
@@ -30,6 +34,10 @@ func helperServe() {
 		os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(2)
 	}
+	if ms, err := strconv.Atoi(os.Getenv(helperDelayEnv)); err == nil {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
+	os.Stderr.WriteString("accepting\n")
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -60,6 +68,16 @@ func TestStartInheritedServerHandsOverItsListener(t *testing.T) {
 	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
 		c.Close()
 		t.Fatal("the listener still accepts after its server has gone: the test kept a copy")
+	}
+}
+
+func TestWaitServerReadyWaitsForTheInheritingServer(t *testing.T) {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), helperServeEnv+"=1", helperDelayEnv+"=1500")
+	addr, stderrPath := StartInheritedServer(t, cmd)
+	WaitServerReady(t, addr)
+	if got := readFileString(stderrPath); !strings.Contains(got, "accepting") {
+		t.Fatalf("WaitServerReady returned before the server began accepting; its stderr: %q", got)
 	}
 }
 

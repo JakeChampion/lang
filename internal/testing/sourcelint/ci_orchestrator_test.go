@@ -15,9 +15,11 @@ const ciSuiteFile = "ci-suite.yml"
 const ciMainFile = "ci-main.yml"
 
 const reaperFile = "cancel-on-failure.yml"
+const preflightFile = "preflight.yml"
 
 type ciJob struct {
 	id    string
+	file  string
 	keys  map[string]string
 	with  map[string]string
 	perms map[string]string
@@ -47,7 +49,7 @@ func workflowJobs(t *testing.T, file string) []ciJob {
 			continue
 		}
 		if m := jobLine.FindStringSubmatch(line); m != nil {
-			jobs = append(jobs, ciJob{id: m[1], keys: map[string]string{}, with: map[string]string{}, perms: map[string]string{}})
+			jobs = append(jobs, ciJob{id: m[1], file: file, keys: map[string]string{}, with: map[string]string{}, perms: map[string]string{}})
 			sub = ""
 			continue
 		}
@@ -177,6 +179,14 @@ func TestCICallsEveryLane(t *testing.T) {
 	for id, j := range ciLanes(t) {
 		called[j.usesFile()] = append(called[j.usesFile()], id)
 	}
+	// The Preflight tier calls the x86-64 legs of some suite lanes a second
+	// time; those calls name the same lane and pass `hosts: x86_64`.
+	tier := map[string]ciJob{}
+	for _, j := range workflowJobs(t, preflightFile) {
+		if f := j.usesFile(); f != "" {
+			tier[f] = j
+		}
+	}
 	for _, wf := range workflowFiles(t) {
 		src := workflowSource(t, wf)
 		on, ok := onBlock(src)
@@ -188,6 +198,18 @@ func TestCICallsEveryLane(t *testing.T) {
 			t.Errorf("%s is a `workflow_call` lane called by %d job(s) of %s (%v); it must be "+
 				"called by exactly one", wf, len(ids), ciFile, ids)
 			continue
+		}
+		if tj, ok := tier[wf]; ok {
+			want, _ := workflowName(src)
+			if tj.keys["name"] != want {
+				t.Errorf("%s: job %q calls %s under the name %q, not the lane's own name %q", preflightFile, tj.id, wf, tj.keys["name"], want)
+			}
+			if tj.keys["secrets"] != "inherit" {
+				t.Errorf("%s: job %q does not pass `secrets: inherit` to %s", preflightFile, tj.id, wf)
+			}
+			if strings.Contains(src, "inputs.hosts") && tj.with["hosts"] != "x86_64" {
+				t.Errorf("%s: job %q calls %s without `hosts: x86_64`; the tier runs the x86-64 legs alone", preflightFile, tj.id, wf)
+			}
 		}
 		delete(called, wf)
 		job := ciLanes(t)[ids[0]]
@@ -332,14 +354,19 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 			t.Errorf("%s: lane %q has no row in the lane table, so nothing decides whether "+
 				"it runs", ciFile, id)
 		}
-		if j.keys["needs"] != "" {
-			t.Errorf("%s: lane %q must use its passed lane map without another dependency; needs=%q",
-				ciSuiteFile, id, j.keys["needs"])
+		// A suite lane reads the lane map ci.yml passes it; a lane ci.yml runs
+		// itself, outside the suite queue, reads the `changes` job's output.
+		wantNeeds, want := "", "fromJSON(inputs.lanes)['"+id+"']"
+		if j.file == ciFile {
+			wantNeeds, want = "[changes]", "fromJSON(needs.changes.outputs.lanes)['"+id+"']"
 		}
-		want := "fromJSON(inputs.lanes)['" + id + "']"
+		if j.keys["needs"] != wantNeeds {
+			t.Errorf("%s: lane %q has needs=%q, want %q",
+				j.file, id, j.keys["needs"], wantNeeds)
+		}
 		if j.keys["if"] != want {
 			t.Errorf("%s: lane %q is gated on `%s`, not on its own row `%s`",
-				ciFile, id, j.keys["if"], want)
+				j.file, id, j.keys["if"], want)
 		}
 	}
 	var stale []string

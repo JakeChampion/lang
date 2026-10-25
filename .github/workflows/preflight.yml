@@ -1,0 +1,82 @@
+name: Preflight
+
+# The checks a pull request runs on every push: the fast tier. ci.yml calls
+# this lane outside the ci-suite.yml FIFO, beside Lint, and runs the full
+# suite on main after the merge (and on a pull request labelled ci-full). The
+# tier is what one push can afford against a pool of about 40 runners: the
+# fixture corpus through the self-host compiler on every target, and the
+# x86-64 legs of the unit, e2e, wasm, differential and coreutils lanes, about
+# 110 runner-minutes and ten minutes of wall. reap-preflight cancels the run
+# the moment a job here fails. The aarch64 legs, the self-host shards and the
+# rest of the suite run on main; main-red.yml files an issue when one is red.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures-selfhost:
+    name: fixtures-selfhost-${{ matrix.leg }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.job-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64-quarantine, test: TestFernFixturesSelfHostX86_64Quarantine, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
+          - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 45, go-timeout: 43m }
+          - { leg: front-end, test: "(TestFernFixturesSelfHostInterp|TestFernFixturesSelfHostCheck|TestGrammarDerivesSelfHostParsedSources)", wasmtime: "false", job-minutes: 30, go-timeout: 28m }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: ${{ matrix.wasmtime }}
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: aarch64 cross toolchain + qemu (arm64 leg)
+        if: matrix.qemu == 'true'
+        uses: ./.github/actions/apt-cross-toolchain
+      - name: run the fixture corpus through the self-host compiler
+        env:
+          FERN_SELFHOST_FIXTURES: "1"
+        run: go test ./internal/testing/e2e/ -run '^${{ matrix.test }}$' -v -timeout ${{ matrix.go-timeout }}
+
+  # The x86-64 legs of the suite lanes, called with `hosts: x86_64`. The lane
+  # workflows are the single definition of each job; the suite calls the same
+  # files with both hosts.
+  test-units:
+    name: Test units
+    uses: ./.github/workflows/test-units.yml
+    with:
+      hosts: x86_64
+    secrets: inherit
+
+  test-e2e-x86_64:
+    name: Test e2e x86_64
+    uses: ./.github/workflows/test-e2e-x86_64.yml
+    secrets: inherit
+
+  test-e2e-wasm:
+    name: Test e2e wasm
+    uses: ./.github/workflows/test-e2e-wasm.yml
+    with:
+      hosts: x86_64
+    secrets: inherit
+
+  test-e2e-differential:
+    name: Test e2e differential
+    uses: ./.github/workflows/test-e2e-differential.yml
+    with:
+      hosts: x86_64
+    secrets: inherit
+
+  test-coreutils:
+    name: Test coreutils
+    uses: ./.github/workflows/test-coreutils.yml
+    with:
+      hosts: x86_64
+    secrets: inherit

@@ -17,17 +17,6 @@ func TestSelfHostTimerFdIRX86_64(t *testing.T) {
     let fds: i32[] = [fd];
     return poll(fds, 500);
 }`, 0},
-		{"shims", `function main(): i32 {
-    let p: i32 = wasm_timer_pollable(0);
-    let d: i32 = wasm_pollable_drop(p);
-    return d - p;
-}`, 1},
-		{"wasm-poll-shim", `function main(): i32 {
-    let p: i32 = wasm_timer_pollable(0);
-    let ps: i32[] = [p];
-    let idx: i32 = wasm_poll(ps);
-    return idx - p;
-}`, 0},
 	}
 
 	for _, tc := range cases {

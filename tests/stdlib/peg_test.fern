@@ -127,8 +127,8 @@ function test_grammar_validation(): test.TestOutcome {
       return test.fail("unknown start should Err");
     },
     Err(e1) => {
-      if (e1 != "unknown rule: nope") {
-        return test.fail("wrong start error: " + e1);
+      if (e1.rule != "nope") {
+        return test.fail("wrong start error: " + e1.message());
       }
     }
   }
@@ -137,9 +137,32 @@ function test_grammar_validation(): test.TestOutcome {
       return test.fail("dangling PRef should Err");
     },
     Err(e2) => {
-      return test.assert_eq(e2, "unknown rule: missing");
+      return test.assert_eq(e2.message(), "peg: unknown rule \"missing\"");
     }
   }
+}
+
+function test_empty_rule_name(): test.TestOutcome {
+  let rules: Map[string, peg.Pattern] = map_new(2);
+  rules = rules.insert("start", PRef(""));
+  match (peg.peg_grammar(rules, "start")) {
+    Ok(_) => {
+      return test.fail("a missing empty-name rule should Err");
+    },
+    Err(e) => {
+      if (e.message() != "peg: unknown rule \"\"") {
+        return test.fail("wrong error: " + e.message());
+      }
+    }
+  }
+  rules = rules.insert("", PLit("x"));
+  let Ok(g) = peg.peg_grammar(rules, "start") else {
+    return test.fail("a present empty-name rule should be valid");
+  };
+  let Ok(m) = peg.peg_match(g, "x") else {
+    return test.fail("expected the empty-name rule to match");
+  };
+  return test.assert_eq(m.pos, 1);
 }
 
 function test_left_recursion_fails_fast(): test.TestOutcome {
@@ -243,6 +266,7 @@ function main(): i32 {
   r = r.it("backtracked capture discarded", test_capture_backtrack_discarded);
   r = r.it("recursive balanced parens", test_recursive_grammar_balanced);
   r = r.it("grammar validation", test_grammar_validation);
+  r = r.it("empty rule name", test_empty_rule_name);
   r = r.it("left recursion fails fast", test_left_recursion_fails_fast);
   r = r.it("eof rejects trailing", test_eof_rejects_trailing);
   r = r.it("http request line", test_http_request_line);
