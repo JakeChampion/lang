@@ -1,15 +1,30 @@
-pub struct Table { first: i32, before: i32[][], inside: boolean }
+// `before` holds a register only for values whose interval reaches a marked
+// position at either end. `clobbers` holds one only for values live strictly
+// across a marked position, so the position's own operands and result may use it.
+pub struct Table { first: i32, before: i32[][], clobber_first: i32, clobbers: i32[][] }
 
 pub function none(): Table {
-  return Table { first: 0, before: [], inside: false };
+  return Table { first: 0, before: [], clobber_first: 0, clobbers: [] };
 }
 
 pub function table(first: i32, count: i32, masks: i32[]): Table {
+  return Table { ...none(), first: first, before: rows(first, count, masks) };
+}
+
+pub function with_clobbers(t: Table, first: i32, count: i32, masks: i32[]): Table {
+  return Table { ...t, clobber_first: first, clobbers: rows(first, count, masks) };
+}
+
+pub function empty(t: Table): boolean {
+  return t.before.len() == 0 && t.clobbers.len() == 0;
+}
+
+function rows(first: i32, count: i32, masks: i32[]): i32[][] {
   if (first < 0 || count < 1 || count > 31) {
     eprint("SSA fixed-register table: invalid register range");
     exit(3);
   }
-  let rows: i32[][] = [];
+  let out: i32[][] = [];
   let reg = 0;
   while (reg < count) {
     let row: i32[] = [0];
@@ -24,22 +39,23 @@ pub function table(first: i32, count: i32, masks: i32[]): Table {
       }
       row = row.append(n);
     }
-    rows = rows.append(row);
+    out = out.append(row);
     reg = reg + 1;
   }
-  return Table { first: first, before: rows, inside: false };
-}
-
-pub function table_inside(first: i32, count: i32, masks: i32[]): Table {
-  return Table { ...table(first, count, masks), inside: true };
+  return out;
 }
 
 pub function validate(t: Table, nregs: i32, positions: i32): void {
-  if (t.first < 0 || t.before.len() > nregs || t.first > nregs - t.before.len()) {
+  validate_rows(t.first, t.before, nregs, positions);
+  validate_rows(t.clobber_first, t.clobbers, nregs, positions);
+}
+
+function validate_rows(first: i32, rows: i32[][], nregs: i32, positions: i32): void {
+  if (first < 0 || rows.len() > nregs || first > nregs - rows.len()) {
     eprint("SSA fixed-register table: range outside caller registers");
     exit(3);
   }
-  for row in t.before {
+  for row in rows {
     if (row.len() != positions + 1) {
       eprint("SSA fixed-register table: incorrect position count");
       exit(3);
@@ -48,12 +64,15 @@ pub function validate(t: Table, nregs: i32, positions: i32): void {
 }
 
 pub function allows(t: Table, reg: i32, lo: i32, hi: i32): boolean {
-  if (reg < t.first || reg - t.first >= t.before.len()) {
-    return true;
+  if (reg >= t.first && reg - t.first < t.before.len()) {
+    let row = t.before[reg - t.first];
+    if (row[hi + 1] != row[lo]) {
+      return false;
+    }
   }
-  let row = t.before[reg - t.first];
-  if (t.inside) {
-    return hi <= lo + 1 || row[hi] == row[lo + 1];
+  if (reg >= t.clobber_first && reg - t.clobber_first < t.clobbers.len() && hi > lo + 1) {
+    let row = t.clobbers[reg - t.clobber_first];
+    return row[hi] == row[lo + 1];
   }
-  return row[hi + 1] == row[lo];
+  return true;
 }
