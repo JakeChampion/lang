@@ -132,6 +132,50 @@ pub function encode(out: u8[], bytes: [u8]): u8[] {
   return o;
 }
 
+// encoded_len_digits and encode_digits code n >= 0 spelled in decimal, as
+// encoded_len and encode code its digits' bytes.
+pub function encoded_len_digits(n: i64): i32 {
+  let bits: i32 = 0;
+  let p: i64 = __decimal_top(n);
+  while (p > 0) {
+    bits = bits + HUFF_LEN[48 + (n / p % 10) as i32] as i32;
+    p = p / 10;
+  }
+  return (bits + 7) / 8;
+}
+
+pub function encode_digits(out: u8[], n: i64): u8[] {
+  let o: u8[] = out;
+  let acc: i64 = 0;
+  let k: i32 = 0;
+  let p: i64 = __decimal_top(n);
+  while (p > 0) {
+    let e: i64 = HUFF[48 + (n / p % 10) as i32];
+    let len: i32 = (e & 255) as i32;
+    acc = acc << len | e >> 8;
+    k = k + len;
+    while (k >= 8) {
+      k = k - 8;
+      o = o.append((acc >> k & 255) as u8);
+    }
+    p = p / 10;
+  }
+  if (k > 0) {
+    acc = acc << 8 - k | ((1 << 8 - k) - 1) as i64;
+    o = o.append((acc & 255) as u8);
+  }
+  return o;
+}
+
+// __decimal_top is the power of ten of n's leading digit.
+function __decimal_top(n: i64): i64 {
+  let p: i64 = 1;
+  while (n / p >= 10) {
+    p = p * 10;
+  }
+  return p;
+}
+
 pub function decode(coded: [u8], room: i32): Result[u8[], HuffmanError] {
   let out: u8[] = __alloc_u8(coded.len() * 8 / 5 + 1);
   __arr_set_len(out, 0);

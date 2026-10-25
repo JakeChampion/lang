@@ -386,27 +386,33 @@ function __map(fields: qpack.Field[]): HeaderMap {
   return hs;
 }
 
-function __response_fields(resp: HttpResponse, length: i64, date: string): qpack.Field[] {
-  let fs: qpack.Field[] = [qpack.status(resp.status)];
+// __response_section encodes a response's header section, adding date
+// and content-length when the response has none, without building its
+// field list.
+function __response_section(enc: qpack.Encoder, resp: HttpResponse, length: i64, date: string): u8[] {
+  let names: string[] = resp.headers.names;
+  let room: i32 = date.len() + 32;
+  for i in 0..names.len() {
+    room = room + names[i].len() + resp.headers.values[i].len() + 4;
+  }
+  let out: u8[] = enc.put_status(enc.section(room), resp.status);
   let has_length: boolean = false;
   let has_date: boolean = false;
-  let i: i32 = 0;
-  while (i < resp.headers.names.len()) {
-    let name: string = resp.headers.names[i].to_lower();
+  for i in 0..names.len() {
+    let name: string = names[i].to_lower();
     has_length = has_length || name == "content-length";
     has_date = has_date || name == "date";
     if (!__connection_specific(name)) {
-      fs = fs.append(qpack.field(name, resp.headers.values[i]));
+      out = enc.put(out, name, resp.headers.values[i]);
     }
-    i = i + 1;
   }
   if (!has_date && date.len() > 0) {
-    fs = fs.append(qpack.field("date", date));
+    out = enc.put(out, "date", date);
   }
   if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
-    fs = fs.append(qpack.field("content-length", length.to_string()));
+    out = enc.put_length(out, length);
   }
-  return fs;
+  return out;
 }
 
 function __connection_specific(name: string): boolean {
@@ -453,7 +459,7 @@ pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
     body = [];
   }
   let whole: boolean = resp.trailers.names.len() == 0;
-  let sent: Conn = Conn { ...c, session: c.session.send_response(id, __response_fields(resp, body.len() as i64, c.date), body, whole) }.__applied(0 as i64);
+  let sent: Conn = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, body.len() as i64, c.date), body, whole) }.__applied(0 as i64);
   if (whole) {
     return sent;
   }
@@ -461,7 +467,7 @@ pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
 }
 
 pub function (c: Conn) respond_head(id: i64, resp: HttpResponse, length: i64): Conn {
-  return Conn { ...c, session: c.session.send_headers(id, __response_fields(resp, length, c.date), false) }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, length, c.date), [], false) }.__applied(0 as i64);
 }
 
 pub function (c: Conn) write(id: i64, bytes: [u8]): Conn {
