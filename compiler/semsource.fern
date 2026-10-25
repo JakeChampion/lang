@@ -8056,6 +8056,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let rewrite: boolean[] = [];
   let unnamed: boolean[] = [];
   let uncalled: boolean[] = [];
+  let always: boolean[] = [];
   let arms: util.NameIndex = util.name_index(dispatched_arms(all));
   let sw: optbisect.Switches = optbisect.switches();
   let i: i32 = 0;
@@ -8068,9 +8069,10 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline && !mod.funcs[i].fip && !mod.funcs[i].fbip && optbisect.allowed_by(sw, "inline", names[i]));
     unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
     uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, arms));
+    always = always.append(i < mod.funcs.len() && mod.funcs[i].always_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, size);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
