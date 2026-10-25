@@ -3,11 +3,11 @@
 package e2eharness
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // hostBuildSlots bounds the cold driver builds that run at once on one host.
@@ -40,17 +40,14 @@ func acquireHostBuildSlot() func() {
 			f.Close()
 		}
 	}
-	for _, f := range slots {
-		if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
-			return release
-		}
-	}
-	// Every slot is held: wait on the one this process hashes to.
-	f := slots[os.Getpid()%len(slots)]
+	// flock cannot wait on several files at once, so a waiter polls every
+	// slot and takes whichever is released first.
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-		if err == nil || !errors.Is(err, syscall.EINTR) {
-			return release
+		for _, f := range slots {
+			if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
+				return release
+			}
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
