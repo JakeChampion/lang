@@ -48,7 +48,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 pub function (d: Decoder) decode(stream: i64, section: [u8]): Decoder>>
 
-<<17 function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder>>
+<<17 function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder>>
 
 <<18 pub function (d: Decoder) cancel(stream: i64): Decoder>>
 
@@ -506,48 +506,35 @@ function __enc_insert(t: Table, name: string, value: string): Result[Table, Opti
 <<16 pub function (d: Decoder) decode(stream: i64, section: [u8]): Decoder>>=
 pub function (d: Decoder) decode(stream: i64, section: [u8]): Decoder {
   let cur: Decoder = Decoder { ...d, fields: [], waiting: false, failed: None };
-  let prefix: Result[(i64, i64, i32), QpackError] = cur.__prefix(section);
-  let Ok(p) = prefix else {
-    return cur.__failed_prefix(prefix);
-  };
-  let (required, base, at) = p;
-  if (required > cur.table.__inserted()) {
-    return cur.__blocked_on(stream);
-  }
-  let lines: Result[Field[], QpackError] = cur.__lines(section, at, required, base);
-  let Ok(fields) = lines else {
-    return cur.__failed_lines(lines);
-  };
-  cur = Decoder { ...cur, blocked: __without(cur.blocked, stream), fields: fields };
-  if (required > 0) {
-    cur = Decoder { ...cur, out: __put_int(cur.out, 128, 7, stream), reported: __max(cur.reported, required) };
-  }
-  return cur;
-}
-```
-
-### `17 function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder`
-
-```fern
-<<17 function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder>>=
-function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder {
-  match (r) {
-    Err(e) => {
-      return Decoder { ...d, failed: Some(e) };
+  match (cur.__prefix(section)) {
+    Ok(p) => {
+      return cur.__decoded(stream, section, p.0, p.1, p.2);
     },
-    Ok(_) => {
-      return d;
+    Err(e) => {
+      return Decoder { ...cur, failed: Some(e) };
     }
   }
 }
+```
 
-function (d: Decoder) __failed_lines(r: Result[Field[], QpackError]): Decoder {
-  match (r) {
+### `17 function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder`
+
+```fern
+<<17 function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder>>=
+function (d: Decoder) __decoded(stream: i64, section: [u8], required: i64, base: i64, at: i32): Decoder {
+  if (required > d.table.__inserted()) {
+    return d.__blocked_on(stream);
+  }
+  match (d.__lines(section, at, required, base)) {
+    Ok(fields) => {
+      let cur: Decoder = Decoder { ...d, blocked: __without(d.blocked, stream), fields: fields };
+      if (required > 0) {
+        cur = Decoder { ...cur, out: __put_int(cur.out, 128, 7, stream), reported: __max(cur.reported, required) };
+      }
+      return cur;
+    },
     Err(e) => {
       return Decoder { ...d, failed: Some(e) };
-    },
-    Ok(_) => {
-      return d;
     }
   }
 }
