@@ -38,7 +38,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<11 const LENGTH_BASE: i32[]>>
 
-<<12 function __table(h: __Huff, bits: i32): i32[]>>
+<<12 function __table(h: __Huff, bits: i32, lit: boolean): i32[]>>
 
 <<13 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State>>
 
@@ -179,7 +179,11 @@ pub function inflate_after(history: [u8], input: [u8], max_out: i32): Result[Inf
 ```fern
 <<6 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError]>>=
 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
-  let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: history, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
+  let out: u8[] = history;
+  if (history.len() == 0) {
+    out = __room(input.len() - from, max_out);
+  }
+  let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: out, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
   let done: boolean = false;
   while (!done && !s.failed) {
     s = __bits(s, input, 1);
@@ -192,6 +196,24 @@ function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result
     return Err(s.error);
   }
   return Ok(Inflated { out: s.out, consumed: s.pos - from });
+}
+
+// Room for four times the input, at least 4 KiB and at most the output
+// limit, so the output rarely grows and copies.
+function __room(avail: i32, max_out: i32): u8[] {
+  let want: i64 = avail as i64 * 4i64;
+  if (want < 4096i64) {
+    want = 4096i64;
+  }
+  if (want > max_out as i64) {
+    want = max_out as i64;
+  }
+  if (want < 0i64) {
+    want = 0i64;
+  }
+  let out: u8[] = __alloc_u8(want as i32);
+  __arr_set_len(out, 0);
+  return out;
 }
 ```
 
@@ -368,13 +390,28 @@ const DIST_EXTRA: i32[] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7,
 const LIT_BITS: i32 = 10;
 
 const DIST_BITS: i32 = 8;
+
+const LIT_MASK: u64 = 1023u64;
+
+const DIST_MASK: u64 = 255u64;
 ```
 
-### `12 function __table(h: __Huff, bits: i32): i32[]`
+### `12 function __table(h: __Huff, bits: i32, lit: boolean): i32[]`
 
 ```fern
-<<12 function __table(h: __Huff, bits: i32): i32[]>>=
-function __table(h: __Huff, bits: i32): i32[] {
+<<12 function __table(h: __Huff, bits: i32, lit: boolean): i32[]>>=
+// An entry holds the code length in bits 0-3, the extra bit count in bits
+// 4-7 and the literal, length base or distance base from bit 16. Zero is a
+// code longer than the table, which __walk reads.
+const E_LITERAL: i32 = 256;
+
+const E_END: i32 = 512;
+
+const E_NO_CODE: i32 = 1024;
+
+const E_PAST: i32 = 2048;
+
+function __table(h: __Huff, bits: i32, lit: boolean): i32[] {
   let table: i32[] = __zeros(1 << bits);
   let code: i32 = 0;
   let index: i32 = 0;
@@ -382,7 +419,7 @@ function __table(h: __Huff, bits: i32): i32[] {
   while (len <= bits) {
     let k: i32 = 0;
     while (k < h.count[len]) {
-      let entry: i32 = h.symbol[index] << 4 | len;
+      let entry: i32 = __entry(h.symbol[index], len, lit);
       let at: i32 = __reversed(code, len);
       while (at < table.len()) {
         table = table.with(at, entry);
@@ -398,7 +435,28 @@ function __table(h: __Huff, bits: i32): i32[] {
   return table;
 }
 
-function __walk(h: __Huff, bits: i64, avail: i32): i32 {
+function __entry(sym: i32, len: i32, lit: boolean): i32 {
+  if (!lit) {
+    if (sym >= 30) {
+      return E_PAST | len;
+    }
+    return DIST_BASE[sym] << 16 | DIST_EXTRA[sym] << 4 | len;
+  }
+  if (sym < 256) {
+    return sym << 16 | E_LITERAL | len;
+  }
+  if (sym == 256) {
+    return E_END | len;
+  }
+  if (sym - 257 >= 29) {
+    return E_PAST | len;
+  }
+  return LENGTH_BASE[sym - 257] << 16 | LENGTH_EXTRA[sym - 257] << 4 | len;
+}
+
+// The entry of a code longer than the table: zero when `avail` bits do not
+// hold it, E_NO_CODE when no code matches.
+function __walk(h: __Huff, bits: u64, avail: i32, lit: boolean): i32 {
   let code: i32 = 0;
   let first: i32 = 0;
   let index: i32 = 0;
@@ -407,117 +465,131 @@ function __walk(h: __Huff, bits: i64, avail: i32): i32 {
     if (len > avail) {
       return 0;
     }
-    code = code | (bits >> (len - 1) as i64 & 1 as i64) as i32;
+    code = code | (bits >> (len - 1) as u64 & 1u64) as i32;
     let count: i32 = h.count[len];
     if (code - count < first) {
-      return h.symbol[index + (code - first)] << 4 | len;
+      return __entry(h.symbol[index + (code - first)], len, lit);
     }
     index = index + count;
     first = first + count << 1;
     code = code << 1;
     len = len + 1;
   }
-  return 0 - 1;
+  return E_NO_CODE;
+}
+
+@inline
+function __le64(data: [u8], at: i32): u64 {
+  return data[at] as u64 | data[at + 1] as u64 << 8 | data[at + 2] as u64 << 16 | data[at + 3] as u64 << 24
+    | data[at + 4] as u64 << 32 | data[at + 5] as u64 << 40 | data[at + 6] as u64 << 48 | data[at + 7] as u64 << 56;
 }
 ```
 
 ### `13 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State`
 
+`__fast` runs while eight input bytes and 258 output bytes are left. One
+word refill leaves at least 56 bits, and a length with its distance needs at
+most 48, so it reads a whole symbol pair with no bit count check. The careful
+loop in `__codes` decodes what is left one byte at a time. The two loops are
+in separate functions so that the fast one has the registers to itself.
+
 ```fern
 <<13 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State>>=
 // fern-lint: allow cyclomatic-complexity
 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State {
-  let lit: i32[] = __table(lencode, LIT_BITS);
-  let dtab: i32[] = __table(distcode, DIST_BITS);
-  let lmask: i64 = (1 << LIT_BITS) as i64 - 1;
-  let dmask: i64 = (1 << DIST_BITS) as i64 - 1;
+  let lit: i32[] = __table(lencode, LIT_BITS, true);
+  let dtab: i32[] = __table(distcode, DIST_BITS, false);
+  let lmask: u64 = (1 << LIT_BITS) as u64 - 1u64;
+  let dmask: u64 = (1 << DIST_BITS) as u64 - 1u64;
   let out: u8[] = s.out;
   let max_out: i32 = s.max_out;
   let pos: i32 = s.pos;
-  let bitbuf: i64 = s.bitbuf as i64;
+  let bitbuf: u64 = s.bitbuf as u64;
   let bitcnt: i32 = s.bitcnt;
   let n: i32 = data.len();
   s = __State { ...s, out: [], lengths: [] };
   let error: Option[InflateError] = None;
   let done: boolean = false;
+  let fast: __Fast = __fast(out, data, pos, bitbuf, bitcnt, max_out, lit, dtab, lencode, distcode);
+  out = fast.out;
+  pos = fast.pos;
+  bitbuf = fast.bitbuf;
+  bitcnt = fast.bitcnt;
+  if (fast.status != F_ROOM) {
+    error = __fast_error(fast.status);
+    done = true;
+  }
   while (!done) {
     while (bitcnt <= 48 && pos < n) {
-      bitbuf = bitbuf | data[pos] as i64 << bitcnt as i64;
+      bitbuf = bitbuf | data[pos] as u64 << bitcnt as u64;
       pos = pos + 1;
       bitcnt = bitcnt + 8;
     }
     let e: i32 = lit[(bitbuf & lmask) as i32];
     if (e == 0) {
-      e = __walk(lencode, bitbuf, bitcnt);
+      e = __walk(lencode, bitbuf, bitcnt, true);
     }
     let used: i32 = e & 15;
-    if (e < 0 || used > bitcnt || e == 0) {
-      error = Some(__walk_error(e));
+    if (e == 0 || used > bitcnt) {
+      error = Some(Truncated);
       done = true;
     } else {
-      bitbuf = bitbuf >> used as i64;
+      bitbuf = bitbuf >> used as u64;
       bitcnt = bitcnt - used;
-      let sym: i32 = e >> 4;
-      if (sym < 256) {
+      if ((e & E_LITERAL) != 0) {
         if (out.len() >= max_out) {
           error = Some(OutputLimit);
           done = true;
         } else {
-          out = out.append(sym as u8);
+          out = out.append((e >> 16) as u8);
         }
-      } else if (sym == 256) {
-        done = true;
-      } else if (sym - 257 >= 29) {
-        error = Some(Malformed("a length code past 285"));
+      } else if ((e & (E_END | E_NO_CODE | E_PAST)) != 0) {
+        error = __symbol_error(e, true);
         done = true;
       } else {
-        let lx: i32 = LENGTH_EXTRA[sym - 257];
-        let len: i32 = LENGTH_BASE[sym - 257] + (bitbuf & (1 << lx) as i64 - 1) as i32;
-        let need: i32 = lx;
-        if (need > bitcnt) {
+        let lx: i32 = e >> 4 & 15;
+        let len: i32 = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
+        if (lx > bitcnt) {
           error = Some(Truncated);
           done = true;
         } else {
-          bitbuf = bitbuf >> lx as i64;
+          bitbuf = bitbuf >> lx as u64;
           bitcnt = bitcnt - lx;
           while (bitcnt <= 48 && pos < n) {
-            bitbuf = bitbuf | data[pos] as i64 << bitcnt as i64;
+            bitbuf = bitbuf | data[pos] as u64 << bitcnt as u64;
             pos = pos + 1;
             bitcnt = bitcnt + 8;
           }
           let d: i32 = dtab[(bitbuf & dmask) as i32];
           if (d == 0) {
-            d = __walk(distcode, bitbuf, bitcnt);
+            d = __walk(distcode, bitbuf, bitcnt, false);
           }
           let dused: i32 = d & 15;
-          if (d < 0 || dused > bitcnt || d == 0) {
-            error = Some(__walk_error(d));
+          if (d == 0 || dused > bitcnt) {
+            error = Some(Truncated);
             done = true;
           } else {
-            bitbuf = bitbuf >> dused as i64;
+            bitbuf = bitbuf >> dused as u64;
             bitcnt = bitcnt - dused;
-            let dsym: i32 = d >> 4;
-            if (dsym >= 30) {
-              error = Some(Malformed("a distance code past 29"));
+            let dx: i32 = d >> 4 & 15;
+            if ((d & (E_NO_CODE | E_PAST)) != 0) {
+              error = __symbol_error(d, false);
+              done = true;
+            } else if (dx > bitcnt) {
+              error = Some(Truncated);
               done = true;
             } else {
-              let dx: i32 = DIST_EXTRA[dsym];
-              if (dx > bitcnt) {
-                error = Some(Truncated);
+              let dist: i32 = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
+              bitbuf = bitbuf >> dx as u64;
+              bitcnt = bitcnt - dx;
+              if (dist > out.len()) {
+                error = Some(Malformed("a distance before the start of the output"));
+                done = true;
+              } else if (out.len() + len > max_out) {
+                error = Some(OutputLimit);
                 done = true;
               } else {
-                let dist: i32 = DIST_BASE[dsym] + (bitbuf & (1 << dx) as i64 - 1) as i32;
-                bitbuf = bitbuf >> dx as i64;
-                bitcnt = bitcnt - dx;
-                if (dist > out.len()) {
-                  error = Some(Malformed("a distance before the start of the output"));
-                  done = true;
-                } else if (out.len() + len > max_out) {
-                  error = Some(OutputLimit);
-                  done = true;
-                } else {
-                  out = __copy(out, len, dist);
-                }
+                out = __copy(out, len, dist);
               }
             }
           }
@@ -527,7 +599,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
   }
   let back: i32 = bitcnt >> 3;
   bitcnt = bitcnt & 7;
-  s = __State { ...s, out: out, pos: pos - back, bitbuf: (bitbuf & (1 << bitcnt) as i64 - 1) as i32, bitcnt: bitcnt };
+  s = __State { ...s, out: out, pos: pos - back, bitbuf: (bitbuf & (1u64 << bitcnt as u64) - 1u64) as i32, bitcnt: bitcnt };
   match (error) {
     Some(err) => {
       return __fail(s, err);
@@ -539,11 +611,128 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
   return s;
 }
 
-function __walk_error(e: i32): InflateError {
-  if (e < 0) {
-    return Malformed("a bit pattern that is no code");
+struct __Fast { out: u8[], pos: i32, bitbuf: u64, bitcnt: i32, status: i32 }
+
+const F_ROOM: i32 = 0;
+
+const F_END: i32 = 1;
+
+const F_NO_CODE: i32 = 2;
+
+const F_LENGTH_PAST: i32 = 3;
+
+const F_DISTANCE_PAST: i32 = 4;
+
+const F_TOO_FAR: i32 = 5;
+
+// Decodes while eight input bytes and 258 output bytes are left, and stops
+// with F_ROOM when they are not. After a literal at least 41 bits are left,
+// so the next entry is read before the refill, and a second literal is
+// decoded with no refill. After a match `e` is -1 and is read after it. The guard at the top is what lets the
+// bounds prover drop the checks on the input words and the two tables.
+function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, max_out: i32, lit: i32[], dtab: i32[], lencode: __Huff, distcode: __Huff): __Fast {
+  let fast_in: i32 = data.len() - 8;
+  let fast_out: i32 = max_out - 258;
+  let status: i32 = F_ROOM;
+  if (pos < 0 || lit.len() < 1 << LIT_BITS || dtab.len() < 1 << DIST_BITS) {
+    return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
   }
-  return Truncated;
+  let e: i32 = 0 - 1;
+  while (pos <= fast_in && out.len() <= fast_out) {
+    bitbuf = bitbuf | __le64(data, pos) << bitcnt as u64;
+    pos = pos + ((bitcnt >> 3 ^ 7) & 7);
+    bitcnt = bitcnt | 56;
+    if (e < 0) {
+      e = lit[(bitbuf & LIT_MASK) as i32];
+    }
+    if (e == 0) {
+      e = __walk(lencode, bitbuf, bitcnt, true);
+    }
+    let used: i32 = e & 15;
+    bitbuf = bitbuf >> used as u64;
+    bitcnt = bitcnt - used;
+    if ((e & E_LITERAL) != 0) {
+      out = out.append((e >> 16) as u8);
+      e = lit[(bitbuf & LIT_MASK) as i32];
+      if ((e & E_LITERAL) != 0) {
+        bitbuf = bitbuf >> (e & 15) as u64;
+        bitcnt = bitcnt - (e & 15);
+        out = out.append((e >> 16) as u8);
+        e = lit[(bitbuf & LIT_MASK) as i32];
+      }
+      continue;
+    }
+    if ((e & (E_END | E_NO_CODE | E_PAST)) != 0) {
+      status = __fast_status(e, F_LENGTH_PAST);
+      break;
+    }
+    let lx: i32 = e >> 4 & 15;
+    let len: i32 = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
+    bitbuf = bitbuf >> lx as u64;
+    bitcnt = bitcnt - lx;
+    let d: i32 = dtab[(bitbuf & DIST_MASK) as i32];
+    if (d == 0) {
+      d = __walk(distcode, bitbuf, bitcnt, false);
+    }
+    let dused: i32 = d & 15;
+    bitbuf = bitbuf >> dused as u64;
+    bitcnt = bitcnt - dused;
+    if ((d & (E_NO_CODE | E_PAST)) != 0) {
+      status = __fast_status(d, F_DISTANCE_PAST);
+      break;
+    }
+    let dx: i32 = d >> 4 & 15;
+    let dist: i32 = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
+    bitbuf = bitbuf >> dx as u64;
+    bitcnt = bitcnt - dx;
+    if (dist > out.len()) {
+      status = F_TOO_FAR;
+      break;
+    }
+    out = __copy(out, len, dist);
+    e = 0 - 1;
+  }
+  return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
+}
+
+function __fast_status(e: i32, past: i32): i32 {
+  if ((e & E_END) != 0) {
+    return F_END;
+  }
+  if ((e & E_NO_CODE) != 0) {
+    return F_NO_CODE;
+  }
+  return past;
+}
+
+function __fast_error(status: i32): Option[InflateError] {
+  if (status == F_NO_CODE) {
+    return Some(Malformed("a bit pattern that is no code"));
+  }
+  if (status == F_LENGTH_PAST) {
+    return Some(Malformed("a length code past 285"));
+  }
+  if (status == F_DISTANCE_PAST) {
+    return Some(Malformed("a distance code past 29"));
+  }
+  if (status == F_TOO_FAR) {
+    return Some(Malformed("a distance before the start of the output"));
+  }
+  return None;
+}
+
+// None for the end-of-block code, the error for the others.
+function __symbol_error(e: i32, lit: boolean): Option[InflateError] {
+  if ((e & E_END) != 0) {
+    return None;
+  }
+  if ((e & E_NO_CODE) != 0) {
+    return Some(Malformed("a bit pattern that is no code"));
+  }
+  if (lit) {
+    return Some(Malformed("a length code past 285"));
+  }
+  return Some(Malformed("a distance code past 29"));
 }
 
 function __copy(own out: u8[], len: i32, dist: i32): u8[] {
@@ -1504,20 +1693,33 @@ function __put_header(w: __Bits, h: __Header): __Bits {
   return w;
 }
 
+// The chains link positions with the same four-byte hash, as libdeflate's
+// do, and a second table holds the last position of each three-byte hash.
 function __tokens(input: [u8], window: i32): i32[] {
   let n: i32 = input.len();
-  let head: i32[] = __filled(32768, 0 - 1);
+  let head3: i32[] = __filled(32768, 0 - 1);
+  let head4: i32[] = __filled(65536, 0 - 1);
   let prev: i32[] = __filled(window, 0 - 1);
   let out: i32[] = [];
   let held: (i32, i32) = (0 - 1, 0);
   let skip: i32 = 0;
   let pos: i32 = 0;
   while (pos < n) {
-    let cur: (i32, i32) = __match_at(input, pos, skip, head, prev, window);
-    if (pos + 2 < n) {
-      let h: i32 = __hash3(input, pos);
-      prev = prev.with(pos & window - 1, head[h]);
-      head = head.with(h, pos);
+    let c3: i32 = 0 - 1;
+    let c4: i32 = 0 - 1;
+    if (pos + 3 < n) {
+      let w: u32 = __le32(input, pos);
+      let h3: i32 = ((w << 8) * 506832829u32 >> 17) as i32;
+      let h4: i32 = (w * 506832829u32 >> 16) as i32;
+      c3 = head3[h3];
+      c4 = head4[h4];
+      head3 = head3.with(h3, pos);
+      head4 = head4.with(h4, pos);
+      prev = prev.with(pos & window - 1, c4);
+    }
+    let cur: (i32, i32) = (0, 0);
+    if (pos >= skip && held.0 < 65) {
+      cur = __longest(input, pos, c3, c4, prev, window, held.0);
     }
     if (pos >= skip && held.0 >= 3 && cur.0 <= held.0) {
       out = out.append(held.0 << 16 | held.1);
@@ -1576,13 +1778,6 @@ function __fast_tokens(input: [u8]): i32[] {
   return out;
 }
 
-function __match_at(input: [u8], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32): (i32, i32) {
-  if (pos < skip || pos + 2 >= input.len()) {
-    return (0, 0);
-  }
-  return __longest(input, pos, head[__hash3(input, pos)], prev, window);
-}
-
 function __filled(n: i32, v: i32): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -1605,26 +1800,59 @@ function __common(input: [u8], from: i32, pos: i32): i32 {
   return __mismatch_bytes(input, from, input, pos, 258);
 }
 
-function __longest(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {
-  let n: i32 = input.len();
+// The longest match at pos, longer than a held match of 3 or more bytes. A
+// search visits at most 35 candidates and stops at a match of 65 bytes. The
+// search for the lazy step visits half as many. A match of 3 bytes further
+// back than 8192 costs more than its literals.
+function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], window: i32, held: i32): (i32, i32) {
+  let max: i32 = cmp.min(258, input.len() - pos);
+  let nice: i32 = cmp.min(65, max);
+  if (max < 4 || held >= nice) {
+    return (0, 0);
+  }
+  let first: u32 = __le32(input, pos);
   let best_len: i32 = 0;
   let best_dist: i32 = 0;
-  let depth: i32 = 0;
-  while (cand >= 0 && pos - cand < window && depth < 32) {
-    let len: i32 = 0;
-    if (pos + best_len >= n || input[cand + best_len] == input[pos + best_len]) {
-      len = __common(input, cand, pos);
-    }
-    if (len > best_len) {
-      best_len = len;
-      best_dist = pos - cand;
-    }
-    if (len == 258) {
-      return (best_len, best_dist);
+  let depth: i32 = 35;
+  if (held >= 3) {
+    best_len = held;
+    depth = 17;
+  } else if (c3 >= 0 && pos - c3 <= 8192 && (__le32(input, c3) ^ first) << 8 == 0u32) {
+    best_len = 3;
+    best_dist = pos - c3;
+  }
+  while (cand >= 0 && pos - cand < window && depth > 0) {
+    if (input[cand + best_len] == input[pos + best_len] && __le32(input, cand) == first) {
+      let len: i32 = __extend(input, cand, pos, max);
+      if (len > best_len) {
+        best_len = len;
+        best_dist = pos - cand;
+        if (len >= nice) {
+          return (best_len, best_dist);
+        }
+      }
     }
     cand = prev[cand & window - 1];
-    depth = depth + 1;
+    depth = depth - 1;
   }
   return (best_len, best_dist);
+}
+
+// The length of the match past its first four bytes, eight bytes at a time.
+// A call here would keep the chain walk's values out of registers.
+@inline
+function __extend(input: [u8], cand: i32, pos: i32, max: i32): i32 {
+  let len: i32 = 4;
+  while (len + 8 <= max) {
+    let x: u64 = __le64(input, cand + len) ^ __le64(input, pos + len);
+    if (x != 0u64) {
+      return len + (__ctz64(x) >> 3);
+    }
+    len = len + 8;
+  }
+  while (len < max && input[cand + len] == input[pos + len]) {
+    len = len + 1;
+  }
+  return len;
 }
 ```
