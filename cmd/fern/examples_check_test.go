@@ -9,7 +9,7 @@ import (
 
 func TestEveryExampleChecks(t *testing.T) {
 	root := repoRoot(t)
-	files, err := corpus.Files(root, corpus.Programs)
+	files, err := corpus.Files(root, append(append([]string{}, corpus.Programs...), "scripts"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import "std/http/h3";
 import "std/http/h3q";
 import "std/tls/verify";
 import "std/headers";
+import "std/stream";
 import "std/async";
 import "std/option";
 import "std/i64";
@@ -56,7 +57,7 @@ function wait_ms(c: h3q.Conn): i32 {
 }
 
 function request(method: string, path: string, body: u8[]): HttpRequest {
-  return HttpRequest { method: method, path: path, body: Stream { data: body, pos: 0, source: None }, headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
+  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(body), headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
 }
 
 struct Fetches { todo: HttpRequest[], owed: i32, answered: i32, closing: boolean }
