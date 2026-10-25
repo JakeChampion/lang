@@ -4519,14 +4519,14 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 }
 
 function paired_op(name: string): boolean {
-  return scalar_op(name) || sempair.pair_word_slot(name) >= 0 || util.str_has_prefix(name, sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
+  return scalar_op(name) || sempair.pair_word_slot(name) >= 0 || sempair.pair_lane_slot(name) >= 0 || util.str_has_prefix(name, sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
 }
 
 function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (scalar_op(ins.str)) {
     return scalar_site(r, f, ins);
   }
-  if (sempair.pair_word_slot(ins.str) >= 0) {
+  if (sempair.pair_word_slot(ins.str) >= 0 || sempair.pair_lane_slot(ins.str) >= 0) {
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_load_local(ins.result));
   }
@@ -4539,7 +4539,17 @@ function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 
 function capture_pair_words(own r: irtables.LowerResult, imm: i32): irtables.LowerResult {
   let base: i32 = ssasem.pair_capture_base(imm);
-  let slot: i32 = ssasem.pair_capture_count(imm) - 1;
+  let count: i32 = ssasem.pair_capture_count(imm);
+  let wide: i32 = ssasem.pair_capture_wide(imm);
+  let lane: i32 = base + count;
+  for slot in 0..2 {
+    if ((wide >> slot & 1) != 0) {
+      r = emit(r, ir.op_call_scalar_word(slot));
+      r = emit(r, ir.op_store_local(lane));
+      lane = lane + 1;
+    }
+  }
+  let slot: i32 = count - 1;
   while (slot >= 0) {
     r = emit(r, ir.op_call_pair_word(slot));
     r = emit(r, ir.op_store_local(base + slot));

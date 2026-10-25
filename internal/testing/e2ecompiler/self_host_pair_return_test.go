@@ -946,9 +946,102 @@ function main(): i32 {
 }
 `
 
+// A 64-bit payload, alone or as either part of a split pair, beside an
+// error that holds a string: it goes back in its slot's 64-bit lane.
+const pairWideProg = `import "std/bench";
+
+enum Fail { Bad(string), Short }
+
+// A 64-bit part goes back in its slot's lane beside the error's word.
+@noinline function first_wide(buf: u8[], at: i32): Result[(i64, i32), Fail] {
+  if (at >= buf.len()) {
+    return Err(Short);
+  }
+  if (buf[at] == 0) {
+    return Err(Bad("zero"));
+  }
+  return Ok((buf[at] as i64 << 40, at + 1));
+}
+
+@noinline function second_wide(buf: u8[], at: i32): Result[(string, i64), Fail] {
+  if (at >= buf.len()) {
+    return Err(Short);
+  }
+  return Ok(("ab", 0 - (buf[at] as i64 << 33)));
+}
+
+// A 64-bit payload alone goes back in the first lane.
+@noinline function single(buf: u8[], at: i32): Result[i64, Fail] {
+  if (at >= buf.len()) {
+    return Err(Short);
+  }
+  return Ok(buf[at] as i64 << 36);
+}
+
+@noinline function forward(buf: u8[], at: i32): Result[(i64, i32), Fail] {
+  match (first_wide(buf, at)) {
+    Ok(r) => {
+      return Ok(r);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+function main(): i32 {
+  let buf: u8[] = [1 as u8, 2 as u8, 0 as u8, 3 as u8];
+  let total: i64 = 0;
+  let a0: i64 = bench.alloc_count();
+  let i: i32 = 0;
+  while (i < 20) {
+    match (forward(buf, i % 5)) {
+      Ok(p) => {
+        total = total + (p.0 >> 40) * 1000 + p.1 as i64;
+      },
+      Err(Bad(why)) => {
+        total = total + why.len() as i64 * 100000;
+      },
+      Err(Short()) => {
+        total = total + 7;
+      }
+    }
+    match (second_wide(buf, i % 5)) {
+      Ok(p) => {
+        total = total + p.0.len() as i64 - (p.1 >> 33);
+      },
+      Err(_) => {
+        total = total + 9;
+      }
+    }
+    match (single(buf, i % 5)) {
+      Ok(v) => {
+        total = total + (v >> 36) * 3;
+      },
+      Err(_) => {
+        total = total + 11;
+      }
+    }
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 1624264) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {

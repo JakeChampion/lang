@@ -1052,6 +1052,9 @@ function three_words(w: Walk, insts: ssa.SInst[], c: i32): boolean {
 // The variants whose word at slot holds a unit. A callee's own first word
 // can read pair_second either way: it names every variant split_second does.
 function word_mask(a: Abi, slot: i32, split: boolean): i32 {
+  if (slot < 0) {
+    return 0;
+  }
   if (slot == 1) {
     return a.split_third;
   }

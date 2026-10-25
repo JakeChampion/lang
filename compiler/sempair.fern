@@ -315,7 +315,7 @@ function pair_type(f: ssasem.Func, t: typeinfo.Type): boolean {
 
 function payloads_fit(f: ssasem.Func, e: semrecords.Enum): boolean {
   for v in e.variants {
-    if (v.fields.len() > 1 || v.fields.len() == 1 && !word(f, v.fields[0].ty)) {
+    if (v.fields.len() > 1 || v.fields.len() == 1 && !word(f, v.fields[0].ty) && !ssasem.is_wide(v.fields[0].ty)) {
       return false;
     }
   }
@@ -379,10 +379,17 @@ pub function split_parts(records: semrecords.Records, finalizers: ssasem.Finaliz
 }
 
 function two_words(parts: typeinfo.Type[]): typeinfo.Type[] {
-  if (parts.len() != 2 || !fits_word(parts[0]) || !fits_word(parts[1])) {
+  if (parts.len() != 2 || !fits_part(parts[0]) || !fits_part(parts[1])) {
     return [];
   }
   return parts;
+}
+
+// A split part fits its pair word, or is a 64-bit integer, which goes in the
+// 64-bit lane of the same slot: the same register on x86-64 and arm64, an
+// i64 global on wasm.
+function fits_part(t: typeinfo.Type): boolean {
+  return fits_word(t) || ssasem.is_wide(t);
 }
 
 function carried(f: ssasem.Func, t: typeinfo.Type): boolean {
@@ -452,7 +459,9 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
     for i in 0..sh.payloads.len() {
       let ts: typeinfo.Type[] = word_types(sh, i);
       for slot in 0..ts.len() {
-        calls = with_contract(calls, pair_set_contract(ts[slot], slot));
+        if (!in_lane(ts, slot)) {
+          calls = with_contract(calls, pair_set_contract(ts[slot], slot));
+        }
       }
     }
   }
@@ -508,9 +517,15 @@ function arm_return(a0: Arm, sh: Shape, at: i32, payload: i32[], defs: ssa.SInst
   let f: ssasem.Func = a.f;
   let insts: ssa.SInst[] = a.insts;
   for slot in 0..words.len() {
-    let set: i32 = f.values.len();
-    f = with_value(f, t_i32());
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [words[slot]], imm: 0, str: pair_set_name(ts[slot], slot) });
+    if (in_lane(ts, slot)) {
+      let l: semscalarreturn.Lanes = semscalarreturn.lane_set(f, insts, words[slot], ts[slot], slot);
+      f = l.f;
+      insts = l.insts;
+    } else {
+      let set: i32 = f.values.len();
+      f = with_value(f, t_i32());
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [words[slot]], imm: 0, str: pair_set_name(ts[slot], slot) });
+    }
   }
   let tag: i32 = f.values.len();
   f = with_value(f, t_i32());
@@ -630,7 +645,8 @@ function rebuild_at(f0: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func, split
   return dispatched(bi, k, sh, captured(f, call, sh), callee);
 }
 
-struct Captured { f: ssasem.Func, insts: ssa.SInst[], tag: i32, w: i32, words: i32[] }
+// lanes holds, per pair slot, the value its 64-bit lane is captured in, or -1.
+struct Captured { f: ssasem.Func, insts: ssa.SInst[], tag: i32, w: i32, words: i32[], lanes: i32[] }
 
 function captured(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
   if (sh.lanes) {
@@ -640,17 +656,41 @@ function captured(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
   if (sh.split) {
     count = 2;
   }
+  let wide: i32 = 0;
+  for i in 0..sh.payloads.len() {
+    let ts: typeinfo.Type[] = word_types(sh, i);
+    for slot in 0..ts.len() {
+      if (in_lane(ts, slot)) {
+        wide = wide | 1 << slot;
+      }
+    }
+  }
   let tag: i32 = f0.values.len();
   let w: i32 = tag + 1;
   let f: ssasem.Func = with_value(f0, t_i32());
-  let insts: ssa.SInst[] = [ssa.SInst { ...call, result: tag, imm: ssasem.pair_capture_imm(w, count) }];
+  let insts: ssa.SInst[] = [ssa.SInst { ...call, result: tag, imm: ssasem.pair_capture_imm(w, count, wide) }];
   let words: i32[] = [];
   for slot in 0..count {
     f = with_value(f, t_usize());
     insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w + slot, args: [tag], imm: 0, str: pair_word_name(slot) });
     words = words.append(w + slot);
   }
-  return Captured { f: f, insts: insts, tag: tag, w: w, words: words };
+  let lanes: i32[] = [0 - 1, 0 - 1];
+  for slot in 0..2 {
+    if ((wide >> slot & 1) != 0) {
+      let lane: i32 = f.values.len();
+      f = with_value(f, semscalarreturn.word_type());
+      f = ssasem.Func { ...f, calls: with_contract(f.calls, lane_contract(slot)) };
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [tag], imm: 0, str: pair_lane_name(slot) });
+      lanes = lanes.with(slot, lane);
+    }
+  }
+  return Captured { f: f, insts: insts, tag: tag, w: w, words: words, lanes: lanes };
+}
+
+// in_lane says the split part at slot goes in that slot's 64-bit lane.
+function in_lane(parts: typeinfo.Type[], slot: i32): boolean {
+  return ssasem.is_wide(parts[slot]);
 }
 
 function captured_lanes(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
@@ -677,7 +717,7 @@ function captured_lanes(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
     k = k + 1;
   }
   l = semscalarreturn.word_tag(l.f, l.insts, w);
-  return Captured { f: l.f, insts: l.insts, tag: l.value, w: w, words: words };
+  return Captured { f: l.f, insts: l.insts, tag: l.value, w: w, words: words, lanes: [] };
 }
 
 function arm_payload(f: ssasem.Func, insts: ssa.SInst[], sh: Shape, i: i32, c: Captured): semscalarreturn.Lanes {
@@ -689,10 +729,17 @@ function arm_payload(f: ssasem.Func, insts: ssa.SInst[], sh: Shape, i: i32, c: C
   let out: ssa.SInst[] = insts;
   let parts: i32[] = [];
   for slot in 0..ts.len() {
-    let x: i32 = g.values.len();
-    g = with_value(g, ts[slot]);
-    out = out.append(ssa.SInst { kind_tag: ssasem.call(), result: x, args: [c.words[slot]], imm: 0, str: word_as_name(ts[slot]) });
-    parts = parts.append(x);
+    if (in_lane(ts, slot)) {
+      let l: semscalarreturn.Lanes = semscalarreturn.lane_as(g, out, c.lanes[slot], ts[slot]);
+      g = l.f;
+      out = l.insts;
+      parts = parts.append(l.value);
+    } else {
+      let x: i32 = g.values.len();
+      g = with_value(g, ts[slot]);
+      out = out.append(ssa.SInst { kind_tag: ssasem.call(), result: x, args: [c.words[slot]], imm: 0, str: word_as_name(ts[slot]) });
+      parts = parts.append(x);
+    }
   }
   if (ts.len() == 1) {
     return semscalarreturn.Lanes { f: g, insts: out, value: parts[0] };
@@ -772,8 +819,11 @@ function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape):
     calls = with_contract(calls, word_contract(1));
   }
   for i in 0..sh.payloads.len() {
-    for t in word_types(sh, i) {
-      calls = with_contract(calls, ssasem.Contract { name: word_as_name(t), params: [t_usize()], modes: [ssasem.value_mode()], result: t });
+    let ts: typeinfo.Type[] = word_types(sh, i);
+    for slot in 0..ts.len() {
+      if (!in_lane(ts, slot)) {
+        calls = with_contract(calls, ssasem.Contract { name: word_as_name(ts[slot]), params: [t_usize()], modes: [ssasem.value_mode()], result: ts[slot] });
+      }
     }
   }
   return calls;
@@ -810,7 +860,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   let p: i32 = 0;
   while (p < b.insts.len()) {
     if (p == k) {
-      insts = insts.append(ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1) });
+      insts = insts.append(ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1, 0) });
       insts = insts.append(ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w, args: [zero], imm: 0, str: pair_word_name(0) });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w], imm: 0, str: word_as_name(sh.payloads[1]) });
@@ -892,6 +942,28 @@ function test(f0: ssasem.Func, v: i32, j: i32, sh: Shape): Test {
     ssa.SInst { kind_tag: 9, result: cond, args: [v, c], imm: 0, str: "==" },
   ];
   return Test { f: f, insts: insts, cond: cond };
+}
+
+function pair_lane_name(slot: i32): string {
+  if (slot == 1) {
+    return "__pair_lane1";
+  }
+  return "__pair_lane";
+}
+
+// The pair slot whose 64-bit lane a caller's read names, or -1.
+pub function pair_lane_slot(name: string): i32 {
+  if (name == "__pair_lane") {
+    return 0;
+  }
+  if (name == "__pair_lane1") {
+    return 1;
+  }
+  return 0 - 1;
+}
+
+function lane_contract(slot: i32): ssasem.Contract {
+  return ssasem.Contract { name: pair_lane_name(slot), params: [t_i32()], modes: [ssasem.value_mode()], result: semscalarreturn.word_type() };
 }
 
 function pair_word_name(slot: i32): string {
