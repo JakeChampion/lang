@@ -112,9 +112,9 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	e2eharness.CheckServeAllocsTLS(t, addr, ServeAllocsTLSCeiling, e2eharness.ServeAllocsRounds, pool)
 }
 
-const ServeAllocsH3Ceiling = 160
+const ServeAllocsH3Ceiling = 151
 
-const ServeAllocsH3MuxCeiling = 108
+const ServeAllocsH3MuxCeiling = 97
 
 const ServeAllocsH3MuxConcurrency = 64
 

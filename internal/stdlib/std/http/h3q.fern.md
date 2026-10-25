@@ -442,9 +442,12 @@ pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
   if (http.http_bodiless(resp.status)) {
     body = [];
   }
-  let head: Conn = c.respond_head(id, resp, body.len() as i64);
-  let w: Conn = head.write(id, body);
-  return w.end(id, resp.trailers);
+  let whole: boolean = resp.trailers.names.len() == 0;
+  let sent: Conn = Conn { ...c, session: c.session.send_response(id, __response_fields(resp, body.len() as i64), body, whole) }.__applied(0 as i64);
+  if (whole) {
+    return sent;
+  }
+  return sent.end(id, resp.trailers);
 }
 
 pub function (c: Conn) respond_head(id: i64, resp: HttpResponse, length: i64): Conn {
