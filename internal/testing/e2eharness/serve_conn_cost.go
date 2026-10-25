@@ -60,7 +60,7 @@ func RaiseConnCostLimit(t *testing.T) {
 
 func CheckPerConnectionCostFlat(t *testing.T, pid int, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	ka, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
