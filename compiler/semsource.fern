@@ -7974,7 +7974,7 @@ function unique_loops(all: Produced[]): Produced[] {
   for old in all {
     let p = old;
     if (p.ok && !p.template) {
-      let h = semunique.hoisted(p.func, contract);
+      let h = semunique.hoisted(p.func, contract, p.modes);
       if (h.changed && optbisect.allowed_by(sw, "unique-loops", p.func.graph.name)) {
         p = Produced { ...p, func: h.func, analysis: None };
       }
