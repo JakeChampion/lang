@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -506,23 +505,6 @@ func TestRunnerSetExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/set", "ok 4 - insert is pure", "1..14", "# pass 14", "# fail 0"} {
-		if !strings.Contains(out, w) {
-			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
-		}
-	}
-}
-
-func runPersistentSuite(t *testing.T, path, suite, persistCase string, n int) {
-	t.Helper()
-	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, path)
-	code, out, errOut := runLangInterp(t, bin, src)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	plan := fmt.Sprintf("1..%d", n)
-	pass := fmt.Sprintf("# pass %d", n)
-	for _, w := range []string{"# Suite: " + suite, persistCase, plan, pass, "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
