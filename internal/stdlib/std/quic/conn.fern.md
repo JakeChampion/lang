@@ -964,15 +964,17 @@ function __eliciting(fs: frames.Frame[]): boolean {
 }
 
 function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64): Conn {
-  let s: Space = c.spaces[space];
+  return Conn { ...c, spaces: c.spaces.with(space, c.spaces[space].__received(pn, eliciting, now)) };
+}
+
+function (s: Space) __received(pn: i64, eliciting: boolean, now: i64): Space {
   let largest: i64 = s.largest_recv;
   let at: i64 = s.largest_recv_at;
   if (pn > largest) {
     largest = pn;
     at = now;
   }
-  s = Space { ...s, ranges: __add_range(s.ranges, pn), largest_recv: largest, largest_recv_at: at, ack_wanted: s.ack_wanted || eliciting };
-  return Conn { ...c, spaces: c.spaces.with(space, s) };
+  return Space { ...s, ranges: __add_range(s.ranges, pn), largest_recv: largest, largest_recv_at: at, ack_wanted: s.ack_wanted || eliciting };
 }
 
 function (c: Conn) __frames(fs: frames.Frame[], space: i32, kind: i32, now: i64): Conn {
@@ -1802,6 +1804,9 @@ function __close_frame(why: Close, space: i32): frames.ConnectionClose {
 ```fern
 <<35 function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[]>>=
 function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
+  if (ranges.len() > 0 && pn == ranges[0].high + 1) {
+    return ranges.with(0, __raised(ranges[0], pn));
+  }
   let out: frames.AckRange[] = [];
   let placed: boolean = false;
   for r in ranges {
@@ -1829,6 +1834,10 @@ function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
     i = i + 1;
   }
   return kept;
+}
+
+function __raised(r: frames.AckRange, pn: i64): frames.AckRange {
+  return frames.AckRange { ...r, high: pn };
 }
 
 function __push_range(out: frames.AckRange[], r: frames.AckRange): frames.AckRange[] {
