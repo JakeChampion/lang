@@ -211,6 +211,9 @@ function test_lengths(): test.TestOutcome {
   if (shown(open_bytes(zeros(15), zeros(12), zeros(16), zeros(0))) != "aead: the key is 15 bytes, the wrong length for this cipher") {
     return test.fail("open took a 15-byte key");
   }
+  if (shown(open_bytes(zeros(16), zeros(8), zeros(15), zeros(0))) != "aead: the nonce is 8 bytes, want 12") {
+    return test.fail("a short message with an 8-byte nonce was not refused by the nonce");
+  }
   return test.assert_eq(shown(seal_bytes(zeros(16), zeros(8), zeros(0), zeros(0))), "aead: the nonce is 8 bytes, want 12");
 }
 
