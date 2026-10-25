@@ -18007,7 +18007,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       if let ast.ExprIdent(sid) = m.scrutinee {
         let takes: boolean = false;
         for arm in m.arms {
-          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern);
+          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern, whole);
         }
         if (!takes) {
           rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
@@ -18019,7 +18019,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
         if (scrut_owned) {
-          actx = ow_arm_payload_ctx(actx, arm.pattern);
+          actx = ow_arm_payload_ctx(actx, arm.pattern, whole);
         } else {
           actx = ow_arm_lent_ctx(actx, arm.pattern);
         }
@@ -18147,8 +18147,8 @@ function ow_unmove(after: MovedEntry[], before: MovedEntry[], name: string): Mov
   return out;
 }
 
-function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
-  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat);
+function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): boolean {
+  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat, whole);
   for n in bound.owned {
     if (n != "_") {
       return true;
@@ -18157,7 +18157,7 @@ function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
   return false;
 }
 
-function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
+function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): OwnCtx {
   if let ast.PatVariant(pv) = pat {
     let vname: string = util.base_type_name(pv.type_name);
     let di: i32 = 0;
@@ -18182,14 +18182,18 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
       return ctx;
     }
     let names: string[] = ctx.owned;
+    let owner: string = ow_scrutinee_enum(whole, vname, ctx.structs);
     let declared: boolean = false;
     for sd in ctx.structs {
-      declared = declared || sd.name == vname;
-      if (sd.name == vname && sd.enum_owner.len() == 0) {
+      if (sd.name != vname || owner.len() > 0 && sd.enum_owner != owner) {
+        continue;
+      }
+      declared = true;
+      if (sd.enum_owner.len() == 0) {
         if (binds[0] != "_" && !util.has_str(names, binds[0])) {
           names = names.append(binds[0]);
         }
-      } else if (sd.name == vname && sd.enum_owner.len() > 0) {
+      } else {
         let i: i32 = 0;
         while (i < binds.len() && i < sd.fields.len()) {
           if (binds[i].len() > 0 && binds[i] != "_" && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.ofuncs)
@@ -18207,6 +18211,21 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     return OwnCtx { ...ctx, owned: names };
   }
   return ctx;
+}
+
+// The enum the scrutinee's type names for the arm's variant, which a same-named variant elsewhere must not stand in for.
+function ow_scrutinee_enum(whole: typeinfo.Type, vname: string, structs: parser.StructDecl[]): string {
+  if let typeinfo.TypeUnion(u) = whole {
+    if (parser.builtin_enum_of(vname) == u.name) {
+      return u.name;
+    }
+    for sd in structs {
+      if (sd.name == vname && sd.enum_owner == u.name) {
+        return u.name;
+      }
+    }
+  }
+  return "";
 }
 
 // Some, Ok and Err have no struct declaration, so the arm scope gives the payload's type.

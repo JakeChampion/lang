@@ -725,6 +725,32 @@ function f(): i32 {
 	}
 }
 
+func TestOwnGuardReadsThePayloadOfTheScrutineesEnum(t *testing.T) {
+	const enums = `
+enum Opt { Some(i32), None }
+enum A { V(i32) }
+enum B { V(i32[]) }
+function opt(n: i32): Option[i32[]] { return Option.Some([n]); }
+`
+	wantOK(t, "builtin-payload-beside-a-user-variant", ownConsumer+enums+`
+function f(): i32 {
+    match (opt(2)) { Some(xs) => { return consume(xs); }, None => { return 0; } }
+    return 0;
+}`)
+	wantOK(t, "scalar-payload-beside-a-pointer-variant", ownConsumer+enums+`
+function f(own a: A): i32 {
+    match (a) { V(n) => { return n; } }
+    let again: A = a;
+    return 0;
+}`)
+	wantE050(t, "own-builtin-matched-beside-a-user-variant", ownConsumer+enums+`
+function f(own o: Option[i32[]]): i32 {
+    match (o) { Some(xs) => { return consume(xs); }, None => { return 0; } }
+    let again: Option[i32[]] = o;
+    return 0;
+}`)
+}
+
 func TestOwnGuardRejectsAResultPayloadThatMayBorrow(t *testing.T) {
 	wantE051(t, "result-payload-through-a-borrowing-callee", freshResultPrelude+`
 function relay(r: Result[i32[], string]): Result[i32[], string] { return r; }
