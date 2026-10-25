@@ -23828,13 +23828,39 @@ function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr
         return ast.ExprIdent { ...id, ty: u.name };
       }
     }
+    return annotate_expr(c.callee, s);
   }
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c)) {
       return annotate_lambda_expr(lm, s, "", ct);
     }
   }
-  return annotate_expr(c.callee, s);
+  let typed = annotate_typed(c.callee, s);
+  if let typeinfo.TypeFunc(_) = typed.ty {
+    return annotate_callable_callee(typed.e, type_label(typed.ty));
+  }
+  return typed.e;
+}
+
+// The lift pass needs complete callback parameters on indirect callees.
+function annotate_callable_callee(e: ast.Expr, signature: string): ast.Expr {
+  if (signature.len() == 0) {
+    return e;
+  }
+  match (e) {
+    ast.ExprFieldAccess(fa) => {
+      return ast.ExprFieldAccess { ...fa, ty: signature };
+    },
+    ast.ExprIndex(ix) => {
+      return ast.ExprIndex { ...ix, ty: signature };
+    },
+    ast.ExprCall(c) => {
+      return ast.ExprCall { ...c, ty: signature };
+    },
+    _ => {
+      return e;
+    }
+  }
 }
 
 function unsettled(e: ast.Expr): Typed {
