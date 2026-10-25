@@ -1,6 +1,7 @@
 # Benchmark status
 
-Performance: not measured.
+A small M2 synthetic process baseline appears below.
+Kernel performance on real images: not measured.
 Image quality: not measured.
 Comparison with libvips: not measured.
 
