@@ -1113,12 +1113,8 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
     return none;
   }
   let t: typeinfo.Type = f.values[ins.result];
-  let n: i32 = 0;
-  if (ssasem.is_u32(t) || ssasem.is_i32(t)) {
-    n = 4;
-  } else if (ssasem.is_wide(t)) {
-    n = 8;
-  } else {
+  let n: i32 = word_width(t);
+  if (n == 0) {
     return none;
   }
   let terms: i32[] = or_terms(defs, f.values, ins.result, t, []);
@@ -1158,6 +1154,17 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
     return none;
   }
   return Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo, big: !le };
+}
+
+// The bytes in a word an OR of byte reads can build, or 0.
+function word_width(t: typeinfo.Type): i32 {
+  if (ssasem.is_u32(t) || ssasem.is_i32(t)) {
+    return 4;
+  }
+  if (ssasem.is_wide(t)) {
+    return 8;
+  }
+  return 0;
 }
 
 function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinfo.Type, acc: i32[]): i32[] {
