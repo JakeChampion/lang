@@ -2,9 +2,21 @@
 
 This module provides methods for `Option` values.
 
+There is no `unwrap` or `expect`, here or on `Result`. A method that traps
+on `None` turns the absence the type records back into a crash. Take the
+value with `match`, `let Some(x) = o else { … }`, `?` or `unwrap_or`, and
+an absence that cannot happen becomes an explicit `else` branch that says
+what happens if it does.
+
 ```fern
 <<*>>=
 // This module provides methods for `Option` values.
+//
+// There is no `unwrap` or `expect`, here or on `Result`. A method that traps
+// on `None` turns the absence the type records back into a crash. Take the
+// value with `match`, `let Some(x) = o else { … }`, `?` or `unwrap_or`, and
+// an absence that cannot happen becomes an explicit `else` branch that says
+// what happens if it does.
 
 import "core/cmp";
 
