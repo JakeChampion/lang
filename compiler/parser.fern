@@ -23775,7 +23775,7 @@ function is_float_type_name(t: string): boolean {
   return t == "f64" || t == "f32";
 }
 
-function is_unsettled_int_literal(e: ast.Expr): boolean {
+pub function is_unsettled_int_literal(e: ast.Expr): boolean {
   match (e) {
     ast.ExprNumber(n) => {
       return !n.is_float && n.suffix.len() == 0 && !is_unit_literal(n);

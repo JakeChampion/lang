@@ -4483,9 +4483,12 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
       _ => {}
     }
   }
-  let rv: Value = eval_expr(b.right, env);
+  let rv: Value = eval_expr(float_operand(b.right, lv), env);
   if (is_err(rv)) {
     return rv;
+  }
+  if (parser.is_unsettled_int_literal(b.left)) {
+    lv = eval_expr(float_operand(b.left, rv), env);
   }
   let overload: string = struct_op_method(b.op, lv);
   if (overload.len() > 0) {
@@ -4504,6 +4507,14 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
     }
   }
   return eval_typed_binary(b.op, lv, rv, b.ty);
+}
+
+// An integer literal beside a float operand is a float, as the checker settles it.
+function float_operand(e: ast.Expr, other: Value): ast.Expr {
+  if let VFloat(_) = other {
+    return parser.settle_to_name(e, "f64");
+  }
+  return e;
 }
 
 function struct_op_method(op: string, lv: Value): string {

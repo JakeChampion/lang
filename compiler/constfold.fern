@@ -53,7 +53,7 @@ function as_int_lit(e: ast.Expr): OptInt {
     ast.ExprUnary(u) => {
       if (u.op == "-") {
         let inner: OptInt = as_int_lit(u.operand);
-        if (inner.ok) {
+        if (inner.ok && !float_negative_zero(inner.v, inner.suffix)) {
           return OptInt { ok: true, v: 0 - inner.v, suffix: inner.suffix };
         }
       }
@@ -116,7 +116,7 @@ function fold_node(e: ast.Expr): ast.Expr {
 function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Expr): ast.Expr {
   let li: OptInt = as_int_lit(lhs);
   let ri: OptInt = as_int_lit(rhs);
-  if (li.ok && ri.ok && li.suffix == ri.suffix && fits(li.v, li.suffix, li.v) && fits(ri.v, ri.suffix, ri.v)) {
+  if (li.ok && ri.ok && li.suffix == ri.suffix && fits(li.v, li.suffix, li.v) && fits(ri.v, ri.suffix, ri.v) && !float_differs(op, li.v, ri.v, li.suffix)) {
     let sfx: string = li.suffix;
     let peak: i64 = li.v;
     if (ri.v > peak) {
@@ -189,6 +189,25 @@ function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Exp
   return unfolded;
 }
 
+// An unsuffixed literal can settle to a float later, so a fold must give the
+// value that float arithmetic gives.
+function float_differs(op: string, l: i64, r: i64, suffix: string): boolean {
+  if (suffix.len() > 0) {
+    return false;
+  }
+  if (op == "/") {
+    return r != 0 && (l % r != 0 || l == 0 && r < 0);
+  }
+  if (op == "*") {
+    return l == 0 && r < 0 || r == 0 && l < 0;
+  }
+  return false;
+}
+
+function float_negative_zero(v: i64, suffix: string): boolean {
+  return v == 0 && suffix.len() == 0;
+}
+
 function int_arith(op: string, l: i64, r: i64): OptInt {
   if (op == "+") {
     return OptInt { ok: true, v: l + r, suffix: "" };
@@ -212,7 +231,7 @@ function fold_arith(v: i64, suffix: string, peak: i64, unfolded: ast.Expr): ast.
 function fold_unary(op: string, operand: ast.Expr, unfolded: ast.Expr): ast.Expr {
   if (op == "-") {
     let oi: OptInt = as_int_lit(operand);
-    if (oi.ok && fits(0 - oi.v, oi.suffix, oi.v)) {
+    if (oi.ok && !float_negative_zero(oi.v, oi.suffix) && fits(0 - oi.v, oi.suffix, oi.v)) {
       return lit_int(0 - oi.v, oi.suffix);
     }
   }
