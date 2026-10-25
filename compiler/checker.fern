@@ -4150,7 +4150,8 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (nominal_args_clash(from, to, unions)) {
     return false;
   }
-  if (type_eq(from, to)) {
+  // type_eq ignores nominal arguments, so an aggregate checks its components below.
+  if (type_eq(from, to) && !is_tuple_or_array(to)) {
     return true;
   }
   match (to) {
@@ -11675,7 +11676,7 @@ function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope)
     }
     let i: i32 = 0;
     while (i < elements.len()) {
-      if (!settles_or_nested(tl.elements[i], elements[i], s)) {
+      if (!view_free_settle(tl.elements[i], elements[i], s) || !settles_or_nested(tl.elements[i], elements[i], s)) {
         return false;
       }
       i = i + 1;
@@ -11693,7 +11694,17 @@ function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
       }
     }
   }
-  return settles_or_assignable(e, want, s);
+  return view_free_settle(e, want, s) && settles_or_assignable(e, want, s);
+}
+
+// Inside a destination, a view slot takes only a value that is already a view:
+// a literal settles into a view only at the top of a destination.
+function view_free_settle(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if (!is_arr_view(want)) {
+    return true;
+  }
+  let t: typeinfo.Type = check_expr(e, s);
+  return is_unknown(t) || type_assignable(t, want, s.unions.unions);
 }
 
 function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
@@ -11784,7 +11795,7 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
     if (c.args.len() != 1 || at >= wa.len()) {
       return false;
     }
-    return settles_to(c.args[0], wa[at], s);
+    return view_free_settle(c.args[0], wa[at], s) && settles_to(c.args[0], wa[at], s);
   }
   return false;
 }
@@ -11795,7 +11806,7 @@ function declared_payloads_settle(c: ast.ExprCall, want: typeinfo.Type, s: Scope
   let i: i32 = 0;
   while (i < c.args.len()) {
     let field: typeinfo.Type = generic_variant_payload_type(s, vname, whole, i);
-    if (is_unknown(field) || !settles_or_assignable(c.args[i], field, s)) {
+    if (is_unknown(field) || !view_free_settle(c.args[i], field, s) || !settles_or_assignable(c.args[i], field, s)) {
       return false;
     }
     i = i + 1;
@@ -11905,7 +11916,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     let at: typeinfo.Type = check_expr(c.args[i], s);
     let pt: typeinfo.Type = variant_pattern_payload_type(s, qname, whole, i);
     out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
-    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
+    if (!is_unknown(at) && !is_unknown(pt) && !(view_free_settle(c.args[i], pt, s) && settles_to(c.args[i], pt, s)) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E036", "variant " + shown_variant(s, qname) + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
     i = i + 1;
@@ -13691,13 +13702,12 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
     if (type_contains_unknown(anchor)) {
       return out;
     }
-    if let typeinfo.TypeArray(_) = anchor {
-      return nested_array_mix(a, anchor, s, out);
-    }
     if (is_primitive_type(anchor) || is_func_type(anchor) || is_tuple_type(anchor)) {
       out = scalar_array_mix(a, anchor, s, out);
     } else if (concrete_instance(anchor)) {
       out = struct_instance_mix(a, anchor, s, out);
+    } else if (is_owned_array(anchor) || is_arr_view(anchor) || struct_name_of(anchor).len() > 0) {
+      out = element_mix(a, anchor, s, out);
     }
   }
 
@@ -13730,7 +13740,7 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
   return out;
 }
 
-function nested_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
   let first: ast.Expr = a.elements[0];
   let k: i32 = 1;
   while (k < a.elements.len()) {
@@ -14297,9 +14307,6 @@ function checks_array_element(ty: typeinfo.Type): boolean {
     typeinfo.TypeUnion(_) => {
       return true;
     },
-    typeinfo.TypeStruct(_) => {
-      return true;
-    },
     _ => {
       return is_dyn_slot(ty) || is_str_view(ty);
     }
@@ -14353,7 +14360,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       let out: util.Diag[] = [];
-      if (is_func_type(elem) || is_tuple_or_array(elem)) {
+      if (!checks_array_element(elem)) {
         out = array_mix_diags(a, s, out);
       }
       for element in a.elements {
