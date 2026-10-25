@@ -1,3 +1,11 @@
+# 2026-10-25 (#13302), on the merge of main at a4d07da7: x86_64 deflate_decode.text
+# and .ir from a local perf-bench run. The aarch64 deflate_decode.text and
+# utf8_ingest_validated.text rows use the same count. Main alone reads 9202 for the last row.
+# Re-pinned 2026-10-25 (#13302) from Perf run 40205765929. The inline
+# back-reference copy cuts deflate_decode.ir by 14% on x86_64 and 13% on aarch64,
+# and adds 1% `.text` to deflate_decode on both targets. The other aarch64 rows take the
+# moves of #13251 and main that no PR re-pinned: deflate_encode.ir is 17% lower,
+# and the utf8_ingest_*.text rows take main's typed JSON decoding.
 # Re-pinned 2026-10-25 from Perf run 40215520155 (main at 5ee00b33): aarch64/map_string.ir
 # 61661591 to 60356414, a 2.1% win over its 2% tolerance, from the semunique fix (#13276)
 # and the HTTP/3 pass (#13324).
@@ -113,8 +121,8 @@ x86_64/call_overhead.text	233
 x86_64/call_overhead.ir	8250807
 x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
-x86_64/deflate_decode.ir	42196555
-x86_64/deflate_decode.text	12626
+x86_64/deflate_decode.ir	36384995
+x86_64/deflate_decode.text	12754
 x86_64/deflate_encode.ir	49965640
 x86_64/deflate_encode.text	7250
 x86_64/enum_match.text	994
@@ -389,8 +397,8 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
-aarch64/deflate_decode.ir	43339918
-aarch64/deflate_decode.text	13460
+aarch64/deflate_decode.ir	37668078
+aarch64/deflate_decode.text	13592
 aarch64/deflate_encode.ir	48587342
 aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206
@@ -437,7 +445,7 @@ aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
 aarch64/utf8_ingest_unchecked.text	8637
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	9210
+aarch64/utf8_ingest_validated.text	9200
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
