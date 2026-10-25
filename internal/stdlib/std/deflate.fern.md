@@ -604,7 +604,9 @@ const F_DISTANCE_PAST: i32 = 4;
 const F_TOO_FAR: i32 = 5;
 
 // Decodes while eight input bytes and 258 output bytes are left, and stops
-// with F_ROOM when they are not. The guard at the top is what lets the
+// with F_ROOM when they are not. After a literal at least 41 bits are left,
+// so the next entry is read before the refill, and a second literal is
+// decoded with no refill. After a match `e` is -1 and is read after it. The guard at the top is what lets the
 // bounds prover drop the checks on the input words and the two tables.
 function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, max_out: i32, lit: i32[], dtab: i32[], lencode: __Huff, distcode: __Huff): __Fast {
   let fast_in: i32 = data.len() - 8;
@@ -613,11 +615,14 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
   if (pos < 0 || lit.len() < 1 << LIT_BITS || dtab.len() < 1 << DIST_BITS) {
     return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
   }
+  let e: i32 = 0 - 1;
   while (pos <= fast_in && out.len() <= fast_out) {
     bitbuf = bitbuf | __le64(data, pos) << bitcnt as u64;
     pos = pos + ((bitcnt >> 3 ^ 7) & 7);
     bitcnt = bitcnt | 56;
-    let e: i32 = lit[(bitbuf & LIT_MASK) as i32];
+    if (e < 0) {
+      e = lit[(bitbuf & LIT_MASK) as i32];
+    }
     if (e == 0) {
       e = __walk(lencode, bitbuf, bitcnt, true);
     }
@@ -626,6 +631,13 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
     bitcnt = bitcnt - used;
     if ((e & E_LITERAL) != 0) {
       out = out.append((e >> 16) as u8);
+      e = lit[(bitbuf & LIT_MASK) as i32];
+      if ((e & E_LITERAL) != 0) {
+        bitbuf = bitbuf >> (e & 15) as u64;
+        bitcnt = bitcnt - (e & 15);
+        out = out.append((e >> 16) as u8);
+        e = lit[(bitbuf & LIT_MASK) as i32];
+      }
       continue;
     }
     if ((e & (E_END | E_NO_CODE | E_PAST)) != 0) {
@@ -656,6 +668,7 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
       break;
     }
     out = __copy(out, len, dist);
+    e = 0 - 1;
   }
   return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
 }
