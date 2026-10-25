@@ -34,6 +34,11 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 		t.Fatal("std/serve's imports changed; update its bounded census fixture")
 	}
 	src = strings.Replace(src, async, "import \"std/platform\";\n"+async, 1)
+	// The fixture is a user program, so the std/time conversions std/serve
+	// may use as a stdlib module are given local copies.
+	for _, fn := range []string{"millis_timeout", "instant_nanos", "instant_from_nanos"} {
+		src = strings.ReplaceAll(src, "time."+fn+"(", "census_"+fn+"(")
+	}
 	start := strings.Index(src, "function __serve_loop(")
 	if start < 0 {
 		t.Fatal("production accept loop not found")
@@ -65,6 +70,16 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	burst = strings.Replace(burst, answered, answered+"\n                        completed = completed + 1;", 1)
 	burst = strings.Replace(burst, burstReturn, "return (conns, flights, completed);", 1)
 	return src[:start] + body + burst + src[end:] + `
+function census_millis_timeout(ms: i32): Option[Duration] {
+    if (ms < 0) { return None; }
+    return Some(time.duration_millis(ms as i64));
+}
+function census_instant_nanos(i: Instant): i64 {
+    return i.since(Instant { sec: 0, nsec: 0 }).as_nanos();
+}
+function census_instant_from_nanos(ns: i64): Instant {
+    return Instant { sec: 0, nsec: 0 }.add(time.duration_nanos(ns));
+}
 function census_burn(n: i32, plat: platform.Platform): i32 {
     let started: Instant = plat.instant();
     let x: i32 = 12345;
