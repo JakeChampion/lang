@@ -14562,7 +14562,7 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     ast.ExprArray(arr) => {
       for element in arr.elements {
         let ekt: typeinfo.Type = check_expr(element, s);
-        if (!is_unknown(ekt) && reports_element(ekt, elem_ty) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
+        if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
           out = out.append(dg_at("E034", "array element: expected " + type_label(elem_ty) + ", got " + type_label(ekt), expr_line(element), expr_col(element)));
         }
       }
@@ -14570,15 +14570,6 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     _ => {}
   }
   return out;
-}
-
-// The destination's own check reports an array element of another element
-// type; only a view where an owned array is wanted, or the reverse, escapes it.
-function reports_element(got: typeinfo.Type, want: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(_) = want {
-    return type_eq(got, want) && !same_element_type(got, want);
-  }
-  return true;
 }
 
 function checks_array_element(ty: typeinfo.Type): boolean {
