@@ -8,39 +8,56 @@ import (
 	"testing"
 )
 
-func TestSelfHostNativePollableAdapters(t *testing.T) {
+func TestSelfHostNativePollables(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "pollables.fern")
 	const program = `
 @noinline
 function mark(h: usize, value: i32): i32 { buf_push_byte(h, 65); return value; }
-@noinline
-function items(h: usize): i32[] { return [mark(h, 5)]; }
 function main(): i32 {
  let h: usize = buf_new(8);
  let live: i32 = mark(h, 37);
  let fd: i32 = tcp_pollable(mark(h, -1));
  let low: i32 = tcp_pollable(mark(h, -2147483647 - 1));
  let high: i32 = tcp_pollable(mark(h, 2147483647));
- let deadline: i32 = wasm_timer_pollable((mark(h, 123) as i64) << 40);
- let dropped: i32 = wasm_pollable_drop(mark(h, 9));
- let blocked: i32 = wasm_block(mark(h, 9));
- let ready: i32 = wasm_poll(items(h));
  tcp_pollable(mark(h, 3));
- wasm_timer_pollable(mark(h, 4) as i64);
- wasm_pollable_drop(mark(h, 5));
- wasm_block(mark(h, 6));
- wasm_poll(items(h));
  let count: i32 = buf_len(h);
  let text: string = buf_take(h);
  buf_free(h);
  if (fd != -1 || low != -2147483647 - 1 || high != 2147483647 || tcp_pollable(0) != 0) { return 91; }
- if (deadline != -1 || ready != -1 || dropped != 0 || blocked != 0) { return 92; }
- if (live != 37 || count != 13 || text.len() != 13) { return 93; }
+ if (live != 37 || count != 5 || text.len() != 5) { return 93; }
  for b in text { if (b != 65 as u8) { return 94; } }
  return 0;
 }`
+	for _, c := range []struct{ builtin, call, hint string }{
+		{"wasm_timer_pollable", "wasm_timer_pollable(5i64)", "use `timer_fd`, which this target provides"},
+		{"wasm_pollable_drop", "wasm_pollable_drop(3)", ""},
+		{"wasm_block", "wasm_block(3)", ""},
+		{"wasm_poll", "wasm_poll([3])", ""},
+	} {
+		gated := filepath.Join(dir, c.builtin+".fern")
+		body := "function main(): i32 { return " + c.call + "; }\n"
+		if err := os.WriteFile(gated, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
+			t.Run("refused/"+c.builtin+"/"+target, func(t *testing.T) {
+				out, err := exec.Command(h.cli, "-target", target, "-o", filepath.Join(dir, "gated"), gated, h.stdlib).CombinedOutput()
+				code := -1
+				if ee, ok := err.(*exec.ExitError); ok {
+					code = ee.ExitCode()
+				}
+				want := "does not provide `pollable`, required by `" + c.builtin + "`"
+				if code != 1 || !strings.Contains(string(out), "E066") || !strings.Contains(string(out), want) {
+					t.Fatalf("exit %d, want 1 with E066 %q:\n%s", code, want, out)
+				}
+				if c.hint != "" && !strings.Contains(string(out), c.hint) {
+					t.Errorf("refusal does not suggest the native equivalent %q:\n%s", c.hint, out)
+				}
+			})
+		}
+	}
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -54,10 +71,8 @@ function main(): i32 {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"tcp_pollable", "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll"} {
-				if strings.Contains(string(asm), "__fern_"+name) {
-					t.Errorf("retired native helper %s remains", name)
-				}
+			if strings.Contains(string(asm), "__fern_tcp_pollable") {
+				t.Errorf("retired native helper tcp_pollable remains")
 			}
 		})
 	}

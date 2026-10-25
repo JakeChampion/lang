@@ -585,16 +585,6 @@ pub function dedupe_weak_defs(asm_text: string): string {
   return text;
 }
 
-pub function native_pollable_result(kind: i32): string {
-  if (kind == 148 || kind == 167) {
-    return "-1";
-  }
-  if (kind == 161 || kind == 162) {
-    return "0";
-  }
-  return "";
-}
-
 pub function buf_helper(kind: i32): string {
   if (kind == 372) {
     return "__fern_buf_push_bytes_expanded";
