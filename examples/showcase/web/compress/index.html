@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Compress the same log with Fern's gzip, Brotli, and zstd encoders, natively and in WebAssembly, beside your browser's gzip." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Compression bench · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/bench/style.css" />
+  </head>
+  <body class="app-page compress-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/" aria-label="Fern, in action home"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/measure.fern.md">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow"><span>17</span>Bytes in, fewer bytes out</div>
+          <h1>Compression <em>bench.</em></h1>
+          <p>Compress one access log with Fern's own gzip, Brotli, and zstd, on the server and in this page. Your browser's native gzip runs beside them.</p>
+          <div class="tech-chips"><span>std/deflate</span><span>std/brotli</span><span>std/zstd</span><span>CompressionStream</span></div>
+        </section>
+        <div id="connection" class="status" role="status">Load the Fern kernel</div>
+      </div>
+      <form class="bench-controls" id="controls">
+        <label
+          >Corpus
+          <select id="corpus">
+            <option value="65536">Generated access log · 64 KiB</option>
+            <option value="262144" selected>Generated access log · 256 KiB</option>
+            <option value="1048576">Generated access log · 1 MiB</option>
+            <option value="file">Your own file · this browser only</option>
+          </select></label
+        ><label
+          >Seed <input id="seed" type="number" min="0" max="1000000" value="1" /></label
+        ><label id="file-field" hidden
+          >File <input id="file" type="file" accept="*/*" /></label
+        ><div class="button-group">
+          <button class="button primary" id="run" type="submit">Run the benchmark ▶</button>
+        </div>
+      </form>
+      <p class="bench-summary" id="summary" role="status">
+        Every engine reads the same bytes. The server and this page generate them from one Fern module.
+      </p>
+      <div class="table-scroll">
+        <table class="bench-table">
+          <thead>
+            <tr><th>Engine</th><th>Ratio</th><th class="rate">Encode</th><th>Decode</th><th>Round trip</th></tr>
+          </thead>
+          <tbody id="results">
+            <tr><td colspan="5">Run the benchmark to measure each codec.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="bench-note" id="interop">
+        This page also asks your browser's own decoders to read Fern's output.
+      </p>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          The server and this page generate the same access log from a seed. Fern encodes it with the standard
+          library's gzip, Brotli, and zstd, then decodes the result and compares checksums. Your browser's
+          CompressionStream encodes the same bytes with its native gzip. Where your browser has a decoder for a
+          format, it also decodes Fern's output, which shows that Fern writes standard streams.
+        </p>
+        <a href="/_src/showcase/measure.fern.md">Read the measured workloads ↗</a> · <a href="/_src/showcase/bench.fern.md">Read the endpoints ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

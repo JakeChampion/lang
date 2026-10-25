@@ -32,7 +32,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<8 function __tls_client_config(c: Config, scid: [u8], params_bytes: u8[]): handshake.ClientConfig>>
 
-<<9 pub function client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string]>>
+<<9 pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string]>>
 
 <<10 function (c: Conn) __initial_keys(dcid: [u8]): Conn>>
 
@@ -50,15 +50,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<18 function (c: Conn) __fail(code: i64, frame_type: i64, reason: string, now: i64): Conn>>
 
-<<19 pub function (c: Conn) tick(now: i64): Conn>>
+<<19 pub function (c: Conn) tick(now: Instant): Conn>>
 
 <<20 function (c: Conn) __tick(now: i64): Conn>>
 
-<<21 pub function (c: Conn) update_keys(now: i64): Result[Conn, string]>>
+<<21 pub function (c: Conn) update_keys(now: Instant): Result[Conn, string]>>
 
 <<22 function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean)...>>
 
-<<23 pub function (c: Conn) receive(datagram: [u8], now: i64): Conn>>
+<<23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn>>
 
 <<24 function (c: Conn) __datagram(datagram: [u8], now: i64): Conn>>
 
@@ -70,7 +70,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<28 function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn>>
 
-<<29 pub function (c: Conn) transmit(now: i64): Conn>>
+<<29 pub function (c: Conn) transmit(now: Instant): Conn>>
 
 <<30 function (c: Conn) __datagram_sent(now: i64): Conn>>
 
@@ -109,6 +109,7 @@ import "std/tls/verify";
 import "std/array";
 import "std/option";
 import "std/i64";
+import "std/time";
 ```
 
 ### `3 const HANDSHAKING: i32`
@@ -275,16 +276,21 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 }
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
-  let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
+  let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
   return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plan: __no_plan(0), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
 }
 ```
 
-### `9 pub function client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string]`
+### `9 pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string]`
 
 ```fern
-<<9 pub function client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string]>>=
-pub function client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string] {
+<<9 pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string]>>=
+// `now` reads the monotonic clock the connection's timers run on; `wall` is the time certificates are checked against.
+pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string] {
+  return __client(c, entropy, time.instant_nanos(now), wall.unix_millis());
+}
+
+function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string] {
   let scid: u8[] = __bytes_range(entropy, 0, c.cid_len);
   let dcid: u8[] = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
   let p: params.Params = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
@@ -301,7 +307,11 @@ pub function client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Co
   }
 }
 
-pub function accept(c: Config, entropy: [u8], first: packet.Header, now: i64): Result[Conn, string] {
+pub function accept(c: Config, entropy: [u8], first: packet.Header, now: Instant): Result[Conn, string] {
+  return __accept(c, entropy, first, time.instant_nanos(now));
+}
+
+function __accept(c: Config, entropy: [u8], first: packet.Header, now: i64): Result[Conn, string] {
   let Some(id) = c.identity else {
     return Err("quic: a server needs an identity");
   };
@@ -374,14 +384,23 @@ pub function (c: Conn) closed_with(): Option[Close] {
   return c.close;
 }
 
-pub function (c: Conn) deadline(): i64 {
+// When the connection next needs a tick, if ever.
+pub function (c: Conn) deadline(): Option[Instant] {
+  let at: i64 = c.__deadline();
+  if (at == 0) {
+    return None;
+  }
+  return Some(time.instant_from_nanos(at));
+}
+
+function (c: Conn) __deadline(): i64 {
   if (c.state == CLOSED) {
     return 0 as i64;
   }
   if (c.state == CLOSING || c.state == DRAINING) {
     return c.close_until;
   }
-  return __earliest(__earliest(c.recovery.timer(), c.idle_until), __earliest(c.key_generate_at, c.key_discard_at));
+  return __earliest(__earliest(c.recovery.timer_ns(), c.idle_until), __earliest(c.key_generate_at, c.key_discard_at));
 }
 ```
 
@@ -519,12 +538,16 @@ pub function (c: Conn) buffered(id: i64): i64 {
   return c.streams.buffered(id);
 }
 
-pub function (c: Conn) close(code: i64, reason: string, app: boolean, now: i64): Conn {
+pub function (c: Conn) close(code: i64, reason: string, app: boolean, now: Instant): Conn {
+  return c.__close(code, reason, app, time.instant_nanos(now));
+}
+
+function (c: Conn) __close(code: i64, reason: string, app: boolean, now: i64): Conn {
   if (c.state >= CLOSING) {
     return c;
   }
   let why: Close = Close { code: code, frame_type: 0 as i64, reason: reason, app: app, remote: false };
-  return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto(recovery.APPLICATION), events: c.events.append(Closed(why)) };
+  return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto_ns(recovery.APPLICATION), events: c.events.append(Closed(why)) };
 }
 ```
 
@@ -537,7 +560,7 @@ function (c: Conn) __fail(code: i64, frame_type: i64, reason: string, now: i64):
     return c;
   }
   let why: Close = Close { code: code, frame_type: frame_type, reason: reason, app: false, remote: false };
-  return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto(recovery.APPLICATION), events: c.events.append(Closed(why)) };
+  return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto_ns(recovery.APPLICATION), events: c.events.append(Closed(why)) };
 }
 
 function (c: Conn) __drain(why: Close, now: i64): Conn {
@@ -548,16 +571,17 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
   if (c.state < CLOSING) {
     events = events.append(Closed(why));
   }
-  return Conn { ...c, state: DRAINING, close: Some(why), close_pending: false, close_until: now + 3 * c.recovery.pto(recovery.APPLICATION), events: events };
+  return Conn { ...c, state: DRAINING, close: Some(why), close_pending: false, close_until: now + 3 * c.recovery.pto_ns(recovery.APPLICATION), events: events };
 }
 ```
 
-### `19 pub function (c: Conn) tick(now: i64): Conn`
+### `19 pub function (c: Conn) tick(now: Instant): Conn`
 
 ```fern
-<<19 pub function (c: Conn) tick(now: i64): Conn>>=
-pub function (c: Conn) tick(now: i64): Conn {
-  return c.__key_timers(now).__tick(now);
+<<19 pub function (c: Conn) tick(now: Instant): Conn>>=
+pub function (c: Conn) tick(now: Instant): Conn {
+  let ns: i64 = time.instant_nanos(now);
+  return c.__key_timers(ns).__tick(ns);
 }
 ```
 
@@ -579,11 +603,11 @@ function (c: Conn) __tick(now: i64): Conn {
     let why: Close = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "idle timeout", app: false, remote: false };
     return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) };
   }
-  let t: i64 = c.recovery.timer();
+  let t: i64 = c.recovery.timer_ns();
   if (t == 0 || now < t) {
     return c;
   }
-  let cur: Conn = Conn { ...c, recovery: c.recovery.on_timeout(now) };
+  let cur: Conn = Conn { ...c, recovery: c.recovery.on_timeout(time.instant_from_nanos(now)) };
   let lost: recovery.Sent[] = cur.recovery.lost;
   let probe: i32 = cur.recovery.probe;
   let after: Conn = Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__requeue(lost);
@@ -594,11 +618,15 @@ function (c: Conn) __tick(now: i64): Conn {
 }
 ```
 
-### `21 pub function (c: Conn) update_keys(now: i64): Result[Conn, string]`
+### `21 pub function (c: Conn) update_keys(now: Instant): Result[Conn, string]`
 
 ```fern
-<<21 pub function (c: Conn) update_keys(now: i64): Result[Conn, string]>>=
-pub function (c: Conn) update_keys(now: i64): Result[Conn, string] {
+<<21 pub function (c: Conn) update_keys(now: Instant): Result[Conn, string]>>=
+pub function (c: Conn) update_keys(now: Instant): Result[Conn, string] {
+  return c.__update_keys(time.instant_nanos(now));
+}
+
+function (c: Conn) __update_keys(now: i64): Result[Conn, string] {
   if (c.state != ESTABLISHED || !c.recovery.handshake_confirmed) {
     return Err("quic: key update before handshake confirmation");
   }
@@ -621,7 +649,7 @@ pub function (c: Conn) update_keys(now: i64): Result[Conn, string] {
 <<22 function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean)...>>=
 function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean): Conn {
   let s: Space = c.spaces[recovery.APPLICATION];
-  let pto: i64 = c.recovery.pto(recovery.APPLICATION);
+  let pto: i64 = c.recovery.pto_ns(recovery.APPLICATION);
   let discard: i64 = 0;
   if (remote) {
     discard = now + 3 * pto;
@@ -696,7 +724,7 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
     }
     let discard: i64 = c.key_discard_at;
     if (c.key_awaiting_peer) {
-      discard = now + 3 * c.recovery.pto(recovery.APPLICATION);
+      discard = now + 3 * c.recovery.pto_ns(recovery.APPLICATION);
     }
     return Conn { ...c, key_first_recv: pn, key_awaiting_peer: false, key_discard_at: discard };
   }
@@ -704,11 +732,15 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
 }
 ```
 
-### `23 pub function (c: Conn) receive(datagram: [u8], now: i64): Conn`
+### `23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn`
 
 ```fern
-<<23 pub function (c: Conn) receive(datagram: [u8], now: i64): Conn>>=
-pub function (c: Conn) receive(datagram: [u8], now: i64): Conn {
+<<23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn>>=
+pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
+  return c.__receive(datagram, time.instant_nanos(now));
+}
+
+function (c: Conn) __receive(datagram: [u8], now: i64): Conn {
   if (c.state == CLOSED) {
     return c;
   }
@@ -946,7 +978,7 @@ function __idle(c: Conn, now: i64): i64 {
   if (ms == 0) {
     return 0 as i64;
   }
-  let floor: i64 = 3 * c.recovery.pto(recovery.APPLICATION);
+  let floor: i64 = 3 * c.recovery.pto_ns(recovery.APPLICATION);
   let d: i64 = ms * 1000000;
   if (d < floor) {
     d = floor;
@@ -1044,7 +1076,7 @@ function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
     exponent = p.ack_delay_exponent;
   }
   let delay: i64 = (a.delay << exponent) * 1000;
-  let cur: Conn = Conn { ...c, recovery: c.recovery.on_ack(space, a, delay, now, c.spaces[space].next_pn - 1) };
+  let cur: Conn = Conn { ...c, recovery: c.recovery.on_ack(space, a, time.duration_nanos(delay), time.instant_from_nanos(now), c.spaces[space].next_pn - 1) };
   let refused: i64 = cur.recovery.refused;
   if (refused != 0) {
     return Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__fail(refused, frames.ACK, "an ACK of a packet never sent", now);
@@ -1302,7 +1334,7 @@ function (c: Conn) __server_question(t: handshake.Server, e: handshake.Event, no
 }
 
 function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boolean {
-  match (verify.verify_server(v.chain, cfg.roots, cfg.server_name, unix_sec)) {
+  match (verify.verify_server(v.chain, cfg.roots, cfg.server_name, time.timestamp_from_unix(unix_sec))) {
     Ok(leaf) => {
       return verify.verify_signed(leaf, v.scheme, v.signed, v.signature);
     },
@@ -1315,7 +1347,7 @@ function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boole
 function (c: Conn) __connected(now: i64): Conn {
   match (c.__peer_transport_params()) {
     Ok(p) => {
-      let cur: Conn = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(p.max_ack_delay * 1000000), events: c.events.append(Event.Connected) };
+      let cur: Conn = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(time.duration_millis(p.max_ack_delay)), events: c.events.append(Event.Connected) };
       if (cur.server) {
         cur = Conn { ...cur, handshake_done_pending: true, recovery: cur.recovery.confirmed() }.__discard(recovery.HANDSHAKE);
       }
@@ -1366,11 +1398,15 @@ function __param_error(reason: string): frames.FrameError {
 }
 ```
 
-### `29 pub function (c: Conn) transmit(now: i64): Conn`
+### `29 pub function (c: Conn) transmit(now: Instant): Conn`
 
 ```fern
-<<29 pub function (c: Conn) transmit(now: i64): Conn>>=
-pub function (c: Conn) transmit(now: i64): Conn {
+<<29 pub function (c: Conn) transmit(now: Instant): Conn>>=
+pub function (c: Conn) transmit(now: Instant): Conn {
+  return c.__transmit(time.instant_nanos(now));
+}
+
+function (c: Conn) __transmit(now: i64): Conn {
   let cur: Conn = c;
   let guard: i32 = 0;
   while (guard < 64) {
@@ -1446,7 +1482,7 @@ function (c: Conn) __aead_guard(now: i64): Conn {
       }
       if (s.next_pn >= frames.MAX_VARINT || used >= __seal_limit(keys) - 1) {
         if (space == recovery.APPLICATION && s.next_pn < frames.MAX_VARINT) {
-          if let Ok(updated) = cur.update_keys(now) {
+          if let Ok(updated) = cur.__update_keys(now) {
             cur = updated;
           } else {
             return cur.__fail(frames.AEAD_LIMIT_REACHED, 0 as i64, "packet encryption limit reached", now);
@@ -1761,7 +1797,7 @@ function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
 
 function (c: Conn) __recorded(p: Plan, now: i64, size: i32, padded: boolean): Conn {
   let pn: i64 = c.spaces[p.space].next_pn;
-  let sent: recovery.Sent = recovery.Sent { pn: pn, at: now, size: size, ack_eliciting: p.eliciting, in_flight: p.eliciting || padded, resend: p.resend };
+  let sent: recovery.Sent = recovery.Sent { pn: pn, at: time.instant_from_nanos(now), size: size, ack_eliciting: p.eliciting, in_flight: p.eliciting || padded, resend: p.resend };
   let sent_count: i64 = c.key_sent;
   if (p.space == recovery.APPLICATION) {
     sent_count = sent_count + 1;

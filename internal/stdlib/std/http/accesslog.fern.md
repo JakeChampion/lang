@@ -43,6 +43,7 @@ import "std/net";
 import "std/headers";
 import "std/i32";
 import "std/i64";
+import "std/time";
 ```
 
 ### `3 pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest)`
@@ -50,14 +51,15 @@ import "std/i64";
 ```fern
 <<3 pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest)>>=
 pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-  let started: i64 = plat.elapsed_ns();
+  let started: Instant = plat.instant();
   let resp: HttpResponse = http.respond(next(req));
-  plat.log(record(req, resp, plat, plat.elapsed_ns() - started));
+  plat.log(record(req, resp, plat, plat.instant().since(started)));
   return Ok(resp);
 }
 
-pub function record[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took_ns: i64): string {
-  let at: i64 = plat.now_ms() * (1000000 as i64);
+pub function record[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took: Duration): string {
+  let now: time.Timestamp = plat.now();
+  let at: i64 = Duration { sec: now.sec, nsec: now.nsec }.as_nanos();
   let out: string = "{\"timeUnixNano\":\"" + at.to_string() + "\"," + __severity(resp.status) + ",\"body\":" + __quoted(req.method + " " + req.path + " " + resp.status.to_string());
   match (plat.trace()) {
     Some(span) => {
@@ -65,7 +67,7 @@ pub function record[P: platform.Platform](req: HttpRequest, resp: HttpResponse, 
     },
     None => {}
   }
-  return out + ",\"attributes\":{" + __attributes(req, resp, plat, took_ns) + "}}";
+  return out + ",\"attributes\":{" + __attributes(req, resp, plat, took.as_nanos()) + "}}";
 }
 ```
 

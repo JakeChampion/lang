@@ -62,13 +62,14 @@ import "std/http/cache";
 import "std/headers";
 import "std/string";
 import "std/i64";
+import "std/time";
 ```
 
 ### `3 pub struct Policy`
 
 ```fern
 <<3 pub struct Policy>>=
-pub struct Policy { origins: string[], methods: string[], headers: string[], exposed: string[], credentials: boolean, max_age: i64 }
+pub struct Policy { origins: string[], methods: string[], headers: string[], exposed: string[], credentials: boolean, max_age: Option[Duration] }
 ```
 
 ### `4 pub function policy(origins: string[]): Policy`
@@ -76,7 +77,7 @@ pub struct Policy { origins: string[], methods: string[], headers: string[], exp
 ```fern
 <<4 pub function policy(origins: string[]): Policy>>=
 pub function policy(origins: string[]): Policy {
-  return Policy { origins: origins, methods: ["GET", "HEAD", "POST"], headers: [], exposed: [], credentials: false, max_age: 0 - 1 as i64 };
+  return Policy { origins: origins, methods: ["GET", "HEAD", "POST"], headers: [], exposed: [], credentials: false, max_age: None };
 }
 
 pub function any_origin(): Policy {
@@ -99,8 +100,9 @@ pub function (p: Policy) with_credentials(): Policy {
   return Policy { ...p, credentials: true };
 }
 
-pub function (p: Policy) with_max_age(seconds: i64): Policy {
-  return Policy { ...p, max_age: seconds };
+// How long a browser may cache the preflight answer; it is sent in whole seconds.
+pub function (p: Policy) with_max_age(d: Duration): Policy {
+  return Policy { ...p, max_age: Some(d) };
 }
 
 pub function cors(req: HttpRequest, p: Policy, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
@@ -153,8 +155,8 @@ pub function preflight(req: HttpRequest, origin: string, p: Policy): Option[Http
   if (asked.len() > 0) {
     out = out.with_header("Access-Control-Allow-Headers", asked.join(", "));
   }
-  if (p.max_age >= 0 as i64) {
-    out = out.with_header("Access-Control-Max-Age", p.max_age.to_string());
+  if let Some(age) = p.max_age {
+    out = out.with_header("Access-Control-Max-Age", age.as_seconds().to_string());
   }
   return Some(out);
 }

@@ -19,7 +19,7 @@ const ORIGIN: string = "93.184.216.34";
 const MS: i64 = 1000000;
 
 function __net(d: sim.Sim): sim_fetch.Net {
-  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(20).kept()]);
+  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, time.duration_millis(5)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(time.duration_millis(20)).kept()]);
 }
 
 function __plat(seed: i64): sim_platform.SimPlatform {
@@ -48,7 +48,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     None => {}
   }
   let upstream: string = __message(plat.http(fetch.get("http://example.test/")));
-  return http.ok(region + " " + plat.now_ms().to_string() + " " + upstream);
+  return http.ok(region + " " + plat.now().unix_millis().to_string() + " " + upstream);
 }
 
 function test_config_and_secret_answer_what_was_set(): test.TestOutcome {
@@ -112,14 +112,14 @@ function test_env_answers_what_was_set(): test.TestOutcome {
 
 function test_the_clock_is_the_simulations(): test.TestOutcome {
   let p: sim_platform.SimPlatform = __plat(1);
-  if (p.now_ms() != 0 as i64) {
-    return test.fail("now before anything: " + p.now_ms().to_string());
+  if (p.now().unix_millis() != 0 as i64) {
+    return test.fail("now before anything: " + p.now().unix_millis().to_string());
   }
   p.http(fetch.get("http://example.test/"));
-  if (p.now_ms() != 25 as i64) {
-    return test.fail("now after a 5 ms connect and a 20 ms answer: " + p.now_ms().to_string());
+  if (p.now().unix_millis() != 25 as i64) {
+    return test.fail("now after a 5 ms connect and a 20 ms answer: " + p.now().unix_millis().to_string());
   }
-  return test.assert_eq(p.elapsed_ns(), 25 as i64 * MS);
+  return test.assert_eq(p.instant().since(sim.at(time.DURATION_ZERO)).as_nanos(), 25 as i64 * MS);
 }
 
 function test_randomness_is_the_seeds(): test.TestOutcome {
@@ -139,7 +139,7 @@ function test_randomness_is_the_seeds(): test.TestOutcome {
 
 function test_http_reaches_global_addresses_only(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("internal.test", ["10.0.0.1"]).listen("10.0.0.1", 80, 1).route("10.0.0.1", 80, "/", [sim_fetch.reply(200, "secret")]);
+  let n: sim_fetch.Net = __net(d).host("internal.test", ["10.0.0.1"]).listen("10.0.0.1", 80, time.duration_millis(1)).route("10.0.0.1", 80, "/", [sim_fetch.reply(200, "secret")]);
   let p: sim_platform.SimPlatform = sim_platform.new(d, n);
   let open: string = __message(p.http(fetch.get("http://example.test/")));
   if (open != "status 200") {
@@ -150,7 +150,7 @@ function test_http_reaches_global_addresses_only(): test.TestOutcome {
 
 function test_http_reaches_only_the_allow_list(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 1).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
+  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, time.duration_millis(1)).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
   match (fetch.allow(["example.test"])) {
     Ok(a) => {
       let p: sim_platform.SimPlatform = sim_platform.new(d, n).with_allow(a);
@@ -168,7 +168,7 @@ const PROXY: string = "10.0.0.9";
 
 function test_http_goes_through_the_proxy_the_env_names(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).listen(PROXY, 3128, 5).route(PROXY, 3128, "http://example.test/", [sim_fetch.reply(203, "via proxy")]);
+  let n: sim_fetch.Net = __net(d).listen(PROXY, 3128, time.duration_millis(5)).route(PROXY, 3128, "http://example.test/", [sim_fetch.reply(203, "via proxy")]);
   let p: sim_platform.SimPlatform = sim_platform.new(d, n);
   p.env_set("http_proxy", "http://" + PROXY + ":3128");
   let proxied: string = __message(p.http(fetch.get("http://example.test/")));
@@ -219,7 +219,7 @@ function __until_cancelled(plat: platform.Platform): string {
   }
   match (plat.deadline()) {
     Some(at) => {
-      return steps.to_string() + " steps, due at " + (at / MS).to_string() + " ms";
+      return steps.to_string() + " steps, due at " + at.since(sim.at(time.DURATION_ZERO)).as_millis().to_string() + " ms";
     },
     None => {
       return steps.to_string() + " steps, no deadline";
@@ -229,7 +229,7 @@ function __until_cancelled(plat: platform.Platform): string {
 }
 
 function test_the_deadline_cancels_on_the_sims_clock(): test.TestOutcome {
-  let bounded: string = __until_cancelled(__plat(1).with_deadline(35 as i64 * MS));
+  let bounded: string = __until_cancelled(__plat(1).with_deadline(sim.at(time.duration_millis(35))));
   if (bounded != "4 steps, due at 35 ms") {
     return test.fail("bounded: " + bounded);
   }

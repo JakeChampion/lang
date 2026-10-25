@@ -7,13 +7,39 @@ import "std/net";
 import "std/quic/conn";
 import "std/tls/verify";
 import "std/async";
+import "std/clock";
+import "std/time";
 import "std/option";
 import "std/i64";
 import "std/string";
 import "core/int";
 
-function now(): i64 {
-  return monotonic_ns();
+function now(): Instant {
+  return clock.instant();
+}
+
+// Whether a connection's next deadline has come.
+function passed(deadline: Option[Instant]): boolean {
+  let Some(at) = deadline else {
+    return false;
+  };
+  return now().cmp(at) >= 0;
+}
+
+// How long to wait for a datagram: until the deadline, between 1 and 100 ms.
+function wait_until(deadline: Option[Instant]): Option[Duration] {
+  let most: Duration = time.duration_millis(100);
+  let Some(at) = deadline else {
+    return Some(most);
+  };
+  let left: Duration = at.since(now()).add(time.duration_millis(1));
+  if (left.cmp(time.duration_millis(1)) < 0) {
+    return Some(time.duration_millis(1));
+  }
+  if (left.cmp(most) > 0) {
+    return Some(most);
+  }
+  return Some(left);
 }
 
 function pump(c: conn.Conn, sock: i32, peer: net.SocketAddr): conn.Conn {
@@ -54,19 +80,8 @@ function drain(c: conn.Conn, sock: i32, buf: u8[]): conn.Conn {
   return cur;
 }
 
-function wait_ms(c: conn.Conn): i32 {
-  let d: i64 = c.deadline();
-  if (d == 0) {
-    return 100;
-  }
-  let ms: i64 = (d - now()) / 1000000 + 1;
-  if (ms < 1) {
-    return 1;
-  }
-  if (ms > 100) {
-    return 100;
-  }
-  return ms as i32;
+function wait_for(c: conn.Conn): Option[Duration] {
+  return wait_until(c.deadline());
 }
 
 function payload(n: i32): u8[] {
@@ -128,12 +143,12 @@ function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean
   let buf: u8[] = __alloc_u8(65536);
   let c: conn.Conn = c0;
   let e: Echo = Echo { id: 0 - 1 as i64, sent: payload(size), got: [], matched: false, closing: false };
-  let started: i64 = now();
-  while (!c.done() && now() - started < 20000000000) {
+  let started: Instant = now();
+  while (!c.done() && now().since(started).cmp(time.duration_seconds(20)) < 0) {
     c = pump(c, sock, peer);
-    let woke: i32 = async.wait_any([sock, 1], wait_ms(c));
+    let woke: i32 = async.wait_any([sock, 1], wait_for(c));
     c = drain(c, sock, buf);
-    if (c.deadline() != 0 && now() >= c.deadline()) {
+    if (passed(c.deadline())) {
       c = c.tick(now());
     }
     let (c2, e2) = echoed(c, e);
@@ -153,7 +168,7 @@ function main(): i32 {
     return 2;
   };
   let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).client_side(argv[2], roots);
-  let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
+  let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {

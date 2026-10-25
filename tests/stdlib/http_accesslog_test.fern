@@ -2,10 +2,11 @@ import "std/test";
 import "std/http";
 import "std/http/accesslog";
 import "std/mock_platform";
+import "std/time";
 
 function plat(): mock_platform.MockPlatform {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.now_set(1700000000123 as i64);
+  m.now_set(time.timestamp_from_unix_millis(1700000000123));
   return m;
 }
 
@@ -18,17 +19,17 @@ function test_a_record_carries_every_field(): test.TestOutcome {
   m.peer_set("192.0.2.7:5000");
   m.trace_set("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
   let req: HttpRequest = HttpRequest { ...get("/users/7"), headers: get("/").headers.set("User-Agent", "curl/8.9 \"x\"") };
-  let line: string = accesslog.record(req, http.ok("hello"), m, 412345 as i64);
+  let line: string = accesslog.record(req, http.ok("hello"), m, time.duration_nanos(412345));
   return test.assert_eq(line, "{\"timeUnixNano\":\"1700000000123000000\",\"severityNumber\":9,\"severityText\":\"INFO\",\"body\":\"GET /users/7 200\",\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"spanId\":\"00f067aa0ba902b7\",\"attributes\":{\"http.request.method\":\"GET\",\"url.path\":\"/users/7\",\"http.response.status_code\":200,\"http.server.request.duration\":0.000412,\"client.address\":\"192.0.2.7\",\"user_agent.original\":\"curl/8.9 \\\"x\\\"\",\"http.response.body.size\":5}}");
 }
 
 function test_absent_fields_are_left_out_and_a_5xx_is_an_error(): test.TestOutcome {
-  let line: string = accesslog.record(get("/boom"), http.text(503, ""), plat(), 2500000000 as i64);
+  let line: string = accesslog.record(get("/boom"), http.text(503, ""), plat(), time.duration_millis(2500));
   return test.assert_eq(line, "{\"timeUnixNano\":\"1700000000123000000\",\"severityNumber\":17,\"severityText\":\"ERROR\",\"body\":\"GET /boom 503\",\"attributes\":{\"http.request.method\":\"GET\",\"url.path\":\"/boom\",\"http.response.status_code\":503,\"http.server.request.duration\":2.500000,\"http.response.body.size\":0}}");
 }
 
 function test_a_produced_body_is_not_counted(): test.TestOutcome {
-  let line: string = accesslog.record(get("/events"), http.chunks(200, (i: i32): Option[u8[]] => None), plat(), 0 as i64);
+  let line: string = accesslog.record(get("/events"), http.chunks(200, (i: i32): Option[u8[]] => None), plat(), time.DURATION_ZERO);
   if (line.contains("body.size")) {
     return test.fail("a producer's body was counted: " + line);
   }

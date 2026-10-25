@@ -54,12 +54,12 @@ console.log("compile error reported at its line OK");
 await compile(
   source.replace(
     "let a: f64 = seed(index, 1);",
-    "let a: f64 = seed(index, random_bytes(1)[0] as i32);",
+    "let a: f64 = seed(index, monotonic_ns() as i32);",
   ),
 );
 assert.match(
   await page.locator("#diagnostics").textContent(),
-  /imports wasi_snapshot_preview1\.random_get/,
+  /imports wasi_snapshot_preview1\.clock_time_get/,
 );
 assert.match(await statusText(), /cannot run here/);
 console.log("unsupported import refused OK");
