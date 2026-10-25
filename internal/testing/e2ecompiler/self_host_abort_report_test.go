@@ -22,6 +22,8 @@ var abortReportCases = []struct{ name, src, cause string }{
 	{"string_index_oob_runtime", `function main(): i32 { let s: string = "abc"; return s[args().len() + 6] as i32; }`, "fern: string index out of range"},
 	{"alloc_size_negative", `function main(): i32 { let b: u8[] = __alloc_u8(args().len() - 6); return b.len(); }`, "fern: allocation size out of range"},
 	{"slice_range_oob", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: [i32] = xs[1:9]; return ys.len(); }`, "fern: slice range out of bounds"},
+	{"byte_slice_range_oob", `function main(): i32 { let xs: u8[] = [1u8, 2u8, 3u8]; let ys: [u8] = xs[1:args().len() + 8]; return ys.len(); }`, "fern: slice range out of bounds"},
+	{"wide_slice_range_oob", `function main(): i32 { let xs: i64[] = [1i64, 2i64]; let ys: [i64] = xs[args().len() + 2:3]; return ys.len(); }`, "fern: slice range out of bounds"},
 	{"byte_view_negative_oob", byteViewReadSrc("args().len() - 2"), "fern: array index out of range"},
 	{"byte_view_past_end_oob", byteViewReadSrc("args().len() + 2"), "fern: array index out of range"},
 	{"buf_push_range_past_end", bufPushRangeSrc("1", "args().len() + 8"), "fern: slice range out of bounds"},
