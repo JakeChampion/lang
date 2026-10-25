@@ -3,17 +3,24 @@ name: Fern image
 # Called from ci.yml, which decides from the changed files whether this lane
 # runs (its path filter is the lane table's `fern-image` row) and cancels the
 # rest of the run when it goes red. `workflow_dispatch` runs it on its own.
+#
+# One job. The native half and the wasm half each build the compiler, install
+# the Python reference and run two to three minutes of tests. As two jobs
+# they paid two builds, two setups and two slots of the runner pool.
 on:
   workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  foundation:
+  image:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
       - run: make build
       - run: ./fern-image/scripts/test.sh
         env:
@@ -21,11 +28,17 @@ jobs:
       - run: ./fern-image/scripts/qualify-workers.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-wasm.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
       - run: ./fern-image/scripts/test-png-corpus.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-png-corpus.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/upload-artifact@v7
@@ -38,25 +51,6 @@ jobs:
           name: image-png-corpus-native
           path: fern-image/build/png-corpus-native.json
           if-no-files-found: error
-  wasm:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-        with:
-          wasmtime: "true"
-      - run: make build
-      - run: ./fern-image/scripts/test-wasm.sh
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
-      - run: ./fern-image/scripts/test-png-corpus.sh wasm
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/upload-artifact@v7
         with:
           name: image-png-corpus-wasm
