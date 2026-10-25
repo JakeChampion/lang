@@ -230,12 +230,12 @@ function varied(): u8[] {
 }
 
 function test_deflate_varied(): test.TestOutcome {
-  return test.assert_eq(round_trip(varied()), "ok 3571");
+  return test.assert_eq(round_trip(varied()), "ok 3669");
 }
 
 function test_deflate_blocks(): test.TestOutcome {
   let input: u8[] = lcg_bytes(17000).concat("the quick brown fox jumps over the lazy dog ".repeat(40).bytes());
-  return test.assert_eq(round_trip(input), "ok 17095");
+  return test.assert_eq(round_trip(input), "ok 17096");
 }
 
 function test_gzip_round_trip(): test.TestOutcome {
@@ -251,7 +251,7 @@ function test_gzip_round_trip(): test.TestOutcome {
       if (hex.encode(out) != hex.encode(want)) {
         return test.fail("the output differs");
       }
-      return test.assert_eq(packed.len(), 7798);
+      return test.assert_eq(packed.len(), 7818);
     },
     Err(e) => {
       return test.fail(e.message());

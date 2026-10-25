@@ -400,8 +400,10 @@ a PNG or a truncated UTF-8 sequence, so `body_text()` is a decode that
 can fail. Inside an HTTP handler, send through the platform value
 instead, `plat.http(req)`, so a test can pass a
 `mock_platform.MockPlatform` whose `http_set` records the response to
-return. `fetch.fetch_future` gives you a future you can hand to
-`async.gather` to overlap several requests on one thread.
+return. To overlap several requests on one thread, run each `fetch.send`
+as an entry of `async.gather_tasks` (or `race_tasks`, `with_deadline_tasks`):
+`async.gather_tasks([() => fetch.send(a), () => fetch.send(b)], fallback)`
+answers every result in order.
 
 ## Serve HTTP
 
