@@ -1,4 +1,54 @@
-# Pipeline plan
+# Row pipeline and future region engine
+
+The first pipeline slice renders individual RGB8/RGBA8 rows on demand.
+It supports materialized image sources, generated solid sources, and nearest-neighbor nodes.
+A solid source needs no complete image allocation.
+Each nearest node requests one input row for the requested output row.
+
+`metadata` returns complete output dimensions. `render_row` returns an owned image with height one.
+The graph's final node is its output.
+Node inputs must refer to earlier nodes, which prevents cycles and forward references.
+Public graph values receive full validation before execution.
+
+## Logical resource limits
+
+Caller limits cover pixels, row bytes, scratch bytes, nodes, and sample evaluations.
+The graph contains at most 64 nodes. Row and scratch byte limits cannot exceed 64 MiB.
+Dimensions and metadata products use i64 arithmetic before bounds checks.
+Nearest coordinates share the checked integer center map with the eager resize module.
+
+For each input path, the scratch estimate is twice the sum of row sizes.
+The factor of two accounts for temporary copies during immutable updates.
+The estimate excludes allocator overhead, graph metadata, retained source images, and caller-retained output rows.
+It does not establish a hard process memory limit or a recoverable OOM guarantee.
+
+The sample budget sums row widths along the path.
+It bounds sample evaluations, not instructions, copy costs, or elapsed CPU time.
+Every node must satisfy the limits, even when the output does not use that node.
+
+## Cancellation and ownership
+
+Execution checks a caller cancellation callback before validation and each node.
+It also checks before each group of 64 output pixels.
+Cancellation returns an explicit error and releases partial row storage.
+The callback is cooperative. It cannot preempt a blocked or nonterminating callback.
+
+Returned rows own their storage. Retained rows preserve their bytes after another row changes.
+Materialized image sources retain their existing storage outside the scratch estimate.
+No threading or concurrent mutation guarantee follows from these contracts.
+
+## Verification
+
+Eight cases cover virtual sources, eager agreement, budgets, graph safety, cancellation, and row isolation.
+The virtual-source case represents ten million pixels and returns only a 2,000-byte row.
+Depth tests execute a 64-node path and reject the next node.
+Coordinate tests exercise i32 boundary dimensions without allocation of a large image.
+
+Native x86-64 and ARM64 under QEMU use the heap sanitizer.
+The same cases also execute through Wasmtime.
+These tests do not qualify aggregate memory or production service behavior.
+
+## Future region engine
 
 The future graph separates source, decode, orientation, resize, crop, color, and encode operations.
 Each node must expose dimensions, format, alpha semantics, and required input regions.
@@ -7,8 +57,8 @@ A scheduler must enforce scratch budgets and release rows after their final cons
 Codec access patterns determine whether a node can request arbitrary regions.
 Sequential codecs cannot promise efficient arbitrary tile access.
 
-M0 contains no graph, scheduler, cancellation, or operation fusion.
-The pixel module provides a scalar correctness baseline.
-A future row interface must avoid a permanent requirement for complete frame allocation.
+Tiles, caching, fusion, bilinear row execution, and decoder row providers remain future work.
+PNG decoding still materializes its complete decoded image.
+The row interface does not assume that every codec supports efficient arbitrary regions.
 
 First measure copy costs and decode access patterns before selection of a tile size.
