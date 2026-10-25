@@ -40,10 +40,10 @@ func TestSelfHostInterpArrayIdentityMatchesOracleAndX86_64(t *testing.T) {
 }
 
 // __arr_set_len on one binding changes the length every holder of the array
-// sees, as the compiled box does. The Go interpreter changes only the variable
-// named at the call (#13186), so this case is held to x86-64 alone.
-func TestSelfHostInterpArrSetLenSharedMatchesX86_64(t *testing.T) {
+// sees, as the compiled box does.
+func TestSelfHostInterpArrSetLenSharedMatchesOracleAndX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
+	oracle := buildFernCLIBin(t)
 	src := filepath.Join(t.TempDir(), "set_len_shared.fern")
 	prog := `import "std/i32";
 
@@ -70,11 +70,15 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	sOut, sErr, sCode := runInterpCLI(t, runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib), "")
+	oOut, oErr, oCode := runInterpCLI(t, exec.Command(oracle, "-interp", src), "")
 	xOut, xErr, xCode := runInterpCLI(t, runX86_64Bin(cli.runner, cli.x86Binary(t, src)), "")
 	if want := "3 3 3\n2 2 2\n4 4 4 4\n"; xOut != want || xCode != 0 {
 		t.Fatalf("x86-64: exit %d, stdout %q (stderr %q); want %q", xCode, xOut, xErr, want)
 	}
 	if sOut != xOut || sCode != xCode {
 		t.Errorf("fern -interp: exit %d, stdout %q (stderr %q); x86-64 printed %q", sCode, sOut, sErr, xOut)
+	}
+	if oOut != xOut || oCode != xCode {
+		t.Errorf("fern-oracle -interp: exit %d, stdout %q (stderr %q); x86-64 printed %q", oCode, oOut, oErr, xOut)
 	}
 }

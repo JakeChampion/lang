@@ -1,0 +1,34 @@
+// A generic type named without arguments binds every parameter to never, so
+// no destination spelled that way takes a value whose construction settled
+// one. Each rejected line below is a different destination.
+
+enum P[T] { Two(i32, T), N }
+enum Bag[T] { Items(T[]), Pairs((T, i32)), Count(i32), Empty }
+enum Q[A, B] { Both(A, B), L(A), R(B) }
+struct W[T] { x: T }
+struct Holder { p: P }
+
+function take(p: P): i32 {
+    return match (p) { Two(a, _) => a, _ => 2 };
+}
+
+function size(b: Bag): i32 {
+    return 0;
+}
+
+function make(): P {
+    return Two(4, 5);
+}
+
+function main(): i32 {
+    let q: P[i32] = Two(1, 2);
+    let a: i32 = take(Two(4, 5));
+    let b: i32 = take(q);
+    let c: i32 = size(Items([1, 2])) + size(Pairs((1, 2)));
+    let ps: P[] = [Two(1, 2)];
+    let h: Holder = Holder { p: Two(1, 2) };
+    let w: W = W { x: 1 };
+    let o: Option[P] = Some(Two(1, 2));
+    let l: Q = L(1);
+    return a + b + c + ps.len();
+}

@@ -1110,6 +1110,9 @@ type Ident struct {
 	EnumName   string
 	Local      bool
 	ConstParam bool
+	// Builtin names the builtin itself, so no binding in scope can capture it.
+	// The parser sets it on the calls a desugar writes (assert, todo).
+	Builtin bool
 }
 type ArrayLit struct {
 	P        Position
@@ -1225,6 +1228,8 @@ type IfExpr struct {
 	Then    Expr
 	Else    Expr
 	IsFloat bool
+	// ElseChained records that the else was written `else if`.
+	ElseChained bool
 }
 
 type StructLit struct {
@@ -1581,6 +1586,8 @@ type Match struct {
 	Arms        []*MatchArm
 	StructMatch string
 	Origin      string
+	// ElseChained records that an if-let's else was written `else if`.
+	ElseChained bool
 }
 
 type TuplePatElem struct {
@@ -1668,6 +1675,8 @@ type MatchExpr struct {
 	Arms        []*MatchExprArm
 	IsFloat     bool
 	StructMatch string
+	// ElseChained records that an if-let's else was written `else if`.
+	ElseChained bool
 }
 
 type MatchExprArm struct {
@@ -2041,6 +2050,9 @@ type ConstDecl struct {
 	Public        bool
 	SourceModule  string
 	PackageScoped bool
+	// FoldErr is constfold's E093 for an initializer it could not evaluate;
+	// the checker reports it only when the initializer type-checks.
+	FoldErr string
 }
 
 type Import struct {
