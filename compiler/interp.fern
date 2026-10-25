@@ -5701,6 +5701,16 @@ function array_with(av: VArr, args: Value[]): Value {
   return v_arr(wout);
 }
 
+// av with x after its elements, in a box of its own. The elements are grown
+// in place when nothing else holds them.
+function arr_appended(av: VArr, x: Value): Value {
+  if (av.store.get().len() > 0) {
+    return v_arr_of(arr_els(av).append(x), av.elem);
+  }
+  let unwritten: i64[] = [];
+  return VArr { ...av, items: av.items.append(x), store: cell_new(unwritten) };
+}
+
 // .len, .with and .append on an array; None for any other method.
 function array_method(av: VArr, name: string, args: Value[]): Option[Value] {
   if (name == "len") {
@@ -5716,14 +5726,7 @@ function array_method(av: VArr, name: string, args: Value[]): Option[Value] {
     if (args.len() != 1) {
       return Some(v_err("array.append: need 1 arg"));
     }
-    let out: Value[] = [];
-    let ai: i32 = 0;
-    while (ai < arr_len(av)) {
-      out = out.append(arr_at(av, ai));
-      ai = ai + 1;
-    }
-    out = out.append(args[0]);
-    return Some(v_arr(out));
+    return Some(arr_appended(av, args[0]));
   }
   return None;
 }
@@ -7931,26 +7934,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return eval_while_stmt(w, env);
     },
     ast.StmtAssign(a) => {
-      let av: Value = eval_expr(a.value, env);
-      if (is_err(av)) {
-        return step_stop(env, av);
-      }
-      let i: i32 = env.names.len() - 1;
-      let found: boolean = false;
-      while (i >= 0 && !found) {
-        if (env.names[i] == a.target) {
-          found = true;
-        }
-        i = i - 1;
-      }
-      if (!found) {
-        return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
-      }
-      let tslot: i32 = env.raw_slot(a.target);
-      if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) {
-        return step_none(env);
-      }
-      return step_none(env.update(a.target, av));
+      return eval_assign_stmt(a, env);
     },
     ast.StmtMatch(m) => {
       return eval_match_stmt(m, env);
@@ -7969,6 +7953,65 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     }
   }
   return step_stop(env, v_err("unhandled Stmt variant"));
+}
+
+function eval_assign_stmt(a: ast.StmtAssign, env: Env): StepResult {
+  if (appends_to_target(a, env)) {
+    return append_in_slot(a, env);
+  }
+  let av: Value = eval_expr(a.value, env);
+  if (is_err(av)) {
+    return step_stop(env, av);
+  }
+  let tslot: i32 = env.raw_slot(a.target);
+  if (tslot < 0) {
+    return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
+  }
+  if (cell_slot_set(env.values[tslot], av)) {
+    return step_none(env);
+  }
+  return step_none(env.update(a.target, av));
+}
+
+// `x = x.append(v)` on an array x holds in its own slot.
+function appends_to_target(a: ast.StmtAssign, env: Env): boolean {
+  if let ast.ExprCall(c) = a.value {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if let ast.ExprIdent(id) = fa.obj {
+        let slot: i32 = env.raw_slot(a.target);
+        if (id.name != a.target || fa.field != "append" || c.args.len() != 1 || slot < 0) {
+          return false;
+        }
+        if let VArr(cur) = env.values[slot] {
+          return !cur.view && cur.store.get().len() == 0;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// Takes x out of its slot before appending, so the array grows in place
+// when the slot was its only holder, as a compiled binding's does. The read,
+// both writes and the append stay in this one frame: split across a call,
+// the compiled interpreter copies the elements.
+function append_in_slot(a: ast.StmtAssign, env: Env): StepResult {
+  let x: Value = v_absent();
+  if let ast.ExprCall(c) = a.value {
+    x = eval_expr(c.args[0], env);
+  }
+  if (is_err(x)) {
+    return step_stop(env, x);
+  }
+  let slot: i32 = env.raw_slot(a.target);
+  let taken: Value = env.values[slot];
+  let emptied: Env = Env { ...env, values: env.values.with(slot, v_absent()) };
+  if let VArr(cur) = taken {
+    let unwritten: i64[] = [];
+    let grown: Value = VArr { ...cur, items: cur.items.append(x), store: cell_new(unwritten) };
+    return step_none(Env { ...emptied, values: emptied.values.with(slot, grown) });
+  }
+  return step_stop(emptied, v_err("array.append: not an array"));
 }
 
 function for_elements(iv: Value): Option[Value[]] {
