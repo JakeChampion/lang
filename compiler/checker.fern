@@ -16369,7 +16369,7 @@ function orphan_impl_diags(mod: parser.Module): util.Diag[] {
 
 function impl_type_is_local(mod: parser.Module, im: parser.ImplInfo): boolean {
   let base: string = util.base_type_name(im.impl_type);
-  if (!declares_nominal(mod, base)) {
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base) || !declares_nominal(mod, base)) {
     return false;
   }
   if (im.module.len() == 0) {
