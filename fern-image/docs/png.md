@@ -67,7 +67,8 @@ A separate Fern executable writes an encoded RGBA fixture.
 An independent Python check verified its chunk CRCs and decompressed scanline bytes.
 
 The native suite uses heap sanitization and reports zero live bytes.
-Fuzz campaigns, broad differential compatibility, peak RSS, and CPU deadlines remain unverified.
+The [finite differential and mutation corpus](png-qualification.md) adds 964 cases against an offline Pillow reference.
+Broad compatibility, unbounded fuzz campaigns, peak RSS, and production CPU deadlines remain unverified.
 
 This codec is experimental and has no production-readiness claim.
 
@@ -75,4 +76,6 @@ The native compiler must contain the static-append allocation fix from PR #13208
 The original compiler corrupts a fixture after an append and subsequent allocation.
 
 Do not change codec code to bypass that defect.
-Keep this change in draft until that prerequisite merges and CI passes.
+PR #13208 and the PNG implementation PR #13210 merged.
+Their original CI runs did not establish a full successful validation.
+The release gate still requires actual current-head CI and the remaining qualification work.

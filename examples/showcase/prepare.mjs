@@ -63,6 +63,12 @@ async function main() {
       });
     }
   }
+  // The showcase shares the documentation site's webfonts.
+  await cp(
+    resolve(source, "../../site/src/assets/fonts"),
+    join(destination, "web/shared/fonts"),
+    { recursive: true },
+  );
   const { spawnSync } = await import("node:child_process");
   const server = resolve(process.argv[3] ?? "examples/fractal/server");
   const examples = resolve(source, "..");

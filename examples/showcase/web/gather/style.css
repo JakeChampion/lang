@@ -1,41 +1,39 @@
-.gather-page {
-  --paper: #f0f2e5;
-  --line: #d3dac7;
-}
 .gather-player {
   position: relative;
 }
 .gather-hud {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  padding: 18px 24px;
-  background: #e3e9d4;
-  border: 1px solid #c9d4b7;
-  border-radius: 12px 12px 0 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--plate-line);
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--plate-raised);
+  color: var(--plate-text);
 }
 .gather-hud b {
   display: block;
-  font-size: 25px;
-  font-weight: 500;
+  font: 400 1.5rem/1.3 var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .gather-hud span {
-  font: 9px monospace;
-  letter-spacing: 0.1em;
-  color: #637653;
+  font: 500 0.6rem var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--plate-muted);
 }
 .arena-wrap {
   position: relative;
-  background: #112e29;
-  border-radius: 0 0 12px 12px;
   overflow: hidden;
+  border: 1px solid var(--plate-line);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--plate);
 }
 .arena-wrap canvas {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 8/5;
+  aspect-ratio: 8 / 5;
   touch-action: none;
 }
 .arena-message {
@@ -45,47 +43,48 @@
   flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  background: #0c1510c4;
+  color: var(--plate-text);
   text-align: center;
-  gap: 14px;
-  background: #112e29c7;
-  color: #f1f0cd;
   pointer-events: none;
-  padding: 24px;
 }
 .arena-message strong {
-  font:
-    36px Georgia,
-    serif;
+  font: 600 clamp(1.5rem, 3.5vw, 2.4rem)/1.1 var(--font-display);
+  font-variation-settings: "SOFT" 40, "WONK" 1;
 }
 .arena-message span {
-  font-size: 13px;
+  font: 0.78rem var(--font-mono);
+  color: var(--plate-muted);
 }
 .gather-bottom {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 32px;
-  margin-top: 20px;
+  gap: 2rem;
+  margin-top: 1.25rem;
 }
 .gather-bottom h2 {
-  font-size: 16px;
+  font-size: 1.25rem;
 }
 .gather-bottom ol {
-  margin: 12px 0;
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
   padding: 0;
   list-style: none;
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
+  font: 0.8rem var(--font-mono);
 }
 .gather-bottom li {
   display: flex;
   justify-content: space-between;
-  max-width: 300px;
+  max-width: 20rem;
+  padding-bottom: 0.35rem;
+  border-bottom: var(--rule);
 }
 .gather-bottom p {
-  font-size: 13px;
-  color: #637653;
-  line-height: 1.8;
+  font-size: 0.875rem;
+  line-height: 1.75;
 }
 .gather-player.is-fullscreen .arena-wrap {
   height: calc(100dvh - 240px);
@@ -100,23 +99,15 @@
 }
 @media (max-width: 720px) {
   .gather-hud {
-    gap: 10px;
-    padding: 16px;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+    padding: 0.9rem;
   }
   .gather-hud b {
-    font-size: 17px;
-  }
-  .gather-hud span {
-    font-size: 8px;
+    font-size: 1.1rem;
   }
   .gather-bottom {
-    grid-template-columns: 1fr;
-  }
-  .arena-message strong {
-    font-size: 25px;
-  }
-  .gather-hud {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .gather-player.is-fullscreen .arena-wrap {
     height: calc(100dvh - 290px);
