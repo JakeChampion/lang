@@ -36,9 +36,6 @@ func StartDelayedUpstream(t *testing.T, body string, delay time.Duration) int {
 
 const wasmFetchPrelude = `import "std/async";
 import "std/fetch";
-import "std/net";
-import "std/string";
-import "std/utf8";
 
 function parse(s: string): i32 {
     let n: i32 = 0; let i: i32 = 0;
@@ -46,32 +43,30 @@ function parse(s: string): i32 {
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
-function loopback(p: i32): net.SocketAddr { return net.socket_addr(net.ipv4_loopback(), p); }
-function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { return t; }, None => { return "?"; } } }
+function body_at(key: string, path: string): string {
+    match (fetch.send(fetch.get("http://127.0.0.1:" + port(key).to_string() + path))) {
+        Ok(resp) => { return resp.body_string(); },
+        Err(e) => { return e.message(); }
+    }
+    return "";
+}
 `
 
 const WasmFetchFanoutSource = wasmFetchPrelude + `
 function main(): i32 {
-    let none: u8[] = [];
-    let f1: async.Future[u8[]] = fetch.fetch_future(loopback(port("PSLOW")), "/a");
-    let f2: async.Future[u8[]] = fetch.fetch_future(loopback(port("PFAST")), "/b");
-    let fs: async.Future[u8[]][] = [f1, f2];
-    let bodies: u8[][] = async.gather(fs, none);
+    let both: (() => string)[] = [() => body_at("PSLOW", "/a"), () => body_at("PFAST", "/b")];
+    let bodies: string[] = async.gather_tasks(both, "incomplete");
     if (bodies.len() != 2) { return 90; }
-    print(text(bodies[0]));   // task 0 (slow upstream) → "AAA"
-    print(text(bodies[1]));   // task 1 (fast upstream) → "BBB"
+    print(bodies[0]);   // task 0 (slow upstream) → "AAA"
+    print(bodies[1]);   // task 1 (fast upstream) → "BBB"
     return 0;
 }`
 
 const WasmRaceFetchSource = wasmFetchPrelude + `
 function main(): i32 {
-    let none: u8[] = [];
-    let fs: async.Future[u8[]][] = [
-        fetch.fetch_future(loopback(port("PA")), "/a"),
-        fetch.fetch_future(loopback(port("PB")), "/b")
-    ];
-    let (winner, body) = async.race(fs, none);
+    let both: (() => string)[] = [() => body_at("PA", "/a"), () => body_at("PB", "/b")];
+    let (winner, body) = async.race_tasks(both, "none");
     if (winner < 0) { print("nowinner\n"); return 1; }
-    print(text(body));   // the winner's body ("AAA" or "BBB")
+    print(body);   // the winner's body ("AAA" or "BBB")
     return 0;
 }`
