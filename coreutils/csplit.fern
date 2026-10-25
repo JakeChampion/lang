@@ -650,15 +650,16 @@ function out_open(st: St): St {
 }
 
 function out_put(st: St, lo: i32, hi: i32): St {
-  let w: io_buffered.BufWriter = st.out.write_bytes_range(st.buf, lo, hi);
-  match (w.error()) {
-    Some(e) => {
-      gnu.error("write error for " + gnu.quotea(st.name) + ": " + gnu.io_error_text(e));
-      cleanup_exit(St { ...st, out: w, open: false });
+  match (st.out.write_bytes_range(st.buf, lo, hi)) {
+    Ok(w) => {
+      return St { ...st, out: w, written: st.written + (hi - lo) as i64 };
     },
-    None => {}
+    Err(e) => {
+      gnu.error("write error for " + gnu.quotea(st.name) + ": " + gnu.io_error_text(e));
+      cleanup_exit(St { ...st, open: false });
+    }
   }
-  return St { ...st, out: w, written: st.written + (hi - lo) as i64 };
+  return st;
 }
 
 function out_close(st: St): St {
@@ -678,7 +679,7 @@ function out_close(st: St): St {
     return St { ...s, created: s.created - 1 };
   }
   if (!s.s.quiet) {
-    return St { ...s, so: s.so.write_string(s.written.to_string() + "\n") };
+    return St { ...s, so: gnu.put(s.so, s.written.to_string() + "\n") };
   }
   return s;
 }
