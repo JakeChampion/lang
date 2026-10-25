@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta
+      name="description"
+      content="Build a voxel world together. Native Fern servers, browser Wasm, and room for 512 participants per world."
+    />
+    <title>Blockyard · Fern, in action</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <link rel="stylesheet" href="/blockyard/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#play">Skip to the world</a>
+    <header class="site-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark">✳</span> fern<span class="brand-suffix">
+          / in action</span
+        ></a
+      >
+      <nav>
+        <a href="/_src/showcase/blockyard.fern.md">Read the source ↗</a
+        ><a href="/">All examples</a>
+      </nav>
+    </header>
+    <main class="blockyard-shell">
+      <div class="game-heading">
+        <div>
+          <div class="eyebrow">A SHARED VOXEL WORLD</div>
+          <h1>Blockyard<span>.</span></h1>
+          <p>Build a place together.</p>
+        </div>
+        <div class="world-picker">
+          <label for="world">World</label
+          ><select id="world" aria-label="Choose a world">
+            <option value="commons">Commons</option>
+            <option value="meadow">Meadow</option>
+            <option value="harbor">Harbor</option></select
+          ><button id="share" class="button">Share world ↗</button>
+        </div>
+      </div>
+      <section id="game" class="game-frame" aria-label="Blockyard game">
+        <canvas
+          id="view"
+          aria-label="3D world. Use the movement pad and drag the view, or use WASD and a mouse."
+          tabindex="0"
+        ></canvas>
+        <div class="sky-vignette" aria-hidden="true"></div>
+        <div class="hud">
+          <div class="world-badge">
+            <span class="live-dot"></span><b id="world-name">COMMONS</b
+            ><span id="players">0 / 512</span>
+          </div>
+          <div class="hud-metrics">
+            <span><b id="fps">—</b> fps</span
+            ><span><b id="latency">—</b> ms</span
+            ><span id="nearby">0 nearby</span>
+          </div>
+        </div>
+        <div id="crosshair" aria-hidden="true">+</div>
+        <div id="welcome" class="welcome-panel">
+          <div class="welcome-mark" aria-hidden="true">▧</div>
+          <h2>Leave your mark.</h2>
+          <p>
+            Lay a path. Build a tower. Find a quiet corner.<br />Everyone in
+            this world builds together.
+          </p>
+          <button id="play" class="button primary">Join world →</button
+          ><span id="loading" role="status">Load the Fern terrain kernel…</span>
+        </div>
+        <div id="play-hint" hidden>
+          Click the view to look around. Esc releases the mouse.
+        </div>
+        <div id="controls" hidden>
+          <div
+            id="joystick"
+            class="joystick"
+            role="group"
+            aria-label="Touch movement pad"
+          >
+            <span class="joystick-ring"></span
+            ><span id="stick" class="stick"></span
+            ><span class="joystick-label">MOVE</span>
+          </div>
+          <div class="actions">
+            <button
+              id="break"
+              class="action"
+              aria-label="Remove selected block"
+            >
+              <span>−</span>Break</button
+            ><button
+              id="place"
+              class="action place"
+              aria-label="Place selected material"
+            >
+              <span>+</span>Place</button
+            ><button id="jump" class="action small">Jump</button
+            ><button id="up" class="action small" hidden>Rise ↑</button
+            ><button id="down" class="action small" hidden>Lower ↓</button>
+          </div>
+          <div
+            id="palette"
+            class="palette"
+            role="toolbar"
+            aria-label="Block materials"
+          ></div>
+        </div>
+        <div class="game-toolbar">
+          <span id="connection" role="status">Not connected</span>
+          <div class="toolbar-buttons">
+            <select id="explore" class="tool" aria-label="Travel to a landmark">
+              <option value="0">Plaza</option>
+              <option value="1">Northwest</option>
+              <option value="2">Northeast</option>
+              <option value="3">Southwest</option></select
+            ><button id="fly" class="tool" aria-pressed="false">Fly</button
+            ><label class="sr-only" for="light">Time of day</label
+            ><select id="light" class="tool" aria-label="Time of day">
+              <option value="day">Day</option>
+              <option value="sunset">Sunset</option>
+              <option value="night">Night</option></select
+            ><button id="leave" class="tool" hidden>Leave</button>
+          </div>
+        </div>
+      </section>
+      <div class="below-game">
+        <p id="storage">Worlds are shared by live participants.</p>
+        <p>
+          <span class="desktop-help"
+            >WASD move · Mouse look · Click break · Right-click place · Space
+            jump · F fly · 1–0 materials</span
+          ><span class="touch-help"
+            >Left pad to move. Drag the view to look. Use Break and Place to
+            build.</span
+          >
+        </p>
+      </div>
+      <details class="lesson">
+        <summary>How Fern runs this world</summary>
+        <p>
+          The native server validates movement and block edits. A browser worker
+          uses Fern Wasm to generate nearby terrain. It combines exposed faces
+          into larger rectangles before WebGL draws them.
+        </p>
+        <p>
+          Worlds support up to 512 participants. The server sends nearby players
+          and block changes. It shares each movement snapshot with everyone in
+          the same area.
+        </p>
+        <p>
+          A persistent data volume enables a journal and crash recovery.
+          Different worlds can use different servers. One server owns each
+          world.
+        </p>
+        <div class="lesson-links">
+          <a href="/_src/showcase/voxel.fern.md">Terrain and collision ↗</a
+          ><a href="/_src/showcase/blockyard_world.fern.md"
+            >Simulation and protocol ↗</a
+          ><a href="/_src/showcase/blockyard_store.fern.md">Persistence ↗</a>
+        </div>
+        <p id="render-stats"></p>
+      </details>
+    </main>
+    <script type="module" src="/blockyard/app.mjs"></script>
+  </body>
+</html>

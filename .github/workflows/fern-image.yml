@@ -1,0 +1,20 @@
+name: Fern image
+
+# Called from ci.yml, which decides from the changed files whether this lane
+# runs (its path filter is the lane table's `fern-image` row) and cancels the
+# rest of the run when it goes red. `workflow_dispatch` runs it on its own.
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - run: make build
+      - run: ./fern-image/scripts/test.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern

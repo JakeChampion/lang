@@ -260,7 +260,7 @@ const BumpPerRequestRounds = 100000
 
 func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)

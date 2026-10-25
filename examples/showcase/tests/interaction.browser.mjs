@@ -30,7 +30,15 @@ for (const fallback of [false, true]) {
         configurable: true,
       });
     });
-  for (const name of ["rally", "mosaic", "wave", "swarm", "pulse", "gather"]) {
+  for (const name of [
+    "rally",
+    "mosaic",
+    "wave",
+    "swarm",
+    "pulse",
+    "gather",
+    "blockyard",
+  ]) {
     const page = await context.newPage();
     await page.goto(`${base}/${name}/`);
     await page.locator(".fullscreen-toggle").tap();

@@ -138,6 +138,8 @@ function receive(value) {
     ["renders", "active_renders"],
     ["games", "game_rooms"],
     ["arena-players", "arena_players"],
+    ["voxel-players", "voxel_players"],
+    ["voxel-blocks", "voxel_blocks"],
     ["canvases", "canvas_rooms"],
     ["strokes", "strokes"],
     ["messages", "websocket_messages"],

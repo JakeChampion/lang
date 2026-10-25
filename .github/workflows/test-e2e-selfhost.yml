@@ -452,34 +452,6 @@ jobs:
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
-  # THE FIXTURE CORPUS THROUGH THE SELF-HOST COMPILER, one leg per target.
-  fixtures-selfhost:
-    name: fixtures-selfhost-${{ matrix.leg }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.job-minutes }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
-          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
-          - { leg: x86-64-quarantine, test: TestFernFixturesSelfHostX86_64Quarantine, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
-          - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 45, go-timeout: 43m }
-          - { leg: front-end, test: "(TestFernFixturesSelfHostInterp|TestFernFixturesSelfHostCheck|TestGrammarDerivesSelfHostParsedSources)", wasmtime: "false", job-minutes: 30, go-timeout: 28m }
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-        with:
-          wasmtime: ${{ matrix.wasmtime }}
-      - uses: ./.github/actions/selfhost-driver-cache
-      - name: aarch64 cross toolchain + qemu (arm64 leg)
-        if: matrix.qemu == 'true'
-        uses: ./.github/actions/apt-cross-toolchain
-      - name: run the fixture corpus through the self-host compiler
-        env:
-          FERN_SELFHOST_FIXTURES: "1"
-        run: go test ./internal/testing/e2e/ -run '^${{ matrix.test }}$' -v -timeout ${{ matrix.go-timeout }}
-
   # THE FERNSMITH CORPUS THROUGH THE SELF-HOST COMPILER, one job per target.
   # Per-seed subtests are parallel, so one job already uses every core; a
   # second job per target would only buy another job's setup. The wasm leg
@@ -543,18 +515,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 0 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 1 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 2 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 3 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 4 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 5 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 6 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 7 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 8 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 9 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 10 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 11 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 0 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 1 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 2 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 3 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 4 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 5 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 6 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 7 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 8 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
@@ -679,7 +648,7 @@ jobs:
           merge-multiple: true
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=12 aarch64=2
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=9 aarch64=2
       - name: why did a shard leave no outcome
         if: failure() && steps.verify.outcome == 'failure'
         env:

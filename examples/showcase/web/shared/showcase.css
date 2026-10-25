@@ -2034,3 +2034,5 @@ canvas {
     padding: 24px;
   }
 }
+
+.blockyard-preview{background:linear-gradient(160deg,#d3e7df,#a4c8c6);position:relative}.blockyard-preview canvas{width:100%;height:100%;object-fit:contain}.blockyard-count{position:absolute;right:14px;top:14px;font:10px ui-monospace,monospace;background:#f4f7e5ca;padding:6px 9px;border-radius:4px;color:#365442}

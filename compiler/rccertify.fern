@@ -417,6 +417,9 @@ function roots_over(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, start: Roots):
         } else {
           root = root.with(ins.result, zero);
         }
+      } else if (zero >= 0 && ins.kind_tag == 8 && ins.args.len() == 1 && ins.args[0] >= 0 && root[ins.args[0]] == zero) {
+        // The one input of a phi a folded branch leaves at its join.
+        root = root.with(ins.result, zero);
       }
     }
   }

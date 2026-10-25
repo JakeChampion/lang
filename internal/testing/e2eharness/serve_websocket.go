@@ -163,7 +163,7 @@ func trimmed(b []byte) string {
 
 func CheckWebSocketSequential(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 
 	c := wsDial(t, addr)
 	c.send(true, 1, []byte("hello"))
@@ -242,7 +242,7 @@ func checkDeclinedHandshakeKeepsConnection(t *testing.T, addr string) {
 
 func CheckWebSocketOverlap(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	c := wsDial(t, addr)
 	c.send(true, 1, []byte("first"))
 	c.expect(1, []byte("first"), "text echo before the other connection")

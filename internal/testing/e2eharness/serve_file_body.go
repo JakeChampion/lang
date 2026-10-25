@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 func FileBodyServerSource(path string) string {
@@ -28,7 +27,7 @@ const FileBodyContent = "served from a file\nline two\n"
 
 func CheckFileBody(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn := rawRequest(t, addr, "/file", "")
 	defer conn.Close()
 	resp := readResponse(t, conn, "/file")

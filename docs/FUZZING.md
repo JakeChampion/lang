@@ -20,12 +20,18 @@ operands whose types fit the context. Every decision goes through a `chooser`,
 so the same generator is driven two ways:
 
 - `Gen*(seed)` — a PCG stream; the seeded sweeps.
-- `Gen*Bytes(data)` — one decision per input byte, for `go test -fuzz` and the
-  coverage-guided loop. An exhausted stream takes the smallest branch of every
-  decision, so cutting bytes off a corpus never grows the program
+- `Gen*Bytes(data)` — one decision per input byte (two for a choice among
+  more than 256), for `go test -fuzz` and the coverage-guided loop. An
+  exhausted stream takes the smallest branch of every decision, so cutting
+  bytes off a corpus never grows the program
   (`TestGenBytesShrinkIsMonotonicAndValid`), and `ShrinkMainBytes` reduces a
   failing corpus to a small repro (Hypothesis-style choice-sequence reduction,
   MacIver and Donaldson, ECOOP 2020).
+
+`MainBytes(seed)` records a seed's decisions as the corpus that generates the
+same program (`TestMainBytesReplaysTheSeed`), so a failing seed shrinks like a
+failing corpus. `ShrinkSource` then deletes whole lines and statements, which
+reaches the declarations every program's prelude emits whatever its corpus.
 
 Three profiles: free-form (parse/check only), runnable (`main` returns a byte),
 and printable (`main` prints observations, which admits floats through
@@ -115,7 +121,7 @@ the language.
 | Pass configuration | an optimisation whose off switch changes the answer, or a bug only the unoptimised path has | the non-sanitize `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` legs compile half the seeds with a seed-chosen subset of `selfHostPassSwitches` (reuse, unit-plan replay, inlining, array fusion, the ndarray kernels) off |
 | **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitize{X86_64,Arm64,Wasm}`; wasm carries the leak census only |
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
-| Compiler self-checks | a lowering the compiler's own verifiers reject: the typed lowering refusing part of a program, the rc certifier showing unbalanced counts, the IR verifier finding malformed IR | every self-host leg and the coverage loop fail such a seed (`compilerRefused`) rather than skip it as a coverage gap |
+| Compiler self-checks | a lowering the compiler's own verifiers reject: the typed lowering refusing part of a program, the rc certifier showing unbalanced counts, the IR verifier finding malformed IR | every self-host leg and the coverage loop fail such a seed (`compilerRefused`) rather than skip it as a coverage gap; their compiles run with `FERN_IR_VERIFY=quiet` so the IR verifier is on |
 | Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
 
@@ -140,6 +146,15 @@ legs append one JSON line per failed seed, and the nightly report posts
 them grouped by signature (`scripts/nightly-findings.mjs`), with a count and
 the first seeds of each. One fault failing two hundred seeds is one row, and
 the same row on consecutive nights is the same bug.
+
+The legs also shrink a failed seed (`diffLeg.shrink`): first its recorded
+corpus, then its source, keeping each step after which the program still
+fails the same way. A refused program must stay refused for the same reason;
+any other must still disagree with the interpreter under the seed's pass
+configuration. The leg logs the result and records it with the finding, and the
+nightly report shows each signature's smallest one. A test process shrinks at
+most 4 seeds, 3 minutes each. Nightly seed 122230's certifier refusal went
+from 5617 bytes to 1948 in 206 tries.
 
 ### Measuring it: the mutation score
 
@@ -323,8 +338,8 @@ built. Citations are to the paper that introduced the technique.
     report + function) instead of one issue per night, ranked by
     Furthest-Point-First (Chen et al., PLDI 2013), with each reduced repro
     promoted to a regression test. Done: the signature (leg, failure class,
-    bisected pass) and the grouped nightly table. Next is the ranking and
-    the promotion of each reduced repro.
+    bisected pass), the grouped nightly table, and each signature's shrunk
+    repro, which the fix commits as its regression test. Next is the ranking.
 
 ## Roadmap
 
@@ -332,5 +347,4 @@ In order:
 
 1. Mutation-score floor in CI once the score is measured over enough mutants
    to be stable, and the survivors worked down.
-2. Rank the nightly signatures (Furthest-Point-First) and promote each
-   reduced repro to a regression test.
+2. Rank the nightly signatures (Furthest-Point-First).

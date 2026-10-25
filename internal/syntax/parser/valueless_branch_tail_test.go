@@ -41,6 +41,13 @@ func TestValuelessBranchTail(t *testing.T) {
 		}
 	})
 
+	t.Run("void match arms can end with branch statements", func(t *testing.T) {
+		s := lastOf(t, `(n:i32):void => { match(n) {0=>{if(n==0){print("zero");}},_=>{print("other");}} }`)
+		if _, ok := s.(*ast.Match); !ok {
+			t.Fatalf("want a statement match, got %T", s)
+		}
+	})
+
 	t.Run("a match with a statement arm and a returning arm", func(t *testing.T) {
 		s := lastOf(t, `(n: i32): void => { match (n) { 0 => { print("a"); }, _ => { return; } } }`)
 		if _, ok := s.(*ast.Match); !ok {
