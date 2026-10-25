@@ -251,11 +251,19 @@ def main():
                     size, mode, raw = expected
                     decoded = (directory / (name + ".raw")).read_bytes()
                     encoded = (directory / (name + ".encoded.png")).read_bytes()
-                    if decoded != raw or reference(encoded) != expected:
+                    rows = (directory / (name + ".rows.raw")).read_bytes()
+                    selected = (directory / (name + ".selected.raw")).read_bytes()
+                    first, count = size[1] // 2, min(2, size[1] - size[1] // 2)
+                    stride = size[0] * len(mode)
+                    if decoded != raw or rows != raw or selected != raw[first * stride:(first + count) * stride] or reference(encoded) != expected:
                         raise ValueError("pixel mismatch in " + case["name"])
                     if (int(fields["width"]), int(fields["height"])) != size or int(fields["channels"]) != len(mode):
                         raise ValueError("metadata mismatch in " + case["name"])
-                    sample.update({"pixel_sha256": sha(raw), "encoded_sha256": sha(encoded), "encoded_bytes": len(encoded)})
+                    if (int(fields["first"]), int(fields["count"])) != (first, count):
+                        raise ValueError("row selection mismatch in " + case["name"])
+                    sample.update({"pixel_sha256": sha(raw), "row_pixel_sha256": sha(rows), "selected_pixel_sha256": sha(selected), "encoded_sha256": sha(encoded), "encoded_bytes": len(encoded)})
+                elif fields.get("row_error") != fields.get("error"):
+                    raise ValueError("row decoder rejection mismatch in " + case["name"])
                 if (directory / name).read_bytes() != case["data"]:
                     raise ValueError("input fixture changed")
                 samples.append(sample)
@@ -270,6 +278,9 @@ def main():
         "host": platform.platform(), "host_machine": platform.machine(), "runtime": runtime, "seed": SEED,
         "compiler_flags": ["-target", "wasm32-wasi" if options.wasmtime else "arm64-linux" if options.qemu else "x86-64-linux", "-sanitize"],
         "warmup_processes": 0, "cache_policy": "No page-cache flush or cold/warm performance comparison.",
+        "row_checks": {"accepted": "Full rows and a middle selection match independent reference bytes.",
+                       "rejected": "Eager and row APIs return the same codec error class.",
+                       "filtered_frame": "Fully materialized before row callbacks. No incremental inflater qualification."},
         "reference": {"Pillow": PIL.__version__, "Pillow_zlib": features.version_codec("zlib"),
                       "Python": platform.python_version(), "Python_zlib": zlib.ZLIB_RUNTIME_VERSION,
                       "Python_zlib_module": zlib.__spec__.origin}, "sha256": hashes,
