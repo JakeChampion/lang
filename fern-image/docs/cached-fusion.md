@@ -61,6 +61,8 @@ Cache payload peaks decrease from 11776 to 9216 bytes.
 All repeats reproduce these counters and finish with zero live bytes.
 
 The raw record includes exact compiler, executable, collector, package, Python, and workspace stdlib hashes.
+It records source commit `5621212e4` and compiler `2105e9e82250`.
+All 92 image TAP cases pass on native Linux, Wasm, and ARM64/QEMU with zero final live bytes.
 The collector checks source and tool immutability before and after the observations.
 Fresh allocator demand does not measure peak live bytes, isolated allocator overhead, RSS, or a process bound.
 The solid fixture does not qualify representative color throughput.
