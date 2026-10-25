@@ -753,19 +753,19 @@ struct Next { conn: Conn, raw: message.Raw, has: boolean }
 ```fern
 <<22 function __next(c: Conn): Result[Next, HandshakeError]>>=
 function __next(c: Conn): Result[Next, HandshakeError] {
-  match (message.split(c.pending)) {
-    Ok(s) => {
-      if (s.messages.len() == 0) {
+  match (message.head(c.pending)) {
+    Ok(n) => {
+      if (n == 0) {
         return Ok(Next { conn: c, raw: message.Raw { kind: 0, bytes: [] }, has: false });
       }
-      let raw: message.Raw = s.messages[0];
-      return Ok(Next { conn: Conn { ...c, pending: __copy(c.pending[raw.bytes.len():c.pending.len()]) }, raw: raw, has: true });
+      let raw: message.Raw = message.Raw { kind: c.pending[0] as i32, bytes: __copy(c.pending[0:n]) };
+      return Ok(Next { conn: Conn { ...c, pending: __copy(c.pending[n:c.pending.len()]) }, raw: raw, has: true });
     },
     Err(e) => {
       return Err(Message(e));
     }
   }
-  return Err(Misuse("split"));
+  return Err(Misuse("head"));
 }
 
 function __decode(raw: message.Raw): Result[message.Message, HandshakeError] {
@@ -1758,6 +1758,9 @@ function __rest(records: record.Record[], from: i32): record.Record[] {
 function __deframe(c: Conn, input: [u8]): Result[Conn, HandshakeError] {
   match (__records(c.inbox, input)) {
     Ok(d) => {
+      if (c.held.len() == 0) {
+        return Ok(Conn { ...c, held: d.records, inbox: d.rest });
+      }
       let held: record.Record[] = c.held;
       let i: i32 = 0;
       while (i < d.records.len()) {
