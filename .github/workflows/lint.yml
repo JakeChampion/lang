@@ -32,7 +32,7 @@ name: Lint
 #                implicitly, by building a driver, so a type error surfaced as
 #                a build-step failure at the top of a job named for something
 #                else (#7317). Also runs on every push to main
-#                (check-sources.yml) to catch merge races.
+#                (main-housekeeping.yml) to catch merge races.
 #   deadcode   — `make deadcode`: fails on any unreachable function not in
 #                scripts/deadcode-allowlist.txt. A whole-program SSA reachability
 #                analysis, so it is the slowest of these by some way.

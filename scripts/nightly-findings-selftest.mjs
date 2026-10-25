@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Pin scripts/nightly-findings.mjs: findings group by signature, the largest
-// group first, each group shows its smallest repro, and neither a cell nor a
-// repro can break the table or lose text to GitHub's tag stripping.
+// group first and then Furthest-Point-First, a row near an earlier one names
+// it, each group shows its smallest repro, and neither a cell nor a repro can
+// break the table or lose text to GitHub's tag stripping.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { summarize } from "./nightly-findings.mjs";
+import { distance, summarize } from "./nightly-findings.mjs";
 
 const line = (test, seed, cls, pass, repro) => JSON.stringify({ test, seed, class: cls, pass, repro });
 
@@ -22,10 +23,39 @@ const table = summarize([
   line("TestDifferential_SelfHostX86_64", 7, "refused: copy or phi type", "inline"),
   line("TestDifferential_SelfHostArm64", 5, "a|b <T> c", "reuse"),
 ]).split("\n");
-assert.equal(table[0], "| seeds | leg | failure | pass | first seeds |");
-assert.equal(table[2], "| 4 | TestDifferential_SelfHostX86_64 | refused: copy or phi type | inline | 3, 7, 12 |");
-assert.equal(table[3], "| 1 | TestDifferential_SelfHostArm64 | a\\|b &lt;T> c | reuse | 5 |");
-assert.equal(table[4], "| 1 | TestDifferential_SelfHostWasm | self-host wasm exit | none | 9 |");
+assert.equal(table[0], "| # | seeds | leg | failure | pass | first seeds | like |");
+assert.equal(table[2], "| 1 | 4 | TestDifferential_SelfHostX86_64 | refused: copy or phi type | inline | 3, 7, 12 |  |");
+assert.equal(table[3], "| 2 | 1 | TestDifferential_SelfHostArm64 | a\\|b &lt;T> c | reuse | 5 |  |");
+assert.equal(table[4], "| 3 | 1 | TestDifferential_SelfHostWasm | self-host wasm exit | none | 9 |  |");
+
+// One fault that fails the same seeds on three legs is one bug: its rows on the
+// other legs go after a smaller group that is a different bug, and name the
+// row they are like.
+const ranked = summarize([
+  line("X", 1, "refused: r", "none"),
+  line("X", 2, "refused: r", "none"),
+  line("X", 3, "refused: r", "none"),
+  line("A", 1, "refused: r", "none"),
+  line("A", 2, "refused: r", "none"),
+  line("W", 1, "refused: r", "none"),
+  line("W", 2, "refused: r", "none"),
+  line("Z", 8, "exit", "inline"),
+]).split("\n");
+assert.equal(ranked[2], "| 1 | 3 | X | refused: r | none | 1, 2, 3 |  |");
+assert.equal(ranked[3], "| 2 | 1 | Z | exit | inline | 8 |  |");
+assert.equal(ranked[4], "| 3 | 2 | A | refused: r | none | 1, 2 | #1 |");
+assert.equal(ranked[5], "| 4 | 2 | W | refused: r | none | 1, 2 | #3 |");
+
+// The same class and pass on other seeds is not enough to call two rows alike
+// without a repro, and similar repros are.
+const g = (cls, pass, seeds, repro) => ({ cls, pass, seeds, repro });
+assert.equal(distance(g("c", "p", [1]), g("c", "p", [2])), 1 / 3);
+const near = distance(
+  g("c", "p", [1], "function main(): i32 { let a: i32[] = [1]; return a[0] - 1; }"),
+  g("c", "p", [2], "function main(): i32 { let a: i32[] = [2]; return a[0] - 2; }"),
+);
+assert.ok(near < 1 / 3, `similar repros: ${near}`);
+assert.equal(distance(g("c", "p", [1], "x y z"), g("d", "q", [2], "u v w")), 1);
 assert.ok(!table.some((l) => l.startsWith("<details>")), "a group with no repro shows none");
 
 const repros = summarize([
@@ -33,8 +63,8 @@ const repros = summarize([
   line("T", 8, "refused: malformed IR", "inline", "function main(): i32 { return 0; }"),
   line("T", 9, "refused: malformed IR", "inline"),
 ]).split("\n");
-assert.equal(repros[2], "| 3 | T | refused: malformed IR | inline | 4, 8, 9 |");
-assert.equal(repros[4], "<details><summary>T: refused: malformed IR, seed 8 shrunk to 34 bytes</summary>");
+assert.equal(repros[2], "| 1 | 3 | T | refused: malformed IR | inline | 4, 8, 9 |  |");
+assert.equal(repros[4], "<details><summary>#1 T: refused: malformed IR, seed 8 shrunk to 34 bytes</summary>");
 assert.equal(repros[6], "<pre>function main(): i32 { return 0; }</pre>");
 const escaped = summarize([line("T", 4, "c", "p", "a << b && c > d")]);
 assert.match(escaped, /<pre>a &lt;&lt; b &amp;&amp; c &gt; d<\/pre>/);
@@ -49,7 +79,7 @@ fs.mkdirSync(path.join(dir, "findings-b"));
 fs.writeFileSync(path.join(dir, "findings-a", "findings.jsonl"), line("T", 1, "c", "p") + "\n");
 fs.writeFileSync(path.join(dir, "findings-b", "findings.jsonl"), line("T", 2, "c", "p") + "\n\n");
 const out = execFileSync("node", [script, dir], { encoding: "utf8" });
-assert.match(out, /\| 2 \| T \| c \| p \| 1, 2 \|/);
+assert.match(out, /\| 1 \| 2 \| T \| c \| p \| 1, 2 \|/);
 fs.rmSync(dir, { recursive: true });
 
 console.log("nightly-findings selftest: ok");

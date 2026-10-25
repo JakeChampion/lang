@@ -7582,11 +7582,17 @@ function instance_limit(): i32 {
 
 struct Inferred { all: Produced[], table: ssasem.Contracts }
 
-function seed_bits(n: i32): boolean[] {
+// A row's bit is the parameter's final mode, so a caller counts an argument only where the callee will.
+function mode_bits(p: Produced, escapes: boolean[]): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
-  while (i < n) {
-    out = out.append(true);
+  while (i < p.func.params.len()) {
+    let consumed: boolean = i >= escapes.len() || escapes[i];
+    if (i < p.modes.len()) {
+      out = out.append(inferred_mode(p.modes[i], p.func.params[i], consumed) == ssaunits.counted_mode());
+    } else {
+      out = out.append(consumed);
+    }
     i = i + 1;
   }
   return out;
@@ -7803,7 +7809,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: false, cycle: 0 - 1, quiet: [] });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: mode_bits(all[i], []), lends: false, cycle: 0 - 1, quiet: [] });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -7843,7 +7849,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     queued = queued.with(i, false);
     let at: i32 = own_row[i];
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
-      let next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows, ix);
+      let next: boolean[] = mode_bits(all[i], ownership.escaping(all[i].func, analyses[i], rows, ix));
       let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
         rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
