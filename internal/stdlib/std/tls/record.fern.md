@@ -296,7 +296,7 @@ pub function frame(t: ContentType, legacy_version: i32, data: [u8]): u8[] {
 
 ```fern
 <<13 pub struct Protection>>=
-pub struct Protection { suite: keyschedule.CipherSuite, key: u8[], iv: u8[], seq: u64, gcm: Option[aes_gcm.Key] }
+pub struct Protection { suite: keyschedule.CipherSuite, key: u8[], iv: u8[], seq: u64, gcm: Option[aes_gcm.Key], chacha: Option[chacha20poly1305.Key] }
 ```
 
 ### `14 pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): Protection`
@@ -305,7 +305,7 @@ pub struct Protection { suite: keyschedule.CipherSuite, key: u8[], iv: u8[], seq
 <<14 pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): Protection>>=
 pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): Protection {
   let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, traffic_secret);
-  return Protection { suite: suite, key: k.key, iv: k.iv, seq: 0 as u64, gcm: __gcm(suite, k.key) };
+  return Protection { suite: suite, key: k.key, iv: k.iv, seq: 0 as u64, gcm: __gcm(suite, k.key), chacha: __chacha(suite, k.key) };
 }
 ```
 
@@ -321,6 +321,23 @@ function __gcm(suite: keyschedule.CipherSuite, key: [u8]): Option[aes_gcm.Key] {
     _ => {}
   }
   match (aes_gcm.key(key)) {
+    Ok(k) => {
+      return Some(k);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+function __chacha(suite: keyschedule.CipherSuite, key: [u8]): Option[chacha20poly1305.Key] {
+  match (suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {},
+    _ => {
+      return None;
+    }
+  }
+  match (chacha20poly1305.key(key)) {
     Ok(k) => {
       return Some(k);
     },
@@ -398,7 +415,10 @@ function __seal(p: Protection, plaintext: [u8], aad: [u8], nonce: [u8]): Result[
       }
     },
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.seal(p.key, nonce, plaintext, aad)) {
+      let Some(c) = p.chacha else {
+        return Err(BadKeys(p.key.len(), p.iv.len()));
+      };
+      match (c.seal(nonce, plaintext, aad)) {
         Ok(sealed) => {
           return Ok(sealed);
         },
@@ -438,7 +458,10 @@ function __open(p: Protection, sealed: [u8], aad: [u8], nonce: [u8]): Result[u8[
       return Ok(inner);
     },
     keyschedule.ChaCha20Poly1305 => {
-      let Ok(inner) = chacha20poly1305.open(p.key, nonce, sealed, aad) else {
+      let Some(c) = p.chacha else {
+        return Err(BadKeys(p.key.len(), p.iv.len()));
+      };
+      let Ok(inner) = c.open(nonce, sealed, aad) else {
         return Err(BadRecordMac);
       };
       return Ok(inner);

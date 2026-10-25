@@ -624,7 +624,7 @@ function replayed(seed: i64): Result[string, string] {
   let sr: server.Step = srd(s2.session, cw.output)?;
   let sw: server.Step = swrite(sr.session, "pong")?;
   let wire: u8[] = c0.output.concat(s1.output).concat(c1.output).concat(s2.output).concat(cw.output).concat(sw.output).concat(c2.tickets[0].identity);
-  return Ok(hex.encode(crypto.sha256_new().update(wire).final_bytes()));
+  return Ok(hex.encode(crypto.sha256_new().update(wire).finish()));
 }
 
 function short_entropy(): string {

@@ -8,7 +8,7 @@ A public key stores the modulus, exponent, and encoded size. Construction valida
 
 ## Contracts
 
-PKCS#1 v1.5 and PSS have separate verification functions. Both use an explicit SHA-2 selector and return false for an invalid signature.
+PKCS#1 v1.5 and PSS are separate verification methods on the public key. Both use an explicit SHA-2 selector and return false for an invalid signature.
 
 ## Module assembly
 
@@ -36,11 +36,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 function __modpow(b: bigint.BigInt, e: bigint.BigInt, n: bigint.BigInt): bigint.BigInt>>
 
-<<11 pub function verify_pkcs1v15(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>
+<<11 pub function (key: PublicKey) verify_pkcs1v15(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>
 
 <<12 function __mgf1(hash: sha2.Hash, seed: [u8], len: i32): u8[]>>
 
-<<13 pub function verify_pss(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>
+<<13 pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>
 ```
 
 ### `module introduction`
@@ -280,11 +280,11 @@ function __pkcs1_em(hash: sha2.Hash, msg: [u8], len: i32): Option[u8[]] {
 }
 ```
 
-### `11 pub function verify_pkcs1v15(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean`
+### `11 pub function (key: PublicKey) verify_pkcs1v15(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean`
 
 ```fern
-<<11 pub function verify_pkcs1v15(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
-pub function verify_pkcs1v15(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
+<<11 pub function (key: PublicKey) verify_pkcs1v15(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
+pub function (key: PublicKey) verify_pkcs1v15(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
   match (__open(key, sig, key.bytes)) {
     Some(got) => {
       match (__pkcs1_em(hash, msg, key.bytes)) {
@@ -374,11 +374,11 @@ function __pss_hash(hash: sha2.Hash, m_hash: [u8], salt: [u8]): u8[] {
 }
 ```
 
-### `13 pub function verify_pss(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean`
+### `13 pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean`
 
 ```fern
-<<13 pub function verify_pss(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
-pub function verify_pss(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
+<<13 pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
+pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
   let em_bits: i32 = key.bits - 1;
   let em_len: i32 = (em_bits + 7) / 8;
   let top: i32 = 8 * em_len - em_bits;
