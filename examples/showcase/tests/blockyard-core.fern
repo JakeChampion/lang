@@ -1,0 +1,191 @@
+import "core/map";
+import "std/array";
+import "std/option";
+import "std/result";
+import "std/test";
+import "../blockyard_world" as model;
+import "../voxel";
+
+function memory_world(): model.World {
+  return model.world("test", map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Ok(()));
+}
+
+function input(seq: i64, flags: i32, x: i32, z: i32, pitch: i32): u8[] {
+  let bytes = __alloc_u8(16);
+  for at in 0..16 {
+    bytes = bytes.with(at, 0);
+  }
+  bytes = bytes.with(0, 1).with(1, flags as u8).with(2, x as u8).with(3, z as u8);
+  bytes = model.put16(bytes, 8, pitch);
+  return model.put32(bytes, 10, seq);
+}
+
+function edit(nonce: i64, action: i32, x: i32, y: i32, z: i32): u8[] {
+  let bytes = __alloc_u8(16);
+  for at in 0..16 {
+    bytes = bytes.with(at, 0);
+  }
+  bytes = bytes.with(0, 2).with(1, action as u8).with(2, 3);
+  bytes = model.put16(bytes, 4, x);
+  bytes = model.put16(bytes, 6, y);
+  bytes = model.put16(bytes, 8, z);
+  return model.put32(bytes, 10, nonce);
+}
+
+function seats_and_interest(): test.TestOutcome {
+  let world = memory_world();
+  let seats: model.Seat[] = [];
+  for at in 0..512 {
+    let Ok(seat) = model.reserve(world, 0) else {
+      return test.fail("could not reserve 512 seats");
+    };
+    seats = seats.append(seat);
+  }
+  if (model.reserve(world, 0).is_ok()) {
+    return test.fail("accepted a 513th seat");
+  }
+  let old = seats[0];
+  model.release(world, old);
+  let Ok(replacement) = model.reserve(world, 0) else {
+    return test.fail("did not reuse a vacant seat");
+  };
+  model.release(world, old);
+  if (!model.owns(world, replacement) || model.control(world, old, input(1, 2, 127, 0, 0), 0).is_ok()) {
+    return test.fail("an expired lease changed its replacement");
+  }
+  seats = seats.with(0, replacement);
+  let players = world.players.get();
+  world.players.set([] as model.Player[]);
+  let at: i32 = 0;
+  while (at < players.len()) {
+    let position: f64 = 32.5;
+    if (at >= 256) {
+      position = 450.5;
+    }
+    players = players.with(at, model.Player { ...players[at], x: position, y: 35, z: position, flags: 2 });
+    at = at + 1;
+  }
+  world.players.set(players);
+  world.updated.set(None);
+  model.advance(world, 0);
+  let near = model.packet(world, 17);
+  let far = model.packet(world, 238);
+  if (near.len() != 4112 || far.len() != 4112 || model.read16(near, 8) != 256 || model.read16(near, 10) != 512) {
+    return test.fail("interest snapshots included distant players");
+  }
+  if (world.index.get().ids.len() != 512) {
+    return test.fail("the spatial index lost a participant");
+  }
+  if (model.control(world, replacement, input(1, 2, 127, 127, 0), 0).is_err()) {
+    return test.fail("valid controls were rejected");
+  }
+  if (model.control(world, replacement, input(1, 2, 0, 0, 0), 0).is_ok() || model.control(world, replacement, [] as u8[], 0).is_ok()) {
+    return test.fail("invalid sequence or length was accepted");
+  }
+  model.advance(world, 100000000);
+  let moved = world.players.get()[replacement.at];
+  let dx = moved.x - 32.5;
+  let dz = moved.z - 32.5;
+  if (dx * dx + dz * dz > 0.491 || moved.applied != 1) {
+    return test.fail("diagonal controls exceeded the speed limit");
+  }
+  for seat in seats {
+    model.release(world, seat);
+  }
+  return test.assert_eq(world.count.get(), 0);
+}
+
+function edit_authority(): test.TestOutcome {
+  let commits = cell_new(0);
+  let world = model.world("build", map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => {
+    commits.set(commits.get() + changes.len());
+    return Ok(());
+  });
+  let Ok(seat) = model.reserve(world, 0) else {
+    return test.fail("no seat");
+  };
+  let players = world.players.get();
+  world.players.set([] as model.Player[]);
+  world.players.set(players.with(0, model.Player { ...players[0], x: 256.5, y: 14, z: 256.5, pitch: -15500 }));
+  let Some(hit) = model.ray(world.blocks.get(), world.players.get()[0]) else {
+    return test.fail("the ground was not visible");
+  };
+  if (hit.x != 256 || hit.y != 13 || hit.z != 256) {
+    return test.fail("grid ray hit differs");
+  }
+  let hidden = model.Proposal { seat: seat, nonce: 1, action: 0, material: 3, x: 256, y: 12, z: 256 };
+  if (model.validate(world, world.blocks.get(), hidden).is_ok()) {
+    return test.fail("a block behind the first hit was editable");
+  }
+  let overlap = model.Proposal { ...hidden, action: 1, y: 14 };
+  if (model.validate(world, world.blocks.get(), overlap).is_ok()) {
+    return test.fail("a block could trap a participant");
+  }
+  if (model.queue_edit(world, seat, edit(1, 0, 256, 13, 256), 0).is_err()) {
+    return test.fail("valid edit was rejected");
+  }
+  if (model.queue_edit(world, seat, edit(2, 0, 256, 13, 256), 1).is_ok()) {
+    return test.fail("edit rate limit did not apply");
+  }
+  model.advance(world, 0);
+  if (world.revision.get() != 1 || commits.get() != 1 || model.material(world.blocks.get(), 256, 13, 256) != 0) {
+    return test.fail("the committed edit was not published");
+  }
+  if (world.chunks.get().get(model.chunk_key(256, 256)).unwrap_or([] as (i32, i32)[]).len() != 1) {
+    return test.fail("chunk edit index differs");
+  }
+  if (world.history.get().len() != 1 || model.event_start(world.history.get(), 1) != 1) {
+    return test.fail("event cursor differs");
+  }
+  model.release(world, seat);
+  return test.pass();
+}
+
+function storage_failure(): test.TestOutcome {
+  let world = model.world("fault", map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("disk unavailable"));
+  let Ok(seat) = model.reserve(world, 0) else {
+    return test.fail("no seat");
+  };
+  let players = world.players.get();
+  world.players.set([] as model.Player[]);
+  world.players.set(players.with(0, model.Player { ...players[0], x: 256.5, y: 14, z: 256.5, pitch: -15500 }));
+  let result = model.queue_edit(world, seat, edit(1, 0, 256, 13, 256), 0);
+  model.advance(world, 0);
+  if (world.fault.get() != "disk unavailable" || world.revision.get() != 0 || model.material(world.blocks.get(), 256, 13, 256) == 0) {
+    return test.fail("a failed durable commit changed the world");
+  }
+  if (model.reserve(world, 0).is_ok()) {
+    return test.fail("a faulted world accepted another participant");
+  }
+  model.release(world, seat);
+  return test.pass();
+}
+
+function jump_edge(): test.TestOutcome {
+  let world = memory_world();
+  let Ok(seat) = model.reserve(world, 0) else {
+    return test.fail("no seat");
+  };
+  let players = world.players.get();
+  world.players.set([] as model.Player[]);
+  world.players.set(players.with(0, model.Player { ...players[0], x: 256.5, y: 14, z: 256.5, grounded: true }));
+  world.updated.set(Some(0 as i64));
+  let pressed = model.control(world, seat, input(1, 1, 0, 0, 0), 1);
+  let released = model.control(world, seat, input(2, 0, 0, 0, 0), 2);
+  model.advance(world, 100000000);
+  let player = world.players.get()[0];
+  if (player.y <= 14.2 || (player.flags & 1) != 0) {
+    return test.fail("a quick jump disappeared or remained pending after its tick");
+  }
+  model.release(world, seat);
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("Blockyard authority");
+  runner = runner.it("capacity, leases, speed, and spatial interest", seats_and_interest);
+  runner = runner.it("ray visibility, collision, edit order, and commit", edit_authority);
+  runner = runner.it("storage failure never confirms an edit", storage_failure);
+  runner = runner.it("a jump press survives release before the next tick", jump_edge);
+  return runner.finish();
+}

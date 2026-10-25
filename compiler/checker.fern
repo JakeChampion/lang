@@ -21787,6 +21787,10 @@ pub function spelled_type(s: Scope, spelling: string): typeinfo.Type {
   return s.resolve_type(spelling);
 }
 
+pub function signature_receiver(s: Scope, sig: FuncSig): typeinfo.Type {
+  return type_from_name_erasing_tparams(sig.receiver, sig.all_type_params, s.type_names());
+}
+
 pub function struct_sig(s: Scope, name: string): StructSig {
   return s.lookup_struct(name);
 }
