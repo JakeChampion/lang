@@ -2,32 +2,32 @@ import "std/test";
 import "std/unicode" as unicode;
 
 function test_ascii(): test.TestOutcome {
-  return test.assert_true(unicode.to_upper("hello") == "HELLO"
-    && unicode.to_lower("HeLLo") == "hello");
+  return test.assert_true("hello".to_upper() == "HELLO"
+    && "HeLLo".to_lower() == "hello");
 }
 
 function test_latin1(): test.TestOutcome {
-  return test.assert_true(unicode.to_upper("café") == "CAFÉ"
-    && unicode.to_lower("ÜBER") == "über");
+  return test.assert_true("café".to_upper() == "CAFÉ"
+    && "ÜBER".to_lower() == "über");
 }
 
 function test_greek(): test.TestOutcome {
-  return test.assert_eq(unicode.to_upper("αβγδ"), "ΑΒΓΔ");
+  return test.assert_eq("αβγδ".to_upper(), "ΑΒΓΔ");
 }
 
 function test_cyrillic(): test.TestOutcome {
-  return test.assert_eq(unicode.to_upper("привет"), "ПРИВЕТ");
+  return test.assert_eq("привет".to_upper(), "ПРИВЕТ");
 }
 
 function test_mixed_unchanged(): test.TestOutcome {
-  return test.assert_eq(unicode.to_upper("a1-b2 c3!"), "A1-B2 C3!");
+  return test.assert_eq("a1-b2 c3!".to_upper(), "A1-B2 C3!");
 }
 
 function test_already_folded(): test.TestOutcome {
-  return test.assert_true(unicode.to_lower("content-length") == "content-length"
-    && unicode.to_upper("ABC-1 !") == "ABC-1 !"
-    && unicode.to_lower("") == ""
-    && unicode.to_lower("x-Y") == "x-y");
+  return test.assert_true("content-length".to_lower() == "content-length"
+    && "ABC-1 !".to_upper() == "ABC-1 !"
+    && "".to_lower() == ""
+    && "x-Y".to_lower() == "x-y");
 }
 
 function test_char_level(): test.TestOutcome {
@@ -37,7 +37,7 @@ function test_char_level(): test.TestOutcome {
 }
 
 function test_sharp_s_expands(): test.TestOutcome {
-  if (unicode.to_upper("straße") != "STRASSE") {
+  if ("straße".to_upper() != "STRASSE") {
     return test.fail("straße -> STRASSE");
   }
   if ((223 as char).to_upper() as i32 != 223) {
@@ -47,43 +47,43 @@ function test_sharp_s_expands(): test.TestOutcome {
 }
 
 function test_eq_ignore_case(): test.TestOutcome {
-  if (!unicode.eq_ignore_case("Café", "cafÉ")) {
+  if (!"Café".eq_ignore_case("cafÉ")) {
     return test.fail("Café ~ cafÉ");
   }
-  if (!unicode.eq_ignore_case("ПРИВЕТ", "привет")) {
+  if (!"ПРИВЕТ".eq_ignore_case("привет")) {
     return test.fail("cyrillic fold");
   }
-  if (unicode.eq_ignore_case("abc", "abd")) {
+  if ("abc".eq_ignore_case("abd")) {
     return test.fail("abc != abd");
   }
-  if (unicode.eq_ignore_case("ab", "abc")) {
+  if ("ab".eq_ignore_case("abc")) {
     return test.fail("length differs");
   }
-  if (unicode.eq_ignore_case("abc", "ab")) {
+  if ("abc".eq_ignore_case("ab")) {
     return test.fail("length differs, reversed");
   }
-  if (!unicode.eq_ignore_case("K", "k")) {
+  if (!"K".eq_ignore_case("k")) {
     return test.fail("kelvin sign ~ k");
   }
-  if (unicode.eq_ignore_case("K", "kk")) {
+  if ("K".eq_ignore_case("kk")) {
     return test.fail("kelvin sign != kk");
   }
-  if (!unicode.eq_ignore_case("ß", "ss")) {
+  if (!"ß".eq_ignore_case("ss")) {
     return test.fail("ß ~ ss");
   }
-  if (!unicode.eq_ignore_case("STRASSE", "straße")) {
+  if (!"STRASSE".eq_ignore_case("straße")) {
     return test.fail("STRASSE ~ straße");
   }
-  if (!unicode.eq_ignore_case("ſ", "s")) {
+  if (!"ſ".eq_ignore_case("s")) {
     return test.fail("long s ~ s");
   }
-  if (unicode.eq_ignore_case("ß", "s")) {
+  if ("ß".eq_ignore_case("s")) {
     return test.fail("ß != s");
   }
-  if (unicode.case_fold("ß") != "ss") {
+  if ("ß".case_fold() != "ss") {
     return test.fail("case_fold ß");
   }
-  if (unicode.case_fold("HELLO") != "hello") {
+  if ("HELLO".case_fold() != "hello") {
     return test.fail("case_fold ascii");
   }
   return test.pass();
@@ -91,11 +91,11 @@ function test_eq_ignore_case(): test.TestOutcome {
 
 function test_roundtrip(): test.TestOutcome {
   let s: string = "Gross-Ελλάδα";
-  if (unicode.to_lower(unicode.to_upper(s)) != unicode.to_lower(s)) {
+  if (s.to_upper().to_lower() != s.to_lower()) {
     return test.fail("simple-mapping roundtrip");
   }
   let e: string = "Groß";
-  if (unicode.to_lower(unicode.to_upper(e)) == unicode.to_lower(e)) {
+  if (e.to_upper().to_lower() == e.to_lower()) {
     return test.fail("expansion should break the roundtrip");
   }
   return test.pass();
@@ -112,10 +112,10 @@ function test_is_digit(): test.TestOutcome {
 }
 
 function test_is_alnum_whitespace(): test.TestOutcome {
-  if (!(97 as char).is_alnum() || !(48 as char).is_alnum()) {
+  if (!(97 as char).is_alphanumeric() || !(48 as char).is_alphanumeric()) {
     return test.fail("alnum");
   }
-  if ((32 as char).is_alnum()) {
+  if ((32 as char).is_alphanumeric()) {
     return test.fail("space is not alnum");
   }
   if (!(32 as char).is_whitespace() || !(9 as char).is_whitespace()
@@ -132,16 +132,16 @@ function test_is_upper_lower(): test.TestOutcome {
 }
 
 function test_ascii_fast_path_agrees(): test.TestOutcome {
-  if (unicode.to_upper("abcXYZ 123!") != "ABCXYZ 123!") {
+  if ("abcXYZ 123!".to_upper() != "ABCXYZ 123!") {
     return test.fail("ascii fast path");
   }
-  if (unicode.to_upper("abcXYZ 123!é") != "ABCXYZ 123!É") {
+  if ("abcXYZ 123!é".to_upper() != "ABCXYZ 123!É") {
     return test.fail("decode path prefix");
   }
-  if (unicode.to_lower("ABCxyz 123!") != "abcxyz 123!") {
+  if ("ABCxyz 123!".to_lower() != "abcxyz 123!") {
     return test.fail("ascii fast path lower");
   }
-  if (unicode.to_lower("ABCxyz 123!É") != "abcxyz 123!é") {
+  if ("ABCxyz 123!É".to_lower() != "abcxyz 123!é") {
     return test.fail("decode path prefix lower");
   }
   if ((127 as char).to_upper() as i32 != 127) {
@@ -169,7 +169,7 @@ function test_alternating_run(): test.TestOutcome {
   if ((0x12F as char).to_upper() as i32 != 0x12E) {
     return test.fail("į -> Į");
   }
-  return test.assert_eq(unicode.to_upper("ăćĕ"), "ĂĆĔ");
+  return test.assert_eq("ăćĕ".to_upper(), "ĂĆĔ");
 }
 
 function test_large_delta_and_non_bmp(): test.TestOutcome {
@@ -182,12 +182,12 @@ function test_large_delta_and_non_bmp(): test.TestOutcome {
   if ((0x10428 as char).to_upper() as i32 != 0x10400) {
     return test.fail("Deseret lower -> upper");
   }
-  return test.assert_eq(unicode.to_upper("𐐨𐐩"), "𐐀𐐁");
+  return test.assert_eq("𐐨𐐩".to_upper(), "𐐀𐐁");
 }
 
 function test_invalid_utf8_replaced(): test.TestOutcome {
   let bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
-  return test.assert_eq(unicode.to_lower(string_from_bytes_unchecked(bad)), "a�b");
+  return test.assert_eq(string_from_bytes_unchecked(bad).to_lower(), "a�b");
 }
 
 function main(): i32 {
@@ -204,7 +204,7 @@ function main(): i32 {
   r = r.it("roundtrip", test_roundtrip);
   r = r.it("is_letter", test_is_letter);
   r = r.it("is_digit", test_is_digit);
-  r = r.it("is_alnum/space", test_is_alnum_whitespace);
+  r = r.it("is_alphanumeric/space", test_is_alnum_whitespace);
   r = r.it("is_upper/lower", test_is_upper_lower);
   r = r.it("ascii fast path", test_ascii_fast_path_agrees);
   r = r.it("alternating run", test_alternating_run);

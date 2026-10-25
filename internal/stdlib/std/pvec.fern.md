@@ -32,7 +32,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub enum VNode[T]>>
+<<3 pub(package) enum VNode[T]>>
 
 <<4 pub function pvec_new[T](): PVec[T]>>
 
@@ -69,11 +69,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "core/iter";
 ```
 
-### `3 pub enum VNode[T]`
+### `3 pub(package) enum VNode[T]`
 
 ```fern
-<<3 pub enum VNode[T]>>=
-pub enum VNode[T] { Empty, Leaf(T[]), Branch(VNode[T][]) }
+<<3 pub(package) enum VNode[T]>>=
+pub(package) enum VNode[T] { Empty, Leaf(T[]), Branch(VNode[T][]) }
 
 pub struct PVec[T] { len: i32, shift: i32, root: VNode[T], tail: T[] }
 ```

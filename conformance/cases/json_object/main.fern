@@ -1,21 +1,30 @@
 import "std/json";
 
-
 function main(): i32 {
-    match (json.json_parse("{\"a\": 40, \"b\": 2}")) {
-        Some(v) => {
-            let a: i32 = 0;
-            let b: i32 = 0;
-            match (json.json_get_i32(v, "a")) {
-                Some(x) => { a = x; },
-                None => { return 1; }
-            }
-            match (json.json_get_i32(v, "b")) {
-                Some(x) => { b = x; },
-                None => { return 2; }
-            }
-            return a + b;
+  match (json.parse("{\"a\": 40, \"b\": 2}")) {
+    Ok(v) => {
+      let a: i32 = 0;
+      let b: i32 = 0;
+      match (json.json_get_i32(v, "a")) {
+        Some(x) => {
+          a = x;
         },
-        None => { return 3; }
+        None => {
+          return 1;
+        }
+      }
+      match (json.json_get_i32(v, "b")) {
+        Some(x) => {
+          b = x;
+        },
+        None => {
+          return 2;
+        }
+      }
+      return a + b;
+    },
+    Err(_) => {
+      return 3;
     }
+  }
 }

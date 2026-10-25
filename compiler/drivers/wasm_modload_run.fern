@@ -235,7 +235,7 @@ function typed_file(entry_path: string, parts: flatten.PerModule[], t: Typed, id
 }
 
 function run_typed(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
-  let d: semlower.Driven = semlower.driven(flatten.bundle(entry, loaded, "wasm32-wasi"), "wasm32-wasi");
+  let d: semlower.Driven = semlower.driven(modloader.bundle(entry_path, entry, loaded, "wasm32-wasi", ""), "wasm32-wasi");
   let t: Typed = typed_units(parts, d, cache_dir);
   if (pm_mode == "func-counts") {
     for m in t.u.mods {

@@ -72,6 +72,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "std/http";
 import "std/headers";
 import "std/stream";
@@ -310,14 +311,14 @@ function __seen(names: string[], name: string): boolean {
 }
 
 function __window_value(v: string): i32 {
-  match (v.trim().trim_chars("\"").parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(v.trim().trim_chars("\""))) {
+    Ok(n) => {
       if (n < 8 || n > 15) {
         return 0;
       }
       return n;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }

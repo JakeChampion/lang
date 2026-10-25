@@ -21,7 +21,7 @@ function main(): i32 {
       if (modloader.report_unresolved(missing, "platforms_reach_run")) {
         return 1;
       }
-      let merged: parser.Module = flatten.bundle(entry, loaded, "");
+      let merged: parser.Module = modloader.bundle(entry_path, entry, loaded, "", "");
       let caps: string[] = platforms.reach(merged);
       let i: i32 = 0;
       while (i < caps.len()) {

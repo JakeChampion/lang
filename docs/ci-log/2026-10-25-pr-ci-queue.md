@@ -93,6 +93,10 @@ Preflight, where Preflight also calls the x86-64 legs of the unit, e2e, wasm,
 differential and coreutils lanes (`hosts: x86_64`). The full suite runs on main
 after the merge and on a pull request labelled `ci-full`.
 
+Preflight runs only where the suite does not. The suite holds every Preflight
+leg, so a run that takes both repeats 16 jobs. Main's first full runs did so
+while the pool queued jobs for 22 minutes.
+
 The owner chose this on 2026-10-25. A regression only the heavy or aarch64 lanes catch now lands on
 main and is caught by main's run.
 
