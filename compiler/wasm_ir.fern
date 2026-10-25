@@ -3234,10 +3234,11 @@ pub function tcp_accept_func(): string {
   o = o + "  (func $__fern_tcp_accept (param $l i32) (result i32)\n";
   o = o + "    (local $sock i32) (local $p i32) (local $ret i32) (local $st i32) (local $e i32)\n";
   o = o + "    (local.set $sock (i32.load (local.get $l)))\n";
-  o = o + "    (if (i32.eqz (i32.load offset=16 (local.get $l))) (then\n";
-  o = o + "      (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
-  o = o + "      (call $__fern_wasi_pollable_block (local.get $p))\n";
-  o = o + "      (call $__fern_wasi_pollable_drop (local.get $p))))\n";
+  o = o + "    (if (i32.eqz (i32.load offset=12 (local.get $l))) (then\n";
+  o = o + "      (if (i32.eqz (i32.load offset=16 (local.get $l))) (then\n";
+  o = o + "        (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
+  o = o + "        (call $__fern_wasi_pollable_block (local.get $p))\n";
+  o = o + "        (call $__fern_wasi_pollable_drop (local.get $p))))))\n";
   o = o + "    (local.set $ret (call $__fern_alloc (i32.const 20)))\n";
   o = o + "    (call $__fern_wasi_tcp_accept (local.get $sock) (local.get $ret))\n";
   o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";

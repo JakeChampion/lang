@@ -2,7 +2,8 @@
 // after the peer's send gets its bytes on every target (#13310). Switched to
 // non-blocking, a socket with nothing queued answers -EAGAIN at once instead,
 // and switched back, its next receive waits again. At the end of the stream a
-// receive answers 0.
+// receive answers 0. A non-blocking listener with no connection pending
+// answers at once too.
 import "std/string";
 
 function main(): i32 {
@@ -25,6 +26,8 @@ function main(): i32 {
 
   print(f"shutdown: {tcp_socket_ctl(c, 4, 1)}");
   print(f"end of stream: {tcp_recv_into(s, buf)}");
+  print(f"non-blocking listener: {tcp_socket_ctl(ls, 3, 1)}");
+  print(f"nothing pending: {tcp_accept(ls) < 0}");
   print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)}");
   return 0;
 }

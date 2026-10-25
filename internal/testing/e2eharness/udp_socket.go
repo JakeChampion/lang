@@ -64,7 +64,7 @@ function main(): i32 {
     if (udp_bind(odd, 0) != 0 - eafnosupport()) { return fail(20); }
     if (udp_sendto(a, odd, pb, "x") != 0 - eafnosupport()) { return fail(21); }
     if (target_os() == "wasi") {
-        // wasi:sockets has no blocking mode to switch off, on any socket.
+        // A wasi:sockets datagram socket has no blocking mode to switch off.
         if (tcp_socket_ctl(a, 3, 1) != 0 - 58) { return fail(17); }
     } else {
         if (tcp_socket_ctl(a, 3, 1) != 0) { return fail(17); }
