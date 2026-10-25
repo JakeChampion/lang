@@ -81,6 +81,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<32 function __cl_order(): i32[]>>
 
 <<33 function __fast_tokens(input: [u8]): i32[]>>
+
+<<34 resumable output>>
 ```
 
 ### `dependencies 1`
@@ -300,6 +302,13 @@ function __stored(own s: __State, data: [u8]): __State {
 ```fern
 <<9 struct __Huff>>=
 struct __Huff { count: i32[], symbol: i32[], left: i32 }
+
+struct __Tables { state: __State, literal: __Huff, distance: __Huff }
+
+function __empty_tables(s: __State): __Tables {
+  let empty = __Huff { count: [], symbol: [], left: 0 };
+  return __Tables { state: s, literal: empty, distance: empty };
+}
 ```
 
 ### `10 function __construct(lengths: i32[], n: i32): __Huff`
@@ -750,6 +759,11 @@ function __copy(own out: u8[], len: i32, dist: i32): u8[] {
 ```fern
 <<14 function __fixed(own s: __State, data: [u8]): __State>>=
 function __fixed(own s: __State, data: [u8]): __State {
+  let tables = __fixed_tables(s);
+  return __codes(__State { ...tables.state }, data, tables.literal, tables.distance);
+}
+
+function __fixed_tables(s: __State): __Tables {
   let lengths: i32[] = [];
   let sym: i32 = 0;
   while (sym < 288) {
@@ -762,7 +776,7 @@ function __fixed(own s: __State, data: [u8]): __State {
     dlengths = dlengths.append(5);
     sym = sym + 1;
   }
-  return __codes(s, data, __construct(lengths, 288), __construct(dlengths, 30));
+  return __Tables { state: s, literal: __construct(lengths, 288), distance: __construct(dlengths, 30) };
 }
 
 function __fixed_length(sym: i32): i32 {
@@ -783,6 +797,14 @@ function __code_length_order(): i32[] {
 }
 
 function __dynamic(own s: __State, data: [u8]): __State {
+  let tables = __dynamic_tables(s, data);
+  if (tables.state.failed) {
+    return tables.state;
+  }
+  return __codes(__State { ...tables.state }, data, tables.literal, tables.distance);
+}
+
+function __dynamic_tables(own s: __State, data: [u8]): __Tables {
   s = __bits(s, data, 5);
   let nlen: i32 = s.last + 257;
   s = __bits(s, data, 5);
@@ -790,7 +812,7 @@ function __dynamic(own s: __State, data: [u8]): __State {
   s = __bits(s, data, 4);
   let ncode: i32 = s.last + 4;
   if (nlen > 286 || ndist > 30) {
-    return __fail(s, Malformed("too many length or distance codes"));
+    return __empty_tables(__fail(s, Malformed("too many length or distance codes")));
   }
   let order: i32[] = __code_length_order();
   let lengths: i32[] = __zeros(19);
@@ -802,29 +824,37 @@ function __dynamic(own s: __State, data: [u8]): __State {
   }
   let lencode: __Huff = __construct(lengths, 19);
   if (lencode.left != 0) {
-    return __fail(s, Malformed("an incomplete or over-subscribed code length code"));
+    return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed code length code")));
   }
   s = __code_lengths(s, data, lencode, nlen + ndist);
   if (s.failed) {
-    return s;
+    return __empty_tables(s);
   }
-  return __dynamic_codes(s, data, nlen, ndist);
+  return __dynamic_codes(s, nlen, ndist);
 }
 
-function __dynamic_codes(own s: __State, data: [u8], nlen: i32, ndist: i32): __State {
+function __dynamic_codes(own s: __State, nlen: i32, ndist: i32): __Tables {
   let all: i32[] = s.lengths;
   if (all[256] == 0) {
-    return __fail(s, Malformed("no end-of-block code"));
+    return __empty_tables(__fail(s, Malformed("no end-of-block code")));
   }
   let lit: __Huff = __construct(all, nlen);
-  if (lit.left < 0 || lit.left > 0 && nlen - lit.count[0] != 1) {
-    return __fail(s, Malformed("an incomplete or over-subscribed literal/length code"));
+  if (__invalid_tree(lit, nlen, false)) {
+    return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed literal/length code")));
   }
   let dist: __Huff = __construct(__tail(all, nlen, nlen + ndist), ndist);
-  if (dist.left < 0 || dist.left > 0 && ndist - dist.count[0] != 1) {
-    return __fail(s, Malformed("an incomplete or over-subscribed distance code"));
+  if (__invalid_tree(dist, ndist, true)) {
+    return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed distance code")));
   }
-  return __codes(s, data, lit, dist);
+  return __Tables { state: s, literal: lit, distance: dist };
+}
+
+function __invalid_tree(tree: __Huff, symbols: i32, empty: boolean): boolean {
+  if (tree.left <= 0) {
+    return tree.left < 0;
+  }
+  let used = symbols - tree.count[0];
+  return !(empty && used == 0 || used == 1 && tree.count[1] == 1);
 }
 
 function __tail(xs: i32[], from: i32, end: i32): i32[] {
@@ -1903,5 +1933,214 @@ function __extend(input: [u8], cand: i32, pos: i32, max: i32): i32 {
     len = len + 1;
   }
   return len;
+}
+```
+
+### Resumable output
+
+The reader retains encoded input and at most 32768 history bytes.
+Each request returns at most 32768 owned output bytes.
+Earlier chunks can precede a later stream error. Callers must wait for `done` before they trust a complete stream.
+
+```fern
+<<34 resumable output>>=
+pub enum InflateReadError { ReadCodec(InflateError), ReadCancelled, ReadRequest, ReadBusy }
+
+pub struct InflateChunk { bytes: u8[], done: boolean, consumed: i32, total: i32, history_bytes: i32 }
+
+pub struct InflateReader { read: (i32, () => boolean) => Result[InflateChunk, InflateReadError] }
+
+@derive(cmp.Eq)
+enum __ReadPhase { ReadHeader, ReadStored, ReadCodes, ReadCopy, ReadEnd }
+
+struct __ReadCursor {
+  state: __State,
+  literal: __Huff,
+  distance_code: __Huff,
+  history: u8[],
+  total: i32,
+  phase: __ReadPhase,
+  final_block: boolean,
+  remaining: i32,
+  distance: i32,
+  byte: i32,
+  cancelled: boolean,
+}
+
+pub function inflate_reader(input: u8[], max_out: i32): Result[InflateReader, InflateReadError] {
+  if (max_out < 0) {
+    return Err(ReadRequest);
+  }
+  let bits = __State { pos: 0, bitbuf: 0, bitcnt: 0, out: [], max_out: max_out, last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
+  let empty = __Huff { count: [], symbol: [], left: 0 };
+  let initial = __ReadCursor {
+    state: bits, literal: empty, distance_code: empty, history: [], total: 0, phase: ReadHeader,
+    final_block: false, remaining: 0, distance: 0, byte: 0 - 1, cancelled: false,
+  };
+  let state: Cell[Option[__ReadCursor]] = cell_new(Some(initial));
+  let read = (count: i32, cancelled: () => boolean): Result[InflateChunk, InflateReadError] => __read_request(state, input, count, cancelled);
+  return Ok(InflateReader { read: read });
+}
+
+function __read_request(state: Cell[Option[__ReadCursor]], input: [u8], count: i32, cancelled: () => boolean): Result[InflateChunk, InflateReadError] {
+  if (count <= 0 || count > 32768) {
+    return Err(ReadRequest);
+  }
+  let cursor = match (state.get()) { Some(v) => v, None => { return Err(ReadBusy); } };
+  state.set(None);
+  let result = __read_run(__ReadCursor { ...cursor }, input, count, cancelled);
+  let answer = __read_answer(result.0, result.1);
+  state.set(Some(result.0));
+  return answer;
+}
+
+function __read_answer(cursor: __ReadCursor, bytes: u8[]): Result[InflateChunk, InflateReadError] {
+  if (cursor.cancelled) {
+    return Err(ReadCancelled);
+  }
+  if (cursor.state.failed) {
+    return Err(ReadCodec(cursor.state.error));
+  }
+  return Ok(InflateChunk { bytes: bytes, done: cursor.phase == ReadEnd, consumed: cursor.state.pos, total: cursor.total, history_bytes: cursor.history.len() });
+}
+
+function __read_run(own cursor: __ReadCursor, input: [u8], count: i32, cancelled: () => boolean): (__ReadCursor, u8[]) {
+  let output: u8[] = [];
+  let steps = 0;
+  while (output.len() < count && cursor.phase != ReadEnd && !cursor.state.failed && !cursor.cancelled) {
+    if (steps % 256 == 0 && cancelled()) {
+      cursor = __ReadCursor { ...cursor, cancelled: true };
+    } else {
+      cursor = __read_step(cursor, input);
+      if (cursor.byte >= 0) {
+        output = output.append(cursor.byte as u8);
+      }
+    }
+    steps = steps + 1;
+    if (steps == 256) {
+      steps = 0;
+    }
+  }
+  return (cursor, output);
+}
+
+function __read_step(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
+  cursor = __ReadCursor { ...cursor, byte: 0 - 1 };
+  let phase = cursor.phase;
+  return match (phase) { ReadHeader => __read_header(cursor, input), ReadStored => __read_stored_byte(cursor, input), ReadCodes => __read_code(cursor, input), ReadCopy => __read_copy_byte(cursor), ReadEnd => cursor };
+}
+
+function __read_header(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
+  let state = __bits(__State { ...cursor.state }, input, 1);
+  let final_block = state.last == 1;
+  state = __bits(state, input, 2);
+  cursor = __ReadCursor { ...cursor, state: state, final_block: final_block };
+  if (state.failed) {
+    return cursor;
+  }
+  if (state.last == 0) {
+    return __read_stored_header(cursor, input);
+  }
+  if (state.last == 3) {
+    return __ReadCursor { ...cursor, state: __fail(state, Malformed("a reserved block type")) };
+  }
+  let tables = if (state.last == 1) { __fixed_tables(state) } else { __dynamic_tables(state, input) };
+  return __ReadCursor { ...cursor, state: tables.state, literal: tables.literal, distance_code: tables.distance, phase: ReadCodes };
+}
+
+function __read_stored_header(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
+  let state = __State { ...cursor.state, bitbuf: 0, bitcnt: 0 };
+  if (state.pos > input.len() - 4) {
+    return __ReadCursor { ...cursor, state: __fail(state, Truncated) };
+  }
+  let length = input[state.pos] as i32 | input[state.pos + 1] as i32 << 8;
+  let complement = input[state.pos + 2] as i32 | input[state.pos + 3] as i32 << 8;
+  if (length != (complement ^ 65535)) {
+    return __ReadCursor { ...cursor, state: __fail(state, Malformed("a stored block's length and its complement disagree")) };
+  }
+  state = __State { ...state, pos: state.pos + 4 };
+  if (length > input.len() - state.pos) {
+    return __ReadCursor { ...cursor, state: __fail(state, Truncated) };
+  }
+  cursor = __ReadCursor { ...cursor, state: state, remaining: length, phase: ReadStored };
+  if (length == 0) {
+    return __read_block_end(cursor);
+  }
+  return cursor;
+}
+
+function __read_block_end(own cursor: __ReadCursor): __ReadCursor {
+  return __ReadCursor { ...cursor, phase: if (cursor.final_block) { ReadEnd } else { ReadHeader } };
+}
+
+function __read_stored_byte(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
+  let byte = input[cursor.state.pos];
+  cursor = __read_emit(cursor, byte);
+  cursor = __ReadCursor { ...cursor, state: __State { ...cursor.state, pos: cursor.state.pos + 1 }, remaining: cursor.remaining - 1 };
+  if (cursor.remaining == 0) {
+    return __read_block_end(cursor);
+  }
+  return cursor;
+}
+
+function __read_emit(own cursor: __ReadCursor, byte: u8): __ReadCursor {
+  if (cursor.total >= cursor.state.max_out) {
+    return __ReadCursor { ...cursor, state: __fail(cursor.state, OutputLimit) };
+  }
+  let history = cursor.history;
+  cursor = __ReadCursor { ...cursor, history: [] };
+  if (history.len() < 32768) {
+    history = history.append(byte);
+  } else {
+    history = history.with(cursor.total & 32767, byte);
+  }
+  return __ReadCursor { ...cursor, history: history, total: cursor.total + 1, byte: byte as i32 };
+}
+
+function __read_code(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
+  let state = __decode(__State { ...cursor.state }, input, cursor.literal);
+  cursor = __ReadCursor { ...cursor, state: state };
+  if (state.failed) {
+    return cursor;
+  }
+  if (state.last < 256) {
+    return __read_emit(cursor, state.last as u8);
+  }
+  if (state.last == 256) {
+    return __read_block_end(cursor);
+  }
+  if (state.last > 285) {
+    return __ReadCursor { ...cursor, state: __fail(state, Malformed("a length code past 285")) };
+  }
+  return __read_match(cursor, input, state.last - 257);
+}
+
+function __read_match(own cursor: __ReadCursor, input: [u8], symbol: i32): __ReadCursor {
+  let state = __bits(__State { ...cursor.state }, input, LENGTH_EXTRA[symbol]);
+  let length = LENGTH_BASE[symbol] + state.last;
+  state = __decode(state, input, cursor.distance_code);
+  if (state.failed) {
+    return __ReadCursor { ...cursor, state: state };
+  }
+  if (state.last >= 30) {
+    return __ReadCursor { ...cursor, state: __fail(state, Malformed("a distance code past 29")) };
+  }
+  let distance_symbol = state.last;
+  state = __bits(state, input, DIST_EXTRA[distance_symbol]);
+  let distance = DIST_BASE[distance_symbol] + state.last;
+  if (distance > cmp.min(cursor.total, 32768)) {
+    state = __fail(state, Malformed("a distance before the available history"));
+  }
+  return __ReadCursor { ...cursor, state: state, phase: ReadCopy, remaining: length, distance: distance };
+}
+
+function __read_copy_byte(own cursor: __ReadCursor): __ReadCursor {
+  let byte = cursor.history[cursor.total - cursor.distance & 32767];
+  cursor = __read_emit(cursor, byte);
+  cursor = __ReadCursor { ...cursor, remaining: cursor.remaining - 1 };
+  if (cursor.remaining == 0) {
+    return __ReadCursor { ...cursor, phase: ReadCodes };
+  }
+  return cursor;
 }
 ```

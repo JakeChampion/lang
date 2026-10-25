@@ -1,0 +1,271 @@
+import "std/deflate";
+import "std/hex";
+import "std/codec";
+import "std/test";
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  return match (value) { Ok(bytes) => bytes, Err(_) => [] };
+}
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function read_all(input: u8[], expected: [u8], chunk_size: i32): boolean {
+  let reader = match (deflate.inflate_reader(input.append(177 as u8), expected.len())) { Ok(v) => v, Err(_) => { return false; } };
+  let total = 0;
+  let done = false;
+  let calls = 0;
+  while (!done && calls <= expected.len() + 2) {
+    let chunk = match (reader.read(chunk_size, never_cancel)) { Ok(v) => v, Err(_) => { return false; } };
+    if (chunk.bytes.len() > chunk_size || chunk.total != total + chunk.bytes.len()
+      || chunk.history_bytes != (if (chunk.total < 32768) { chunk.total } else { 32768 })
+      || chunk.consumed > input.len() || !same(chunk.bytes, expected[total:chunk.total])) {
+      return false;
+    }
+    total = chunk.total;
+    done = chunk.done;
+    if (done && chunk.consumed != input.len()) {
+      return false;
+    }
+    calls = calls + 1;
+  }
+  let end = match (reader.read(1, never_cancel)) { Ok(v) => v.done && v.bytes.len() == 0 && v.total == total && v.consumed == input.len(), _ => false };
+  return done && total == expected.len() && end;
+}
+
+function goldens(): test.TestOutcome {
+  let dynamic = "";
+  let i = 0;
+  while (i < 12) {
+    dynamic = dynamic + "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. ";
+    i = i + 1;
+  }
+  let streams = ["010300fcff616263", "cb48cdc9c957c8402701", "edcebb1580201044d156a6026b31a0013f08a8b08a8062f56e0926641bcf9b73aeb21a6776d38631d21db0d08335fbe302151d9178de87b76226d341358bfb813b5f317274bb64b1b8a2797a75c0eece4c91bfe66a4910af78c52b5ef18a57bc7fbd1f"];
+  let expected = ["abc", "hello hello hello hello", dynamic];
+  i = 0;
+  while (i < streams.len()) {
+    let data = __codec_bytes(hex.decode(streams[i]));
+    for size in [1, 2, 3, 7, 257, 32768] {
+      if (!read_all(data, expected[i].bytes(), size)) {
+        return test.fail("independent stored, fixed, or dynamic bytes");
+      }
+    }
+    i = i + 1;
+  }
+  return test.assert_true(true);
+}
+
+function ring_stream(): u8[] {
+  let data: u8[] = [0, 0, 128, 255, 127];
+  let i = 0;
+  while (i < 32768) {
+    data = data.append((i * 37 + i / 251) as u8);
+    i = i + 1;
+  }
+  return data.append(3 as u8).append(222 as u8).append(255 as u8).append(15 as u8).append(0 as u8);
+}
+
+function history_wrap(): test.TestOutcome {
+  let expected: u8[] = [];
+  let i = 0;
+  while (i < 32768) {
+    expected = expected.append((i * 37 + i / 251) as u8);
+    i = i + 1;
+  }
+  expected = expected.append(expected[0]).append(expected[1]).append(expected[2]);
+  for size in [1, 255, 257, 32768] {
+    if (!read_all(ring_stream(), expected, size)) {
+      return test.fail("32768-byte distance across history and chunk boundaries");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function literal_only(): test.TestOutcome {
+  let streams = [
+    "05c001040000000010000000000000000001000000000000000000000000000000000000000000008010",
+    "05c001040000000010000000000000000000000000000000000000000000000000000000000000008000",
+    "05c201040000000010000000000000000001000000000000000000000000000000000000000000008010",
+  ];
+  let expected = ["AAA", "", "A"];
+  let i = 0;
+  while (i < streams.len()) {
+    let data = __codec_bytes(hex.decode(streams[i]));
+    let eager = match (deflate.inflate(data, 3)) { Ok(v) => same(v.out, expected[i].bytes()), _ => false };
+    if (!eager || !read_all(data, expected[i].bytes(), 1)) {
+      return test.fail("literal-only dynamic tree");
+    }
+    i = i + 1;
+  }
+  for invalid in [
+    "0580010400000040000000000000000000000000000000000000000000000000000000000000000002",
+    "05c001040000008020000000000000000000000000000000000000000000000000000000000000008006",
+    "0dc0010400000080200000000000000000010000000000000000000000000000000000000000000000cf",
+    "05c001040000000010000000000000000003000000000000000000000000000000000000000000008002",
+    "05c201040000000010000000000000000000000000000000000000000000000000000000000000008007",
+    "05c001040000000010000000000000000003000000000000000000000000000000000000000000000000",
+  ] {
+    let data = __codec_bytes(hex.decode(invalid));
+    let eager = match (deflate.inflate(data, 3)) { Err(_) => true, _ => false };
+    let reader = match (deflate.inflate_reader(data, 3)) { Ok(v) => v, Err(_) => { return test.fail("open invalid tree"); } };
+    let rejected = match (reader.read(4, never_cancel)) { Err(deflate.ReadCodec(_)) => true, _ => false };
+    if (!eager || !rejected) {
+      return test.fail("invalid tree or absent distance use");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function empty_blocks(): test.TestOutcome {
+  let data: u8[] = [];
+  let i = 0;
+  while (i < 600) {
+    for byte in [0 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8] {
+      data = data.append(byte);
+    }
+    i = i + 1;
+  }
+  data = data.append(3 as u8).append(0 as u8);
+  let reader = match (deflate.inflate_reader(data, 0)) { Ok(v) => v, Err(_) => { return test.fail("open empty stream"); } };
+  let polls = cell_new(0);
+  let cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let result = match (reader.read(1, cancel)) { Ok(v) => v.done && v.total == 0 && v.bytes.len() == 0 && v.consumed == data.len(), _ => false };
+  return test.assert_true(result && polls.get() >= 3);
+}
+
+function rejected(input: u8[], max_out: i32, expected: string): boolean {
+  let reader = match (deflate.inflate_reader(input, max_out)) { Ok(v) => v, Err(_) => { return false; } };
+  let error = "";
+  let i = 0;
+  while (i <= max_out + 1 && error == "") {
+    match (reader.read(1, never_cancel)) {
+      Err(deflate.ReadCodec(e)) => {
+        error = e.message();
+      },
+      Ok(v) => {
+        if (v.done) {
+          return false;
+        }
+      },
+      _ => {
+        return false;
+      }
+    }
+    i = i + 1;
+  }
+  let repeated = match (reader.read(2, never_cancel)) { Err(deflate.ReadCodec(e)) => e.message() == error, _ => false };
+  return error == expected && repeated;
+}
+
+function errors_and_limits(): test.TestOutcome {
+  let truncated = deflate.Truncated.message();
+  let limit = deflate.OutputLimit.message();
+  let input = __codec_bytes(hex.decode("010300fcff616263"));
+  let valid = match (deflate.inflate_reader(input, 3)) { Ok(v) => v, Err(_) => { return test.fail("open"); } };
+  let bad_request = match (valid.read(0, never_cancel)) { Err(deflate.ReadRequest()) => true, _ => false };
+  let large_request = match (valid.read(32769, never_cancel)) { Err(deflate.ReadRequest()) => true, _ => false };
+  let negative = match (deflate.inflate_reader(input, 0 - 1)) { Err(deflate.ReadRequest()) => true, _ => false };
+  let after = match (valid.read(3, never_cancel)) { Ok(v) => same(v.bytes, "abc".bytes()) && v.done, _ => false };
+  let reserved = deflate.Malformed("a reserved block type").message();
+  let length = deflate.Malformed("a stored block's length and its complement disagree").message();
+  let good = rejected([], 3, truncated) && rejected([7], 3, reserved)
+    && rejected([1, 1, 0, 0, 0, 42], 3, length) && rejected([1, 2, 0, 253, 255, 42], 3, truncated)
+    && rejected(input, 2, limit) && rejected(__codec_bytes(hex.decode("cb48cdc9c957c8402701")), 4, limit);
+  return test.assert_true(good && bad_request && large_request && negative && after);
+}
+
+function ownership(): test.TestOutcome {
+  let input = __codec_bytes(hex.decode("010300fcff616263"));
+  let reader = match (deflate.inflate_reader(input, 3)) { Ok(v) => v, Err(_) => { return test.fail("open"); } };
+  input = input.with(5, 19 as u8);
+  let alias = reader;
+  let first = match (reader.read(1, never_cancel)) { Ok(v) => v.bytes, Err(_) => { return test.fail("first"); } };
+  let kept = first;
+  let changed = first.with(0, 17 as u8);
+  let second = match (alias.read(2, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("second"); } };
+  let fresh = read_all(__codec_bytes(hex.decode("010300fcff616263")), "abc".bytes(), 1);
+  return test.assert_true(input[5] == 19 as u8 && kept[0] == 97 as u8 && changed[0] == 17 as u8
+    && same(second.bytes, "bc".bytes()) && second.done && second.total == 3 && fresh);
+}
+
+function cancellation(): test.TestOutcome {
+  let input = ring_stream();
+  let control = match (deflate.inflate_reader(input, 32771)) { Ok(v) => v, Err(_) => { return test.fail("open control"); } };
+  let polls = cell_new(0);
+  let count = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  match (control.read(32768, count)) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("control");
+    }
+  }
+  let total = polls.get();
+  let stop = 1;
+  while (stop <= total) {
+    let reader = match (deflate.inflate_reader(input, 32771)) { Ok(v) => v, Err(_) => { return test.fail("open cancellation"); } };
+    polls.set(0);
+    let cancel = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() >= stop;
+    };
+    let cancelled = match (reader.read(32768, cancel)) { Err(deflate.ReadCancelled()) => true, _ => false };
+    let terminal = match (reader.read(1, never_cancel)) { Err(deflate.ReadCancelled()) => true, _ => false };
+    if (!cancelled || !terminal || polls.get() != stop) {
+      return test.fail("cancellation poll or terminal state");
+    }
+    stop = stop + 1;
+  }
+  return test.assert_true(total >= 128);
+}
+
+function reentrancy(): test.TestOutcome {
+  let reader = match (deflate.inflate_reader(__codec_bytes(hex.decode("010300fcff616263")), 3)) { Ok(v) => v, Err(_) => { return test.fail("open"); } };
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    match (reader.read(1, never_cancel)) {
+      Err(deflate.ReadBusy()) => {
+        calls.set(calls.get() + 1);
+      },
+      _ => {
+        return true;
+      }
+    }
+    return false;
+  };
+  let result = match (reader.read(3, cancel)) { Ok(v) => v.done && same(v.bytes, "abc".bytes()), _ => false };
+  return test.assert_true(result && calls.get() == 1);
+}
+
+function main(): i32 {
+  let r = test.test_new("resumable DEFLATE output");
+  r = r.it("independent stored, fixed, and dynamic fixtures at six chunk sizes", goldens);
+  r = r.it("history wrap and distance 32768 across chunk boundaries", history_wrap);
+  r = r.it("literal-only blocks accept empty distance trees and reject malformed tables", literal_only);
+  r = r.it("empty block chains retain cancellation polls and exact consumption", empty_blocks);
+  r = r.it("invalid requests, output limits, truncation, and sticky codec errors", errors_and_limits);
+  r = r.it("input mutation, output retention, and shared session aliases", ownership);
+  r = r.it("every cancellation poll terminates and releases state", cancellation);
+  r = r.it("recursive callbacks reject reentry without corrupting the session", reentrancy);
+  return r.finish();
+}
