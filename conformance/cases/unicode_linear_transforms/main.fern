@@ -1,0 +1,68 @@
+import "std/string";
+import "std/unicode";
+
+function main(): i32 {
+  let text: string = "éßΣ ".repeat(128);
+  let count: i64 = __heap_alloc_count();
+  let upper: string = text.to_upper();
+  let lower: string = text.to_lower();
+  let folded: string = text.case_fold();
+  let swapped: string = text.swap_case();
+  let titled: string = text.title_case();
+  let allocations: i64 = __heap_alloc_count() - count;
+  if (upper.hash_fnv32() != 419326789 as u32) {
+    return 1;
+  }
+  if (lower.hash_fnv32() != 2810942789 as u32) {
+    return 2;
+  }
+  if (folded.hash_fnv32() != 3531486405 as u32) {
+    return 3;
+  }
+  if (swapped.hash_fnv32() != 173501637 as u32) {
+    return 4;
+  }
+  if (titled.hash_fnv32() != 3888304197 as u32) {
+    return 5;
+  }
+  if (allocations > 128 as i64) {
+    return 6;
+  }
+  let clusters: string = "é👨‍👩‍👧‍👦".repeat(16);
+  let reverse_before: i64 = __heap_alloc_count();
+  let reversed: string = unicode.reverse_graphemes(clusters);
+  if (__heap_alloc_count() - reverse_before > 32 as i64) {
+    return 14;
+  }
+  if (reversed != "👨‍👩‍👧‍👦é".repeat(16)) {
+    return 7;
+  }
+  if (unicode.reverse_graphemes(reversed) != clusters) {
+    return 8;
+  }
+  let bad: string = string_from_bytes_unchecked([240 as u8, 159 as u8, 65 as u8, 255 as u8]);
+  if (bad.to_lower() != "��a�") {
+    return 9;
+  }
+  if (bad.to_upper() != "��A�") {
+    return 10;
+  }
+  if (bad.case_fold() != "��a�") {
+    return 11;
+  }
+  if (bad.swap_case() != "��a�") {
+    return 12;
+  }
+  if (bad.title_case() != "��A�") {
+    return 13;
+  }
+  let reverse_bad: string = unicode.reverse_graphemes(bad);
+  if (reverse_bad.len() != 4 || reverse_bad[0] != 255 as u8 || reverse_bad[1] != 65 as u8 || reverse_bad[2] != 159 as u8 || reverse_bad[3] != 240 as u8) {
+    return 15;
+  }
+  let empty_before: i64 = __heap_alloc_count();
+  if (unicode.reverse_graphemes("") != "" || __heap_alloc_count() != empty_before) {
+    return 16;
+  }
+  return 0;
+}

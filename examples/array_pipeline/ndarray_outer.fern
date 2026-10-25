@@ -1,3 +1,9 @@
+// Native probe: left length, right length, rounds, mode (0 stdlib, 1 scalar,
+// 2 explicit kernel). The explicit kernel probe requires packed inputs.
+// Check every result and both inputs outside the timed region. The packed
+// probe retains the ordinary element-function call and append semantics.
+import "std/i32";
+import "std/result";
 import "std/ndarray";
 import "std/string";
 import "std/array";
@@ -78,16 +84,16 @@ function main(): i32 {
   let rounds: i32 = 2;
   let variant: i32 = 0;
   if (argv.len() > 1) {
-    n = argv[1].parse_int_or(n);
+    n = i32.parse_i32(argv[1]).unwrap_or(n);
   }
   if (argv.len() > 2) {
-    m = argv[2].parse_int_or(m);
+    m = i32.parse_i32(argv[2]).unwrap_or(m);
   }
   if (argv.len() > 3) {
-    rounds = argv[3].parse_int_or(rounds);
+    rounds = i32.parse_i32(argv[3]).unwrap_or(rounds);
   }
   if (argv.len() > 4) {
-    variant = argv[4].parse_int_or(0);
+    variant = i32.parse_i32(argv[4]).unwrap_or(0);
   }
   if (n < 1 || m < 1 || rounds < 1 || n > 2147483647 / m || variant < 0 || variant > 2) {
     return 1;

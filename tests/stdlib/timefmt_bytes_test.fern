@@ -28,7 +28,7 @@ function exercise(): i32 {
       return 1;
     }
     let text: string = timefmt.format(raw, z, 0, 0);
-    if (text != "�1970�" || !utf8.is_valid_utf8(text)) {
+    if (text != "�1970�" || !utf8.is_valid(text)) {
       return 2;
     }
     i = i + 1;
@@ -56,7 +56,7 @@ function exercise(): i32 {
   if (!equal(timefmt.format_bytes(compiled, z, 0, 0), bytes)) {
     return 5;
   }
-  if (!utf8.is_valid_utf8(timefmt.format(compiled, z, 0, 0))) {
+  if (!utf8.is_valid(timefmt.format(compiled, z, 0, 0))) {
     return 6;
   }
   return 0;

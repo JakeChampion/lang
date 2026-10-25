@@ -241,19 +241,19 @@ function main(): i32 {
   }
   let count: i32 = -1;
   let ticks: i32 = 0;
-  match (argv[2].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[2])) {
+    Ok(n) => {
       count = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }
-  match (argv[3].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[3])) {
+    Ok(n) => {
       ticks = n;
     },
-    None => {
+    Err(_) => {
       return 2;
     }
   }

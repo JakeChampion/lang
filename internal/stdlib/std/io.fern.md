@@ -40,7 +40,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "std/io_outcome";
 import "std/utf8" as utf8;
 ```
 
@@ -93,18 +92,18 @@ pub function read_all_bytes(r: Reader): Result[u8[], IoError] {
 function read_stdin_buffer(): Result[usize, IoError] {
   let r: Reader = stdin();
   let result: Result[usize, IoError] = read_all_buffer(r);
-  let closed: Option[IoError] = r.close().failure();
+  let closed: Result[void, IoError] = r.close();
   match (result) {
     Err(e) => {
       return Err(e);
     },
     Ok(b) => {
       match (closed) {
-        Some(e) => {
+        Err(e) => {
           buf_free(b);
           return Err(e);
         },
-        None => {
+        Ok(_) => {
           return Ok(b);
         }
       }

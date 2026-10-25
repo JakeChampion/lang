@@ -1,0 +1,194 @@
+{
+  "source_commit": "f674ab43d324f2c2f6a8f9668da4e19ebb52b0a0",
+  "go_cases": 2479,
+  "packages": 5,
+  "skips": 0,
+  "native_certificate": {
+    "recorded_source": "56690b99c644ee5ef39595beb472dc4c4fe7cf18",
+    "current_source": "f674ab43d324f2c2f6a8f9668da4e19ebb52b0a0",
+    "paths": [
+      "compiler",
+      "internal/stdlib",
+      "bootstrap/stage0.lock",
+      ".github/selfhost-driver-sizes.txt"
+    ],
+    "changed": [],
+    "compiler": "/workspace/scratch/lang-primitive-protocols/latest-package-integration/bootstrap/stage3",
+    "compiler_sha256": "1dda7c479a999be867f30cbff901e9dd8ba1511bdf4626c2da14871388549a94"
+  },
+  "matrices": [
+    {
+      "file": "contracts-matrix-results.json",
+      "commands": 144,
+      "balanced_censuses": 24
+    },
+    {
+      "file": "verified-negative.json",
+      "commands": 6,
+      "balanced_censuses": 0
+    },
+    {
+      "file": "package-compatibility/committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15
+    },
+    {
+      "file": "package-compatibility/package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3
+    },
+    {
+      "file": "package-compatibility/reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12
+    },
+    {
+      "file": "all-coreutils-checks.json",
+      "commands": 212,
+      "balanced_censuses": 0
+    }
+  ],
+  "prior_proof": "package-corpus-integration",
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 1005,
+      "sha256": "9e62f4c9e836d73d486da61299498a9584b6bfa8d6c6f68cf1806adaaf2ef158"
+    },
+    {
+      "path": "native-source-certificate.json.gz",
+      "bytes": 318,
+      "sha256": "470850aad8eb6dca8820e951911df9067a0497d0506ae23a951cb6b6d9f13726"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 147744,
+      "sha256": "1b04e02de4ece6650af0258e327e7804fd6b0466b832afaa232f0203f8425967"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 379,
+      "sha256": "0fa3d98607e294f4c58418c9a8a3e2f2ddb6447bce337dab12b11085e4c39924"
+    },
+    {
+      "path": "contracts-matrix.py.gz",
+      "bytes": 1462,
+      "sha256": "e71a0fe138c702c86a3f9e7c94dcdcbf812948fd5ffd8fbe0a7bab40399b7e91"
+    },
+    {
+      "path": "contracts-matrix-results.json.gz",
+      "bytes": 4822,
+      "sha256": "54835e9c57dcfb1cb67c18455637a3a09c53023f8377f022a4bb9ee07f7cd632"
+    },
+    {
+      "path": "contracts-matrix.log.gz",
+      "bytes": 185,
+      "sha256": "7528648243f72fef96dba55b954470030f537c4376fd0637dd71c9ba6c435244"
+    },
+    {
+      "path": "verified-negative.py.gz",
+      "bytes": 731,
+      "sha256": "5f4b6ae5d9c2a7cb00c36b20c0ce4a201b8bb18f8ca56ba5210964af49695344"
+    },
+    {
+      "path": "verified-negative.json.gz",
+      "bytes": 808,
+      "sha256": "97f45d978753e216f4db945805b1525ea758c2ba9ff6d11cfc9304f8c8fa7db1"
+    },
+    {
+      "path": "verified-negative.log.gz",
+      "bytes": 121,
+      "sha256": "fa62a15b4a9a954f18e789bc7a1e537a0cb27fbb2e5491901effdbcf7415d204"
+    },
+    {
+      "path": "check-all-coreutils.py.gz",
+      "bytes": 673,
+      "sha256": "eb0093a0abfbeddde516846c3bd7b5da7d2075613a03eedb20e62a4f257c8f5d"
+    },
+    {
+      "path": "all-coreutils-checks.json.gz",
+      "bytes": 1820,
+      "sha256": "150fee43b56c19a7d51adb10b154906c08787268b67306b7a4586033d3bd810d"
+    },
+    {
+      "path": "all-coreutils-checks.log.gz",
+      "bytes": 438,
+      "sha256": "9c56d79f28ef22bb35a32cbb346037402f41ec0d69149040b22d06c3ab8de5de"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body.md.gz",
+      "bytes": 727,
+      "sha256": "3bb585f36cd13132201dc1a0816451ea1ac414f29a85417fdfd60105670c01c0"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1582,
+      "sha256": "e728670cf8e5123503a93aaaf92d78f3aa7554403f4f3f9d89b773547cf74e76"
+    },
+    {
+      "path": "package-compatibility/committed-matrix-final.py.gz",
+      "bytes": 1497,
+      "sha256": "1bea10fe94fe17a89f4125a6de174324a9e5e34e1fcc556ba2f31475276b6fc0"
+    },
+    {
+      "path": "package-compatibility/committed-matrix-final-results.json.gz",
+      "bytes": 4491,
+      "sha256": "81a0620edba4c42729113d23c8449f7a9715df06b79796378d713c1c27e4ef49"
+    },
+    {
+      "path": "package-compatibility/committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-compatibility/package-project-matrix-final.py.gz",
+      "bytes": 1432,
+      "sha256": "b818c6d274f2c34bfe524302b930ba495af4d48caffb16c507d88b50b96baf3e"
+    },
+    {
+      "path": "package-compatibility/package-project-matrix-final-results.json.gz",
+      "bytes": 1221,
+      "sha256": "a02e6509036f0b521aed6556a17386b17ba4e2239dee8191c8ccfe79d8d0bc77"
+    },
+    {
+      "path": "package-compatibility/package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "package-compatibility/reexport-matrix-final.py.gz",
+      "bytes": 1480,
+      "sha256": "7e24d5ea2c7645f8df003e6004f7717a9f4392d72d85503c5eefe27321fee6f9"
+    },
+    {
+      "path": "package-compatibility/reexport-matrix-final-results.json.gz",
+      "bytes": 2219,
+      "sha256": "80ac252826a265e55fa920da813a6038f22f1f1865b2933b444225ea19afcd19"
+    },
+    {
+      "path": "package-compatibility/reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    }
+  ]
+}

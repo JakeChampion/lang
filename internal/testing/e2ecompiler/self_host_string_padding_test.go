@@ -16,7 +16,7 @@ function main(): i32 {
         while (width < 32) {
             let left: string = "x".pad_start_str(width, fill);
             let right: string = "x".pad_end_str(width, fill);
-            if (!utf8.is_valid_utf8(left) || !utf8.is_valid_utf8(right)) { return 5; }
+            if (!utf8.is_valid(left) || !utf8.is_valid(right)) { return 5; }
             if (left.len() > width || right.len() > width) { return 6; }
             if (!left.ends_with("x") || !right.starts_with("x")) { return 7; }
             width = width + 1;

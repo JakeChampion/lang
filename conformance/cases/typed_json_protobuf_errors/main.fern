@@ -1,0 +1,387 @@
+import "std/json" as js;
+import "std/protobuf";
+import "std/error";
+import "core/cmp";
+import "std/string";
+import "std/i64";
+
+@derive(js.FromJson)
+struct Box[T] { value: T, rest: T[], maybe: Option[T] }
+
+@derive(js.FromJson)
+enum Choice { Empty, Pair(i32, string), Record { n: i64 } }
+
+function describe[T: error.Error](e: T): string {
+  return e.message();
+}
+
+function display[T: cmp.Display](e: T): string {
+  return e.to_string();
+}
+
+function json_cases(): i32 {
+  let bad: string = "{\n  \"value\": ]}";
+  match (js.parse(bad)) {
+    Ok(_) => {
+      return 1;
+    },
+    Err(parsed) => {
+      match (js.decode[Box[i64]](bad)) {
+        Ok(_) => {
+          return 2;
+        },
+        Err(e) => {
+          if (e.offset != parsed.offset || e.line != 2 || e.col != parsed.col || e.message != parsed.message) {
+            return 3;
+          }
+          if (describe(e) != display(e)) {
+            return 4;
+          }
+          match (js.decode_array[Box[i64]](bad)) {
+            Ok(_) => {
+              return 5;
+            },
+            Err(nested) => {
+              if (nested.offset != e.offset || nested.line != e.line || nested.col != e.col) {
+                return 5;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let b: Result[Box[i64], js.JsonError] = Box.from_json("{\"value\":-9223372036854775808,\"rest\":[9223372036854775807]}");
+  match (b) {
+    Ok(v) => {
+      if (v.value + 1 as i64 != -(9223372036854775807 as i64) || v.rest[0] != 9223372036854775807 as i64) {
+        return 6;
+      }
+      match (v.maybe) {
+        None => {},
+        Some(_) => {
+          return 7;
+        }
+      }
+    },
+    Err(_) => {
+      return 8;
+    }
+  }
+  match (js.parse("{\"n\":-9223372036854775808}")) {
+    Ok(v) => {
+      match (js.json_get_i64(v, "n")) {
+        Some(n) => {
+          if (n + 1 as i64 != -(9223372036854775807 as i64)) {
+            return 9;
+          }
+        },
+        None => {
+          return 10;
+        }
+      }
+    },
+    Err(_) => {
+      return 11;
+    }
+  }
+  match (js.decode[i64]("9223372036854775808")) {
+    Ok(_) => {
+      return 12;
+    },
+    Err(e) => {
+      if (e.offset != -1 || e.line != 0 || e.col != 0) {
+        return 13;
+      }
+    }
+  }
+  match (js.decode[i64]("-9223372036854775809")) {
+    Ok(_) => {
+      return 14;
+    },
+    Err(_) => {}
+  }
+  match (js.decode[Box[i32]]("{\"value\":1,\"rest\":[\"bad\"]}")) {
+    Ok(_) => {
+      return 15;
+    },
+    Err(e) => {
+      if (e.to_string() != "field \"rest\": [0]: expected an integer, got a string") {
+        return 16;
+      }
+    }
+  }
+  let c: Result[Choice, js.JsonError] = Choice.from_json("{\"Pair\":[1,\"ok\"]}");
+  match (c) {
+    Ok(_) => {},
+    Err(_) => {
+      return 17;
+    }
+  }
+  match (Choice.from_json("{\"Record\":{\"n\":false}}")) {
+    Ok(_) => {
+      return 18;
+    },
+    Err(e) => {
+      if (e.to_string() != "variant \"Record\": field \"n\": expected an integer, got a boolean") {
+        return 19;
+      }
+    }
+  }
+  match (Choice.from_json("\"Other\"")) {
+    Ok(_) => {
+      return 20;
+    },
+    Err(e) => {
+      if (e.message != "unknown variant \"Other\"") {
+        return 21;
+      }
+    }
+  }
+  return 0;
+}
+
+function protobuf_cases(): i32 {
+  let all: u8[] = protobuf.varint_field(1, -(1 as i64)).concat(protobuf.bytes_field(536870911, [1 as u8, 2 as u8]));
+  match (protobuf.decode(all)) {
+    Ok(fields) => {
+      if (fields.len() != 2 || fields[0].word != -(1 as i64) || fields[1].number != 536870911 || fields[1].bytes.len() != 2) {
+        return 30;
+      }
+    },
+    Err(_) => {
+      return 31;
+    }
+  }
+  let overflow: u8[] = [8 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 2 as u8];
+  match (protobuf.decode(overflow)) {
+    Ok(_) => {
+      return 32;
+    },
+    Err(e) => {
+      if (e.offset != 10 || e.field != 1 || describe(e) != display(e)) {
+        return 33;
+      }
+      match (e.kind) {
+        protobuf.VarintOverflow => {},
+        _ => {
+          return 34;
+        }
+      }
+    }
+  }
+  let huge: u8[] = [10 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 16 as u8];
+  match (protobuf.decode(huge)) {
+    Ok(_) => {
+      return 35;
+    },
+    Err(e) => {
+      if (e.offset != 1 || e.field != 1) {
+        return 36;
+      }
+      match (e.kind) {
+        protobuf.LengthOutOfBounds(n, left) => {
+          if (n != 4294967296 as u64 || left != 0) {
+            return 37;
+          }
+        },
+        _ => {
+          return 38;
+        }
+      }
+    }
+  }
+  match (protobuf.decode([128 as u8, 128 as u8, 128 as u8, 128 as u8, 16 as u8, 0 as u8])) {
+    Ok(_) => {
+      return 39;
+    },
+    Err(e) => {
+      if (e.offset != 0 || e.field != 0) {
+        return 40;
+      }
+      match (e.kind) {
+        protobuf.InvalidFieldNumber(n) => {
+          if (n != 536870912 as u64) {
+            return 41;
+          }
+        },
+        _ => {
+          return 42;
+        }
+      }
+    }
+  }
+  match (protobuf.decode([8 as u8, 128 as u8])) {
+    Ok(_) => {
+      return 43;
+    },
+    Err(e) => {
+      if (e.offset != 2 || e.field != 1) {
+        return 44;
+      }
+      match (e.kind) {
+        protobuf.UnexpectedEnd => {},
+        _ => {
+          return 45;
+        }
+      }
+    }
+  }
+  match (protobuf.decode([13 as u8, 0 as u8])) {
+    Ok(_) => {
+      return 46;
+    },
+    Err(e) => {
+      if (e.offset != 1 || e.field != 1) {
+        return 47;
+      }
+      match (e.kind) {
+        protobuf.FixedOutOfBounds(n, left) => {
+          if (n != 4 || left != 1) {
+            return 48;
+          }
+        },
+        _ => {
+          return 49;
+        }
+      }
+    }
+  }
+  match (protobuf.decode([11 as u8])) {
+    Ok(_) => {
+      return 50;
+    },
+    Err(e) => {
+      match (e.kind) {
+        protobuf.UnsupportedGroup(w) => {
+          if (w != 3) {
+            return 51;
+          }
+        },
+        _ => {
+          return 52;
+        }
+      }
+    }
+  }
+  match (protobuf.decode([15 as u8])) {
+    Ok(_) => {
+      return 53;
+    },
+    Err(e) => {
+      match (e.kind) {
+        protobuf.InvalidWireType(w) => {
+          if (w != 7) {
+            return 54;
+          }
+        },
+        _ => {
+          return 55;
+        }
+      }
+    }
+  }
+  match (protobuf.decode([0 as u8])) {
+    Ok(_) => {
+      return 56;
+    },
+    Err(e) => {
+      match (e.kind) {
+        protobuf.InvalidFieldNumber(n) => {
+          if (n != 0 as u64) {
+            return 57;
+          }
+        },
+        _ => {
+          return 58;
+        }
+      }
+    }
+  }
+  match (protobuf.decode([])) {
+    Ok(v) => {
+      if (v.len() != 0) {
+        return 59;
+      }
+    },
+    Err(_) => {
+      return 60;
+    }
+  }
+  return 0;
+}
+
+function varint_boundaries(): i32 {
+  let prefix: u8[] = [8 as u8];
+  let i: i32 = 0;
+  while (i < 10) {
+    match (protobuf.decode(prefix)) {
+      Ok(_) => {
+        return 61;
+      },
+      Err(e) => {
+        if (e.offset != prefix.len() || e.field != 1) {
+          return 62;
+        }
+        match (e.kind) {
+          protobuf.UnexpectedEnd => {},
+          _ => {
+            return 63;
+          }
+        }
+      }
+    }
+    if (i < 9) {
+      prefix = prefix.append(128 as u8);
+    }
+    i = i + 1;
+  }
+  let last: i32 = 0;
+  while (last < 256) {
+    match (protobuf.decode(prefix.append(last as u8))) {
+      Ok(fields) => {
+        if (last > 1 || fields.len() != 1 || fields[0].word != last as i64 << 63) {
+          return 64;
+        }
+      },
+      Err(e) => {
+        if (last <= 1 || e.offset != 10 || e.field != 1) {
+          return 65;
+        }
+        match (e.kind) {
+          protobuf.VarintOverflow => {},
+          _ => {
+            return 66;
+          }
+        }
+      }
+    }
+    last = last + 1;
+  }
+  let values: i64[] = [0 as i64, 127 as i64, 128 as i64, 16383 as i64, 16384 as i64, 4294967296 as i64, 9223372036854775807 as i64, -(1 as i64)];
+  for value in values {
+    match (protobuf.decode(protobuf.varint_field(1, value))) {
+      Ok(fields) => {
+        if (fields.len() != 1 || fields[0].word != value) {
+          return 67;
+        }
+      },
+      Err(_) => {
+        return 68;
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let j: i32 = json_cases();
+  if (j != 0) {
+    return j;
+  }
+  let p: i32 = protobuf_cases();
+  if (p != 0) {
+    return p;
+  }
+  return varint_boundaries();
+}

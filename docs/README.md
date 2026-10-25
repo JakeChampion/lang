@@ -33,6 +33,7 @@ which ones.
 | `INTEGER-SEMANTICS.md` | [policy] | Wrapping, never-trapping integer operations with identical results on every backend, and the rules for usize. |
 | `STR-VIEW-CONTRACT.md` | [policy] | What enforces the borrowed `str` contract (#8635). |
 | `STRINGS-SOTA.md` | [policy] | String state of the art and Fern's string decisions D1–D11 (UTF-8, byte indices, char, guaranteed validity), and the October 2026 migration audit. |
+| `NUMBER-PARSING.md` | [reference] | Typed numeric parsing, range checks, and shared integer formats. |
 | `ASSOCIATED-TYPES.md` | [reference] | Trait associated types and `Base::Name` projections (`Self::Item`, `T::Item`) as shipped. |
 | `BYTE-API.md` | [reference] | Byte views at codec inputs, owned outputs, byte access and character fills. |
 | `BLOCK-EXPRESSIONS.md` | [reference] | Block-expression syntax and value rules. |
@@ -241,6 +242,7 @@ which ones.
 | `NET-P8-HTTP3-PLAN.md` | [plan] | Networking P8: QUIC and HTTP/3, slice by slice; slices 1–7 landed, and the rest are open. |
 | `NETWORKING-RESEARCH-2026-09.md` | [research] | The survey behind the networking plan: server performance, API ergonomics, TLS/DNS/QUIC/io_uring, simulation testing, security and operations. |
 | `SOTA-STDLIB-BLUEPRINT.md` | [research] | Each stdlib primitive audited against the best known algorithm, with a verdict and recommended order. |
+| `JSON-PROTOBUF-ERRORS.md` | [reference] | Typed JSON and Protocol Buffers decode errors, locations, and migration. |
 | `STDLIB-DESIGN-RESEARCH.md` | [research] | Design research on four stdlib areas: HTTP, JSON, date/time and I/O. |
 | `MAP-SPECIALIZATION.md` | [record] | An unstarted proposal to monomorphise `Map[K, V]`; two attempts regressed code size, and keyed helpers landed instead. |
 | `NET-P0-MESSAGE-LAYER-PLAN.md` | [record] | Networking P0: allocations of the HTTP framing path and serve loop, taken to zero per hello request; done (#9853). |
@@ -305,3 +307,5 @@ Dated records live in topic directories, named `YYYY-MM-DD-slug.md`. In
 | `contexts/` | Spec summaries of the FIP and runtime experiments. |
 | `records/` | Retired architecture sections preserved from current references. |
 | `proposals/` | The Fern Proposal draw list and settled rulings (FERN-PROPOSALS.md). |
+
+| `TEXT-API.md` | [reference] | Text operation owners, current names, and encoding contracts. |

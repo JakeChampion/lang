@@ -1,0 +1,390 @@
+{
+  "source_commit": "4ae4322350a9ded1d3989a6464e3d3f3394ad925",
+  "compiled_source_commit": "4ee0c13b3055436ba026f210c5f88cc4eaa3a162",
+  "main_base": "6912c7718d176daf8996d55e75bf60f6d52c47fb",
+  "public_parent": "445d513307cbf7e77a3951e041fa49ebf534c8a7",
+  "prior_capsule": "../final-validation/manifest.json",
+  "prior_manifest_sha256": "530cf869bd2750049dcb8e4bfad00796193e810738deded0e1a3e0d7d2049367",
+  "prior_passed": 4792,
+  "prior_skipped": 1,
+  "suites": [
+    {
+      "file": "/workspace/scratch/lang-stdlib-apis-final-0830/upstream-4cda/focused-tap-regressions.jsonl",
+      "source_commit": "2399ec3e4d2dc405bbc1b62bd1b6e3ead5b887c9",
+      "run": 7,
+      "passed": 7,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "/workspace/scratch/lang-stdlib-apis-final-0830/upstream-4cda/formatter-final-regressions.jsonl",
+      "source_commit": "2399ec3e4d2dc405bbc1b62bd1b6e3ead5b887c9",
+      "run": 2,
+      "passed": 2,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "/workspace/scratch/lang-stdlib-apis-6912-final/source-gates.jsonl",
+      "source_commit": "4ee0c13b3055436ba026f210c5f88cc4eaa3a162",
+      "run": 199,
+      "passed": 199,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "/workspace/scratch/lang-stdlib-apis-6912-final/compiler-gates.jsonl",
+      "source_commit": "4ee0c13b3055436ba026f210c5f88cc4eaa3a162",
+      "run": 8,
+      "passed": 8,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "/workspace/scratch/lang-stdlib-apis-6912-final/native-stdlib-regressions.jsonl",
+      "source_commit": "4ee0c13b3055436ba026f210c5f88cc4eaa3a162",
+      "run": 8,
+      "passed": 8,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "/workspace/scratch/lang-stdlib-apis-6912-final/regex-native-regressions.jsonl",
+      "source_commit": "4ae4322350a9ded1d3989a6464e3d3f3394ad925",
+      "run": 3,
+      "passed": 3,
+      "skipped": 0,
+      "packages": 1
+    }
+  ],
+  "total_recorded_passed": 5019,
+  "total_skipped": 1,
+  "bootstrap": {
+    "source_git": "4ee0c13b3055436ba026f210c5f88cc4eaa3a162",
+    "source_sha256": "ea0a4c1d9f7b182d4f3165d63d005dea7052dc76b024ab7b1444f25157cdedda",
+    "stages": [
+      {
+        "stage": "stage1",
+        "producer_sha256": "a4d655b3ce09712582951702c8fce5d0cba0dbe58736c7da95ef2a60a9b3674f",
+        "seconds": 27.12527690202114,
+        "bytes": 14570800,
+        "sha256": "99a9de4f9f56f5626e643a02dd560364b1464f7c078041c79e8d80e49257b42f"
+      },
+      {
+        "stage": "stage2",
+        "producer_sha256": "99a9de4f9f56f5626e643a02dd560364b1464f7c078041c79e8d80e49257b42f",
+        "seconds": 22.159921083017252,
+        "bytes": 14570816,
+        "sha256": "dda7f2ec372a444abbb8a1f6d160a3e9803ca42ab0a3a8bacdadb6ab7417c7ca"
+      },
+      {
+        "stage": "stage3",
+        "producer_sha256": "dda7f2ec372a444abbb8a1f6d160a3e9803ca42ab0a3a8bacdadb6ab7417c7ca",
+        "seconds": 39.90739716999815,
+        "bytes": 14570816,
+        "sha256": "dda7f2ec372a444abbb8a1f6d160a3e9803ca42ab0a3a8bacdadb6ab7417c7ca"
+      }
+    ],
+    "fixedpoint": true
+  },
+  "compiler": {
+    "path": "/tmp/lang-stdlib-apis-6912-bootstrap/stage3",
+    "bytes": 14570816,
+    "sha256": "dda7f2ec372a444abbb8a1f6d160a3e9803ca42ab0a3a8bacdadb6ab7417c7ca"
+  },
+  "oracle": {
+    "path": "/tmp/lang-stdlib-apis-6912-oracle",
+    "sha256": "4090fddc3b9a0d0076412e924b4b147fe4690f00cb4aa2db27572f6599fe4244"
+  },
+  "embedded": {
+    "binary": "/tmp/lang-stdlib-apis-4cda-embedded-fern",
+    "sha256": "cf0b9b0703c394d324fe33a631b98db33a744dd6060ea084fbfb1adb75c7f3a1",
+    "commands": 136,
+    "stdlib_bytes_match_current": true
+  },
+  "diagnostic_tap_sweep": {
+    "file": "compatibility__tap-regressions.jsonl.gz",
+    "conclusion": "10-minute timeout in slow digest examples; excluded from pass totals"
+  },
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 1584,
+      "sha256": "e7af4ca3a377e044cc8c8ec62d5e2ddb15053b5d9778c73836f2bb55b57d19f9"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 349528,
+      "sha256": "6d2fe26e29a14d796c45097a3ba1e7cb764b68e1163a20ec14056aecf588fcd8"
+    },
+    {
+      "path": "retired-interpreter-runner-2399.go.gz",
+      "bytes": 13537,
+      "sha256": "4f6ba1f4098d035915a159ebbc292d9c93f0b22073a2a830b65613c459bbd6f5"
+    },
+    {
+      "path": "source.txt.gz",
+      "bytes": 59,
+      "sha256": "d0aad83ae614f07b942f35f0f44a3dff96e851fc5e4062781e4dc1f434ff1a66",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/source.txt"
+    },
+    {
+      "path": "pr-body.md.gz",
+      "bytes": 830,
+      "sha256": "10a919d6768a6b8b9ebebf1196d23fb60fc0cd64d1b7ba86f0e005e53660d6da",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/pr-body.md"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 2681,
+      "sha256": "36e178f913d1797fd0efda3cff7aea2bebce554b54d0e3abe1ee77ae7d9b88d6",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/record-proofs.py"
+    },
+    {
+      "path": "prepare-record.py.gz",
+      "bytes": 1486,
+      "sha256": "82f56aadc30059b5ebac0a4cbf51599f96d4903d94747636b016066764360da5",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/prepare-record.py"
+    },
+    {
+      "path": "native-source-certificate.json.gz",
+      "bytes": 29156,
+      "sha256": "acf397f5debf2b77fc69c569ddad57b2ed00ac6dd71a8a75ab83a3e77f14c401",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/native-source-certificate.json"
+    },
+    {
+      "path": "compiler-equivalence.json.gz",
+      "bytes": 268,
+      "sha256": "6e70f8a588fc1bcd10a4ed7d18eb5993e0f874616d38ef46e2d1d6126d7555e4",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/compiler-equivalence.json"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/readme-ste.log"
+    },
+    {
+      "path": "pr-body-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/pr-body-ste.log"
+    },
+    {
+      "path": "bootstrap.log.gz",
+      "bytes": 277,
+      "sha256": "d28b414ad7ff804e48def1ba4711ee30991ca050cf281232ad823ec8c32ece7f",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/bootstrap.log"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 350,
+      "sha256": "9a0e851d1562ac000384620766c55c14a87c47f07aedbd53f007d421918ecdfc",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/oracle-version.txt"
+    },
+    {
+      "path": "source-gates.jsonl.gz",
+      "bytes": 13640,
+      "sha256": "9c8bd83d0581eeaaefdf2b6128f9db1a463a4319f6673f04eecf7d84ea295556",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/source-gates.jsonl"
+    },
+    {
+      "path": "compiler-gates.jsonl.gz",
+      "bytes": 1323,
+      "sha256": "5bcce277a9820ba4762e9d82599d0bb2d22292c7cb57bf301971f2eeb4e28d83",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/compiler-gates.jsonl"
+    },
+    {
+      "path": "native-stdlib-regressions.jsonl.gz",
+      "bytes": 1049,
+      "sha256": "44749ed562d9c36f27dbf7607b427c1a26e741c68dfb68f8c6eb2ca28c358f0f",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/native-stdlib-regressions.jsonl"
+    },
+    {
+      "path": "regex-native-regressions.jsonl.gz",
+      "bytes": 510,
+      "sha256": "a07e8dd5bfb029a7b170872fec1bd53ad1ba93e999074505525748f4e1e832f7",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/regex-native-regressions.jsonl"
+    },
+    {
+      "path": "refresh-driver-sizes.py.gz",
+      "bytes": 983,
+      "sha256": "df8eb7b752b79639c020e59b3a81b463fc5cc7d12bc32aa8935c88d6e20660d6",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/refresh-driver-sizes.py"
+    },
+    {
+      "path": "check-sizes.log.gz",
+      "bytes": 120,
+      "sha256": "384583f861efce9ec169c6a3b3afa0757304dfa7ae30ce61a693a8b0f485343e",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/check-sizes.log"
+    },
+    {
+      "path": "asm_load_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/asm_load_run-final-build.log"
+    },
+    {
+      "path": "asm_modload_run-final-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/asm_modload_run-final-build.log"
+    },
+    {
+      "path": "final-driver-builds.json.gz",
+      "bytes": 1098,
+      "sha256": "c14fbb2cef0cfcd7b901ab6163fd0b641461c09e970b3ae117af83c06c3a5245",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/final-driver-builds.json"
+    },
+    {
+      "path": "final-driver-sizes.txt.gz",
+      "bytes": 165,
+      "sha256": "986226dfc5f635b5402e676da0977974609423204e73932ca01877ad6e98df1d",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/final-driver-sizes.txt"
+    },
+    {
+      "path": "final-driver-gate.log.gz",
+      "bytes": 353,
+      "sha256": "24ef090539415d99f5a06f9a2d649425dbc68d46021556c4938246e50166f91e",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/final-driver-gate.log"
+    },
+    {
+      "path": "format-vet.py.gz",
+      "bytes": 524,
+      "sha256": "0ca2b00de9bb038b75059d502b5c527c54a713edfd6f07547a2428e6168201e1",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/format-vet.py"
+    },
+    {
+      "path": "format-vet.log.gz",
+      "bytes": 54,
+      "sha256": "bef4030c400c8ab3549be7f09a9eabeed9e785f2307a849f820bbe5a7f6eb7c7",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/format-vet.log"
+    },
+    {
+      "path": "format-final.json.gz",
+      "bytes": 81,
+      "sha256": "c558c8eb97af73798cda7a4846223d399d8a041995254c536a3648c8c9965e9a",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/format-final.json"
+    },
+    {
+      "path": "format-check.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/format-check.log"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/gofmt.log"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/vet.log"
+    },
+    {
+      "path": "bootstrap__bootstrap.json.gz",
+      "bytes": 400,
+      "sha256": "3c24e1ed8a2399cf9449a3cc477305ffa239fae54424191c2e88224fcfc8e687",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/bootstrap/bootstrap.json"
+    },
+    {
+      "path": "bootstrap__completed-intermediates.json.gz",
+      "bytes": 235,
+      "sha256": "18ac64fb8b4a3ef53d0269d09ee42e1687ce8a3a77abd0b2d9a3cab221a6a2c0",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/bootstrap/completed-intermediates.json"
+    },
+    {
+      "path": "bootstrap__stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/bootstrap/stage1.log"
+    },
+    {
+      "path": "bootstrap__stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/bootstrap/stage2.log"
+    },
+    {
+      "path": "bootstrap__stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-6912-final/bootstrap/stage3.log"
+    },
+    {
+      "path": "compatibility__focused-tap-regressions.jsonl.gz",
+      "bytes": 1031,
+      "sha256": "fe455e8d9530a4ee71f5a1698ca82655f0fbad5c6c8c3accd9540d206c2fc305",
+      "original": "/workspace/scratch/lang-stdlib-apis-final-0830/upstream-4cda/focused-tap-regressions.jsonl"
+    },
+    {
+      "path": "compatibility__formatter-final-regressions.jsonl.gz",
+      "bytes": 430,
+      "sha256": "58252197b6ef4b43626275a67d6bda54be8275b7359c775c19668ed4991a4c13",
+      "original": "/workspace/scratch/lang-stdlib-apis-final-0830/upstream-4cda/formatter-final-regressions.jsonl"
+    },
+    {
+      "path": "compatibility__tap-regressions.jsonl.gz",
+      "bytes": 37275,
+      "sha256": "913de7379a02b619fe5555b5b20ef362bd56db6aea0c09bb72e8a535c29db77f",
+      "original": "/workspace/scratch/lang-stdlib-apis-final-0830/upstream-4cda/tap-regressions.jsonl"
+    },
+    {
+      "path": "compatibility__tap-selection.json.gz",
+      "bytes": 1887,
+      "sha256": "b0480c4d234b2bac33a442af2cffea911d7f8fd9c0e069a039109a8b9cca0249",
+      "original": "/workspace/scratch/lang-stdlib-apis-final-0830/upstream-4cda/tap-selection.json"
+    },
+    {
+      "path": "compatibility__tap-timeout-orphan-cleanup.json.gz",
+      "bytes": 23,
+      "sha256": "2ca4529576310b626c1bd48352d283b521d029d54f195d8416536872d826e4c6",
+      "original": "/workspace/scratch/lang-stdlib-apis-final-0830/upstream-4cda/tap-timeout-orphan-cleanup.json"
+    },
+    {
+      "path": "embedded__embedded-results.json.gz",
+      "bytes": 69537,
+      "sha256": "6b96f2fd44a443eccf11ae7007ed8ba3d353bab747310a3fbcfbb3afb3fea706",
+      "original": "/workspace/scratch/lang-stdlib-apis-4cda-final/embedded-results.json"
+    },
+    {
+      "path": "embedded__embedded-results.log.gz",
+      "bytes": 47,
+      "sha256": "8da7cbc1828325de4efdfe30873ec94ad539f5585e92ec5989119ced37e39ea8",
+      "original": "/workspace/scratch/lang-stdlib-apis-4cda-final/embedded-results.log"
+    },
+    {
+      "path": "embedded__embedded-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-4cda-final/embedded-build.log"
+    },
+    {
+      "path": "embedded__embedded-asset-inventory.json.gz",
+      "bytes": 13247,
+      "sha256": "4ff26de5f93f65719f4322d166294740559cf78816aa8f15d622355db5a607be",
+      "original": "/workspace/scratch/lang-stdlib-apis-4cda-final/embedded-asset-inventory.json"
+    },
+    {
+      "path": "embedded__embed-stage.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "original": "/workspace/scratch/lang-stdlib-apis-4cda-final/embed-stage.log"
+    },
+    {
+      "path": "embedded__fern-image.log.gz",
+      "bytes": 489,
+      "sha256": "e51fa4f3c83cf2e7dce75602bb56f02f0b77f307d48292b55214405a46d85a2c",
+      "original": "/workspace/scratch/lang-stdlib-apis-4cda-final/fern-image.log"
+    },
+    {
+      "path": "embedded__check-embedded.py.gz",
+      "bytes": 1560,
+      "sha256": "43f1fa3bb4f89784544e4c737a2d5b8b2810b7f61155e4b9bc41b87f360a4696",
+      "original": "/workspace/scratch/lang-stdlib-apis-4cda-final/check-embedded.py"
+    }
+  ]
+}

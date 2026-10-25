@@ -12,7 +12,7 @@ function valid_ref(s: string): boolean {
     let n: i32 = s.len();
     let i: i32 = 0;
     while (i < n) {
-        match (utf8.utf8_decode_at(s, i)) {
+        match (utf8.decode_at(s, i)) {
             Some(pair) => { i = i + pair.1; },
             None => { return false; }
         }
@@ -34,7 +34,7 @@ function bytes4(a: i32, b: i32, c: i32, d: i32): string {
 }
 
 function check(s: string, code: i32): i32 {
-    if (utf8.is_valid_utf8(s) != valid_ref(s)) { return code; }
+    if (utf8.is_valid(s) != valid_ref(s)) { return code; }
     return 0;
 }
 
@@ -93,7 +93,7 @@ function main(): i32 {
     let mixed: string = string_from_bytes_unchecked([65 as u8, 195 as u8, 169 as u8,
         226 as u8, 130 as u8, 172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8]);
     if (check(mixed, 26) != 0) { return 26; }
-    if (!utf8.is_valid_utf8(mixed)) { return 27; }
+    if (!utf8.is_valid(mixed)) { return 27; }
 
     // A valid string with one byte corrupted at each position in turn
     // is rejected by both, at every width.
@@ -108,7 +108,7 @@ function main(): i32 {
         }
         let broken: string = string_from_bytes_unchecked(b);
         if (check(broken, 28) != 0) { return 28; }
-        if (utf8.is_valid_utf8(broken)) { return 29; }
+        if (utf8.is_valid(broken)) { return 29; }
         k = k + 1;
     }
 
@@ -141,7 +141,7 @@ function main(): i32 {
             while (q < run) { withcp = withcp.append(pre[q]); q = q + 1; }
             let good: string = string_from_bytes_unchecked(withcp);
             if (check(good, 30) != 0) { return 30; }
-            if (!utf8.is_valid_utf8(good)) { return 31; }
+            if (!utf8.is_valid(good)) { return 31; }
 
             // Same shape with the continuation byte replaced by an ASCII
             // one: the lead byte is still found, but the sequence is now
@@ -155,7 +155,7 @@ function main(): i32 {
             }
             let broke: string = string_from_bytes_unchecked(bad);
             if (check(broke, 32) != 0) { return 32; }
-            if (utf8.is_valid_utf8(broke)) { return 33; }
+            if (utf8.is_valid(broke)) { return 33; }
             at = at + 1;
         }
         run = run + 1;

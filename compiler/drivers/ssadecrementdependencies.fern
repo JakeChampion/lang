@@ -1,3 +1,4 @@
+import "std/utf8";
 import "../ssadecrementtext" as text;
 import "std/string";
 
@@ -45,7 +46,7 @@ function namespace(s: string, entry: string, local: string): void {
   check(".data\n.ascii \"unterminated\n" + s, entry, false);
   check(".data\n.ascii \"complete\"; .set alias, hidden\n" + s, entry, false);
   for code in [0, 1, 11, 12, 31, 127] {
-    check(string.string_from_codepoint(code as char) + "\n" + s, entry, false);
+    check(utf8.encode(code as char) + "\n" + s, entry, false);
   }
 }
 

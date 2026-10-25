@@ -1,16 +1,24 @@
+import "std/i32";
 import "std/io";
 import "std/string";
 
-
 function main(): i32 {
-    match (io.read_line(stdin())) {
-        Ok(Some(line)) => {
-            match (line.trim().parse_int()) {
-                Some(n) => { return n * 2; },
-                None => { return 254; }
-            }
+  match (io.read_line(stdin())) {
+    Ok(Some(line)) => {
+      match (i32.parse_i32(line.trim())) {
+        Ok(n) => {
+          return n * 2;
         },
-        Ok(None()) => { return 0; },
-        Err(_) => { return 253; }
+        Err(_) => {
+          return 254;
+        }
+      }
+    },
+    Ok(None()) => {
+      return 0;
+    },
+    Err(_) => {
+      return 253;
     }
+  }
 }

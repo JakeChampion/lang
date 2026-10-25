@@ -79,11 +79,11 @@ pub function max_age(cc: string): Option[f64] {
   if (digits.len() == 0) {
     return None;
   }
-  match (digits.parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(digits)) {
+    Ok(n) => {
       return Some(n as f64);
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }

@@ -43,7 +43,7 @@ function check(input: string, a: i32, b: i32, valid: boolean, want: string): boo
   let Ok(m) = r else { return !valid; };
   if (!valid) { return false; }
   match (m.caps.get("value")) {
-    Some(s) => { return s == want && utf8.is_valid_utf8(s); },
+    Some(s) => { return s == want && utf8.is_valid(s); },
     None => { return false; }
   }
 }

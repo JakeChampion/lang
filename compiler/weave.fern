@@ -1,3 +1,4 @@
+import "std/unicode";
 import "std/string";
 import "./literate";
 import "./util";
@@ -224,7 +225,7 @@ function chunk_anchor(name: string): string {
   let i: i32 = 0;
   while (i < name.len()) {
     let c: u8 = name[i];
-    if (is_alnum(c)) {
+    if (is_alphanumeric(c)) {
       buf = buf.append(c);
     } else if (c < 128 || c >= 192) {
       buf = buf.append(b'-');
@@ -234,7 +235,7 @@ function chunk_anchor(name: string): string {
   return "chunk-" + string_from_bytes_unchecked(buf);
 }
 
-function is_alnum(c: u8): boolean {
+function is_alphanumeric(c: u8): boolean {
   return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9';
 }
 
@@ -660,7 +661,7 @@ function safe_link_url(url: string): boolean {
       let scheme: string = (slice_unchecked(url, 0, i) + "").to_lower();
       return scheme == "http" || scheme == "https" || scheme == "mailto";
     }
-    if (!is_alnum(c) && c != b'+' && c != b'-' && c != b'.') {
+    if (!is_alphanumeric(c) && c != b'+' && c != b'-' && c != b'.') {
       return true;
     }
     i = i + 1;
@@ -677,7 +678,7 @@ function is_type_name(w: string): boolean {
 }
 
 function is_word(c: u8): boolean {
-  return c == b'_' || is_alnum(c);
+  return c == b'_' || is_alphanumeric(c);
 }
 
 function span(cls: string, text: string): string {
