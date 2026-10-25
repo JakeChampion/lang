@@ -266,6 +266,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jnz .Lapo_cap\n");
   s = s.write("    movq $4, %rcx\n");
   s = s.write(".Lapo_cap:\n");
+  s = s.write("    leaq 1(%r14), %rax\n    cmpq %rax, %rcx\n    cmovbq %rax, %rcx\n");
   s = s.write("    leaq 24(,%rcx,8), %rdi\n");
   s = s.write("    cmpq $2048, %rdi\n");
   s = s.write("    ja .Lapo_alloc\n");
@@ -387,7 +388,7 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Larr_push_u8_cliff:\n");
   s = s.write("    incq __fern_arr_push_shared(%rip)\n    addq %r14, __fern_arr_push_copied(%rip)\n    jmp .Larr_push_u8_cap\n");
   s = s.write(".Larr_push_u8_dbl:\n    shlq $1, %rcx\n");
-  s = s.write(".Larr_push_u8_cap:\n    movq %rcx, %rdi\n    call __fern_arr_box\n");
+  s = s.write(".Larr_push_u8_cap:\n    leaq 8(%r14), %rax\n    shrq $3, %rax\n    cmpq %rax, %rcx\n    cmovbq %rax, %rcx\n    movq %rcx, %rdi\n    call __fern_arr_box\n");
   s = s.write("    leaq 1(%r14), %rcx\n    movq %rcx, (%rax)\n");
   s = s.write("    leaq 8(%r12), %rsi\n    leaq 8(%rax), %rdi\n    movq %r14, %rcx\n    rep movsb\n");
   s = s.write("    movb %r13b, 8(%rax,%r14)\n");
@@ -3313,6 +3314,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Larr_push_dbl:\n");
     s = s.write("    shlq $1, %rcx\n");
     s = s.write(".Larr_push_cap:\n");
+    s = s.write("    leaq 1(%r14), %rax\n    cmpq %rax, %rcx\n    cmovbq %rax, %rcx\n");
     s = s.write("    movq %rcx, %r15\n");
     s = s.write("    movq %r15, %rdi\n");
     s = s.write("    call __fern_arr_box\n");
