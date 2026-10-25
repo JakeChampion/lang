@@ -320,9 +320,9 @@ pub function (a: Duration) sub(b: Duration): Duration {
 }
 
 pub function (d: Duration) mul(n: i32): Duration {
-  let nanos: i64 = d.nsec as i64 * n as i64;
+  let nanos: i64 = d.nsec as i64 * (n as i64);
   let Some(sec) = d.sec.checked_mul(n as i64) else {
-    return __duration_bound(d.sec.signum() * n as i64);
+    return __duration_bound(d.sec.signum() * (n as i64));
   };
   let Some(total) = sec.checked_add(nanos.div_euclid(1000000000)) else {
     return __duration_bound(nanos);

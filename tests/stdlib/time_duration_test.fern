@@ -3,6 +3,7 @@ import "std/time";
 import "core/cmp";
 
 const I64_MAX: i64 = 9223372036854775807;
+
 const I64_MIN: i64 = 0 - 9223372036854775807 - 1;
 
 function parts(d: Duration, sec: i64, nsec: i32): boolean {
