@@ -305,8 +305,16 @@ locals sit above `nvals`. It emits:
   string or of a byte array, whose every use reads it within one
   instruction (`ssaunits.frame_views`) builds its descriptor in three frame
   slots (`op_str_slice_frame`, `op_raw_string_frame`) that the release
-  skips; on wasm, which has no data pointer to share, the same op copies the
-  bytes and the release frees the copy.
+  skips. That box is a native string, which carries a data pointer. On wasm
+  a string is an inline `{len, bytes}` block, and a callee cannot address
+  its caller's locals, so there a byte slice's descriptor is a window:
+  `{data, len}` in eight bytes of the call's shadow-stack frame
+  (`$__fern_shadow_sp`, between the free lists and the heap), handed on
+  tagged 3. The view's string-arm reads (`ir.view_string`) and the wasm
+  kernels that take a string or a view decode it, and the release skips it
+  as it skips any odd address (`TestSelfHostLentWindowConsumers`). A string
+  slice still copies its bytes there (`$__fern_substr`), and so does a byte
+  slice's heap form (`__fern_str_borrow`).
 
 What the lowering may assume: the plan verified; it re-derives the semantic
 facts it needs from the graph rather than trusting a sidecar. It refuses the

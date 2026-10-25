@@ -49,46 +49,155 @@ function main(): i32 {
 }
 `
 
+// A lent slice's descriptor read by every kind of consumer a [u8] parameter
+// reaches: the decoded reads, a slice of it lent on, the byte-view helpers,
+// the bytes runtime, the string copy, the AES key schedule and the writer.
+// On wasm each slice is a window in the caller's shadow-stack frame, so the
+// output must match the native targets and the loop must allocate nothing.
+const lentWindowProg = `import "std/i32";
+import "std/i64";
+
+@noinline function shape(d: [u8]): i32 {
+  return d.len() * 1000000 + (d[0] as i32) * 1000 + (d[d.len() - 1] as i32);
+}
+
+@noinline function total(d: [u8]): i32 {
+  let t: i32 = 0;
+  for x in d {
+    t = t + (x as i32);
+  }
+  return t;
+}
+
+@noinline function inner(d: [u8]): i32 {
+  return total(d[1:d.len() - 1]);
+}
+
+@noinline function handed(d: [u8]): i32 {
+  return shape(d) + inner(d);
+}
+
+@noinline function checks(d: [u8]): i32 {
+  return __crc32_cksum_array(7, d) ^ __sum_bytes_array(d) ^ __bsd_sum_bytes(d, 3);
+}
+
+@noinline function differs(a: [u8], b: [u8]): i32 {
+  return __mismatch_bytes(a, 0, b, 0, a.len());
+}
+
+@noinline function copied(d: [u8]): i32 {
+  let all: u8[] = __bytes_owned(d);
+  let mid: u8[] = __bytes_range(d, 1, 3);
+  let into: u8[] = __bytes_into(__alloc_u8(8), 2, d, 0, 4);
+  return all.len() * 10000 + (mid[0] as i32) * 100 + (into[2] as i32);
+}
+
+@noinline function text(d: [u8]): string {
+  return string_from_bytes_unchecked(__bytes_owned(d));
+}
+
+@noinline function expanded(k: [u8]): i32 {
+  let r: u8[] = __aes_expand_key(k);
+  return r.len() * 1000 + (r[175] as i32);
+}
+
+@noinline function put(d: [u8]): i32 {
+  match (stdout().write_bytes(d)) {
+    Ok(_) => { return 0; },
+    Err(_) => { return 1; },
+  }
+}
+
+function main(): i32 {
+  let buf: u8[] = __alloc_u8(64);
+  for i in 0..64 {
+    buf = buf.with(i, (65 + i % 26) as u8);
+  }
+  let s: [u8] = "the quick brown fox".as_bytes();
+  print(shape(buf[3:9]).to_string() + " " + total(buf[3:9]).to_string() + " " + handed(buf[3:9]).to_string());
+  print(shape(s[4:9]).to_string() + " " + handed(s[4:9]).to_string());
+  print(checks(buf[2:40]).to_string() + " " + checks(s[1:12]).to_string());
+  print(differs(buf[0:10], buf[26:36]).to_string() + " " + differs(buf[0:10], buf[1:11]).to_string() + " " + differs(s[4:9], buf[0:5]).to_string());
+  print(copied(buf[5:12]).to_string() + " " + copied(s[10:15]).to_string());
+  print(text(buf[0:6]) + "|" + text(s[4:9]));
+  print(expanded(buf[16:32]).to_string());
+  put(buf[20:26]);
+  put(s[15:19]);
+  print("");
+  let before: i64 = __heap_alloc_count();
+  let acc: i32 = 0;
+  for i in 0..1000 {
+    acc = acc + handed(buf[i % 8:i % 8 + 20]) + checks(s[1:12]) + differs(buf[0:10], s[2:12]);
+  }
+  print((__heap_alloc_count() - before).to_string() + " " + acc.to_string());
+  return 0;
+}
+`
+
+const lentWindowOut = `6068073 423 6068355
+5113107 5113428
+2022080422 12064917
+10 0 0
+77170 61498
+ABCDEF|quick
+176041
+UVWXYZ fox
+0 2070134178
+`
+
+var lentViewLeak = regexp.MustCompile(`leakcheck: allocs=(\d+) frees=(\d+) live_bytes=0`)
+
+// runLentView compiles prog for target, sanitized or not, and returns its
+// stdout and stderr.
+func runLentView(t *testing.T, cli *selfHostCLI, prog, target string, sanitize bool) (string, string) {
+	t.Helper()
+	var flags []string
+	if sanitize {
+		flags = append(flags, "-sanitize")
+	}
+	bin := compileCPUProfile(t, cli, prog, target, "", flags...)
+	var cmd *exec.Cmd
+	switch target {
+	case "x86-64-linux":
+		cmd = runX86_64Bin(cli.runner, bin)
+	case "arm64-linux":
+		_, qemu := arm64Tooling(t)
+		cmd = runArm64Bin(qemu, bin)
+	default:
+		cmd = exec.Command("wasmtime", "run", bin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("sanitize=%v: %v: stdout %q; stderr %s", sanitize, err, &stdout, &stderr)
+	}
+	if sanitize {
+		if m := lentViewLeak.FindStringSubmatch(stderr.String()); len(m) != 3 || m[1] != m[2] {
+			t.Fatalf("unbalanced sanitized run: %s", &stderr)
+		}
+	}
+	return stdout.String(), stderr.String()
+}
+
 func TestSelfHostLentViewLetsItsRecordMove(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	leak := regexp.MustCompile(`leakcheck: allocs=(\d+) frees=(\d+) live_bytes=0`)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			if got, _ := runLentView(t, cli, lentViewProg, target, false); got != "0 0\n" {
+				t.Errorf("1000 calls through the field and through a local allocate %q, want %q", got, "0 0\n")
+			}
+			runLentView(t, cli, lentViewProg, target, true)
+		})
+	}
+}
+
+func TestSelfHostLentWindowConsumers(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			for _, sanitize := range []bool{false, true} {
-				var flags []string
-				if sanitize {
-					flags = append(flags, "-sanitize")
-				}
-				bin := compileCPUProfile(t, cli, lentViewProg, target, "", flags...)
-				var cmd *exec.Cmd
-				switch target {
-				case "x86-64-linux":
-					cmd = runX86_64Bin(cli.runner, bin)
-				case "arm64-linux":
-					_, qemu := arm64Tooling(t)
-					cmd = runArm64Bin(qemu, bin)
-				default:
-					cmd = exec.Command("wasmtime", "run", bin)
-				}
-				var stdout, stderr bytes.Buffer
-				cmd.Stdout, cmd.Stderr = &stdout, &stderr
-				if err := cmd.Run(); err != nil {
-					t.Fatalf("sanitize=%v: %v: stdout %q; stderr %s", sanitize, err, &stdout, &stderr)
-				}
-				if !sanitize {
-					// wasm boxes each lent slice's descriptor (#13207), as many
-					// through the field as through the local.
-					want := "0 0\n"
-					if target == "wasm32-wasi" {
-						want = "1000 1000\n"
-					}
-					if got := stdout.String(); got != want {
-						t.Errorf("1000 calls through the field and through a local allocate %q, want %q", got, want)
-					}
-					continue
-				}
-				if m := leak.FindStringSubmatch(stderr.String()); len(m) != 3 || m[1] != m[2] {
-					t.Fatalf("unbalanced sanitized run: %s", &stderr)
+				if got, _ := runLentView(t, cli, lentWindowProg, target, sanitize); got != lentWindowOut {
+					t.Errorf("sanitize=%v: got\n%s\nwant\n%s", sanitize, got, lentWindowOut)
 				}
 			}
 		})
