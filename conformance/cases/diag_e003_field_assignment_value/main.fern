@@ -1,0 +1,24 @@
+// A field assignment is refused (E048), and its value is still checked
+// against the field's type, as a variable assignment's value is.
+struct In { q: i32 }
+
+struct Out { i: In, name: string, n: i32 }
+
+struct Box[T] { v: T }
+
+function main(): i32 {
+    let s: Out = Out { i: In { q: 1 }, name: "a", n: 0 };
+    s.n = "x";
+    s.i.q = true;
+    s.i = 4;
+    s.name += 2;
+    s.n = 5000000000;
+    s.n = 7;
+    let b: Box[i32] = Box { v: 1 };
+    b.v = "s";
+    let t: (i32, string) = (1, "a");
+    t.1 = 3;
+    let x: i32 = 0;
+    x = s.n = "y";
+    return x;
+}

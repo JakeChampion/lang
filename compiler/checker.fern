@@ -12987,23 +12987,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
   }
   match (c.callee) {
     ast.ExprIdent(id) => {
-      if (id.name == "__set_field" && c.args.len() == 3) {
-        out = util.append_diags(out, immutable_assignment_value_diags(c, s, true));
-        let fld: string = "field";
-        match (c.args[1]) {
-          ast.ExprString(fs) => {
-            fld = fs.value;
-          },
-          _ => {}
-        }
-        if let typeinfo.TypeStruct(ost) = check_expr(c.args[0], s) {
-          out = util.append_diags(out, opaque_access_diags(s.lookup_struct(ost.name), s, "access a field of", expr_line(c.args[1]), expr_col(c.args[1])));
-        }
-        out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with `T { ...old, " + fld + ": value }`", expr_line(c.args[1]), expr_col(c.args[1])));
-      }
-      if (id.name == "__set_index" && c.args.len() == 3) {
-        out = util.append_diags(out, immutable_assignment_value_diags(c, s, false));
-        out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", c.line, c.col));
+      if ((id.name == "__set_field" || id.name == "__set_index") && c.args.len() == 2) {
+        out = util.append_diags(out, place_assign_diags(c.args[0], c.args[1], c.line, c.col, s));
       }
       if (id.name == "cell_new" && c.args.len() == 1) {
         let cnat: typeinfo.Type = check_expr(c.args[0], s);
@@ -15577,33 +15562,6 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
   return out;
 }
 
-function immutable_assignment_type(c: ast.ExprCall, s: Scope, field: boolean): typeinfo.Type {
-  let target: typeinfo.Type = check_expr(c.args[0], s);
-  if (!field) {
-    return index_result_type(target, check_expr(c.args[1], s));
-  }
-  if let ast.ExprString(name) = c.args[1] {
-    let access: ast.ExprFieldAccess = ast.ExprFieldAccess { obj: c.args[0], field: name.value, line: name.line, col: name.col, ty: "", const_read: false };
-    return field_access_result_type(access, target, s);
-  }
-  return t_unknown("assignment field name");
-}
-
-function immutable_assignment_value_diags(c: ast.ExprCall, s: Scope, field: boolean): util.Diag[] {
-  let target: typeinfo.Type = immutable_assignment_type(c, s, field);
-  let value: ast.Expr = c.args[2];
-  let actual: typeinfo.Type = check_expr(value, s);
-  let out: util.Diag[] = int_dest_range_diags(value, target);
-  out = util.append_diags(out, ctor_payload_diags(value, target, s));
-  let bounds: util.Diag[] = dest_bound_diags(value, target, s);
-  out = util.append_diags(out, bounds);
-  let misfit: boolean = !settles_to(value, target, s) && !coercible(actual, target, s);
-  if (bounds.len() == 0 && !is_unknown(target) && !is_unknown(actual) && (misfit || fills_unsettled_argument(actual, target))) {
-    out = out.append(dg_at("E003", "assignment: expected " + type_label(target) + ", got " + type_label(actual) + str_copy_hint(actual, target), expr_line(c.callee), expr_col(c.callee)));
-  }
-  return out;
-}
-
 function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.Diag[] {
   let out: util.Diag[] = [];
   if (!cur.defines(a.target) && cur.lookup_sig(a.target).is_const) {
@@ -15613,23 +15571,36 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
   } else if (cur.is_const_param(a.target)) {
     out = out.append(dg_at("E091", "cannot assign to const parameter " + a.target + ": it is the constant its instance is made for", a.target_line, a.target_col));
   } else {
-    out = assign_value_diags(a, cur, unions);
+    out = assign_value_diags(a.value, cur.lookup(a.target), "variable \"" + a.target + "\"", !parser.is_iflet_value_local(a.target), a.line, a.col, cur, unions);
   }
   return out;
 }
 
-function assign_value_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.Diag[] {
-  let tt: typeinfo.Type = cur.lookup(a.target);
-  let vt: typeinfo.Type = check_expr(a.value, cur);
-  let out: util.Diag[] = int_dest_range_diags(a.value, tt);
-  out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
-  let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
+// assign_value_diags checks an assigned value against its destination type tt; what names the destination in E003.
+function assign_value_diags(value: ast.Expr, tt: typeinfo.Type, what: string, report_misfit: boolean, line: i32, col: i32, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  let vt: typeinfo.Type = check_expr(value, cur);
+  let out: util.Diag[] = int_dest_range_diags(value, tt);
+  out = util.append_diags(out, ctor_payload_diags(value, tt, cur));
+  let abound: util.Diag[] = dest_bound_diags(value, tt, cur);
   out = util.append_diags(out, abound);
-  let misfit: boolean = !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
-  if (!parser.is_iflet_value_local(a.target) && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
-    out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
+  let misfit: boolean = !settles_to(value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
+  if (report_misfit && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
+    out = out.append(dg_at("E003", what + ": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), line, col));
   }
   return out;
+}
+
+// place_assign_diags checks `place = value` for a field or element place, which the parser desugars to __set_field / __set_index.
+function place_assign_diags(place: ast.Expr, value: ast.Expr, line: i32, col: i32, s: Scope): util.Diag[] {
+  let out: util.Diag[] = assign_value_diags(value, check_expr(place, s), "assignment", true, line, col, s, s.unions.unions);
+  match (place) {
+    ast.ExprFieldAccess(fa) => {
+      return out.append(dg_at("E048", "cannot assign to field \"" + fa.field + "\": fields are immutable after construction; rebuild with `T { ...old, " + fa.field + ": value }`", fa.line, fa.col));
+    },
+    _ => {
+      return out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", expr_line(place), expr_col(place)));
+    }
+  }
 }
 
 function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): util.Diag[] {
@@ -21846,9 +21817,23 @@ function check_module_raw_floor(raw_mod: parser.Module, entry_file: string, raw_
   let mangled: util.NameIndex = util.name_index(imported_decl_names(raw_mod));
   let named: util.Diag[] = [];
   for d in mt.diags {
-    named = named.append(source_named_diag(d, mangled));
+    let nd: util.Diag = source_named_diag(d, mangled);
+    if (!reported_before(named, nd)) {
+      named = named.append(nd);
+    }
   }
   return ModuleTypes { ...mt, diags: named };
+}
+
+// reported_before holds when ds already has d's code and message at d's position: a
+// node checked twice (a compound assignment's place) reports once, as Go's checker does.
+function reported_before(ds: util.Diag[], d: util.Diag): boolean {
+  for e in ds {
+    if (e.line == d.line && e.col == d.col && e.code == d.code && e.message == d.message) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // source_named_diag spells each name an imported module declares as its
