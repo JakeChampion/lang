@@ -5,6 +5,7 @@ Kernel performance on real images: not measured.
 Image quality: not measured.
 Comparison with libvips: not measured.
 
+
 The test suite proves selected functional properties only.
 No throughput or parity claim follows from its results.
 
