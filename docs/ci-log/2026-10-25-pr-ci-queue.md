@@ -103,8 +103,8 @@ three x86-64 shards instead of four, with two aarch64 shards as before.
 
 On 2026-10-25 the owner removed the `main` ruleset. Until then
 `strict_required_status_checks_policy` required a branch to be level with
-main before it merged, so every merge forced every other open pull request
-to rebase and run its suite again, and the required checks named a job that
-no longer existed. The `changes` job's identical-tree proof still applies
-when a branch happens to be level with main; otherwise the main run is the
-backstop for the merged tree.
+main before it merged. Every merge therefore forced every other open pull
+request to rebase and run its suite again. The required checks also named a
+job that no longer existed. The `changes` job's identical-tree proof still
+applies when a branch is level with main. In every other case the main run
+is the backstop for the merged tree.
