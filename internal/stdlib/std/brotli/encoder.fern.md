@@ -64,13 +64,9 @@ function put(own w: Writer, value: i32, bits: i32): Writer {
   return Writer { bytes: bytes, at: at, acc: acc, used: used };
 }
 
-fip function reverse(value: i32, bits: i32): i32 {
-  let v: i32 = value;
-  v = v >> 1 & 0x5555 | (v & 0x5555) << 1;
-  v = v >> 2 & 0x3333 | (v & 0x3333) << 2;
-  v = v >> 4 & 0x0f0f | (v & 0x0f0f) << 4;
-  v = v >> 8 | (v & 255) << 8;
-  return v >> 16 - bits;
+// The low `bits` bits of `value` in reverse order, for `bits` up to 16.
+pub fip function reverse(value: i32, bits: i32): i32 {
+  return (REVERSE_BYTE[value & 255] as i32 << 8 | REVERSE_BYTE[value >> 8 & 255] as i32) >> 16 - bits;
 }
 
 function code(own w: Writer, value: i32, bits: i32): Writer {
