@@ -179,7 +179,11 @@ pub function inflate_after(history: [u8], input: [u8], max_out: i32): Result[Inf
 ```fern
 <<6 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError]>>=
 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
-  let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: history, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
+  let out: u8[] = history;
+  if (history.len() == 0) {
+    out = __room(input.len() - from, max_out);
+  }
+  let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: out, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
   let done: boolean = false;
   while (!done && !s.failed) {
     s = __bits(s, input, 1);
@@ -192,6 +196,24 @@ function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result
     return Err(s.error);
   }
   return Ok(Inflated { out: s.out, consumed: s.pos - from });
+}
+
+// Room for four times the input, at least 4 KiB and at most the output
+// limit, so the output rarely grows and copies.
+function __room(avail: i32, max_out: i32): u8[] {
+  let want: i64 = avail as i64 * 4i64;
+  if (want < 4096i64) {
+    want = 4096i64;
+  }
+  if (want > max_out as i64) {
+    want = max_out as i64;
+  }
+  if (want < 0i64) {
+    want = 0i64;
+  }
+  let out: u8[] = __alloc_u8(want as i32);
+  __arr_set_len(out, 0);
+  return out;
 }
 ```
 
