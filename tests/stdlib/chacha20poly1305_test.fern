@@ -170,6 +170,71 @@ function test_lengths(): test.TestOutcome {
   return test.assert_eq(shown(chacha20poly1305.seal(key_seq(0), __codec_bytes(hex.decode("00")), none, none)), "aead: the nonce is 1 bytes, want 12");
 }
 
+// RFC 8439 section 2.8.2 in place: iv 07000000 with the sequence number 4041424344454647 folded in is the
+// section's nonce, and the aad sits behind the tag in the one buffer.
+function laid(): u8[] {
+  let pt: u8[] = sunscreen();
+  let aad: u8[] = aead_aad();
+  let n: i32 = pt.len();
+  let buf: u8[] = __alloc_u8(n + 16 + aad.len());
+  for i in 0..n {
+    buf = buf.with(i, pt[i]);
+  }
+  for i in 0..aad.len() {
+    buf = buf.with(n + 16 + i, aad[i]);
+  }
+  return buf;
+}
+
+function rfc_iv(): u8[] {
+  return __codec_bytes(hex.decode("070000000000000000000000"));
+}
+
+function rfc_seq(): u64 {
+  return 0x4041424344454647 as u64;
+}
+
+// Seals the laid-out section under seal_seq, flips byte flip of the result when it is not negative, and opens it
+// under open_seq.
+function round_trip(seal_seq: u64, flip: i32, open_seq: u64): Result[u8[], aead.AeadError] {
+  let n: i32 = sunscreen().len();
+  let sealed: u8[] = chacha20poly1305.seal_in_place(key_seq(128), rfc_iv(), seal_seq, laid(), n + 16, 12, 0, n)?;
+  if (flip >= 0) {
+    sealed = sealed.with(flip, sealed[flip] ^ 1 as u8);
+  }
+  return chacha20poly1305.open_in_place(key_seq(128), rfc_iv(), open_seq, sealed, n + 16, 12, 0, n);
+}
+
+function opened(r: Result[u8[], aead.AeadError]): string {
+  match (r) {
+    Ok(b) => {
+      return hex.encode(b[0:sunscreen().len()]);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_in_place(): test.TestOutcome {
+  let n: i32 = sunscreen().len();
+  if (shown(chacha20poly1305.seal_in_place(key_seq(128), rfc_iv(), rfc_seq(), laid(), n + 16, 12, 0, n)) != rfc_sealed() + hex.encode(aead_aad())) {
+    return test.fail("seal_in_place");
+  }
+  let forged: string = "aead: the message does not verify";
+  if (opened(round_trip(rfc_seq(), 0 - 1, rfc_seq() + 1 as u64)) != forged) {
+    return test.fail("the next sequence number");
+  }
+  if (opened(round_trip(rfc_seq(), n + 3, rfc_seq())) != forged) {
+    return test.fail("a changed tag");
+  }
+  if (opened(round_trip(rfc_seq(), n + 16 + 2, rfc_seq())) != forged) {
+    return test.fail("changed aad");
+  }
+  return test.assert_eq(opened(round_trip(rfc_seq(), 0 - 1, rfc_seq())), hex.encode(sunscreen()));
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/crypto/chacha20poly1305");
   r = r.it("chacha20 block, RFC 8439 2.3.2", test_block);
@@ -184,6 +249,7 @@ function main(): i32 {
   r = r.it("open, several blocks", test_open_long);
   r = r.it("open refuses a forgery", test_open_refuses);
   r = r.it("key and nonce lengths", test_lengths);
+  r = r.it("seal and open in place, RFC 8439 under a sequence number", test_in_place);
   return r.finish();
 }
 
