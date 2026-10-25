@@ -189,6 +189,7 @@ import "std/tls/client";
 import "std/tls/ktls";
 import "std/tls/verify";
 import "std/crypto";
+import "std/hex";
 import "std/envflag";
 import "std/http/h2";
 import "core/int";
@@ -1334,7 +1335,7 @@ function __roots_key(roots: Option[verify.Roots]): string {
       for c in r.certs {
         h = h.update(c.raw);
       }
-      return h.final_hex();
+      return hex.encode(h.finish());
     },
     None => {
       return "system";

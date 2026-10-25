@@ -4,7 +4,7 @@ This module provides message digests, key derivation, and authentication codes.
 
 ## Model
 
-Digest states are values. An update borrows input bytes and returns the next state. Final methods return owned digest bytes or hexadecimal text.
+Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Hexadecimal text is `hex.encode` of the digest.
 
 ## Contracts
 
@@ -14,10 +14,10 @@ The same state must receive each returned update value. Authentication helpers c
 
 ```fern test name=std-crypto-example
 import "std/crypto";
-import "std/string";
+import "std/hex";
 
 function main(): i32 {
-  let digest = crypto.sha256_hex("abc".as_bytes());
+  let digest = hex.encode(crypto.sha256("abc".as_bytes()));
   if (digest != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 1; }
   return 0;
 }
@@ -45,7 +45,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<8 function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[]>>
 
-<<9 pub function hkdf_extract(salt: [u8], ikm: [u8]): u8[]>>
+<<9 pub function hkdf_sha256_extract(salt: [u8], ikm: [u8]): u8[]>>
 
 <<10 pub struct Sha3>>
 
@@ -61,11 +61,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 function __sha3_pad(h: Sha3, domain: u8): Sha3>>
 
-<<17 pub function (h: Sha3) final_bytes(): u8[]>>
+<<17 pub function (h: Sha3) finish(): u8[]>>
 
 <<18 function __sha3_out(st: Sha3, own out: u8[], n: i32): u8[]>>
 
-<<19 pub function (h: Sha3) final_hex(): string>>
+<<19 pub function sha3_224(s: [u8]): u8[]>>
 
 <<20 pub struct Shake>>
 
@@ -139,29 +139,6 @@ function __put_le64(own d: u8[], at: i32, v: u64): u8[] {
     i = i + 1;
   }
   return d;
-}
-
-function __hex_char(d: i32): i32 {
-  if (d < 10) {
-    return 48 + d;
-  }
-  return 87 + d;
-}
-
-function __bytes_to_hex(b: [u8]): string {
-  let n: i32 = b.len();
-  if (n == 0) {
-    return "";
-  }
-  let buf: u8[] = __alloc_u8(n * 2);
-  let i: i32 = 0;
-  while (i < n) {
-    let v: i32 = b[i] as i32;
-    buf = buf.with(i * 2, __hex_char(v >> 4 & 15) as u8);
-    buf = buf.with(i * 2 + 1, __hex_char(v & 15) as u8);
-    i = i + 1;
-  }
-  return string_from_bytes_unchecked(buf);
 }
 ```
 
@@ -348,7 +325,7 @@ pub function (h: Md5) update(chunk: [u8]): Md5 {
   return h;
 }
 
-pub function (h: Md5) final_bytes(): u8[] {
+pub function (h: Md5) finish(): u8[] {
   let bl: i32 = h.buf_len;
   let plen: i32 = 64;
   if (bl >= 56) {
@@ -367,17 +344,9 @@ pub function (h: Md5) final_bytes(): u8[] {
   return out;
 }
 
-pub function (h: Md5) final_hex(): string {
-  return __bytes_to_hex(h.final_bytes());
-}
-
-// md5_bytes and md5_hex calculate the digest of `s`.
-pub function md5_bytes(s: [u8]): u8[] {
-  return md5_new().update(s).final_bytes();
-}
-
-pub function md5_hex(s: [u8]): string {
-  return __bytes_to_hex(md5_new().update(s).final_bytes());
+// md5 calculates the digest of `s`.
+pub function md5(s: [u8]): u8[] {
+  return md5_new().update(s).finish();
 }
 
 // === SHA-1 (RFC 3174) ===
@@ -734,7 +703,7 @@ pub function (h: Sha1) update(chunk: [u8]): Sha1 {
   return h;
 }
 
-pub function (h: Sha1) final_bytes(): u8[] {
+pub function (h: Sha1) finish(): u8[] {
   let bl: i32 = h.buf_len;
   let plen: i32 = 64;
   if (bl >= 56) {
@@ -754,17 +723,9 @@ pub function (h: Sha1) final_bytes(): u8[] {
   return out;
 }
 
-pub function (h: Sha1) final_hex(): string {
-  return __bytes_to_hex(h.final_bytes());
-}
-
-// sha1_bytes and sha1_hex calculate the digest of `s`.
-pub function sha1_bytes(s: [u8]): u8[] {
-  return sha1_new().update(s).final_bytes();
-}
-
-pub function sha1_hex(s: [u8]): string {
-  return __bytes_to_hex(sha1_new().update(s).final_bytes());
+// sha1 calculates the digest of `s`.
+pub function sha1(s: [u8]): u8[] {
+  return sha1_new().update(s).finish();
 }
 
 // === SHA-224 and SHA-256 (FIPS 180-4) ===
@@ -1159,7 +1120,7 @@ pub function (h: Sha256) update(chunk: [u8]): Sha256 {
   return h;
 }
 
-pub function (h: Sha256) final_bytes(): u8[] {
+pub function (h: Sha256) finish(): u8[] {
   let bl: i32 = h.buf_len;
   let plen: i32 = 64;
   if (bl >= 56) {
@@ -1184,26 +1145,14 @@ pub function (h: Sha256) final_bytes(): u8[] {
   return out;
 }
 
-pub function (h: Sha256) final_hex(): string {
-  return __bytes_to_hex(h.final_bytes());
+// sha256 calculates the digest of `s`.
+pub function sha256(s: [u8]): u8[] {
+  return sha256_new().update(s).finish();
 }
 
-// sha256_bytes and sha256_hex calculate the digest of `s`.
-pub function sha256_bytes(s: [u8]): u8[] {
-  return sha256_new().update(s).final_bytes();
-}
-
-pub function sha256_hex(s: [u8]): string {
-  return __bytes_to_hex(sha256_new().update(s).final_bytes());
-}
-
-// sha224_bytes and sha224_hex calculate the digest of `s`.
-pub function sha224_bytes(s: [u8]): u8[] {
-  return sha224_new().update(s).final_bytes();
-}
-
-pub function sha224_hex(s: [u8]): string {
-  return __bytes_to_hex(sha224_new().update(s).final_bytes());
+// sha224 calculates the digest of `s`.
+pub function sha224(s: [u8]): u8[] {
+  return sha224_new().update(s).finish();
 }
 
 // === SHA-384 and SHA-512 (FIPS 180-4) ===
@@ -1644,7 +1593,7 @@ pub function (h: Sha512) update(chunk: [u8]): Sha512 {
   return h;
 }
 
-pub function (h: Sha512) final_bytes(): u8[] {
+pub function (h: Sha512) finish(): u8[] {
   let bl: i32 = h.buf_len;
   let plen: i32 = 128;
   if (bl >= 112) {
@@ -1671,26 +1620,14 @@ pub function (h: Sha512) final_bytes(): u8[] {
   return out;
 }
 
-pub function (h: Sha512) final_hex(): string {
-  return __bytes_to_hex(h.final_bytes());
+// sha512 calculates the digest of `s`.
+pub function sha512(s: [u8]): u8[] {
+  return sha512_new().update(s).finish();
 }
 
-// sha512_bytes and sha512_hex calculate the digest of `s`.
-pub function sha512_bytes(s: [u8]): u8[] {
-  return sha512_new().update(s).final_bytes();
-}
-
-pub function sha512_hex(s: [u8]): string {
-  return __bytes_to_hex(sha512_new().update(s).final_bytes());
-}
-
-// sha384_bytes and sha384_hex calculate the digest of `s`.
-pub function sha384_bytes(s: [u8]): u8[] {
-  return sha384_new().update(s).final_bytes();
-}
-
-pub function sha384_hex(s: [u8]): string {
-  return __bytes_to_hex(sha384_new().update(s).final_bytes());
+// sha384 calculates the digest of `s`.
+pub function sha384(s: [u8]): u8[] {
+  return sha384_new().update(s).finish();
 }
 
 // === SM3 (GB/T 32905-2016) ===
@@ -2380,7 +2317,7 @@ pub function (h: Sm3) update(chunk: [u8]): Sm3 {
   return h;
 }
 
-pub function (h: Sm3) final_bytes(): u8[] {
+pub function (h: Sm3) finish(): u8[] {
   let bl: i32 = h.buf_len;
   let plen: i32 = 64;
   if (bl >= 56) {
@@ -2403,17 +2340,9 @@ pub function (h: Sm3) final_bytes(): u8[] {
   return out;
 }
 
-pub function (h: Sm3) final_hex(): string {
-  return __bytes_to_hex(h.final_bytes());
-}
-
-// sm3_bytes and sm3_hex calculate the digest of `s`.
-pub function sm3_bytes(s: [u8]): u8[] {
-  return sm3_new().update(s).final_bytes();
-}
-
-pub function sm3_hex(s: [u8]): string {
-  return __bytes_to_hex(sm3_new().update(s).final_bytes());
+// sm3 calculates the digest of `s`.
+pub function sm3(s: [u8]): u8[] {
+  return sm3_new().update(s).finish();
 }
 
 // === BLAKE2b (RFC 7693), unkeyed, digest length 1..64 bytes ===
@@ -3322,7 +3251,7 @@ pub function (h: Blake2b) update(chunk: [u8]): Blake2b {
   return h;
 }
 
-pub function (h: Blake2b) final_bytes(): u8[] {
+pub function (h: Blake2b) finish(): u8[] {
   let bl: i32 = h.buf_len;
   let pad: u8[] = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);
   let st: Blake2b = __blake2b_blocks(h, pad, 0, 1, h.total + bl as u64, true);
@@ -3341,17 +3270,9 @@ pub function (h: Blake2b) final_bytes(): u8[] {
   return __bytes_into(__alloc_u8(st.out_len), 0, full, 0, st.out_len);
 }
 
-pub function (h: Blake2b) final_hex(): string {
-  return __bytes_to_hex(h.final_bytes());
-}
-
-// blake2b_bytes and blake2b_hex calculate an `out_len`-byte digest of `s`.
-pub function blake2b_bytes(s: [u8], out_len: i32): u8[] {
-  return blake2b_new(out_len).update(s).final_bytes();
-}
-
-pub function blake2b_hex(s: [u8], out_len: i32): string {
-  return __bytes_to_hex(blake2b_new(out_len).update(s).final_bytes());
+// blake2b calculates an `out_len`-byte digest of `s`.
+pub function blake2b(s: [u8], out_len: i32): u8[] {
+  return blake2b_new(out_len).update(s).finish();
 }
 
 // <<< generated
@@ -3363,9 +3284,9 @@ pub function blake2b_hex(s: [u8], out_len: i32): string {
 <<4 function __mac_digest(hlen: i32, msg: [u8]): u8[]>>=
 function __mac_digest(hlen: i32, msg: [u8]): u8[] {
   if (hlen == 48) {
-    return sha384_new().update(msg).final_bytes();
+    return sha384(msg);
   }
-  return sha256_new().update(msg).final_bytes();
+  return sha256(msg);
 }
 
 function __mac_block(hlen: i32): i32 {
@@ -3391,9 +3312,9 @@ function __pad_block(bs: i32, key: [u8], pad: i32): u8[] {
 
 function __mac_digest2(hlen: i32, a: [u8], b: [u8]): u8[] {
   if (hlen == 48) {
-    return sha384_new().update(a).update(b).final_bytes();
+    return sha384_new().update(a).update(b).finish();
   }
-  return sha256_new().update(a).update(b).final_bytes();
+  return sha256_new().update(a).update(b).finish();
 }
 
 function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
@@ -3418,10 +3339,6 @@ pub function hmac_sha384(key: [u8], msg: [u8]): u8[] {
   return __hmac(48, key, msg);
 }
 
-pub function hmac_sha256_hex(key: [u8], msg: [u8]): string {
-  return __bytes_to_hex(__hmac(32, key, msg));
-}
-
 pub function consteq(a: [u8], b: [u8]): boolean {
   let la: i32 = a.len();
   let lb: i32 = b.len();
@@ -3438,12 +3355,8 @@ pub function consteq(a: [u8], b: [u8]): boolean {
   return diff == 0;
 }
 
-pub function hmac_verify(key: [u8], msg: [u8], mac: [u8]): boolean {
+pub function hmac_sha256_verify(key: [u8], msg: [u8], mac: [u8]): boolean {
   return consteq(hmac_sha256(key, msg), mac);
-}
-
-pub function hmac_verify_hex(key: [u8], msg: [u8], mac_hex: string): boolean {
-  return consteq(hmac_sha256_hex(key, msg).as_bytes(), mac_hex.as_bytes());
 }
 ```
 
@@ -3501,16 +3414,8 @@ pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: 
   return __pbkdf2_core(password, salt, iterations, dk_len);
 }
 
-pub function pbkdf2_sha256_hex(password: [u8], salt: [u8], iterations: i32, dk_len: i32): string {
-  return __bytes_to_hex(__pbkdf2_core(password, salt, iterations, dk_len));
-}
-
-pub function pbkdf2_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
+pub function pbkdf2_sha256_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
   return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
-}
-
-pub function pbkdf2_verify_hex(password: [u8], salt: [u8], iterations: i32, expected_hex: string): boolean {
-  return consteq(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2).as_bytes(), expected_hex.as_bytes());
 }
 ```
 
@@ -3548,24 +3453,20 @@ function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
 }
 ```
 
-### `9 pub function hkdf_extract(salt: [u8], ikm: [u8]): u8[]`
+### `9 pub function hkdf_sha256_extract(salt: [u8], ikm: [u8]): u8[]`
 
 ```fern
-<<9 pub function hkdf_extract(salt: [u8], ikm: [u8]): u8[]>>=
-pub function hkdf_extract(salt: [u8], ikm: [u8]): u8[] {
+<<9 pub function hkdf_sha256_extract(salt: [u8], ikm: [u8]): u8[]>>=
+pub function hkdf_sha256_extract(salt: [u8], ikm: [u8]): u8[] {
   return __hkdf_extract(32, salt, ikm);
 }
 
-pub function hkdf_expand(prk: [u8], info: [u8], length: i32): u8[] {
+pub function hkdf_sha256_expand(prk: [u8], info: [u8], length: i32): u8[] {
   return __hkdf_expand(32, prk, info, length);
 }
 
 pub function hkdf_sha256(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
-  return hkdf_expand(hkdf_extract(salt, ikm), info, length);
-}
-
-pub function hkdf_sha256_hex(salt: [u8], ikm: [u8], info: [u8], length: i32): string {
-  return __bytes_to_hex(hkdf_expand(hkdf_extract(salt, ikm), info, length));
+  return __hkdf_expand(32, __hkdf_extract(32, salt, ikm), info, length);
 }
 
 pub function hkdf_sha384_extract(salt: [u8], ikm: [u8]): u8[] {
@@ -3933,11 +3834,11 @@ function __sha3_pad(h: Sha3, domain: u8): Sha3 {
 }
 ```
 
-### `17 pub function (h: Sha3) final_bytes(): u8[]`
+### `17 pub function (h: Sha3) finish(): u8[]`
 
 ```fern
-<<17 pub function (h: Sha3) final_bytes(): u8[]>>=
-pub function (h: Sha3) final_bytes(): u8[] {
+<<17 pub function (h: Sha3) finish(): u8[]>>=
+pub function (h: Sha3) finish(): u8[] {
   return __sha3_out(__sha3_pad(h, 0x06 as u8), __alloc_u8(h.out_len), h.out_len);
 }
 ```
@@ -3980,16 +3881,24 @@ function __put_lane(own out: u8[], at: i32, lane: u64, n: i32): u8[] {
 }
 ```
 
-### `19 pub function (h: Sha3) final_hex(): string`
+### `19 pub function sha3_224(s: [u8]): u8[]`
 
 ```fern
-<<19 pub function (h: Sha3) final_hex(): string>>=
-pub function (h: Sha3) final_hex(): string {
-  return __bytes_to_hex(h.final_bytes());
+<<19 pub function sha3_224(s: [u8]): u8[]>>=
+pub function sha3_224(s: [u8]): u8[] {
+  return sha3_224_new().update(s).finish();
 }
 
-pub function sha3_256_hex(s: [u8]): string {
-  return sha3_256_new().update(s).final_hex();
+pub function sha3_256(s: [u8]): u8[] {
+  return sha3_256_new().update(s).finish();
+}
+
+pub function sha3_384(s: [u8]): u8[] {
+  return sha3_384_new().update(s).finish();
+}
+
+pub function sha3_512(s: [u8]): u8[] {
+  return sha3_512_new().update(s).finish();
 }
 ```
 

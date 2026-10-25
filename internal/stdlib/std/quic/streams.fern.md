@@ -110,6 +110,9 @@ pub function (r: Reassembly) add(offset: i64, data: u8[]): Reassembly {
     return __hold(r, offset, data);
   }
   let skip: i32 = (front - offset) as i32;
+  if (skip == 0 && r.ready.len() == 0) {
+    return __drain(Reassembly { ...r, ready: data });
+  }
   return __drain(Reassembly { ...r, ready: __append_range(r.ready, data, skip, data.len()) });
 }
 
@@ -224,6 +227,7 @@ pub struct Streams {
   limits: i64[],
   opened: i64[],
   limits_dirty: boolean[],
+  closed: i64[],
   open_blocked: i64[],
   recv_max: i64,
   recv_window: i64,
@@ -255,7 +259,7 @@ pub struct Streams {
 <<7 pub function table(server: boolean, local: params.Params): Streams>>=
 pub function table(server: boolean, local: params.Params): Streams {
   let none: params.Params = params.defaults();
-  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0, index: [], base: 0 as i64 };
+  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], closed: [0 as i64, 0 as i64, 0 as i64, 0 as i64], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0, index: [], base: 0 as i64 };
   let bidi: i32 = s.__peer_type(false);
   return Streams { ...s, limits: s.limits.with(bidi, local.initial_max_streams_bidi).with(bidi + 2, local.initial_max_streams_uni) };
 }
@@ -468,10 +472,22 @@ pub function (s: Streams) read(id: i64): Streams {
   if (st.recv.reset >= 0) {
     return s.__refuse("the peer reset the stream");
   }
-  let (data, bytes) = st.recv.data.take();
-  let fin: boolean = st.recv.final_size >= 0 && data.taken == st.recv.final_size;
-  let cur: Streams = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64, refused: "", read_data: bytes, read_fin: fin }.__put(i, Stream { ...st, recv: Recv { ...st.recv, data: data, fin_read: fin } });
+  let bytes: u8[] = st.recv.data.ready;
+  let fin: boolean = st.recv.final_size >= 0 && st.recv.data.delivered() == st.recv.final_size;
+  let cur: Streams = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64, refused: "", read_data: bytes, read_fin: fin, list: s.list.with(i, s.list[i].__read_out(fin)) };
   return cur.__retire_done(i);
+}
+
+function (st: Stream) __read_out(fin: boolean): Stream {
+  return Stream { ...st, recv: st.recv.__read_out(fin) };
+}
+
+function (r: Recv) __read_out(fin: boolean): Recv {
+  return Recv { ...r, data: r.data.__emptied(), fin_read: fin };
+}
+
+function (r: Reassembly) __emptied(): Reassembly {
+  return Reassembly { ...r, taken: r.delivered(), ready: [] };
 }
 
 pub function (s: Streams) reset(id: i64, code: i64): Streams {
@@ -629,20 +645,36 @@ function (s: Streams) __on_stream(d: frames.StreamData): Streams {
   if let Some(e) = cur.__credit_error(st.recv, end, frames.STREAM) {
     return cur.__fail(e);
   }
-  let r: Recv = __with_final(st.recv, end, d.fin);
-  let more: i64 = __max(0 as i64, end - r.highest);
+  let more: i64 = __max(0 as i64, end - st.recv.highest);
   let next: Streams = Streams { ...cur, recv_highest: cur.recv_highest + more };
-  if (r.reset >= 0 || r.stop >= 0) {
-    return next.__put(i, Stream { ...st, recv: Recv { ...r, highest: r.highest + more } });
+  if (st.recv.reset >= 0 || st.recv.stop >= 0) {
+    return Streams { ...next, list: next.list.with(i, next.list[i].__received(d, end, more, false)) };
   }
-  let before: i64 = r.data.delivered();
-  let data: Reassembly = r.data.add(d.offset, d.data);
-  let readable: boolean = data.delivered() > before || d.fin && !r.fin_read && data.delivered() == r.final_size;
-  let events: Event[] = next.events;
-  if (readable) {
-    events = events.append(Readable(d.stream));
+  let before: i64 = st.recv.data.delivered();
+  let fin_read: boolean = st.recv.fin_read;
+  next = Streams { ...next, list: next.list.with(i, next.list[i].__received(d, end, more, true)) };
+  let r: Recv = next.list[i].recv;
+  if (r.data.delivered() > before || d.fin && !fin_read && r.data.delivered() == r.final_size) {
+    return Streams { ...next, events: next.events.append(Readable(d.stream)) };
   }
-  return Streams { ...next, events: events }.__put(i, Stream { ...st, recv: Recv { ...r, data: data, highest: r.highest + more } });
+  return next;
+}
+
+function (st: Stream) __received(d: frames.StreamData, end: i64, more: i64, keep: boolean): Stream {
+  return Stream { ...st, recv: st.recv.__received(d, end, more, keep) };
+}
+
+// __received takes a STREAM frame's data into the reassembly when keep,
+// and otherwise only its final size and extent.
+function (r: Recv) __received(d: frames.StreamData, end: i64, more: i64, keep: boolean): Recv {
+  let final: i64 = r.final_size;
+  if (d.fin) {
+    final = end;
+  }
+  if (!keep) {
+    return Recv { ...r, final_size: final, highest: r.highest + more };
+  }
+  return Recv { ...r, final_size: final, highest: r.highest + more, data: r.data.add(d.offset, d.data) };
 }
 
 function __final_error(r: Recv, end: i64, fin: boolean, kind: i64): Option[frames.FrameError] {
@@ -983,8 +1015,7 @@ pub function (s: Streams) acked(item: recovery.Resend): Streams {
       if (i < 0) {
         return s;
       }
-      let st: Stream = s.list[i];
-      return s.__put(i, Stream { ...st, send: __acked_range(st.send, offset, len, fin) }).__retire_done(i);
+      return Streams { ...s, list: s.list.with(i, s.list[i].__acked_send(offset, len, fin)) }.__retire_done(i);
     },
     recovery.Again(frames.ResetStreamFrame(r)) => {
       let i: i32 = s.__find(r.stream);
@@ -1005,9 +1036,17 @@ pub function (s: Streams) acked(item: recovery.Resend): Streams {
 
 ```fern
 <<20 function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send>>=
+function (st: Stream) __acked_send(offset: i64, len: i32, fin: boolean): Stream {
+  return Stream { ...st, send: __acked_range(st.send, offset, len, fin) };
+}
+
 function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send {
   if (snd.reset >= 0) {
     return snd;
+  }
+  if (snd.acked.len() == 0 && offset <= snd.base) {
+    let top: i64 = __max(snd.base, offset + len as i64);
+    return Send { ...snd, base: top, buf: __dropped(snd.buf, (top - snd.base) as i32), fin_acked: snd.fin_acked || fin };
   }
   let acked: i64[] = __merge(snd.acked, offset, offset + len as i64);
   let base: i64 = snd.base;
@@ -1015,8 +1054,17 @@ function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send {
     base = __max(base, acked[1]);
     acked = __rest_i64(__rest_i64(acked));
   }
-  let drop: i32 = (base - snd.base) as i32;
-  return Send { ...snd, acked: acked, base: base, buf: __slice_range(snd.buf, drop, snd.buf.len()), fin_acked: snd.fin_acked || fin };
+  return Send { ...snd, acked: acked, base: base, buf: __dropped(snd.buf, (base - snd.base) as i32), fin_acked: snd.fin_acked || fin };
+}
+
+function __dropped(buf: u8[], n: i32): u8[] {
+  if (n == 0) {
+    return buf;
+  }
+  if (n == buf.len()) {
+    return [];
+  }
+  return __slice_range(buf, n, buf.len());
 }
 
 function __merge(ranges: i64[], lo: i64, hi: i64): i64[] {
@@ -1130,6 +1178,17 @@ function (s: Streams) __restate(id: i64, send: boolean): Streams {
   return s;
 }
 
+function (s: Streams) __initial_streams(t: i32): i64 {
+  if ((t & 2) == 0) {
+    return s.local.initial_max_streams_bidi;
+  }
+  return s.local.initial_max_streams_uni;
+}
+
+function (st: Stream) __closed(): Stream {
+  return Stream { ...st, closed: true };
+}
+
 function (s: Streams) __retire_done(i: i32): Streams {
   let st: Stream = s.list[i];
   if (st.closed || !__done(st)) {
@@ -1138,9 +1197,16 @@ function (s: Streams) __retire_done(i: i32): Streams {
   let cur: Streams = Streams { ...s, retired: s.retired + 1 };
   if (!cur.__is_local(st.id)) {
     let t: i32 = (st.id & 3) as i32;
-    cur = Streams { ...cur, limits: cur.limits.with(t, cur.limits[t] + 1), limits_dirty: cur.limits_dirty.with(t, true) };
+    let initial: i64 = cur.__initial_streams(t);
+    let target: i64 = cur.closed[t] + 1 + initial;
+    cur = Streams { ...cur, closed: cur.closed.with(t, cur.closed[t] + 1) };
+    // The peer may open its initial number of streams past those it has
+    // closed; the limit is advertised once it moves by an eighth of that.
+    if (target - cur.limits[t] >= __max(1 as i64, initial / 8)) {
+      cur = Streams { ...cur, limits: cur.limits.with(t, target), limits_dirty: cur.limits_dirty.with(t, true) };
+    }
   }
-  cur = cur.__put(i, Stream { ...st, closed: true });
+  cur = Streams { ...cur, list: cur.list.with(i, cur.list[i].__closed()) };
   if (cur.retired >= 32 && cur.retired * 2 >= cur.list.len()) {
     return cur.__sweep();
   }
@@ -1226,12 +1292,13 @@ function __rest_i64(xs: i64[]): i64[] {
 }
 
 function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
-  let b: usize = buf_new(out.len() + (to - from));
-  buf_push_bytes_range(b, out, 0, out.len());
-  buf_push_bytes_range(b, src, from, to);
-  let grown: u8[] = buf_take_bytes(b);
-  buf_free(b);
-  return grown;
+  if (from == to) {
+    return out;
+  }
+  if (out.len() == 0) {
+    return __slice_range(src, from, to);
+  }
+  return out.concat(__slice_range(src, from, to));
 }
 
 function __slice_range(src: u8[], from: i32, to: i32): u8[] {

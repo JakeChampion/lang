@@ -17,11 +17,10 @@ type stdlibConcatCase struct {
 }
 
 var cryptoIRCases = []stdlibConcatCase{
-	{"sha256-len", `return sha256_hex("hello".as_bytes()).len();`},
-	{"sha256-abc-d0", `return sha256_hex("abc".as_bytes())[0] as i32;`},
-	{"sha256-empty-d0", `return sha256_hex("".as_bytes())[0] as i32;`},
-	{"sha256-bytes-len", `return sha256_bytes("abc".as_bytes()).len();`},
-	{"hmac-len", `return hmac_sha256_hex([107 as u8, 101 as u8, 121 as u8], "msg".as_bytes()).len();`},
+	{"sha256-len", `return sha256("hello".as_bytes()).len();`},
+	{"sha256-abc-d0", `return sha256("abc".as_bytes())[0] as i32 % 100;`},
+	{"sha256-empty-d0", `return sha256("".as_bytes())[0] as i32 % 100;`},
+	{"hmac-len", `return hmac_sha256([107 as u8, 101 as u8, 121 as u8], "msg".as_bytes()).len();`},
 }
 
 var pathIRCases = []stdlibConcatCase{

@@ -83,13 +83,13 @@ pub function (h: Hash) size(): i32 {
 pub function (h: Hash) digest(msg: [u8]): u8[] {
   match (h) {
     Sha256 => {
-      return crypto.sha256_new().update(msg).final_bytes();
+      return crypto.sha256(msg);
     },
     Sha384 => {
-      return crypto.sha384_new().update(msg).final_bytes();
+      return crypto.sha384(msg);
     },
     Sha512 => {
-      return crypto.sha512_new().update(msg).final_bytes();
+      return crypto.sha512(msg);
     }
   }
   return [];

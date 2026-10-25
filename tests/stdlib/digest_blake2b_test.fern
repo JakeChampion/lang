@@ -1,5 +1,6 @@
 import "std/test";
 import "std/crypto" as crypto;
+import "std/hex";
 import "std/string";
 
 function __pseudo(): u8[] {
@@ -23,22 +24,22 @@ function __thousand_a(): string {
 }
 
 function test_empty(): test.TestOutcome {
-  return test.assert_eq(crypto.blake2b_new(64).final_hex(), "786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce");
+  return test.assert_eq(hex.encode(crypto.blake2b_new(64).finish()), "786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce");
 }
 
 function test_abc(): test.TestOutcome {
-  return test.assert_eq(crypto.blake2b_new(64).update("abc".as_bytes()).final_hex(), "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
+  return test.assert_eq(hex.encode(crypto.blake2b_new(64).update("abc".as_bytes()).finish()), "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
 }
 
 function test_multiblock(): test.TestOutcome {
   return test.assert_eq(
-    crypto.blake2b_new(64).update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu".as_bytes()).final_hex(),
+    hex.encode(crypto.blake2b_new(64).update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu".as_bytes()).finish()),
     "ce741ac5930fe346811175c5227bb7bfcd47f42612fae46c0809514f9e0e3a11ee1773287147cdeaeedff50709aa716341fe65240f4ad6777d6bfaf9726e5e52",
   );
 }
 
 function test_bytes_len(): test.TestOutcome {
-  return test.assert_eq(crypto.blake2b_new(64).update("abc".as_bytes()).final_bytes().len(), 64);
+  return test.assert_eq(crypto.blake2b_new(64).update("abc".as_bytes()).finish().len(), 64);
 }
 
 function test_million_a_chunked(): test.TestOutcome {
@@ -49,7 +50,7 @@ function test_million_a_chunked(): test.TestOutcome {
     h = h.update(chunk.as_bytes());
     i = i + 1;
   }
-  return test.assert_eq(h.final_hex(), "98fb3efb7206fd19ebf69b6f312cf7b64e3b94dbe1a17107913975a793f177e1d077609d7fba363cbba00d05f7aa4e4fa8715d6428104c0a75643b0ff3fd3eaf");
+  return test.assert_eq(hex.encode(h.finish()), "98fb3efb7206fd19ebf69b6f312cf7b64e3b94dbe1a17107913975a793f177e1d077609d7fba363cbba00d05f7aa4e4fa8715d6428104c0a75643b0ff3fd3eaf");
 }
 
 function test_seven_byte_updates(): test.TestOutcome {
@@ -61,8 +62,8 @@ function test_seven_byte_updates(): test.TestOutcome {
     i = i + 7;
   }
   h = h.update(msg[i:10003]);
-  let chunked: string = h.final_hex();
-  let whole: string = crypto.blake2b_new(64).update(msg).final_hex();
+  let chunked: string = hex.encode(h.finish());
+  let whole: string = hex.encode(crypto.blake2b_new(64).update(msg).finish());
   if (chunked != "6088e8a2fde1d069eb0051accb83d114530aeb1a3ccd94ed6765a6d05d793de246a85a5b86a9725270b6403edf2f0db75189b920a4ad4ce54efb03a99df700c0") {
     return test.fail("chunked: " + chunked);
   }
@@ -70,25 +71,25 @@ function test_seven_byte_updates(): test.TestOutcome {
 }
 
 function test_update_bytes_and_oneshot(): test.TestOutcome {
-  let via_bytes: string = crypto.blake2b_new(64).update("abc".bytes()).final_hex();
-  if (via_bytes != crypto.blake2b_hex("abc".as_bytes(), 64)) {
+  let via_bytes: string = hex.encode(crypto.blake2b_new(64).update("abc".bytes()).finish());
+  if (via_bytes != hex.encode(crypto.blake2b("abc".as_bytes(), 64))) {
     return test.fail("one-shot differs: " + via_bytes);
   }
   return test.assert_eq(via_bytes, "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
 }
 
 function test_digest_lengths(): test.TestOutcome {
-  if (crypto.blake2b_hex("abc".as_bytes(), 20) != "384264f676f39536840523f284921cdc68b6846b") {
+  if (hex.encode(crypto.blake2b("abc".as_bytes(), 20)) != "384264f676f39536840523f284921cdc68b6846b") {
     return test.fail("len 20");
   }
-  if (crypto.blake2b_hex("abc".as_bytes(), 32) != "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319") {
+  if (hex.encode(crypto.blake2b("abc".as_bytes(), 32)) != "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319") {
     return test.fail("len 32");
   }
-  if (crypto.blake2b_hex("abc".as_bytes(), 1) != "6b") {
+  if (hex.encode(crypto.blake2b("abc".as_bytes(), 1)) != "6b") {
     return test.fail("len 1");
   }
-  if (crypto.blake2b_new(32).update("abc".as_bytes()).final_bytes().len() != 32) {
-    return test.fail("final_bytes len");
+  if (crypto.blake2b_new(32).update("abc".as_bytes()).finish().len() != 32) {
+    return test.fail("finish len");
   }
   return test.pass();
 }
@@ -98,7 +99,7 @@ function main(): i32 {
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);
-  r = r.it("final_bytes len", test_bytes_len);
+  r = r.it("finish len", test_bytes_len);
   r = r.it("million a, 1000x1000", test_million_a_chunked);
   r = r.it("7-byte updates", test_seven_byte_updates);
   r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);

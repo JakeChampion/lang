@@ -13,13 +13,17 @@ var cryptoModuleIRCases = []struct {
 	src  string
 }{
 	{"sha256-abc", `import "std/crypto";
-function main(): i32 { if (crypto.sha256_hex("abc".as_bytes()) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 42; } return 0; }`},
+import "std/hex";
+function main(): i32 { if (hex.encode(crypto.sha256("abc".as_bytes())) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 42; } return 0; }`},
 	{"sha256-empty", `import "std/crypto";
-function main(): i32 { if (crypto.sha256_hex("".as_bytes()) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") { return 42; } return 0; }`},
+import "std/hex";
+function main(): i32 { if (hex.encode(crypto.sha256("".as_bytes())) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") { return 42; } return 0; }`},
 	{"sha256-pangram-len", `import "std/crypto";
-function main(): i32 { return crypto.sha256_hex("The quick brown fox jumps over the lazy dog".as_bytes()).len(); }`},
+import "std/hex";
+function main(): i32 { return hex.encode(crypto.sha256("The quick brown fox jumps over the lazy dog".as_bytes())).len(); }`},
 	{"hmac-known", `import "std/crypto";
-function main(): i32 { if (crypto.hmac_sha256_hex([107 as u8, 101 as u8, 121 as u8], "The quick brown fox jumps over the lazy dog".as_bytes()) == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8") { return 42; } return 0; }`},
+import "std/hex";
+function main(): i32 { if (hex.encode(crypto.hmac_sha256([107 as u8, 101 as u8, 121 as u8], "The quick brown fox jumps over the lazy dog".as_bytes())) == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8") { return 42; } return 0; }`},
 }
 
 func TestSelfHostCryptoModuleIR(t *testing.T) {

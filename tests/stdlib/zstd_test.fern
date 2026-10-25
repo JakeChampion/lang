@@ -117,6 +117,36 @@ function test_refusals(): test.TestOutcome {
   return test.assert_eq(cut + " | " + sum_bad + " | " + magic + " | " + limit + " | " + reserved + " | " + dict, "zstd: truncated | zstd: checksum mismatch | zstd: malformed: magic number | zstd: output past the limit | zstd: malformed: reserved block type | zstd: unsupported: dictionary");
 }
 
+function joined(a: u8[], b: u8[]): u8[] {
+  let out: u8[] = a;
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function limited(frames: u8[], cap: i32): string {
+  match (zstd.decompress(frames, cap)) {
+    Ok(out) => {
+      return sum(out);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_frame_edges(): test.TestOutcome {
+  let a: u8[] = lines(400);
+  let b: u8[] = lcg_bytes(3000);
+  let frames: u8[] = joined(zstd.compress(a), zstd.compress(b));
+  let n: i32 = a.len() + b.len();
+  let both: string = limited(frames, n) + " | " + sum(joined(a, b)) + " | " + limited(frames, n - 1);
+  let skips: string = read("502a4d180500") + " | " + read("502a4d18f8ffffff") + " | " + read("502a4d1802000000ffff28b52ffd200c6100006669727374206672616d653b");
+  return test.assert_eq(both + " | " + skips, "12090 2852243673 | 12090 2852243673 | zstd: output past the limit | zstd: truncated | zstd: truncated | 12 2092780098");
+}
+
 function packed(input: u8[]): string {
   let frame: u8[] = zstd.compress(input);
   match (zstd.decompress(frame, input.len() + 1)) {
@@ -171,6 +201,7 @@ function main(): i32 {
   r = r.it("raw and run-length blocks, no content size", test_block_kinds);
   r = r.it("two frames around a skippable one", test_frames);
   r = r.it("refusals", test_refusals);
+  r = r.it("frames that share the output and skippable frames", test_frame_edges);
   r = r.it("the encoder's frames read back", test_encoder);
   r = r.it("the encoder across blocks", test_encoder_blocks);
   return r.finish();

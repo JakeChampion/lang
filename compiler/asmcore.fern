@@ -2667,12 +2667,27 @@ pub function rt_src_udp_recvfrom(t: string, packed: boolean): string {
   if (t == "arm64-darwin") {
     family = "let fam: i32 = __raw_load8(sa, 1);";
   }
-  return "function __fern_udp_recvfrom" + packed_suffix(packed) + "(fd: i32, buf: i32[], from: i32[]): i32 { let max: i32 = buf.len(); let p: usize = __raw_alloc(max + 1); let sa: usize = __raw_scratch(32); __raw_store8(sa, 28, 28); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); let n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, (sa + 28) as i64) as i32; " + recv_spread(packed) + " if (n >= 0 && from.len() >= 19) { let f: usize = __raw_arr_ptr(from); let z: i32 = 1; while (z <= 19) { " + elem_store(packed, "f", "z - 1", "0") + " z = z + 1; } " + family + " let n_addr: i32 = 0; let at: i32 = 4; if (fam == 2) { " + elem_store(packed, "f", "0", "4") + " n_addr = 4; } else if (fam == " + sockopt(t, "af_inet6") + ") { " + elem_store(packed, "f", "0", "6") + " n_addr = 16; at = 8; } let k: i32 = 0; while (k < n_addr) { " + elem_store(packed, "f", "1 + k", "__raw_load8(sa, at + k)") + " k = k + 1; } " + elem_store(packed, "f", "17", "__raw_load8(sa, 2)") + " " + elem_store(packed, "f", "18", "__raw_load8(sa, 3)") + " } let p_own: string = __raw_string(p, max + 1); return n; }";
+  return "function __fern_udp_recvfrom" + packed_suffix(packed) + "(fd: i32, buf: i32[], from: i32[]): i32 { let max: i32 = buf.len(); " + recv_buffer(packed, false) + " let sa: usize = __raw_scratch(32); __raw_store8(sa, 28, 28); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); let n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, (sa + 28) as i64) as i32; " + recv_spread(packed) + " if (n >= 0 && from.len() >= 19) { let f: usize = __raw_arr_ptr(from); let z: i32 = 1; while (z <= 19) { " + elem_store(packed, "f", "z - 1", "0") + " z = z + 1; } " + family + " let n_addr: i32 = 0; let at: i32 = 4; if (fam == 2) { " + elem_store(packed, "f", "0", "4") + " n_addr = 4; } else if (fam == " + sockopt(t, "af_inet6") + ") { " + elem_store(packed, "f", "0", "6") + " n_addr = 16; at = 8; } let k: i32 = 0; while (k < n_addr) { " + elem_store(packed, "f", "1 + k", "__raw_load8(sa, at + k)") + " k = k + 1; } " + elem_store(packed, "f", "17", "__raw_load8(sa, 2)") + " " + elem_store(packed, "f", "18", "__raw_load8(sa, 3)") + " } " + recv_buffer(packed, true) + " return n; }";
+}
+
+// recv_buffer is where the datagram lands: a packed array's own bytes, or
+// for the unpacked layout a bounce buffer, boxed once read so it is freed.
+function recv_buffer(packed: boolean, release: boolean): string {
+  if (packed && release) {
+    return "";
+  }
+  if (packed) {
+    return "let p: usize = __raw_arr_ptr(buf) + 8;";
+  }
+  if (release) {
+    return "let p_own: string = __raw_string(p, max + 1);";
+  }
+  return "let p: usize = __raw_alloc(max + 1);";
 }
 
 function recv_spread(packed: boolean): string {
   if (packed) {
-    return "if (n > 0) { __memcpy((__raw_arr_ptr(buf) + 8), p, n); }";
+    return "";
   }
   return "let b: usize = __raw_arr_ptr(buf); let i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; }";
 }
@@ -5679,7 +5694,7 @@ function builtin_i32_names(): string[] {
     "__arr_push_shared_count",
     "__map_hash_seed",
     "__memchr",
-    "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
+    "__count_byte_bytes", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
     "__ascii_run",
     "__scan_set", "__scan_set_bytes",
     "__count_runs", "__count_runs_bytes",
@@ -6408,7 +6423,7 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
     || name == "args" || name == "read_file" || name == "read_file_bytes"
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
-    || name == "str_from_bytes" || name == "alloc_u8" || name == "buf"
+    || name == "str_from_bytes" || name == "alloc_u8"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8"
     || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_borrow" || name == "str_grow"
@@ -6424,6 +6439,10 @@ pub function runtime_need_deps(name: string): string[] {
   if (name == "arr_push_u8") {
     let du8: string[] = ["arr_push", "heap"];
     return du8;
+  }
+  if (name == "buf") {
+    let dbuf: string[] = ["heap", "memcpy"];
+    return dbuf;
   }
   if (name == "buf_u8" || name == "buf_bytes" || name == "buf_bytes_u8") {
     let dbu8: string[] = ["buf", "heap"];

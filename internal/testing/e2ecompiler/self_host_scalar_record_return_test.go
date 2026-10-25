@@ -121,7 +121,31 @@ var scalarReturnCases = []struct{ name, source, want string }{
 	{"inferred-donor", scalarRecordInferredDonor, "1000\n"},
 	{"function-value", scalarRecordFunctionValue, "1000\n"},
 	{"finalizer", scalarRecordFinalizer, "1000\n"},
+	{"tuple-lanes", scalarTupleLanes, "0\n"},
+	{"tuple-boxed", scalarTupleBoxed, "2000\n"},
 }
+
+const scalarTupleLanes = `import "std/i64";
+@noinline function three(i:i32):(i32,u64,boolean){return (0-i,0xfedcba9876543210u64+(i as u64),i%2==0);}
+@noinline function four(i:i32):(i64,i64,f64,u8){let t=(i as i64,2i64,0.5,(i%251) as u8);if(i%3==0){t=(0i64-1i64,0i64,0.0-1.5,7u8);}return t;}
+@noinline function wide(i:i32):(i32,i64){return (i,0x123456789abcdef0i64+(i as i64));}
+@noinline function float(i:i32):(i32,f64){return (i,0.25);}
+function main():i32{let before=__heap_alloc_count();let i=0;
+ while(i<1000){let (a,b,c)=three(i);if(a!=0-i||b!=0xfedcba9876543210u64+(i as u64)||c!=(i%2==0)){return 41;}
+  let q=four(i);if(i%3==0){if(q.0!=0i64-1i64||q.1!=0i64||q.2!=0.0-1.5||q.3!=7u8){return 42;}}else{if(q.0!=(i as i64)||q.1!=2i64||q.2!=0.5||q.3!=(i%251) as u8){return 43;}}
+  let (x,y)=wide(i);if(x!=i||y!=0x123456789abcdef0i64+(i as i64)){return 44;}
+  let (u,v)=float(i);if(u!=i||v!=0.25){return 45;}
+  i=i+1;}
+ let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+`
+
+const scalarTupleBoxed = `import "std/i64";
+@noinline function five(i:i32):(i64,i64,i64,i64,i64){return (i as i64,2i64,3i64,4i64,5i64);}
+@noinline function held(i:i32,xs:i64[]):(i64,i64,i64[]){return (i as i64,2i64,xs);}
+function main():i32{let xs:i64[]=[17i64];let before=__heap_alloc_count();let i=0;
+ while(i<1000){let f=five(i);if(f.0!=(i as i64)||f.4!=5i64){return 46;}let (a,b,c)=held(i,xs);if(a!=(i as i64)||b+c[0]!=19i64){return 47;}i=i+1;}
+ let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+`
 
 func TestSelfHostScalarRecordReturnsInstrumented(t *testing.T) {
 	cli := buildSelfHostCLI(t)

@@ -1,9 +1,6 @@
 package e2ecompiler
 
-import (
-	"fmt"
-	"testing"
-)
+import "testing"
 
 const byteViewSliceProgram = `@noinline function viewlen(v: [u8]): i32 { return v.len(); }
 @noinline function mk(n: i32): u8[] {
@@ -18,7 +15,7 @@ function main(): i32 {
   let before: i64 = __heap_alloc_count();
   let i: i32 = 0;
   while (i < 1000) { acc = acc + viewlen(pt[1:90]); i = i + 1; }
-  if (__heap_alloc_count() - before != %di64) { return 1; }
+  if (__heap_alloc_count() - before != 0i64) { return 1; }
   before = __heap_alloc_count();
   i = 0;
   while (i < 1000) { acc = acc + viewlen(pt); i = i + 1; }
@@ -98,14 +95,10 @@ function main(): i32 {
 func TestSelfHostRecordPathAllocs(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-		sliceAllocs := 0
-		if target == "wasm32-wasi" {
-			sliceAllocs = 1000
-		}
 		for _, probe := range []struct {
 			name, program string
 		}{
-			{"byte-view-slice", fmt.Sprintf(byteViewSliceProgram, sliceAllocs)},
+			{"byte-view-slice", byteViewSliceProgram},
 			{"enum-payload-take", enumPayloadTakeProgram},
 		} {
 			t.Run(target+"/"+probe.name, func(t *testing.T) {
