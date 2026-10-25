@@ -3,7 +3,9 @@
 Issue #13374 extends nearest-chain fusion to an explicit cached batch API.
 `fold_rows_fused` accepts the same arguments and returns the same result types as `fold_rows`.
 Existing `fold_rows` and `render_rows` behavior and statistics remain unchanged.
-The cached tile interface still uses the existing fold without fusion.
+Existing `render_cached_tile` calls still use the fold without fusion.
+The explicit `render_cached_tile_fused` interface applies the fused fold inside the same checked tile executor.
+See [tile admission](regions.md) for its charges and regression evidence.
 
 ## Execution contract
 
@@ -63,6 +65,7 @@ All repeats reproduce these counters and finish with zero live bytes.
 The raw record includes exact compiler, executable, collector, package, Python, and workspace stdlib hashes.
 It records source commit `5621212e4` and compiler `2105e9e82250`.
 All 92 image TAP cases pass on native Linux, Wasm, and ARM64/QEMU with zero final live bytes.
+
 The collector checks source and tool immutability before and after the observations.
 Fresh allocator demand does not measure peak live bytes, isolated allocator overhead, RSS, or a process bound.
 The solid fixture does not qualify representative color throughput.
