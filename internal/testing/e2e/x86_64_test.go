@@ -496,11 +496,12 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-func TestX86_64InstantNow(t *testing.T) {
+func TestX86_64TimestampNow(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `
 import "std/time";
+import "std/clock";
 function main(): i32 {
-    let ts: Instant = time.instant_now();
+    let ts: time.Timestamp = clock.now();
     if (ts.sec < (1700000000 as i64)) { return 1; }
     if (ts.sec > (253402300800 as i64)) { return 2; }
     return 0;
