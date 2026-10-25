@@ -513,9 +513,6 @@ TestSelfHostFerndocSelfChecks 2
 TestSelfHostFetchAccumulatorStaysLinearX86_64 14
 TestSelfHostFetchClient 136
 TestSelfHostFetchDeadline 126
-TestSelfHostFetchFutureFanoutX86_64 116
-TestSelfHostFetchFutureLargeBodyX86_64 99
-TestSelfHostFetchFutureModloadIRX86_64 4
 TestSelfHostFetchTask 12
 TestSelfHostFieldAppendInPlaceArm64 3
 TestSelfHostFieldAppendInPlaceWasmIR 2
@@ -1289,7 +1286,6 @@ TestSelfHostShredBytes 4
 TestSelfHostShredPatternBytes 2
 TestSelfHostShufBytes 2
 TestSelfHostSignalDispositionIRArm64 2
-TestSelfHostSimPrograms 3
 TestSelfHostSimTasks 118
 TestSelfHostSimulationDriver 7
 TestSelfHostSimulationDriverArguments 2
@@ -1437,6 +1433,8 @@ TestSelfHostTabsBytes 4
 TestSelfHostTacBytes 5
 TestSelfHostTargetCapabilityDifferentialX86_64 2
 TestSelfHostTaskCombinators 2
+TestSelfHostTaskFetchFanoutX86_64 116
+TestSelfHostTaskFetchLargeBodyX86_64 99
 TestSelfHostTaskFrame 2
 TestSelfHostTaskPortable 2
 TestSelfHostTaskProgramsBalanceTheLeakCensus 3
@@ -1622,7 +1620,6 @@ TestSelfHostWasmEveryNeedLinksAlone 5
 TestSelfHostWasmExternSum 3
 TestSelfHostWasmFailedReadLine 2
 TestSelfHostWasmFailedWriteFile 2
-TestSelfHostWasmFetchFutureFanout 3
 TestSelfHostWasmFuncRangeShard 11
 TestSelfHostWasmHTTPHandlerCensus 24
 TestSelfHostWasmHTTPKeepAlive 91
@@ -1651,6 +1648,7 @@ TestSelfHostWasmStdoutClose 2
 TestSelfHostWasmStringAlignment 3
 TestSelfHostWasmTCPRecvLifecycleCensus 2
 TestSelfHostWasmTCPSendLifecycleCensus 2
+TestSelfHostWasmTaskFetchFanout 3
 TestSelfHostWasmUDPGuestStorage 2
 TestSelfHostWasmUDPLifecycleCensus 2
 TestSelfHostWasmUnitsN2 11
