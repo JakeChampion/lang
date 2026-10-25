@@ -92,3 +92,20 @@ func TestEntryShadowOfBuiltinIsNamedAsWritten(t *testing.T) {
 		t.Fatalf("want an E003 naming the entry's Span, got %v", errs)
 	}
 }
+
+// The entry's struct Option takes the return type, and None stays the
+// built-in's, so the mismatch is an E002 that spells both as Option.
+func TestEntryShadowOfBuiltinEnumMismatchIsSpelledAsWritten(t *testing.T) {
+	errs := moduleCheckErrors(t, "struct Option { n: i32 }\nfunction g(): Option[i32] { return None; }\nfunction main(): i32 { return 0; }\n")
+	var got []string
+	for _, e := range errs {
+		got = append(got, e.ErrCode+": "+e.Msg)
+	}
+	want := []string{
+		`E010: struct "Option" is a reserved built-in name and cannot be redeclared`,
+		"E002: return value: expected Option[i32], got Option",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("got:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
+}

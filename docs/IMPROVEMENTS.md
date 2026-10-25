@@ -182,18 +182,13 @@ seeds.
 with the corpus persisted across runs. Catches regressions the
 deterministic sweep misses (which it has, twice in this thread).
 
-## 7. 🛠 `IsReservedName(s string) bool` helper
+## 7. ✅ One reserved-name list
 
-The checker's `TestReservedBuiltinNamesCannotBeShadowed`
-enumerates Option, Result, IoError, Reader, Writer,
-HttpRequest, HttpResponse. The list is duplicated in the checker
-init code and in the test. Langsmith has to know these too (to
-avoid generating clashing names).
-
-**Fix**: Single exported `func IsReservedName(s string) bool` in
-`internal/check/checker` (or `internal/syntax/ast`), with all callers
-consulting it. Test asserts the list matches what the checker
-rejects.
+`ast.IsReservedTypeName` in `internal/syntax/ast` is the one list of
+built-in type names. The checker and the loader's entry-shadow rename
+consult it, and `TestReservedTypeNamesAreTheBuiltinDecls`
+asserts it matches the checker's built-in declarations in both
+directions.
 
 ## 8. 🛠 Merge `interp.evalProgram` and `evalChecked`
 
