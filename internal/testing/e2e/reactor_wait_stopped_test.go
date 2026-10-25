@@ -14,10 +14,11 @@ func TestReactorWaitSurvivesStopContinue(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "stopped.fern")
 	prog := `import "std/async";
+import "std/time";
 function main(): i32 {
   let d: async.RealDriver = async.real_driver();
   let start: i64 = monotonic_ns();
-  let got: i32[] = d.wait(1, 1500);
+  let got: i32[] = d.wait(1, Some(time.duration_millis(1500)));
   let ms: i64 = (monotonic_ns() - start) / (1000000 as i64);
   if (got.len() != 0) {
     return 2;

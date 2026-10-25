@@ -5,6 +5,7 @@ This module runs futures with a deterministic virtual clock.
 ## Model
 
 A simulation owns a virtual clock, a seeded random state, and scripted readiness. Futures can progress against that state without wall-clock delays.
+The virtual clock starts at the instant `sim.at(DURATION_ZERO)`. Every time a test gives the simulation is an `Instant` on that clock.
 
 ## Contracts
 
@@ -43,11 +44,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 impl async.Driver for Sim>>
 
-<<8 pub function (s: Sim) advance_to(to_ns: i64): boolean>>
+<<8 pub function (s: Sim) advance_to(to: Instant): boolean>>
 
 <<9 function __settled[T](t: async.Task[T], st: async.TaskStatus[T]): async.TaskStatus[T]>>
 
-<<10 pub function future_at[T](drv: Sim, at_ns: i64, v: T): async.Future[T]>>
+<<10 pub function future_at[T](drv: Sim, at: Instant, v: T): async.Future[T]>>
 ```
 
 ### `module introduction`
@@ -65,6 +66,7 @@ import "std/i32";
 import "core/int";
 import "std/async";
 import "std/rand";
+import "std/time";
 ```
 
 ### `3 pub struct Sim`
@@ -82,9 +84,24 @@ pub function new(seed: i64): Sim {
   return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(rand.rng_seed(seed)), watched: cell_new(""), readiness: cell_new("") };
 }
 
-pub function (s: Sim) ready_at(fd: i32, at_ms: i32, bits: i32): i32 {
-  s.readiness.set(s.readiness.get() + int.int_to_string(fd) + ":" + int.int_to_string(at_ms) + ":" + int.int_to_string(bits) + ";");
+// The virtual instant `offset` after the simulation starts.
+pub function at(offset: Duration): Instant {
+  return Instant { sec: offset.sec, nsec: offset.nsec };
+}
+
+// The virtual time since the simulation started.
+pub function (s: Sim) elapsed(): Duration {
+  return time.duration_nanos(s.clock_ns.get());
+}
+
+pub function (s: Sim) ready_at(fd: i32, at: Instant, bits: i32): i32 {
+  s.readiness.set(s.readiness.get() + int.int_to_string(fd) + ":" + int.int_to_string(__ms_of(at)) + ":" + int.int_to_string(bits) + ";");
   return 0;
+}
+
+// Readiness tokens and table rows hold virtual times in whole milliseconds.
+function __ms_of(at: Instant): i32 {
+  return (time.instant_nanos(at) / 1000000) as i32;
 }
 ```
 
@@ -171,10 +188,11 @@ pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
 ```fern
 <<7 impl async.Driver for Sim>>=
 impl async.Driver for Sim {
-  function poll_ready(self: Sim, toks: i32[], timeout_ms: i32): i32 {
+  function poll_ready(self: Sim, toks: i32[], timeout: Option[Duration]): i32 {
     if (__task_cur() != 0) {
-      return async.park_tokens(toks, timeout_ms);
+      return async.park_tokens(toks, timeout);
     }
+    let timeout_ms: i32 = time.timeout_millis(timeout);
     if (toks.len() == 0) {
       return -1;
     }
@@ -216,11 +234,11 @@ impl async.Driver for Sim {
     }
     return ties[__roll(self, ties.len())];
   }
-  function now_ns(self: Sim): i64 {
-    return self.clock_ns.get();
+  function now(self: Sim): Instant {
+    return time.instant_from_nanos(self.clock_ns.get());
   }
-  function timer(self: Sim, ns: i64): i32 {
-    return ((self.clock_ns.get() + ns) / 1000000) as i32;
+  function timer(self: Sim, after: Duration): i32 {
+    return ((self.clock_ns.get() + after.as_nanos()) / 1000000) as i32;
   }
   function drop_token(self: Sim, tok: i32): i32 {
     return 0;
@@ -239,7 +257,8 @@ impl async.Driver for Sim {
     self.readiness.set(kept);
     return 0;
   }
-  function wait_into(self: Sim, own events: i32[], timeout_ms: i32): i32[] {
+  function wait_into(self: Sim, own events: i32[], timeout: Option[Duration]): i32[] {
+    let timeout_ms: i32 = time.timeout_millis(timeout);
     let room: i32 = events.len() / 2;
     if (room <= 0) {
       return async.end_pairs(events, 0);
@@ -299,14 +318,15 @@ impl async.Driver for Sim {
 }
 ```
 
-### `8 pub function (s: Sim) advance_to(to_ns: i64): boolean`
+### `8 pub function (s: Sim) advance_to(to: Instant): boolean`
 
 ```fern
-<<8 pub function (s: Sim) advance_to(to_ns: i64): boolean>>=
-pub function (s: Sim) advance_to(to_ns: i64): boolean {
+<<8 pub function (s: Sim) advance_to(to: Instant): boolean>>=
+pub function (s: Sim) advance_to(to: Instant): boolean {
+  let to_ns: i64 = time.instant_nanos(to);
   if (__task_cur() != 0) {
     let set: i32[] = [(to_ns / 1000000) as i32, 1];
-    if (async.wait_any(set, 0 - 1) == async.cancelled()) {
+    if (async.wait_any(set, None) == async.cancelled()) {
       return false;
     }
   }
@@ -316,7 +336,19 @@ pub function (s: Sim) advance_to(to_ns: i64): boolean {
   return true;
 }
 
-pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at_ms: i32[]): async.TaskStatus[T][] {
+// Task `i` is cancelled at `cancel_at[i]` when that is present.
+pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at: Option[Instant][]): async.TaskStatus[T][] {
+  let cancel_at_ms: i32[] = [];
+  for c in cancel_at {
+    match (c) {
+      Some(at) => {
+        cancel_at_ms = cancel_at_ms.append(__ms_of(at));
+      },
+      None => {
+        cancel_at_ms = cancel_at_ms.append(0 - 1);
+      }
+    }
+  }
   let tasks: async.Task[T][] = [];
   let out: async.TaskStatus[T][] = [];
   for e in entries {
@@ -363,8 +395,9 @@ function __now_ms(drv: Sim): i32 {
 
 function __wait_due(w: async.Wait, now_ms: i32, cancel_ms: i32): i32 {
   let due: i32 = cancel_ms;
-  if (w.timeout_ms >= 0 && (due < 0 || now_ms + w.timeout_ms < due)) {
-    due = now_ms + w.timeout_ms;
+  let timeout_ms: i32 = time.timeout_millis(w.timeout);
+  if (timeout_ms >= 0 && (due < 0 || now_ms + timeout_ms < due)) {
+    due = now_ms + timeout_ms;
   }
   let i: i32 = 0;
   while (i * 2 < w.set.len()) {
@@ -407,7 +440,8 @@ function __wait_word(drv: Sim, w: async.Wait, now_ms: i32, due_ms: i32, cancel_m
   if (pairs.len() > 1) {
     return pairs[__roll(drv, pairs.len())];
   }
-  if (w.timeout_ms >= 0 && now_ms + w.timeout_ms == due_ms) {
+  let timeout_ms: i32 = time.timeout_millis(w.timeout);
+  if (timeout_ms >= 0 && now_ms + timeout_ms == due_ms) {
     return 0 - 1;
   }
   return async.cancelled();
@@ -472,20 +506,21 @@ function __pend[T](tok: i32, next: async.Future[T]): async.Future[T] {
 }
 ```
 
-### `10 pub function future_at[T](drv: Sim, at_ns: i64, v: T): async.Future[T]`
+### `10 pub function future_at[T](drv: Sim, at: Instant, v: T): async.Future[T]`
 
 ```fern
-<<10 pub function future_at[T](drv: Sim, at_ns: i64, v: T): async.Future[T]>>=
-pub function future_at[T](drv: Sim, at_ns: i64, v: T): async.Future[T] {
+<<10 pub function future_at[T](drv: Sim, at: Instant, v: T): async.Future[T]>>=
+pub function future_at[T](drv: Sim, at: Instant, v: T): async.Future[T] {
   let done: async.Future[T] = Ready(v);
-  return __pend((at_ns / 1000000) as i32, done);
+  return __pend(__ms_of(at), done);
 }
 
-pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32, v: T): async.Future[T] {
+// Ready at `at`, after `resuspends` further waits `step` apart.
+pub function future_chain[T](drv: Sim, at: Instant, step: Duration, resuspends: i32, v: T): async.Future[T] {
   let f: async.Future[T] = Ready(v);
   let i: i32 = resuspends;
   while (i >= 0) {
-    f = __pend(((at_ns + i as i64 * step_ns) / 1000000) as i32, f);
+    f = __pend(__ms_of(at.add(step.mul(i))), f);
     i = i - 1;
   }
   return f;

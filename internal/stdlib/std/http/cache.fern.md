@@ -56,7 +56,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<14 pub function precondition_failed(): HttpResponse>>
 
-<<15 pub const DELTA_MAX: i64>>
+<<15 pub const DELTA_MAX: Duration>>
 
 <<16 pub function cache_control(): CacheControl>>
 
@@ -414,19 +414,20 @@ pub function precondition_failed(): HttpResponse {
 }
 ```
 
-### `15 pub const DELTA_MAX: i64`
+### `15 pub const DELTA_MAX: Duration`
 
 ```fern
-<<15 pub const DELTA_MAX: i64>>=
-pub const DELTA_MAX: i64 = 2147483648;
+<<15 pub const DELTA_MAX: Duration>>=
+// The largest delta-seconds value a cache keeps; a larger one reads as this.
+pub const DELTA_MAX: Duration = Duration { sec: 2147483648, nsec: 0 };
 
 pub struct CacheControl {
-  max_age: Option[i64],
-  s_maxage: Option[i64],
-  max_stale: Option[i64],
-  min_fresh: Option[i64],
-  stale_while_revalidate: Option[i64],
-  stale_if_error: Option[i64],
+  max_age: Option[Duration],
+  s_maxage: Option[Duration],
+  max_stale: Option[Duration],
+  min_fresh: Option[Duration],
+  stale_while_revalidate: Option[Duration],
+  stale_if_error: Option[Duration],
   no_cache: boolean,
   no_cache_fields: string[],
   private: boolean,
@@ -513,10 +514,10 @@ function __qualified(out: string[], name: string, on: boolean, fields: string[])
   return out.append(name + "=\"" + __join(fields) + "\"");
 }
 
-function __delta(out: string[], name: string, n: Option[i64]): string[] {
+function __delta(out: string[], name: string, n: Option[Duration]): string[] {
   match (n) {
     Some(v) => {
-      return out.append(name + "=" + v.to_string());
+      return out.append(name + "=" + v.as_seconds().to_string());
     },
     None => {
       return out;
@@ -524,13 +525,13 @@ function __delta(out: string[], name: string, n: Option[i64]): string[] {
   }
 }
 
-function __max_stale(out: string[], n: Option[i64]): string[] {
+function __max_stale(out: string[], n: Option[Duration]): string[] {
   match (n) {
     Some(v) => {
-      if (v >= DELTA_MAX) {
+      if (v.cmp(DELTA_MAX) >= 0) {
         return out.append("max-stale");
       }
-      return out.append("max-stale=" + v.to_string());
+      return out.append("max-stale=" + v.as_seconds().to_string());
     },
     None => {
       return out;
@@ -590,7 +591,10 @@ function __is_delta_name(name: string): boolean {
 }
 
 function __delta_directive(c: CacheControl, name: string, value: string, has_value: boolean): CacheControl {
-  let n: Option[i64] = __delta_seconds(value);
+  let n: Option[Duration] = None;
+  if let Some(secs) = __delta_seconds(value) {
+    n = Some(time.duration_seconds(secs));
+  }
   if (name == "max-stale" && !has_value) {
     n = Some(DELTA_MAX);
   }
@@ -609,7 +613,7 @@ function __delta_directive(c: CacheControl, name: string, value: string, has_val
   return __delta_directive_more(c, name, n);
 }
 
-function __delta_directive_more(c: CacheControl, name: string, n: Option[i64]): CacheControl {
+function __delta_directive_more(c: CacheControl, name: string, n: Option[Duration]): CacheControl {
   if (name == "min-fresh" && __is_none(c.min_fresh)) {
     return CacheControl { ...c, min_fresh: n };
   }
@@ -622,7 +626,7 @@ function __delta_directive_more(c: CacheControl, name: string, n: Option[i64]): 
   return c;
 }
 
-function __is_none(n: Option[i64]): boolean {
+function __is_none(n: Option[Duration]): boolean {
   match (n) {
     Some(_) => {
       return false;
@@ -644,13 +648,13 @@ function __delta_seconds(s: string): Option[i64] {
     if (b < 48 as u8 || b > 57 as u8) {
       return None;
     }
-    if (n < DELTA_MAX) {
+    if (n < DELTA_MAX.sec) {
       n = n * (10 as i64) + (b - 48 as u8) as i64;
     }
     i = i + 1;
   }
-  if (n > DELTA_MAX) {
-    return Some(DELTA_MAX);
+  if (n > DELTA_MAX.sec) {
+    return Some(DELTA_MAX.sec);
   }
   return Some(n);
 }

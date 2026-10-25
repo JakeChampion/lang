@@ -158,7 +158,7 @@ let got: Option[i32][] = async.with_deadline(time.duration_millis(250), [
 ## 6. Deterministic simulation: the `Driver` seam and `std/sim`
 
 Everything nondeterministic the combinators do funnels through one seam: the
-`async.Driver` trait (`poll_ready` / `now_ns` / `timer` / `drop_token`). Each
+`async.Driver` trait (`poll_ready` / `now` / `timer` / `drop_token`). Each
 combinator has an `*_on(drv, …)` sibling — `gather_on` / `race_on` /
 `with_deadline_on` — carrying the loop; the plain forms delegate to it with the
 real driver (whose methods are exactly the `poll` / `monotonic_ns` /
@@ -177,18 +177,20 @@ sleeps:
 ```fern
 import "std/async";
 import "std/sim";
+import "std/time";
 
 let d: sim.Sim = sim.new(7);
 let fs: async.Future[string][] = [
-    sim.future_at(d, 40000000, "late"),   // ready at 40ms of virtual time
-    sim.future_at(d, 10000000, "early")   // ready at 10ms
+    sim.future_at(d, sim.at(time.duration_millis(40)), "late"),   // ready at 40ms of virtual time
+    sim.future_at(d, sim.at(time.duration_millis(10)), "early")   // ready at 10ms
 ];
 let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
-// got == [None, Some("early")], and d.now_ns() == exactly 25000000
+// got == [None, Some("early")], and d.elapsed() is exactly 25ms
 ```
 
-`sim.future_at(d, at_ns, v)` resolves to `v` at virtual time `at_ns`;
-`sim.future_chain(d, at_ns, step_ns, n, v)` re-suspends `n` times (the
+`sim.at(offset)` is the virtual `Instant` `offset` after the simulation
+starts. `sim.future_at(d, at, v)` resolves to `v` at that instant;
+`sim.future_chain(d, at, step, n, v)` re-suspends `n` times (the
 shape of a read loop that parks on each chunk) before resolving. See
 `tests/stdlib/sim_driver_test.fern`.
 
@@ -198,25 +200,25 @@ shape of a read loop that parks on each chunk) before resolving. See
 and routes whose scripted answers carry a first-byte latency, a chunking
 schedule and a close policy. The real client runs against it unchanged
 (`fetch.send_on`, or `plat.http` over a `sim_platform.SimPlatform`), and
-`sim.run_tasks(drv, entries, cancel_at_ms)` (§8) drives a fan-out of such
+`sim.run_tasks(drv, entries, cancel_at)` (§8) drives a fan-out of such
 fetches in virtual time.
 
 ```fern
 // UP is the upstream's address; fetch_via(plat, path) answers the body of
 // plat.http(fetch.get("http://up.test" + path)).
 let d: sim.Sim = sim.new(1);
-let n: sim_fetch.Net = sim_fetch.net(d).host("up.test", [UP]).listen(UP, 80, 5)
-    .route(UP, 80, "/a", [sim_fetch.reply(200, "alpha").after(30)])
-    .route(UP, 80, "/b", [sim_fetch.reply(200, "beta").after(10)]);
+let n: sim_fetch.Net = sim_fetch.net(d).host("up.test", [UP]).listen(UP, 80, time.duration_millis(5))
+    .route(UP, 80, "/a", [sim_fetch.reply(200, "alpha").after(time.duration_millis(30))])
+    .route(UP, 80, "/b", [sim_fetch.reply(200, "beta").after(time.duration_millis(10))]);
 let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
 let entries: (() => string)[] = [() => fetch_via(plat, "/a"), () => fetch_via(plat, "/b")];
-let got: async.TaskStatus[string][] = sim.run_tasks(d, entries, [0 - 1, 0 - 1]);
+let got: async.TaskStatus[string][] = sim.run_tasks(d, entries, [None, None]);
 // /b answers at 15ms of virtual time and /a at 35ms
 ```
 
 Faults are scripted answers: `sim_fetch.reset()` closes the connection with
 nothing sent, `silent()` never answers (the client's timeout or a
-cancellation ends the fetch), and `in_chunks(size, every_ms)` with `held()`
+cancellation ends the fetch), and `in_chunks(size, every)` with `held()`
 delivers a prefix and then goes quiet. `sim.sweep_seeds(n, prop)` runs
 `prop(seed)` over seeds `1..n` and returns the first failing seed (0 if all
 pass), with `Sim.rng_state()` available for lockstep assertions. See
@@ -228,7 +230,7 @@ scripted upstream futures with random latencies, chunk schedules, and
 faults (fail, stall, partial, and flaky ones that draw on the sim PRNG),
 driven through random `gather_on` / `race_on` / `with_deadline_on`
 pipelines — and requires interp, native x86-64, and wasm to print
-byte-identical digests (results, winners, `None` slots, `now_ns`,
+byte-identical digests (results, winners, `None` slots, the virtual clock,
 `rng_state`). Any backend divergence on a sim
 program is a real bug, never a flake; a failure prints the whole
 program and its generator seed for replay
@@ -274,8 +276,9 @@ closing their sockets.
 
 ## 8. Tasks: parking a call chain
 
-`async.wait_any(set, timeout_ms)` waits for any of the (fd, interest) pairs
-in `set` (1 readable, 2 writable), bounded by `timeout_ms` (-1 for none),
+`async.wait_any(set, timeout)` waits for any of the (fd, interest) pairs
+in `set` (1 readable, 2 writable), bounded by `timeout`, an
+`Option[Duration]` (`None` waits without limit),
 and answers the index of the pair that became ready or -1 at the timeout.
 With no task current it blocks: one `poll` for a read-only set, a reactor
 made for the call otherwise. Under a scheduler it *parks*: the compiler
@@ -294,9 +297,9 @@ let st: async.TaskStatus[i32] = async.task_start(t);
 match (st) {
     Done(v) => { … },
     Suspended(w) => {
-        // w.set and w.timeout_ms are what the task waits for; here the
+        // w.set and w.timeout are what the task waits for; here the
         // scheduler waits on them itself.
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, woke);
     },
     Cancelled => { … }
@@ -342,11 +345,11 @@ blocks; under the blocking fallback each entry runs to its end inside
 A parked frame keeps what it holds: a `str` or byte view read after the
 park still sees its owner, and a closure sharing a mutated scalar with the
 frame still shares it (`TestSelfHostTaskFrame`).
-The simulation drives tasks too: `sim.run_tasks(drv, entries, cancel_at_ms)`
+The simulation drives tasks too: `sim.run_tasks(drv, entries, cancel_at)`
 runs its entries as tasks in virtual time, each move of the clock
 (`Sim.advance_to`, a `poll_ready`, any `wait_any`) a park the driver answers
-when that moment is the earliest any task is due, and `cancel_at_ms[i]` is
-the virtual time task `i` is cancelled at, a scripted disconnect. A handler's
+when that moment is the earliest any task is due, and `cancel_at[i]`, when
+`Some`, is the virtual instant task `i` is cancelled at, a scripted disconnect. A handler's
 `plat.http` over a `SimPlatform` parks on the scripted network's latencies
 and, cancelled while it waits, answers `FetchError.Cancelled` — the same bytes
 on every target (`TestSelfHostSimTasks`).

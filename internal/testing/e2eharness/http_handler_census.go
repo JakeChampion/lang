@@ -66,9 +66,9 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	burst = strings.Replace(burst, burstReturn, "return (conns, flights, completed);", 1)
 	return src[:start] + body + burst + src[end:] + `
 function census_burn(n: i32, plat: platform.Platform): i32 {
-    let started: i64 = plat.elapsed_ns();
+    let started: Instant = plat.instant();
     let x: i32 = 12345;
-    while (plat.elapsed_ns() - started < n as i64) {
+    while (plat.instant().since(started).as_nanos() < n as i64) {
         let i: i32 = 0;
         while (i < 1024) {
             x = (x * 1103515245 + 12345) & 2147483647;

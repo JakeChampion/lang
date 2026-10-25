@@ -28,6 +28,7 @@ import "std/cli";
 import "std/http";
 import "std/net";
 import "std/async";
+import "std/time";
 import "std/url";
 import "std/string";
 import "core/int";
@@ -167,7 +168,7 @@ function run(p: Plan): i32 {
     if (now >= end || idle(conns) < 0) {
       until = end + DRAIN_NS;
     }
-    let events: i32[] = drv.wait(2 * conns.len(), millis_until(now, until));
+    let events: i32[] = drv.wait(2 * conns.len(), Some(wait_until(now, until)));
     let k: i32 = 0;
     while (k + 1 < events.len()) {
       let at: i32 = conn_of(conns, events[k]);
@@ -194,15 +195,15 @@ function run(p: Plan): i32 {
   return 0;
 }
 
-function millis_until(now: i64, until: i64): i32 {
+function wait_until(now: i64, until: i64): Duration {
   if (until <= now) {
-    return 0;
+    return time.DURATION_ZERO;
   }
-  let ms: i64 = (until - now) / 1000000;
-  if (ms > 1000) {
-    return 1000;
+  let ns: i64 = until - now;
+  if (ns > 1000000000) {
+    return time.duration_seconds(1);
   }
-  return ms as i32;
+  return time.duration_nanos(ns);
 }
 
 function open(drv: async.RealDriver, p: Plan): Conn {

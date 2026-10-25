@@ -49,8 +49,7 @@ import "std/time";
 ```fern
 <<2 pub function now(): time.Timestamp>>=
 pub function now(): time.Timestamp {
-  let d: Duration = time.duration_millis(now_unix_ms());
-  return time.Timestamp { sec: d.sec, nsec: d.nsec };
+  return time.timestamp_from_unix_millis(now_unix_ms());
 }
 
 pub function instant(): Instant {

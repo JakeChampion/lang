@@ -1,3 +1,4 @@
+import "std/time";
 import "std/unicode";
 import "std/test";
 import "std/http";
@@ -55,7 +56,7 @@ function refused(c: cookie.SetCookie): string {
 }
 
 function test_serialize(): test.TestOutcome {
-  let c: cookie.SetCookie = cookie.SetCookie { ...cookie.new("sid", "abc"), domain: "example.com", expires: 784111777 as i64, max_age: 3600, secure: true, same_site: cookie.Strict, partitioned: true };
+  let c: cookie.SetCookie = cookie.SetCookie { ...cookie.new("sid", "abc"), domain: "example.com", expires: Some(time.timestamp_from_unix(784111777)), max_age: Some(time.duration_seconds(3600)), secure: true, same_site: cookie.Strict, partitioned: true };
   let none: cookie.SetCookie = cookie.SetCookie { ...cookie.new("a", "\"quoted\""), path: "", http_only: false, same_site: cookie.CrossSite, secure: true };
   return test.assert_eq(serialized(c) + "|" + serialized(none) + "|" + serialized(cookie.delete("sid")), "sid=abc; Path=/; Domain=example.com; Expires=Sun, 06 Nov 1994 08:49:37 GMT; Max-Age=3600; Secure; HttpOnly; SameSite=Strict; Partitioned|a=\"quoted\"; Secure; SameSite=None|sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
 }
@@ -63,7 +64,7 @@ function test_serialize(): test.TestOutcome {
 function test_refused(): test.TestOutcome {
   let base: cookie.SetCookie = cookie.new("sid", "abc");
   let long: string = "x".repeat(4093);
-  let got: string = refused(cookie.SetCookie { ...base, name: "" }) + " " + refused(cookie.SetCookie { ...base, name: "s d" }) + " " + refused(cookie.SetCookie { ...base, name: "s=d" }) + " " + refused(cookie.SetCookie { ...base, value: "a b" }) + " " + refused(cookie.SetCookie { ...base, value: "a;b" }) + " " + refused(cookie.SetCookie { ...base, value: "a,b" }) + " " + refused(cookie.SetCookie { ...base, value: "a\"b" }) + " " + refused(cookie.SetCookie { ...base, value: "a\\b" }) + " " + refused(cookie.SetCookie { ...base, value: "é" }) + " " + refused(cookie.SetCookie { ...base, value: "a\r\nb" }) + " " + refused(cookie.SetCookie { ...base, value: long }) + " " + refused(cookie.SetCookie { ...base, value: long + "x" }) + " " + refused(cookie.SetCookie { ...base, path: "/a;b" }) + " " + refused(cookie.SetCookie { ...base, domain: "ex\tample.com" }) + " " + refused(cookie.SetCookie { ...base, domain: "x".repeat(1025) }) + " " + refused(cookie.SetCookie { ...base, max_age: cookie.MAX_AGE_CAP }) + " " + refused(cookie.SetCookie { ...base, max_age: cookie.MAX_AGE_CAP + 1 }) + " " + refused(cookie.SetCookie { ...base, partitioned: true }) + " " + refused(cookie.SetCookie { ...base, same_site: cookie.CrossSite });
+  let got: string = refused(cookie.SetCookie { ...base, name: "" }) + " " + refused(cookie.SetCookie { ...base, name: "s d" }) + " " + refused(cookie.SetCookie { ...base, name: "s=d" }) + " " + refused(cookie.SetCookie { ...base, value: "a b" }) + " " + refused(cookie.SetCookie { ...base, value: "a;b" }) + " " + refused(cookie.SetCookie { ...base, value: "a,b" }) + " " + refused(cookie.SetCookie { ...base, value: "a\"b" }) + " " + refused(cookie.SetCookie { ...base, value: "a\\b" }) + " " + refused(cookie.SetCookie { ...base, value: "é" }) + " " + refused(cookie.SetCookie { ...base, value: "a\r\nb" }) + " " + refused(cookie.SetCookie { ...base, value: long }) + " " + refused(cookie.SetCookie { ...base, value: long + "x" }) + " " + refused(cookie.SetCookie { ...base, path: "/a;b" }) + " " + refused(cookie.SetCookie { ...base, domain: "ex\tample.com" }) + " " + refused(cookie.SetCookie { ...base, domain: "x".repeat(1025) }) + " " + refused(cookie.SetCookie { ...base, max_age: Some(cookie.MAX_AGE_CAP) }) + " " + refused(cookie.SetCookie { ...base, max_age: Some(cookie.MAX_AGE_CAP.add(time.duration_seconds(1))) }) + " " + refused(cookie.SetCookie { ...base, partitioned: true }) + " " + refused(cookie.SetCookie { ...base, same_site: cookie.CrossSite });
   let prefixes: string = refused(cookie.SetCookie { ...base, name: "__Host-sid" }) + " " + refused(cookie.SetCookie { ...base, name: "__Host-sid", secure: true }) + " " + refused(cookie.SetCookie { ...base, name: "__Host-sid", secure: true, domain: "example.com" }) + " " + refused(cookie.SetCookie { ...base, name: "__Host-sid", secure: true, path: "/a" }) + " " + refused(cookie.SetCookie { ...base, name: "__Secure-sid" }) + " " + refused(cookie.SetCookie { ...base, name: "__Secure-sid", secure: true, domain: "example.com" });
   return test.assert_eq(got + "|" + prefixes, "name name name value value value value value value value ok long Path Domain Domain ok lifetime Partitioned SameSite|prefix ok prefix prefix prefix ok");
 }
@@ -94,7 +95,7 @@ function test_request_cookie(): test.TestOutcome {
 }
 
 function set(j: cookie.Jar, u: string, v: string, now: i64): string {
-  match (j.set(u, v, now)) {
+  match (j.set(u, v, time.timestamp_from_unix_millis(now))) {
     Ok(c) => {
       let flags: string = "";
       if (c.host_only) {
@@ -113,7 +114,7 @@ function set(j: cookie.Jar, u: string, v: string, now: i64): string {
 }
 
 function header(j: cookie.Jar, u: string, now: i64): string {
-  match (j.header(u, now)) {
+  match (j.header(u, time.timestamp_from_unix_millis(now))) {
     Some(v) => {
       return v;
     },
@@ -126,7 +127,7 @@ function header(j: cookie.Jar, u: string, now: i64): string {
 
 function names(j: cookie.Jar, now: i64): string {
   let out: string = "";
-  for c in j.all(now) {
+  for c in j.all(time.timestamp_from_unix_millis(now)) {
     out = out + c.name + " ";
   }
   return out.trim();
@@ -172,15 +173,15 @@ function test_jar_malformed(): test.TestOutcome {
 function test_jar_lifetime(): test.TestOutcome {
   let j: cookie.Jar = cookie.jar();
   let a: string = set(j, "http://example.com/", "a=1; Max-Age=5", T0) + "|" + set(j, "http://example.com/", "b=1; Expires=Wed, 09 Jun 2021 10:18:14 GMT", T0) + "|" + set(j, "http://example.com/", "c=1; Expires=Sun, 06 Nov 2094 08:49:37 GMT; Max-Age=1", T0) + "|" + set(j, "http://example.com/", "d=1; Max-Age=0", T0) + "|" + set(j, "http://example.com/", "e=1; Max-Age=-3", T0) + "|" + set(j, "http://example.com/", "f=1; Max-Age=99999999", T0) + "|" + set(j, "http://example.com/", "g=1; Max-Age=soon", T0);
-  let b: string = names(j, T0) + "|" + names(j, T0 + 1000 as i64) + "|" + names(j, T0 + 5000 as i64) + "|" + names(j, 1623233894000 as i64) + "|" + names(j, T0 + cookie.MAX_AGE_CAP as i64 * (1000 as i64));
+  let b: string = names(j, T0) + "|" + names(j, T0 + 1000 as i64) + "|" + names(j, T0 + 5000 as i64) + "|" + names(j, 1623233894000 as i64) + "|" + names(j, T0 + cookie.MAX_AGE_CAP.as_millis());
   let gone: string = set(j, "http://example.com/", "g=2; Max-Age=0", T0) + " " + names(j, T0);
   return test.assert_eq(a + "#" + b + "#" + gone, "a@example.com/ h|b@example.com/ h|c@example.com/ h|d@example.com/ h|e@example.com/ h|f@example.com/ h|g@example.com/ h#a b c f g|a b f g|b f g|g|g#g@example.com/ h a b c f");
 }
 
 function date(s: string): string {
   match (cookie.parse_date(s)) {
-    Some(sec) => {
-      return sec.to_string();
+    Some(t) => {
+      return t.sec.to_string();
     },
     None => {
       return "none";
@@ -247,14 +248,14 @@ function test_fetch_with_jar(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let login: string = "HTTP/1.1 200 Status\r\nSet-Cookie: sid=1; Path=/; HttpOnly\r\nSet-Cookie: theme=dark; Path=/ui\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
   let go: string = "HTTP/1.1 302 Status\r\nLocation: /ui/home\r\nSet-Cookie: hop=1; Path=/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen(ORIGIN, 80, 5).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/login", [sim_fetch.raw(login)]).route(ORIGIN, 80, "/go", [sim_fetch.raw(go)]).route(ORIGIN, 80, "/ui/home", [sim_fetch.reply(200, "home")]).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen(ORIGIN, 80, time.duration_millis(5)).listen("93.184.216.35", 80, time.duration_millis(5)).route(ORIGIN, 80, "/login", [sim_fetch.raw(login)]).route(ORIGIN, 80, "/go", [sim_fetch.raw(go)]).route(ORIGIN, 80, "/ui/home", [sim_fetch.reply(200, "home")]).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
   let j: cookie.Jar = cookie.jar();
   let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxies("", "", ""), roots: None, jar: Some(j), allow: None };
   let r1: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/login"), policy);
   let r2: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), policy);
   let r3: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/go").with_header("Cookie", "given=1"), policy);
   let lines: string = header_line(sent_text(n, 0), "cookie") + "|" + header_line(sent_text(n, 1), "cookie") + "|" + header_line(sent_text(n, 2), "cookie") + "|" + header_line(sent_text(n, 3), "cookie");
-  return test.assert_eq(lines + "#" + names(j, d.now_ns() / 1000000), "-|-|Cookie: given=1; sid=1|Cookie: given=1; theme=dark; sid=1; hop=1#sid theme hop");
+  return test.assert_eq(lines + "#" + names(j, d.elapsed().as_nanos() / 1000000), "-|-|Cookie: given=1; sid=1|Cookie: given=1; theme=dark; sid=1; hop=1#sid theme hop");
 }
 
 function main(): i32 {

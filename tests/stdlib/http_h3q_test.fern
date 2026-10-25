@@ -14,6 +14,7 @@ import "std/string";
 import "std/option";
 import "std/result";
 import "core/int";
+import "std/time";
 
 const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
 
@@ -24,6 +25,23 @@ const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
   + "-----END PRIVATE KEY-----\n";
 
 const MS: i64 = 1000000;
+
+const START: Instant = Instant { sec: 0, nsec: 0 };
+
+function at_ns(ns: i64): Instant {
+  return START.add(time.duration_nanos(ns));
+}
+
+function due_ns(at: Option[Instant]): i64 {
+  match (at) {
+    Some(i) => {
+      return i.since(START).as_nanos();
+    },
+    None => {
+      return 0;
+    }
+  }
+}
 
 const WALL_MS: i64 = 1700000000000;
 
@@ -60,13 +78,13 @@ struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string,
 
 function begin(): Result[Ends, string] {
   let cc: conn.Config = client_config();
-  let q: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64, WALL_MS)?;
+  let q: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(WALL_MS))?;
   return Ok(Ends { client: h3q.client(q, h3.config()), server: None, now: 0 as i64, log: "", lose_every: 0, carried: 0, reorder: false, requests: [], ids: [], responses: "", window: 0 as i64, raw: false });
 }
 
 function to_server(e: Ends, d: u8[]): Ends {
   if let Some(s) = e.server {
-    return Ends { ...e, server: Some(s.receive(d, e.now)) };
+    return Ends { ...e, server: Some(s.receive(d, at_ns(e.now))) };
   }
   let sc: conn.Config = server_config();
   if (e.window > 0) {
@@ -75,10 +93,10 @@ function to_server(e: Ends, d: u8[]): Ends {
   let Ok(h) = packet.parse(d, 0, 8) else {
     return e;
   };
-  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), h, e.now) else {
+  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), h, at_ns(e.now)) else {
     return e;
   };
-  return Ends { ...e, server: Some(h3q.server(q, h3.config()).receive(d, e.now)) };
+  return Ends { ...e, server: Some(h3q.server(q, h3.config()).receive(d, at_ns(e.now))) };
 }
 
 function carried(e: Ends): (Ends, boolean) {
@@ -100,7 +118,7 @@ function ordered(e: Ends, out: u8[][]): u8[][] {
 }
 
 function round(e: Ends): (Ends, boolean) {
-  let c: h3q.Conn = e.client.transmit(e.now);
+  let c: h3q.Conn = e.client.transmit(at_ns(e.now));
   let out: u8[][] = c.datagrams();
   c = c.sent();
   let cur: Ends = Ends { ...e, client: c };
@@ -113,7 +131,7 @@ function round(e: Ends): (Ends, boolean) {
   }
   let moved: boolean = out.len() > 0;
   if let Some(s) = cur.server {
-    let s2: h3q.Conn = s.transmit(cur.now);
+    let s2: h3q.Conn = s.transmit(at_ns(cur.now));
     let sout: u8[][] = s2.datagrams();
     s2 = s2.sent();
     cur = Ends { ...cur, server: Some(s2) };
@@ -131,9 +149,9 @@ function round(e: Ends): (Ends, boolean) {
 
 function client_received(e: Ends, d: u8[]): h3q.Conn {
   if (e.raw) {
-    return h3q.Conn { ...e.client, quic: e.client.quic.receive(d, e.now) };
+    return h3q.Conn { ...e.client, quic: e.client.quic.receive(d, at_ns(e.now)) };
   }
-  return e.client.receive(d, e.now);
+  return e.client.receive(d, at_ns(e.now));
 }
 
 function noticed(e: Ends): Ends {
@@ -196,9 +214,9 @@ function settled(e: Ends, rounds: i32): Ends {
 }
 
 function ticked(e: Ends): Ends {
-  let due: i64 = e.client.deadline();
+  let due: i64 = due_ns(e.client.deadline());
   if let Some(s) = e.server {
-    let d: i64 = s.deadline();
+    let d: i64 = due_ns(s.deadline());
     if (d != 0 && (due == 0 || d < due)) {
       due = d;
     }
@@ -210,13 +228,13 @@ function ticked(e: Ends): Ends {
   if (now < e.now) {
     now = e.now;
   }
-  let c: h3q.Conn = e.client.tick(now);
+  let c: h3q.Conn = e.client.tick(at_ns(now));
   if (e.raw) {
-    c = h3q.Conn { ...e.client, quic: e.client.quic.tick(now) };
+    c = h3q.Conn { ...e.client, quic: e.client.quic.tick(at_ns(now)) };
   }
   let cur: Ends = Ends { ...e, now: now, client: c };
   if let Some(s) = cur.server {
-    cur = Ends { ...cur, server: Some(s.tick(now)) };
+    cur = Ends { ...cur, server: Some(s.tick(at_ns(now))) };
   }
   return noticed(cur);
 }
@@ -340,7 +358,7 @@ function test_close(): test.TestOutcome {
       let Some(s2) = e.server else {
         return test.fail("no server");
       };
-      e = settled(Ends { ...e, server: Some(s2.close(e.now)) }, 20);
+      e = settled(Ends { ...e, server: Some(s2.close(at_ns(e.now))) }, 20);
       return test.assert_eq(after_goaway + " | " + e.log, "false true | client ended 256 remote true; server ended 256 remote false; ");
     },
     Err(why) => {

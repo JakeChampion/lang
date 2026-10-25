@@ -54,11 +54,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<19 function __max_age(v: string): Option[i32]>>
 
-<<20 pub function parse_date(s: string): Option[i64]>>
+<<20 pub function parse_date(s: string): Option[time.Timestamp]>>
 
 <<21 function __year_of(year: i32): i32>>
 
-<<22 function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored]>>
+<<22 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]>>
 
 <<23 pub function domain_matches(host: string, domain: string): boolean>>
 
@@ -86,6 +86,7 @@ import "std/string";
 import "std/array";
 import "std/url";
 import "std/time";
+import "std/i64";
 import "std/publicsuffix";
 import "core/int";
 import "std/error";
@@ -98,9 +99,10 @@ import "core/cmp";
 <<3 pub enum SameSite>>=
 pub enum SameSite { Unset, Strict, Lax, CrossSite }
 
-pub struct SetCookie { name: string, value: string, path: string, domain: string, max_age: i32, expires: i64, secure: boolean, http_only: boolean, same_site: SameSite, partitioned: boolean }
+pub struct SetCookie { name: string, value: string, path: string, domain: string, max_age: Option[Duration], expires: Option[time.Timestamp], secure: boolean, http_only: boolean, same_site: SameSite, partitioned: boolean }
 
-pub const MAX_AGE_CAP: i32 = 34560000;
+// 400 days, the longest lifetime a browser keeps.
+pub const MAX_AGE_CAP: Duration = Duration { sec: 34560000, nsec: 0 };
 
 pub const PAIR_CAP: i32 = 4096;
 
@@ -112,11 +114,11 @@ pub const ATTRIBUTE_CAP: i32 = 1024;
 ```fern
 <<4 pub function new(name: string, value: string): SetCookie>>=
 pub function new(name: string, value: string): SetCookie {
-  return SetCookie { name: name, value: value, path: "/", domain: "", max_age: -1, expires: 0 as i64, secure: false, http_only: true, same_site: Lax, partitioned: false };
+  return SetCookie { name: name, value: value, path: "/", domain: "", max_age: None, expires: None, secure: false, http_only: true, same_site: Lax, partitioned: false };
 }
 
 pub function delete(name: string): SetCookie {
-  return SetCookie { ...new(name, ""), max_age: 0 };
+  return SetCookie { ...new(name, ""), max_age: Some(time.DURATION_ZERO) };
 }
 ```
 
@@ -129,7 +131,7 @@ pub enum CookieError {
   BadValueByte(string),
   BadAttribute(string),
   TooLong(i32),
-  Lifetime(i32),
+  Lifetime(Duration),
   Prefix(string),
 }
 ```
@@ -170,8 +172,8 @@ pub function (e: CookieError) message(): string {
     TooLong(n) => {
       return "a cookie's name and value are past " + int.int_to_string(n) + " bytes";
     },
-    Lifetime(n) => {
-      return "a cookie's Max-Age is past " + int.int_to_string(n) + " seconds, 400 days";
+    Lifetime(cap) => {
+      return "a cookie's Max-Age is past " + cap.as_seconds().to_string() + " seconds, 400 days";
     },
     Prefix(name) => {
       return "cookie " + name + " lacks what its prefix requires";
@@ -207,11 +209,11 @@ pub function (c: SetCookie) serialize(): Result[string, CookieError] {
   if (c.domain.len() > 0) {
     out = out + "; Domain=" + c.domain;
   }
-  if (c.expires != 0 as i64) {
-    out = out + "; Expires=" + time.timestamp_from_unix(c.expires).format_http_date();
+  if let Some(at) = c.expires {
+    out = out + "; Expires=" + at.format_http_date();
   }
-  if (c.max_age >= 0) {
-    out = out + "; Max-Age=" + int.int_to_string(c.max_age);
+  if let Some(age) = c.max_age {
+    out = out + "; Max-Age=" + age.as_seconds().to_string();
   }
   return Ok(out + __flags(c));
 }
@@ -277,8 +279,10 @@ function __attributes_ok(c: SetCookie): Result[boolean, CookieError] {
   if (!__is_attribute_value(c.domain)) {
     return Err(BadAttribute("Domain"));
   }
-  if (c.max_age > MAX_AGE_CAP) {
-    return Err(Lifetime(MAX_AGE_CAP));
+  if let Some(age) = c.max_age {
+    if (age.cmp(MAX_AGE_CAP) > 0) {
+      return Err(Lifetime(MAX_AGE_CAP));
+    }
   }
   if (c.partitioned && !c.secure) {
     return Err(BadAttribute("Partitioned"));
@@ -380,7 +384,8 @@ pub function (r: HttpRequest) cookie(name: string): Option[string] {
 
 ```fern
 <<13 pub struct Cookie>>=
-pub struct Cookie { name: string, value: string, domain: string, path: string, host_only: boolean, secure: boolean, http_only: boolean, partitioned: boolean, expires: i64, created: i64, accessed: i64 }
+// `expires` is None for a session cookie.
+pub struct Cookie { name: string, value: string, domain: string, path: string, host_only: boolean, secure: boolean, http_only: boolean, partitioned: boolean, expires: Option[time.Timestamp], created: time.Timestamp, accessed: time.Timestamp }
 
 pub enum Ignored { NotACookie, ForeignDomain, PublicSuffixDomain, InsecureOrigin, SecureKept, PrefixBroken, UnsecuredPartition }
 ```
@@ -436,7 +441,7 @@ pub function jar_with(suffix: (string) => boolean, per_domain: i32, total: i32):
   return Jar { rows: cell_new(""), suffix: suffix, per_domain: per_domain, total: total };
 }
 
-pub function (j: Jar) store(request_url: string, h: HeaderMap, now: i64): i32 {
+pub function (j: Jar) store(request_url: string, h: HeaderMap, now: time.Timestamp): i32 {
   let n: i32 = 0;
   for v in h.get_all("set-cookie") {
     match (j.set(request_url, v, now)) {
@@ -449,9 +454,9 @@ pub function (j: Jar) store(request_url: string, h: HeaderMap, now: i64): i32 {
   return n;
 }
 
-pub function (j: Jar) set(request_url: string, set_cookie: string, now: i64): Result[Cookie, Ignored] {
+pub function (j: Jar) set(request_url: string, set_cookie: string, now: time.Timestamp): Result[Cookie, Ignored] {
   let u: Url = __url(request_url)?;
-  let parsed: __Parsed = __parse(set_cookie, now)?;
+  let parsed: __Parsed = __parse(set_cookie, now.unix_millis())?;
   let c: Cookie = __place(j, u, parsed, now)?;
   if (u.scheme.to_lower() != "https") {
     if (c.secure) {
@@ -466,7 +471,7 @@ pub function (j: Jar) set(request_url: string, set_cookie: string, now: i64): Re
   return Ok(c);
 }
 
-pub function (j: Jar) header(request_url: string, now: i64): Option[string] {
+pub function (j: Jar) header(request_url: string, now: time.Timestamp): Option[string] {
   let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(request_url)) {
     Some(p) => {
@@ -496,17 +501,29 @@ pub function (j: Jar) header(request_url: string, now: i64): Option[string] {
   return Some(__pairs(picked));
 }
 
-pub function (j: Jar) all(now: i64): Cookie[] {
+pub function (j: Jar) all(now: time.Timestamp): Cookie[] {
   let out: Cookie[] = [];
   for line in j.rows.get().split("\n") {
     if (line.len() > 0) {
       let c: Cookie = __restored(line);
-      if (c.expires < 0 as i64 || c.expires > now) {
+      if (__alive(c, now)) {
         out = out.append(c);
       }
     }
   }
   return out;
+}
+
+function __alive(c: Cookie, at: time.Timestamp): boolean {
+  match (c.expires) {
+    Some(e) => {
+      return e.cmp(at) > 0;
+    },
+    None => {
+      return true;
+    }
+  }
+  return true;
 }
 
 pub function (j: Jar) clear(): void {
@@ -613,7 +630,7 @@ function __flag(p: __Parsed, key: string): __Parsed {
 }
 
 function __lifetime(p: __Parsed, key: string, value: string, now: i64): __Parsed {
-  let cap: i64 = now + MAX_AGE_CAP as i64 * (1000 as i64);
+  let cap: i64 = now + MAX_AGE_CAP.as_millis();
   if (key == "max-age") {
     match (__max_age(value)) {
       Some(n) => {
@@ -632,8 +649,8 @@ function __lifetime(p: __Parsed, key: string, value: string, now: i64): __Parsed
     return p;
   }
   match (parse_date(value)) {
-    Some(sec) => {
-      return __Parsed { ...p, expires: __min(sec * (1000 as i64), cap) };
+    Some(at) => {
+      return __Parsed { ...p, expires: __min(at.unix_millis(), cap) };
     },
     None => {
       return p;
@@ -666,7 +683,7 @@ function __max_age(v: string): Option[i32] {
       if (v.starts_with("-")) {
         return Some(0 - 1);
       }
-      return Some(MAX_AGE_CAP);
+      return Some(MAX_AGE_CAP.as_seconds() as i32);
     }
   }
   return None;
@@ -680,11 +697,11 @@ function __min(a: i64, b: i64): i64 {
 }
 ```
 
-### `20 pub function parse_date(s: string): Option[i64]`
+### `20 pub function parse_date(s: string): Option[time.Timestamp]`
 
 ```fern
-<<20 pub function parse_date(s: string): Option[i64]>>=
-pub function parse_date(s: string): Option[i64] {
+<<20 pub function parse_date(s: string): Option[time.Timestamp]>>=
+pub function parse_date(s: string): Option[time.Timestamp] {
   let found: i32[] = [0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1];
   for token in __date_tokens(s) {
     found = __date_token(found, token);
@@ -698,7 +715,7 @@ pub function parse_date(s: string): Option[i64] {
     return None;
   }
   let days: i32 = d.days_since(time.date_make(1970, 1, 1));
-  return Some(days as i64 * (86400 as i64) + (found[0] * 3600 + found[1] * 60 + found[2]) as i64);
+  return Some(time.timestamp_from_unix(days as i64 * (86400 as i64) + (found[0] * 3600 + found[1] * 60 + found[2]) as i64));
 }
 ```
 
@@ -831,11 +848,11 @@ function __month_of(token: string): i32 {
 }
 ```
 
-### `22 function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored]`
+### `22 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]`
 
 ```fern
-<<22 function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored]>>=
-function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored] {
+<<22 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]>>=
+function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored] {
   let host: string = u.host.to_lower();
   let domain: string = host;
   let host_only: boolean = true;
@@ -853,7 +870,15 @@ function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored]
   if (!p.has_path) {
     path = __default_path(u);
   }
-  return Ok(Cookie { name: p.name, value: p.value, domain: domain, path: path, host_only: host_only, secure: p.secure, http_only: p.http_only, expires: p.expires, created: now, accessed: now, partitioned: p.partitioned });
+  return Ok(Cookie { name: p.name, value: p.value, domain: domain, path: path, host_only: host_only, secure: p.secure, http_only: p.http_only, expires: __expiry(p.expires), created: now, accessed: now, partitioned: p.partitioned });
+}
+
+// The parser's expiry in milliseconds, where -1 marks a session cookie.
+function __expiry(ms: i64): Option[time.Timestamp] {
+  if (ms < 0) {
+    return None;
+  }
+  return Some(time.timestamp_from_unix_millis(ms));
 }
 
 function __secure_shadowed(all: Cookie[], c: Cookie): boolean {
@@ -889,7 +914,7 @@ function __replaced(all: Cookie[], c: Cookie): Cookie[] {
       out = out.append(old);
     }
   }
-  if (c.expires < 0 as i64 || c.expires > c.created) {
+  if (__alive(c, c.created)) {
     out = out.append(fresh);
   }
   return out;
@@ -920,7 +945,7 @@ function __without_oldest(all: Cookie[], domain: string): Cookie[] {
   let pick: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < all.len()) {
-    if ((domain.len() == 0 || all[i].domain == domain) && (pick < 0 || all[i].accessed < all[pick].accessed)) {
+    if ((domain.len() == 0 || all[i].domain == domain) && (pick < 0 || all[i].accessed.cmp(all[pick].accessed) < 0)) {
       pick = i;
     }
     i = i + 1;
@@ -943,7 +968,7 @@ function __reaches(c: Cookie, host: string, path: string, secure: boolean): bool
 
 function __ordered(picked: Cookie[], c: Cookie): Cookie[] {
   let k: i32 = 0;
-  while (k < picked.len() && (picked[k].path.len() > c.path.len() || picked[k].path.len() == c.path.len() && picked[k].created <= c.created)) {
+  while (k < picked.len() && (picked[k].path.len() > c.path.len() || picked[k].path.len() == c.path.len() && picked[k].created.cmp(c.created) <= 0)) {
     k = k + 1;
   }
   return array.slice(picked, 0, k).append(c).concat(array.slice(picked, k, picked.len()));
@@ -1047,13 +1072,25 @@ function __row(c: Cookie): string {
   if (c.partitioned) {
     flags = flags + "p";
   }
-  let fields: string[] = [c.name, c.value, c.domain, c.path, flags, __i64_string(c.expires), __i64_string(c.created), __i64_string(c.accessed)];
+  let fields: string[] = [c.name, c.value, c.domain, c.path, flags, __i64_string(__expiry_ms(c.expires)), __i64_string(c.created.unix_millis()), __i64_string(c.accessed.unix_millis())];
   return fields.join(__sep());
 }
 
 function __restored(row: string): Cookie {
   let f: string[] = row.split(__sep());
-  return Cookie { name: f[0], value: f[1], domain: f[2], path: f[3], host_only: f[4].contains("h"), secure: f[4].contains("s"), http_only: f[4].contains("o"), partitioned: f[4].contains("p"), expires: __i64_of(f[5]), created: __i64_of(f[6]), accessed: __i64_of(f[7]) };
+  return Cookie { name: f[0], value: f[1], domain: f[2], path: f[3], host_only: f[4].contains("h"), secure: f[4].contains("s"), http_only: f[4].contains("o"), partitioned: f[4].contains("p"), expires: __expiry(__i64_of(f[5])), created: time.timestamp_from_unix_millis(__i64_of(f[6])), accessed: time.timestamp_from_unix_millis(__i64_of(f[7])) };
+}
+
+function __expiry_ms(expires: Option[time.Timestamp]): i64 {
+  match (expires) {
+    Some(e) => {
+      return e.unix_millis();
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+  return 0 - 1;
 }
 
 function __i64_string(n: i64): string {

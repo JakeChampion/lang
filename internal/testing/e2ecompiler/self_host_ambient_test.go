@@ -73,7 +73,7 @@ import "std/platform";
 function helper(plat: platform.Platform): void { plat.log("hit"); }
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     helper(plat);
-    let a: i64 = plat.now_ms();` + tail,
+    let a: i64 = plat.now().sec;` + tail,
 			want: nil,
 		},
 		{
