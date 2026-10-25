@@ -4058,7 +4058,7 @@ pub function (s: string) parse_float(): Option[f64] {
     v = f64_from_bits(_el_compute(w, q) as i64);
   }
   if (neg) {
-    v = 0.0 - v;
+    v = -v;
   }
   return Some(v);
 }
@@ -4184,7 +4184,7 @@ function __parse_float_exact(s: string): Option[f64] {
     v = __decimal_to_f64(dig, k);
   }
   if (neg) {
-    v = 0.0 - v;
+    v = -v;
   }
   return Some(v);
 }

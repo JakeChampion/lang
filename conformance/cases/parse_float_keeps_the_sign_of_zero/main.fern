@@ -1,0 +1,32 @@
+// A negative input that parses to zero keeps the sign bit, on the fast path and on the
+// exact fallback that takes more than 19 significant digits.
+import "std/string";
+
+function sign(s: string): string {
+  match (s.parse_float()) {
+    Some(v) => {
+      if (f64_bits(v) < 0) {
+        return s + " -0";
+      }
+      if (f64_bits(v) == 0) {
+        return s + " +0";
+      }
+      return s + " nonzero";
+    },
+    None => {
+      return s + " none";
+    }
+  }
+}
+
+function main(): i32 {
+  print(sign("0"));
+  print(sign("-0"));
+  print(sign("-0.0"));
+  print(sign("-0e5"));
+  print(sign("1e-9999"));
+  print(sign("-1e-9999"));
+  print(sign("-12345678901234567890123e-9999"));
+  print(sign("12345678901234567890123e-9999"));
+  return 0;
+}
