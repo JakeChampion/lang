@@ -1,113 +1,106 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+import "std/utf8";
 import "std/string";
 
 struct Box { v: i32 }
 
 pub function (s: string) codes(): i32[] {
-    let o: i32[] = [];
-    let i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i] as i32); i = i + 1; }
-    return o;
+  let o: i32[] = [];
+  let i: i32 = 0;
+  while (i < s.len()) {
+    o = o.append(s[i] as i32);
+    i = i + 1;
+  }
+  return o;
 }
 
-pub function (x: i64) parts(): i32[] { return [1, 2]; }
+pub function (x: i64) parts(): i32[] {
+  return [1, 2];
+}
 
-pub function (b: Box) items(): i32[] { return [b.v, b.v]; }
+pub function (b: Box) items(): i32[] {
+  return [b.v, b.v];
+}
 
-function mk_free(): i32[] { return [4, 5]; }
-
+function mk_free(): i32[] {
+  return [4, 5];
+}
 
 function chars_bound(i: i32): i32 {
-    let cs = "abc".chars();
-    let n: i32 = 0;
-    for c in cs { n = n + 1; }
-    return n;
+  let cs = "abc".chars();
+  let n: i32 = 0;
+  for c in cs {
+    n = n + 1;
+  }
+  return n;
 }
-
-
 
 function chars_inline(i: i32): i32 {
-    let n: i32 = 0;
-    for c in "de".chars() { n = n + 1; }
-    return n;
+  let n: i32 = 0;
+  for c in "de".chars() {
+    n = n + 1;
+  }
+  return n;
 }
-
 
 function user_string_method(i: i32): i32 {
-    let ks = "xy".codes();
-    let n: i32 = 0;
-    for k in ks { n = n + k; }
-    return n;
+  let ks = "xy".codes();
+  let n: i32 = 0;
+  for k in ks {
+    n = n + k;
+  }
+  return n;
 }
-
 
 function i64_receiver(i: i32): i32 {
-    let ps = (7 as i64).parts();
-    let n: i32 = 0;
-    for p in ps { n = n + p; }
-    return n;
+  let ps = (7 as i64).parts();
+  let n: i32 = 0;
+  for p in ps {
+    n = n + p;
+  }
+  return n;
 }
 
-
 function struct_receiver(i: i32): i32 {
-    let b: Box = Box { v: 2 };
-    let xs = b.items();
-    let n: i32 = 0;
-    for v in xs { n = n + v; }
-    return n;
+  let b: Box = Box { v: 2 };
+  let xs = b.items();
+  let n: i32 = 0;
+  for v in xs {
+    n = n + v;
+  }
+  return n;
 }
 
 function free_function(i: i32): i32 {
-    let xs = mk_free();
-    let n: i32 = 0;
-    for v in xs { n = n + v; }
-    return n;
+  let xs = mk_free();
+  let n: i32 = 0;
+  for v in xs {
+    n = n + v;
+  }
+  return n;
 }
 
-
-
 function len_and_index(i: i32): i32 {
-    let cs = "abcd".chars();
-    if (cs.len() != 4) { return 253; }
-    let ks = "zz".codes();
-    if (ks[0] != 122) { return 252; }
-    return 2;
+  let cs = "abcd".chars();
+  if (cs.len() != 4) {
+    return 253;
+  }
+  let ks = "zz".codes();
+  if (ks[0] != 122) {
+    return 252;
+  }
+  return 2;
 }
 
 function main(): i32 {
-    let acc: i32 = 0;
-    let i: i32 = 0;
-    while (i < 50) {
-        acc = acc + chars_bound(i) + chars_inline(i) + user_string_method(i)
-            + i64_receiver(i) + struct_receiver(i) + free_function(i) + len_and_index(i);
-        i = i + 1;
-    }
-    if (__rc_underflow_count() != 0) { return 251; }
-    return acc % 113;
+  let acc: i32 = 0;
+  let i: i32 = 0;
+  while (i < 50) {
+    acc = acc + chars_bound(i) + chars_inline(i) + user_string_method(i)
+      + i64_receiver(i) + struct_receiver(i) + free_function(i) + len_and_index(i);
+    i = i + 1;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 251;
+  }
+  return acc % 113;
 }

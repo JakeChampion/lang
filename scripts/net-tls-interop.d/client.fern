@@ -1,3 +1,21 @@
+// The Fern TLS client scripts/net-tls-interop runs against OpenSSL's
+// s_server and Go's crypto/tls server: one line per case, the same lines
+// whichever server answers, so the script compares them with one
+// expected text. Every server answers GET /hello with "hello".
+//
+//   get      std/fetch over HTTPS, the roots from SSL_CERT_FILE
+//   socket   a std/tls/client session on a socket of its own, with ALPN
+//   resume   another, resumed from the ticket the first was issued
+//   mtls     the server requiring a client certificate, shown one
+//   nocert   the same server, shown none, which it refuses
+//   bulk     the 16 MiB body of /bulk over std/fetch, with its time, when
+//            BULK is set: not every server has one to give
+//   handshakes  twenty connections, with their time
+//
+// A body is shown by its first line: the whole of a hello, the heading of
+// a page of connection details. The protocol ALPN agreed on follows the
+// socket cases' answers when there is one.
+import "std/i32";
 import "std/fetch";
 import "std/http";
 import "std/string";
@@ -23,11 +41,11 @@ function setting(name: string, fallback: string): string {
 }
 
 function port_of(name: string): i32 {
-  match (int.parse_int_radix(setting(name, "0"), 10)) {
-    Some(n) => {
+  match (i32.parse_i32_radix(setting(name, "0"), 10)) {
+    Ok(n) => {
       return n;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }

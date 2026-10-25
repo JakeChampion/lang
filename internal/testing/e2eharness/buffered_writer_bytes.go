@@ -69,7 +69,8 @@ function main(): i32 {
     }
   }
   // An existing error discards pending bytes but survives each flush.
-  let failed = io.BufWriter { w: stdout(), buf: io.BufBlock { h: buf_new(1) }, cap: 1, err: Some(Other("first", "failure", 0)) };
+  let initial = io.buf_writer_new(stdout(), 1);
+  let failed = io.BufWriter { ...initial, err: Some(Other("first", "failure", 0)) };
   failed = failed.write_byte(255);
   failed = failed.write_string("discarded");
   failed = failed.write_bytes(held);

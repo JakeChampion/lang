@@ -1,3 +1,6 @@
+// The JSON echo server the soak lane holds under load: every request body
+// is parsed and encoded again, so a request allocates and frees a tree.
+import "std/i32";
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -7,7 +10,7 @@ import "core/int";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   match (req.body_string()) {
     Ok(text) => {
-      match (json.json_parse_result(text)) {
+      match (json.parse(text)) {
         Ok(v) => {
           return http.json(json.json_encode(v));
         },
@@ -26,11 +29,11 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function port(): i32 {
   match (env("PORT")) {
     Some(p) => {
-      match (int.parse_int_radix(p, 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(p, 10)) {
+        Ok(n) => {
           return n;
         },
-        None => {
+        Err(_) => {
           return 8080;
         }
       }

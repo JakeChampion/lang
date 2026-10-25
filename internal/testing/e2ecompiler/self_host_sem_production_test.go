@@ -5486,9 +5486,9 @@ function main(): i32 {
     em = em.insert(B, 4);
     let n: i32 = em.entries().len();
     let parsed: i32 = 0;
-    match (json.json_parse("12")) {
-        Some(_) => { parsed = 1; },
-        None => { parsed = 0; },
+    match (json.parse("12")) {
+        Ok(_) => { parsed = 1; },
+        Err(_) => { parsed = 0; },
     }
     return n * 10 + parsed * 5 + code(Reply.Ok) + code(Reply.Busy);
 }

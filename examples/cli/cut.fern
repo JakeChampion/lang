@@ -16,29 +16,29 @@ function parse_list(spec: string): (i32, i32)[] {
         let lo: i32 = 1;
         let hi: i32 = 0;
         if (!los.is_empty()) {
-          match (los.parse_int()) {
-            Some(n) => {
+          match (i32.parse_i32(los)) {
+            Ok(n) => {
               lo = n;
             },
-            None => {}
+            Err(_) => {}
           }
         }
         if (!his.is_empty()) {
-          match (his.parse_int()) {
-            Some(n) => {
+          match (i32.parse_i32(his)) {
+            Ok(n) => {
               hi = n;
             },
-            None => {}
+            Err(_) => {}
           }
         }
         out = out.append((lo, hi));
       },
       None => {
-        match (p.parse_int()) {
-          Some(n) => {
+        match (i32.parse_i32(p)) {
+          Ok(n) => {
             out = out.append((n, n));
           },
-          None => {}
+          Err(_) => {}
         }
       }
     }

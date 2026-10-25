@@ -1,3 +1,7 @@
+// The stateful server the soak lane holds under load: a bounded map of the
+// paths seen most recently, the oldest evicted past the bound, so the
+// state churns without growing.
+import "std/i32";
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -39,11 +43,11 @@ function handle(r: Recent, req: HttpRequest, plat: platform.Platform): (Recent, 
 function port(): i32 {
   match (env("PORT")) {
     Some(p) => {
-      match (int.parse_int_radix(p, 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(p, 10)) {
+        Ok(n) => {
           return n;
         },
-        None => {
+        Err(_) => {
           return 8080;
         }
       }

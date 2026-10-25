@@ -209,7 +209,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -218,9 +218,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) {
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) {
                 i = i + 1;
             }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
@@ -457,7 +457,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -673,7 +673,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -682,9 +682,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
             toks = toks.append(TokPunct { ch: 1001 });
@@ -1155,7 +1155,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -1164,9 +1164,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
             toks = toks.append(TokPunct { ch: 1001 });   // ==
@@ -1624,7 +1624,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -1633,9 +1633,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
             toks = toks.append(TokPunct { ch: 1001 });   // ==
@@ -1981,7 +1981,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -1990,9 +1990,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -2277,7 +2277,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -2286,9 +2286,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -2589,7 +2589,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -2598,9 +2598,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -2895,7 +2895,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -2904,9 +2904,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -3140,7 +3140,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -3149,9 +3149,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -3422,7 +3422,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -3431,9 +3431,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -3693,7 +3693,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -3702,9 +3702,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             let start: i32 = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -3953,7 +3953,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -3962,9 +3962,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_letter()) {
             let start: i32 = i;
-            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alphanumeric()) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -4145,7 +4145,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -4324,7 +4324,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -4603,7 +4603,7 @@ function tokenize(src: string): Token[] {
         if (b == 47 && i + 1 < n && src[i + 1] == 47) {
             i = i + 2;
             while (i < n && src[i] != 10) { i = i + 1; }
-        } else if ((b as u8).is_ascii_white_space()) {
+        } else if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             start = i;
@@ -4626,9 +4626,9 @@ function tokenize(src: string): Token[] {
             } else {
                 toks = toks.append(TokInt { value: numV });
             }
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             start = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { text: slice_unchecked(src, i, i + 1) + "" });
@@ -4786,7 +4786,7 @@ function tokenize(src: string): Token[] {
             // Line comment — drop bytes through next \n.
             i = i + 2;
             while (i < n && src[i] != 10) { i = i + 1; }
-        } else if ((b as u8).is_ascii_white_space()) {
+        } else if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if (b == 34) {
             // String literal with escape handling. Build the
@@ -4813,9 +4813,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: numV });
-        } else if ((b as u8).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_letter() || b == 95) {
             start = i;
-            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) {
+            while (i < n && (src[i].is_ascii_alphanumeric() || src[i] == 95)) {
                 i = i + 1;
             }
             let name: str = slice_unchecked(src, start, i);
@@ -4978,7 +4978,7 @@ function tokenize(src: string): Token[] {
     let numSfx: string = "";
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if (b == 48 && i + 1 < n && (src[i + 1] == 120 || src[i + 1] == 88)) {
             if (i + 2 >= n || !src[i + 2].is_ascii_hex_digit()) {
@@ -5004,9 +5004,9 @@ function tokenize(src: string): Token[] {
             numSfx = read_num_suffix(src, i);
             if (numSfx.len() > 0) { i = i + numSfx.len(); }
             toks = toks.append(TokInt { value: numV, base: 10, suffix: numSfx });
-        } else if ((b as u8).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_letter()) {
             let start: i32 = i;
-            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alphanumeric()) { i = i + 1; }
             let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
@@ -5116,7 +5116,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
             let v: i32 = 0;
@@ -5127,9 +5127,9 @@ function tokenize(src: string): Token[] {
             let sfx: string = read_num_suffix(src, i);
             if (sfx.len() > 0) { i = i + sfx.len(); }
             toks = toks.append(TokInt { value: v, suffix: sfx });
-        } else if ((b as u8).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_letter()) {
             let start: i32 = i;
-            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alphanumeric()) { i = i + 1; }
             let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
@@ -5224,7 +5224,7 @@ function tokenize(src: string): Token[] {
     let i: i32 = 0;
     while (i < n) {
         let b: i32 = src[i] as i32;
-        if ((b as u8).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_whitespace()) {
             i = i + 1;
         } else if (b == 47 && i + 1 < n && src[i + 1] == 47) {
             i = i + 2;
@@ -5268,9 +5268,9 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as u8).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_letter()) {
             let start: i32 = i;
-            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alphanumeric()) { i = i + 1; }
             let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
@@ -5349,7 +5349,7 @@ function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
 function is_alpha(b: i32): boolean {
     return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
 }
-function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+function is_alphanumeric(b: i32): boolean { return is_digit(b) || is_alpha(b); }
 function is_ws(b: i32): boolean {
     return b == 32 || b == 9 || b == 10 || b == 13;
 }
@@ -5395,7 +5395,7 @@ function tokenize(src: string): Token[] {
             toks = toks.append(TokInt { value: v });
         } else if (is_alpha(b)) {
             let start: i32 = i;
-            while (i < n && is_alnum(src[i] as i32)) { i = i + 1; }
+            while (i < n && is_alphanumeric(src[i] as i32)) { i = i + 1; }
             let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
@@ -5469,13 +5469,13 @@ function main(): i32 {
     if (!(48 as u8).is_ascii_digit()) { return 1; }      // '0'
     if (!(57 as u8).is_ascii_digit()) { return 2; }      // '9'
     if ((47 as u8).is_ascii_digit()) { return 3; }       // '/' is not a digit
-    if (!(65 as u8).is_ascii_alpha()) { return 4; }      // 'A'
-    if (!(122 as u8).is_ascii_alpha()) { return 5; }     // 'z'
-    if ((64 as u8).is_ascii_alpha()) { return 6; }       // '@' is not alpha
-    if (!(48 as u8).is_ascii_alnum()) { return 7; }
-    if (!(65 as u8).is_ascii_alnum()) { return 8; }
-    if (!(32 as u8).is_ascii_white_space()) { return 9; }
-    if (!(10 as u8).is_ascii_white_space()) { return 10; }
+    if (!(65 as u8).is_ascii_letter()) { return 4; }      // 'A'
+    if (!(122 as u8).is_ascii_letter()) { return 5; }     // 'z'
+    if ((64 as u8).is_ascii_letter()) { return 6; }       // '@' is not alpha
+    if (!(48 as u8).is_ascii_alphanumeric()) { return 7; }
+    if (!(65 as u8).is_ascii_alphanumeric()) { return 8; }
+    if (!(32 as u8).is_ascii_whitespace()) { return 9; }
+    if (!(10 as u8).is_ascii_whitespace()) { return 10; }
     if (!(97 as u8).is_ascii_hex_digit()) { return 11; } // 'a'
     if (!(70 as u8).is_ascii_hex_digit()) { return 12; } // 'F'
     if ((103 as u8).is_ascii_hex_digit()) { return 13; } // 'g' is not hex
@@ -5537,7 +5537,7 @@ function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
 function is_alpha(b: i32): boolean {
     return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
 }
-function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+function is_alphanumeric(b: i32): boolean { return is_digit(b) || is_alpha(b); }
 
 function tokenize(src: string): Token[] {
     let toks: Token[] = [];
@@ -5556,7 +5556,7 @@ function tokenize(src: string): Token[] {
             toks = toks.append(TokInt { value: v });
         } else if (is_alpha(b)) {
             let start: i32 = i;
-            while (i < n && is_alnum(src[i] as i32)) { i = i + 1; }
+            while (i < n && is_alphanumeric(src[i] as i32)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -5762,10 +5762,10 @@ function main(): i32 {
     }
     match (empty_i.lcm_all()) { Some(_) => { return 46; }, None => { } }
 
-    if ("a bb ccc dddd".word_count_min(3) != 2) { return 50; }
-    if ("a bb ccc dddd".word_count_min(1) != 4) { return 51; }
-    if ("a bb ccc".word_count_min(10) != 0) { return 52; }
-    if ("".word_count_min(1) != 0) { return 53; }
+    if ("a bb ccc dddd".whitespace_word_count_min(3) != 2) { return 50; }
+    if ("a bb ccc dddd".whitespace_word_count_min(1) != 4) { return 51; }
+    if ("a bb ccc".whitespace_word_count_min(10) != 0) { return 52; }
+    if ("".whitespace_word_count_min(1) != 0) { return 53; }
 
     match ("the quick brown fox".longest_word()) {
         Some(w) => { if (w != "quick") { return 60; } },
@@ -6312,13 +6312,14 @@ function main(): i32 {
 
 func TestArm64StdlibBundle22(t *testing.T) {
 	src := `
+import "std/i32";
 import "std/string";
 function main(): i32 {
     // parse_hex_int / parse_bin_int
-    match ("ff".parse_hex_int()) { Some(v) => { if (v != 255) { return 1; } }, None => { return 2; }, }
-    match ("1010".parse_bin_int()) { Some(v) => { if (v != 10) { return 3; } }, None => { return 4; }, }
-    match ("xyz".parse_hex_int()) { Some(_) => { return 5; }, None => { } }
-    match ("2".parse_bin_int()) { Some(_) => { return 6; }, None => { } }
+    match (i32.parse_i32_radix("ff", 16)) { Ok(v) => { if (v != 255) { return 1; } }, Err(_) => { return 2; }, }
+    match (i32.parse_i32_radix("1010", 2)) { Ok(v) => { if (v != 10) { return 3; } }, Err(_) => { return 4; }, }
+    match (i32.parse_i32_radix("xyz", 16)) { Ok(_) => { return 5; }, Err(_) => { } }
+    match (i32.parse_i32_radix("2", 2)) { Ok(_) => { return 6; }, Err(_) => { } }
 
     // is_in_range — half-open
     if (!(5).is_in_range(0, 10)) { return 7; }
@@ -6772,10 +6773,10 @@ function main(): i32 {
     if (empty.count_non_empty() != 0) { return 5; }
 
     // word_count
-    if ("hello world".word_count() != 2) { return 6; }
-    if ("  a  b  c  ".word_count() != 3) { return 7; }
-    if ("".word_count() != 0) { return 8; }
-    if ("foo\tbar\nbaz".word_count() != 3) { return 9; }
+    if ("hello world".whitespace_word_count() != 2) { return 6; }
+    if ("  a  b  c  ".whitespace_word_count() != 3) { return 7; }
+    if ("".whitespace_word_count() != 0) { return 8; }
+    if ("foo\tbar\nbaz".whitespace_word_count() != 3) { return 9; }
 
     // escape_html
     if ("hello".escape_html() != "hello") { return 10; }
@@ -7280,7 +7281,8 @@ function main(): i32 {
 }
 
 func TestArm64StdlibBundle3(t *testing.T) {
-	src := `
+	src := `import "std/utf8";
+
 import "std/i64";
 import "std/u32";
 import "std/u64";
@@ -7363,15 +7365,15 @@ function main(): i32 {
     // String predicates — whole-string variants.
     if (!"abc".is_ascii_only()) { return 19; }
     if (!"".is_ascii_only()) { return 20; }
-    if (!"12345".is_numeric()) { return 21; }
-    if ("12a".is_numeric()) { return 22; }
-    if ("".is_numeric()) { return 23; }
-    if (!"hello".is_alpha_only()) { return 24; }
-    if ("hello1".is_alpha_only()) { return 25; }
-    if ("".is_alpha_only()) { return 26; }
-    if (!"hello123".is_alnum_only()) { return 27; }
-    if ("hello world".is_alnum_only()) { return 28; }   // space breaks
-    if ("".is_alnum_only()) { return 29; }
+    if (!"12345".is_digits()) { return 21; }
+    if ("12a".is_digits()) { return 22; }
+    if ("".is_digits()) { return 23; }
+    if (!"hello".is_letters()) { return 24; }
+    if ("hello1".is_letters()) { return 25; }
+    if ("".is_letters()) { return 26; }
+    if (!"hello123".is_alphanumeric()) { return 27; }
+    if ("hello world".is_alphanumeric()) { return 28; }   // space breaks
+    if ("".is_alphanumeric()) { return 29; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7492,27 +7494,28 @@ function main(): i32 {
 
 func TestArm64Radix(t *testing.T) {
 	src := `
+import "std/i32";
 import "core/int";
 import "std/format";
 function main(): i32 {
     // Parse — bases 2 / 8 / 10 / 16 / 36.
-    match (int.parse_int_radix("ff", 16))   { Some(v) => { if (v != 255) { return 1; } }, None => { return 2; }, }
-    match (int.parse_int_radix("FF", 16))   { Some(v) => { if (v != 255) { return 3; } }, None => { return 4; }, }
-    match (int.parse_int_radix("1010", 2))  { Some(v) => { if (v != 10) { return 5; } }, None => { return 6; }, }
-    match (int.parse_int_radix("777", 8))   { Some(v) => { if (v != 511) { return 7; } }, None => { return 8; }, }
-    match (int.parse_int_radix("12345", 10)){ Some(v) => { if (v != 12345) { return 9; } }, None => { return 10; }, }
-    match (int.parse_int_radix("z", 36))    { Some(v) => { if (v != 35) { return 11; } }, None => { return 12; }, }
+    match (i32.parse_i32_radix("ff", 16))   { Ok(v) => { if (v != 255) { return 1; } }, Err(_) => { return 2; }, }
+    match (i32.parse_i32_radix("FF", 16))   { Ok(v) => { if (v != 255) { return 3; } }, Err(_) => { return 4; }, }
+    match (i32.parse_i32_radix("1010", 2))  { Ok(v) => { if (v != 10) { return 5; } }, Err(_) => { return 6; }, }
+    match (i32.parse_i32_radix("777", 8))   { Ok(v) => { if (v != 511) { return 7; } }, Err(_) => { return 8; }, }
+    match (i32.parse_i32_radix("12345", 10)){ Ok(v) => { if (v != 12345) { return 9; } }, Err(_) => { return 10; }, }
+    match (i32.parse_i32_radix("z", 36))    { Ok(v) => { if (v != 35) { return 11; } }, Err(_) => { return 12; }, }
 
     // Sign handling.
-    match (int.parse_int_radix("-ff", 16))  { Some(v) => { if (v != (0 - 255)) { return 13; } }, None => { return 14; }, }
-    match (int.parse_int_radix("+ff", 16))  { Some(v) => { if (v != 255) { return 15; } }, None => { return 16; }, }
+    match (i32.parse_i32_radix("-ff", 16))  { Ok(v) => { if (v != (0 - 255)) { return 13; } }, Err(_) => { return 14; }, }
+    match (i32.parse_i32_radix("+ff", 16))  { Ok(v) => { if (v != 255) { return 15; } }, Err(_) => { return 16; }, }
 
     // Malformed input — None for every shape.
-    match (int.parse_int_radix("", 10))     { Some(_) => { return 17; }, None => { } }
-    match (int.parse_int_radix("-", 10))    { Some(_) => { return 18; }, None => { } }
-    match (int.parse_int_radix("gg", 16))   { Some(_) => { return 19; }, None => { } }
-    match (int.parse_int_radix("12", 1))    { Some(_) => { return 20; }, None => { } }
-    match (int.parse_int_radix("12", 37))   { Some(_) => { return 21; }, None => { } }
+    match (i32.parse_i32_radix("", 10))     { Ok(_) => { return 17; }, Err(_) => { } }
+    match (i32.parse_i32_radix("-", 10))    { Ok(_) => { return 18; }, Err(_) => { } }
+    match (i32.parse_i32_radix("gg", 16))   { Ok(_) => { return 19; }, Err(_) => { } }
+    match (i32.parse_i32_radix("12", 1))    { Ok(_) => { return 20; }, Err(_) => { } }
+    match (i32.parse_i32_radix("12", 37))   { Ok(_) => { return 21; }, Err(_) => { } }
 
     // Format — same base spread, plus sign + zero + negative.
     if (int.int_to_string_radix(255, 16) != "ff") { return 22; }
@@ -7524,9 +7527,9 @@ function main(): i32 {
     if (int.int_to_string_radix(0 - 255, 16) != "-ff") { return 28; }
 
     // Round-trip — parse(format.format(n)) == Some(n).
-    match (int.parse_int_radix(int.int_to_string_radix(0 - 12345, 16), 16)) {
-        Some(v) => { if (v != (0 - 12345)) { return 29; } },
-        None => { return 30; },
+    match (i32.parse_i32_radix(int.int_to_string_radix(0 - 12345, 16), 16)) {
+        Ok(v) => { if (v != (0 - 12345)) { return 29; } },
+        Err(_) => { return 30; },
     }
     return 0;
 }`

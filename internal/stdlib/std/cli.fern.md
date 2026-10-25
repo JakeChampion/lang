@@ -152,7 +152,7 @@ function __cli_short_name_at(cluster: string, j: i32): string {
   if (b < 128) {
     return string_from_bytes_unchecked([cluster[j]]);
   }
-  match (utf8.utf8_decode_at(cluster, j)) {
+  match (utf8.decode_at(cluster, j)) {
     Some(pair) => {
       return slice_unchecked(cluster, j, j + pair.1) + "";
     },

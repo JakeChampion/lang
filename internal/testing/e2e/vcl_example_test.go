@@ -238,6 +238,30 @@ func TestVCLCompileTapSuitePasses(t *testing.T) {
 }
 
 func TestVCLCompiledMatchesInterpreted(t *testing.T) {
+	testVCLPolicyMatchesInterpreted(t, "testdata/policy.vcl", false)
+}
+
+func TestVCLRegexErrorsMatchInterpreted(t *testing.T) {
+	for _, expression := range []string{
+		`req.url ~ "("`,
+		`req.url !~ "["`,
+		`regsub(req.url, "(", "x") == "x"`,
+		`regsuball(req.url, "[", "x") == "x"`,
+	} {
+		t.Run(expression, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "invalid-regex.vcl")
+			policy := `vcl 4.1; backend origin { .host = "127.0.0.1"; }
+sub vcl_recv { if (` + expression + `) { return (pass); } return (hash); }`
+			if err := os.WriteFile(path, []byte(policy), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			testVCLPolicyMatchesInterpreted(t, path, true)
+		})
+	}
+}
+
+func testVCLPolicyMatchesInterpreted(t *testing.T, policyPath string, regexError bool) {
+	t.Helper()
 	bin := buildLangBinForInterp(t)
 	vclDir := langSrcAbs(t, "examples/vcl")
 	outDir := t.TempDir()
@@ -248,7 +272,8 @@ func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 	}
 	prefix = filepath.ToSlash(prefix) + "/"
 
-	compileCmd := exec.Command(bin, "-interp", "vclc.fern", "--", "-p", prefix, "testdata/policy.vcl")
+	// Compile testdata/policy.vcl with imports pointing back at the runtime.
+	compileCmd := exec.Command(bin, "-interp", "vclc.fern", "--", "-p", prefix, policyPath)
 	compileCmd.Dir = vclDir
 	var gen, genErr bytes.Buffer
 	compileCmd.Stdout = &gen
@@ -274,10 +299,13 @@ func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 		{"PURGE", "/static/app.css", "127.0.0.1"},
 		{"HEAD", "/static/x.css", "-n", "2"},
 	}
+	if regexError {
+		cases = [][]string{{"GET", "/"}}
+	}
 	for _, args := range cases {
 		args := args
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			interpArgs := append([]string{"-interp", "vclrun.fern", "--", "testdata/policy.vcl"}, args...)
+			interpArgs := append([]string{"-interp", "vclrun.fern", "--", policyPath}, args...)
 			ic := exec.Command(bin, interpArgs...)
 			ic.Dir = vclDir
 			var iOut, iErr bytes.Buffer
@@ -295,6 +323,9 @@ func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 			_ = cc.Run()
 			cCode := cc.ProcessState.ExitCode()
 
+			if regexError && (iCode == 0 || !strings.Contains(iErr.String(), "regex byte") || !strings.Contains(cErr.String(), "regex byte")) {
+				t.Fatalf("regex error missing: interpreted exit %d stderr %s; compiled exit %d stderr %s", iCode, iErr.String(), cCode, cErr.String())
+			}
 			if iCode != cCode {
 				t.Errorf("exit differs: interpreted %d, compiled %d\ninterp stderr: %s\ncompiled stderr: %s",
 					iCode, cCode, iErr.String(), cErr.String())

@@ -31,7 +31,8 @@ import "std/option";
 import "std/array";
 import "std/http/sse";
 import "std/json";
-import "std/parse";
+import "std/i64";
+import "std/number_parse";
 import "std/png";
 import "std/time";
 import "std/async";
@@ -169,12 +170,12 @@ pub function changes(room: Room, after: Option[i64]): Option[sse.Event] {
 }
 
 pub function events(room: Room, req: HttpRequest): HttpResponse {
-  let cursor: Cell[Option[i64]] = cell_new(parse.int64(sse.last_event_id(req).unwrap_or("")).ok());
+  let cursor: Cell[Option[i64]] = cell_new(i64.parse_i64(sse.last_event_id(req).unwrap_or("")).ok());
   return sse.respond_with(time.duration_seconds(15), (index: i32): Option[sse.Event] => {
     while (!async.task_cancelled()) {
       match (changes(room, cursor.get())) {
         Some(event) => {
-          cursor.set(parse.int64(event.id).ok());
+          cursor.set(i64.parse_i64(event.id).ok());
           return Some(event);
         },
         None => {}
@@ -252,7 +253,7 @@ function send_pending(room: Room, cursor: Cell[Option[i64]], connection: websock
       connection.close(1013, "canvas receiver is too slow");
       return;
     }
-    cursor.set(parse.int64(event.id).ok());
+    cursor.set(i64.parse_i64(event.id).ok());
   }
 }
 

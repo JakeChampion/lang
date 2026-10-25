@@ -51,11 +51,11 @@ function read_int(s: string, cur: Cur): IntRead {
     return IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
   }
   let digits: string = slice_unchecked(s, cur.at, nl).to_owned();
-  match (digits.parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(digits)) {
+    Ok(n) => {
       return IntRead { value: n, cur: Cur { at: nl + 1, ok: true } };
     },
-    None => {
+    Err(_) => {
       return IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
     }
   }
@@ -76,22 +76,22 @@ function read_field(s: string, cur: Cur): StrRead {
 }
 
 function to_i64(s: string): i64 {
-  match (s.parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(s)) {
+    Ok(n) => {
       return n as i64;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }
 }
 
 function to_f64(s: string): f64 {
-  match (s.parse_float()) {
-    Some(f) => {
+  match (f64.parse_f64(s)) {
+    Ok(f) => {
       return f;
     },
-    None => {
+    Err(_) => {
       return 0.0;
     }
   }
