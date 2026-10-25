@@ -2599,6 +2599,14 @@ function (s: Scope) with_block_ret(rt: typeinfo.Type): Scope {
   return Scope { ...s, ret_type: rt };
 }
 
+// The local an identifier names: none for one that names a builtin.
+function (s: Scope) ident_binding(id: ast.ExprIdent): i32 {
+  if (id.builtin) {
+    return 0 - 1;
+  }
+  return s.binding_index(id.name);
+}
+
 function (s: Scope) binding_index(name: string): i32 {
   let i: i32 = s.names.len() - 1;
   while (i >= 0) {
@@ -4922,6 +4930,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
   }
   let bound_at: i32 = s.binding_index(name);
+  if let ast.ExprIdent(cid) = c.callee {
+    bound_at = s.ident_binding(cid);
+  }
   if (bound_at >= 0) {
     if let typeinfo.TypeFunc(tf) = s.types[bound_at] {
       if (!tf.params_known) {
@@ -5894,7 +5905,7 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
 }
 
 function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
-  let bi: i32 = s.binding_index(id.name);
+  let bi: i32 = s.ident_binding(id);
   if (bi >= 0 && !is_unknown(s.types[bi])) {
     return s.types[bi];
   }
@@ -10078,7 +10089,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): b
   let bound: boolean = exit_bound || lets_bind_exit(stmts);
   match (last) {
     ast.StmtExpr(x) => {
-      return !bound && parser.calls_exit(x.value);
+      return parser.calls_exit(x.value, bound);
     },
     ast.StmtBreak(_) => {
       return jumps;
@@ -12679,7 +12690,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           }
         }
       }
-      if (!s.defines(id.name)) {
+      if (s.ident_binding(id) < 0) {
         let sig: FuncSig = s.lookup_sig(id.name);
         if (sig.name.len() > 0 && sig.all_type_params.len() > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.all_type_params.len()) {
           out = out.append(dg_at("E040", util.arity_message(id.name, sig.all_type_params.len(), c.type_args.len(), "type argument"), c.line, c.col));
@@ -14071,7 +14082,7 @@ function (s: Scope) callee_resolves(c: ast.ExprCall): boolean {
 function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   match (c.callee) {
     ast.ExprIdent(id) => {
-      if (!s.defines(id.name)) {
+      if (s.ident_binding(id) < 0) {
         return s.lookup_sig(id.name).param_types;
       }
       if let typeinfo.TypeFunc(f) = s.lookup(id.name) {
@@ -14303,7 +14314,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
 }
 
 function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
-  let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "" };
+  let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "", builtin: false };
   let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   return check_expr(call, s.bind("__for_iter", t));
 }
@@ -17264,7 +17275,7 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   match (callee) {
     ast.ExprIdent(id) => {
-      if (util.has_str(ctx.bound, id.name)) {
+      if (!id.builtin && util.has_str(ctx.bound, id.name)) {
         if let typeinfo.TypeFunc(ft) = check_expr(callee, ctx.scope) {
           return ft.param_own;
         }
@@ -17288,7 +17299,7 @@ function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
       let d: util.Diag[] = [];
-      if (ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
+      if (!id.builtin && ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
         d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(util.pos_line(ow_moved_line(moved, id.name))) + ")", id.line, id.col));
       }
       return OwnWalk { moved: moved, diags: d };
@@ -22991,7 +23002,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
   match (e) {
     ast.ExprIdent(id) => {
       let it: typeinfo.Type = check_ident_expr(id, s);
-      return Typed { e: ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(it) }, ty: it, known: true };
+      return Typed { e: ast.ExprIdent { ...id, ty: type_to_irtag(it) }, ty: it, known: true };
     },
     ast.ExprBinary(b) => {
       let lta: Typed = annotate_typed(b.left, s);

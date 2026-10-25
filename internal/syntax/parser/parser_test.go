@@ -156,8 +156,8 @@ func TestParseAssertDesugar(t *testing.T) {
 		if !ok {
 			t.Fatalf("stmt %d: then[0] not a Call", idx)
 		}
-		if id, ok := epCall.Callee.(*ast.Ident); !ok || id.Name != "eprint" {
-			t.Errorf("stmt %d: then[0] callee should be eprint, got %v", idx, epCall.Callee)
+		if id, ok := epCall.Callee.(*ast.Ident); !ok || id.Name != "eprint" || !id.Builtin {
+			t.Errorf("stmt %d: then[0] callee should be the builtin eprint, got %#v", idx, epCall.Callee)
 		}
 		_, isConcat := epCall.Args[0].(*ast.Binary)
 		if isConcat != wantConcat {
@@ -171,8 +171,8 @@ func TestParseAssertDesugar(t *testing.T) {
 		if !ok {
 			t.Fatalf("stmt %d: then[1] not a Call", idx)
 		}
-		if id, ok := exCall.Callee.(*ast.Ident); !ok || id.Name != "exit" {
-			t.Errorf("stmt %d: then[1] callee should be exit, got %v", idx, exCall.Callee)
+		if id, ok := exCall.Callee.(*ast.Ident); !ok || id.Name != "exit" || !id.Builtin {
+			t.Errorf("stmt %d: then[1] callee should be the builtin exit, got %#v", idx, exCall.Callee)
 		}
 	}
 	check(0, true)

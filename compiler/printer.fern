@@ -1941,7 +1941,7 @@ function assign_parts(st: ast.Stmt): AssignParts {
   let none: AssignParts = AssignParts { place: parser.e_bool(true), value: parser.e_bool(true), ok: false };
   match (st) {
     ast.StmtAssign(a) => {
-      return AssignParts { place: ast.ExprIdent { name: a.target, line: 0, col: 0, ty: "" }, value: a.value, ok: true };
+      return AssignParts { place: ast.ExprIdent { name: a.target, line: 0, col: 0, ty: "", builtin: false }, value: a.value, ok: true };
     },
     ast.StmtExpr(x) => {
       if let ast.ExprCall(c) = x.value {

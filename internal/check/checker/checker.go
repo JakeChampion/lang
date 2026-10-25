@@ -8357,6 +8357,14 @@ func (c *checker) identValueBinding(name string, s *scope) (ast.Type, bool) {
 	return c.capturedType(name, s)
 }
 
+// calleeBinding is identValueBinding for a callee, which a Builtin ident never names.
+func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
+	if id.Builtin {
+		return nil, false
+	}
+	return c.identValueBinding(id.Name, s)
+}
+
 type cellStore struct {
 	pos      ast.Position
 	name     string
@@ -9524,7 +9532,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return false
 			}
 			id, ok := n.(*ast.Ident)
-			if !ok || !owned[id.Name] {
+			if !ok || id.Builtin || !owned[id.Name] {
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
@@ -11983,7 +11991,7 @@ func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
 	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen || !c.funcVisibleHere(id.Name) {
 		return false
 	}
-	_, bound := c.identValueBinding(id.Name, s)
+	_, bound := c.calleeBinding(id, s)
 	return !bound
 }
 
@@ -12519,13 +12527,13 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.FloatType{Polymorphic: true}
 	case *ast.Ident:
-		if t, ok := s.lookup(n.Name); ok {
+		if t, ok := s.lookup(n.Name); ok && !n.Builtin {
 			n.Local = true
 			n.ConstParam = s.binder(n.Name).consts[n.Name]
 			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
-		if len(c.captureChain) > 0 {
+		if len(c.captureChain) > 0 && !n.Builtin {
 			for i := len(c.captureChain) - 1; i >= 0; i-- {
 				ent := c.captureChain[i]
 				if ent.scope == nil {
@@ -13136,7 +13144,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		intrinsic := IntrinsicNone
 		if id, direct := n.Callee.(*ast.Ident); direct {
-			if _, local := c.identValueBinding(id.Name, s); !local {
+			if _, local := c.calleeBinding(id, s); !local {
 				intrinsic = c.intrinsicSigs[ft]
 			}
 		}
@@ -13190,7 +13198,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
-				if _, isValue := c.identValueBinding(id.Name, s); isValue {
+				if _, isValue := c.calleeBinding(id, s); isValue {
 					c.shadowedGenericCalls[n] = true
 				}
 			}
@@ -13244,7 +13252,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		calleeName := ""
 		if cid, ok := n.Callee.(*ast.Ident); ok {
 			calleeName = cid.Name
-			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
+			if _, isValue := c.calleeBinding(cid, s); isValue {
 				calleeIsValue = true
 			} else {
 				calleeOwnFlags = c.info.OwnFuncs[cid.Name]

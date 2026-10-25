@@ -91,6 +91,8 @@ array_sort                                           0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
 arrpush                                              0
+assert_fails_with_shadowing_exit                     0
+assert_todo_ignore_shadowing_names                   0
 associated_functions                                 0
 audit_core_builtins                                  0
 audit_env_time_random                                0
@@ -244,6 +246,8 @@ eval_order_aggregate_literal                         0
 exit                                                 0
 exit_42                                              0
 exit_code                                            0
+exit_diverges                                        0
+exit_diverges_let_else_taken                         0
 exit_max                                             0
 f32_array_element                                    0
 f32_array_param                                      0
@@ -1032,6 +1036,7 @@ three_arms_bind_p                                    0
 time_leap                                            0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
+todo_reached_with_shadowing_exit                     0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0

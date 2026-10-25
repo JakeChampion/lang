@@ -2,7 +2,8 @@ import "./typeinfo";
 
 pub struct ExprNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
 
-pub struct ExprIdent { name: string, line: i32, col: i32, ty: string }
+// builtin: names the builtin itself, which no binding in scope can capture.
+pub struct ExprIdent { name: string, line: i32, col: i32, ty: string, builtin: boolean }
 
 pub struct ExprString { value: string, line: i32, col: i32 }
 

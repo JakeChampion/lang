@@ -1,0 +1,21 @@
+import "std/i32";
+
+// A todo that is reached calls the builtin exit with status 101 even when a
+// local named exit is in scope, so the closure bound to that name never runs
+// and nothing after the todo does either.
+
+function unfinished(n: i32): i32 {
+  let exit: (i32) => void = (c: i32): void => { print("local exit"); };
+  if (n > 0) {
+    todo("positive n");
+  }
+  exit(n);
+  return n;
+}
+
+function main(): i32 {
+  print("before");
+  let r: i32 = unfinished(4);
+  print(f"after {r}");
+  return 0;
+}
