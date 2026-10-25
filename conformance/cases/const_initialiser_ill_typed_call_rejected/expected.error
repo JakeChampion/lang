@@ -1,0 +1,1 @@
+main.fern:7:1: error[E093]: const A: expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)

@@ -6425,10 +6425,10 @@ function assign_to(target: ast.Expr, rhs: ast.Expr, line: i32, col: i32): ast.St
       return s_assign_at(id.name, rhs, line, col, id.line, id.col);
     },
     ast.ExprIndex(ix) => {
-      return s_expr(e_call_at(e_ident("__set_index"), [ix.array, ix.index, rhs], ix.line, ix.col));
+      return s_expr(e_call_at(e_ident_at("__set_index", line, col), [ix.array, ix.index, rhs], ix.line, ix.col));
     },
     ast.ExprFieldAccess(fa) => {
-      return s_expr(e_call(e_ident("__set_field"), [fa.obj, e_string_at(fa.field, fa.line, fa.col), rhs]));
+      return s_expr(e_call(e_ident_at("__set_field", line, col), [fa.obj, e_string_at(fa.field, fa.line, fa.col), rhs]));
     },
     _ => {
       return s_unknown_at(coded_kind("P003", "left-hand side of assignment is not assignable"), line, col);
