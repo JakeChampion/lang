@@ -427,7 +427,7 @@ function scalar_width(ty: parser.TypeRef): string {
 
 function literal_number(n: ast.ExprNumber): Value {
   if (parser.float_settled_int(n)) {
-    return floating(util.lit_to_i64(n.text) as u64 as f64);
+    return floating((util.lit_to_i64(n.text) as u64) as f64);
   }
   if (n.is_float) {
     // The oracle retains f64 precision while it evaluates constant expressions.
