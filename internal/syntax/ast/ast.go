@@ -1581,6 +1581,8 @@ type Match struct {
 	Arms        []*MatchArm
 	StructMatch string
 	Origin      string
+	// ElseChained records that an if-let's else was written `else if`.
+	ElseChained bool
 }
 
 type TuplePatElem struct {

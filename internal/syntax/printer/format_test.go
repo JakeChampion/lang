@@ -91,6 +91,43 @@ func TestFormatIfElseIndents(t *testing.T) {
 	}
 }
 
+func TestFormatKeepsElseIfLetChain(t *testing.T) {
+	const src = `enum Box { Full(i32), Half(i32), Empty }
+
+function chain(flag: boolean, box: Box): i32 {
+  if let Full(v) = box {
+    return v;
+  } else if let Half(h) = box {
+    return h;
+  } else if (flag) {
+    return 1;
+  } else if let Empty = box {
+    return 2;
+  } else {
+    return 0;
+  }
+}
+
+function nested(box: Box): i32 {
+  if let Full(v) = box {
+    return v;
+  } else {
+    if let Half(h) = box {
+      return h;
+    }
+  }
+  return 0;
+}
+`
+	got := formatSrc(t, src)
+	if got != src {
+		t.Errorf("formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", got, src)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Errorf("format is not idempotent\n--- first ---\n%s\n--- second ---\n%s", got, again)
+	}
+}
+
 func TestFormatEmptyBlockStaysCompact(t *testing.T) {
 	got := formatSrc(t, `function f(): void {}`)
 	want := "function f(): void {}\n"

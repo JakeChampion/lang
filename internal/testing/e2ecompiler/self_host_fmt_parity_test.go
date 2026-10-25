@@ -284,6 +284,25 @@ function pick(flag: boolean, box: Box): i32 {
 }
 function main(): i32 { return pick(false, Full(7)); }
 `},
+	{"if-let-else-if-let-chain", `enum Box { Full(i32), Half(i32), Empty }
+struct Pair { a: i32, b: i32 }
+function variant(flag: boolean, box: Box): i32 {
+  if let Full(v) = box { return v; } else if let Half(h) = box { return h; } else if (flag) { return 1; } else if let Empty = box { return 2; } else { return 0; }
+}
+function patterns(pair: (i32, i32), rec: Pair, n: i32): i32 {
+  if let (1, v) = pair { return v; } else if let Pair { a: 2, b } = rec { return b; } else if let 3 | 4 = n { return n; } else if let k @ 7..=9 = n { return k; }
+  return 0;
+}
+function nested(o: Option[Option[i32]]): i32 {
+  if let Some(Some(v)) = o { return v; } else if let Some(None) = o { return 1; }
+  return 0;
+}
+function braced(box: Box): i32 {
+  if let Full(v) = box { return v; } else { if let Half(h) = box { return h; } }
+  return 0;
+}
+function main(): i32 { return variant(false, Half(1)) + patterns((1, 2), Pair { a: 2, b: 3 }, 8) + nested(Some(None)) + braced(Empty); }
+`},
 	{"pub-package", `pub(package) struct S { n: i32 }
 pub(package) enum E { A, B }
 pub(package) type T = S | S;
