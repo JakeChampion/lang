@@ -48,7 +48,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 pub function (p: Protection) kernel_info(): u8[]>>
 
-<<17 function __nonce_into(own buf: u8[], at: i32, p: Protection): u8[]>>
+<<17 function __seal(p: Protection, own out: u8[], at: i32, n: i32): Result[u8[], RecordError]>>
 
 <<18 pub struct Sealed>>
 
@@ -56,7 +56,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<20 pub struct Opened>>
 
-<<21 pub function (p: Protection) open(r: Record): Result[Opened, RecordError]>>
+<<21 pub function (p: Protection) open(own r: Record): Result[Opened, RecordError]>>
 
 <<22 function __content_end(inner: [u8]): Result[i32, RecordError]>>
 ```
@@ -190,8 +190,6 @@ const MAX_FRAGMENT: i32 = 16384;
 const MAX_PROTECTED: i32 = 16640;
 
 const TAG_LEN: i32 = 16;
-
-const NONCE_LEN: i32 = 12;
 ```
 
 ### `10 function __content_type(b: i32): Result[ContentType, RecordError]`
@@ -222,6 +220,16 @@ function __copy(src: [u8], from: i32, len: i32): u8[] {
   return __bytes_range(src, from, from + len);
 }
 
+// A protected fragment is copied with room behind it for the five header bytes open authenticates.
+function __fragment(src: [u8], from: i32, len: i32, code: i32): u8[] {
+  if (code != 23) {
+    return __copy(src, from, len);
+  }
+  let out: u8[] = __bytes_into(__alloc_u8(len + 5), 0, src, from, len);
+  __arr_set_len(out, len);
+  return out;
+}
+
 function __put(own dst: u8[], at: i32, src: [u8]): u8[] {
   return __bytes_into(dst, at, src, 0, src.len());
 }
@@ -245,7 +253,21 @@ pub struct Deframed { records: Record[], rest: u8[] }
 ```fern
 <<12 pub function deframe(buf: [u8]): Result[Deframed, RecordError]>>=
 pub function deframe(buf: [u8]): Result[Deframed, RecordError] {
+  let whole: i32 = framed_end(buf)?;
   let records: Record[] = [];
+  let at: i32 = 0;
+  while (at < whole) {
+    records = records.append(record_at(buf, at)?);
+    at = record_end(buf, at);
+  }
+  if (at == buf.len()) {
+    return Ok(Deframed { records: records, rest: [] });
+  }
+  return Ok(Deframed { records: records, rest: __copy(buf, at, buf.len() - at) });
+}
+
+// The end of the last whole record in buf, every header up to it checked.
+pub function framed_end(buf: [u8]): Result[i32, RecordError] {
   let at: i32 = 0;
   while (at + 5 <= buf.len()) {
     let code: i32 = buf[at] as i32;
@@ -264,13 +286,24 @@ pub function deframe(buf: [u8]): Result[Deframed, RecordError] {
     if (at + 5 + len > buf.len()) {
       break;
     }
-    records = records.append(Record { content_type: t, version: buf[at + 1] as i32 << 8 | buf[at + 2] as i32, fragment: __copy(buf, at + 5, len) });
     at = at + 5 + len;
   }
-  if (at == buf.len()) {
-    return Ok(Deframed { records: records, rest: [] });
-  }
-  return Ok(Deframed { records: records, rest: __copy(buf, at, buf.len() - at) });
+  return Ok(at);
+}
+
+pub function record_end(buf: [u8], at: i32): i32 {
+  return at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
+}
+
+// The whole record at buf[at], its fragment copied out; a protected one with room for open's header.
+pub function record_at(buf: [u8], at: i32): Result[Record, RecordError] {
+  let code: i32 = buf[at] as i32;
+  return Ok(Record { content_type: __content_type(code)?, version: buf[at + 1] as i32 << 8 | buf[at + 2] as i32, fragment: __fragment(buf, at + 5, record_end(buf, at) - at - 5, code) });
+}
+
+// r with a fragment of its own, for a record still held where another holds its fragment.
+pub function (r: Record) owned(): Record {
+  return Record { content_type: r.content_type, version: r.version, fragment: __fragment(r.fragment, 0, r.fragment.len(), r.content_type.code()) };
 }
 
 pub function frame(t: ContentType, legacy_version: i32, data: [u8]): u8[] {
@@ -364,31 +397,18 @@ pub function (p: Protection) kernel_info(): u8[] {
 }
 ```
 
-### `17 function __nonce_into(own buf: u8[], at: i32, p: Protection): u8[]`
+### `17 function __seal(p: Protection, own out: u8[], at: i32, n: i32): Result[u8[], RecordError]`
 
 ```fern
-<<17 function __nonce_into(own buf: u8[], at: i32, p: Protection): u8[]>>=
-// Writes the record's nonce, the IV with the sequence number folded into its last eight bytes, at buf[at:at + 12].
-function __nonce_into(own buf: u8[], at: i32, p: Protection): u8[] {
-  let i: i32 = 0;
-  while (i < 4) {
-    buf = buf.with(at + i, p.iv[i]);
-    i = i + 1;
-  }
-  while (i < 12) {
-    buf = buf.with(at + i, p.iv[i] ^ (p.seq >> (8 * (11 - i)) as u64 & 255 as u64) as u8);
-    i = i + 1;
-  }
-  return buf;
-}
-
-function __seal(p: Protection, plaintext: [u8], aad: [u8], nonce: [u8]): Result[u8[], RecordError] {
+<<17 function __seal(p: Protection, own out: u8[], at: i32, n: i32): Result[u8[], RecordError]>>=
+// Seals out[at:at + n] in place, the record header out[0:5] its additional data and the tag behind it.
+function __seal(p: Protection, own out: u8[], at: i32, n: i32): Result[u8[], RecordError] {
   match (p.suite.aead()) {
     keyschedule.Aes128Gcm | keyschedule.Aes256Gcm => {
       let Some(g) = p.gcm else {
         return Err(BadKeys(p.key.len(), p.iv.len()));
       };
-      match (g.seal(nonce, plaintext, aad)) {
+      match (g.seal_in_place(p.iv, p.seq, out, 0, 5, at, n)) {
         Ok(sealed) => {
           return Ok(sealed);
         },
@@ -398,7 +418,7 @@ function __seal(p: Protection, plaintext: [u8], aad: [u8], nonce: [u8]): Result[
       }
     },
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.seal(p.key, nonce, plaintext, aad)) {
+      match (chacha20poly1305.seal_in_place(p.key, p.iv, p.seq, out, 0, 5, at, n)) {
         Ok(sealed) => {
           return Ok(sealed);
         },
@@ -426,19 +446,20 @@ function __seal_failed(p: Protection, e: aead.AeadError): RecordError {
   return BadRecordMac;
 }
 
-function __open(p: Protection, sealed: [u8], aad: [u8], nonce: [u8]): Result[u8[], RecordError] {
+// Opens buf[0:n] in place, the tag behind it and the header, the additional data, behind the tag.
+function __open(p: Protection, own buf: u8[], n: i32): Result[u8[], RecordError] {
   match (p.suite.aead()) {
     keyschedule.Aes128Gcm | keyschedule.Aes256Gcm => {
       let Some(g) = p.gcm else {
         return Err(BadKeys(p.key.len(), p.iv.len()));
       };
-      let Ok(inner) = g.open(nonce, sealed, aad) else {
+      let Ok(inner) = g.open_in_place(p.iv, p.seq, buf, n + TAG_LEN, 5, 0, n) else {
         return Err(BadRecordMac);
       };
       return Ok(inner);
     },
     keyschedule.ChaCha20Poly1305 => {
-      let Ok(inner) = chacha20poly1305.open(p.key, nonce, sealed, aad) else {
+      let Ok(inner) = chacha20poly1305.open_in_place(p.key, p.iv, p.seq, buf, n + TAG_LEN, 5, 0, n) else {
         return Err(BadRecordMac);
       };
       return Ok(inner);
@@ -485,7 +506,7 @@ pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): 
   __advanceable(p)?;
   let n: i32 = content.len() + 1 + pad;
   let end: i32 = 5 + n + TAG_LEN;
-  let out: u8[] = __header(__alloc_u8(end + NONCE_LEN), 0, 23, 0x0303, n + TAG_LEN);
+  let out: u8[] = __header(__alloc_u8(end), 0, 23, 0x0303, n + TAG_LEN);
   out = __put(out, 5, content);
   out = out.with(5 + content.len(), t.code() as u8);
   let i: i32 = 5 + content.len() + 1;
@@ -493,11 +514,7 @@ pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): 
     out = out.with(i, 0 as u8);
     i = i + 1;
   }
-  out = __nonce_into(out, end, p);
-  let sealed: u8[] = __seal(p, out[5:5 + n], out[0:5], out[end:end + NONCE_LEN])?;
-  out = __put(out, 5, sealed);
-  __arr_set_len(out, end);
-  return Ok(Sealed { record: out, next: __advanced(p) });
+  return Ok(Sealed { record: __seal(p, out, 5, n)?, next: __advanced(p) });
 }
 ```
 
@@ -508,24 +525,35 @@ pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): 
 pub struct Opened { content_type: ContentType, content: u8[], next: Protection }
 ```
 
-### `21 pub function (p: Protection) open(r: Record): Result[Opened, RecordError]`
+### `21 pub function (p: Protection) open(own r: Record): Result[Opened, RecordError]`
 
 ```fern
-<<21 pub function (p: Protection) open(r: Record): Result[Opened, RecordError]>>=
-pub function (p: Protection) open(r: Record): Result[Opened, RecordError] {
+<<21 pub function (p: Protection) open(own r: Record): Result[Opened, RecordError]>>=
+pub function (p: Protection) open(own r: Record): Result[Opened, RecordError] {
   if (r.content_type.code() != 23) {
     return Err(UnexpectedContentType(r.content_type.code()));
   }
-  if (r.fragment.len() > MAX_PROTECTED) {
-    return Err(RecordOverflow(r.fragment.len()));
+  let version: i32 = r.version;
+  let fragment: u8[] = r.fragment;
+  if (fragment.len() > MAX_PROTECTED) {
+    return Err(RecordOverflow(fragment.len()));
   }
   __advanceable(p)?;
-  let scratch: u8[] = __nonce_into(__header(__alloc_u8(5 + NONCE_LEN), 0, 23, r.version, r.fragment.len()), 5, p);
-  let inner: u8[] = __open(p, r.fragment, scratch[0:5], scratch[5:5 + NONCE_LEN])?;
-  let end: i32 = __content_end(inner)?;
+  let n: i32 = fragment.len() - TAG_LEN;
+  if (n < 0) {
+    return Err(BadRecordMac);
+  }
+  let inner: u8[] = __open(p, __header_behind(fragment, version), n)?;
+  let end: i32 = __content_end(inner[0:n])?;
   let t: ContentType = __inner_type(inner[end] as i32, end)?;
   __arr_set_len(inner, end);
   return Ok(Opened { content_type: t, content: inner, next: __advanced(p) });
+}
+
+// Appends the record header behind the fragment, into the room deframe left there.
+function __header_behind(own fragment: u8[], version: i32): u8[] {
+  let n: i32 = fragment.len();
+  return fragment.append(23 as u8).append((version >> 8 & 255) as u8).append((version & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8);
 }
 ```
 

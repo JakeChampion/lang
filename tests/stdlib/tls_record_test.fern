@@ -432,6 +432,40 @@ function test_bad_keys(): test.TestOutcome {
   return test.assert_eq(sealed(aes.seal(record.ApplicationData, app_data(), 0)), "tls record: a 32-byte key and a 12-byte iv do not fit the cipher suite");
 }
 
+// A record taken from the wire is the open's own, and a held one is opened through a copy, so the held record
+// still carries its ciphertext afterwards.
+function test_record_at(): test.TestOutcome {
+  let app: u8[] = __codec_bytes(hex.decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5"));
+  let wire: u8[] = cat(cat(close_notify_record(), app), __codec_bytes(hex.decode("170303004300")));
+  match (record.framed_end(wire)) {
+    Ok(end) => {
+      if (end != 5 + 2 + 72) {
+        return test.fail("framed_end " + int.int_to_string(end));
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  if (record.record_end(wire, 7) != 7 + 72) {
+    return test.fail("record_end");
+  }
+  let Ok(rec) = record.record_at(wire, 7) else {
+    return test.fail("record_at");
+  };
+  if (rec.version != 0x0303 || hex.encode(rec.fragment) != hex.encode(app[5:72])) {
+    return test.fail("record_at fragment");
+  }
+  if (opened(client_write().open(rec.owned())) != "23 " + hex.encode(app_data())) {
+    return test.fail("open the copy");
+  }
+  return test.assert_eq(hex.encode(rec.fragment), hex.encode(app[5:72]));
+}
+
+function close_notify_record(): u8[] {
+  return __codec_bytes(hex.decode("15030300020100"));
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/record");
   r = r.it("frame the ClientHello", test_frame_client_hello);
@@ -457,6 +491,7 @@ function main(): i32 {
   r = r.it("AES-128-GCM records of RFC 8448", test_aes_128_gcm_trace);
   r = r.it("AES-256-GCM records", test_aes_256_gcm);
   r = r.it("keys that do not fit the suite", test_bad_keys);
+  r = r.it("a record taken from the wire, and a held one opened through a copy", test_record_at);
   return r.finish();
 }
 

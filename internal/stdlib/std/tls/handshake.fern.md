@@ -54,7 +54,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<19 struct Absorbed>>
 
-<<20 function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, Handsh...>>
+<<20 function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, H...>>
 
 <<21 struct Next>>
 
@@ -96,7 +96,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<40 function __client_message(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError]>>
 
-<<41 function __client_run(c: Client, out: Out): Result[ClientStep, HandshakeError]>>
+<<41 function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, HandshakeError]>>
 
 <<42 pub function (c: Client) read(input: [u8]): Result[ClientStep, HandshakeError]>>
 
@@ -136,7 +136,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<60 function __retry_request(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, out: Out): Res...>>
 
-<<61 function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError]>>
+<<61 function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, HandshakeError]>>
 
 <<62 pub function (s: Server) read(input: [u8]): Result[ServerStep, HandshakeError]>>
 
@@ -676,11 +676,11 @@ function __write_quic(c: Conn, t: record.ContentType, content: [u8]): Result[Wro
 struct Absorbed { conn: Conn, out: Out }
 ```
 
-### `20 function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, Handsh...`
+### `20 function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, H...`
 
 ```fern
-<<20 function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, Handsh...>>=
-function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
+<<20 function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, H...>>=
+function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
   if (r.content_type.code() == 20) {
     if (ccs && r.fragment.len() == 1 && r.fragment[0] == 1) {
       return Ok(Absorbed { conn: c, out: out });
@@ -1724,25 +1724,50 @@ function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] 
 }
 ```
 
-### `41 function __client_run(c: Client, out: Out): Result[ClientStep, HandshakeError]`
+### `41 function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, HandshakeError]`
 
 ```fern
-<<41 function __client_run(c: Client, out: Out): Result[ClientStep, HandshakeError]>>=
-function __client_run(c: Client, out: Out): Result[ClientStep, HandshakeError] {
+<<41 function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, HandshakeError]>>=
+// Runs the held records, then the whole records of wire, each fragment copied once and opened where it sits;
+// what the state leaves unread is held.
+function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, HandshakeError] {
+  let whole: i32 = __whole(wire)?;
   let records: record.Record[] = c.conn.held;
   let r: ClientRun = __client_drain(c, out)?;
   let i: i32 = 0;
-  while (!__client_parked(r.client.state) && i < records.len()) {
-    let a: Absorbed = __absorb(r.client.conn, records[i], r.client.state < C_CONNECTED, r.client.state == C_CONNECTED, r.out)?;
+  let at: i32 = 0;
+  while (!__client_parked(r.client.state) && (i < records.len() || at < whole)) {
+    let rec: record.Record = __next_record(records, i, wire, at)?;
+    if (i < records.len()) {
+      i = i + 1;
+    } else {
+      at = record.record_end(wire, at);
+    }
+    let a: Absorbed = __absorb(r.client.conn, rec, r.client.state < C_CONNECTED, r.client.state == C_CONNECTED, r.out)?;
     let state: i32 = r.client.state;
     if (a.out.closed) {
       state = C_CLOSED;
     }
     r = __client_drain(Client { ...r.client, conn: a.conn, state: state }, a.out)?;
-    i = i + 1;
   }
-  let client: Client = Client { ...r.client, conn: Conn { ...r.client.conn, held: __rest(records, i) } };
-  return Ok(__client_step(client, r.out));
+  let h: Held = __held(r.client.conn.inbox, __rest(records, i), wire, at)?;
+  return Ok(__client_step(Client { ...r.client, conn: Conn { ...r.client.conn, held: h.held, inbox: h.inbox } }, r.out));
+}
+
+// The held record at i, copied so it is the open's own, or once they are run the whole record at wire[at].
+function __next_record(records: record.Record[], i: i32, wire: [u8], at: i32): Result[record.Record, HandshakeError] {
+  if (i < records.len()) {
+    return Ok(records[i].owned());
+  }
+  match (record.record_at(wire, at)) {
+    Ok(r) => {
+      return Ok(r);
+    },
+    Err(e) => {
+      return Err(Record(e));
+    }
+  }
+  return Err(Misuse("deframe"));
 }
 
 function __rest(records: record.Record[], from: i32): record.Record[] {
@@ -1755,19 +1780,10 @@ function __rest(records: record.Record[], from: i32): record.Record[] {
   return out;
 }
 
-function __deframe(c: Conn, input: [u8]): Result[Conn, HandshakeError] {
-  match (__records(c.inbox, input)) {
-    Ok(d) => {
-      if (c.held.len() == 0) {
-        return Ok(Conn { ...c, held: d.records, inbox: d.rest });
-      }
-      let held: record.Record[] = c.held;
-      let i: i32 = 0;
-      while (i < d.records.len()) {
-        held = held.append(d.records[i]);
-        i = i + 1;
-      }
-      return Ok(Conn { ...c, held: held, inbox: d.rest });
+function __whole(wire: [u8]): Result[i32, HandshakeError] {
+  match (record.framed_end(wire)) {
+    Ok(n) => {
+      return Ok(n);
     },
     Err(e) => {
       return Err(Record(e));
@@ -1776,11 +1792,35 @@ function __deframe(c: Conn, input: [u8]): Result[Conn, HandshakeError] {
   return Err(Misuse("deframe"));
 }
 
-function __records(inbox: u8[], input: [u8]): Result[record.Deframed, record.RecordError] {
-  if (inbox.len() == 0) {
-    return record.deframe(input);
+struct Held { held: record.Record[], inbox: u8[] }
+
+// Holds rest and the records of wire[at:], and keeps a partial last record as the inbox; with no wire the inbox
+// is left as it was.
+function __held(inbox: u8[], rest: record.Record[], wire: [u8], at: i32): Result[Held, HandshakeError] {
+  if (wire.len() == 0) {
+    return Ok(Held { held: rest, inbox: inbox });
   }
-  return record.deframe(__cat(__copy(inbox), input));
+  if (at == wire.len()) {
+    return Ok(Held { held: rest, inbox: [] });
+  }
+  match (record.deframe(wire[at:wire.len()])) {
+    Ok(d) => {
+      let held: record.Record[] = rest;
+      for r in d.records {
+        held = held.append(r);
+      }
+      return Ok(Held { held: held, inbox: d.rest });
+    },
+    Err(e) => {
+      return Err(Record(e));
+    }
+  }
+  return Err(Misuse("deframe"));
+}
+
+// The bytes a read runs: the partial record already held, then the input.
+function __wire(c: Conn, input: [u8]): u8[] {
+  return __cat(__copy(c.inbox), input);
 }
 ```
 
@@ -1795,7 +1835,10 @@ pub function (c: Client) read(input: [u8]): Result[ClientStep, HandshakeError] {
   if (c.conn.quic) {
     return Err(Misuse("read under QUIC"));
   }
-  return __client_run(Client { ...c, conn: __deframe(c.conn, input)? }, __out());
+  if (c.conn.inbox.len() == 0) {
+    return __client_run(c, input, __out());
+  }
+  return __client_run(c, __wire(c.conn, input), __out());
 }
 
 pub function (c: Client) read_crypto(level: i32, bytes: [u8]): Result[ClientStep, HandshakeError] {
@@ -1808,7 +1851,7 @@ pub function (c: Client) read_crypto(level: i32, bytes: [u8]): Result[ClientStep
   if (level != c.conn.reading) {
     return Err(Level(level));
   }
-  return __client_run(Client { ...c, conn: Conn { ...c.conn, pending: __join(c.conn.pending, bytes) } }, __out());
+  return __client_run(Client { ...c, conn: Conn { ...c.conn, pending: __join(c.conn.pending, bytes) } }, [], __out());
 }
 
 pub function (c: Client) peer_extensions(): message.Extension[] {
@@ -1822,7 +1865,7 @@ pub function (c: Client) verdict(ok: boolean): Result[ClientStep, HandshakeError
   if (!ok) {
     return Err(BadCertificate);
   }
-  return __client_run(Client { ...c, state: C_WAIT_FINISHED }, __out());
+  return __client_run(Client { ...c, state: C_WAIT_FINISHED }, [], __out());
 }
 
 pub function (c: Client) signature(sig: [u8]): Result[ClientStep, HandshakeError] {
@@ -1832,7 +1875,7 @@ pub function (c: Client) signature(sig: [u8]): Result[ClientStep, HandshakeError
   let cv: u8[] = message.encode(message.CertificateVerifyMsg(message.CertificateVerify { scheme: c.own_scheme, signature: __copy(sig) }));
   let conn: Conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, cv) };
   let r: ClientRun = __client_finish(c, conn, __cat(__copy(c.flight), cv), __out())?;
-  return __client_run(r.client, r.out);
+  return __client_run(r.client, [], r.out);
 }
 
 pub function (c: Client) write(data: [u8]): Result[ClientStep, HandshakeError] {
@@ -2641,26 +2684,33 @@ function __server_drain(s: Server, out: Out): Result[ServerRun, HandshakeError] 
 }
 ```
 
-### `61 function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError]`
+### `61 function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, HandshakeError]`
 
 ```fern
-<<61 function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError]>>=
-function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError] {
+<<61 function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, HandshakeError]>>=
+function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, HandshakeError] {
+  let whole: i32 = __whole(wire)?;
   let records: record.Record[] = s.conn.held;
   let r: ServerRun = __server_drain(s, out)?;
   let i: i32 = 0;
-  while (!__server_parked(r.server.state) && i < records.len()) {
+  let at: i32 = 0;
+  while (!__server_parked(r.server.state) && (i < records.len() || at < whole)) {
+    let rec: record.Record = __next_record(records, i, wire, at)?;
+    if (i < records.len()) {
+      i = i + 1;
+    } else {
+      at = record.record_end(wire, at);
+    }
     let ccs: boolean = __client_flight_due(r.server.state) || r.server.state == S_WAIT_CLIENT_HELLO && r.server.retry_group != 0;
-    let a: Absorbed = __absorb(r.server.conn, records[i], ccs, r.server.state == S_CONNECTED, r.out)?;
+    let a: Absorbed = __absorb(r.server.conn, rec, ccs, r.server.state == S_CONNECTED, r.out)?;
     let state: i32 = r.server.state;
     if (a.out.closed) {
       state = S_CLOSED;
     }
     r = __server_drain(Server { ...r.server, conn: a.conn, state: state }, a.out)?;
-    i = i + 1;
   }
-  let server: Server = Server { ...r.server, conn: Conn { ...r.server.conn, held: __rest(records, i) } };
-  return Ok(__server_step(server, r.out));
+  let h: Held = __held(r.server.conn.inbox, __rest(records, i), wire, at)?;
+  return Ok(__server_step(Server { ...r.server, conn: Conn { ...r.server.conn, held: h.held, inbox: h.inbox } }, r.out));
 }
 ```
 
@@ -2697,7 +2747,10 @@ function __server_read(s: Server, input: [u8]): Result[ServerStep, HandshakeErro
   if (s.conn.quic) {
     return Err(Misuse("read under QUIC"));
   }
-  return __server_run(Server { ...s, conn: __deframe(s.conn, input)? }, __out());
+  if (s.conn.inbox.len() == 0) {
+    return __server_run(s, input, __out());
+  }
+  return __server_run(s, __wire(s.conn, input), __out());
 }
 
 pub function (s: Server) read_crypto(level: i32, bytes: [u8]): Result[ServerStep, HandshakeError] {
@@ -2710,7 +2763,7 @@ pub function (s: Server) read_crypto(level: i32, bytes: [u8]): Result[ServerStep
   if (level != s.conn.reading) {
     return Err(Level(level));
   }
-  return __server_run(Server { ...s, conn: Conn { ...s.conn, pending: __join(s.conn.pending, bytes) } }, __out());
+  return __server_run(Server { ...s, conn: Conn { ...s.conn, pending: __join(s.conn.pending, bytes) } }, [], __out());
 }
 
 pub function (s: Server) peer_extensions(): message.Extension[] {
@@ -2723,7 +2776,7 @@ pub function (s: Server) signature(sig: [u8]): Result[ServerStep, HandshakeError
   }
   let cv: u8[] = message.encode(message.CertificateVerifyMsg(message.CertificateVerify { scheme: s.scheme, signature: __copy(sig) }));
   let r: ServerRun = __send_finished(s, s.flight, cv, __out())?;
-  return __server_run(r.server, r.out);
+  return __server_run(r.server, [], r.out);
 }
 
 pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, HandshakeError] {
@@ -2738,11 +2791,11 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
     Some(c) => {
       __check_binder(s, raw, h, n.suite, c)?;
       let r: ServerRun = __serve_hello(server, raw, h, n, c.psk, c.index, __out())?;
-      return __server_run(r.server, r.out);
+      return __server_run(r.server, [], r.out);
     },
     None => {
       let r: ServerRun = __serve_hello(server, raw, h, n, [], 0, __out())?;
-      return __server_run(r.server, r.out);
+      return __server_run(r.server, [], r.out);
     }
   }
   return Err(Misuse("resume"));
@@ -2755,7 +2808,7 @@ pub function (s: Server) verdict(ok: boolean): Result[ServerStep, HandshakeError
   if (!ok) {
     return Err(BadCertificate);
   }
-  return __server_run(Server { ...s, state: S_WAIT_FINISHED }, __out());
+  return __server_run(Server { ...s, state: S_WAIT_FINISHED }, [], __out());
 }
 
 pub function (s: Server) client_chain(): u8[][] {
