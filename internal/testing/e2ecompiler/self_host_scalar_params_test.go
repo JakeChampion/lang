@@ -11,6 +11,8 @@ import (
 // crosses a function boundary: a record of scalar fields, an Option of one,
 // and an Option of a scalar travel as their parts, through a free function,
 // a method, a trait impl reached by a generic, and a parameter handed on.
+// A split parameter is also the base of a record update whose result is
+// kept whole: in a free function, a method, and a trait impl's self.
 const scalarParamsLib = `import "std/time";
 
 pub struct Mix { a: i32, b: i64, c: f64, d: boolean }
@@ -84,6 +86,44 @@ impl Waiter for Real {
 @noinline pub function wait_on[W: Waiter](w: W, t: Option[Duration]): i64 {
   return w.wait(t);
 }
+
+@noinline pub function moved_by(m: Mix, by: i64): Mix {
+  return Mix { ...m, b: m.b + by };
+}
+
+pub struct Line { pos: i32, pend: i32, tab: boolean }
+
+@noinline pub function (l: Line) space(by: i32): Line {
+  if (l.tab) {
+    return Line { ...l, pos: l.pos + by, pend: l.pend + 1 };
+  }
+  return Line { ...l, pos: l.pos + by };
+}
+
+pub trait Bump {
+  function bumped(self: Self, by: f64): f64;
+}
+
+pub struct S0 { f0: f64, f1: boolean, f2: f64 }
+
+@noinline function tg0(a: S0, b: S0, k: i32): (f64, S0) {
+  return (a.f0 + a.f2 + k as f64, b);
+}
+
+impl Bump for S0 {
+  function bumped(self: S0, by: f64): f64 {
+    let (head, kept) = tg0(self, S0 { ...self, f2: self.f2 + by }, 2);
+    let flag: f64 = 0.0;
+    if (kept.f1) {
+      flag = 1.0;
+    }
+    return head + kept.f2 * 2.0 + flag;
+  }
+}
+
+@noinline pub function bump_on[B: Bump](b: B, by: f64): f64 {
+  return b.bumped(by);
+}
 `
 
 const scalarParamsMain = `import "std/bench";
@@ -120,6 +160,25 @@ function main(): i32 {
   if (allocated != 0) {
     return 2;
   }
+  let kept: lib.Mix[] = [];
+  let line: lib.Line = lib.Line { pos: 0, pend: 0, tab: false };
+  let bumped: f64 = 0.0;
+  i = 0;
+  while (i < 10) {
+    kept = kept.append(lib.moved_by(mixes[i % 2], i as i64));
+    line = line.space(i).space(1);
+    line = lib.Line { ...line, tab: i % 3 == 0 };
+    bumped = bumped + lib.bump_on(lib.S0 { f0: 1.5, f1: i % 2 == 0, f2: 2.0 }, 0.5);
+    i = i + 1;
+  }
+  let moved: f64 = 0.0;
+  for m in kept {
+    moved = moved + lib.sum_mix(m);
+  }
+  print(moved.to_string() + " " + line.pos.to_string() + " " + line.pend.to_string() + " " + bumped.to_string());
+  if (moved != 100000000033.75 || line.pos != 55 || line.pend != 6 || bumped != 110.0) {
+    return 3;
+  }
   return 0;
 }
 `
@@ -138,7 +197,7 @@ func TestSelfHostScalarParams(t *testing.T) {
 			}
 			stderr, code := cli.exitOfFile(t, src, target, nil, "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
 			if code != 0 {
-				t.Errorf("exit %d, want 0 (1: a wrong value, 2: the loop allocated)\n%s", code, stderr)
+				t.Errorf("exit %d, want 0 (1: a wrong value, 2: the loop allocated, 3: a wrong value after a record update)\n%s", code, stderr)
 			}
 			if !strings.Contains(stderr, "live_bytes=0") {
 				t.Errorf("%q, want every block freed", stderr)

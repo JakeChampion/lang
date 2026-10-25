@@ -504,7 +504,10 @@ function moved_inst(ins: ssa.SInst, map: i32[], p: i32, extra: i32): ssa.SInst {
     imm = ins.imm + extra;
   }
   let donor: i32 = ssasem.update_base(ins);
-  if (donor >= 0) {
+  if (donor == p) {
+    // A split parameter has no box to update in place; every field is already an argument.
+    imm = 0;
+  } else if (donor >= 0) {
     imm = moved(map, donor) + 1;
   }
   return ssa.SInst { ...ins, result: moved(map, ins.result), args: args, imm: imm };
