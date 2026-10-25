@@ -171,14 +171,10 @@ func TestIllTypedConstIsTheCheckersError(t *testing.T) {
 	}
 }
 
-func TestWellTypedUnfoldableConstIsE093(t *testing.T) {
+func TestZeroDivisorOutranksATypeError(t *testing.T) {
 	got := foldErr(t, `const X: i32 = 1 / 0 + (1 + true);`)
 	if !strings.Contains(got, "division by zero") {
 		t.Errorf("a zero divisor outranks a sibling's type error, as the self-host's eval_const does; got %v", got)
-	}
-	got = foldErr(t, "const F: f64 = 1.5;\nconst X: f64 = F * 2;")
-	if !strings.Contains(got, "2:1: const X: binary `*` mixes float with non-float") {
-		t.Errorf("a well-typed initializer the folder cannot settle stays the folder's E093; got %v", got)
 	}
 }
 

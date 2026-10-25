@@ -1,0 +1,15 @@
+// In a const initializer, an integer-literal operand of a typed float takes
+// the float type before the fold, as it does in code. F is typed by its
+// declaration, and so is a value computed from it.
+const F: f64 = 1.5;
+const G: f64 = F * 2;
+const H: f64 = F + 1 / 2;
+const L: boolean = F < 2;
+const M: boolean = -2 < F;
+const N: boolean = (F + 1) < 3;
+const P: f64 = 1 / 2 + F * (3 / 2);
+
+function main(): i32 {
+    print(f"{G} {H} {L} {M} {N} {P}");
+    return 0;
+}

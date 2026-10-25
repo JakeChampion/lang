@@ -321,12 +321,33 @@ func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, assets *embed
 	case *ast.Binary:
 		left, lerr := evalConst(n.Left, w, values, assets)
 		right, rerr := evalConst(n.Right, w, values, assets)
+		if typedFloat(left) {
+			right, rerr = besideFloat(n.Right, right, rerr, values, assets)
+		} else if typedFloat(right) {
+			left, lerr = besideFloat(n.Left, left, lerr, values, assets)
+		}
 		if err := firstErr(lerr, rerr); err != nil {
 			return nil, err
 		}
 		return foldBinary(n, w, left, right)
 	}
 	return nil, errors.New(notConstant)
+}
+
+// typedFloat reports a float that has a declared width: an earlier const, or a
+// value computed from one. A float literal has none.
+func typedFloat(e ast.Expr) bool {
+	f, ok := e.(*ast.FloatLit)
+	return ok && f.Width != 0
+}
+
+// besideFloat evaluates an integer-literal operand of a typed float as a float,
+// as the checker settles it.
+func besideFloat(e, v ast.Expr, err error, values map[string]ast.Expr, assets *embed.Set) (ast.Expr, error) {
+	if settled, ok := intLitsAsFloat(e); ok {
+		return evalConst(settled, intWidth{}, values, assets)
+	}
+	return v, err
 }
 
 func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
@@ -336,7 +357,7 @@ func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 		case *ast.NumberLit:
 			return &ast.NumberLit{P: n.P, Value: w.trunc(-v.Value)}, nil
 		case *ast.FloatLit:
-			return &ast.FloatLit{P: n.P, Value: -v.Value}, nil
+			return &ast.FloatLit{P: n.P, Value: -v.Value, Width: v.Width}, nil
 		}
 		return nil, fmt.Errorf("unary `-` requires a number or float operand")
 	case "!":
@@ -399,7 +420,7 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		if !rok {
 			return nil, fmt.Errorf("binary `%s` mixes float with non-float; conversions must be explicit even in constants", n.Op)
 		}
-		return foldFloatBinary(n, lf.Value, rf.Value)
+		return foldFloatBinary(n, lf.Value, rf.Value, max(lf.Width, rf.Width))
 	}
 
 	ln, lok := left.(*ast.NumberLit)
@@ -540,19 +561,19 @@ func foldNumberBinary(n *ast.Binary, w intWidth, l, r int64) (ast.Expr, error) {
 	return nil, fmt.Errorf("operator `%s` not allowed in integer constant expressions", n.Op)
 }
 
-func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
+func foldFloatBinary(n *ast.Binary, l, r float64, width int) (ast.Expr, error) {
 	switch n.Op {
 	case "+":
-		return &ast.FloatLit{P: n.P, Value: l + r}, nil
+		return &ast.FloatLit{P: n.P, Value: l + r, Width: width}, nil
 	case "-":
-		return &ast.FloatLit{P: n.P, Value: l - r}, nil
+		return &ast.FloatLit{P: n.P, Value: l - r, Width: width}, nil
 	case "*":
-		return &ast.FloatLit{P: n.P, Value: l * r}, nil
+		return &ast.FloatLit{P: n.P, Value: l * r, Width: width}, nil
 	case "/":
 		if r == 0 {
 			return nil, &Error{Pos: n.P, Msg: "division by zero in constant expression"}
 		}
-		return &ast.FloatLit{P: n.P, Value: l / r}, nil
+		return &ast.FloatLit{P: n.P, Value: l / r, Width: width}, nil
 	case "==":
 		return &ast.BoolLit{P: n.P, Value: l == r}, nil
 	case "!=":

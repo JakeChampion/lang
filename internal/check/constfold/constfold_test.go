@@ -164,6 +164,16 @@ func TestFoldSettlesIntegerLiteralsToFloat(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", src, lit.Value, want)
 		}
 	}
+	for src, want := range map[string]float64{
+		`const X: f64 = F * 2;`:               3,
+		`const X: f64 = F + 1 / 2;`:           2,
+		`const X: f64 = 1 / 2 + F * (3 / 2);`: 2.75,
+	} {
+		prog := fold(t, "const F: f64 = 1.5;\n"+src+"\nfunction main(): f64 { return X; }")
+		if lit, ok := returnLit(t, prog).(*ast.FloatLit); !ok || lit.Value != want {
+			t.Errorf("%s: got %#v, want %v", src, returnLit(t, prog), want)
+		}
+	}
 	prog := fold(t, "const Z: f64 = -0;\nfunction main(): f64 { return Z; }")
 	if lit, ok := returnLit(t, prog).(*ast.FloatLit); !ok || !math.Signbit(lit.Value) {
 		t.Errorf("-0 should fold to negative zero, got %#v", returnLit(t, prog))
@@ -179,8 +189,12 @@ func TestFoldComparesStringsAndChars(t *testing.T) {
 		`const X: boolean = 'z' <= 'b';`:  false,
 		`const X: boolean = 'a' == 'a';`:  true,
 		`const X: boolean = b'a' < b'b';`: true,
+		`const X: boolean = F < 2;`:       true,
+		`const X: boolean = -2 < F;`:      true,
+		`const X: boolean = (F + 1) < 3;`: true,
+		`const X: boolean = 1 / 2 > F;`:   false,
 	} {
-		prog := fold(t, src+"\nfunction main(): boolean { return X; }")
+		prog := fold(t, "const F: f64 = 1.5;\n"+src+"\nfunction main(): boolean { return X; }")
 		lit, ok := returnLit(t, prog).(*ast.BoolLit)
 		if !ok {
 			t.Fatalf("%s: return value should be BoolLit, got %T", src, returnLit(t, prog))

@@ -446,5 +446,20 @@ function earlier_value(name: string, names: string[], values: Value[]): Value {
 }
 
 function evaluate_binary(b: ast.ExprBinary, ty: parser.TypeRef, names: string[], values: Value[]): Value {
-  return binary(b.op, evaluate(b.left, ty, names, values), evaluate(b.right, ty, names, values), scalar_width(ty));
+  let left: Value = evaluate(b.left, ty, names, values);
+  let right: Value = evaluate(b.right, ty, names, values);
+  if let FloatValue(_) = left.data {
+    right = beside_float(b.right, right, names, values);
+  } else if let FloatValue(_) = right.data {
+    left = beside_float(b.left, left, names, values);
+  }
+  return binary(b.op, left, right, scalar_width(ty));
+}
+
+// An integer-literal operand of a float is a float, as the checker settles it.
+function beside_float(e: ast.Expr, v: Value, names: string[], values: Value[]): Value {
+  if (parser.is_unsettled_int_literal(e)) {
+    return evaluate(parser.settle_to_name(e, "f64"), parser.parse_type_ref("f64"), names, values);
+  }
+  return v;
 }
