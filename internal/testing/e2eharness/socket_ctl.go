@@ -2,31 +2,9 @@ package e2eharness
 
 func SocketCtlProbe() string {
 	return `import "core/int";
-import "std/async";
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
-    return n;
-}
-
-function eagain(): i32 {
-    if (target_os() == "darwin") { return 35; }
-    if (target_os() == "wasi") { return 6; }
-    return 11;
-}
-
-// recv waits for c to be readable, since a wasi:sockets read never blocks,
-// then reads into buf: the count, 0 at the end of the stream, or -errno. A
-// wake that finds nothing yet (-EAGAIN) waits again.
-function recv(c: i32, buf: u8[]): i32 {
-    let set: i32[] = [c, 1];
-    let n: i32 = 0 - eagain();
-    let tries: i32 = 0;
-    while (n == 0 - eagain() && tries < 100) {
-        async.wait_any(set, 5000);
-        n = tcp_recv_into(c, buf);
-        tries = tries + 1;
-    }
     return n;
 }
 
@@ -49,21 +27,20 @@ function main(): i32 {
     if (a < 0) { return fail(5); }
     if (tcp_socket_ctl(a, 2, 1) != 0) { return fail(7); }
     if (target_os() == "wasi") {
-        // wasi:sockets has no no-delay and no blocking mode to switch off.
+        // wasi:sockets has no no-delay switch.
         if (tcp_socket_ctl(a, 1, 1) != 0 - 58) { return fail(6); }
-        if (tcp_socket_ctl(c, 3, 1) != 0 - 58) { return fail(8); }
     } else {
         if (tcp_socket_ctl(a, 1, 1) != 0) { return fail(6); }
-        if (tcp_socket_ctl(c, 3, 1) != 0) { return fail(8); }
-        let nothing: u8[] = [0u8, 0u8];
-        if (tcp_recv_into(c, nothing) >= 0) { return fail(9); }
-        if (tcp_socket_ctl(c, 3, 0) != 0) { return fail(10); }
     }
+    if (tcp_socket_ctl(c, 3, 1) != 0) { return fail(8); }
+    let nothing: u8[] = [0u8, 0u8];
+    if (tcp_recv_into(c, nothing) >= 0) { return fail(9); }
+    if (tcp_socket_ctl(c, 3, 0) != 0) { return fail(10); }
     if (tcp_send_bytes(a, [104u8, 105u8]) != 2) { return fail(11); }
     if (tcp_socket_ctl(a, 4, 1) != 0) { return fail(12); }
     let got: u8[] = [0u8, 0u8, 0u8, 0u8];
-    if (recv(c, got) != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
-    if (recv(c, got) != 0) { return fail(14); }
+    if (tcp_recv_into(c, got) != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
+    if (tcp_recv_into(c, got) != 0) { return fail(14); }
     if (tcp_socket_ctl(a, 11, 0) >= 0) { return fail(15); }
     // Op 9 is the local address as 16-bit groups and the port: the
     // accepted side is 127.0.0.1, so family 4, 127 << 8 then 1, nothing
@@ -166,17 +143,16 @@ function main(): i32 {
     if (!ok(net.set_keepalive(a, true))) { return fail(5); }
     if (target_os() == "wasi") {
         if (!unsupported(net.set_nodelay(a, true))) { return fail(6); }
-        if (!unsupported(net.set_nonblocking(c, true))) { return fail(7); }
     } else {
         if (!ok(net.set_nodelay(a, true))) { return fail(6); }
-        if (!ok(net.set_nonblocking(c, true))) { return fail(7); }
-        let probe: u8[] = [0u8, 0u8];
-        match (net.read(c, probe)) {
-            Ok(n) => { return fail(8); },
-            Err(e) => { if (!e.eq(net.WouldBlock)) { return fail(8); } },
-        }
-        if (!ok(net.set_nonblocking(c, false))) { return fail(9); }
     }
+    if (!ok(net.set_nonblocking(c, true))) { return fail(7); }
+    let probe: u8[] = [0u8, 0u8];
+    match (net.read(c, probe)) {
+        Ok(n) => { return fail(8); },
+        Err(e) => { if (!e.eq(net.WouldBlock)) { return fail(8); } },
+    }
+    if (!ok(net.set_nonblocking(c, false))) { return fail(9); }
     match (net.write(a, [104u8, 105u8])) {
         Ok(n) => { if (n != 2) { return fail(10); } },
         Err(e) => { return fail(10); },

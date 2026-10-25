@@ -17,27 +17,28 @@ function main(): i32 {
   let ls: i32 = tcp_listen_with(lo, 0, 16, false);
   let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
   let s: i32 = tcp_accept(ls);
+
+  let buf: u8[] = __alloc_u8(4);
+  let bytes: [u8] = buf[0:4];
+  let tail: [u8] = bytes[1:3];
+  print(f"send: {tcp_send_bytes(c, "ABC".bytes())}");
+  let n: i32 = tcp_recv_into(s, buf);
+  print(f"received {n}: buf {buf[0]} {buf[1]} {buf[2]}");
+  print(f"byte view: {bytes[0]} {bytes[1]} {bytes[2]} len {bytes.len()}");
+  print(f"view of a view: {tail[0]} {tail[1]} len {tail.len()}");
+
   let r: i32 = reactor_new();
   print(f"watch: {reactor_ctl(r, 1, s, 1)}");
-
   let events: i32[] = [0, 0, 0, 0];
   let pair: [i32] = events[0:2];
   let whole: [i32] = events[:];
   let w: Window = Window { events: first_two(whole) };
-  print(f"send: {tcp_send_bytes(c, "ABC".bytes())}");
+  print(f"send: {tcp_send_bytes(c, "D".bytes())}");
   let got: i32 = reactor_wait(r, events, 1000);
   print(f"reactor_wait: {got} fd {events[0] == s} ready {events[1] > 0}");
   print(f"i32 view: fd {pair[0] == s} ready {pair[1] > 0} len {pair.len()}");
   print(f"whole view: fd {whole[0] == s} ready {whole[1] > 0} len {whole.len()}");
   print(f"view in a field: fd {w.events[0] == s} ready {w.events[1] > 0}");
-
-  let buf: u8[] = __alloc_u8(4);
-  let bytes: [u8] = buf[0:4];
-  let tail: [u8] = bytes[1:3];
-  let n: i32 = tcp_recv_into(s, buf);
-  print(f"received {n}: buf {buf[0]} {buf[1]} {buf[2]}");
-  print(f"byte view: {bytes[0]} {bytes[1]} {bytes[2]} len {bytes.len()}");
-  print(f"view of a view: {tail[0]} {tail[1]} len {tail.len()}");
 
   print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)} {reactor_ctl(r, 3, 0, 0)}");
   return 0;

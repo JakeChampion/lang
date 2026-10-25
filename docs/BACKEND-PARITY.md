@@ -143,11 +143,16 @@ is never mistaken for an error, 9 the socket's own address and 10 its
 peer's as 16-bit groups: arg 0..7 the group in network order, an IPv4
 address filling 0 and 1 and the rest 0, 8 the family as 4 or 6, 9 the
 port, -EINVAL past that) are the socket controls of #9853;
-std/net wraps them. On wasm, ops 1, 3 and 6 answer `-ENOTSUP` (58 in the
+std/net wraps them. On wasm, ops 1 and 6 answer `-ENOTSUP` (58 in the
 WASI numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
-blocking mode to turn off nor a reading of the send queue (op 7 reads
+reading of the send queue (op 7 reads
 `remote-address`, whose 16-bit IPv6 groups the u16 lowering byte-swaps
-into the same words), and
+into the same words). wasi:sockets has no blocking mode either, so op 3 is
+a flag in the socket's record: a receive on a blocking socket waits on its
+input stream and reads again, and an accept on a blocking listener waits on
+the listener before it accepts, while a non-blocking socket answers -EAGAIN
+at once. A send on wasm writes and flushes all its bytes before it returns
+whichever mode the socket is in; and
 `reuse_port` is ignored: a port is one socket's there. Every other op and the backlog behave the same on every
 target. A wasi:sockets `result<_, error-code>` puts the error-code at byte
 1 (a handle, tuple or address payload puts it at 4, a u64 count at 8);
@@ -237,7 +242,8 @@ kqueue: on wasm, where the pollables a watch holds are children of the
 socket's streams, `tcp_close` unwatches it from each live set first. Behind it, `tcp_recv_into(fd, buf)` is
 the owned-buffer read: the bytes read into the caller's `u8[]`, 0 at EOF,
 -EAGAIN (wasi's 6) when nothing is queued and the socket is non-blocking,
-which on wasm is every socket, else -errno. A signal is a readiness event
+else -errno; a blocking socket waits for bytes or the end of the stream on
+every target. A signal is a readiness event
 too: `reactor_ctl` op 4 watches signal `fd` and answers a descriptor op 5
 wants back, and the set reports a delivery as the pair (-signal, 1). On
 Linux the signal is blocked and read through a signalfd the set holds
@@ -282,10 +288,10 @@ of these at check time there.
 
 | Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | `fern-oracle -interp` |
 | --- | --- | --- | --- | --- | --- |
-| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_send_bytes` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
+| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_send_bytes` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 20-byte record (a datagram socket's is 16 bytes) | E066 | net package |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
-| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
-| `tcp_recv_into` | Fern body, `read(2)`, -errno on failure | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty, `-EIO` on a stream error | E066 | a read through the descriptor |
+| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets, op 3 a flag in the record; 1 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
+| `tcp_recv_into` | Fern body, `read(2)`, -errno on failure | Fern body | non-blocking read on the input stream; while it is empty, a wait on the stream and another read, or `-EAGAIN` on a non-blocking socket; `-EIO` on a stream error | E066 | a read through the descriptor |
 | `tcp_ktls` | Fern body: `setsockopt` for the `tls` upper-layer protocol and each direction's keys, `sendmsg` and `recvmsg` with the record type as a control message | E066: no `ktls` | E066: no `ktls` | E066 | `-ENOSYS` |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
 | `tcp_send_buf` | Fern body, one `sendto(2)` of the builder's bytes from `from` | Fern body | the builder's bytes written to the output stream in place, as `tcp_send_bytes` writes an array | E066 | one socket write of the builder's bytes |
