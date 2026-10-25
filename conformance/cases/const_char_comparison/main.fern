@@ -1,0 +1,13 @@
+// The comparison operators fold on char constants. A byte literal is a u8,
+// so arithmetic folds on it as well.
+const LESS: boolean = 'a' < 'b';
+const AT_MOST: boolean = 'z' <= 'b';
+const SAME: boolean = 'a' == 'a';
+const OTHER: boolean = 'a' != 'a';
+const BYTE_LESS: boolean = b'a' < b'b';
+const NEXT: u8 = b'a' + 1;
+
+function main(): i32 {
+    print(f"{LESS} {AT_MOST} {SAME} {OTHER} {BYTE_LESS} {NEXT}");
+    return 0;
+}

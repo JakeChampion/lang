@@ -5947,7 +5947,6 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(mod.funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
-  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
   let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, 0, mod.funcs.len(), cache);
@@ -10583,6 +10582,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
       return "";
     }
   }
+  ircore.refuse_claims(sub.refused);
   let g: string = emit_module_ir_gated_sub(ircore.sub_lifted(sub, tm), darwin, sub, recs);
   if (g != "") {
     return g;
@@ -10639,7 +10639,6 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
   }
-  ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, lo, hh, cache);

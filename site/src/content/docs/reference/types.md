@@ -76,6 +76,7 @@ not a character literal. `for b in s` walks the bytes.
 
 ```fern
 import "std/string";
+import "std/utf8";
 
 function main(): i32 {
     let s: string = "héllo";

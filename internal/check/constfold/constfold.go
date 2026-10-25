@@ -1,6 +1,7 @@
 package constfold
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"unicode/utf8"
@@ -201,6 +202,11 @@ func evalElems(elems []ast.Expr, elemT func(int) ast.Type, values map[string]ast
 }
 
 func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, assets *embed.Set) (ast.Expr, error) {
+	if _, ok := want.(ast.FloatType); ok {
+		if settled, ok := intLitsAsFloat(e); ok {
+			e = settled
+		}
+	}
 	switch n := e.(type) {
 	case *ast.ArrayLit:
 		var elemT ast.Type
@@ -257,6 +263,40 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, asset
 	return evalConst(e, declaredWidth(want), values, assets)
 }
 
+// intLitsAsFloat rewrites a tree of unsuffixed integer literals under unary -
+// and binary + - * / with float literals, as the checker settles it for a float type.
+func intLitsAsFloat(e ast.Expr) (ast.Expr, bool) {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.Width != 0 {
+			return nil, false
+		}
+		return &ast.FloatLit{P: x.P, Value: float64(uint64(x.Value)), Raw: x.Raw}, true
+	case *ast.Unary:
+		if x.Op != "-" {
+			return nil, false
+		}
+		operand, ok := intLitsAsFloat(x.Operand)
+		if !ok {
+			return nil, false
+		}
+		return &ast.Unary{P: x.P, Op: x.Op, Operand: operand}, true
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/":
+		default:
+			return nil, false
+		}
+		left, lok := intLitsAsFloat(x.Left)
+		right, rok := intLitsAsFloat(x.Right)
+		if !lok || !rok {
+			return nil, false
+		}
+		return &ast.Binary{P: x.P, Op: x.Op, Left: left, Right: right}, true
+	}
+	return nil, false
+}
+
 func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
@@ -310,6 +350,17 @@ func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 }
 
 func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, error) {
+	left, right = byteAsNumber(left), byteAsNumber(right)
+	if lc, lok := left.(*ast.CharLit); lok {
+		rc, rok := right.(*ast.CharLit)
+		if !rok {
+			return nil, fmt.Errorf("binary `%s` between char and non-char is not a constant expression", n.Op)
+		}
+		if v, ok := compare(n.Op, lc.Value, rc.Value); ok {
+			return &ast.BoolLit{P: n.P, Value: v}, nil
+		}
+		return nil, fmt.Errorf("operator `%s` not allowed on chars in constant expressions", n.Op)
+	}
 	if ls, lok := left.(*ast.StringLit); lok {
 		rs, rok := right.(*ast.StringLit)
 		if !rok {
@@ -318,10 +369,9 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		switch n.Op {
 		case "+":
 			return &ast.StringLit{P: n.P, Value: ls.Value + rs.Value}, nil
-		case "==":
-			return &ast.BoolLit{P: n.P, Value: ls.Value == rs.Value}, nil
-		case "!=":
-			return &ast.BoolLit{P: n.P, Value: ls.Value != rs.Value}, nil
+		}
+		if v, ok := compare(n.Op, ls.Value, rs.Value); ok {
+			return &ast.BoolLit{P: n.P, Value: v}, nil
 		}
 		return nil, fmt.Errorf("operator `%s` not allowed on strings in constant expressions", n.Op)
 	}
@@ -358,6 +408,32 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		return nil, fmt.Errorf("binary `%s` operands aren't both numbers", n.Op)
 	}
 	return foldNumberBinary(n, w, ln.Value, rn.Value)
+}
+
+// byteAsNumber gives a byte literal the u8 value it stands for.
+func byteAsNumber(e ast.Expr) ast.Expr {
+	if c, ok := e.(*ast.CharLit); ok && c.IsByte {
+		return &ast.NumberLit{P: c.P, Value: c.Value, Width: 8, IsUnsigned: true}
+	}
+	return e
+}
+
+func compare[T cmp.Ordered](op string, l, r T) (bool, bool) {
+	switch op {
+	case "==":
+		return l == r, true
+	case "!=":
+		return l != r, true
+	case "<":
+		return l < r, true
+	case "<=":
+		return l <= r, true
+	case ">":
+		return l > r, true
+	case ">=":
+		return l >= r, true
+	}
+	return false, false
 }
 
 type intWidth struct {

@@ -60,7 +60,7 @@ function message(): u8[] {
 function pkcs1(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
   match (rsa.public_key(__codec_bytes(hex.decode(n)), __codec_bytes(hex.decode("010001")))) {
     Ok(k) => {
-      return rsa.verify_pkcs1v15(k, h, msg, __codec_bytes(hex.decode(sig)));
+      return k.verify_pkcs1v15(h, msg, __codec_bytes(hex.decode(sig)));
     },
     Err(e) => {
       return false;
@@ -72,7 +72,7 @@ function pkcs1(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
 function pss(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
   match (rsa.public_key(__codec_bytes(hex.decode(n)), __codec_bytes(hex.decode("010001")))) {
     Ok(k) => {
-      return rsa.verify_pss(k, h, msg, __codec_bytes(hex.decode(sig)));
+      return k.verify_pss(h, msg, __codec_bytes(hex.decode(sig)));
     },
     Err(e) => {
       return false;
