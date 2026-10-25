@@ -3,6 +3,7 @@ import "../lexer";
 import "../parser";
 import "../flatten";
 import "../treeshake";
+import "../checker";
 import "../asm_arm64_ir";
 import "../asm_ir";
 import "../asmcore";
@@ -109,8 +110,8 @@ struct View {
   refused: util.Diag[],
 }
 
-function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], target: string): View {
-  let d: semlower.Driven = semlower.driven(treeshake.without_extern_callers(merged_program(entry, loaded, target)), target);
+function per_module_view(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], target: string): View {
+  let d: semlower.Driven = semlower.driven(treeshake.without_extern_callers(merged_program(entry_path, entry, loaded, target)), target);
   let g: ircore.Gated = semlower.program(d);
   let raw: parser.Module[] = [];
   let entry_at: i32 = 0;
@@ -125,20 +126,22 @@ function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], p
   return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, contracts: d.sub.contracts, rt: d.sub.rt_lower, refused: d.sub.refused };
 }
 
-function merged_program(entry: parser.Module, loaded: flatten.LoadedModule[], target: string): parser.Module {
-  let merged: parser.Module = flatten.bundle(entry, loaded, target);
+function merged_program(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string): parser.Module {
+  let merged: parser.Module = modloader.bundle(entry_path, entry, loaded, target, "");
   let md: platforms.Descriptor = platforms.for_target(target);
   merged = constfold.fold_target_name(merged, md.environment, md.isa);
   return constfold.prune_literal_branches(merged);
 }
 
+// Annotated before the shake, as fern.fern does: the display desugar of
+// `print(x)` reaches a primitive's `to_string` only through the annotation.
 function merged_emitted(merged: parser.Module): parser.Module {
   let errs: util.Diag[] = asmcore.check_undefined_calls(merged);
   if (errs.len() > 0) {
     eprint(util.format_diags(errs));
     exit(1);
   }
-  return treeshake.treeshake(merged);
+  return treeshake.treeshake(checker.annotate_module(merged));
 }
 
 function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
@@ -246,7 +249,7 @@ function emit_per_module_spawned(entry_path: string, entry: parser.Module, loade
     return 1;
   }
   let parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
-  let units: string[] = flat_unit_list(entry_path, parts, per_module_view(entry, loaded, parts, target).u.mods, func_budget);
+  let units: string[] = flat_unit_list(entry_path, parts, per_module_view(entry_path, entry, loaded, parts, target).u.mods, func_budget);
   if (units.len() == 0) {
     return 1;
   }
@@ -420,7 +423,7 @@ function run_per_module(entry_path: string, entry: parser.Module, loaded: flatte
     print(util.i32_to_string(parts.len()) + "\n");
     return 0;
   }
-  let v: View = per_module_view(entry, loaded, parts, target);
+  let v: View = per_module_view(entry_path, entry, loaded, parts, target);
   let infmods: parser.Module[] = v.u.mods;
   if (pm_mode == "func-counts" || pm_mode == "shape") {
     let fci: i32 = 0;
@@ -675,7 +678,7 @@ function main(): i32 {
       if (pm_mode.len() > 0) {
         return run_per_module(entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi);
       }
-      let merged: parser.Module = merged_program(entry, loaded, target);
+      let merged: parser.Module = merged_program(entry_path, entry, loaded, target);
       if (vprovided) {
         return verify_provided_module(merged, target);
       }
@@ -694,11 +697,11 @@ function main(): i32 {
         }
       }
       if (target == "arm64-linux") {
-        let d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
+        let d64: semlower.Driven = semlower.driven_shaken(merged_emitted(merged), target);
         write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
         return 0;
       }
-      let d: semlower.Driven = semlower.driven(merged_emitted(merged), target);
+      let d: semlower.Driven = semlower.driven_shaken(merged_emitted(merged), target);
       write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
       return 0;
     },

@@ -2111,7 +2111,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
 	registerStringMethod("len", nil, ast.NumberType{})
-	c.info.FuncSigs["__method_boolean_to_string"] = &ast.FuncType{Params: []ast.Type{ast.BoolType{}}, Result: ast.StringType{}}
+	// A scalar builtin method is a signature with no Methods entry, so a
+	// declared method of the name takes over the dispatch and the signature
+	// (builtinScalarMethod, isScalarBuiltinMethod).
+	for name, recv := range map[string]ast.Type{
+		"i32": ast.NumberType{}, "i64": ast.NumberType{Width: 64, Signed: true},
+		"u8": ast.NumberType{Width: 8}, "u32": ast.NumberType{Width: 32}, "u64": ast.NumberType{Width: 64},
+		"usize": ast.NumberType{Width: ast.WidthPtr}, "f32": ast.FloatType{Width: 32}, "f64": ast.FloatType{Width: 64},
+		"boolean": ast.BoolType{}, "char": ast.CharType{}, "string": ast.StringType{},
+	} {
+		method, _ := builtinScalarMethod(name, "to_string")
+		c.info.FuncSigs[method] = &ast.FuncType{Params: []ast.Type{recv}, Result: ast.StringType{}}
+	}
 
 	c.info.FuncSigs["string_from_bytes_unchecked"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
@@ -2289,6 +2300,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 
+	// First pass: gather all top-level signatures so functions can call
+	// each other in any order. Methods are hoisted to mangled
+	// top-level names (`__method_<Type>_<Name>`) with the receiver
+	// prepended to the parameter list, so codegen never has to know
+	// about methods.
+	declaredFunctions := make(map[string]bool, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
 			c.checkMainSignature(fn)
@@ -2375,10 +2392,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		} else if fn.MethodRecv != "" {
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
 		}
-		if _, dup := c.info.FuncSigs[fn.Name]; dup && !isScalarBuiltinMethod(fn.Name) {
+		if _, dup := c.info.FuncSigs[fn.Name]; dup && (!isScalarBuiltinMethod(fn.Name) || declaredFunctions[fn.Name]) {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
 			continue
 		}
+		declaredFunctions[fn.Name] = true
 		params := make([]ast.Type, len(fn.Params))
 		owns := make([]bool, len(fn.Params))
 		for i, p := range fn.Params {
@@ -2389,7 +2407,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		if fn.AssocConst {
 			c.info.AssocConsts[fn.Name] = true
 		}
-		if fn.MethodRecv == "" {
+		// Method dispatch already checks visibility, including calls from a
+		// trait default to methods on its implementing type. The trait's
+		// module need not import that type's module.
+		if fn.MethodRecv == "" && !isScalarBuiltinMethod(fn.Name) {
 			c.funcSources[fn.Name] = fn.SourceModule
 		}
 		if len(fn.TypeParams) > 0 {
@@ -2737,6 +2758,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.computeResultBorrows(prog)
 
 	c.rewriteAssocConstReads(prog)
+	c.checkConsts(prog)
 	for _, fn := range prog.Funcs {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -3587,7 +3609,7 @@ func deriveKind(name string) string {
 
 func hasStdJson(prog *ast.Program) bool {
 	for _, pf := range prog.Funcs {
-		if pf.Name == "json__json_parse" {
+		if pf.Name == "json__parse" {
 			return true
 		}
 	}
@@ -3598,7 +3620,7 @@ func fromJsonFieldTypes(types []ast.Type) ([]ast.Type, int, bool) {
 	out := make([]ast.Type, len(types))
 	for i, t := range types {
 		e := fromJsonElem(t)
-		if _, nested := fromJsonContainer(e); nested {
+		if container, nested := fromJsonContainer(e); nested && container != "option" {
 			return nil, i, false
 		}
 		switch e.(type) {
@@ -4704,7 +4726,7 @@ func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       body,
 	}
 }
@@ -4739,13 +4761,13 @@ func synthEnumFromJsonValue(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 				{VariantName: "Err", Bindings: []string{"__fj_e"}, Body: fjReturn(fjVariant("Err", &ast.Ident{Name: "__fj_e"}))},
 			},
 		},
-		&ast.Return{Value: fjVariant("Err", &ast.StringLit{Value: ""})},
+		&ast.Return{Value: fjVariant("Err", fjCall("error", &ast.StringLit{Value: ""}))},
 	}}
 	return &ast.FuncDecl{
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       body,
 	}
 }
@@ -4858,7 +4880,7 @@ func synthFromJsonText(name string, recv ast.Type) *ast.FuncDecl {
 		Name:       "from_json",
 		AssocType:  name,
 		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: call}}},
 	}
 }
@@ -5204,15 +5226,29 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 func builtinScalarMethod(typeName, name string) (string, bool) {
-	if typeName == "boolean" && name == "to_string" {
-		return "__method_boolean_to_string", true
+	if name == "to_string" {
+		if typeName == "boolean" {
+			return "__method_boolean_to_string", true
+		}
+		switch typeName {
+		case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "string":
+			return "__primitive_" + typeName + "_to_string", true
+		}
 	}
 	return "", false
 }
 
 func isScalarBuiltinMethod(mangled string) bool {
-	return mangled == "__method_boolean_to_string"
+	if mangled == "__method_boolean_to_string" {
+		return true
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(mangled, "__primitive_"), "_to_string")
+	method, ok := builtinScalarMethod(name, "to_string")
+	return ok && method == mangled
 }
+
+// IsPrimitiveDisplayMethod lets the oracle replace a builtin with its source body.
+func IsPrimitiveDisplayMethod(name string) bool { return isScalarBuiltinMethod(name) }
 
 type checker struct {
 	entryModule string
@@ -5761,6 +5797,9 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		params := typeParamSet(impl.TypeParams)
 		c.checkTypeKnown(impl.Type, params, impl.P)
 	}
+	for _, cd := range prog.Consts {
+		c.checkTypeKnown(cd.Type, nil, cd.P)
+	}
 }
 
 func (c *checker) validateMapKeyTypes(prog *ast.Program) {
@@ -5943,7 +5982,8 @@ func (c *checker) visibleVariants(name string) []variantRef {
 	from := c.currentModule()
 	var out []variantRef
 	for _, vr := range all {
-		if c.moduleSeesVariant(from, vr.srcModule) {
+		ed := c.info.Enums[vr.enumName]
+		if c.moduleSeesVariant(from, vr.srcModule) && (ed.VisibleFrom == nil || ed.VisibleFrom[from]) {
 			out = append(out, vr)
 		}
 	}
@@ -6961,7 +7001,7 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 	}
 	if e, ok := expected.(ast.ArrayType); ok {
 		a, ok := actual.(ast.ArrayType)
-		return ok && c.unifyType(e.Elem, a.Elem, sub)
+		return ok && (a.Elem == nil || c.unifyType(e.Elem, a.Elem, sub))
 	}
 	if e, ok := expected.(ast.SliceType); ok {
 		a, ok := actual.(ast.SliceType)
@@ -7394,6 +7434,9 @@ func (c *checker) lendArrayAsView(arg *ast.Expr, want, got ast.Type, own bool) {
 func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[string]ast.Type, own bool) bool {
 	if c.unifyType(want, got, sub) {
 		return true
+	}
+	if resolved := substituteType(want, sub); !containsParamType(resolved) {
+		return c.argOK(arg, resolved, got, own)
 	}
 	if own {
 		return false
@@ -8329,6 +8372,14 @@ func (c *checker) identValueBinding(name string, s *scope) (ast.Type, bool) {
 		return t, true
 	}
 	return c.capturedType(name, s)
+}
+
+// calleeBinding is identValueBinding for a callee, which a Builtin ident never names.
+func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
+	if id.Builtin {
+		return nil, false
+	}
+	return c.identValueBinding(id.Name, s)
 }
 
 type cellStore struct {
@@ -9498,7 +9549,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return false
 			}
 			id, ok := n.(*ast.Ident)
-			if !ok || !owned[id.Name] {
+			if !ok || id.Builtin || !owned[id.Name] {
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
@@ -11957,7 +12008,7 @@ func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
 	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen || !c.funcVisibleHere(id.Name) {
 		return false
 	}
-	_, bound := c.identValueBinding(id.Name, s)
+	_, bound := c.calleeBinding(id, s)
 	return !bound
 }
 
@@ -12069,6 +12120,14 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if _, bound := c.identValueBinding(x.Name, s); bound {
 			return nil, false
 		}
+		// Contextual primitive names are identifier tokens too. A value
+		// binding above still wins over their type spelling.
+		if x.Name == "char" {
+			return ast.CharType{}, true
+		}
+		if x.Name == "str" {
+			return ast.StrType{}, true
+		}
 		_, isStruct := c.info.Structs[x.Name]
 		_, isEnum := c.info.Enums[x.Name]
 		_, isResource := c.info.Resources[x.Name]
@@ -12085,7 +12144,10 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if !ok {
 			return nil, false
 		}
-		st := head.(ast.StructType)
+		st, nominal := head.(ast.StructType)
+		if !nominal {
+			return nil, false
+		}
 		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
 	}
 	return nil, false
@@ -12288,20 +12350,45 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	c.restampLitCaptures(fn.Captures, outer)
 }
 
+// checkConsts type-checks the initializers constfold left in prog.Consts,
+// reporting the folder's E093 for one only when it is well-typed.
+func (c *checker) checkConsts(prog *ast.Program) {
+	for _, cd := range prog.Consts {
+		before := len(c.errors)
+		c.constType(cd)
+		if len(c.errors) == before && cd.FoldErr != "" {
+			c.report(cd.SourceModule, cd.P, "E093", cd.FoldErr)
+		}
+	}
+}
+
 func (c *checker) constType(cd *ast.ConstDecl) ast.Type {
 	if t, ok := c.constTypes[cd.Name]; ok {
 		return t
-	}
-	if cd.Type != nil {
-		c.constTypes[cd.Name] = cd.Type
-		return cd.Type
 	}
 	if c.constBusy[cd.Name] {
 		c.errfCode(cd.P, "E001", "const %s is defined in terms of itself", cd.Name)
 		return nil
 	}
 	c.constBusy[cd.Name] = true
-	t := c.checkExpr(cd.Value, newScope(nil))
+	prev := c.current
+	c.current = &ast.FuncDecl{P: cd.P, SourceModule: cd.SourceModule}
+	c.setElemHintFor(cd.Value, cd.Type)
+	c.expectedType = cd.Type
+	s := newScope(nil)
+	t := c.checkExpr(cd.Value, s)
+	c.expectedType = nil
+	c.elemHint = nil
+	if cd.Type != nil {
+		c.settleNumeric(cd.Value, cd.Type)
+		t = c.postSettleType(cd.Value, t)
+		t = c.maybeWrapForUnion(cd.Type, &cd.Value, t, s)
+		if t != nil && !c.assignable(cd.Type, t) {
+			c.errfCode(cd.P, "E002", "const %s: expected %s, got %s%s", cd.Name, cd.Type, t, assignHint(cd.Type, t))
+		}
+		t = cd.Type
+	}
+	c.current = prev
 	delete(c.constBusy, cd.Name)
 	c.constTypes[cd.Name] = t
 	return t
@@ -12493,13 +12580,13 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.FloatType{Polymorphic: true}
 	case *ast.Ident:
-		if t, ok := s.lookup(n.Name); ok {
+		if t, ok := s.lookup(n.Name); ok && !n.Builtin {
 			n.Local = true
 			n.ConstParam = s.binder(n.Name).consts[n.Name]
 			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
-		if len(c.captureChain) > 0 {
+		if len(c.captureChain) > 0 && !n.Builtin {
 			for i := len(c.captureChain) - 1; i >= 0; i-- {
 				ent := c.captureChain[i]
 				if ent.scope == nil {
@@ -12937,7 +13024,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
 				}
 				for i, a := range n.Args {
-					if i < len(resolvedPayloads) {
+					if i < len(resolvedPayloads) && !containsParamType(resolvedPayloads[i]) {
 						c.settleNumeric(a, resolvedPayloads[i])
 					}
 				}
@@ -13110,7 +13197,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		intrinsic := IntrinsicNone
 		if id, direct := n.Callee.(*ast.Ident); direct {
-			if _, local := c.identValueBinding(id.Name, s); !local {
+			if _, local := c.calleeBinding(id, s); !local {
 				intrinsic = c.intrinsicSigs[ft]
 			}
 		}
@@ -13164,7 +13251,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
-				if _, isValue := c.identValueBinding(id.Name, s); isValue {
+				if _, isValue := c.calleeBinding(id, s); isValue {
 					c.shadowedGenericCalls[n] = true
 				}
 			}
@@ -13218,7 +13305,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		calleeName := ""
 		if cid, ok := n.Callee.(*ast.Ident); ok {
 			calleeName = cid.Name
-			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
+			if _, isValue := c.calleeBinding(cid, s); isValue {
 				calleeIsValue = true
 			} else {
 				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
@@ -14073,11 +14160,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if vt == nil {
 				continue
 			}
-			if containsParamType(fieldExpected) {
-				if at, ok := vt.(ast.ArrayType); ok && at.Elem == nil {
-					continue
-				}
-			} else {
+			if !containsParamType(fieldExpected) {
 				c.settleNumeric(f.Value, fieldExpected)
 				vt = c.postSettleType(f.Value, vt)
 			}
@@ -14096,7 +14179,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				c.stampStructTypeArgs(f.Value, expected)
-				if unifyIfArms(expected, vt) == nil && !c.assignable(expected, vt) {
+				if !c.assignable(expected, vt) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
 			}
@@ -14358,7 +14441,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "f64x2", "f32x4", "string", "boolean":
+	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
 		return true
 	}
 	return false
@@ -16197,6 +16280,10 @@ func isBareNumericLiteral(e ast.Expr) bool {
 }
 
 func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) bool {
+	if ed.VisibleFrom != nil && !ed.VisibleFrom[c.currentModule()] {
+		c.errfCode(p, "E087", "enum %s is not visible from this package", c.enumHintName(ed.Name))
+		return false
+	}
 	if qualifier == "" {
 		return false
 	}

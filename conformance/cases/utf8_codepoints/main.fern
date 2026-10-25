@@ -1,63 +1,101 @@
-
-
-
-
-
-
-
+import "std/utf8";
 import "std/string";
 
 function main(): i32 {
+  let a: char[] = "abc".chars();
+  if (a.len() != 3 || a[0] as i32 != 97 || a[1] as i32 != 98 || a[2] as i32 != 99) {
+    print("ascii FAILED");
+    return 1;
+  }
+  if ("abc".codepoint_count() != 3) {
+    print("ascii count FAILED");
+    return 1;
+  }
 
-    let a: char[] = "abc".chars();
-    if (a.len() != 3 || (a[0] as i32) != 97 || (a[1] as i32) != 98 || (a[2] as i32) != 99) { print("ascii FAILED"); return 1; }
-    if ("abc".codepoint_count() != 3) { print("ascii count FAILED"); return 1; }
+  let e: char[] = "é".chars();
+  if (e.len() != 1 || e[0] as i32 != 233) {
+    print("2-byte FAILED");
+    return 1;
+  }
+  let eu: char[] = "€".chars();
+  if (eu.len() != 1 || eu[0] as i32 != 8364) {
+    print("3-byte FAILED");
+    return 1;
+  }
+  let g: char[] = "😀".chars();
+  if (g.len() != 1 || g[0] as i32 != 128512) {
+    print("4-byte FAILED");
+    return 1;
+  }
 
+  let mix: string = "a€b😀c";
+  if (mix.len() != 10) {
+    print("mixed bytelen FAILED");
+    return 1;
+  }
+  if (mix.codepoint_count() != 5) {
+    print("mixed count FAILED");
+    return 1;
+  }
+  let mc: char[] = mix.chars();
+  if (mc.len() != 5 || mc[0] as i32 != 97 || mc[1] as i32 != 8364 || mc[2] as i32 != 98 || mc[3] as i32 != 128512 || mc[4] as i32 != 99) {
+    print("mixed decode FAILED");
+    return 1;
+  }
 
-    let e: char[] = "é".chars();
-    if (e.len() != 1 || (e[0] as i32) != 233) { print("2-byte FAILED"); return 1; }
-    let eu: char[] = "€".chars();
-    if (eu.len() != 1 || (eu[0] as i32) != 8364) { print("3-byte FAILED"); return 1; }
-    let g: char[] = "😀".chars();
-    if (g.len() != 1 || (g[0] as i32) != 128512) { print("4-byte FAILED"); return 1; }
+  if (utf8.encode(128512 as char) != "😀") {
+    print("encode one FAILED");
 
+    return 1;
+  }
+  if (utf8.encode_all([104 as char, 233 as char, 108 as char, 108 as char, 111 as char]) != "héllo") {
+    print("encode arr FAILED");
+    return 1;
+  }
+  if (utf8.encode_all(mix.chars()) != mix) {
+    print("roundtrip FAILED");
+    return 1;
+  }
 
-    let mix: string = "a€b😀c";
-    if (mix.len() != 10) { print("mixed bytelen FAILED"); return 1; }
-    if (mix.codepoint_count() != 5) { print("mixed count FAILED"); return 1; }
-    let mc: char[] = mix.chars();
-    if (mc.len() != 5 || (mc[0] as i32) != 97 || (mc[1] as i32) != 8364 || (mc[2] as i32) != 98 || (mc[3] as i32) != 128512 || (mc[4] as i32) != 99) {
-        print("mixed decode FAILED"); return 1;
-    }
+  if (mix.codepoint_count() != mix.chars().len()) {
+    print("count/len mismatch FAILED");
 
+    return 1;
+  }
 
-    if (string.string_from_codepoint(128512 as char) != "😀") { print("encode one FAILED"); return 1; }
-    if (string.string_from_codepoints([104 as char, 233 as char, 108 as char, 108 as char, 111 as char]) != "héllo") { print("encode arr FAILED"); return 1; }
-    if (string.string_from_codepoints(mix.chars()) != mix) { print("roundtrip FAILED"); return 1; }
+  let bad: char[] = string_from_bytes_unchecked([255 as u8, 66 as u8]).chars();
+  if (bad.len() != 2 || bad[0] as i32 != 65533 || bad[1] as i32 != 66) {
+    print("bad-lead FAILED");
+    return 1;
+  }
+  let trunc: char[] = string_from_bytes_unchecked([226 as u8]).chars();
+  if (trunc.len() != 1 || trunc[0] as i32 != 65533) {
+    print("truncated FAILED");
+    return 1;
+  }
+  let stray: char[] = string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]).chars();
+  if (stray.len() != 3 || stray[0] as i32 != 65 || stray[1] as i32 != 65533 || stray[2] as i32 != 66) {
+    print("stray-cont FAILED");
+    return 1;
+  }
 
+  let surrogate: i32 = 55296;
+  let oor: i32 = 1114112;
+  if (utf8.encode(surrogate as char) != utf8.encode(65533 as char)) {
+    print("surrogate FAILED");
+    return 1;
+  }
+  if (utf8.encode(oor as char) != utf8.encode(65533 as char)) {
+    print("oor FAILED");
+    return 1;
+  }
 
-    if (mix.codepoint_count() != mix.chars().len()) { print("count/len mismatch FAILED"); return 1; }
+  if ("".chars().len() != 0 || "".codepoint_count() != 0) {
+    print("empty FAILED");
 
+    return 1;
+  }
 
-    let bad: char[] = string_from_bytes_unchecked([255 as u8, 66 as u8]).chars();
-    if (bad.len() != 2 || (bad[0] as i32) != 65533 || (bad[1] as i32) != 66) { print("bad-lead FAILED"); return 1; }
-    let trunc: char[] = string_from_bytes_unchecked([226 as u8]).chars();
-    if (trunc.len() != 1 || (trunc[0] as i32) != 65533) { print("truncated FAILED"); return 1; }
-    let stray: char[] = string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]).chars();
-    if (stray.len() != 3 || (stray[0] as i32) != 65 || (stray[1] as i32) != 65533 || (stray[2] as i32) != 66) { print("stray-cont FAILED"); return 1; }
-
-
-
-
-
-    let surrogate: i32 = 55296;
-    let oor: i32 = 1114112;
-    if (string.string_from_codepoint(surrogate as char) != string.string_from_codepoint(65533 as char)) { print("surrogate FAILED"); return 1; }
-    if (string.string_from_codepoint(oor as char) != string.string_from_codepoint(65533 as char)) { print("oor FAILED"); return 1; }
-
-
-    if ("".chars().len() != 0 || "".codepoint_count() != 0) { print("empty FAILED"); return 1; }
-
-    print("OK");
-    return 0;
+  print("OK");
+  return 0;
 }

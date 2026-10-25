@@ -26,7 +26,8 @@ import "std/result";
 import "std/option";
 import "std/array";
 import "std/url";
-import "std/parse";
+import "std/i64";
+import "std/number_parse";
 import "std/crypto";
 import "std/i32";
 import "std/i64";
@@ -62,7 +63,7 @@ pub function query(req: HttpRequest, name: string, fallback: string): string {
 }
 
 pub function integer(req: HttpRequest, name: string, fallback: i32, low: i32, high: i32): Result[i32, http.HttpError] {
-  let value: i64 = parse.int64(query(req, name, fallback.to_string())).map_err((e: parse.IntError): http.HttpError => http.fail(400, "invalid " + name))?;
+  let value: i64 = i64.parse_i64(query(req, name, fallback.to_string())).map_err((e: number_parse.ParseNumberError): http.HttpError => http.fail(400, "invalid " + name))?;
   if (value < low as i64 || value > high as i64) {
     return Err(http.fail(400, name + " is outside its range"));
   }

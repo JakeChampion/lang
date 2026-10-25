@@ -641,7 +641,7 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
   let d: i32 = c.num_digits;
   if (n >= 0 as i64 && d >= 1 && d <= 18) {
     let v: u64 = n as u64;
-    let len: i32 = io_buffered.buf_u64_len(v);
+    let len: i32 = gnu.decimal_len(v);
     let zeros: i32 = 0;
     if (len > d) {
       let p: u64 = 1 as u64;
@@ -651,7 +651,7 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
         k = k + 1;
       }
       v = v % p;
-      zeros = d - io_buffered.buf_u64_len(v);
+      zeros = d - gnu.decimal_len(v);
       len = d;
     }
     let f: Line = l.to(cs + d - len, c).flush(c);
@@ -659,7 +659,7 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
       buf_push_byte(f.buf, 48);
       zeros = zeros - 1;
     }
-    io_buffered.buf_push_u64(f.buf, v);
+    gnu.push_decimal(f.buf, v);
     l = Line { ...f, pos: f.pos + len };
   } else {
     let s: string = n.to_string();

@@ -1,3 +1,24 @@
+// examples/vcl/vars.fern — VCL's variable namespace and its scoping.
+//
+// VCL variables are not free-floating: each is legal to READ in some
+// subroutines and to WRITE in a smaller set, and getting that wrong is
+// the most common real VCL bug. `req` is not available while fetching
+// from a backend — that is what `bereq` is for — and reaching for
+// `beresp` outside a backend-response subroutine is the same mistake
+// from the other side.
+//
+// So the table below is the point of this module, and `read` / `write`
+// consult it before touching the transaction at all. It encodes the
+// well-known distinctions (req vs bereq, beresp only in the backend
+// response subroutines, resp only in deliver and synth, obj only on a
+// hit) rather than Varnish's complete per-variable matrix; what is here
+// is enforced, and an unknown name is rejected rather than silently read
+// as empty.
+//
+// A `call`ed subroutine runs in its CALLER's context, so every check
+// takes the enclosing `vcl_*` method rather than the name of whatever
+// custom subroutine happens to be executing.
+import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
@@ -253,11 +274,11 @@ pub function as_int(v: value.Value): i64 {
       return d as i64;
     },
     _ => {
-      match (value.to_str(v).parse_int()) {
-        Some(n) => {
+      match (i32.parse_i32(value.to_str(v))) {
+        Ok(n) => {
           return n as i64;
         },
-        None => {
+        Err(_) => {
           return 0;
         }
       }

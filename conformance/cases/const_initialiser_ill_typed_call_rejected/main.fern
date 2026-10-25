@@ -1,0 +1,11 @@
+// A call is not a constant expression, and that is the diagnostic even
+// when the call is also ill-typed.
+function f(x: i32): i32 {
+    return x;
+}
+
+const A: i32 = f(true);
+
+function main(): i32 {
+    return A;
+}

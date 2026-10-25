@@ -21,7 +21,7 @@ function test_guide_message(): test.TestOutcome {
       return test.assert_eq(fields.len().to_string() + " " + v + " " + hex.encode(protobuf.varint_field(1, 150 as i64)), "1 150 089601");
     },
     Err(e) => {
-      return test.fail(e);
+      return test.fail(e.to_string());
     }
   }
   return test.fail("unreachable");
@@ -52,7 +52,7 @@ function test_fields(): test.TestOutcome {
               }
             },
             Err(e) => {
-              return test.fail(e);
+              return test.fail(e.to_string());
             }
           }
         },
@@ -68,7 +68,7 @@ function test_fields(): test.TestOutcome {
       return test.assert_eq(hex.encode(protobuf.string_field(2, "testing")) + " " + text + " " + size + " " + reps.len().to_string() + string_from_bytes_unchecked(reps[1]) + " " + fixed, "120774657374696e67 testing 27182 2bc 5:4");
     },
     Err(e) => {
-      return test.fail(e);
+      return test.fail(e.to_string());
     }
   }
   return test.fail("unreachable");
@@ -85,7 +85,7 @@ function fault(bytes_hex: string): string {
       return "ok " + fields.len().to_string();
     },
     Err(e) => {
-      return e;
+      return e.to_string();
     }
   }
   return "unreachable";
@@ -93,7 +93,7 @@ function fault(bytes_hex: string): string {
 
 function test_faults(): test.TestOutcome {
   let got: string = fault("08") + "|" + fault("1205616263") + "|" + fault("0b") + "|" + fault("00") + "|" + fault("ffffffffffffffffffff01") + "|" + fault("0f01");
-  return test.assert_eq(got, "varint cut short at byte 1|field 2 length past the end|field 1 is a group|field number 0 at byte 1|varint over ten bytes at byte 0|field 1 has wire type 7");
+  return test.assert_eq(got, "byte 1: field 1: unexpected end of varint|byte 1: field 2: length 5 exceeds 3 remaining bytes|byte 0: field 1: unsupported group wire type 3|byte 0: invalid field number 0|byte 9: varint exceeds 64 bits|byte 0: field 1: invalid wire type 7");
 }
 
 function main(): i32 {

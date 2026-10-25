@@ -1,60 +1,56 @@
-
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
   let r: i32 = 0;
 
-  let m: regex.RCaps = require_caps(regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped"));
-  if (require_regex_text(m.group(1)) == "123" && require_regex_text(m.group(2)) == "456") {
+  let m: regex.Captures = require_caps({ let __checked_regex_5: regex.Regex = match (regex.compile("(\\d+)-(\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.captures("order 123-456 shipped") });
+  if (require_regex_text(match (m.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "123" && require_regex_text(match (m.group(2)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "456") {
     r = r + 1;
   }
-  if (require_regex_text(m.group(0)) == "123-456" && at(m.group_start(0), 6) && at(m.group_end(0), 13)) {
+  if (require_regex_text(match (m.group(0)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "123-456" && at(m.group_start(0), 6) && at(m.group_end(0), 13)) {
     r = r + 2;
   }
   if (m.group_count() == 2) {
     r = r + 4;
   }
 
-  let absent: regex.RCaps = require_caps(regex.regex_captures("a(bc)?d", "ad"));
-  if (!absent.has_group(1) && require_regex_text(absent.group(1)) == "") {
+  let absent: regex.Captures = require_caps({ let __checked_regex_4: regex.Regex = match (regex.compile("a(bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.captures("ad") });
+  if (!absent.has_group(1) && match (absent.group(1)) { Ok(None()) => true, _ => false }) {
     r = r + 8;
   }
-  let present: regex.RCaps = require_caps(regex.regex_captures("a(bc)?d", "abcd"));
-  if (present.has_group(1) && require_regex_text(present.group(1)) == "bc") {
+  let present: regex.Captures = require_caps({ let __checked_regex_3: regex.Regex = match (regex.compile("a(bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.captures("abcd") });
+  if (present.has_group(1) && require_regex_text(match (present.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "bc") {
     r = r + 16;
   }
 
-  let alt: regex.RCaps = require_caps(regex.regex_captures("gr(a|e)y", "say grey"));
-  if (require_regex_text(alt.group(1)) == "e") {
+  let alt: regex.Captures = require_caps({ let __checked_regex_2: regex.Regex = match (regex.compile("gr(a|e)y")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.captures("say grey") });
+  if (require_regex_text(match (alt.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "e") {
     r = r + 32;
   }
 
-
-  let nest: regex.RCaps = require_caps(regex.regex_captures("((a|b)c)+", "acbc"));
-  if (require_regex_text(nest.group(0)) == "acbc" && require_regex_text(nest.group(1)) == "bc" && require_regex_text(nest.group(2)) == "b") {
+  // quantified nested groups report the LAST iteration's spans
+  let nest: regex.Captures = require_caps({ let __checked_regex_1: regex.Regex = match (regex.compile("((a|b)c)+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.captures("acbc") });
+  if (require_regex_text(match (nest.group(0)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "acbc" && require_regex_text(match (nest.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "bc" && require_regex_text(match (nest.group(2)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "b") {
     r = r + 64;
   }
 
-
-  let greedy: regex.RCaps = require_caps(regex.regex_captures("(a+)(a+)", "aaaa"));
-  if (require_regex_text(greedy.group(1)) == "aaa" && require_regex_text(greedy.group(2)) == "a") {
+  // greedy quantifiers: the left group takes as much as it can
+  let greedy: regex.Captures = require_caps({ let __checked_regex_0: regex.Regex = match (regex.compile("(a+)(a+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.captures("aaaa") });
+  if (require_regex_text(match (greedy.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "aaa" && require_regex_text(match (greedy.group(2)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a") {
     r = r + 128;
   }
 
   return r;
 }
 
-
-function require_caps(result: Option[regex.RCaps]): regex.RCaps {
+// require_caps is the match, exiting 1 when there is none.
+function require_caps(result: Option[regex.Captures]): regex.Captures {
   if let Some(c) = result {
     return c;
   }
   exit(1);
-  return regex.RCaps { text: "", starts: [], ends: [], names: [] };
+  return regex.Captures { text: "", starts: [], ends: [], names: [] };
 }
 
 function at(o: Option[i32], want: i32): boolean {

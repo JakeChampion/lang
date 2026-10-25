@@ -45,7 +45,7 @@ enum Either[L, R] { Left(L), Right(R), Both { l: L, r: R } }
 enum Bag[T] { Items(T[]), Nothing }
 
 function bag(text: string): string {
-  let r: Result[Bag[i32], string] = Bag.from_json(text);
+  let r: Result[Bag[i32], json.JsonError] = Bag.from_json(text);
   match (r) {
     Ok(b) => {
       match (b) {
@@ -58,20 +58,20 @@ function bag(text: string): string {
       }
     },
     Err(why) => {
-      return "err " + why;
+      return "err " + why.to_string();
     }
   }
   return "";
 }
 
 function round(text: string): string {
-  let r: Result[Either[i32, string], string] = Either.from_json(text);
+  let r: Result[Either[i32, string], json.JsonError] = Either.from_json(text);
   match (r) {
     Ok(e) => {
       return "ok " + e.to_json();
     },
     Err(why) => {
-      return "err " + why;
+      return "err " + why.to_string();
     }
   }
   return "";

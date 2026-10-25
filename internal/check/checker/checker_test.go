@@ -2576,6 +2576,44 @@ func TestShadowedOrNonExitCallDoesNotDiverge(t *testing.T) {
 	}
 }
 
+func TestAssertAndTodoIgnoreShadowingNames(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"todo-param-closure", `function f(exit: (i32) => void): i32 { todo("later"); }`},
+		{"todo-let-values", `function f(): string {
+			let exit: i32 = 1;
+			let eprint: string = "x";
+			todo;
+		}`},
+		{"todo-arm-binding", `enum Opt { Has(i32), Nil }
+		function f(o: Opt): i32 {
+			match (o) { Has(exit) => { todo; }, Nil => { return 0; } }
+		}`},
+		{"todo-in-closure", `function f(exit: i32): i32 {
+			let g: () => i32 = (): i32 => { todo; };
+			return g() + exit;
+		}`},
+		{"todo-after-owned-move", `function take(own s: string): void { print(s); }
+		function f(own exit: string): i32 {
+			take(exit);
+			todo;
+		}`},
+		{"assert-param-values", `function f(exit: i32, eprint: string): i32 {
+			assert(exit > 0, eprint);
+			return exit;
+		}`},
+		{"assert-in-closure", `function f(exit: i32): i32 {
+			let g: (i32) => i32 = (k: i32): i32 => { assert(k > exit); return k; };
+			return g(2);
+		}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if err := checkSource(t, c.src); err != nil {
+				t.Errorf("assert and todo call the builtins whatever is in scope, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestFoldedAssertFalseDoesNotDiverge(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 { assert(false, "never"); }`)
 	if err != nil {
@@ -7623,17 +7661,12 @@ function main(): i32 { return 0; }`)
 func TestByteDisplayGateAndDispatchAgree(t *testing.T) {
 	const displayTrait = `trait Display { function to_string(self: Self): string; }
 `
-	err := checkSource(t, displayTrait+
+	// The primitive byte formatter remains available beside another receiver's
+	// explicit method; that method must not replace the byte's default.
+	if err := checkSource(t, displayTrait+
 		`impl Display for u32 { function to_string(self: Self): string { return "u32"; } }
-function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0; }`)
-	if err == nil {
-		t.Fatalf("expected print(u8) to be refused with only a u32 Display impl in scope")
-	}
-	if !hasCode(err, "E038") {
-		t.Errorf("want E038 (Display not implemented for u8), got %v", err)
-	}
-	if strings.Contains(err.Error(), "no method \"to_string\" on u8") {
-		t.Errorf("gate admitted the call and dispatch then failed on u8: %v", err)
+function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0; }`); err != nil {
+		t.Fatalf("primitive byte display beside a u32 impl: %v", err)
 	}
 
 	if err := checkSource(t, displayTrait+
@@ -7731,11 +7764,14 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 		decl    string
 		wantMod string
 	}{
-		{"u8 points at core/cmp", `let s: string = "A"; let b: u8 = s[0]; print(b.to_string());`, `core/cmp`},
-		{"u32 still points at std/u32", `let x: u32 = 5; print(x.to_string());`, `std/u32`},
-		{"u64 still points at std/u64", `let x: u64 = 5; print(x.to_string());`, `std/u64`},
-		{"usize points at std/u64", `let x: usize = 5; print(x.to_string());`, `std/u64`},
-		{"i64 still points at std/i64", `let x: i64 = 5; print(x.to_string());`, `std/i64`},
+		{"i32 radix points at std/i32", `let x: i32 = 5; print(x.to_string_radix(16));`, `std/i32`},
+		{"i64 radix points at std/i64", `let x: i64 = 5; print(x.to_string_radix(16));`, `std/i64`},
+		{"f32 precision points at std/f64", `let x: f32 = 1.5; print(x.to_string_prec(2));`, `std/f64`},
+		{"f64 precision points at std/f64", `let x: f64 = 1.5; print(x.to_string_prec(2));`, `std/f64`},
+		// A `str` view had NO hint at all: scalarModuleFor had no StrType case,
+		// so the message fell through to the builtin list ("it has: as_bytes,
+		// len") — the outcome that function's own comment forbids, and the one
+		// a reader reaches by FOLLOWING E043 (TestStrToOwnedAdviceIsFollowable).
 		{"str points at std/string", `let s: string = "abcdef"; let v: str = s[0:3]; print(v.to_owned());`, `std/string`},
 	}
 	for _, tc := range cases {

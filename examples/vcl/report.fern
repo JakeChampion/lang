@@ -1,3 +1,13 @@
+// examples/vcl/report.fern — the request command line and the transaction
+// report, shared by `vclrun` and by every compiled policy.
+//
+// A compiled policy is a program in its own right and needs the same
+// entry point as the interpreter's driver: parse a method, a URL, optional
+// headers, and run. Putting that here means the two cannot drift, and a
+// compiled policy's output can be diffed against the interpreter's
+// directly — which is exactly how the differential test checks that
+// compiling changed nothing.
+import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
@@ -18,11 +28,11 @@ pub function parse_args(argv: string[], first: i32): Args {
   while (i < argv.len()) {
     let arg: string = argv[i];
     if (arg == "-n" && i + 1 < argv.len()) {
-      match (argv[i + 1].parse_int()) {
-        Some(c) => {
+      match (i32.parse_i32(argv[i + 1])) {
+        Ok(c) => {
           a = Args { ...a, repeat: c };
         },
-        None => {
+        Err(_) => {
           return bad;
         }
       }

@@ -50,6 +50,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module reads and writes gRPC messages, status codes, and metadata over HTTP/2.
+
+import "std/unicode";
+// This module reads and writes gRPC messages, status codes, and metadata over HTTP/2.
 ```
 
 ### `dependencies 2`

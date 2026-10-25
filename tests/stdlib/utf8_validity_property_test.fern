@@ -1,3 +1,4 @@
+import "std/unicode";
 import "std/fuzz";
 import "std/test";
 import "std/string";
@@ -23,7 +24,7 @@ function build(input: u8[]): string {
 }
 
 function ok(name: string, produced: string): string {
-  if (utf8.is_valid_utf8(produced)) {
+  if (utf8.is_valid(produced)) {
     return "";
   }
   return name + " produced invalid UTF-8";
@@ -32,7 +33,7 @@ function ok(name: string, produced: string): string {
 function ok_all(name: string, produced: string[]): string {
   let i: i32 = 0;
   for part in produced {
-    if (!utf8.is_valid_utf8(part)) {
+    if (!utf8.is_valid(part)) {
       return name + " produced an invalid UTF-8 element at index " + i.to_string();
     }
     i = i + 1;
@@ -122,7 +123,7 @@ function check_case_and_style(input: u8[]): test.TestOutcome {
 function chars_as_strings(s: string): string[] {
   let out: string[] = [];
   for c in s.chars() {
-    out = out.append(utf8.utf8_encode(c));
+    out = out.append(utf8.encode(c));
   }
   return out;
 }

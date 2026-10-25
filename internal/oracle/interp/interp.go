@@ -669,6 +669,9 @@ func New() *Interp {
 	i.Builtins["__method_string_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_string_as_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_boolean_to_string"] = &Builtin{Fn: builtinBoolToString}
+	for _, primitive := range []string{"i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "string"} {
+		i.Builtins["__primitive_"+primitive+"_to_string"] = &Builtin{Fn: builtinPrimitiveToString(primitive)}
+	}
 	i.Builtins["stdin"] = &Builtin{Fn: builtinStdin}
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
@@ -4915,6 +4918,35 @@ func builtinBoolToString(_ *Interp, args []Value) (Value, error) {
 	return String("false"), nil
 }
 
+func builtinPrimitiveToString(primitive string) func(*Interp, []Value) (Value, error) {
+	return func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s.to_string(): expected one receiver", primitive)
+		}
+		if n, ok := args[0].(Number); ok {
+			switch primitive {
+			case "char":
+				return String(string(rune(n))), nil
+			case "u8":
+				return String(strconv.FormatUint(uint64(uint8(n)), 10)), nil
+			case "u32":
+				return String(strconv.FormatUint(uint64(uint32(n)), 10)), nil
+			case "u64", "usize":
+				return String(strconv.FormatUint(uint64(n), 10)), nil
+			case "i32", "i64":
+				return String(n.String()), nil
+			}
+		}
+		if value, ok := args[0].(Float); ok && (primitive == "f32" || primitive == "f64") {
+			return String(value.String()), nil
+		}
+		if value, ok := args[0].(String); ok && primitive == "string" {
+			return value, nil
+		}
+		return nil, fmt.Errorf("%s.to_string(): incompatible receiver %T", primitive, args[0])
+	}
+}
+
 func builtinLen(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf(".len(): expected 1 arg (receiver), got %d", len(args))
@@ -5528,7 +5560,8 @@ func builtinBufFree(i *Interp, args []Value) (Value, error) {
 
 func (i *Interp) Register(fn *ast.FuncDecl) {
 	i.Funcs[fn.Name] = fn
-	if fn.Name == "__method_boolean_to_string" {
+	// A source implementation takes precedence over primitive display builtins.
+	if checker.IsPrimitiveDisplayMethod(fn.Name) {
 		delete(i.Builtins, fn.Name)
 	}
 	if fn.ImplTrait != "" && fn.MethodRecv != "" && fn.MethodSimpleName != "" {
@@ -7168,7 +7201,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
-		if v, ok := env.get(id.Name); ok {
+		if v, ok := env.get(id.Name); ok && !id.Builtin {
 			switch fv := v.(type) {
 			case Func:
 				return i.callFunc(fv.Decl, args)

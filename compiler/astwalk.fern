@@ -822,9 +822,29 @@ function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast
   return st;
 }
 
+// Every name e reads, a builtin's included.
 function ident_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
     ast.ExprIdent(id) => {
+      return acc.append(id.name);
+    },
+    ast.ExprLambda(lm) => {
+      return lambda_reads(lm, acc, collect_idents_expr);
+    },
+    _ => {
+      return acc;
+    }
+  }
+  return acc;
+}
+
+// The names e reads from bindings in scope, which a builtin identifier never does.
+function binding_read_of(e: ast.Expr, own acc: string[]): string[] {
+  match (e) {
+    ast.ExprIdent(id) => {
+      if (id.builtin) {
+        return acc;
+      }
       return acc.append(id.name);
     },
     ast.ExprLambda(lm) => {
@@ -835,6 +855,10 @@ function ident_of(e: ast.Expr, own acc: string[]): string[] {
     }
   }
   return acc;
+}
+
+function binding_reads_expr(e: ast.Expr, own acc: string[]): string[] {
+  return fold_expr_pruned(e, acc, binding_read_of, not_lambda);
 }
 
 pub function not_lambda(e: ast.Expr): boolean {
@@ -942,12 +966,17 @@ function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], re
   return (acc, bound);
 }
 
+// The names lm reads from bindings outside it: what it captures.
 pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): string[] {
+  return lambda_reads(lm, acc, binding_reads_expr);
+}
+
+function lambda_reads(lm: ast.ExprLambda, own acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
   let bound: string[] = [];
   for param in lm.params {
     bound = append_bound_name(bound, param.name);
   }
-  let (used, final_bound) = scoped_stmts_reads(lm.body, bound, acc, collect_idents_expr);
+  let (used, final_bound) = scoped_stmts_reads(lm.body, bound, acc, reads);
   return used;
 }
 
@@ -996,7 +1025,7 @@ pub function collect_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
 
 pub function count_ident_expr(e: ast.Expr, name: string): i32 {
   function at_expr(node: ast.Expr, own n: i32): i32 {
-    for id in ident_of(node, []) {
+    for id in binding_read_of(node, []) {
       if (id == name) {
         n = n + 1;
       }
@@ -1016,7 +1045,7 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
     return n;
   }
   function at_expr(e: ast.Expr, own n: i32): i32 {
-    for id in ident_of(e, []) {
+    for id in binding_read_of(e, []) {
       if (id == name) {
         n = n + 1;
       }
@@ -1156,33 +1185,140 @@ pub function collect_bound_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
   return acc;
 }
 
-pub struct QualRef { qual: string, name: string, line: i32, col: i32 }
+pub struct QualRef { qual: string, name: string, line: i32, col: i32, call: boolean }
 
-function qualref_of(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
-  match (e) {
-    ast.ExprFieldAccess(fa) => {
-      match (fa.obj) {
-        ast.ExprIdent(id) => {
-          if (util.has_str(quals, id.name)) {
-            return acc.append(QualRef { qual: id.name, name: fa.field, line: fa.line, col: fa.col });
-          }
-        },
-        _ => {}
+function qualref_at(fa: ast.ExprFieldAccess, quals: string[], own acc: QualRef[], call: boolean): QualRef[] {
+  if let ast.ExprIdent(id) = fa.obj {
+    if (util.has_str(quals, id.name)) {
+      // Pre-order visits a call before its callee. Record that reference once.
+      if (!call && acc.len() > 0) {
+        let last = acc[acc.len() - 1];
+        if (last.call && last.qual == id.name && last.name == fa.field && last.line == fa.line && last.col == fa.col) {
+          return acc;
+        }
       }
-      return acc;
+      return acc.append(QualRef { qual: id.name, name: fa.field, line: fa.line, col: fa.col, call: call });
+    }
+  }
+  return acc;
+}
+
+function without_qualifiers(quals: string[], binders: string[]): string[] {
+  let hides = false;
+  for name in binders {
+    hides = hides || util.has_str(quals, name);
+  }
+  if (!hides) {
+    return quals;
+  }
+  let out: string[] = [];
+  for qual in quals {
+    if (!util.has_str(binders, qual)) {
+      out = out.append(qual);
+    }
+  }
+  return out;
+}
+
+function qualref_of(e: ast.Expr, quals: string[], own acc: QualRef[]): QualRef[] {
+  match (e) {
+    ast.ExprCall(c) => {
+      if let ast.ExprFieldAccess(fa) = c.callee {
+        return qualref_at(fa, quals, acc, true);
+      }
     },
-    _ => {
-      return acc;
+    ast.ExprFieldAccess(fa) => {
+      return qualref_at(fa, quals, acc, false);
+    },
+    ast.ExprLambda(lm) => {
+      let bound: string[] = [];
+      for p in lm.params {
+        bound = append_bound_name(bound, p.name);
+      }
+      return collect_qualrefs_body(lm.body, quals, bound, acc);
+    },
+    _ => {}
+  }
+  return acc;
+}
+
+function qualrefs_expr(e: ast.Expr, quals: string[], own acc: QualRef[]): QualRef[] {
+  function visit(n: ast.Expr, own a: QualRef[]): QualRef[] {
+    return qualref_of(n, quals, a);
+  }
+  return fold_expr_pruned(e, acc, visit, not_lambda);
+}
+
+function qualrefs_leaf(st: ast.Stmt, quals: string[], own acc: QualRef[]): QualRef[] {
+  if let ast.StmtReturn(r) = st {
+    return qualrefs_expr(r.value, quals, acc);
+  }
+  if let ast.StmtExpr(e) = st {
+    return qualrefs_expr(e.value, quals, acc);
+  }
+  if let ast.StmtAssign(a) = st {
+    return qualrefs_expr(a.value, quals, acc);
+  }
+  return acc;
+}
+
+function qualrefs_match(m: ast.StmtMatch, quals: string[], own acc: QualRef[]): QualRef[] {
+  acc = qualrefs_expr(m.scrutinee, quals, acc);
+  for arm in m.arms {
+    let active = without_qualifiers(quals, pattern_binders(arm.pattern, []));
+    if (arm.has_guard) {
+      acc = qualrefs_expr(arm.guard, active, acc);
+    }
+    acc = collect_qualrefs_body(arm.body, active, [], acc);
+  }
+  return acc;
+}
+
+// Local names hide import qualifiers from their declaration onward in their block.
+pub function collect_qualrefs_body(body: ast.Stmt[], quals: string[], bound: string[], own acc: QualRef[]): QualRef[] {
+  let active = without_qualifiers(quals, bound);
+  for st in body {
+    acc = collect_qualrefs_stmt(st, active, acc);
+    if let ast.StmtVar(v) = st {
+      active = without_qualifiers(active, append_bound_name([], v.name));
     }
   }
   return acc;
 }
 
 pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualRef[]): QualRef[] {
-  function visit(n: ast.Expr, own a: QualRef[]): QualRef[] {
-    return qualref_of(n, quals, a);
+  match (st) {
+    ast.StmtVar(v) => {
+      let active = quals;
+      if (ast.var_binds_itself(v)) {
+        active = without_qualifiers(active, append_bound_name([], v.name));
+      }
+      return qualrefs_expr(v.init, active, acc);
+    },
+    ast.StmtIf(f) => {
+      acc = qualrefs_expr(f.cond, quals, acc);
+      acc = collect_qualrefs_body(f.then_body, quals, [], acc);
+      return collect_qualrefs_body(f.else_body, quals, [], acc);
+    },
+    ast.StmtWhile(w) => {
+      acc = qualrefs_expr(w.cond, quals, acc);
+      return collect_qualrefs_body(w.body, quals, [], acc);
+    },
+    ast.StmtFor(f) => {
+      acc = qualrefs_expr(f.iter, quals, acc);
+      return collect_qualrefs_body(f.body, quals, append_bound_name([], f.var_name), acc);
+    },
+    ast.StmtMatch(m) => {
+      return qualrefs_match(m, quals, acc);
+    },
+    ast.StmtDefer(d) => {
+      return collect_qualrefs_stmt(d.action, quals, acc);
+    },
+    _ => {
+      return qualrefs_leaf(st, quals, acc);
+    }
   }
-  return fold_stmt(st, acc, visit);
+  return acc;
 }
 
 pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[], types: string[], enums: string[], enum_assoc: string[] }

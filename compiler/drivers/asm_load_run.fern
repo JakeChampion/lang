@@ -185,7 +185,7 @@ function main(): i32 {
     if (parts[pm_index].is_entry) {
       extra = pm_extra;
     }
-    let pd: semlower.Driven = lowered(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target, prune);
+    let pd: semlower.Driven = lowered(checked_or_exit(modloader.bundle(entry_path, entry_mod, loaded, target, root), prune, target), target, prune);
     ircore.refuse_claims(pd.sub.refused);
     let pg: ircore.Gated = semlower.program(pd);
     let pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
@@ -193,7 +193,7 @@ function main(): i32 {
     return 0;
   }
 
-  let merged: parser.Module = flatten.bundle(entry_mod, loaded, target);
+  let merged: parser.Module = modloader.bundle(entry_path, entry_mod, loaded, target, root);
 
   if (do_decide || probe) {
     let v: semlower.Verdict = decided(merged, prune, target);

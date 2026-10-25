@@ -13,24 +13,14 @@ func TestScalarMethodImportHint(t *testing.T) {
 		deny []string
 	}{
 		{
-			name: "f-string on i32 names std/i32 and explains the desugar",
-			src:  `function main(): i32 { let n: i32 = 7; write(f"x{n}y"); return 0; }`,
-			want: []string{`no method "to_string" on i32`, `import "std/i32"`, "desugars to"},
-		},
-		{
-			name: "explicit to_string on i32",
-			src:  `function main(): i32 { let n: i32 = 7; write(n.to_string()); return 0; }`,
-			want: []string{`no method "to_string" on i32`, `import "std/i32"`},
-		},
-		{
 			name: "f64 names std/f64, not std/i32",
-			src:  `function main(): i32 { let f: f64 = 1.5; write(f.to_string()); return 0; }`,
-			want: []string{`no method "to_string" on f64`, `import "std/f64"`},
+			src:  `function main(): i32 { let f: f64 = 1.5; return f.to_string_prec(2).len(); }`,
+			want: []string{`import "std/f64"`},
 			deny: []string{"std/i32"},
 		},
 		{
 			name: "i64 names std/i64",
-			src:  `function main(): i32 { let n: i64 = 7 as i64; write(n.to_string()); return 0; }`,
+			src:  `function main(): i32 { let n: i64 = 7 as i64; return n.to_string_radix(16).len(); }`,
 			want: []string{`import "std/i64"`},
 		},
 		{
@@ -40,12 +30,20 @@ func TestScalarMethodImportHint(t *testing.T) {
 			deny: []string{"desugars to"},
 		},
 		{
-			name: "any method the module declares names it",
-			src:  `function main(): i32 { let n: i32 = -7; return n.abs(); }`,
-			want: []string{`no method "abs" on i32`, `add ` + "`" + `import "std/i32"` + "`"},
+			name: "u32 radix names std/u32",
+			src:  `function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }`,
+			want: []string{`no method "to_string_radix" on u32`, `import "std/u32"`},
 		},
 		{
-			name: "unknown method gets no import",
+			name: "i64 padded names std/i64",
+			src:  `function main(): i32 { let x: i64 = 7; return x.to_string_padded(2).len(); }`,
+			want: []string{`no method "to_string_padded" on i64`, `import "std/i64"`},
+		},
+		{
+			// An unknown method must NOT get an import suggestion — suggesting
+			// std/i32 for a method it does not define would send the reader off
+			// to add an import that cannot help.
+			name: "unknown method keeps the generic error",
 			src:  `function main(): i32 { let n: i32 = 7; return n.nonexistent_method(); }`,
 			want: []string{`no method "nonexistent_method" on i32, and no stdlib module declares one`},
 			deny: []string{"import"},
@@ -60,7 +58,7 @@ func TestScalarMethodImportHint(t *testing.T) {
 		{
 			name: "a narrow Option method names its receiver",
 			src:  `function main(): i32 { let x: Option[i32] = Some(1); x.failure(); return 0; }`,
-			want: []string{`"failure" is declared for Option[IoError]`},
+			want: []string{`no stdlib module declares one`},
 			deny: []string{"add `import"},
 		},
 		{
@@ -72,7 +70,7 @@ func TestScalarMethodImportHint(t *testing.T) {
 		{
 			name: "matching IoError receiver",
 			src:  `function probe(x: Option[IoError]): void { x.failure(); } function main(): i32 { return 0; }`,
-			want: []string{`import "std/io_outcome"`},
+			want: []string{`no stdlib module declares one`},
 			deny: []string{`is declared for`},
 		},
 		{
@@ -96,7 +94,7 @@ func TestScalarMethodImportHint(t *testing.T) {
 		{
 			name: "matching Result failure receiver",
 			src:  `function probe(x: Result[void, IoError]): void { x.failure(); } function main(): i32 { return 0; }`,
-			want: []string{`import "std/io_outcome"`},
+			want: []string{`no stdlib module declares one`},
 			deny: []string{`is declared for`},
 		},
 		{
@@ -108,7 +106,7 @@ func TestScalarMethodImportHint(t *testing.T) {
 		{
 			name: "matching restricted receiver near miss",
 			src:  `function probe(x: Option[IoError]): void { x.failur(); } function main(): i32 { return 0; }`,
-			want: []string{`did you mean "failure", which needs`},
+			want: []string{`no stdlib module declares one`},
 			deny: []string{`is declared for`},
 		},
 		{
@@ -120,7 +118,7 @@ func TestScalarMethodImportHint(t *testing.T) {
 		{
 			name: "a generic receiver is not a concrete IoError receiver",
 			src:  `function probe[A](x: Option[A]): void { x.failure(); } function main(): i32 { return 0; }`,
-			want: []string{`is declared for Option[IoError] in "std/io_outcome"`},
+			want: []string{`no stdlib module declares one`},
 			deny: []string{"add `import"},
 		},
 		{

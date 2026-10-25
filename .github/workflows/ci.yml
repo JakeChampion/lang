@@ -268,7 +268,7 @@ jobs:
               // or did not run runs here, so main stays the backstop for the
               // filters. A run still in flight with its suite under way is
               // waited for, polling until it completes or the wait budget
-              // runs out (cancel-on-merge.yml and reap-stale-runs.yml spare
+              // runs out (cancel-on-merge.yml and the reap-stale-runs action spare
               // exactly that run); one whose suite is still queued is not,
               // since main alone is faster than the queue. perf always runs,
               // because its main run records the history. Any error proves
@@ -462,14 +462,16 @@ jobs:
     uses: ./.github/workflows/lint.yml
     secrets: inherit
 
-  # The fail-fast tier: the fixture corpus through the self-host compiler, run
-  # beside Lint and outside the suite queue. It reads the lane table like a
-  # suite lane, so a doc-only change skips it, and reap-preflight below cancels
-  # the whole run, queued suite included, when a leg fails.
+  # The fail-fast tier: the fixture corpus through the self-host compiler and
+  # the x86-64 legs of the unit, e2e, wasm, differential and coreutils lanes,
+  # run beside Lint and outside the suite queue. It reads the lane table like
+  # a suite lane, so a doc-only change skips it, and reap-preflight below
+  # cancels the whole run when a leg fails. It runs only where the suite does
+  # not: the suite already holds every leg, so the two never run together.
   preflight:
     name: Preflight
     needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['preflight']
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-full') && fromJSON(needs.changes.outputs.lanes)['preflight']
     uses: ./.github/workflows/preflight.yml
     secrets: inherit
 

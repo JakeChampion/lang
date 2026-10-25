@@ -1,0 +1,16 @@
+[
+  {
+    "compiler": "Go",
+    "sha256": "2889b1db1c43703c1407a85a89fb4ba6f703b829087fbfd965504710eea30f9e",
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-manifest-package/baseline-project/main.fern:2:32: error[E087]: x.helper is `pub(package)` \u2014 only modules in the same package as x may use it\n    function main(): i32 { return x.helper(); }\n                                   ^\n"
+  },
+  {
+    "compiler": "self",
+    "sha256": "a15088b975e81eecc599266a85b36a870cee09233c9ee26c864bbefaec90fcf9",
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-manifest-package/baseline-project/main.fern:2:32: error[E087]: x.helper is `pub(package)` \u2014 only modules in the same package as x may use it\n    function main(): i32 { return x.helper(); }\n                                   ^\n"
+  }
+]

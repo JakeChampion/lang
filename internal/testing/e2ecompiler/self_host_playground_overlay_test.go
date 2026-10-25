@@ -168,9 +168,9 @@ function main(): i32 {
     let s: string = "a1";
     let n: i32 = 0;
     if (s[1].is_ascii_digit()) { n = n + 1; }
-    if (s[0].is_ascii_alpha()) { n = n + 2; }
+    if (s[0].is_ascii_letter()) { n = n + 2; }
     let b: i32 = 32;
-    if ((b as u8).is_ascii_white_space()) { n = n + 4; }
+    if ((b as u8).is_ascii_whitespace()) { n = n + 4; }
     return n;
 }
 `

@@ -1,3 +1,4 @@
+import "std/unicode";
 import "std/test";
 import "std/sim";
 import "std/sim_fetch";
@@ -723,7 +724,7 @@ function test_raw_write_journal(): test.TestOutcome {
   if (n.sent_count() != 2 || n.sent(0).len() != 0 || !n.sent(1).equal(invalid)) {
     return test.fail("journal lost a write");
   }
-  if (!utf8.is_valid_utf8(n.sent.get())) {
+  if (!utf8.is_valid(n.sent.get())) {
     return test.fail("journal is not ASCII text");
   }
   n.close(conn);

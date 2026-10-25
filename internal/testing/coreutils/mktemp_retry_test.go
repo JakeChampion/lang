@@ -29,7 +29,7 @@ func newMktempRetryFault(t *testing.T) *mktempRetryFault {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(source)
+	s := "import \"std/i32\";\n" + string(source)
 	const candidate = "function make(s: Settings, head: string, run: i32, tail: string): Attempt {"
 	const attempt = "try_once(s, head + random_run(run) + tail)"
 	if strings.Count(s, candidate) != 1 || strings.Count(s, attempt) != 1 {
@@ -38,7 +38,7 @@ func newMktempRetryFault(t *testing.T) *mktempRetryFault {
 	s = strings.Replace(s, candidate, candidate+`
   let stop: i32 = 0;
   match (env("FERN_PROBE_STOP")) {
-    Some(v) => { match (v.parse_int()) { Some(n) => { stop = n; }, None => { exit(91); } } },
+    Some(v) => { match (i32.parse_i32(v)) { Ok(n) => { stop = n; }, Err(_) => { exit(91); } } },
     None => {}
   }
   `, 1)

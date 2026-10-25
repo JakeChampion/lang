@@ -1,0 +1,19 @@
+import "std/array";
+
+struct Item { value: i32 }
+
+struct Crate[T] { items: T[] }
+
+function remaining[T](box: Crate[T]): T[] {
+  return box.items.drop(1);
+}
+
+function main(): i32 {
+  let box: Crate[Item] = Crate { items: [Item { value: 1 }, Item { value: 2 }] };
+  let rest: Item[] = remaining(box);
+  if (rest.len() != 1 || rest[0].value != 2) {
+    return 1;
+  }
+  print("ok");
+  return 0;
+}
