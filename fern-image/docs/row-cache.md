@@ -58,10 +58,10 @@ The qualifier enables the leak census and keeps allocator reuse active.
 
 | Cache payload limit | Rows | Hits | Rendered node rows | Allocations | Fresh allocator demand, bytes |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 16 | 0 | 48 | 680,900 | 11,464 |
-| 0 | 128 | 0 | 384 | 5,447,060 | 11,464 |
-| 12,000 | 16 | 22 | 26 | 482,828 | 20,312 |
-| 12,000 | 128 | 190 | 194 | 3,736,316 | 20,312 |
+| 0 | 16 | 0 | 48 | 680,917 | 11,504 |
+| 0 | 128 | 0 | 384 | 5,447,189 | 11,504 |
+| 12,000 | 16 | 22 | 26 | 482,845 | 20,352 |
+| 12,000 | 128 | 190 | 194 | 3,736,445 | 20,352 |
 
 The enabled cache reaches four entries and 12,000 payload bytes in this workload.
 It reduces repeated parent work and allocation counts, while fresh allocator demand increases.
@@ -69,6 +69,8 @@ These observations do not measure throughput, peak live bytes, peak RSS, isolate
 
 Raw observations are in [row-cache-m4.json](../benchmarks/results/row-cache-m4.json).
 The collector checks source and tool hashes before and after every collection.
+This record uses compiler `53f01a55b4da` and the row fold implementation.
+Earlier observations remain in git history with their original hashes.
 
 ```sh
 FERN_LEAKCHECK=1 bin/fern -target x86-64-linux \
