@@ -2523,6 +2523,72 @@ func TestLetElseAcceptsDivergentLoop(t *testing.T) {
 	}
 }
 
+func TestExitCallDiverges(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"body-ends-in-exit", `function f(): i32 { exit(4); }`},
+		{"both-branches-exit", `function f(b: boolean): i32 {
+			if (b) { return 1; } else { eprint("no"); exit(2); }
+		}`},
+		{"match-arm-exits", `function f(n: i32): i32 {
+			match (n) { 0 => { return 0; }, _ => { exit(1); } }
+		}`},
+		{"let-else-exits", `enum Opt { Has(i32), Nil }
+		function f(o: Opt): i32 {
+			let Has(v) = o else { eprint("absent"); exit(1); };
+			return v;
+		}`},
+		{"todo", `function f(): i32 { todo("later"); }`},
+		{"exit-moves-nothing-past-it", `function take(own s: string): void { print(s); }
+		function f(b: boolean, own s: string): void {
+			if (b) { take(s); exit(1); }
+			print(s);
+		}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if err := checkSource(t, c.src); err != nil {
+				t.Errorf("a trailing exit should diverge, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestShadowedOrNonExitCallDoesNotDiverge(t *testing.T) {
+	for _, c := range []struct{ name, src, code string }{
+		{"param-named-exit", `function f(exit: (i32) => void): i32 { exit(4); }`, "E052"},
+		{"local-named-exit", `function f(): i32 {
+			let exit: (i32) => void = (n: i32): void => { print("local"); };
+			exit(4);
+		}`, "E052"},
+		{"let-else-local-exit", `enum Opt { Has(i32), Nil }
+		function f(o: Opt, exit: (i32) => void): i32 {
+			let Has(v) = o else { exit(1); };
+			return v;
+		}`, "E022"},
+		{"assert-false", `function f(): i32 { assert(false, "never"); }`, "E052"},
+		{"exit-not-last", `function f(): i32 { exit(1); print("after"); }`, "E052"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if errorWithCode(err, c.code) == nil {
+				t.Fatalf("want %s, got %v", c.code, err)
+			}
+		})
+	}
+}
+
+func TestFoldedAssertFalseDoesNotDiverge(t *testing.T) {
+	prog, err := parser.Parse(`function f(): i32 { assert(false, "never"); }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); errorWithCode(err, "E052") == nil {
+		t.Fatalf("an assert folded to if (true) must not end the body: want E052, got %v", err)
+	}
+}
+
 func TestIfExprTypechecks(t *testing.T) {
 	for _, src := range []string{
 		`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`,

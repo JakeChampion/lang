@@ -1,0 +1,44 @@
+import "std/i32";
+import "std/string";
+import "core/cmp";
+
+struct Datagram { data: u8[], from: u8[] }
+
+function recv_into(fd: i32, d: Datagram): i32 {
+  return udp_recvfrom(fd, d.data, d.from);
+}
+
+function text(b: u8[], n: i32): string {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(b[i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let u: i32 = udp_bind(lo, 0);
+  print(f"udp_sendto: {udp_sendto(u, lo, tcp_local_port(u), "dgram")}");
+  let dbuf: u8[] = __alloc_u8(16);
+  let from: u8[] = __alloc_u8(19);
+  let data_alias: u8[] = dbuf;
+  let from_alias: u8[] = from;
+  let d: Datagram = Datagram { data: dbuf, from: from };
+  let n: i32 = udp_recvfrom(u, dbuf, from);
+  print(f"udp_recvfrom: {text(dbuf, n)} family {from[0]} addr {from[1]}.{from[2]}.{from[3]}.{from[4]}");
+  print(f"aliases: {text(data_alias, n)} family {from_alias[0]} addr {from_alias[1]}.{from_alias[2]}.{from_alias[3]}.{from_alias[4]}");
+  print(f"fields: {text(d.data, n)} family {d.from[0]}");
+
+  let fresh: Datagram = Datagram { data: __alloc_u8(16), from: __alloc_u8(19) };
+  let kept: u8[] = fresh.data;
+  let kept_from: u8[] = fresh.from;
+  print(f"udp_sendto: {udp_sendto(u, lo, tcp_local_port(u), "again")}");
+  n = recv_into(u, fresh);
+  print(f"through fields: {text(fresh.data, n)} kept {text(kept, n)} family {kept_from[0]} addr {kept_from[1]}");
+  print(f"first datagram untouched: {text(dbuf, 5)} {text(data_alias, 5)}");
+  print(f"udp close: {tcp_close(u)}");
+  return 0;
+}
