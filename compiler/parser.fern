@@ -7947,6 +7947,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
   p = p.advance();
   while (p.peek_punct() != "}" && !p.at_end()) {
     let vline: i32 = p.peek_line();
+    let vcol: i32 = p.peek_col();
     let vname: string = p.peek_ident();
     if (vname.len() == 0) {
       break;
@@ -8005,7 +8006,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
         p = p.advance();
       }
     }
-    out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: name, must_consume: false, variant_field_names: vfnames, is_pub: true, is_package: false, opaque: false, module: "" });
+    out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: vline, col: vcol, enum_owner: name, must_consume: false, variant_field_names: vfnames, is_pub: true, is_package: false, opaque: false, module: "" });
     vlines = vlines.append(vline);
     if (p.peek_punct() == ",") {
       p = p.advance();

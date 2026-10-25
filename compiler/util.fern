@@ -966,7 +966,7 @@ pub function is_diagnostic_code(code: string): boolean {
     return false;
   }
   let head: i32 = code[0] as i32;
-  if (head != 69 && head != 80) {
+  if (head != 69 && head != 80 && head != 87) {
     return false;
   }
   let i: i32 = 1;
@@ -1207,28 +1207,32 @@ pub function demangle(name: string): string {
   return slice_unchecked(name, 0, cut) + "." + slice_unchecked(name, cut + 2, name.len());
 }
 
-pub function demangle_all(text: string): string {
+// demangle_named demangles each whole word of `text` that `mangled` holds,
+// leaving every other word as written.
+pub function demangle_named(text: string, mangled: NameIndex): string {
   let out: string = "";
+  let kept: i32 = 0;
   let i: i32 = 0;
   while (i < text.len()) {
-    if (!ident_start_byte(text[i])) {
-      out = out + slice_unchecked(text, i, i + 1);
+    if (!ident_byte_at(text, i)) {
       i = i + 1;
       continue;
     }
     let j: i32 = i;
-    while (j < text.len() && (ident_start_byte(text[j]) || text[j] >= b'0' && text[j] <= b'9')) {
+    while (ident_byte_at(text, j)) {
       j = j + 1;
     }
     let word: string = slice_unchecked(text, i, j) + "";
-    if (word[0] == b'_') {
-      out = out + word;
-    } else {
-      out = out + demangle(word);
+    if (mangled.find(word) >= 0) {
+      out = out + slice_unchecked(text, kept, i) + demangle(word);
+      kept = j;
     }
     i = j;
   }
-  return out;
+  if (kept == 0) {
+    return text;
+  }
+  return out + slice_unchecked(text, kept, text.len());
 }
 
 pub function derive_hint(tn: string, derive: string, trait_name: string): string {
