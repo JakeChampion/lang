@@ -100,6 +100,8 @@ import "std/string";
 import "std/headers";
 import "std/http";
 import "std/json";
+import "std/time";
+import "std/clock";
 ```
 
 ### `3 pub struct TestRunner`
@@ -1561,7 +1563,9 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
   return r.it(name, () => Pass);
 }
 
-pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () => void, max_us: i64): TestRunner {
+// Fails when the median iteration takes longer than `budget`.
+pub function (r: TestRunner) bench_max(name: string, iterations: i32, fn: () => void, budget: Duration): TestRunner {
+  let max_us: i64 = budget.as_micros();
   if (iterations <= 0) {
     return r.it(name, () => fail("bench: iterations must be > 0"));
   }
@@ -1582,49 +1586,33 @@ pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () 
     + "max=" + max_us_observed.to_string() + "us "
     + "budget=" + max_us.to_string() + "us");
   if (median_us > max_us) {
-    let over_us: string = "bench_max_us: median " + median_us.to_string()
+    let over_us: string = "bench_max: median " + median_us.to_string()
       + "us > budget " + max_us.to_string() + "us";
     return r.it(name, () => Fail(over_us));
   }
   return r.it(name, () => Pass);
 }
 
-pub function (r: TestRunner) bench_max_ms(name: string, iterations: i32, fn: () => void, max_ms: i64): TestRunner {
-  return r.bench_max_us(name, iterations, fn, max_ms * (1000 as i64));
-}
-
-pub function assert_elapsed_lt_ms(start_ns: i64, max_ms: i64): TestOutcome {
-  let elapsed_ns: i64 = monotonic_ns() - start_ns;
-  let elapsed_ms: i64 = elapsed_ns / (1000000 as i64);
-  if (elapsed_ms < max_ms) {
+pub function assert_elapsed_lt(start: Instant, limit: Duration): TestOutcome {
+  let elapsed: Duration = clock.elapsed(start);
+  if (elapsed.cmp(limit) < 0) {
     return Pass;
   }
-  return Fail("assert_elapsed_lt_ms: " + elapsed_ms.to_string()
-    + "ms elapsed, expected < " + max_ms.to_string() + "ms");
+  return Fail("assert_elapsed_lt: " + elapsed.as_micros().to_string()
+    + "us elapsed, expected < " + limit.as_micros().to_string() + "us");
 }
 
-pub function assert_elapsed_lt_us(start_ns: i64, max_us: i64): TestOutcome {
-  let elapsed_ns: i64 = monotonic_ns() - start_ns;
-  let elapsed_us: i64 = elapsed_ns / (1000 as i64);
-  if (elapsed_us < max_us) {
+pub function assert_close_to_now(actual: time.Timestamp, max_skew: Duration): TestOutcome {
+  let skew: Duration = clock.now().since(actual);
+  let magnitude: Duration = skew;
+  if (skew.is_negative()) {
+    magnitude = time.DURATION_ZERO.sub(skew);
+  }
+  if (magnitude.cmp(max_skew) <= 0) {
     return Pass;
   }
-  return Fail("assert_elapsed_lt_us: " + elapsed_us.to_string()
-    + "us elapsed, expected < " + max_us.to_string() + "us");
-}
-
-pub function assert_close_to_now_ms(actual_ms: i64, max_skew_ms: i64): TestOutcome {
-  let now_ms: i64 = now_unix_ms();
-  let skew_ms: i64 = now_ms - actual_ms;
-  let abs_skew: i64 = skew_ms;
-  if (abs_skew < 0 as i64) {
-    abs_skew = 0 as i64 - abs_skew;
-  }
-  if (abs_skew <= max_skew_ms) {
-    return Pass;
-  }
-  return Fail("assert_close_to_now_ms: skew " + skew_ms.to_string()
-    + "ms exceeds bound " + max_skew_ms.to_string() + "ms");
+  return Fail("assert_close_to_now: skew " + skew.as_millis().to_string()
+    + "ms exceeds bound " + max_skew.as_millis().to_string() + "ms");
 }
 ```
 

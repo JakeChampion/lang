@@ -24,7 +24,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function transport(c: conn.Config): conn.Config>>
 
-<<5 function (c: Conn) __stepped(now: i64): Conn>>
+<<5 function (c: Conn) __stepped(now: Instant): Conn>>
 
 <<6 function (c: Conn) __session_event(e: h3.Event): Conn>>
 
@@ -60,6 +60,7 @@ import "std/string";
 import "std/option";
 import "std/result";
 import "core/int";
+import "std/time";
 ```
 
 ### `3 pub enum Event`
@@ -102,7 +103,7 @@ pub function (c: Conn) quic(): conn.Conn {
   return c.quic;
 }
 
-pub function (c: Conn) deadline(): i64 {
+pub function (c: Conn) deadline(): Option[Instant] {
   return c.quic.deadline();
 }
 
@@ -126,15 +127,15 @@ pub function (c: Conn) sent(): Conn {
   return Conn { ...c, quic: c.quic.sent() };
 }
 
-pub function (c: Conn) receive(datagram: [u8], now: i64): Conn {
+pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
   return Conn { ...c, quic: c.quic.receive(datagram, now) }.__stepped(now);
 }
 
-pub function (c: Conn) tick(now: i64): Conn {
+pub function (c: Conn) tick(now: Instant): Conn {
   return Conn { ...c, quic: c.quic.tick(now) }.__stepped(now);
 }
 
-pub function (c: Conn) transmit(now: i64): Conn {
+pub function (c: Conn) transmit(now: Instant): Conn {
   return Conn { ...c, quic: c.quic.transmit(now) };
 }
 
@@ -142,19 +143,19 @@ pub function (c: Conn) shutdown(): Conn {
   if (!c.started || c.stopping) {
     return c;
   }
-  return Conn { ...c, session: c.session.send_goaway(c.next), stopping: true }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.send_goaway(c.next), stopping: true }.__applied(time.instant_from_nanos(0));
 }
 
-pub function (c: Conn) close(now: i64): Conn {
+pub function (c: Conn) close(now: Instant): Conn {
   return Conn { ...c, quic: c.quic.close(h3.H3_NO_ERROR, "", true, now) };
 }
 ```
 
-### `5 function (c: Conn) __stepped(now: i64): Conn`
+### `5 function (c: Conn) __stepped(now: Instant): Conn`
 
 ```fern
-<<5 function (c: Conn) __stepped(now: i64): Conn>>=
-function (c: Conn) __stepped(now: i64): Conn {
+<<5 function (c: Conn) __stepped(now: Instant): Conn>>=
+function (c: Conn) __stepped(now: Instant): Conn {
   let evs: conn.Event[] = c.quic.events;
   let notes: streams.Event[] = c.quic.stream_events();
   if (evs.len() == 0 && notes.len() == 0) {
@@ -212,7 +213,7 @@ function (c: Conn) __started(): Conn {
 }
 
 function (c: Conn) __fatal(why: string): Conn {
-  return Conn { ...c, quic: c.quic.close(h3.H3_GENERAL_PROTOCOL_ERROR, why, true, 0 as i64) };
+  return Conn { ...c, quic: c.quic.close(h3.H3_GENERAL_PROTOCOL_ERROR, why, true, time.instant_from_nanos(0)) };
 }
 
 function (c: Conn) __readable(id: i64): Conn {
@@ -240,7 +241,7 @@ function (c: Conn) __unparked(): Conn {
   return c;
 }
 
-function (c: Conn) __applied(now: i64): Conn {
+function (c: Conn) __applied(now: Instant): Conn {
   let cur: Conn = c;
   while (true) {
     let acts: h3.Action[] = cur.session.actions;
@@ -295,7 +296,7 @@ function __headers_of(e: h3.Event): Option[i64] {
   return None;
 }
 
-function __acts(q: conn.Conn, acts: h3.Action[], now: i64): conn.Conn {
+function __acts(q: conn.Conn, acts: h3.Action[], now: Instant): conn.Conn {
   let cur: conn.Conn = q;
   for a in acts {
     cur = __act(cur, a, now);
@@ -303,7 +304,7 @@ function __acts(q: conn.Conn, acts: h3.Action[], now: i64): conn.Conn {
   return cur;
 }
 
-function __act(q: conn.Conn, a: h3.Action, now: i64): conn.Conn {
+function __act(q: conn.Conn, a: h3.Action, now: Instant): conn.Conn {
   match (a) {
     h3.Write(id, bytes, fin) => {
       return q.written(id, bytes, fin);
@@ -554,7 +555,7 @@ function (c: Conn) __respond_with(id: i64, resp: HttpResponse, bytes: [u8]): Con
     n = 0;
   }
   let whole: boolean = resp.trailers.names.len() == 0;
-  let sent: Conn = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, n as i64, c.date), bytes[0:n], whole) }.__applied(0 as i64);
+  let sent: Conn = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, n as i64, c.date), bytes[0:n], whole) }.__applied(time.instant_from_nanos(0));
   if (whole) {
     return sent;
   }
@@ -562,25 +563,25 @@ function (c: Conn) __respond_with(id: i64, resp: HttpResponse, bytes: [u8]): Con
 }
 
 pub function (c: Conn) respond_head(id: i64, resp: HttpResponse, length: i64): Conn {
-  return Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, length, c.date), [], false) }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, length, c.date), [], false) }.__applied(time.instant_from_nanos(0));
 }
 
 pub function (c: Conn) write(id: i64, bytes: [u8]): Conn {
   if (bytes.len() == 0) {
     return c;
   }
-  return Conn { ...c, session: c.session.send_data(id, bytes, false) }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.send_data(id, bytes, false) }.__applied(time.instant_from_nanos(0));
 }
 
 pub function (c: Conn) end(id: i64, trailers: HeaderMap): Conn {
   if (trailers.names.len() > 0) {
-    return Conn { ...c, session: c.session.send_trailers(id, __trailer_fields(trailers)) }.__applied(0 as i64);
+    return Conn { ...c, session: c.session.send_trailers(id, __trailer_fields(trailers)) }.__applied(time.instant_from_nanos(0));
   }
-  return Conn { ...c, session: c.session.send_data(id, [], true) }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.send_data(id, [], true) }.__applied(time.instant_from_nanos(0));
 }
 
 pub function (c: Conn) abort(id: i64, code: i64): Conn {
-  return Conn { ...c, session: c.session.abort(id, code), partials: __without(c.partials, id) }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.abort(id, code), partials: __without(c.partials, id) }.__applied(time.instant_from_nanos(0));
 }
 
 pub function (c: Conn) request(req: HttpRequest, scheme: string): Result[(Conn, i64), string] {
@@ -594,7 +595,7 @@ pub function (c: Conn) request(req: HttpRequest, scheme: string): Result[(Conn, 
   if (body.len() > 0 || req.trailers.names.len() > 0) {
     cur = cur.write(id, body).end(id, req.trailers);
   }
-  return Ok((cur.__applied(0 as i64), id));
+  return Ok((cur.__applied(time.instant_from_nanos(0)), id));
 }
 ```
 

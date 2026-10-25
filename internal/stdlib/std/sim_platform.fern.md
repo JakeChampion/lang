@@ -56,7 +56,7 @@ import "std/http/trace";
 
 ```fern
 <<3 pub struct SimPlatform>>=
-pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow], deadline: Option[i64], trace: Option[trace.Context] }
+pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow], deadline: Option[Instant], trace: Option[trace.Context] }
 ```
 
 ### `4 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform`
@@ -75,7 +75,7 @@ pub function (p: SimPlatform) with_allow(a: fetch.Allow): SimPlatform {
   return SimPlatform { ...p, allow: Some(a) };
 }
 
-pub function (p: SimPlatform) with_deadline(at: i64): SimPlatform {
+pub function (p: SimPlatform) with_deadline(at: Instant): SimPlatform {
   return SimPlatform { ...p, deadline: Some(at) };
 }
 
@@ -93,14 +93,15 @@ impl platform.Platform for SimPlatform {
     self.mock.record("log", msg);
   }
 
-  function now_ms(self: SimPlatform): i64 {
-    self.mock.record("now_ms", "");
-    return self.drv.now_ns() / 1000000;
+  function now(self: SimPlatform): time.Timestamp {
+    self.mock.record("now", "");
+    let d: Duration = time.duration_nanos(self.drv.clock_ns.get());
+    return time.Timestamp { sec: d.sec, nsec: d.nsec };
   }
 
-  function elapsed_ns(self: SimPlatform): i64 {
-    self.mock.record("elapsed_ns", "");
-    return self.drv.now_ns();
+  function instant(self: SimPlatform): Instant {
+    self.mock.record("instant", "");
+    return self.drv.now();
   }
 
   function env(self: SimPlatform, name: string): Option[string] {
@@ -125,7 +126,7 @@ impl platform.Platform for SimPlatform {
 
   function sleep(self: SimPlatform, d: Duration): void {
     self.mock.record("sleep", d.as_millis().to_string());
-    let moved: boolean = self.drv.advance_to(self.drv.now_ns() + d.as_nanos());
+    let moved: boolean = self.drv.advance_to(self.drv.now().add(d));
   }
 
   function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
@@ -144,7 +145,7 @@ impl platform.Platform for SimPlatform {
     return self.mock.peer();
   }
 
-  function deadline(self: SimPlatform): Option[i64] {
+  function deadline(self: SimPlatform): Option[Instant] {
     self.mock.record("deadline", "");
     return self.deadline;
   }
@@ -156,7 +157,7 @@ impl platform.Platform for SimPlatform {
 
   function cancelled(self: SimPlatform): boolean {
     self.mock.record("cancelled", "");
-    return async.task_cancelled() || platform.passed(self.deadline, self.drv.now_ns());
+    return async.task_cancelled() || platform.passed(self.deadline, self.drv.now());
   }
 }
 ```
@@ -177,7 +178,7 @@ pub function (p: SimPlatform) secret_set(name: string, value: string): void {
   p.mock.secret_set(name, value);
 }
 
-pub function (p: SimPlatform) file_set(path: string, content: string, mtime: i64): void {
+pub function (p: SimPlatform) file_set(path: string, content: string, mtime: time.Timestamp): void {
   p.mock.file_set(path, content, mtime);
 }
 

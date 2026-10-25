@@ -153,7 +153,8 @@ function main(): i32 {
 
 // The client: ten requests at once on one HTTP/3 connection, each answer
 // printed in the order asked once all are in, then a close.
-const serveH3ClientSource = `import "std/i32";
+const serveH3ClientSource = `import "std/time";
+import "std/i32";
 import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
@@ -161,11 +162,12 @@ import "std/http/h3q";
 import "std/tls/verify";
 import "std/headers";
 import "std/async";
+import "std/clock";
 import "std/option";
 import "std/string";
 
-function now(): i64 {
-  return monotonic_ns();
+function now(): Instant {
+  return clock.instant();
 }
 
 function request(method: string, path: string, body: u8[]): HttpRequest {
@@ -240,7 +242,7 @@ function main(): i32 {
     return 2;
   };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("localhost", roots));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
@@ -257,8 +259,8 @@ function main(): i32 {
   let a: Asked = Asked { reqs: reqs, ids: [], answers: ["", "", "", "", "", "", "", "", "", ""], got: 0, sent: false };
   let c: h3q.Conn = h3q.client(q, h3.config()).with_max_body(4194304 as i64);
   let buf: u8[] = __alloc_u8(65536);
-  let started: i64 = now();
-  while (a.got < reqs.len() && !c.done() && now() - started < 60000000000) {
+  let started: Instant = now();
+  while (a.got < reqs.len() && !c.done() && clock.elapsed(started).cmp(time.duration_seconds(60)) < 0) {
     let c2: h3q.Conn = c.transmit(now());
     let out: u8[][] = c2.datagrams();
     c2 = c2.sent();
@@ -267,7 +269,7 @@ function main(): i32 {
       let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
     }
     let wait: i32 = 50;
-    let woke: i32 = async.wait_any([sock, 1], wait);
+    let woke: i32 = async.wait_any([sock, 1], Some(time.duration_millis(wait)));
     let going: boolean = true;
     while (going) {
       match (net.recv_from(sock, buf)) {
@@ -279,8 +281,10 @@ function main(): i32 {
         }
       }
     }
-    if (c.deadline() != 0 && now() >= c.deadline()) {
-      c = c.tick(now());
+    if let Some(at) = c.deadline() {
+      if (now().cmp(at) >= 0) {
+        c = c.tick(now());
+      }
     }
     let (c3, a2) = asked(c, a);
     c = c3;

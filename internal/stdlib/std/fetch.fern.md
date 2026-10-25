@@ -66,7 +66,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<25 function __driven_read_failed(sh: Shared, at: i32, d: Driven, e: net.NetError): Option[i32]>>
 
-<<26 pub function (sh: Shared) expired(now: i64, bound: i64): i32[]>>
+<<26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]>>
 
 <<27 function __mail_answered(sh: Shared, fd: i32, events: h2.Event[], streams: i32): i32>>
 
@@ -116,7 +116,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<50 enum __Record>>
 
-<<51 function __kernel_record(sock: i32, s: client.Session, now: i64): __Record>>
+<<51 function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record>>
 
 <<52 function __handshake_read(got: Result[net.Recv, net.NetError]): Result[u8[], FetchError]>>
 
@@ -171,6 +171,7 @@ import "std/unicode";
 import "std/string";
 import "std/async";
 import "std/time";
+import "std/clock";
 import "std/http";
 import "std/headers";
 import "std/http/cookie";
@@ -669,13 +670,13 @@ function __asks_codings(req: Request): boolean {
 ```fern
 <<14 pub trait Transport>>=
 pub trait Transport {
-  function now_ns(self: Self): i64;
-  function wall_ms(self: Self): i64;
+  function now(self: Self): Instant;
+  function wall(self: Self): time.Timestamp;
   function random_bytes(self: Self, n: i32): u8[];
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
-  function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
+  function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: u8[]): i32;
-  function read(self: Self, conn: i32, max: i32, wait_ms: i64): Result[net.Recv, net.NetError];
+  function read(self: Self, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError];
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
   function socket(self: Self, conn: i32): i32;
@@ -705,7 +706,7 @@ pub function (p: Idle) proxy_env(): ProxyEnv {
 
 ```fern
 <<16 pub struct Kept>>=
-pub struct Kept { place: __Place, fd: i32, since: i64, tls: Option[client.Session], h2: Option[h2.Conn] }
+pub struct Kept { place: __Place, fd: i32, since: Instant, tls: Option[client.Session], h2: Option[h2.Conn] }
 ```
 
 ### `17 pub function idle(): Idle`
@@ -830,7 +831,7 @@ pub function shared_of(pool: Idle): Shared {
 <<20 pub struct Shared>>=
 pub struct Shared { rows: Cell[Driven[]], mail: Cell[Mail[]], next: Cell[i32], dialing: Cell[string[]] }
 
-pub struct Driven { key: string, fd: i32, tls: client.Session, h2: h2.Conn, out: u8[], wire: u8[], streams: i32, since: i64, watched: boolean, writing: boolean }
+pub struct Driven { key: string, fd: i32, tls: client.Session, h2: h2.Conn, out: u8[], wire: u8[], streams: i32, since: Instant, watched: boolean, writing: boolean }
 
 pub struct Mail { id: i32, fd: i32, stream: i32, key: string, answer: Option[Result[Answer, FetchError]] }
 
@@ -853,7 +854,7 @@ pub function (sh: Shared) owns(fd: i32): boolean {
   return __driven_at(sh.rows.get(), fd) >= 0;
 }
 
-pub function (sh: Shared) adopt(key: string, fd: i32, tls: client.Session, hc: h2.Conn, now: i64): void {
+pub function (sh: Shared) adopt(key: string, fd: i32, tls: client.Session, hc: h2.Conn, now: Instant): void {
   sh.rows.set(sh.rows.get().append(Driven { key: key, fd: fd, tls: tls, h2: hc, out: [], wire: [], streams: 0, since: now, watched: false, writing: false }));
 }
 
@@ -956,7 +957,7 @@ pub function (sh: Shared) abandon(id: i32): void {
   }
   let d: Driven = rows[row];
   let step: h2.Step = d.h2.reset(m.stream, 8);
-  sh.rows.set(rows.with(row, Driven { ...d, h2: step.conn, out: d.out.concat(step.output), streams: d.streams - 1, since: monotonic_ns() }));
+  sh.rows.set(rows.with(row, Driven { ...d, h2: step.conn, out: d.out.concat(step.output), streams: d.streams - 1, since: clock.instant() }));
 }
 
 pub function (sh: Shared) answered(): i32[] {
@@ -1040,7 +1041,7 @@ pub function (sh: Shared) sockets(): i32[] {
 function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
   let session: client.Session = d.tls;
   if (bytes.len() == 0) {
-    match (__kernel_record(d.fd, d.tls, now_unix_ms())) {
+    match (__kernel_record(d.fd, d.tls, clock.now())) {
       RecordTaken(step) => {
         session = step.session;
         if (step.closed) {
@@ -1063,7 +1064,7 @@ function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i3
   }
   let fed: h2.Step = d.h2.read(bytes);
   let streams: i32 = __mail_answered(sh, d.fd, fed.events, d.streams);
-  sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: session, h2: fed.conn, out: d.out.concat(fed.output), streams: streams, since: monotonic_ns() }));
+  sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: session, h2: fed.conn, out: d.out.concat(fed.output), streams: streams, since: clock.instant() }));
   if (fed.conn.closed()) {
     __driven_failed(sh, d.fd, Protocol("HTTP/2: the connection closed before the response ended"));
     return Some(d.fd);
@@ -1142,11 +1143,11 @@ function __driven_read_failed(sh: Shared, at: i32, d: Driven, e: net.NetError): 
 
 function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
   let fd: i32 = d.fd;
-  match (d.tls.read(bytes, now_unix_ms())) {
+  match (d.tls.read(bytes, clock.now())) {
     Ok(step) => {
       let fed: h2.Step = d.h2.read(step.data);
       let streams: i32 = __mail_answered(sh, fd, fed.events, d.streams);
-      sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: step.session, h2: fed.conn, out: d.out.concat(step.output).concat(fed.output), streams: streams, since: monotonic_ns() }));
+      sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: step.session, h2: fed.conn, out: d.out.concat(step.output).concat(fed.output), streams: streams, since: clock.instant() }));
       if (fed.conn.closed() || step.closed) {
         __driven_failed(sh, fd, Protocol("HTTP/2: the connection closed before the response ended"));
         return Some(fd);
@@ -1163,16 +1164,17 @@ function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]
 }
 ```
 
-### `26 pub function (sh: Shared) expired(now: i64, bound: i64): i32[]`
+### `26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]`
 
 ```fern
-<<26 pub function (sh: Shared) expired(now: i64, bound: i64): i32[]>>=
-pub function (sh: Shared) expired(now: i64, bound: i64): i32[] {
+<<26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]>>=
+// Drops and returns the idle connections quiet for longer than `idle`, and those the peer is closing.
+pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[] {
   let rows: Driven[] = sh.rows.get();
   let kept: Driven[] = [];
   let gone: i32[] = [];
   for d in rows {
-    if (d.streams == 0 && (now - d.since > bound || d.h2.going_away() || d.h2.closed())) {
+    if (d.streams == 0 && (now.since(d.since).cmp(idle) > 0 || d.h2.going_away() || d.h2.closed())) {
       gone = gone.append(d.fd);
     } else {
       kept = kept.append(d);
@@ -1372,7 +1374,7 @@ function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
 }
 
 function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
-  let rows: Kept[] = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now_ns(), tls: conn.tls, h2: conn.h2 });
+  let rows: Kept[] = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now(), tls: conn.tls, h2: conn.h2 });
   let from: i32 = 0;
   while (rows.len() - from > tr.idle().max) {
     __close(tr, __kept_conn(rows[from]));
@@ -1390,10 +1392,9 @@ function __live_kept[T: Transport](tr: T): Kept[] {
   if (rows.len() == 0) {
     return rows;
   }
-  let now: i64 = tr.now_ns();
-  let bound: i64 = pool.idle.as_nanos();
+  let now: Instant = tr.now();
   let from: i32 = 0;
-  while (from < rows.len() && now - rows[from].since > bound) {
+  while (from < rows.len() && now.since(rows[from].since).cmp(pool.idle) > 0) {
     __close(tr, __kept_conn(rows[from]));
     from = from + 1;
   }
@@ -1458,11 +1459,11 @@ pub function sockets_with(pool: Idle): Sockets {
 ```fern
 <<33 impl Transport for Sockets>>=
 impl Transport for Sockets {
-  function now_ns(self: Sockets): i64 {
-    return monotonic_ns();
+  function now(self: Sockets): Instant {
+    return clock.instant();
   }
-  function wall_ms(self: Sockets): i64 {
-    return now_unix_ms();
+  function wall(self: Sockets): time.Timestamp {
+    return clock.now();
   }
   function random_bytes(self: Sockets, n: i32): u8[] {
     return random_bytes(n);
@@ -1488,14 +1489,14 @@ impl Transport for Sockets {
     }
     return Ok(Lookup { dial: names.synthesized(plain), named: plain, judged: carried });
   }
-  function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
-    return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: time.duration_millis(timeout_ms as i64) });
+  function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError] {
+    return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: timeout });
   }
   function write(self: Sockets, conn: i32, data: u8[]): i32 {
     return tcp_send_bytes(conn, data);
   }
-  function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): Result[net.Recv, net.NetError] {
-    return net.read_watched(conn, max, wait_ms, self.pool.read_interest(conn));
+  function read(self: Sockets, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+    return net.read_watched(conn, max, wait, self.pool.read_interest(conn));
   }
   function close(self: Sockets, conn: i32): i32 {
     match (self.pool.armed) {
@@ -1713,7 +1714,7 @@ function __permitted(policy: Policy, host: string, port: i32): Result[i32, Fetch
 ```fern
 <<41 pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[HttpResponse, FetchError]>>=
 pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[HttpResponse, FetchError] {
-  let started: i64 = tr.now_ns();
+  let started: i64 = time.instant_nanos(tr.now());
   let cur: Request = req;
   let hops: i32 = 0;
   while (true) {
@@ -1740,7 +1741,7 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
 function __with_jar[T: Transport](tr: T, req: Request, jar: Option[cookie.Jar]): Request {
   match (jar) {
     Some(j) => {
-      match (j.header(req.url, tr.wall_ms())) {
+      match (j.header(req.url, tr.wall())) {
         Some(v) => {
           let all: string = v;
           match (req.headers.get("cookie")) {
@@ -1766,7 +1767,7 @@ function __with_jar[T: Transport](tr: T, req: Request, jar: Option[cookie.Jar]):
 function __stored[T: Transport](tr: T, jar: Option[cookie.Jar], request_url: string, h: HeaderMap): void {
   match (jar) {
     Some(j) => {
-      j.store(request_url, h, tr.wall_ms());
+      j.store(request_url, h, tr.wall());
     },
     None => {}
   }
@@ -1989,7 +1990,7 @@ function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started
     if (sh.dialing(key)) {
       match (__connect(tr, t, req, guard, roots)) {
         Ok(conn) => {
-          let adopted: i32 = __shared_adopted(sh, key, conn, tr.now_ns());
+          let adopted: i32 = __shared_adopted(sh, key, conn, tr.now());
           sh.dialed(key);
           if (adopted < 0) {
             return Ok(OnTask(conn));
@@ -2007,7 +2008,7 @@ function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started
   return Err(Protocol("unreachable"));
 }
 
-function __shared_adopted(sh: Shared, key: string, conn: __Conn, now: i64): i32 {
+function __shared_adopted(sh: Shared, key: string, conn: __Conn, now: Instant): i32 {
   match (conn.h2) {
     Some(hc) => {
       match (conn.tls) {
@@ -2029,7 +2030,7 @@ function __shared_adopted(sh: Shared, key: string, conn: __Conn, now: i64): i32 
 
 function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shared, id: i32): Result[Answer, FetchError] {
   while (true) {
-    let left_ms: i64 = req.timeouts.total.as_millis() - (tr.now_ns() - started) / 1000000;
+    let left_ms: i64 = req.timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / 1000000;
     let wait_ms: i64 = req.timeouts.inactivity.as_millis();
     let bound: Phase = Inactivity;
     if (left_ms < wait_ms) {
@@ -2040,7 +2041,7 @@ function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shar
       sh.abandon(id);
       return Err(Timeout(bound));
     }
-    let woke: i32 = async.wait_any([id, MAIL_INTEREST], wait_ms as i32);
+    let woke: i32 = async.wait_any([id, MAIL_INTEREST], Some(time.duration_millis(wait_ms)));
     if (woke == async.cancelled()) {
       sh.abandon(id);
       return Err(FetchError.Cancelled);
@@ -2214,9 +2215,9 @@ function __send_framed[T: Transport](tr: T, fd: i32, s: client.Session, output: 
 
 function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolean, roots: Option[verify.Roots]): Result[__Conn, FetchError] {
   let timeouts: Timeouts = req.timeouts;
-  let begun: i64 = tr.now_ns();
+  let begun: i64 = time.instant_nanos(tr.now());
   let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
-  match (tr.connect(addrs, t.port, __connect_bound(timeouts).as_millis() as i32)) {
+  match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
     Ok(fd) => {
       if (!t.tls) {
         return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None });
@@ -2299,11 +2300,11 @@ function __ktls_asked(req: Request): boolean {
 enum __Record { RecordTaken(client.Step), RecordsEnded, RecordAwaited, RecordFailed(FetchError) }
 ```
 
-### `51 function __kernel_record(sock: i32, s: client.Session, now: i64): __Record`
+### `51 function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record`
 
 ```fern
-<<51 function __kernel_record(sock: i32, s: client.Session, now: i64): __Record>>=
-function __kernel_record(sock: i32, s: client.Session, now: i64): __Record {
+<<51 function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record>>=
+function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record {
   match (ktls.read_now(sock)) {
     ktls.Opened(t, content) => {
       match (s.read(ktls.framed(t, content), now)) {
@@ -2351,11 +2352,11 @@ function __tunnel[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64): Res
     if (got.len() > 16384) {
       return Err(Protocol("the proxy's answer to CONNECT is past the header budget"));
     }
-    let wait_ms: i64 = (deadline - tr.now_ns()) / 1000000;
+    let wait_ms: i64 = (deadline - time.instant_nanos(tr.now())) / 1000000;
     if (wait_ms <= 0) {
       return Err(Timeout(Connecting));
     }
-    got = __append_bytes(got, __tunnel_read(__io(tr.read(fd, 16384, wait_ms))?)?);
+    got = __append_bytes(got, __tunnel_read(__io(tr.read(fd, 16384, time.duration_millis(wait_ms)))?)?);
   }
   if (__head_end(got) != got.len()) {
     return Err(Protocol("the proxy sent bytes after its answer to CONNECT"));
@@ -2418,15 +2419,15 @@ function __tunnel_status(head: string): Result[void, FetchError] {
 function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
   let roots: verify.Roots = __roots(given)?;
   let cfg: client.Config = client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]);
-  let step: client.Step = __tls(client.start(cfg, tr.random_bytes(client.entropy(cfg)), tr.wall_ms()))?;
+  let step: client.Step = __tls(client.start(cfg, tr.random_bytes(client.entropy(cfg)), tr.wall()))?;
   __write_all(tr, fd, step.output)?;
   let s: client.Session = step.session;
   while (!s.connected()) {
-    let wait_ms: i64 = (deadline - tr.now_ns()) / 1000000;
+    let wait_ms: i64 = (deadline - time.instant_nanos(tr.now())) / 1000000;
     if (wait_ms <= 0) {
       return Err(Timeout(Connecting));
     }
-    let input: u8[] = __handshake_read(tr.read(fd, 65536, wait_ms))?;
+    let input: u8[] = __handshake_read(tr.read(fd, 65536, time.duration_millis(wait_ms)))?;
     let next: client.Step = __tls_read(tr, fd, s, input)?;
     __write_all(tr, fd, next.output)?;
     s = next.session;
@@ -2473,7 +2474,7 @@ function __roots(given: Option[verify.Roots]): Result[verify.Roots, FetchError] 
 }
 
 function __tls_read[T: Transport](tr: T, fd: i32, s: client.Session, input: [u8]): Result[client.Step, FetchError] {
-  match (s.read(input, tr.wall_ms())) {
+  match (s.read(input, tr.wall())) {
     Ok(step) => {
       return Ok(step);
     },
@@ -2988,7 +2989,7 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
     if (raw.len() > 0) {
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }
-    match (__kernel_record(tr.socket(conn.fd), session, tr.wall_ms())) {
+    match (__kernel_record(tr.socket(conn.fd), session, tr.wall())) {
       RecordTaken(step) => {
         session = step.session;
         if (step.closed) {
@@ -3009,7 +3010,7 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
 
 function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
-  let left_ms: i64 = timeouts.total.as_millis() - (tr.now_ns() - started) / ns_per_ms;
+  let left_ms: i64 = timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / ns_per_ms;
   if (left_ms <= 0) {
     return Err(Timeout(Total));
   }
@@ -3019,7 +3020,7 @@ function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started:
     wait_ms = left_ms;
     bound = Total;
   }
-  match (__io(tr.read(conn, 65536, wait_ms))?) {
+  match (__io(tr.read(conn, 65536, time.duration_millis(wait_ms)))?) {
     Chunk(chunk) => {
       return Ok(chunk);
     },

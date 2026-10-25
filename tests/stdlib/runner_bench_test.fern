@@ -1,4 +1,5 @@
 import "std/test";
+import "std/time";
 
 function workload_tiny(): void {
   let i: i32 = 0;
@@ -24,7 +25,7 @@ function main(): i32 {
   r = r.bench("tiny arithmetic loop", 20, workload_tiny);
   r = r.bench("string build (50 chars)", 10, workload_string_build);
 
-  r = r.bench_max_us("tiny loop under 1s budget", 20, workload_tiny, 1000000 as i64);
+  r = r.bench_max("tiny loop under 1s budget", 20, workload_tiny, time.duration_seconds(1));
 
   return r.finish();
 }

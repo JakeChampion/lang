@@ -103,7 +103,9 @@ func TestServeH3SocketX86_64(t *testing.T) {
 	})
 }
 
-const serveH3SocketClient = `import "std/net";
+const serveH3SocketClient = `import "std/time";
+import "std/clock";
+import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
 import "std/http/h3q";
@@ -119,7 +121,7 @@ function main(): i32 {
   let Some(local) = net.socket_addr_parse(argv[2]) else { return 2; };
   let Ok(roots) = verify.roots_from_file(argv[3]) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("localhost", roots));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), monotonic_ns(), now_unix_ms()) else { return 2; };
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), clock.instant(), clock.now()) else { return 2; };
   let Ok(sock) = net.udp_socket(local) else { return 2; };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
   let c: h3q.Conn = h3q.client(q, h3.config());
@@ -127,23 +129,23 @@ function main(): i32 {
   let sent: i32 = 0;
   let got: i32 = 0;
   let first: string = "";
-  let started: i64 = monotonic_ns();
-  while (!c.done() && monotonic_ns() - started < 15000000000) {
-    let now: i64 = monotonic_ns();
+  let started: Instant = clock.instant();
+  while (!c.done() && clock.elapsed(started).cmp(time.duration_seconds(15)) < 0) {
+    let now: Instant = clock.instant();
     let next: h3q.Conn = c.transmit(now);
     let out: u8[][] = next.datagrams();
     next = next.sent();
     c = next;
     for d in out { let r: Result[i32, net.NetError] = net.send_to(sock, d, peer); }
-    let woke: i32 = async.wait_any([sock, 1], 10);
+    let woke: i32 = async.wait_any([sock, 1], Some(time.duration_millis(10)));
     let reading: boolean = true;
     while (reading) {
       match (net.recv_from(sock, buf)) {
-        Ok(d) => { c = c.receive(buf[0:d.0], monotonic_ns()); },
+        Ok(d) => { c = c.receive(buf[0:d.0], clock.instant()); },
         Err(_) => { reading = false; }
       }
     }
-    if (c.deadline() != 0 && monotonic_ns() >= c.deadline()) { c = c.tick(monotonic_ns()); }
+    if let Some(at) = c.deadline() { if (clock.instant().cmp(at) >= 0) { c = c.tick(clock.instant()); } }
     let evs: h3q.Event[] = c.events;
     let after: h3q.Conn = c.events_taken();
     c = after;
@@ -160,7 +162,7 @@ function main(): i32 {
       }
     }
     if (got == 2) {
-      let closed: h3q.Conn = c.close(monotonic_ns()).transmit(monotonic_ns());
+      let closed: h3q.Conn = c.close(clock.instant()).transmit(clock.instant());
       let final: u8[][] = closed.datagrams();
       closed = closed.sent();
       for d in final { let r: Result[i32, net.NetError] = net.send_to(sock, d, peer); }

@@ -6,14 +6,40 @@ import "std/http/h3q";
 import "std/tls/identity";
 import "std/headers";
 import "std/async";
+import "std/clock";
+import "std/time";
 import "std/option";
 import "std/i64";
 import "core/int";
 
 struct Server { cfg: conn.Config, sock: i32, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32 }
 
-function now(): i64 {
-  return monotonic_ns();
+function now(): Instant {
+  return clock.instant();
+}
+
+// Whether a connection's next deadline has come.
+function passed(deadline: Option[Instant]): boolean {
+  let Some(at) = deadline else {
+    return false;
+  };
+  return now().cmp(at) >= 0;
+}
+
+// How long to wait for a datagram: until the deadline, between 1 and 100 ms.
+function wait_until(deadline: Option[Instant]): Option[Duration] {
+  let most: Duration = time.duration_millis(100);
+  let Some(at) = deadline else {
+    return Some(most);
+  };
+  let left: Duration = at.since(now()).add(time.duration_millis(1));
+  if (left.cmp(time.duration_millis(1)) < 0) {
+    return Some(time.duration_millis(1));
+  }
+  if (left.cmp(most) > 0) {
+    return Some(most);
+  }
+  return Some(left);
 }
 
 function answer(req: HttpRequest): HttpResponse {
@@ -51,22 +77,11 @@ function copied(buf: u8[], n: i32): u8[] {
   return out;
 }
 
-function wait_ms(s: Server): i32 {
+function wait_for(s: Server): Option[Duration] {
   let Some(c) = s.current else {
-    return 100;
+    return Some(time.duration_millis(100));
   };
-  let d: i64 = c.deadline();
-  if (d == 0) {
-    return 100;
-  }
-  let ms: i64 = (d - now()) / 1000000 + 1;
-  if (ms < 1) {
-    return 1;
-  }
-  if (ms > 100) {
-    return 100;
-  }
-  return ms as i32;
+  return wait_until(c.deadline());
 }
 
 function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
@@ -102,7 +117,7 @@ function drained(s: Server, buf: u8[]): Server {
 
 function sent(s: Server, c: h3q.Conn): Server {
   let cur: Server = s;
-  if (c.deadline() != 0 && now() >= c.deadline()) {
+  if (passed(c.deadline())) {
     cur = served(cur, c.tick(now()));
   }
   let Some(ticked) = cur.current else {
@@ -149,9 +164,9 @@ function main(): i32 {
   print("fern h3 server: listening");
   let buf: u8[] = __alloc_u8(65536);
   let s: Server = s0;
-  let started: i64 = now();
-  while (now() - started < 20000000000) {
-    let woke: i32 = async.wait_any([s.sock, 1], wait_ms(s));
+  let started: Instant = now();
+  while (now().since(started).cmp(time.duration_seconds(20)) < 0) {
+    let woke: i32 = async.wait_any([s.sock, 1], wait_for(s));
     s = drained(s, buf);
     if let Some(c) = s.current {
       s = sent(s, c);

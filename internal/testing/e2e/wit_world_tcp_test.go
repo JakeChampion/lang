@@ -34,14 +34,15 @@ func TestComposeTcpFromWorld(t *testing.T) {
 
 	dir := t.TempDir()
 
-	src := strings.Replace(`import "std/net";
+	src := strings.Replace(`import "std/time";
+import "std/net";
 
 function main(): i32 {
     let sock = tcp_listen(__PORT__);
     if (sock < 0) { return 1; }
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+    let msg: u8[] = match (net.read_watched(conn, 1024, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => b,
         _ => { return 5; },
     };
