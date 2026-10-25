@@ -447,7 +447,7 @@ pub function (s: Streams) open(uni: boolean): Streams {
   return cur.__indexed(id, cur.list.len() - 1);
 }
 
-pub function (s: Streams) write(id: i64, data: [u8], fin: boolean): Streams {
+pub function (s: Streams) write(id: i64, data: u8[], fin: boolean): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_send) {
     return s.__refuse("no stream to write to");
@@ -456,9 +456,9 @@ pub function (s: Streams) write(id: i64, data: [u8], fin: boolean): Streams {
   if (st.send.fin || st.send.reset >= 0) {
     return s.__refuse("the stream's sending half is closed");
   }
-  let buf: u8[] = __copy(data);
+  let buf: u8[] = data;
   if (st.send.buf.len() > 0) {
-    buf = st.send.buf.concat(buf);
+    buf = st.send.buf.concat(data);
   }
   return s.__refuse("").__put(i, Stream { ...st, send: Send { ...st.send, buf: buf, fin: fin } });
 }
@@ -1303,10 +1303,6 @@ function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
 
 function __slice_range(src: u8[], from: i32, to: i32): u8[] {
   return __bytes_range(src, from, to);
-}
-
-function __copy(b: [u8]): u8[] {
-  return __bytes_owned(b);
 }
 
 function __min(a: i64, b: i64): i64 {

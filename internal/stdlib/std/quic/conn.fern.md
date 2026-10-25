@@ -46,7 +46,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 function (c: Conn) __checked(): Result[Conn, string]>>
 
-<<17 pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn>>
+<<17 pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn>>
 
 <<18 function (c: Conn) __fail(code: i64, frame_type: i64, reason: string, now: i64): Conn>>
 
@@ -444,7 +444,7 @@ pub function (c: Conn) blocked_open(uni: boolean): Conn {
   return Conn { ...c, streams: c.streams.blocked_open(uni) };
 }
 
-pub function (c: Conn) write(id: i64, data: [u8], fin: boolean): Result[Conn, string] {
+pub function (c: Conn) write(id: i64, data: u8[], fin: boolean): Result[Conn, string] {
   return c.written(id, data, fin).__checked();
 }
 
@@ -479,11 +479,11 @@ function (c: Conn) __checked(): Result[Conn, string] {
 }
 ```
 
-### `17 pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn`
+### `17 pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn`
 
 ```fern
-<<17 pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn>>=
-pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn {
+<<17 pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn>>=
+pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn {
   return Conn { ...c, streams: c.streams.write(id, data, fin) };
 }
 
