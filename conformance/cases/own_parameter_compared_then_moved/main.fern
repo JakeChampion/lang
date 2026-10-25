@@ -1,0 +1,26 @@
+// An operand of a comparison or of string concatenation is borrowed, so an
+// owned value can still move after it.
+function keep(own s: string): i32 { return s.len() as i32; }
+
+function check(own s: string): i32 {
+    if (s == "x") {
+        return 0;
+    }
+    return keep(s);
+}
+
+function extend(own s: string): i32 {
+    let t: string = s + "!";
+    return keep(s) + keep(t);
+}
+
+function word(s: string): string {
+    return s + "";
+}
+
+function main(): i32 {
+    let x: i32 = check(word("ab"));
+    let y: i32 = extend(word("c"));
+    print(f"{x} {y}");
+    return 0;
+}
