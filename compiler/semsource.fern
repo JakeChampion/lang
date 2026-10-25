@@ -7988,6 +7988,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   if (verify) {
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
+    table = with_promoted_params(table, inlined.all, names);
     all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
@@ -8059,6 +8060,36 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 
 struct Spliced { all: Produced[], spliced: boolean[] }
 
+// A function whose parameters pass in lanes takes them in every call.
+function with_promoted_params(table: ssasem.Contracts, all: Produced[], names: string[]): ssasem.Contracts {
+  let list: ssasem.Contract[] = table.list;
+  let changed: boolean = false;
+  for i in 0..all.len() {
+    let p: Produced = all[i];
+    let at: i32 = table.names.find(names[i]);
+    if (p.ok && !p.template && at >= 0 && !same_types(list[at].params, p.func.params)) {
+      list = list.with(at, ssasem.Contract { ...list[at], params: p.func.params, modes: p.modes });
+      changed = true;
+    }
+  }
+  if (!changed) {
+    return table;
+  }
+  return ssasem.contracts_of(list);
+}
+
+function same_types(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (!semtypes.equal(a[i], b[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function unique_loops(all: Produced[]): Produced[] {
   let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
   let contract = ssasem.Contract { name: semunique.name(), params: [bytes], modes: [ssaunits.counted_mode()], result: bytes };
@@ -8120,11 +8151,11 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     always = always.append(i < mod.funcs.len() && mod.funcs[i].always_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size, true);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
-    let p: Produced = Produced { ...all[i], func: out.funcs[i] };
+    let p: Produced = Produced { ...all[i], func: out.funcs[i], modes: out.modes[i] };
     if (out.rewritten[i]) {
       p = Produced { ...p, func: ssabounds.proven_indices(p.func), analysis: None };
     }

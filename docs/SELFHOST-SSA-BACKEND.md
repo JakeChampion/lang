@@ -288,6 +288,37 @@ variant from the declared result type (`rccertify.Abi.split_second`,
 `split_third`), and a call that captures two words reads the first word's
 mask from the split form.
 
+## A record of scalars passed in its fields
+
+A parameter whose type is a record of one to four integer, boolean or char
+fields (`Duration`, `Instant`, `Timestamp`), or an `Option` of such a record or
+of one such scalar, is passed in lanes: the fields in order, and for an Option a
+boolean that holds `Some` ahead of the payload's fields. `semscalarparam`, which
+`seminline` runs once splicing is done and before `sempair` chooses its
+functions, makes the choice. A function takes part only when every reference to
+it is a direct call from a rewritten body, nothing outside the bodies names it,
+and no anchor names its arguments by position. A slot keeps its lanes while the
+body reads the parameter only apart (a field, an Option test, the payload's
+fields) or hands it whole to another promoted slot. Demotions run to a fixed
+point across the module.
+
+A caller reads a record argument's fields where the call is, and splitting takes
+a construction apart, so `width(Span { lo: i, hi: 1 })` builds nothing. An
+Option argument is laned where it is built: each `Some` or `None` and each join
+of them gets its lanes beside it. An argument that is not built in sight, such
+as a field read or a call result, is tested at the call. The block splits there:
+one arm reads the payload's fields, the other passes zeros, and the call
+continues where the two join. Lanes have no register limit. A call with more
+than six arguments takes the stack entry, and that costs less than allocating
+and releasing the boxes it replaces.
+
+The rewritten function's values are renumbered so that parameter k is value k.
+Its contract, each caller's copy of it and the module table all take the lane
+types, so ownership inference, the certifier and the IR verifier
+(`physicalbody.sig_index`) see the arity the body was lowered with.
+`TestSelfHostScalarParam` pins the shapes at no allocations on the three
+targets, and shows that a function named as a value keeps its boxed parameter.
+
 ## What the lift admits, and what declines
 
 Everything the compiler uses. Measured on the compiler compiling itself

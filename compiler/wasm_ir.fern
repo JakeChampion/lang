@@ -5179,7 +5179,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   let str_vals: string[] = str_values(cache);
   let cagg_vals: string[] = const_agg_values(cache);
   let ft: string[] = fn_value_table(cache);
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), ir.pops_by_kind(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(physicalbody.sig_index(all_funcs, physical), ir.pops_by_kind(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {

@@ -82,7 +82,7 @@ const scalarRecordEscapes = `import "std/i64";
 struct Quad { a:i64,b:i64,c:i64,d:i64 }
 @noinline function record(i:i32):Quad {return Quad {a:i as i64,b:2i64,c:3i64,d:4i64};}
 @noinline function consume(q:Quad):i64 {return q.a+q.b+q.c+q.d;}
-function main():i32 {let before=__heap_alloc_count();let i=0;while(i<1000){if(consume(record(i))!=(i as i64)+9i64){return 17;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+function main():i32 {let c:(Quad)=>i64=consume;let before=__heap_alloc_count();let i=0;while(i<1000){if(c(record(i))!=(i as i64)+9i64){return 17;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
 `
 
 const scalarRecordSmallPhis = `import "std/i64";
@@ -244,7 +244,7 @@ struct Quad {a:i64,b:i64,c:i64,d:i64}
 @noinline function make(i:i32):Quad{return Quad {a:i as i64,b:2i64,c:3i64,d:4i64};}
 @noinline function pass(own q:Quad):Quad{return q;}
 @noinline function consume(q:Quad):i64{return q.a+q.b+q.c+q.d;}
-function main():i32{let before=__heap_alloc_count();let i=0;while(i<1000){let q=pass(make(i));let r=Quad {...q,a:q.a+1i64};if(consume(r)!=(i as i64)+10i64){return 32;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+function main():i32{let c:(Quad)=>i64=consume;let before=__heap_alloc_count();let i=0;while(i<1000){let q=pass(make(i));let r=Quad {...q,a:q.a+1i64};if(c(r)!=(i as i64)+10i64){return 32;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
 `
 
 func TestSelfHostRecordUpdateDonorMetadata(t *testing.T) {

@@ -6,6 +6,7 @@ import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
 import "./sempair";
+import "./semscalarparam";
 import "./semdead";
 import "./ownership";
 import "./ssabytes";
@@ -65,11 +66,11 @@ function max_box_saving_caller_insts(): i32 {
   return 6000;
 }
 
-pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolean[] }
+pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolean[], modes: i32[][] }
 
 struct Rewrite { f: ssasem.Func, changed: boolean }
 
-pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], always: boolean[], size: boolean): Inlined {
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], always: boolean[], size: boolean, promote: boolean): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
   let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, always, size);
@@ -77,7 +78,10 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let rounds: Inlined = done.out;
   sp = grown_leaves(rounds, done.sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
-  let out: Inlined = split_all(paired_all(rounds, names, rewrite, uncalled), rewrite, modes);
+  if (promote) {
+    rounds = promoted_all(rounds, names, modes, rewrite, uncalled);
+  }
+  let out: Inlined = split_all(paired_all(rounds, names, rewrite, uncalled), rewrite, rounds.modes);
   dump_wanted(out.funcs);
   return Inlined { ...out, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
@@ -261,7 +265,7 @@ struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shar
 struct Rounds { out: Inlined, sp: Spliceable }
 
 function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][], sp: Spliceable): Rounds {
-  let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [] };
+  let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [], modes: modes };
   let alone: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs0.len()) {
@@ -363,6 +367,17 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
     i = i + 1;
   }
   return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed, sizes: sizes, callees: callees };
+}
+
+function promoted_all(prev: Inlined, names: string[], modes: i32[][], rewrite: boolean[], uncalled: boolean[]): Inlined {
+  let p: semscalarparam.Promoted = semscalarparam.promote(prev.funcs, names, modes, rewrite, uncalled);
+  let rewritten: boolean[] = prev.rewritten;
+  for i in 0..p.changed.len() {
+    if (p.changed[i]) {
+      rewritten = rewritten.with(i, true);
+    }
+  }
+  return Inlined { ...prev, funcs: p.funcs, rewritten: rewritten, modes: p.modes };
 }
 
 function paired_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled: boolean[]): Inlined {
@@ -484,14 +499,14 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     return funcs;
   }
   let ix: util.NameIndex = util.name_index(names);
-  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false).funcs;
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false, false).funcs;
   let callbacks: boolean[] = [];
   let ci: i32 = 0;
   while (ci < candidates.len()) {
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
     ci = ci + 1;
   }
-  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false).funcs;
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false, false).funcs;
   let leaves: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {

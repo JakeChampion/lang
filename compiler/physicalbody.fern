@@ -1,4 +1,7 @@
 import "./irtables";
+import "./irverify";
+import "./parser";
+import "./util";
 import "./ssasem";
 import "./semrecords";
 import "./typeinfo";
@@ -85,6 +88,30 @@ pub function lowered_origins(lowered: Lowered, producer: i32): Origin[] {
     i = i + 1;
   }
   return out;
+}
+
+// The declared arity of each function, or the larger one its contract gives
+// when its parameters pass in lanes.
+pub function sig_index(funcs: parser.FuncDecl[], c: Collection): irverify.NameIndex {
+  let names: string[] = [];
+  let counts: i32[] = [];
+  for m in c.producers {
+    for k in m.contracts {
+      names = names.append(k.name);
+      counts = counts.append(k.params.len());
+    }
+  }
+  let ix: util.NameIndex = util.name_index(names);
+  let sigs: irverify.FnSig[] = [];
+  for s in irtables.fn_sigs(funcs) {
+    let at: i32 = ix.find(s.name);
+    if (at >= 0 && counts[at] > s.n_params) {
+      sigs = sigs.append(irverify.FnSig { ...s, n_params: counts[at] });
+    } else {
+      sigs = sigs.append(s);
+    }
+  }
+  return irverify.sig_index(sigs);
 }
 
 pub function abis(c: Collection): rccertify.Abis {

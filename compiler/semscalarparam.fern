@@ -1,0 +1,966 @@
+import "./ssa";
+import "./ssasem";
+import "./semrecords";
+import "./semtypes";
+import "./typeinfo";
+import "./sourcepos";
+import "./util";
+
+// A parameter that is a record of scalars, or an Option of a scalar or of
+// such a record, passes in its lanes: the record's fields, or a flag that
+// holds Some followed by the payload's fields. A function qualifies when
+// every reference to it is a direct call, and a slot stays promoted while
+// the body only reads it apart or hands it to another promoted slot.
+
+pub struct Promoted { funcs: ssasem.Func[], modes: i32[][], changed: boolean[] }
+
+struct Slot { lanes: typeinfo.Type[], names: string[], option: boolean, record: boolean }
+
+function no_slot(): Slot {
+  return Slot { lanes: [], names: [], option: false, record: false };
+}
+
+function lane_type(t: typeinfo.Type): boolean {
+  return ssasem.is_integer(t) || ssasem.is_bool(t) || ssasem.is_char(t);
+}
+
+function t_bool(): typeinfo.Type {
+  return typeinfo.TypeBool { tag: 0 };
+}
+
+struct Fields { types: typeinfo.Type[], names: string[] }
+
+function scalar_fields(f: ssasem.Func, t: typeinfo.Type, most: i32): Fields {
+  let none: Fields = Fields { types: [], names: [] };
+  let at: i32 = semrecords.find(f.records, t);
+  if (at < 0 || ssasem.has_finalizer(f, t) || ssasem.holds_view(f, t)) {
+    return none;
+  }
+  let r: semrecords.Record = f.records.list[at];
+  if (r.views || r.nests_func || r.fields.len() == 0 || r.fields.len() > most) {
+    return none;
+  }
+  let out: Fields = none;
+  for field in r.fields {
+    if (!lane_type(field.ty)) {
+      return none;
+    }
+    out = Fields { types: out.types.append(field.ty), names: out.names.append(field.name) };
+  }
+  return out;
+}
+
+function slot_of(f: ssasem.Func, t: typeinfo.Type): Slot {
+  let fields: Fields = scalar_fields(f, t, 4);
+  if (fields.types.len() > 0) {
+    return Slot { lanes: fields.types, names: fields.names, option: false, record: true };
+  }
+  let at: i32 = semrecords.find_enum(f.enums, t);
+  if (at < 0 || !plain_option(f.enums[at])) {
+    return no_slot();
+  }
+  let p: typeinfo.Type = f.enums[at].variants[0].fields[0].ty;
+  if (lane_type(p)) {
+    return Slot { lanes: [t_bool(), p], names: [], option: true, record: false };
+  }
+  let inner: Fields = scalar_fields(f, p, 3);
+  if (inner.types.len() == 0) {
+    return no_slot();
+  }
+  let lanes: typeinfo.Type[] = [t_bool()];
+  for l in inner.types {
+    lanes = lanes.append(l);
+  }
+  return Slot { lanes: lanes, names: inner.names, option: true, record: true };
+}
+
+function plain_option(e: semrecords.Enum): boolean {
+  if (e.layout != semrecords.layout_option() || e.views || e.nests_func || e.variants.len() != 2) {
+    return false;
+  }
+  let some: semrecords.Variant = e.variants[0];
+  let none: semrecords.Variant = e.variants[1];
+  return some.name == "Some" && none.name == "None" && some.fields.len() == 1 && none.fields.len() == 0;
+}
+
+// The functions that rewritten bodies call directly and nothing else names.
+function direct_only(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): boolean[] {
+  let r: Refs = Refs { calls: __alloc_i32(funcs.len()), other: __alloc_bool(funcs.len()) };
+  for j in 0..funcs.len() {
+    for b in funcs[j].graph.blocks {
+      for ins in b.insts {
+        r = counted(funcs, ix, rewrite[j], r, ins);
+      }
+    }
+  }
+  let out: boolean[] = [];
+  for i in 0..funcs.len() {
+    out = out.append(r.calls[i] > 0 && !r.other[i]);
+  }
+  return out;
+}
+
+struct Refs { calls: i32[], other: boolean[] }
+
+function counted(funcs: ssasem.Func[], ix: util.NameIndex, rewritten: boolean, r: Refs, ins: ssa.SInst): Refs {
+  let at: i32 = ix.find(ins.str);
+  if (at < 0) {
+    return r;
+  }
+  if (ins.kind_tag == ssasem.call() && rewritten && ins.args.len() == funcs[at].params.len()) {
+    return Refs { ...r, calls: r.calls.with(at, r.calls[at] + 1) };
+  }
+  if (!names_data(ins.kind_tag)) {
+    return Refs { ...r, other: r.other.with(at, true) };
+  }
+  return r;
+}
+
+// An instruction whose str is a string literal, a field or a variant, never
+// a function.
+function names_data(k: i32): boolean {
+  return k == 5 || reads(k) || k == ssasem.tuple_get() || k == ssasem.record_new() || k == ssasem.variant_new();
+}
+
+function reads(k: i32): boolean {
+  return k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get();
+}
+
+struct Plan { slots: Slot[][], ok: boolean[][] }
+
+function initial(funcs: ssasem.Func[], modes: i32[][], eligible: boolean[]): Plan {
+  let slots: Slot[][] = [];
+  let ok: boolean[][] = [];
+  for i in 0..funcs.len() {
+    let f: ssasem.Func = funcs[i];
+    let row: Slot[] = [];
+    let flags: boolean[] = [];
+    let usable: boolean = eligible[i] && !f.graph.takes_env && f.params.len() == f.graph.nparams && i < modes.len() && modes[i].len() == f.params.len();
+    for t in f.params {
+      let s: Slot = no_slot();
+      if (usable) {
+        s = slot_of(f, t);
+      }
+      row = row.append(s);
+      flags = flags.append(s.lanes.len() > 0);
+    }
+    slots = slots.append(row);
+    ok = ok.append(flags);
+  }
+  return Plan { slots: slots, ok: ok };
+}
+
+function any_ok(flags: boolean[]): boolean {
+  for x in flags {
+    if (x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function defs_of(g: ssa.SFunc): ssa.SInst[] {
+  let out: ssa.SInst[] = [];
+  for v in 0..g.nvals {
+    out = out.append(ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" });
+  }
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result < out.len()) {
+        out = out.with(ins.result, ins);
+      }
+    }
+  }
+  return out;
+}
+
+function through_copies(defs: ssa.SInst[], v: i32): i32 {
+  let x: i32 = v;
+  let steps: i32 = 0;
+  while (x >= 0 && x < defs.len() && steps < 64) {
+    let d: ssa.SInst = defs[x];
+    if (d.kind_tag != 7 || d.args.len() != 1) {
+      return x;
+    }
+    x = d.args[0];
+    steps = steps + 1;
+  }
+  return x;
+}
+
+function param_value(f: ssasem.Func, k: i32): i32 {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.param() && ins.imm == k) {
+        return ins.result;
+      }
+    }
+  }
+  return 0 - 1;
+}
+
+function marked(flags: boolean[], v: i32): boolean {
+  return v >= 0 && v < flags.len() && flags[v];
+}
+
+// v and the copies of it.
+function aliases(g: ssa.SFunc, v: i32): boolean[] {
+  let out: boolean[] = __alloc_bool(g.nvals);
+  if (v < 0 || v >= g.nvals) {
+    return out;
+  }
+  out = out.with(v, true);
+  let n: i32 = 0;
+  let grown: i32 = 1;
+  while (grown > n) {
+    n = grown;
+    for b in g.blocks {
+      for ins in b.insts {
+        if (copied(out, ins)) {
+          out = out.with(ins.result, true);
+          grown = grown + 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function copied(held: boolean[], ins: ssa.SInst): boolean {
+  return ins.kind_tag == 7 && ins.args.len() == 1 && marked(held, ins.args[0]) && ins.result >= 0 && !marked(held, ins.result);
+}
+
+function promoted_arg(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, ins: ssa.SInst, m: i32, t: typeinfo.Type): boolean {
+  if (ins.kind_tag != ssasem.call()) {
+    return false;
+  }
+  let c: i32 = ix.find(ins.str);
+  return c >= 0 && ins.args.len() == p.ok[c].len() && p.ok[c][m] && semtypes.equal(funcs[c].params[m], t);
+}
+
+// Whether every use of the values `held` is one the rewrite takes apart. A
+// payload is the record an Option slot holds.
+function read_apart(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, f: ssasem.Func, held: boolean[], t: typeinfo.Type, s: Slot, payload: boolean): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      for k in 0..ins.args.len() {
+        if (marked(held, ins.args[k]) && !allowed_use(funcs, ix, p, f, ins, k, t, s, payload)) {
+          return false;
+        }
+      }
+    }
+    if (b.term.kind_tag == 1 && marked(held, b.term.value) || b.term.kind_tag == 3 && marked(held, b.term.cond)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function allowed_use(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, f: ssasem.Func, ins: ssa.SInst, k: i32, t: typeinfo.Type, s: Slot, payload: boolean): boolean {
+  if (ins.kind_tag == 7 || promoted_arg(funcs, ix, p, ins, k, t)) {
+    return true;
+  }
+  if (payload || !s.option) {
+    return ins.kind_tag == ssasem.record_get() && ins.imm >= 0 && ins.result >= 0;
+  }
+  if (ins.kind_tag == ssasem.variant_is()) {
+    return ins.result >= 0 && (ins.str == "Some" || ins.str == "None");
+  }
+  return payload_read(funcs, ix, p, f, ins, s);
+}
+
+function payload_read(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, f: ssasem.Func, ins: ssa.SInst, s: Slot): boolean {
+  if (ins.kind_tag != ssasem.variant_get() || ins.str != "Some" || ins.imm != 0 || ins.result < 0) {
+    return false;
+  }
+  return !s.record || read_apart(funcs, ix, p, f, aliases(f.graph, ins.result), f.values[ins.result], s, true);
+}
+
+function settle(funcs: ssasem.Func[], ix: util.NameIndex, p0: Plan): Plan {
+  let p: Plan = p0;
+  let changed: boolean = true;
+  for _ in 0..64 {
+    if (!changed) {
+      break;
+    }
+    changed = false;
+    for j in 0..funcs.len() {
+      let f: ssasem.Func = funcs[j];
+      for k in 0..p.ok[j].len() {
+        if (p.ok[j][k]) {
+          let v: i32 = param_value(f, k);
+          if (v < 0 || !read_apart(funcs, ix, p, f, aliases(f.graph, v), f.params[k], p.slots[j][k], false)) {
+            p = demoted(p, j, k);
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+  if (changed) {
+    return initial_none(p);
+  }
+  return p;
+}
+
+// A plan that promotes nothing, for a fixed point that does not settle.
+function initial_none(p: Plan): Plan {
+  let ok: boolean[][] = [];
+  for row in p.ok {
+    let flags: boolean[] = [];
+    for x in row {
+      flags = flags.append(false);
+    }
+    ok = ok.append(flags);
+  }
+  return Plan { ...p, ok: ok };
+}
+
+function demoted(p: Plan, j: i32, k: i32): Plan {
+  return Plan { ...p, ok: p.ok.with(j, p.ok[j].with(k, false)) };
+}
+
+pub function promote(funcs: ssasem.Func[], names: string[], modes: i32[][], rewrite: boolean[], unnamed: boolean[]): Promoted {
+  let ix: util.NameIndex = util.name_index(names);
+  let direct: boolean[] = direct_only(funcs, ix, rewrite);
+  let anchored: boolean[] = anchored_callees(funcs, ix);
+  let eligible: boolean[] = [];
+  for i in 0..funcs.len() {
+    eligible = eligible.append(direct[i] && rewrite[i] && unnamed[i] && !anchored[i]);
+  }
+  let p: Plan = settle(funcs, ix, initial(funcs, modes, eligible));
+  let out: ssasem.Func[] = [];
+  let out_modes: i32[][] = [];
+  let changed: boolean[] = [];
+  for i in 0..funcs.len() {
+    let f: ssasem.Func = funcs[i];
+    let m: i32[] = [];
+    if (i < modes.len()) {
+      m = modes[i];
+    }
+    let touched: boolean = any_ok(p.ok[i]) || rewrite[i] && calls_promoted(f, ix, p);
+    if (touched) {
+      let r: Rewritten = rewritten(funcs, ix, p, i, m);
+      f = r.f;
+      m = r.modes;
+    }
+    out = out.append(f);
+    out_modes = out_modes.append(m);
+    changed = changed.append(touched);
+  }
+  return Promoted { funcs: out, modes: out_modes, changed: changed };
+}
+
+// The callees an anchor names by argument position, which promoting would shift.
+function anchored_callees(funcs: ssasem.Func[], ix: util.NameIndex): boolean[] {
+  let out: boolean[] = __alloc_bool(funcs.len());
+  for f in funcs {
+    for a in f.anchors {
+      let at: i32 = ix.find(a.name);
+      if (at >= 0) {
+        out = out.with(at, true);
+      }
+    }
+  }
+  return out;
+}
+
+function calls_promoted(f: ssasem.Func, ix: util.NameIndex, p: Plan): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call()) {
+        let c: i32 = ix.find(ins.str);
+        if (c >= 0 && ins.args.len() == p.ok[c].len() && any_ok(p.ok[c])) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+struct Rewritten { f: ssasem.Func, modes: i32[] }
+
+// lanes: what each promoted value stands for; the value goes. built: the
+// lanes a caller made for an Option argument; the argument stays. placed:
+// instructions to put after the definition of the value in `after`.
+struct Work { f: ssasem.Func, defs: ssa.SInst[], lanes: i32[][], built: i32[][], after: i32[], placed: ssa.SInst[][], forced: i32[][] }
+
+function fresh(w: Work, t: typeinfo.Type): Work {
+  let f: ssasem.Func = w.f;
+  let g: ssa.SFunc = ssa.SFunc { ...f.graph, nvals: f.values.len() + 1 };
+  return Work { ...w, f: ssasem.Func { ...f, values: f.values.append(t), graph: g }, lanes: w.lanes.append([]), built: w.built.append([]) };
+}
+
+function placed_after(w: Work, v: i32, ins: ssa.SInst): Work {
+  let at: i32 = util.index_of_i32(w.after, v);
+  if (at < 0) {
+    return Work { ...w, after: w.after.append(v), placed: w.placed.append([ins]) };
+  }
+  return Work { ...w, placed: w.placed.with(at, w.placed[at].append(ins)) };
+}
+
+function rewritten(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, i: i32, modes0: i32[]): Rewritten {
+  let f0: ssasem.Func = funcs[i];
+  let g: ssa.SFunc = f0.graph;
+  let none: i32[][] = [];
+  for v in 0..g.nvals {
+    none = none.append([]);
+  }
+  let w: Work = Work { f: f0, defs: defs_of(g), lanes: none, built: none, after: [], placed: [], forced: [] };
+  let index: i32[] = [];
+  let at: i32 = 0;
+  for k in 0..f0.params.len() {
+    index = index.append(at);
+    at = at + slot_width(p, i, k);
+  }
+  w = param_lanes(w, p, i);
+  let e: Emit = Emit { done: [], cur: ssa.SBlock { id: 0 - 1, insts: [], term: jump(0), preds: [] }, next: next_block_id(g), moved: [], to: [] };
+  for b in g.blocks {
+    e = Emit { ...e, cur: ssa.SBlock { ...b, insts: [] } };
+    for ins in b.insts {
+      let c: i32 = promoted_callee(ix, p, ins);
+      if (c >= 0) {
+        let gd: Guarded = guarded_args(p, c, w, e, ins);
+        w = gd.w;
+        e = gd.e;
+      }
+      let step: Step = rewrite_inst(funcs, ix, p, i, w, ins, index);
+      w = Work { ...step.w, forced: [] };
+      e = Emit { ...e, cur: ssa.SBlock { ...e.cur, insts: util.append_all(e.cur.insts, step.insts) } };
+    }
+    if (e.cur.id != b.id) {
+      e = Emit { ...e, moved: e.moved.append(b.id), to: e.to.append(e.cur.id) };
+      w = Work { ...w, f: ssasem.Func { ...w.f, source_positions: sourcepos.continued(w.f.source_positions, b.id, e.cur.id) } };
+    }
+    e = Emit { ...e, done: e.done.append(e.cur) };
+  }
+  let blocks: ssa.SBlock[] = with_placed(repointed(e), w);
+  let own: ssasem.Contract = promoted_contract(p, i, ssasem.Contract { name: "", params: f0.params, modes: modes0, result: f0.result });
+  let f: ssasem.Func = w.f;
+  let graph: ssa.SFunc = ssa.SFunc { ...f.graph, blocks: blocks, nparams: own.params.len() };
+  let out: ssasem.Func = ssasem.Func { ...f, params: own.params, graph: graph, calls: promoted_contracts(ix, p, f.calls) };
+  return Rewritten { f: numbered(out), modes: own.modes };
+}
+
+function slot_width(p: Plan, i: i32, k: i32): i32 {
+  if (p.ok[i][k]) {
+    return p.slots[i][k].lanes.len();
+  }
+  return 1;
+}
+
+// Renumbers the values so that parameter k is value k.
+function numbered(f: ssasem.Func): ssasem.Func {
+  let g: ssa.SFunc = f.graph;
+  let map: i32[] = param_order(f);
+  let values: typeinfo.Type[] = f.values;
+  for v in 0..g.nvals {
+    values = values.with(map[v], f.values[v]);
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in g.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      insts = insts.append(numbered_inst(map, ins));
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: numbered_term(map, b.term) });
+  }
+  let dbg: i32[] = [];
+  for d in f.dbg_vals {
+    dbg = dbg.append(mapped(map, d));
+  }
+  return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...g, blocks: blocks }, dbg_vals: dbg, source_positions: sourcepos.renamed(f.source_positions, map) };
+}
+
+// Each value's new number: parameter k is k, and the rest follow in order.
+function param_order(f: ssasem.Func): i32[] {
+  let g: ssa.SFunc = f.graph;
+  let map: i32[] = [];
+  for v in 0..g.nvals {
+    map = map.append(0 - 1);
+  }
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.param() && ins.result >= 0) {
+        map = map.with(ins.result, ins.imm);
+      }
+    }
+  }
+  let next: i32 = f.params.len();
+  for v in 0..g.nvals {
+    if (map[v] < 0) {
+      map = map.with(v, next);
+      next = next + 1;
+    }
+  }
+  return map;
+}
+
+function numbered_term(map: i32[], t: ssa.STerm): ssa.STerm {
+  if (t.kind_tag == 1 && t.value >= 0) {
+    return ssa.STerm { ...t, value: map[t.value] };
+  }
+  if (t.kind_tag == 3 && t.cond >= 0) {
+    return ssa.STerm { ...t, cond: map[t.cond] };
+  }
+  return t;
+}
+
+function mapped(map: i32[], v: i32): i32 {
+  if (v >= 0 && v < map.len()) {
+    return map[v];
+  }
+  return v;
+}
+
+function numbered_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
+  let args: i32[] = [];
+  for a in ins.args {
+    args = args.append(mapped(map, a));
+  }
+  let imm: i32 = ins.imm;
+  let base: i32 = ssasem.update_base(ins);
+  if (base >= 0) {
+    imm = mapped(map, base) + 1;
+  }
+  return ssa.SInst { ...ins, result: mapped(map, ins.result), args: args, imm: imm };
+}
+
+// The lanes of each promoted parameter, of its copies and, for an Option of
+// a record, of its payload: new values the parameter instructions define.
+function param_lanes(w0: Work, p: Plan, i: i32): Work {
+  let w: Work = w0;
+  let g: ssa.SFunc = w0.f.graph;
+  for k in 0..p.ok[i].len() {
+    if (p.ok[i][k]) {
+      let s: Slot = p.slots[i][k];
+      let ids: i32[] = [];
+      for t in s.lanes {
+        ids = ids.append(w.f.values.len());
+        w = fresh(w, t);
+      }
+      let held: boolean[] = aliases(g, param_value(w0.f, k));
+      w = with_lanes(w, held, ids);
+      if (s.option && s.record) {
+        w = payload_lanes(w, g, held, ids);
+      }
+    }
+  }
+  return w;
+}
+
+function with_lanes(w0: Work, held: boolean[], ids: i32[]): Work {
+  let w: Work = w0;
+  for x in 0..held.len() {
+    if (held[x]) {
+      w = Work { ...w, lanes: w.lanes.with(x, ids) };
+    }
+  }
+  return w;
+}
+
+function payload_lanes(w0: Work, g: ssa.SFunc, held: boolean[], ids: i32[]): Work {
+  let w: Work = w0;
+  let rest: i32[] = [];
+  for n in 1..ids.len() {
+    rest = rest.append(ids[n]);
+  }
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.variant_get() && ins.args.len() == 1 && marked(held, ins.args[0])) {
+        w = with_lanes(w, aliases(g, ins.result), rest);
+      }
+    }
+  }
+  return w;
+}
+
+struct Step { w: Work, insts: ssa.SInst[] }
+
+function copy_of(result: i32, from: i32): ssa.SInst {
+  return ssa.SInst { kind_tag: 7, result: result, args: [from], imm: 0, str: "" };
+}
+
+function lanes_at(w: Work, v: i32): i32[] {
+  if (v >= 0 && v < w.lanes.len()) {
+    return w.lanes[v];
+  }
+  return [];
+}
+
+function rewrite_inst(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, i: i32, w: Work, ins: ssa.SInst, index: i32[]): Step {
+  if (ins.kind_tag == ssasem.param()) {
+    return param_insts(w, p, i, ins, index);
+  }
+  if (lanes_at(w, ins.result).len() > 0) {
+    return Step { w: w, insts: [] };
+  }
+  if (reads(ins.kind_tag) && ins.args.len() == 1) {
+    let held: i32[] = lanes_at(w, ins.args[0]);
+    if (held.len() > 0) {
+      return Step { w: w, insts: [read_inst(ins, held)] };
+    }
+  }
+  if (ins.kind_tag == ssasem.call()) {
+    let c: i32 = ix.find(ins.str);
+    if (c >= 0 && ins.args.len() == p.ok[c].len() && any_ok(p.ok[c])) {
+      return call_insts(p, c, w, ins);
+    }
+  }
+  return Step { w: w, insts: [ins] };
+}
+
+function param_insts(w: Work, p: Plan, i: i32, ins: ssa.SInst, index: i32[]): Step {
+  let k: i32 = ins.imm;
+  if (k < 0 || k >= index.len()) {
+    return Step { w: w, insts: [ins] };
+  }
+  if (!p.ok[i][k]) {
+    return Step { w: w, insts: [ssa.SInst { ...ins, imm: index[k] }] };
+  }
+  let ids: i32[] = lanes_at(w, ins.result);
+  let out: ssa.SInst[] = [];
+  for n in 0..ids.len() {
+    out = out.append(ssa.SInst { kind_tag: ssasem.param(), result: ids[n], args: [], imm: index[k] + n, str: "" });
+  }
+  return Step { w: w, insts: out };
+}
+
+// A field of a promoted value is its lane, an Option test its flag, and a
+// scalar payload its one lane.
+function read_inst(ins: ssa.SInst, held: i32[]): ssa.SInst {
+  if (ins.kind_tag == ssasem.record_get()) {
+    return copy_of(ins.result, held[ins.imm]);
+  }
+  if (ins.kind_tag == ssasem.variant_is() && ins.str == "Some") {
+    return copy_of(ins.result, held[0]);
+  }
+  if (ins.kind_tag == ssasem.variant_is()) {
+    return ssa.SInst { kind_tag: 10, result: ins.result, args: [held[0]], imm: 0, str: "!" };
+  }
+  return copy_of(ins.result, held[1]);
+}
+
+function call_insts(p: Plan, c: i32, w0: Work, ins: ssa.SInst): Step {
+  let w: Work = w0;
+  let before: ssa.SInst[] = [];
+  let args: i32[] = [];
+  for m in 0..ins.args.len() {
+    let a: i32 = ins.args[m];
+    if (!p.ok[c][m]) {
+      args = args.append(a);
+    } else {
+      let s: Slot = p.slots[c][m];
+      let held: i32[] = lanes_at(w, a);
+      if (held.len() == 0 && m < w.forced.len()) {
+        held = w.forced[m];
+      }
+      if (held.len() == 0 && !s.option) {
+        let r: Read = fields_read(w, a, s);
+        w = r.w;
+        before = util.append_all(before, r.insts);
+        held = r.ids;
+      } else if (held.len() == 0) {
+        let o: Laned = option_lanes(w, a, s);
+        w = o.w;
+        held = o.ids;
+      }
+      args = util.append_all(args, held);
+    }
+  }
+  return Step { w: w, insts: before.append(ssa.SInst { ...ins, args: args }) };
+}
+
+struct Read { w: Work, insts: ssa.SInst[], ids: i32[] }
+
+// The rewritten blocks so far and the one being filled. A block split at a
+// call continues in a new block; moved[k] is an original block whose end is
+// now block to[k].
+struct Emit { done: ssa.SBlock[], cur: ssa.SBlock, next: i32, moved: i32[], to: i32[] }
+
+function next_block_id(g: ssa.SFunc): i32 {
+  let hi: i32 = 0;
+  for b in g.blocks {
+    if (b.id >= hi) {
+      hi = b.id + 1;
+    }
+  }
+  return hi;
+}
+
+function promoted_callee(ix: util.NameIndex, p: Plan, ins: ssa.SInst): i32 {
+  if (ins.kind_tag != ssasem.call()) {
+    return 0 - 1;
+  }
+  let c: i32 = ix.find(ins.str);
+  if (c >= 0 && ins.args.len() == p.ok[c].len() && any_ok(p.ok[c])) {
+    return c;
+  }
+  return 0 - 1;
+}
+
+struct Guarded { w: Work, e: Emit }
+
+// An Option argument that is not built from constructions in sight is tested
+// where it is passed: the block splits, one arm reads the payload's fields,
+// the other passes zeros, and the call continues where the two join.
+function guarded_args(p: Plan, c: i32, w0: Work, e0: Emit, ins: ssa.SInst): Guarded {
+  let w: Work = w0;
+  let e: Emit = e0;
+  let forced: i32[][] = [];
+  for m in 0..ins.args.len() {
+    let lanes: i32[] = [];
+    let a: i32 = ins.args[m];
+    if (p.ok[c][m] && p.slots[c][m].option && lanes_at(w, a).len() == 0 && !constructed(w, a, [])) {
+      let g: Guarded = guard(w, e, a, p.slots[c][m]);
+      w = g.w;
+      e = g.e;
+      lanes = w.forced[0];
+    }
+    forced = forced.append(lanes);
+  }
+  return Guarded { w: Work { ...w, forced: forced }, e: e };
+}
+
+function constructed(w: Work, v: i32, seen: i32[]): boolean {
+  let x: i32 = through_copies(w.defs, v);
+  if (x < 0 || x >= w.defs.len()) {
+    return false;
+  }
+  if (lanes_at(w, x).len() > 0 || util.index_of_i32(seen, x) >= 0) {
+    return true;
+  }
+  let d: ssa.SInst = w.defs[x];
+  if (d.kind_tag != 8) {
+    return option_built(d);
+  }
+  let walked: i32[] = seen.append(x);
+  for a in d.args {
+    if (!constructed(w, a, walked)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function option_built(d: ssa.SInst): boolean {
+  return d.kind_tag == ssasem.variant_new() && (d.str == "Some" && d.args.len() == 1 || d.str == "None" && d.args.len() == 0);
+}
+
+function branch(cond: i32, t: i32, f: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 };
+}
+
+function jump(target: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+}
+
+// Splits e0.cur at the call and leaves the lanes in w.forced[0].
+function guard(w0: Work, e0: Emit, a: i32, s: Slot): Guarded {
+  let w: Work = w0;
+  let tag: i32 = w.f.values.len();
+  w = fresh(w, t_bool());
+  let some: i32 = e0.next;
+  let none: i32 = some + 1;
+  let join: i32 = some + 2;
+  let head: ssa.SBlock = ssa.SBlock { ...e0.cur, insts: e0.cur.insts.append(ssa.SInst { kind_tag: ssasem.variant_is(), result: tag, args: [a], imm: 0, str: "Some" }), term: branch(tag, some, none) };
+  let read: ssa.SInst[] = [];
+  let parts: i32[] = [];
+  if (s.record) {
+    let payload: i32 = w.f.values.len();
+    let at: i32 = semrecords.find_enum(w.f.enums, w.f.values[a]);
+    w = fresh(w, w.f.enums[at].variants[0].fields[0].ty);
+    read = read.append(ssa.SInst { kind_tag: ssasem.variant_get(), result: payload, args: [a], imm: 0, str: "Some" });
+    for n in 1..s.lanes.len() {
+      let id: i32 = w.f.values.len();
+      w = fresh(w, s.lanes[n]);
+      read = read.append(ssa.SInst { kind_tag: ssasem.record_get(), result: id, args: [payload], imm: n - 1, str: s.names[n - 1] });
+      parts = parts.append(id);
+    }
+  } else {
+    let id: i32 = w.f.values.len();
+    w = fresh(w, s.lanes[1]);
+    read = read.append(ssa.SInst { kind_tag: ssasem.variant_get(), result: id, args: [a], imm: 0, str: "Some" });
+    parts = parts.append(id);
+  }
+  let zeros: ssa.SInst[] = [];
+  let phis: ssa.SInst[] = [];
+  let lanes: i32[] = [tag];
+  for k in 0..parts.len() {
+    let z: i32 = w.f.values.len();
+    w = fresh(w, s.lanes[k + 1]);
+    zeros = zeros.append(ssa.SInst { kind_tag: ssasem.zero(), result: z, args: [], imm: 0, str: "" });
+    let id: i32 = w.f.values.len();
+    w = fresh(w, s.lanes[k + 1]);
+    phis = phis.append(ssa.SInst { kind_tag: 8, result: id, args: [parts[k], z], imm: 0, str: "" });
+    lanes = lanes.append(id);
+  }
+  let arms: ssa.SBlock[] = [
+    head,
+    ssa.SBlock { id: some, insts: read, term: jump(join), preds: [head.id] },
+    ssa.SBlock { id: none, insts: zeros, term: jump(join), preds: [head.id] },
+  ];
+  let cont: ssa.SBlock = ssa.SBlock { id: join, insts: phis, term: e0.cur.term, preds: [some, none] };
+  return Guarded { w: Work { ...w, forced: [lanes] }, e: Emit { ...e0, done: util.append_all(e0.done, arms), cur: cont, next: join + 1 } };
+}
+
+// A successor of a split block names the block that now ends it.
+function repointed(e: Emit): ssa.SBlock[] {
+  if (e.moved.len() == 0) {
+    return e.done;
+  }
+  let out: ssa.SBlock[] = [];
+  for b in e.done {
+    let preds: i32[] = [];
+    for q in b.preds {
+      let at: i32 = util.index_of_i32(e.moved, q);
+      if (at >= 0 && targets(e.done, e.to[at], b.id)) {
+        preds = preds.append(e.to[at]);
+      } else {
+        preds = preds.append(q);
+      }
+    }
+    out = out.append(ssa.SBlock { ...b, preds: preds });
+  }
+  return out;
+}
+
+function targets(blocks: ssa.SBlock[], from: i32, to: i32): boolean {
+  for b in blocks {
+    if (b.id == from) {
+      let t: ssa.STerm = b.term;
+      return t.kind_tag == 2 && t.target == to || t.kind_tag == 3 && (t.t == to || t.f == to);
+    }
+  }
+  return false;
+}
+
+function fields_read(w0: Work, a: i32, s: Slot): Read {
+  let w: Work = w0;
+  let insts: ssa.SInst[] = [];
+  let ids: i32[] = [];
+  for n in 0..s.lanes.len() {
+    let id: i32 = w.f.values.len();
+    w = fresh(w, s.lanes[n]);
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: id, args: [a], imm: n, str: s.names[n] });
+    ids = ids.append(id);
+  }
+  return Read { w: w, insts: insts, ids: ids };
+}
+
+struct Laned { w: Work, ids: i32[] }
+
+// The lanes of an Option argument, made beside each construction and
+// joined where the constructions join.
+function option_lanes(w0: Work, a: i32, s: Slot): Laned {
+  let x: i32 = through_copies(w0.defs, a);
+  let held: i32[] = lanes_at(w0, x);
+  if (held.len() == 0) {
+    held = w0.built[x];
+  }
+  if (held.len() > 0) {
+    return Laned { w: w0, ids: held };
+  }
+  let d: ssa.SInst = w0.defs[x];
+  let w: Work = w0;
+  let ids: i32[] = [];
+  for t in s.lanes {
+    ids = ids.append(w.f.values.len());
+    w = fresh(w, t);
+  }
+  w = Work { ...w, built: w.built.with(x, ids) };
+  if (d.kind_tag == 8) {
+    return Laned { w: joined_lanes(w, x, d, s, ids), ids: ids };
+  }
+  return Laned { w: built_lanes(w, x, d, s, ids), ids: ids };
+}
+
+function joined_lanes(w0: Work, x: i32, d: ssa.SInst, s: Slot, ids: i32[]): Work {
+  let w: Work = w0;
+  let incoming: i32[][] = [];
+  for arg in d.args {
+    let o: Laned = option_lanes(w, arg, s);
+    w = o.w;
+    incoming = incoming.append(o.ids);
+  }
+  for n in 0..ids.len() {
+    let phi_args: i32[] = [];
+    for row in incoming {
+      phi_args = phi_args.append(row[n]);
+    }
+    w = placed_after(w, x, ssa.SInst { kind_tag: 8, result: ids[n], args: phi_args, imm: 0, str: "" });
+  }
+  return w;
+}
+
+function built_lanes(w0: Work, x: i32, d: ssa.SInst, s: Slot, ids: i32[]): Work {
+  let w: Work = w0;
+  let some: boolean = d.str == "Some";
+  let flag: i32 = 0;
+  if (some) {
+    flag = 1;
+  }
+  w = placed_after(w, x, ssa.SInst { kind_tag: 2, result: ids[0], args: [], imm: flag, str: "" });
+  for n in 1..ids.len() {
+    if (!some) {
+      w = placed_after(w, x, ssa.SInst { kind_tag: ssasem.zero(), result: ids[n], args: [], imm: 0, str: "" });
+    } else if (!s.record) {
+      w = placed_after(w, x, copy_of(ids[n], d.args[0]));
+    } else {
+      w = placed_after(w, x, ssa.SInst { kind_tag: ssasem.record_get(), result: ids[n], args: [d.args[0]], imm: n - 1, str: s.names[n - 1] });
+    }
+  }
+  return w;
+}
+
+function with_placed(blocks: ssa.SBlock[], w: Work): ssa.SBlock[] {
+  if (w.after.len() == 0) {
+    return blocks;
+  }
+  let out: ssa.SBlock[] = [];
+  for b in blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      insts = insts.append(ins);
+      let at: i32 = util.index_of_i32(w.after, ins.result);
+      if (ins.result >= 0 && at >= 0) {
+        insts = util.append_all(insts, w.placed[at]);
+      }
+    }
+    out = out.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return out;
+}
+
+function promoted_contracts(ix: util.NameIndex, p: Plan, calls: ssasem.Contract[]): ssasem.Contract[] {
+  let out: ssasem.Contract[] = [];
+  for c in calls {
+    let at: i32 = ix.find(c.name);
+    if (at >= 0 && c.params.len() == p.ok[at].len() && any_ok(p.ok[at])) {
+      out = out.append(promoted_contract(p, at, c));
+    } else {
+      out = out.append(c);
+    }
+  }
+  return out;
+}
+
+function promoted_contract(p: Plan, at: i32, c: ssasem.Contract): ssasem.Contract {
+  let params: typeinfo.Type[] = [];
+  let modes: i32[] = [];
+  for k in 0..c.params.len() {
+    if (p.ok[at][k]) {
+      for t in p.slots[at][k].lanes {
+        params = params.append(t);
+        modes = modes.append(ssasem.value_mode());
+      }
+    } else {
+      params = params.append(c.params[k]);
+      if (k < c.modes.len()) {
+        modes = modes.append(c.modes[k]);
+      }
+    }
+  }
+  return ssasem.Contract { ...c, params: params, modes: modes };
+}

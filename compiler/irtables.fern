@@ -1045,7 +1045,7 @@ function declares_typevars(fn: parser.FuncDecl): boolean {
   return fn.type_params.len() > 0 || fn.all_type_params.len() > 0;
 }
 
-pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
+pub function fn_sigs(funcs: parser.FuncDecl[]): irverify.FnSig[] {
   let sigs: irverify.FnSig[] = [];
   for fn in funcs {
     let nm: string = fn.name;
@@ -1058,7 +1058,7 @@ pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
     }
     sigs = sigs.append(irverify.FnSig { name: nm, n_params: np });
   }
-  return irverify.sig_index(sigs);
+  return sigs;
 }
 
 pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): string[] {
