@@ -1,24 +1,11 @@
 name: Fern image
+
+# Called from ci.yml, which decides from the changed files whether this lane
+# runs (its path filter is the lane table's `fern-image` row) and cancels the
+# rest of the run when it goes red. `workflow_dispatch` runs it on its own.
 on:
-  pull_request:
-    paths:
-      - 'fern-image/**'
-      - 'compiler/**'
-      - 'internal/stdlib/**'
-      - 'bootstrap/**'
-      - 'scripts/fern-embed-stage'
-      - 'Makefile'
-      - '.github/workflows/fern-image.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'fern-image/**'
-      - 'compiler/**'
-      - 'internal/stdlib/**'
-      - 'bootstrap/**'
-      - 'scripts/fern-embed-stage'
-      - 'Makefile'
-      - '.github/workflows/fern-image.yml'
+  workflow_call:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

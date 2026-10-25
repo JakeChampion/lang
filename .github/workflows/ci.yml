@@ -149,6 +149,18 @@ jobs:
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml"
               ] },
+              "fern-image": { "paths": [
+                "fern-image/**",
+                "compiler/**",
+                "internal/stdlib/**",
+                "bootstrap/**",
+                "scripts/fern-embed-stage",
+                "Makefile",
+                ".github/workflows/fern-image.yml",
+                ".github/workflows/ci-suite.yml",
+                ".github/workflows/ci-main.yml",
+                ".github/workflows/ci.yml"
+              ] },
               "vscode-extension": { "paths": [
                 "editors/vscode/**",
                 ".github/workflows/vscode-extension.yml",
