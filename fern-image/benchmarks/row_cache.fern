@@ -1,0 +1,46 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+import "std/i32";
+import "std/i64";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() != 3 || (av[1] != "0" && av[1] != "12000") || (av[2] != "16" && av[2] != "128")) {
+    eprint("usage: row_cache 0|12000 16|128");
+    return 1;
+  }
+  let cache_bytes = 0;
+  let count = 16;
+  if (av[1] == "12000") { cache_bytes = 12000; }
+  if (av[2] == "128") { count = 128; }
+  let before: i64 = __heap_bump_bytes();
+  let allocated: i64 = __heap_alloc_count();
+  let limits = pipeline.Limits { max_pixels: 10000000, max_row_bytes: 4000, max_scratch_bytes: 28000, max_nodes: 2, max_samples: 320000 };
+  let input = match (pipeline.solid(1000, 10000, pixels.RGBA8, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 }, limits)) { Ok(v) => v, Err(_) => { return 2; } };
+  input = match (pipeline.bilinear(input, 500, 20000, limits)) { Ok(v) => v, Err(_) => { return 3; } };
+  let checksum = cell_new(0);
+  let consume = (row: pixels.Image): Result[void, i32] => {
+    if (row.layout.width != 500 || row.layout.height != 1 || row.data.len() != 2000) { return Err(4); }
+    let first = match (pixels.read_pixel(row, 0, 0)) { Ok(v) => v, Err(_) => { return Err(5); } };
+    let last = match (pixels.read_pixel(row, 499, 0)) { Ok(v) => v, Err(_) => { return Err(6); } };
+    if (first.r != 17 as u8 || last.r != 17 as u8 || first.a != 128 as u8 || last.a != 128 as u8) { return Err(7); }
+    checksum.set(checksum.get() + last.r as i32);
+    return Ok(());
+  };
+  let stats = match (pipeline.render_rows(input, 10000, count, limits, cache_bytes, never_cancel, consume)) { Ok(v) => v, Err(_) => { return 8; } };
+  let allocations: i64 = __heap_alloc_count() - allocated;
+  let after: i64 = __heap_bump_bytes();
+  if (stats.rows != count || checksum.get() != count * 17 || allocations <= 0i64 || after < before) { return 9; }
+  if (cache_bytes == 0 && (stats.hits != 0 || stats.misses != count * 3 || stats.peak_cache_bytes != 0)) { return 10; }
+  if (cache_bytes > 0 && (stats.hits <= 0 || stats.misses >= count * 3 || stats.peak_cache_bytes > cache_bytes || stats.peak_cache_entries > 4)) { return 11; }
+  print("cache_bytes=" + cache_bytes.to_string() + " count=" + count.to_string() + " allocations=" + allocations.to_string()
+    + " bump_before=" + before.to_string() + " bump_after=" + after.to_string() + " bump_delta=" + (after - before).to_string()
+    + " hits=" + stats.hits.to_string() + " misses=" + stats.misses.to_string()
+    + " peak_cache_bytes=" + stats.peak_cache_bytes.to_string() + " peak_cache_entries=" + stats.peak_cache_entries.to_string()
+    + " checksum=" + checksum.get().to_string());
+  return 0;
+}

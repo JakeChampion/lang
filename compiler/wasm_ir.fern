@@ -12763,7 +12763,7 @@ function called_names(mod: parser.Module): util.NameIndex {
 struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, clkres: boolean, ep: boolean, ex: boolean, net: boolean, fs: boolean, wait: boolean }
 
 pub function census_on(sw: asmcore.Switches): boolean {
-  return sw.sanitize || asmcore.leak_check_on();
+  return sw.sanitize || sw.leak_check;
 }
 
 function host_needs(mod: parser.Module, census: boolean): HostNeeds {

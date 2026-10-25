@@ -92,7 +92,7 @@ func TestSelfHostBufCopy(t *testing.T) {
 					t.Fatalf("%s: shared text extraction body missing", target)
 				}
 				if target == "x86-64-linux" {
-					copyPattern = regexp.MustCompile(`\n\s+rep movsb\n`)
+					copyPattern = regexp.MustCompile(`\n\s+(rep movsb|(call|jmp) __fern_memcpy)\n`)
 				} else {
 					copyPattern = regexp.MustCompile(`\n\s+ldr x[0-9]+, \[x1\], #8\n\s+str x[0-9]+, \[x0\], #8\n`)
 				}

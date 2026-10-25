@@ -975,7 +975,8 @@ function main(): i32 {
 // ListenErrorTypedSource binds the held port every way a server can: its
 // own listener single-process, supervised, and per worker with reuse_port,
 // then the metrics exporter single-process and supervised. Each must come
-// back as Err(ListenError) naming the port and AddrInUse; the exit code
+// back as Err(ListenError) naming the port and AddrInUse, and after a
+// metrics failure the server's own port must be free to bind again; the exit code
 // names the first that did not (tens digit the case, units the defect).
 func ListenErrorTypedSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
@@ -1020,15 +1021,36 @@ function main(): i32 {
     if (got != 0) {
         return 30 + got;
     }
-    got = refused(serve.run(0, serve.Config { ...serve.config(), metrics_port: held }, handle), held);
+    let own: i32 = free_port();
+    got = refused(serve.run(own, serve.Config { ...serve.config(), metrics_port: held }, handle), held);
     if (got != 0) {
         return 40 + got;
     }
-    got = refused(serve.supervise(0, serve.Config { ...serve.config(), workers: 1, metrics_port: held }, handle), held);
+    if (!rebinds(own)) {
+        return 46;
+    }
+    got = refused(serve.supervise(own, serve.Config { ...serve.config(), workers: 1, metrics_port: held }, handle), held);
     if (got != 0) {
         return 50 + got;
     }
+    if (!rebinds(own)) {
+        return 56;
+    }
     return 0;
+}
+function free_port(): i32 {
+    let fd: i32 = tcp_listen(0);
+    let port: i32 = tcp_local_port(fd);
+    tcp_close(fd);
+    return port;
+}
+function rebinds(port: i32): boolean {
+    let fd: i32 = tcp_listen(port);
+    if (fd < 0) {
+        return false;
+    }
+    tcp_close(fd);
+    return true;
 }
 `, port)
 }
