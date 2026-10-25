@@ -558,7 +558,7 @@ func capGrants(mans map[string]*manifest.Manifest, entry string) (map[string][]s
 	for dir := range out {
 		sort.Strings(out[dir])
 	}
-	var viols []string
+	var viols diag.Errors
 	for _, mdir := range dirs {
 		man := byDir[mdir]
 		held, governed := out[man.Dir]
@@ -577,14 +577,17 @@ func capGrants(mans map[string]*manifest.Manifest, entry string) (map[string][]s
 		for _, name := range names {
 			for _, c := range man.Deps[name].Capabilities {
 				if !heldSet[c] {
-					viols = append(viols, fmt.Sprintf("%s: dependency %q of %q is granted '%s' but %q itself holds only [%s] (attenuation: a dependency may grant at most what it holds)",
-						filepath.Join(man.Dir, manifest.FileName), name, man.Name, c, man.Name, strings.Join(held, ", ")))
+					viols = append(viols, &manifest.Error{
+						Path: filepath.Join(man.Dir, manifest.FileName),
+						Line: man.Deps[name].Line,
+						Msg:  fmt.Sprintf("dependency %q of %q is granted '%s' but %q itself holds only [%s] (attenuation: a dependency may grant at most what it holds)", name, man.Name, c, man.Name, strings.Join(held, ", ")),
+					})
 				}
 			}
 		}
 	}
 	if len(viols) > 0 {
-		return nil, errors.New(strings.Join(viols, "\n"))
+		return nil, viols
 	}
 	return out, nil
 }

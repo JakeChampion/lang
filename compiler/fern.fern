@@ -1602,6 +1602,19 @@ function manifest_refused(b: Bundle, dir: string, man: fern_toml.Manifest): Bund
   };
 }
 
+function grant_refused(b: Bundle, errors: pkggrants.Refusal[]): Bundle {
+  let failures: util.Diag[] = [];
+  for error in errors {
+    let index: i32 = util.index_of_str(b.files, error.path);
+    if (index < 0) {
+      index = b.files.len();
+      b = Bundle { ...b, files: b.files.append(error.path), maps: b.maps.append(util.no_line_map()), srcs: b.srcs.append("") };
+    }
+    failures = failures.append(util.Diag { ...error.diag, line: util.line_base(index) + error.diag.line });
+  }
+  return Bundle { ...b, failures: failures };
+}
+
 function manifest_reqs(man: fern_toml.Manifest): mvs.Req[] {
   let out: mvs.Req[] = [];
   let i: i32 = 0;
@@ -2359,6 +2372,7 @@ function is_vendorable(name: string): boolean {
 }
 
 struct Bundle {
+  failures: util.Diag[],
   entry: parser.Module,
   entry_ident: string,
   root: string,
@@ -2532,11 +2546,11 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let maps: util.LineMap[] = [s.maps[0]];
   let srcs: string[] = [s.srcs[0]];
   if (gov.man.err.len() > 0) {
-    return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: no_files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, gov.dir, gov.man);
+    return manifest_refused(Bundle { failures: [], entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: no_files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, gov.dir, gov.man);
   }
   let missing: util.Diag = emitforms.http_entry_refused(entry_mod, target);
   if (missing.message.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: no_files, maps: maps, srcs: srcs, err: missing.message, err_code: missing.code, err_line: missing.line, err_col: missing.col };
+    return Bundle { failures: [], entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: no_files, maps: maps, srcs: srcs, err: missing.message, err_code: missing.code, err_line: missing.line, err_col: missing.col };
   }
 
   let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], lines: [], cols: [], stdlibs: [], unrooted: "", display_queued: false }, entry_mod, dir_slash, root, deps, false);
@@ -2560,7 +2574,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       done_paths = done_paths.append(mpath);
       let rm: modloader.Resolved = read_bundle_module(s, mpath, from, ipath);
       if (!rm.ok) {
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: unloaded_error(rm, ipath), err_code: "E086", err_line: at_line, err_col: at_col };
+        return Bundle { failures: [], entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: unloaded_error(rm, ipath), err_code: "E086", err_line: at_line, err_col: at_col };
       }
       let mdir: string = modloader.dirname(util.clean_path(rm.shown));
       let origin: string = "";
@@ -2579,7 +2593,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
       let module_gov: Governed = governing_manifest(mdir);
       if (module_gov.man.err.len() > 0) {
-        return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, module_gov.dir, module_gov.man);
+        return manifest_refused(Bundle { failures: [], entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, module_gov.dir, module_gov.man);
       }
       let module_at: pkggrants.ModuleAt = module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib);
       module_packages = module_packages.append(module_at);
@@ -2593,29 +2607,29 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     }
   }
   if (q.unrooted.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_code: "", err_line: 0, err_col: 0 };
+    return Bundle { failures: [], entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_code: "", err_line: 0, err_col: 0 };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
   if let Some(imp) = flatten.import_cycle(entry_r, entry_ident, loaded, root) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: modloader.import_cycle_message(imp.path), err_code: "E086", err_line: imp.line, err_col: imp.col };
+    return Bundle { failures: [], entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: modloader.import_cycle_message(imp.path), err_code: "E086", err_line: imp.line, err_col: imp.col };
   }
   let prefixes: string[] = flatten.assign_prefixes(loaded);
   let checked: pkggrants.Checked = pkggrants.checked(grant_mans, root_package, module_packages, prefixes);
   pkgs = checked.pkgs;
-  if (checked.err.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err, err_code: "", err_line: 0, err_col: 0 };
+  if (checked.errors.len() > 0) {
+    return grant_refused(Bundle { failures: [], entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, checked.errors);
   }
   let reexports: util.Diag[] = visibility.reexport_diags(entry_r, loaded);
   if (reexports.len() > 0) {
     let d: util.Diag = reexports[0];
-    return Bundle { entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: entry_r, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: d.message, err_code: d.code, err_line: d.line, err_col: d.col };
+    return Bundle { failures: [], entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: entry_r, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: d.message, err_code: d.code, err_line: d.line, err_col: d.col };
   }
   let merged: parser.Module = flatten.bundle_with_prefixes(entry_r, loaded, target, prefixes);
   merged = visibility.scope_enums(merged, prefixes, package_roots);
 
   merged = parser.fill_default_args_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: merged, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 };
+  return Bundle { failures: [], entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: merged, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 };
 }
 
 function unloaded_error(rm: modloader.Resolved, ipath: string): string {
@@ -2630,6 +2644,9 @@ struct Loaded { b: Bundle, refused: Finding[] }
 function load_checked(s: Sources, root: string, target: string, embed_dir: string): Loaded {
   let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(s.srcs[0], target)));
   let b: Bundle = load_bundle(s, entry_mod, root, target);
+  if (b.failures.len() > 0) {
+    return Loaded { b: b, refused: errors_of(b.failures) };
+  }
   if (b.err.len() > 0) {
     let f: Finding = refusal(b.err);
     return Loaded { b: b, refused: [Finding { ...f, diag: util.Diag { ...f.diag, code: b.err_code, line: b.err_line, col: b.err_col } }] };
@@ -2683,7 +2700,7 @@ function load_source(entry_path: string, src: string, open: modloader.Buffers, r
   let (s, err) = entry_sources(entry_path, src);
   if (err.len() > 0) {
     let none: parser.Module = parser.parse_module(lexer.tokenize(""));
-    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], package_roots: [], files: [], maps: [], srcs: [], err: err, err_code: "", err_line: 0, err_col: 0 }, refused: [refusal(err)] };
+    return Loaded { b: Bundle { failures: [], entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], package_roots: [], files: [], maps: [], srcs: [], err: err, err_code: "", err_line: 0, err_col: 0 }, refused: [refusal(err)] };
   }
   return load_checked(Sources { ...s, open: open }, root, target, embed_dir);
 }
@@ -3554,7 +3571,7 @@ function lsp_close(s: Server, uri: string): Server {
 
 function lsp_doc(ld: Loaded): Doc {
   let b: Bundle = ld.b;
-  return Doc { loaded: b.err.len() == 0, prog: lspquery.program(b.merged, b.entry, b.loaded, b.srcs), files: b.files, maps: b.maps };
+  return Doc { loaded: b.err.len() == 0 && b.failures.len() == 0, prog: lspquery.program(b.merged, b.entry, b.loaded, b.srcs), files: b.files, maps: b.maps };
 }
 
 function lsp_query(s: Server, m: lsp.Message): (Server, string) {
@@ -5235,6 +5252,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let full: parser.Module = parser.erase_view_module(typed);
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
   let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
+  if (eprint_findings(st, errors_of(sub.diagnostics), entry_path, b.files, b.maps)) {
+    return 1;
+  }
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

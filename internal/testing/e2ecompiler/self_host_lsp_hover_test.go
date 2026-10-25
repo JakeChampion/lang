@@ -291,9 +291,9 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 		askLSP(t, s, dir, []string{"main.fern"}, []lspAsk{
 			defAsk("annotation-definition", "main.fern", 2, 35, "util.fern", rng(0, 11, 16)),
 			defAsk("qualifier-definition", "main.fern", 2, 31, "util.fern", rng(0, 11, 16)),
-			hoverAsk("annotation-hover", "main.fern", 2, 35, "struct util__Point { x: i32, y: i32 }", rng(2, 30, 40)),
-			hoverAsk("return-annotation", "main.fern", 1, 24, "struct util__Point { x: i32, y: i32 }", rng(1, 19, 29)),
-			hoverAsk("qualified-literal", "main.fern", 1, 47, "struct util__Point { x: i32, y: i32 }", rng(1, 39, 49)),
+			hoverAsk("annotation-hover", "main.fern", 2, 35, "struct util.Point { x: i32, y: i32 }", rng(2, 30, 40)),
+			hoverAsk("return-annotation", "main.fern", 1, 24, "struct util.Point { x: i32, y: i32 }", rng(1, 19, 29)),
+			hoverAsk("qualified-literal", "main.fern", 1, 47, "struct util.Point { x: i32, y: i32 }", rng(1, 39, 49)),
 			defAsk("qualified-literal", "main.fern", 1, 47, "util.fern", rng(0, 11, 16)),
 			hoverAsk("qualified-call", "main.fern", 2, 72, "(from util) function foo(): i32", rng(2, 66, 74)),
 			defAsk("qualified-call", "main.fern", 2, 72, "util.fern", rng(1, 13, 16)),
@@ -329,14 +329,14 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 			defAsk("b-variant", "b.fern", 1, 33, "b.fern", rng(0, 16, 20)),
 			hoverAsk("own-variant", "own.fern", 3, 17, "(variant of Kind) Text", rng(3, 16, 20)),
 			defAsk("own-variant", "own.fern", 3, 17, "own.fern", rng(1, 12, 16)),
-			hoverAsk("imported-variant", "own.fern", 4, 21, "(variant of a__Kind) Text", rng(4, 18, 24)),
+			hoverAsk("imported-variant", "own.fern", 4, 21, "(variant of a.Kind) Text", rng(4, 18, 24)),
 			defAsk("imported-variant", "own.fern", 4, 21, "a.fern", rng(0, 16, 20)),
-			hoverAsk("imported-call", "main.fern", 2, 41, "(from a) function ka(): a__Kind", rng(2, 39, 43)),
+			hoverAsk("imported-call", "main.fern", 2, 41, "(from a) function ka(): a.Kind", rng(2, 39, 43)),
 			defAsk("imported-call", "main.fern", 2, 41, "a.fern", rng(1, 13, 15)),
 			hoverAsk("no-search-in-siblings", "main.fern", 1, 33, "", lspRange{}),
 			defAsk("no-search-in-siblings", "main.fern", 1, 33, "", lspRange{}),
 			hoverAsk("no-type-in-siblings", "main.fern", 1, 19, "", lspRange{}),
-			hoverAsk("own-annotation", "main.fern", 2, 30, "enum a__Kind { Text }", rng(2, 30, 36)),
+			hoverAsk("own-annotation", "main.fern", 2, 30, "enum a.Kind { Text }", rng(2, 30, 36)),
 		})
 	})
 }

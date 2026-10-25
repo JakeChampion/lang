@@ -10,7 +10,7 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 
 pub struct FuncDecl { stdlib: string, no_inline: boolean, always_inline: boolean, name: string, receiver_name: string, receiver_type: string, receiver_own: boolean, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string, impl_trait: string, dyn_traits: string[], streams: i32[] }
 
-pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string, fn_param_types: string }
+pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string, fn_param_types: string, line: i32, col: i32 }
 
 pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, variant_field_names: string[], is_pub: boolean, is_package: boolean, opaque: boolean, module: string }
 
@@ -6417,10 +6417,10 @@ function assign_to(target: ast.Expr, rhs: ast.Expr, line: i32, col: i32): ast.St
       return s_assign_at(id.name, rhs, line, col, id.line, id.col);
     },
     ast.ExprIndex(ix) => {
-      return s_expr(e_call_at(e_ident("__set_index"), [ix.array, ix.index, rhs], ix.line, ix.col));
+      return s_expr(e_call_at(e_ident_at("__set_index", line, col), [ix.array, ix.index, rhs], ix.line, ix.col));
     },
     ast.ExprFieldAccess(fa) => {
-      return s_expr(e_call(e_ident("__set_field"), [fa.obj, e_string_at(fa.field, fa.line, fa.col), rhs]));
+      return s_expr(e_call(e_ident_at("__set_field", line, col), [fa.obj, e_string_at(fa.field, fa.line, fa.col), rhs]));
     },
     _ => {
       return s_unknown_at(coded_kind("P003", "left-hand side of assignment is not assignable"), line, col);
@@ -7805,21 +7805,23 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
 }
 
 function parse_struct_field(p: Par): (StructFieldDecl, Par) {
+  let line: i32 = p.peek_line();
+  let col: i32 = p.peek_col();
   let name: string = p.peek_ident();
   if (name.len() == 0) {
-    return (StructFieldDecl { name: "", type_name: "", fn_ret: "", fn_param_types: "" }, p);
+    return (StructFieldDecl { name: "", type_name: "", fn_ret: "", fn_param_types: "", line: line, col: col }, p);
   }
   p = p.advance();
   if (p.peek_punct() != ":") {
-    return (StructFieldDecl { name: name, type_name: "", fn_ret: "", fn_param_types: "" }, p);
+    return (StructFieldDecl { name: name, type_name: "", fn_ret: "", fn_param_types: "", line: line, col: col }, p);
   }
   p = p.advance();
-  return parse_field_type(p, name);
+  return parse_field_type(p, name, line, col);
 }
 
-function parse_field_type(p: Par, name: string): (StructFieldDecl, Par) {
+function parse_field_type(p: Par, name: string, line: i32, col: i32): (StructFieldDecl, Par) {
   let (ty, end) = parse_decl_type(p);
-  return (StructFieldDecl { name: name, type_name: ty.name, fn_ret: ty.fn_ret, fn_param_types: ty.fn_params }, end);
+  return (StructFieldDecl { name: name, type_name: ty.name, fn_ret: ty.fn_ret, fn_param_types: ty.fn_params, line: line, col: col }, end);
 }
 
 function parse_decl_tparams(p: Par, kind: string, name: string): (string[], Par) {
@@ -7987,7 +7989,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
         if (rnum > 0) {
           mark = "__ev" + dl_itoa(rnum);
         }
-        let (rf, rf_p) = parse_field_type(p, mark);
+        let (rf, rf_p) = parse_field_type(p, mark, vline, vcol);
         p = rf_p;
         fields = fields.append(rf);
         vfnames = vfnames.append(rfname);
@@ -8003,14 +8005,14 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
       }
     } else if (p.peek_punct() == "(") {
       p = p.advance();
-      let (tr, tr_p) = parse_field_type(p, "__ev");
+      let (tr, tr_p) = parse_field_type(p, "__ev", vline, vcol);
       p = tr_p;
       fields = fields.append(tr);
       let pnum: i32 = 1;
       let (pmore, pmore_p) = p.more_elems(")");
       p = pmore_p;
       while (pmore) {
-        let (tr2, tr2_p) = parse_field_type(p, "__ev" + dl_itoa(pnum));
+        let (tr2, tr2_p) = parse_field_type(p, "__ev" + dl_itoa(pnum), vline, vcol);
         p = tr2_p;
         fields = fields.append(tr2);
         pnum = pnum + 1;
@@ -8205,7 +8207,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_types: str
     if (fields.len() > 0) {
       field = "__ev" + dl_itoa(fields.len());
     }
-    fields = fields.append(StructFieldDecl { name: field, type_name: t, fn_ret: "", fn_param_types: "" });
+    fields = fields.append(StructFieldDecl { name: field, type_name: t, fn_ret: "", fn_param_types: "", line: 0, col: 0 });
   }
   return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
@@ -8305,109 +8307,109 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_variant(structs, "Other", ["string", "string", "i32"], "IoError");
   if (!name_declared(structs, "FileStat")) {
     let fsf: StructFieldDecl[] = [];
-    fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "mode", type_name: "u32", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "nlink", type_name: "u32", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "uid", type_name: "u32", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "gid", type_name: "u32", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "rdev", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "blksize", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "atime", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "atime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "mtime", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "btime", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fsf = fsf.append(StructFieldDecl { name: "btime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "mode", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "nlink", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "uid", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "gid", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "rdev", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "blksize", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "atime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "atime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "mtime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "btime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "btime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "DirEntry")) {
     let def: StructFieldDecl[] = [];
-    def = def.append(StructFieldDecl { name: "name", type_name: "string", fn_ret: "", fn_param_types: "" });
-    def = def.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    def = def.append(StructFieldDecl { name: "kind", type_name: "u32", fn_ret: "", fn_param_types: "" });
+    def = def.append(StructFieldDecl { name: "name", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    def = def.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    def = def.append(StructFieldDecl { name: "kind", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "DirEntry", fields: def, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "FsStat")) {
     let fvf: StructFieldDecl[] = [];
-    fvf = fvf.append(StructFieldDecl { name: "block_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "blocks_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "blocks_avail", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "files", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "files_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "fs_type", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "fsid", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    fvf = fvf.append(StructFieldDecl { name: "fs_type_name", type_name: "string", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "block_size", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "blocks_free", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "blocks_avail", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "files", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "files_free", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "fs_type", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "fsid", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "fs_type_name", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "MountEntry")) {
     let mef: StructFieldDecl[] = [];
-    mef = mef.append(StructFieldDecl { name: "source", type_name: "string", fn_ret: "", fn_param_types: "" });
-    mef = mef.append(StructFieldDecl { name: "target", type_name: "string", fn_ret: "", fn_param_types: "" });
-    mef = mef.append(StructFieldDecl { name: "fstype", type_name: "string", fn_ret: "", fn_param_types: "" });
-    mef = mef.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    mef = mef.append(StructFieldDecl { name: "source", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    mef = mef.append(StructFieldDecl { name: "target", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    mef = mef.append(StructFieldDecl { name: "fstype", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    mef = mef.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "MountEntry", fields: mef, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "WinSize")) {
     let wsf: StructFieldDecl[] = [];
-    wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "" });
-    wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "WinSize", fields: wsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Pipe")) {
     let pf: StructFieldDecl[] = [];
-    pf = pf.append(StructFieldDecl { name: "r", type_name: "Reader", fn_ret: "", fn_param_types: "" });
-    pf = pf.append(StructFieldDecl { name: "w", type_name: "Writer", fn_ret: "", fn_param_types: "" });
+    pf = pf.append(StructFieldDecl { name: "r", type_name: "Reader", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    pf = pf.append(StructFieldDecl { name: "w", type_name: "Writer", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "Pipe", fields: pf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "ProcessResult")) {
     let prf: StructFieldDecl[] = [];
-    prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "", fn_param_types: "" });
-    prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "", fn_param_types: "" });
-    prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HeaderMap")) {
     let hmf: StructFieldDecl[] = [];
-    hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "", fn_param_types: "" });
-    hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "", fn_param_types: "" });
+    hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
-    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
-    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
-    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HttpRequest")) {
     let hrf: StructFieldDecl[] = [];
-    hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "" });
-    hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
-    hrf = hrf.append(StructFieldDecl { name: "body", type_name: "ByteStream", fn_ret: "", fn_param_types: "" });
-    hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
-    hrf = hrf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+    hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hrf = hrf.append(StructFieldDecl { name: "body", type_name: "ByteStream", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hrf = hrf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HttpResponse")) {
     let hsf: StructFieldDecl[] = [];
-    hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "" });
-    hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
-    hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
-    hsf = hsf.append(StructFieldDecl { name: "background", type_name: "Option[() => void]", fn_ret: "", fn_param_types: "" });
+    hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hsf = hsf.append(StructFieldDecl { name: "background", type_name: "Option[() => void]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
@@ -8417,53 +8419,53 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_struct2(structs, "Zoned", "instant", "Instant", "zone", "TimeZone");
   if (!name_declared(structs, "Date")) {
     let df: StructFieldDecl[] = [];
-    df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Time")) {
     let tf: StructFieldDecl[] = [];
-    tf = tf.append(StructFieldDecl { name: "hour", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    tf = tf.append(StructFieldDecl { name: "second", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    tf = tf.append(StructFieldDecl { name: "hour", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    tf = tf.append(StructFieldDecl { name: "second", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Span")) {
     let spf: StructFieldDecl[] = [];
-    spf = spf.append(StructFieldDecl { name: "years", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    spf = spf.append(StructFieldDecl { name: "months", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    spf = spf.append(StructFieldDecl { name: "weeks", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    spf = spf.append(StructFieldDecl { name: "days", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    spf = spf.append(StructFieldDecl { name: "hours", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "years", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "months", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "weeks", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "days", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "hours", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
-    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
-    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
-    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "BytesWriter")) {
     let bwf: StructFieldDecl[] = [];
-    bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Url")) {
     let urlf: StructFieldDecl[] = [];
-    urlf = urlf.append(StructFieldDecl { name: "scheme", type_name: "string", fn_ret: "", fn_param_types: "" });
-    urlf = urlf.append(StructFieldDecl { name: "host", type_name: "string", fn_ret: "", fn_param_types: "" });
-    urlf = urlf.append(StructFieldDecl { name: "port", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
-    urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string", fn_ret: "", fn_param_types: "" });
-    urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string", fn_ret: "", fn_param_types: "" });
+    urlf = urlf.append(StructFieldDecl { name: "scheme", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    urlf = urlf.append(StructFieldDecl { name: "host", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    urlf = urlf.append(StructFieldDecl { name: "port", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
@@ -8472,16 +8474,16 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
 function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
   if (!name_declared(structs, "BodySource")) {
     let bsf: StructFieldDecl[] = [];
-    bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "" });
-    bsf = bsf.append(StructFieldDecl { name: "fault", type_name: "Cell[i32]", fn_ret: "", fn_param_types: "" });
-    bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]" });
+    bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "", line: 0, col: 0 });
+    bsf = bsf.append(StructFieldDecl { name: "fault", type_name: "Cell[i32]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "ByteStream")) {
     let stf: StructFieldDecl[] = [];
-    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
-    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    stf = stf.append(StructFieldDecl { name: "source", type_name: "Option[BodySource]", fn_ret: "", fn_param_types: "" });
+    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    stf = stf.append(StructFieldDecl { name: "source", type_name: "Option[BodySource]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "ByteStream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
@@ -8492,8 +8494,8 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
     return structs;
   }
   let fields: StructFieldDecl[] = [];
-  fields = fields.append(StructFieldDecl { name: f0, type_name: t0, fn_ret: "", fn_param_types: "" });
-  fields = fields.append(StructFieldDecl { name: f1, type_name: t1, fn_ret: "", fn_param_types: "" });
+  fields = fields.append(StructFieldDecl { name: f0, type_name: t0, fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+  fields = fields.append(StructFieldDecl { name: f1, type_name: t1, fn_ret: "", fn_param_types: "", line: 0, col: 0 });
   return structs.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
@@ -14303,7 +14305,7 @@ function ms_module(mod: Module): Module {
         let ffr: TyIns = mg_ty(sd.fields[fj].fn_ret, gstructs, ft.mins);
         let ffl: TyIns = mg_ty_list(sd.fields[fj].fn_param_types, gstructs, ffr.mins);
         ins = ffl.mins;
-        nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.ty });
+        nf = nf.append(StructFieldDecl { ...sd.fields[fj], type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.ty });
         fj = fj + 1;
       }
       nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
@@ -14375,7 +14377,7 @@ function ms_module(mod: Module): Module {
         let gfr: TyIns = mg_ty(ms_enum_clone_ty(subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), mod.enums), gstructs, ft2.mins);
         let gfl: TyIns = mg_ty_list(ms_enum_clone_ty(subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), mod.enums), gstructs, gfr.mins);
         ins = gfl.mins;
-        cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
+        cf = cf.append(StructFieldDecl { ...gd.fields[cfi], type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
         cfi = cfi + 1;
       }
       nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names, is_pub: true, is_package: false, opaque: gd.opaque, module: gd.module });
@@ -16046,7 +16048,7 @@ pub function monomorphize_enums(mod: Module): Module {
               f_ptys = fn_spelling_params(f_ty);
               f_ty = "fn";
             }
-            nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: f_ty, fn_ret: f_ret, fn_param_types: f_ptys });
+            nf = nf.append(StructFieldDecl { ...vs.fields[fj2], type_name: f_ty, fn_ret: f_ret, fn_param_types: f_ptys });
             fj2 = fj2 + 1;
           }
           cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume, variant_field_names: vs.variant_field_names, is_pub: true, is_package: false, opaque: vs.opaque, module: vs.module });
@@ -16095,7 +16097,7 @@ pub function monomorphize_enums(mod: Module): Module {
       let rfj: i32 = 0;
       while (rfj < sd.fields.len()) {
         let fslot: MeSlot = me_rewrite_slot(sd.fields[rfj].type_name, sd.fields[rfj].fn_ret, sd.fields[rfj].fn_param_types, menums);
-        rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: fslot.ty, fn_ret: fslot.fn_ret, fn_param_types: fslot.fn_params });
+        rf = rf.append(StructFieldDecl { ...sd.fields[rfj], type_name: fslot.ty, fn_ret: fslot.fn_ret, fn_param_types: fslot.fn_params });
         rfj = rfj + 1;
       }
       out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
@@ -18046,7 +18048,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       if (vi < al.variant_args.len() && al.variant_args[vi].len() > 0) {
         payload = member + "[" + al.variant_args[vi] + "]";
       }
-      structs = structs.append(StructDecl { name: member, fields: [StructFieldDecl { name: "__ev", type_name: payload, fn_ret: "", fn_param_types: "" }], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+      structs = structs.append(StructDecl { name: member, fields: [StructFieldDecl { name: "__ev", type_name: payload, fn_ret: "", fn_param_types: "", line: 0, col: 0 }], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
       vi = vi + 1;
     }
     enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });

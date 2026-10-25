@@ -12365,7 +12365,7 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
     for field in esd.fields {
       let ft: typeinfo.Type = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
       if (holds_lanes(ft)) {
-        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
+        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", field.line, field.col));
       }
     }
   }
@@ -12845,6 +12845,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
   match (c.callee) {
     ast.ExprIdent(id) => {
       if (id.name == "__set_field" && c.args.len() == 3) {
+        out = util.append_diags(out, immutable_assignment_value_diags(c, s, true));
         let fld: string = "field";
         match (c.args[1]) {
           ast.ExprString(fs) => {
@@ -12858,6 +12859,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
         out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
       }
       if (id.name == "__set_index" && c.args.len() == 3) {
+        out = util.append_diags(out, immutable_assignment_value_diags(c, s, false));
         out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", c.line, c.col));
       }
       if (id.name == "cell_new" && c.args.len() == 1) {
@@ -15428,6 +15430,33 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
       _ => {}
     }
     cur = bind_stmt(st, cur);
+  }
+  return out;
+}
+
+function immutable_assignment_type(c: ast.ExprCall, s: Scope, field: boolean): typeinfo.Type {
+  let target: typeinfo.Type = check_expr(c.args[0], s);
+  if (!field) {
+    return index_result_type(target, check_expr(c.args[1], s));
+  }
+  if let ast.ExprString(name) = c.args[1] {
+    let access: ast.ExprFieldAccess = ast.ExprFieldAccess { obj: c.args[0], field: name.value, line: name.line, col: name.col, ty: "", const_read: false };
+    return field_access_result_type(access, target, s);
+  }
+  return t_unknown("assignment field name");
+}
+
+function immutable_assignment_value_diags(c: ast.ExprCall, s: Scope, field: boolean): util.Diag[] {
+  let target: typeinfo.Type = immutable_assignment_type(c, s, field);
+  let value: ast.Expr = c.args[2];
+  let actual: typeinfo.Type = check_expr(value, s);
+  let out: util.Diag[] = int_dest_range_diags(value, target);
+  out = util.append_diags(out, ctor_payload_diags(value, target, s));
+  let bounds: util.Diag[] = dest_bound_diags(value, target, s);
+  out = util.append_diags(out, bounds);
+  let misfit: boolean = !settles_to(value, target, s) && !coercible(actual, target, s);
+  if (bounds.len() == 0 && !is_unknown(target) && !is_unknown(actual) && (misfit || fills_unsettled_argument(actual, target))) {
+    out = out.append(dg_at("E003", "assignment: expected " + type_label(target) + ", got " + type_label(actual) + str_copy_hint(actual, target), expr_line(c.callee), expr_col(c.callee)));
   }
   return out;
 }
@@ -21666,7 +21695,7 @@ function source_named_diag(d: util.Diag, mangled: util.NameIndex): util.Diag {
 
 // imported_decl_names is every bundle name an imported module's declaration
 // carries; an entry-module name is never mangled, whatever it contains.
-function imported_decl_names(mod: parser.Module): string[] {
+pub function imported_decl_names(mod: parser.Module): string[] {
   let out: string[] = [];
   for fd in mod.funcs {
     out = with_mangled(out, fd.name, fd.module);
@@ -22040,7 +22069,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       for field in esd.fields {
         let fu: string = e064_unknown_name(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
+          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), field.line, field.col));
         }
       }
     }

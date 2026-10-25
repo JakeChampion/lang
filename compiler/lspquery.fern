@@ -11,7 +11,7 @@ import "./util";
 
 pub struct Program { merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[], srcs: string[], view: Option[View] }
 
-pub struct View { types: checker.QueryView, quals: flatten.Qualifiers[] }
+pub struct View { types: checker.QueryView, quals: flatten.Qualifiers[], names: util.NameIndex }
 
 pub function program(merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[], srcs: string[]): Program {
   return Program { merged: merged, entry: entry, loaded: loaded, srcs: srcs, view: None };
@@ -28,7 +28,7 @@ pub function view_of(p: Program): View {
   if let Some(v) = p.view {
     return v;
   }
-  return View { types: checker.query_view(p.merged), quals: flatten.bundle_qualifiers(p.entry, p.loaded) };
+  return View { types: checker.query_view(p.merged), quals: flatten.bundle_qualifiers(p.entry, p.loaded), names: util.name_index(checker.imported_decl_names(p.merged)) };
 }
 
 pub struct Answer { found: boolean, text: string, line: i32, col: i32, len: i32 }
@@ -52,7 +52,7 @@ pub function hover(p: Program, line: i32, col: i32): Answer {
   if (text.len() == 0) {
     return no_answer();
   }
-  return Answer { found: true, text: util.show_type_vars(text), line: q.site.line, col: q.site.col, len: q.site.len };
+  return Answer { found: true, text: util.show_type_vars(source_text(text, q.names, q.quals)), line: q.site.line, col: q.site.col, len: q.site.len };
 }
 
 pub function hover_doc(p: Program, line: i32, col: i32): string {
@@ -93,14 +93,14 @@ pub function definition(p: Program, line: i32, col: i32): Answer {
   return node_def(p, q.v, scope_at(q.v, fd, q.site), fd, q.f, q.site);
 }
 
-pub struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Found }
+pub struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Found, names: util.NameIndex }
 
 pub function query(p: Program, line: i32, col: i32): (Query, boolean) {
   let view: View = view_of(p);
   let m: i32 = util.pos_file_index(line);
   let quals: flatten.Qualifiers = quals_of(view, m);
   let (site, ok) = site_at(module_toks(p, m), quals, line, col);
-  return (Query { v: view.types, site: site, quals: quals, f: locate(view.types, site) }, ok);
+  return (Query { v: view.types, site: site, quals: quals, f: locate(view.types, site), names: view.names }, ok);
 }
 
 pub struct Tok { text: string, ident: boolean, line: i32, col: i32 }
@@ -806,6 +806,45 @@ function joined(xs: string[]): string {
     i = i + 1;
   }
   return out;
+}
+
+pub function source_text(text: string, names: util.NameIndex, quals: flatten.Qualifiers): string {
+  let out: string = "";
+  let kept: i32 = 0;
+  let i: i32 = 0;
+  while (i < text.len()) {
+    if (!util.ident_byte_at(text, i)) {
+      i = i + 1;
+      continue;
+    }
+    let end: i32 = i;
+    while (util.ident_byte_at(text, end)) {
+      end = end + 1;
+    }
+    let word: string = slice_unchecked(text, i, end) + "";
+    if (names.find(word) >= 0) {
+      out = out + slice_unchecked(text, kept, i) + source_word(word, quals);
+      kept = end;
+    }
+    i = end;
+  }
+  return out + slice_unchecked(text, kept, text.len());
+}
+
+function source_word(word: string, quals: flatten.Qualifiers): string {
+  let own: string = unprefixed(word, quals.own);
+  if (own != word) {
+    return own;
+  }
+  let i: i32 = 0;
+  while (i < quals.prefixes.len()) {
+    let name: string = unprefixed(word, quals.prefixes[i]);
+    if (name != word) {
+      return quals.aliases[i] + "." + name;
+    }
+    i = i + 1;
+  }
+  return util.demangle(word);
 }
 
 pub function unprefixed(name: string, prefix: string): string {

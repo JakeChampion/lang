@@ -3,6 +3,7 @@ import "./capvocab";
 import "./docsummary";
 
 pub struct Dep {
+  line: i32,
   name: string,
   kind: string,
   path: string,
@@ -123,7 +124,7 @@ pub function parse(src: string): Manifest {
       seen = seen.append("[" + section + "]");
       continue;
     }
-    m = Manifest { ...with_entry(m, section, line, seen), err_line: li };
+    m = Manifest { ...with_entry(m, section, line, seen, li), err_line: li };
     seen = seen.append(section + "\n" + entry_key(line));
   }
   if (m.err.len() == 0 && m.name.len() == 0 && !workspace) {
@@ -163,7 +164,7 @@ function failed(m: Manifest, err: string): Manifest {
   return Manifest { ...m, err: err };
 }
 
-function with_entry(m: Manifest, section: string, line: string, seen: string[]): Manifest {
+function with_entry(m: Manifest, section: string, line: string, seen: string[], line_number: i32): Manifest {
   let eq: i32 = index_of(line, b'=', 0);
   if (eq < 0) {
     return failed(m, "expected `key = value`, got " + docsummary.quote(line));
@@ -177,7 +178,7 @@ function with_entry(m: Manifest, section: string, line: string, seen: string[]):
     return with_package_key(m, key, val);
   }
   if (section == "dependencies") {
-    return with_dep(m, key, val);
+    return with_dep(m, key, val, line_number);
   }
   if (section == "workspace") {
     return with_members(m, key, val);
@@ -211,7 +212,7 @@ function with_package_key(m: Manifest, key: string, val: string): Manifest {
   return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
 }
 
-function with_dep(m: Manifest, key: string, val: string): Manifest {
+function with_dep(m: Manifest, key: string, val: string, line: i32): Manifest {
   let d: DepResult = parse_dep(key, val);
   if (d.err.len() > 0) {
     return failed(m, "dependency " + docsummary.quote(key) + ": " + d.err);
@@ -219,7 +220,7 @@ function with_dep(m: Manifest, key: string, val: string): Manifest {
   if (!valid_dep_name(key)) {
     return failed(m, "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
   }
-  return Manifest { ...m, deps: m.deps.append(d.dep) };
+  return Manifest { ...m, deps: m.deps.append(Dep { ...d.dep, line: line }) };
 }
 
 function with_members(m: Manifest, key: string, val: string): Manifest {
@@ -378,7 +379,7 @@ function dep_failed(d: Dep, err: string): DepResult {
 }
 
 function parse_dep(name: string, val: string): DepResult {
-  let d: Dep = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [] };
+  let d: Dep = Dep { line: 0, name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [] };
   if (val.len() == 0 || val[0] != b'{') {
     let s: Parsed = parse_string(val);
     if (s.err.len() > 0) {

@@ -436,6 +436,7 @@ pub function lower_failed_refuse(name: string, r: irtables.LowerResult): i32 {
 }
 
 pub struct Sub {
+  diagnostics: util.Diag[],
   bodies: irtables.LowerResult[],
   extra: irtables.LowerResult[],
   contracts: string[],
@@ -454,7 +455,7 @@ pub struct Sub {
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
-  return Sub { bodies: [], extra: [], contracts: [], physical_contracts: [], physical_records: semrecords.no_records(), physical_enums: [], physical_finalizers: [], physical_origins: physicalbody.no_origins(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
+  return Sub { diagnostics: [], bodies: [], extra: [], contracts: [], physical_contracts: [], physical_records: semrecords.no_records(), physical_enums: [], physical_finalizers: [], physical_origins: physicalbody.no_origins(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
 }
 
 pub function sub_lifted(sub: Sub, annotated: parser.Module): parser.Module {
@@ -1009,7 +1010,7 @@ function splice_leaf_body(leaf: irtables.LowerResult, base: i32, ret: i32, word:
   return SpliceBody { ops: out, word: word, scalar_words: scalar_words };
 }
 
-pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irtables.LowerResult[]): void {
+pub function fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irtables.LowerResult[]): util.Diag[] {
   let diags: util.Diag[] = [];
   let hh: i32 = hi;
   if (hh < 0 || hh > funcs.len()) {
@@ -1022,6 +1023,11 @@ pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache:
     }
     i = i + 1;
   }
+  return diags;
+}
+
+pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irtables.LowerResult[]): void {
+  let diags: util.Diag[] = fip_claims(funcs, lo, hi, cache);
   if (diags.len() == 0) {
     return;
   }

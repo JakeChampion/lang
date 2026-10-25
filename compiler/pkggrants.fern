@@ -171,13 +171,16 @@ function joined(xs: string[], sep: string): string {
   return out;
 }
 
-function violations(m: ManifestAt, held: string[]): string[] {
-  let out: string[] = [];
+pub struct Refusal { path: string, diag: util.Diag }
+
+function violations(m: ManifestAt, held: string[]): Refusal[] {
+  let out: Refusal[] = [];
   for dep in m.man.deps {
     if (dep.governed) {
       for cap in dep.caps {
         if (!util.has_str(held, cap)) {
-          out = out.append(m.dir + "/fern.toml: dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + joined(sorted_unique(held), ", ") + "] (attenuation: a dependency may grant at most what it holds)");
+          let message: string = "dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + joined(sorted_unique(held), ", ") + "] (attenuation: a dependency may grant at most what it holds)";
+          out = out.append(Refusal { path: m.dir + "/fern.toml", diag: util.Diag { code: "E088", message: message, line: dep.line, col: 1, length: 0, fix: None, related: [] } });
         }
       }
     }
@@ -187,7 +190,17 @@ function violations(m: ManifestAt, held: string[]): string[] {
 
 pub struct ModuleAt { dir: string, owner_dir: string, name: string, stdlib: boolean }
 
-pub struct Checked { pkgs: caps.Pkg[], err: string }
+pub struct Checked { pkgs: caps.Pkg[], errors: Refusal[] }
+
+function refusal_after(a: Refusal, b: Refusal): boolean {
+  if (a.path != b.path) {
+    return util.str_less(b.path, a.path);
+  }
+  if (a.diag.line != b.diag.line) {
+    return a.diag.line > b.diag.line;
+  }
+  return util.str_less(b.diag.message, a.diag.message);
+}
 
 function within(dir: string, parent: string): boolean {
   return dir == parent || dir.len() > parent.len() && slice_unchecked(dir, 0, parent.len()) == parent && dir[parent.len()] == b'/';
@@ -195,7 +208,7 @@ function within(dir: string, parent: string): boolean {
 
 pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {
   let held: Holding[] = holdings(mans, root.dir);
-  let errors: string[] = [];
+  let errors: Refusal[] = [];
   for m in mans {
     let at: i32 = holding_index(held, m.dir);
     if (at >= 0 && m.dir != root.dir) {
@@ -213,7 +226,7 @@ pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], pr
     }
     i = i + 1;
   }
-  return Checked { pkgs: pkgs, err: joined(sorted_unique(errors), "\n") };
+  return Checked { pkgs: pkgs, errors: util.sorted_by(errors, refusal_after) };
 }
 
 function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holding[]): caps.Pkg {

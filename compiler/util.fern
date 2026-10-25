@@ -1177,7 +1177,7 @@ pub function ident_from(line: string, col: i32, name: string): i32 {
   return 0;
 }
 
-function ident_byte_at(s: string, i: i32): boolean {
+pub function ident_byte_at(s: string, i: i32): boolean {
   return i >= 0 && i < s.len() && (ident_start_byte(s[i]) || s[i] >= b'0' && s[i] <= b'9');
 }
 
