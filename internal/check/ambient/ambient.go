@@ -23,8 +23,8 @@ type Violation struct {
 
 var bagMethods = map[string]string{
 	"eprint":       "log",
-	"now_unix_ms":  "now_ms",
-	"monotonic_ns": "elapsed_ns",
+	"now_unix_ms":  "now",
+	"monotonic_ns": "instant",
 	"env":          "env",
 	"config_get":   "config",
 	"random_i32":   "random_i32",

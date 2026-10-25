@@ -26,6 +26,7 @@ A render version identifies the binary so immutable tile URLs remain safe across
 
 ```fern
 <<Renderer state>>=
+import "std/time";
 import "std/http";
 import "std/http/router";
 import "std/http/static";
@@ -164,8 +165,8 @@ pub function routes[P: platform.Platform](state: Stats, web: string, sources: so
     }
     return Ok(http.respond(websocket.accept(req, websocket.options(), session(state, session_id))));
   });
-  app = app.get("/api/config", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.json_of(state.view(plat.now_ms())).with_header("Cache-Control", "no-store")));
-  app = app.get("/api/stats", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.json_of(state.view(plat.now_ms())).with_header("Cache-Control", "no-store")));
+  app = app.get("/api/config", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.json_of(state.view(plat.now().unix_millis())).with_header("Cache-Control", "no-store")));
+  app = app.get("/api/stats", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.json_of(state.view(plat.now().unix_millis())).with_header("Cache-Control", "no-store")));
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
   app = app.get("/_src", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/_src/")));
   app = app.get("/_src/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
@@ -367,7 +368,7 @@ function forget_cancel(state: Stats, key: Option[string]): void {
 function request_stopped(state: Stats, key: Option[string], next_yield: Cell[i64]): boolean {
   if (async.in_task() && now_ns() >= next_yield.get()) {
     next_yield.set(now_ns() + 4000000);
-    let ready: i32 = async.wait_any([], 1);
+    let ready: i32 = async.wait_any([], Some(time.duration_millis(1)));
   }
   if (async.task_cancelled()) {
     return true;

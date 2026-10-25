@@ -142,6 +142,16 @@ pub function (t: Timestamp) sub(d: Duration): Timestamp {
   return Timestamp { sec: r.sec, nsec: r.nsec };
 }
 
+pub function timestamp_from_unix_millis(ms: i64): Timestamp {
+  let d: Duration = duration_millis(ms);
+  return Timestamp { sec: d.sec, nsec: d.nsec };
+}
+
+// Milliseconds since the epoch; saturates at the i64 range.
+pub function (t: Timestamp) unix_millis(): i64 {
+  return Duration { sec: t.sec, nsec: t.nsec }.as_millis();
+}
+
 // Negative when `earlier` is later than `t`.
 pub function (t: Timestamp) since(earlier: Timestamp): Duration {
   return Duration { sec: t.sec, nsec: t.nsec }.sub(Duration { sec: earlier.sec, nsec: earlier.nsec });
@@ -440,6 +450,39 @@ pub function (a: Instant) eq(b: Instant): boolean {
 
 pub function (a: Instant) cmp(b: Instant): i32 {
   return __cmp_parts(a.sec, a.nsec, b.sec, b.nsec);
+}
+
+// The clock reading in nanoseconds, for the library's own integer bookkeeping.
+pub(package) function instant_nanos(i: Instant): i64 {
+  return Duration { sec: i.sec, nsec: i.nsec }.as_nanos();
+}
+
+pub(package) function instant_from_nanos(ns: i64): Instant {
+  let d: Duration = duration_nanos(ns);
+  return Instant { sec: d.sec, nsec: d.nsec };
+}
+
+// The millisecond timeout the runtime's wait primitives take: -1 waits without a limit.
+// A partial millisecond rounds up, so a short positive timeout still waits.
+pub(package) function timeout_millis(t: Option[Duration]): i32 {
+  let Some(d) = t else {
+    return 0 - 1;
+  };
+  if (d.sec < 0 || d.is_zero()) {
+    return 0;
+  }
+  let ms: i64 = d.add(duration_nanos(999999)).as_millis();
+  if (ms > 2147483647) {
+    return 2147483647;
+  }
+  return ms as i32;
+}
+
+pub(package) function millis_timeout(ms: i32): Option[Duration] {
+  if (ms < 0) {
+    return None;
+  }
+  return Some(duration_millis(ms as i64));
 }
 ```
 

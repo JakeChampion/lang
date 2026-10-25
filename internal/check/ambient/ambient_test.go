@@ -66,7 +66,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("hit");
-    let a: i64 = plat.now_ms();
+    let a: i64 = plat.now().sec;
     match (plat.env("HOME")) { Some(v) => { }, None => { } }` + handlerTail,
 			want: nil,
 		},

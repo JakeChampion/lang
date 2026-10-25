@@ -311,7 +311,8 @@ function main(): i32 {
 }
 `
 
-const pairSuspendProg = `import "std/async";
+const pairSuspendProg = `import "std/time";
+import "std/async";
 import "std/bench";
 
 struct Box2 { n: i32, s: string }
@@ -321,7 +322,7 @@ struct Box2 { n: i32, s: string }
   let k: i32 = n;
   if (park) {
     let none: i32[] = [];
-    k = k + async.wait_any(none, 1) + 2;
+    k = k + async.wait_any(none, Some(time.duration_millis(1))) + 2;
   }
   return (b, k % 2 == 0);
 }
@@ -331,7 +332,7 @@ struct Box2 { n: i32, s: string }
   let k: i32 = n;
   if (park) {
     let none: i32[] = [];
-    k = k + async.wait_any(none, 1) + 2;
+    k = k + async.wait_any(none, Some(time.duration_millis(1))) + 2;
   }
   if (k % 2 == 0) {
     return Ok(b);
@@ -408,7 +409,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, woke);
       },
       Cancelled => {

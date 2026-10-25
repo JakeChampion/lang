@@ -22,10 +22,10 @@ func TestSelfHostWasiHttpPlatformCapabilities(t *testing.T) {
 import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log(f"LOGLINE {req.method} {req.path}");
-    if (plat.now_ms() < 1600000000000) {
+    if (plat.now().unix_millis() < 1600000000000) {
         return http.text(500, "clock");
     }
-    if (plat.elapsed_ns() < 0) {
+    if (plat.instant().sec < 0) {
         return http.text(500, "monotonic");
     }
     if (plat.random_i32() == 0 && plat.random_i32() == 0 && plat.random_i32() == 0) {

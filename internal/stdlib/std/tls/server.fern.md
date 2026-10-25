@@ -83,6 +83,7 @@ import "std/crypto/chacha20poly1305";
 import "std/i32";
 import "std/net";
 import "std/time";
+import "std/clock";
 import "std/tls";
 import "std/tls/handshake";
 import "std/tls/identity";
@@ -170,11 +171,11 @@ function __handshake_config(config: Config): handshake.ServerConfig {
   return handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks };
 }
 
-pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure] {
+pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure] {
   if (s.held.len() == 0) {
-    return __read(s, input, now);
+    return __read(s, input, now.unix_millis());
   }
-  return __read(Session { ...s, held: [] }, __cat(__copy(s.held), input), now);
+  return __read(Session { ...s, held: [] }, __cat(__copy(s.held), input), now.unix_millis());
 }
 ```
 
@@ -415,7 +416,7 @@ function __client_trusted(config: Config, v: handshake.Verification, now: i64): 
   if (v.chain.len() == 0) {
     return Err(tls.CertificateMissing);
   }
-  match (verify.verify_client(v.chain, roots, now / 1000)) {
+  match (verify.verify_client(v.chain, roots, time.timestamp_from_unix(now / 1000))) {
     Ok(leaf) => {
       if (!verify.scheme_fits(leaf, v.scheme)) {
         return Err(tls.SchemeMismatch);
@@ -872,7 +873,7 @@ function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.Tl
 }
 
 function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, tls.TlsError] {
-  match (s.read(input, now_unix_ms())) {
+  match (s.read(input, clock.now())) {
     Ok(step) => {
       __send_out(fd, s, step.output)?;
       let r: i32 = ktls.install(fd, step.rekeyed);

@@ -311,23 +311,22 @@ jobs:
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
-  # THE FERNSMITH CORPUS THROUGH THE SELF-HOST COMPILER, one job per target.
-  # Per-seed subtests are parallel, so one job already uses every core; a
-  # second job per target would only buy another job's setup. The wasm leg
-  # t.Skips without wasmtime, so its job installs it.
+  # THE FERNSMITH CORPUS THROUGH THE SELF-HOST COMPILER, in two jobs. Per-seed
+  # subtests are parallel, so one job already uses every core. The x86_64 leg
+  # is the long one and has a job of its own. The sanitize, arm64 and wasm
+  # legs are two to four minutes of work each. They share one job, so the
+  # lane pays one setup and holds one slot of the runner pool for the three.
   diff-selfhost:
     needs: [driver-sizes]
     name: diff-selfhost-${{ matrix.target }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - { target: x86_64, qemu: "false", wasmtime: "false" }
-          - { target: x86_64-sanitize, qemu: "false", wasmtime: "false" }
-          - { target: arm64, qemu: "true", wasmtime: "false" }
-          - { target: wasm, qemu: "false", wasmtime: "true" }
+          - { target: sanitize-arm64-wasm, qemu: "true", wasmtime: "true" }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -348,7 +347,7 @@ jobs:
           go test ./internal/testing/e2e/ -run '^TestDifferential_CheckerMutants$' -v -timeout 20m
           go test ./internal/testing/e2e/ -run '^TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash$' -v -timeout 10m
       - name: x86_64 under -sanitize
-        if: matrix.target == 'x86_64-sanitize'
+        if: matrix.target == 'sanitize-arm64-wasm'
         env:
           FERN_SELFHOST_DIFF: "1"
         run: |
@@ -356,14 +355,14 @@ jobs:
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostSanitizeX86_64$' -v -timeout 43m
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostEMISanitizeX86_64$' -v -timeout 20m
       - name: arm64
-        if: matrix.target == 'arm64'
+        if: ${{ !cancelled() && matrix.target == 'sanitize-arm64-wasm' }}
         env:
           FERN_SELFHOST_DIFF: "1"
         run: |
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostArm64$' -v -timeout 43m
       - name: wasm
-        if: matrix.target == 'wasm'
+        if: ${{ !cancelled() && matrix.target == 'sanitize-arm64-wasm' }}
         env:
           FERN_SELFHOST_DIFF: "1"
         run: |
