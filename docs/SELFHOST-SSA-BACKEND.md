@@ -319,6 +319,32 @@ types, so ownership inference, the certifier and the IR verifier
 `TestSelfHostScalarParam` pins the shapes at no allocations on the three
 targets, and shows that a function named as a value keeps its boxed parameter.
 
+A record field of the same shape is stored the same way: its lanes take the
+field's place in the record's own slots, so `Sent { at: now }` builds one box,
+not two. The same pass decides the fields, in the same fixed point as the
+parameters. A field stays in lanes while every `record_get` of it, in every
+body the program compiles, is read apart, handed to a promoted parameter or
+stored into another field held in lanes. A construction supplies the field's
+lanes the way a call supplies an argument's. The decision is made once, on
+the whole program's semantic graph, before any unit is lowered, so every unit
+sees one layout.
+
+A record keeps its declared layout when something other than the compiled
+bodies reads it: a record with type arguments, a closure environment, one with
+a finalizer or views, a struct-union member (read through its union's payload
+reads), the runtime's own structs, and any record an `@export` or a host
+import carries (`semsource.pinned_records`).
+
+Every function's record table, the module's, and the declarations the backends
+read (`semlower.laid_records`, which `irtables.with_decls` substitutes) take
+the laid-out record. A lane field is named `<field>$<lane>`. The record's
+release and drop helpers are made from that table, so they skip the lanes as
+scalars. A record update copies them slot for slot, so a kept field stays in
+place. `TestSelfHostInlineField` pins the serve path's three shapes (an
+Instant, an Instant in records held in an array, an `Option[Duration]`) and
+the read paths on the three targets. `TestSelfHostInlineFieldLayout` reads
+the decision off the semantic graph for each read path and each exclusion.
+
 ## What the lift admits, and what declines
 
 Everything the compiler uses. Measured on the compiler compiling itself

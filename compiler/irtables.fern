@@ -137,6 +137,23 @@ function stab_buckets(): i32 {
   return 2053;
 }
 
+// The declarations with the lowering's records: an instance of a generic one
+// is added, and a record laid out with lanes replaces its declaration.
+pub function with_decls(decls: parser.StructDecl[], records: parser.StructDecl[]): parser.StructDecl[] {
+  let names: string[] = [];
+  for sd in records {
+    names = names.append(sd.name);
+  }
+  let ix: util.NameIndex = util.name_index(names);
+  let out: parser.StructDecl[] = [];
+  for sd in decls {
+    if (sd.enum_owner != "" || ix.find(sd.name) < 0) {
+      out = out.append(sd);
+    }
+  }
+  return util.append_all(out, records);
+}
+
 pub function struct_tab(decls: parser.StructDecl[]): StructTab {
   let nb: i32 = stab_buckets();
   let head: i32[] = util.minus_ones(nb);

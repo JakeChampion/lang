@@ -144,9 +144,9 @@ function main(): i32 {
 }
 `
 
-// Slots the rewrite must leave whole: a record kept past the call, an Option
-// read from a field, and a function named as a value. Only the answer and the
-// census are pinned.
+// Slots the rewrite must leave whole: a record kept past the call and a
+// function named as a value, beside an Option stored in a record field. Only
+// the answer and the census are pinned.
 const scalarParamKeptProg = `struct Gap { lo: i64, hi: i32 }
 
 struct Box { t: Option[Gap], s: Gap }

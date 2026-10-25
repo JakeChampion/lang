@@ -11,8 +11,13 @@ import "./util";
 // holds Some followed by the payload's fields. A function qualifies when
 // every reference to it is a direct call, and a slot stays promoted while
 // the body only reads it apart or hands it to another promoted slot.
+//
+// A record field of the same shape is stored the same way, in lanes that
+// take the field's place in its record, while every read of the field in the
+// program is read apart or handed to a promoted slot.
 
-pub struct Promoted { funcs: ssasem.Func[], modes: i32[][], changed: boolean[] }
+// records: the records that hold a field in lanes, as they are laid out now.
+pub struct Promoted { funcs: ssasem.Func[], modes: i32[][], changed: boolean[], records: semrecords.Record[] }
 
 struct Slot { lanes: typeinfo.Type[], names: string[], option: boolean, record: boolean }
 
@@ -126,9 +131,117 @@ function reads(k: i32): boolean {
   return k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get();
 }
 
-struct Plan { slots: Slot[][], ok: boolean[][] }
+struct Plan { slots: Slot[][], ok: boolean[][], inl: Inline }
 
-function initial(funcs: ssasem.Func[], modes: i32[][], eligible: boolean[]): Plan {
+// The records whose lane-shaped fields may be stored in lanes: slots[r][k]
+// and ok[r][k] for field k of recs[r].
+struct Inline { recs: semrecords.Record[], ix: util.NameIndex, slots: Slot[][], ok: boolean[][] }
+
+// The candidates among the module's records. A record stays boxed where
+// something other than the compiled bodies may see its layout: a type with
+// arguments, a closure environment, a finalizer, a view, and the records
+// `pinned` names (the runtime's own and those an export or import carries).
+function inline_candidates(table: ssasem.Func, pinned: string[]): Inline {
+  let pins: util.NameIndex = util.name_index(util.append_all(pinned, union_members(table)));
+  let recs: semrecords.Record[] = [];
+  let keys: string[] = [];
+  let slots: Slot[][] = [];
+  let ok: boolean[][] = [];
+  for rec in table.records.list {
+    if (!inlinable_record(table, rec, pins)) {
+      continue;
+    }
+    let row: Slot[] = [];
+    let flags: boolean[] = [];
+    for field in rec.fields {
+      let sl: Slot = slot_of(table, field.ty);
+      row = row.append(sl);
+      flags = flags.append(sl.lanes.len() > 0);
+    }
+    if (any_ok(flags)) {
+      recs = recs.append(rec);
+      keys = keys.append(ssasem.type_key(rec.ty));
+      slots = slots.append(row);
+      ok = ok.append(flags);
+    }
+  }
+  return Inline { recs: recs, ix: util.name_index(keys), slots: slots, ok: ok };
+}
+
+// A struct-union's member is read through its union's payload reads, which
+// the rewrite does not lay out, so members keep their declared layout.
+function union_members(table: ssasem.Func): string[] {
+  let out: string[] = [];
+  for e in table.enums {
+    if (e.layout != semrecords.layout_member()) {
+      continue;
+    }
+    for v in e.variants {
+      out = out.append(v.name);
+    }
+  }
+  return out;
+}
+
+function inlinable_record(table: ssasem.Func, rec: semrecords.Record, pins: util.NameIndex): boolean {
+  if let typeinfo.TypeStruct(r) = rec.ty {
+    return r.args.len() == 0 && !semtypes.is_env(rec.ty) && !rec.views && !rec.nests_func && !ssasem.has_finalizer(table, rec.ty)
+      && pins.find(ssasem.type_key(rec.ty)) < 0 && pins.find(r.name) < 0;
+  }
+  return false;
+}
+
+function inline_at(inl: Inline, t: typeinfo.Type): i32 {
+  if let typeinfo.TypeStruct(r) = t {
+    return inl.ix.find(ssasem.type_key(t));
+  }
+  return 0 - 1;
+}
+
+function inline_field(inl: Inline, t: typeinfo.Type, k: i32): boolean {
+  let r: i32 = inline_at(inl, t);
+  return r >= 0 && k >= 0 && k < inl.ok[r].len() && inl.ok[r][k];
+}
+
+// Whether ins stores the value at its argument k into a field held in lanes.
+function stored_inline(p: Plan, f: ssasem.Func, ins: ssa.SInst, k: i32, t: typeinfo.Type): boolean {
+  if (ins.kind_tag != ssasem.record_new() || ins.result < 0) {
+    return false;
+  }
+  let r: i32 = inline_at(p.inl, f.values[ins.result]);
+  return r >= 0 && inline_field(p.inl, f.values[ins.result], k) && semtypes.equal(p.inl.recs[r].fields[k].ty, t);
+}
+
+function demoted_field(p: Plan, r: i32, k: i32): Plan {
+  return Plan { ...p, inl: Inline { ...p.inl, ok: p.inl.ok.with(r, p.inl.ok[r].with(k, false)) } };
+}
+
+// Demotes each field held in lanes that body f reads whole.
+function fields_checked(funcs: ssasem.Func[], ix: util.NameIndex, p0: Plan, f: ssasem.Func): Options {
+  let p: Plan = p0;
+  let changed: boolean = false;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag != ssasem.record_get() || ins.args.len() != 1 || ins.result < 0) {
+        continue;
+      }
+      let t: typeinfo.Type = f.values[ins.args[0]];
+      if (!inline_field(p.inl, t, ins.imm)) {
+        continue;
+      }
+      let r: i32 = inline_at(p.inl, t);
+      if (!read_apart(funcs, ix, p, f, aliases(f.graph, ins.result), f.values[ins.result], p.inl.slots[r][ins.imm], false)) {
+        p = demoted_field(p, r, ins.imm);
+        changed = true;
+      }
+    }
+  }
+  return Options { p: p, changed: changed };
+}
+
+struct Options { p: Plan, changed: boolean }
+
+function initial(funcs: ssasem.Func[], modes: i32[][], eligible: boolean[], inl: Inline): Plan {
   let slots: Slot[][] = [];
   let ok: boolean[][] = [];
   for i in 0..funcs.len() {
@@ -147,7 +260,7 @@ function initial(funcs: ssasem.Func[], modes: i32[][], eligible: boolean[]): Pla
     slots = slots.append(row);
     ok = ok.append(flags);
   }
-  return Plan { slots: slots, ok: ok };
+  return Plan { slots: slots, ok: ok, inl: inl };
 }
 
 function any_ok(flags: boolean[]): boolean {
@@ -257,7 +370,7 @@ function read_apart(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, f: ssasem
 }
 
 function allowed_use(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, f: ssasem.Func, ins: ssa.SInst, k: i32, t: typeinfo.Type, s: Slot, payload: boolean): boolean {
-  if (ins.kind_tag == 7 || promoted_arg(funcs, ix, p, ins, k, t)) {
+  if (ins.kind_tag == 7 || promoted_arg(funcs, ix, p, ins, k, t) || stored_inline(p, f, ins, k, t)) {
     return true;
   }
   if (payload || !s.option) {
@@ -276,7 +389,7 @@ function payload_read(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, f: ssas
   return !s.record || read_apart(funcs, ix, p, f, aliases(f.graph, ins.result), f.values[ins.result], s, true);
 }
 
-function settle(funcs: ssasem.Func[], ix: util.NameIndex, p0: Plan): Plan {
+function settle(funcs: ssasem.Func[], ix: util.NameIndex, p0: Plan, rewrite: boolean[]): Plan {
   let p: Plan = p0;
   let changed: boolean = true;
   for _ in 0..64 {
@@ -295,6 +408,11 @@ function settle(funcs: ssasem.Func[], ix: util.NameIndex, p0: Plan): Plan {
           }
         }
       }
+      if (rewrite[j]) {
+        let checked: Options = fields_checked(funcs, ix, p, f);
+        p = checked.p;
+        changed = changed || checked.changed;
+      }
     }
   }
   if (changed) {
@@ -307,48 +425,165 @@ function settle(funcs: ssasem.Func[], ix: util.NameIndex, p0: Plan): Plan {
 function initial_none(p: Plan): Plan {
   let ok: boolean[][] = [];
   for row in p.ok {
-    let flags: boolean[] = [];
-    for x in row {
-      flags = flags.append(false);
-    }
-    ok = ok.append(flags);
+    ok = ok.append(__alloc_bool(row.len()));
   }
-  return Plan { ...p, ok: ok };
+  let fields: boolean[][] = [];
+  for row in p.inl.ok {
+    fields = fields.append(__alloc_bool(row.len()));
+  }
+  return Plan { ...p, ok: ok, inl: Inline { ...p.inl, ok: fields } };
 }
 
 function demoted(p: Plan, j: i32, k: i32): Plan {
   return Plan { ...p, ok: p.ok.with(j, p.ok[j].with(k, false)) };
 }
 
-pub function promote(funcs: ssasem.Func[], names: string[], modes: i32[][], rewrite: boolean[], unnamed: boolean[]): Promoted {
+// table: a function whose records and enums are the module's. pinned: the
+// records whose layout something outside the compiled bodies reads.
+pub function promote(funcs: ssasem.Func[], names: string[], modes: i32[][], rewrite: boolean[], unnamed: boolean[], table: ssasem.Func, pinned: string[]): Promoted {
   let ix: util.NameIndex = util.name_index(names);
-  let direct: boolean[] = direct_only(funcs, ix, rewrite);
-  let anchored: boolean[] = anchored_callees(funcs, ix);
-  let eligible: boolean[] = [];
-  for i in 0..funcs.len() {
-    eligible = eligible.append(direct[i] && rewrite[i] && unnamed[i] && !anchored[i]);
-  }
-  let p: Plan = settle(funcs, ix, initial(funcs, modes, eligible));
+  let p: Plan = settle(funcs, ix, initial(funcs, modes, eligible_of(funcs, ix, rewrite, unnamed), inline_candidates(table, pinned)), rewrite);
+  let lay: Layout = layout_of(p.inl);
   let out: ssasem.Func[] = [];
   let out_modes: i32[][] = [];
   let changed: boolean[] = [];
   for i in 0..funcs.len() {
     let f: ssasem.Func = funcs[i];
-    let m: i32[] = [];
-    if (i < modes.len()) {
-      m = modes[i];
-    }
-    let touched: boolean = any_ok(p.ok[i]) || rewrite[i] && calls_promoted(f, ix, p);
+    let m: i32[] = modes_at(modes, i);
+    let touched: boolean = any_ok(p.ok[i]) || rewrite[i] && (calls_promoted(f, ix, p) || touches_inline(f, lay));
     if (touched) {
-      let r: Rewritten = rewritten(funcs, ix, p, i, m);
+      let r: Rewritten = rewritten(funcs, ix, p, lay, i, m);
       f = r.f;
       m = r.modes;
     }
+    f = ssasem.Func { ...f, records: laid_out(f.records, lay) };
     out = out.append(f);
     out_modes = out_modes.append(m);
     changed = changed.append(touched);
   }
-  return Promoted { funcs: out, modes: out_modes, changed: changed };
+  return Promoted { funcs: out, modes: out_modes, changed: changed, records: lay.recs };
+}
+
+// The functions whose parameters may pass in lanes.
+function eligible_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[]): boolean[] {
+  let direct: boolean[] = direct_only(funcs, ix, rewrite);
+  let anchored: boolean[] = anchored_callees(funcs, ix);
+  let out: boolean[] = [];
+  for i in 0..funcs.len() {
+    out = out.append(direct[i] && rewrite[i] && unnamed[i] && !anchored[i]);
+  }
+  return out;
+}
+
+function modes_at(modes: i32[][], i: i32): i32[] {
+  if (i < modes.len()) {
+    return modes[i];
+  }
+  return [];
+}
+
+// The records with a field in lanes, as laid out with the lanes, and where
+// each declared field now starts.
+struct Layout { types: typeinfo.Type[], ix: util.NameIndex, recs: semrecords.Record[], starts: i32[][], inl: Inline }
+
+function layout_of(inl: Inline): Layout {
+  let types: typeinfo.Type[] = [];
+  let keys: string[] = [];
+  let recs: semrecords.Record[] = [];
+  let starts: i32[][] = [];
+  for r in 0..inl.recs.len() {
+    if (!any_ok(inl.ok[r])) {
+      continue;
+    }
+    let rec: semrecords.Record = inl.recs[r];
+    let fields: semrecords.Field[] = [];
+    let at: i32[] = [];
+    for k in 0..rec.fields.len() {
+      at = at.append(fields.len());
+      fields = util.append_all(fields, laid_fields(rec.fields[k], inl.slots[r][k], inl.ok[r][k]));
+    }
+    types = types.append(rec.ty);
+    keys = keys.append(ssasem.type_key(rec.ty));
+    recs = recs.append(semrecords.Record { ...rec, fields: fields });
+    starts = starts.append(at);
+  }
+  return Layout { types: types, ix: util.name_index(keys), recs: recs, starts: starts, inl: inl };
+}
+
+function laid_fields(field: semrecords.Field, sl: Slot, laned: boolean): semrecords.Field[] {
+  if (!laned) {
+    return [field];
+  }
+  let names: string[] = lane_names(sl);
+  let out: semrecords.Field[] = [];
+  for n in 0..sl.lanes.len() {
+    out = out.append(semrecords.Field { name: field.name + "$" + names[n], ty: sl.lanes[n] });
+  }
+  return out;
+}
+
+function lane_names(sl: Slot): string[] {
+  if (!sl.option) {
+    return sl.names;
+  }
+  if (!sl.record) {
+    return ["some", "value"];
+  }
+  let out: string[] = ["some"];
+  return util.append_all(out, sl.names);
+}
+
+function laid_at(lay: Layout, t: typeinfo.Type): i32 {
+  if let typeinfo.TypeStruct(r) = t {
+    return lay.ix.find(ssasem.type_key(t));
+  }
+  return 0 - 1;
+}
+
+function laid_out(table: semrecords.Records, lay: Layout): semrecords.Records {
+  if (lay.recs.len() == 0) {
+    return table;
+  }
+  let list: semrecords.Record[] = [];
+  let changed: boolean = false;
+  for rec in table.list {
+    let at: i32 = laid_at(lay, rec.ty);
+    if (at >= 0) {
+      list = list.append(lay.recs[at]);
+      changed = true;
+    } else {
+      list = list.append(rec);
+    }
+  }
+  if (!changed) {
+    return table;
+  }
+  return semrecords.records_of(list);
+}
+
+function touches_inline(f: ssasem.Func, lay: Layout): boolean {
+  if (lay.recs.len() == 0) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (laid_inst(f, lay, ins) >= 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The layout row of the record ins builds or reads, or -1.
+function laid_inst(f: ssasem.Func, lay: Layout, ins: ssa.SInst): i32 {
+  if (ins.kind_tag == ssasem.record_new() && ins.result >= 0) {
+    return laid_at(lay, f.values[ins.result]);
+  }
+  if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1) {
+    return laid_at(lay, f.values[ins.args[0]]);
+  }
+  return 0 - 1;
 }
 
 // The callees an anchor names by argument position, which promoting would shift.
@@ -400,7 +635,7 @@ function placed_after(w: Work, v: i32, ins: ssa.SInst): Work {
   return Work { ...w, placed: w.placed.with(at, w.placed[at].append(ins)) };
 }
 
-function rewritten(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, i: i32, modes0: i32[]): Rewritten {
+function rewritten(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, lay: Layout, i: i32, modes0: i32[]): Rewritten {
   let f0: ssasem.Func = funcs[i];
   let g: ssa.SFunc = f0.graph;
   let none: i32[][] = [];
@@ -414,18 +649,18 @@ function rewritten(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, i: i32, mo
     index = index.append(at);
     at = at + slot_width(p, i, k);
   }
-  w = param_lanes(w, p, i);
+  w = field_lanes(param_lanes(w, p, i), lay);
   let e: Emit = Emit { done: [], cur: ssa.SBlock { id: 0 - 1, insts: [], term: jump(0), preds: [] }, next: next_block_id(g), moved: [], to: [] };
   for b in g.blocks {
     e = Emit { ...e, cur: ssa.SBlock { ...b, insts: [] } };
     for ins in b.insts {
-      let c: i32 = promoted_callee(ix, p, ins);
-      if (c >= 0) {
-        let gd: Guarded = guarded_args(p, c, w, e, ins);
+      let row: Row = lane_row(ix, p, lay, w.f, ins);
+      if (row.ok.len() > 0) {
+        let gd: Guarded = guarded_args(row, w, e, ins);
         w = gd.w;
         e = gd.e;
       }
-      let step: Step = rewrite_inst(funcs, ix, p, i, w, ins, index);
+      let step: Step = rewrite_inst(funcs, ix, p, lay, i, w, ins, index);
       w = Work { ...step.w, forced: [] };
       e = Emit { ...e, cur: ssa.SBlock { ...e.cur, insts: util.append_all(e.cur.insts, step.insts) } };
     }
@@ -550,6 +785,33 @@ function param_lanes(w0: Work, p: Plan, i: i32): Work {
   return w;
 }
 
+// The lanes of each read of a field held in lanes, of its copies and of an
+// Option field's payload: new values the reads of the lanes define.
+function field_lanes(w0: Work, lay: Layout): Work {
+  let w: Work = w0;
+  let g: ssa.SFunc = w0.f.graph;
+  for b in g.blocks {
+    for ins in b.insts {
+      let r: i32 = laid_inst(w0.f, lay, ins);
+      if (r < 0 || ins.kind_tag != ssasem.record_get() || !lay.inl.ok[inline_at(lay.inl, lay.types[r])][ins.imm]) {
+        continue;
+      }
+      let sl: Slot = lay.inl.slots[inline_at(lay.inl, lay.types[r])][ins.imm];
+      let ids: i32[] = [];
+      for t in sl.lanes {
+        ids = ids.append(w.f.values.len());
+        w = fresh(w, t);
+      }
+      let held: boolean[] = aliases(g, ins.result);
+      w = with_lanes(w, held, ids);
+      if (sl.option && sl.record) {
+        w = payload_lanes(w, g, held, ids);
+      }
+    }
+  }
+  return w;
+}
+
 function with_lanes(w0: Work, held: boolean[], ids: i32[]): Work {
   let w: Work = w0;
   for x in 0..held.len() {
@@ -589,9 +851,13 @@ function lanes_at(w: Work, v: i32): i32[] {
   return [];
 }
 
-function rewrite_inst(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, i: i32, w: Work, ins: ssa.SInst, index: i32[]): Step {
+function rewrite_inst(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, lay: Layout, i: i32, w: Work, ins: ssa.SInst, index: i32[]): Step {
   if (ins.kind_tag == ssasem.param()) {
     return param_insts(w, p, i, ins, index);
+  }
+  let r: i32 = laid_inst(w.f, lay, ins);
+  if (r >= 0 && ins.kind_tag == ssasem.record_get()) {
+    return Step { w: w, insts: laid_reads(w, lay, r, ins) };
   }
   if (lanes_at(w, ins.result).len() > 0) {
     return Step { w: w, insts: [] };
@@ -602,13 +868,46 @@ function rewrite_inst(funcs: ssasem.Func[], ix: util.NameIndex, p: Plan, i: i32,
       return Step { w: w, insts: [read_inst(ins, held)] };
     }
   }
-  if (ins.kind_tag == ssasem.call()) {
-    let c: i32 = ix.find(ins.str);
-    if (c >= 0 && ins.args.len() == p.ok[c].len() && any_ok(p.ok[c])) {
-      return call_insts(p, c, w, ins);
-    }
+  let row: Row = lane_row(ix, p, lay, w.f, ins);
+  if (row.ok.len() > 0) {
+    return built_insts(row, w, ins);
   }
   return Step { w: w, insts: [ins] };
+}
+
+// A read of a record laid out with lanes: a field held in lanes is read lane
+// by lane into the lanes its value stands for, any other at its new slot.
+function laid_reads(w: Work, lay: Layout, r: i32, ins: ssa.SInst): ssa.SInst[] {
+  let at: i32 = lay.starts[r][ins.imm];
+  let ids: i32[] = lanes_at(w, ins.result);
+  if (ids.len() == 0) {
+    return [ssa.SInst { ...ins, imm: at }];
+  }
+  let out: ssa.SInst[] = [];
+  for n in 0..ids.len() {
+    let field: semrecords.Field = lay.recs[r].fields[at + n];
+    out = out.append(ssa.SInst { kind_tag: ssasem.record_get(), result: ids[n], args: ins.args, imm: at + n, str: field.name });
+  }
+  return out;
+}
+
+// The lane slots of a call to a promoted function or of a construction of a
+// record laid out with lanes; empty for any other instruction.
+struct Row { slots: Slot[], ok: boolean[] }
+
+function lane_row(ix: util.NameIndex, p: Plan, lay: Layout, f: ssasem.Func, ins: ssa.SInst): Row {
+  let c: i32 = promoted_callee(ix, p, ins);
+  if (c >= 0) {
+    return Row { slots: p.slots[c], ok: p.ok[c] };
+  }
+  if (ins.kind_tag != ssasem.record_new() || ins.result < 0) {
+    return Row { slots: [], ok: [] };
+  }
+  let r: i32 = inline_at(lay.inl, f.values[ins.result]);
+  if (r < 0 || !any_ok(lay.inl.ok[r]) || ins.args.len() != lay.inl.ok[r].len()) {
+    return Row { slots: [], ok: [] };
+  }
+  return Row { slots: lay.inl.slots[r], ok: lay.inl.ok[r] };
 }
 
 function param_insts(w: Work, p: Plan, i: i32, ins: ssa.SInst, index: i32[]): Step {
@@ -642,16 +941,17 @@ function read_inst(ins: ssa.SInst, held: i32[]): ssa.SInst {
   return copy_of(ins.result, held[1]);
 }
 
-function call_insts(p: Plan, c: i32, w0: Work, ins: ssa.SInst): Step {
+// A call or construction with each argument at a lane slot passed as its lanes.
+function built_insts(row: Row, w0: Work, ins: ssa.SInst): Step {
   let w: Work = w0;
   let before: ssa.SInst[] = [];
   let args: i32[] = [];
   for m in 0..ins.args.len() {
     let a: i32 = ins.args[m];
-    if (!p.ok[c][m]) {
+    if (!row.ok[m]) {
       args = args.append(a);
     } else {
-      let s: Slot = p.slots[c][m];
+      let s: Slot = row.slots[m];
       let held: i32[] = lanes_at(w, a);
       if (held.len() == 0 && m < w.forced.len()) {
         held = w.forced[m];
@@ -705,15 +1005,15 @@ struct Guarded { w: Work, e: Emit }
 // An Option argument that is not built from constructions in sight is tested
 // where it is passed: the block splits, one arm reads the payload's fields,
 // the other passes zeros, and the call continues where the two join.
-function guarded_args(p: Plan, c: i32, w0: Work, e0: Emit, ins: ssa.SInst): Guarded {
+function guarded_args(row: Row, w0: Work, e0: Emit, ins: ssa.SInst): Guarded {
   let w: Work = w0;
   let e: Emit = e0;
   let forced: i32[][] = [];
   for m in 0..ins.args.len() {
     let lanes: i32[] = [];
     let a: i32 = ins.args[m];
-    if (p.ok[c][m] && p.slots[c][m].option && lanes_at(w, a).len() == 0 && !constructed(w, a, [])) {
-      let g: Guarded = guard(w, e, a, p.slots[c][m]);
+    if (row.ok[m] && row.slots[m].option && lanes_at(w, a).len() == 0 && !constructed(w, a, [])) {
+      let g: Guarded = guard(w, e, a, row.slots[m]);
       w = g.w;
       e = g.e;
       lanes = w.forced[0];

@@ -7987,8 +7987,9 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   let all: Produced[] = anchored.all;
   names = anchored.names;
   if (verify) {
-    let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
+    let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size, promotion(all, mod, table, memo, finalizers));
     table = with_promoted_params(table, inlined.all, names);
+    memo = with_laid_records(memo, inlined.records);
     all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
@@ -8058,7 +8059,101 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
   return out;
 }
 
-struct Spliced { all: Produced[], spliced: boolean[] }
+struct Spliced { all: Produced[], spliced: boolean[], records: semrecords.Record[] }
+
+// The module's records and enums for the lane pass, read through the first
+// produced body, and the records it must leave as declared.
+function promotion(all: Produced[], mod: parser.Module, table: ssasem.Contracts, memo: SchemaMemo, finalizers: ssasem.Finalizer[]): seminline.Promotion {
+  for p in all {
+    if (p.ok && !p.template && !p.bodyless) {
+      let records: semrecords.Records = semrecords.Records { list: memo.records, names: memo.record_names };
+      let f: ssasem.Func = ssasem.Func { ...p.func, records: records, enums: memo.enums, finalizers: finalizers };
+      return seminline.Promotion { on: true, table: [f], pinned: pinned_records(mod, table, records, memo.enums) };
+    }
+  }
+  return seminline.no_promotion();
+}
+
+// The records whose layout something outside the compiled bodies reads: the
+// runtime's own, and every record an exported function or a host import
+// carries, through the records, arrays, tuples and enums that hold it.
+function pinned_records(mod: parser.Module, table: ssasem.Contracts, records: semrecords.Records, enums: semrecords.Enum[]): string[] {
+  let out: string[] = [];
+  for sd in mod.structs {
+    if (sd.line == 0 && sd.module == "") {
+      out = out.append(sd.name);
+    }
+  }
+  let work: typeinfo.Type[] = signature_types(mod, table);
+  let seen: string[] = [];
+  while (work.len() > 0) {
+    let t: typeinfo.Type = work[work.len() - 1];
+    work = work.take(work.len() - 1);
+    let key: string = ssasem.type_key(t);
+    if (util.index_of_str(seen, key) >= 0) {
+      continue;
+    }
+    seen = seen.append(key);
+    if let typeinfo.TypeStruct(r) = t {
+      out = out.append(key);
+    }
+    work = util.append_all(work, held_types(t, records, enums));
+  }
+  return out;
+}
+
+// The parameter and result types of each export and host import.
+function signature_types(mod: parser.Module, table: ssasem.Contracts): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for fd in mod.funcs {
+    let at: i32 = ssasem.find_contract(table, parser.decl_key(fd));
+    if (at >= 0 && (fd.import_iface != "" || fd.import_wit != "" || exported(fd, mod))) {
+      out = util.append_all(out, table.list[at].params).append(table.list[at].result);
+    }
+  }
+  return out;
+}
+
+function held_types(t: typeinfo.Type, records: semrecords.Records, enums: semrecords.Enum[]): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  if let typeinfo.TypeArray(a) = t {
+    return [a.elem];
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    return tup.elements;
+  }
+  let at: i32 = semrecords.find(records, t);
+  if (at >= 0) {
+    for field in records.list[at].fields {
+      out = out.append(field.ty);
+    }
+  }
+  let e: i32 = semrecords.find_enum(enums, t);
+  if (e >= 0) {
+    for v in enums[e].variants {
+      for field in v.fields {
+        out = out.append(field.ty);
+      }
+    }
+  }
+  return out;
+}
+
+// The memo with each record the lane pass laid out replaced by its layout.
+function with_laid_records(memo: SchemaMemo, laid: semrecords.Record[]): SchemaMemo {
+  if (laid.len() == 0) {
+    return memo;
+  }
+  let list: semrecords.Record[] = memo.records;
+  for rec in laid {
+    for k in 0..list.len() {
+      if (semtypes.equal(list[k].ty, rec.ty)) {
+        list = list.with(k, rec);
+      }
+    }
+  }
+  return SchemaMemo { ...memo, records: list };
+}
 
 // A function whose parameters pass in lanes takes them in every call.
 function with_promoted_params(table: ssasem.Contracts, all: Produced[], names: string[]): ssasem.Contracts {
@@ -8125,9 +8220,9 @@ function byte_copy_loops(all: Produced[]): Produced[] {
   return out;
 }
 
-function inline_leaves(all: Produced[], names: string[], mod: parser.Module, size: boolean): Spliced {
+function inline_leaves(all: Produced[], names: string[], mod: parser.Module, size: boolean, promote: seminline.Promotion): Spliced {
   if (!inline_on()) {
-    return Spliced { all: all, spliced: [] };
+    return Spliced { all: all, spliced: [], records: [] };
   }
   let funcs: ssasem.Func[] = [];
   let modes: i32[][] = [];
@@ -8151,7 +8246,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     always = always.append(i < mod.funcs.len() && mod.funcs[i].always_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size, true);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size, promote);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
@@ -8162,7 +8257,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     result = result.append(p);
     i = i + 1;
   }
-  return Spliced { all: result, spliced: out.spliced };
+  return Spliced { all: result, spliced: out.spliced, records: out.records };
 }
 
 function without_unnamed(all: Produced[], names: string[], spliced: boolean[], mod: parser.Module): Produced[] {

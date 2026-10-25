@@ -469,7 +469,7 @@ pub function with_records(mod: parser.Module, sub: Sub): parser.Module {
   if (sub.records.len() == 0) {
     return mod;
   }
-  return parser.Module { ...mod, structs: util.append_all(mod.structs, sub.records) };
+  return parser.Module { ...mod, structs: irtables.with_decls(mod.structs, sub.records) };
 }
 
 pub function produced(bodies: irtables.LowerResult[], i: i32, fd: parser.FuncDecl): irtables.LowerResult {

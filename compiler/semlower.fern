@@ -397,9 +397,9 @@ function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Pla
 function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): Inference {
   let built: semsource.Built = semsource.with_analyses(semsource.build_module_with(mod, opts));
   util.arr_push_cliff_report("sem:built", 0);
-  let records: parser.StructDecl[] = instance_records(built);
+  let records: parser.StructDecl[] = util.append_all(instance_records(built), laid_records(built, mod.structs));
   if (records.len() > 0) {
-    structs = irtables.struct_tab(util.append_all(structs.decls, records));
+    structs = irtables.struct_tab(irtables.with_decls(structs.decls, records));
   }
   let declared: Planned = rows_planned(mod, built, no_reuse(), []);
   let inf: Inference = Inference { built: built, rows: no_reuse(), records: records };
@@ -410,6 +410,39 @@ function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: se
   }
   util.arr_push_cliff_report("sem:lowered", 0);
   return inf;
+}
+
+// The declarations of the records the lane pass laid out, each with a lane
+// field (its name holds a `$`) in the place of the field it holds. They
+// replace the declared ones (ircore.with_records), so every layout the
+// backends read is the one the bodies were lowered with.
+function laid_records(built: semsource.Built, decls: parser.StructDecl[]): parser.StructDecl[] {
+  let out: parser.StructDecl[] = [];
+  for rec in built.records.list {
+    if (!laned(rec)) {
+      continue;
+    }
+    let name: string = ssasem.type_key(rec.ty);
+    for sd in decls {
+      if (sd.name == name && sd.enum_owner == "") {
+        let fields: parser.StructFieldDecl[] = [];
+        for fl in rec.fields {
+          fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
+        }
+        out = out.append(parser.StructDecl { ...sd, fields: fields });
+      }
+    }
+  }
+  return out;
+}
+
+function laned(rec: semrecords.Record): boolean {
+  for fl in rec.fields {
+    if (util.index_of_sub(fl.name, "$") >= 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function instance_records(built: semsource.Built): parser.StructDecl[] {

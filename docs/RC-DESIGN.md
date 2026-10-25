@@ -372,7 +372,8 @@ pointer that flows through the program points past the header.
 - An **array** box has its capacity at `data-16`, its count at `data-8`, its
   length at `data+0` and element `i` at `data+(i+1)*8`
   (`__fern_arr_box`). A **record** is an array-shaped box whose first word is
-  its `shape_addr` and the rest one word per field; a **tuple** has one word
+  its `shape_addr` and the rest one word per field, a field the inliner holds
+  in lanes taking one word per lane (`docs/SELFHOST-SSA-BACKEND.md`); a **tuple** has one word
   per element and no shape word; a declared **enum variant** is laid out as a
   record, its shape word naming the variant. A **string** box is a data
   pointer and a length, released through `__fern_str_free`; a fused string
