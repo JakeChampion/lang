@@ -987,8 +987,7 @@ pub function (s: Streams) acked(item: recovery.Resend): Streams {
       if (i < 0) {
         return s;
       }
-      let st: Stream = s.list[i];
-      return s.__put(i, Stream { ...st, send: __acked_range(st.send, offset, len, fin) }).__retire_done(i);
+      return Streams { ...s, list: s.list.with(i, s.list[i].__acked_send(offset, len, fin)) }.__retire_done(i);
     },
     recovery.Again(frames.ResetStreamFrame(r)) => {
       let i: i32 = s.__find(r.stream);
@@ -1009,9 +1008,17 @@ pub function (s: Streams) acked(item: recovery.Resend): Streams {
 
 ```fern
 <<20 function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send>>=
+function (st: Stream) __acked_send(offset: i64, len: i32, fin: boolean): Stream {
+  return Stream { ...st, send: __acked_range(st.send, offset, len, fin) };
+}
+
 function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send {
   if (snd.reset >= 0) {
     return snd;
+  }
+  if (snd.acked.len() == 0 && offset <= snd.base) {
+    let top: i64 = __max(snd.base, offset + len as i64);
+    return Send { ...snd, base: top, buf: __dropped(snd.buf, (top - snd.base) as i32), fin_acked: snd.fin_acked || fin };
   }
   let acked: i64[] = __merge(snd.acked, offset, offset + len as i64);
   let base: i64 = snd.base;
@@ -1019,8 +1026,17 @@ function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send {
     base = __max(base, acked[1]);
     acked = __rest_i64(__rest_i64(acked));
   }
-  let drop: i32 = (base - snd.base) as i32;
-  return Send { ...snd, acked: acked, base: base, buf: __slice_range(snd.buf, drop, snd.buf.len()), fin_acked: snd.fin_acked || fin };
+  return Send { ...snd, acked: acked, base: base, buf: __dropped(snd.buf, (base - snd.base) as i32), fin_acked: snd.fin_acked || fin };
+}
+
+function __dropped(buf: u8[], n: i32): u8[] {
+  if (n == 0) {
+    return buf;
+  }
+  if (n == buf.len()) {
+    return [];
+  }
+  return __slice_range(buf, n, buf.len());
 }
 
 function __merge(ranges: i64[], lo: i64, hi: i64): i64[] {
