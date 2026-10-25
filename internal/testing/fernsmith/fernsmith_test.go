@@ -1166,6 +1166,14 @@ func TestGenReachesOwnershipShapes(t *testing.T) {
 		{"as? downcast of a trait object (5%)", 0.02, regexp.MustCompile(` as\? S\d+\) \{ Some\(`)},
 		{"generic struct and enum cluster (12%)", 0.06, regexp.MustCompile(`let __gen_a\d+: G0\[`)},
 		{"generic instance over a boxed type (9%)", 0.04, regexp.MustCompile(`let __gen_a\d+: G0\[(string|i32\[\]|i64\[\]|boolean\[\]|Pair|Xyz|Map|Option|Result|\(|S\d|E\d)`)},
+		{"recursive list enum (54%)", 0.25, regexp.MustCompile(`enum RL0 \{ RNil0, RCons0\(i32, RL0\) \}`)},
+		{"binary tree enum (33%)", 0.14, regexp.MustCompile(`enum RT0 \{`)},
+		{"rose tree holding an array of itself (34%)", 0.14, regexp.MustCompile(`RRose0\(i32, RR0\[\]\)`)},
+		{"generic list of strings (27%)", 0.11, regexp.MustCompile(`enum GL0\[T\] \{`)},
+		{"struct linked through an Option of itself (21%)", 0.09, regexp.MustCompile(`struct RN0 \{ v: i32, next: Option\[RN0\] \}`)},
+		{"nested pattern over a recursive enum (7%)", 0.03, regexp.MustCompile(`c = rl0_pairs\(c\)`)},
+		{"recursive-data helper called (32%)", 0.12, regexp.MustCompile(`(\(|, |\|> |= |return )(rl0|rt0|rr0|gs0|rn0)_go\(`)},
+		{"list rebuilt while an alias holds it (46%)", 0.15, regexp.MustCompile(`let h\d: RL0 = c; c = rl0_(map|keep|rev)\(c`)},
 	}
 	hits := make([]int, len(landmarks))
 	for seed := uint64(0); seed < seeds; seed++ {

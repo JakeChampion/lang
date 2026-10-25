@@ -20,6 +20,7 @@ const (
 	featTraits
 	featGenericDecl
 	featOwnRecv
+	featRecData
 	numFeatures
 )
 

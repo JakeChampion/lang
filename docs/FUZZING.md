@@ -107,6 +107,19 @@ var into the value it returns (printed, in the printable profile), the way
 Csmith checksums global state. Without it a wrong value anywhere the return
 expression did not read passes unseen.
 
+**Recursive data**: `featRecData` declares recursive types and helpers that
+build, rebuild and fold them:
+
+- a list, with map, filter, reverse and a nested pattern
+- a binary search tree, with insert and fold
+- a rose tree whose children are an array of itself
+- a list generic in its payload, instantiated at `string`
+- a struct that reaches itself through an `Option` field
+
+A rebuild of a unique value can reuse its boxes. A helper sometimes keeps
+its input alive past a rebuild, so the rebuild must copy instead. A list of
+up to 2047 cells goes only through the loops, which tests a deep drop.
+
 The other generators are narrower: `genNumProgram` (numeric properties),
 `genSimProgram` (deterministic-simulation properties), and `std/fuzz` inside
 the language.

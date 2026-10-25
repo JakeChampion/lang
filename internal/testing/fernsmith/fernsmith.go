@@ -711,6 +711,7 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	g.declareTrait(b)
 	g.declareGenerics(b)
 	g.declareOwnRecv(b)
+	g.declareRecData(b)
 }
 
 func (g *Generator) declareDynamicNominals(b *strings.Builder) {
