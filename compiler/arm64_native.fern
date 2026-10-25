@@ -6361,6 +6361,10 @@ function arm64_gas_bad_ext_alu(fam: i32, mnem: string, ops: string[]): string {
   if (fam == arm64_fam_condsel()) {
     return arm64_gas_bad_condsel(mnem, ops);
   }
+  return arm64_gas_bad_ext_alu_rest(fam, mnem, ops);
+}
+
+function arm64_gas_bad_ext_alu_rest(fam: i32, mnem: string, ops: string[]): string {
   if (fam == arm64_fam_bitops()) {
     return arm64_gas_bad_rev(mnem, ops);
   }

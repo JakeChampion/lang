@@ -1022,14 +1022,10 @@ function still_holds(ev: i32, hi: i32[], now: i32): boolean {
   return hi[ev] >= now;
 }
 
-// A loop is a header and the blocks up to its last back edge, so a header
-// with two back edges counts once.
-pub function block_loop_weights(f: SFunc): i32[] {
+// The position of each header's last back edge, or -1.
+function furthest_latches(f: SFunc): i32[] {
   let at: i32[] = block_positions(f);
-  let latch: i32[] = __alloc_i32(f.blocks.len());
-  for bi in 0..f.blocks.len() {
-    latch = latch.with(bi, 0 - 1);
-  }
+  let latch: i32[] = util.minus_ones(f.blocks.len());
   for bi in 0..f.blocks.len() {
     for which in 0..2 {
       let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
@@ -1038,6 +1034,13 @@ pub function block_loop_weights(f: SFunc): i32[] {
       }
     }
   }
+  return latch;
+}
+
+// A loop is a header and the blocks up to its last back edge, so a header
+// with two back edges counts once.
+pub function block_loop_weights(f: SFunc): i32[] {
+  let latch: i32[] = furthest_latches(f);
   let depth: i32[] = __alloc_i32(f.blocks.len());
   for h in 0..f.blocks.len() {
     let k: i32 = h;
@@ -4257,61 +4260,93 @@ pub function fold_extensions(f: SFunc): Formed {
   if (!has_extension(f)) {
     return Formed { f: f, repl: [] };
   }
-  let def_b: i32[] = __alloc_i32(f.nvals);
-  let def_k: i32[] = __alloc_i32(f.nvals);
-  let facts: i32[] = __alloc_i32(f.nvals);
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    def_b = def_b.with(i, 0 - 1);
-    def_k = def_k.with(i, 0 - 1);
-    i = i + 1;
+  let d: DefSites = def_sites_of(f);
+  let facts: i32[] = ext_facts(f, d);
+  if (facts.len() == 0) {
+    return Formed { f: f, repl: [] };
   }
+  let repl: i32[] = dropped_extensions(f, facts);
+  if (repl.len() == 0) {
+    return Formed { f: f, repl: [] };
+  }
+  let flat: Formed = formed_by(f, repl);
+  return Formed { f: rewrite_through(f, flat.repl), repl: flat.repl };
+}
+
+struct DefSites { blk: i32[], at: i32[] }
+
+function def_sites_of(f: SFunc): DefSites {
+  let blk: i32[] = util.minus_ones(f.nvals);
+  let at: i32[] = util.minus_ones(f.nvals);
   for bi in 0..f.blocks.len() {
     for k in 0..f.blocks[bi].insts.len() {
       let r: i32 = f.blocks[bi].insts[k].result;
       if (r >= 0 && r < f.nvals) {
-        def_b = def_b.with(r, bi);
-        def_k = def_k.with(r, k);
-        facts = facts.with(r, EXT_BYTE);
+        blk = blk.with(r, bi);
+        at = at.with(r, k);
       }
     }
   }
-  let changed: boolean = true;
-  let rounds: i32 = 0;
-  while (changed && rounds < 64) {
-    changed = false;
-    for blk in f.blocks {
-      for ins in blk.insts {
-        let r: i32 = ins.result;
-        if (r >= 0 && r < f.nvals) {
-          let x: i32 = ext_transfer(f, def_b, def_k, facts, ins) & facts[r];
-          if (x != facts[r]) {
-            facts = facts.with(r, x);
-            changed = true;
-          }
-        }
+  return DefSites { blk: blk, at: at };
+}
+
+// The fixed point, or [] when 64 rounds do not settle it.
+function ext_facts(f: SFunc, d: DefSites): i32[] {
+  let facts: i32[] = __alloc_i32(f.nvals);
+  for v in 0..f.nvals {
+    if (d.blk[v] >= 0) {
+      facts = facts.with(v, EXT_BYTE);
+    }
+  }
+  for round in 0..64 {
+    let next: i32[] = ext_round(f, d, facts);
+    if (next.len() == 0) {
+      return facts;
+    }
+    facts = next;
+  }
+  return [];
+}
+
+// One pass over the instructions, or [] when no fact shrank.
+function ext_round(f: SFunc, d: DefSites, facts: i32[]): i32[] {
+  let changed: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let r: i32 = ins.result;
+      if (r >= 0 && r < f.nvals) {
+        let x: i32 = ext_transfer(f, d.blk, d.at, facts, ins) & facts[r];
+        changed = changed || x != facts[r];
+        facts = facts.with(r, x);
       }
     }
-    rounds = rounds + 1;
   }
-  if (changed) {
-    return Formed { f: f, repl: [] };
+  if (!changed) {
+    return [];
   }
+  return facts;
+}
+
+// The replacement map, or [] when no extension goes.
+function dropped_extensions(f: SFunc, facts: i32[]): i32[] {
   let repl: i32[] = identity_repl(f.nvals);
   let dropped: boolean = false;
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.result >= 0 && ins.result < f.nvals && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < f.nvals && holds_result(ins, facts[ins.args[0]])) {
+      if (drops(f, facts, ins)) {
         repl = repl.with(ins.result, ins.args[0]);
         dropped = true;
       }
     }
   }
   if (!dropped) {
-    return Formed { f: f, repl: [] };
+    return [];
   }
-  let flat: Formed = formed_by(f, repl);
-  return Formed { f: rewrite_through(f, flat.repl), repl: flat.repl };
+  return repl;
+}
+
+function drops(f: SFunc, facts: i32[], ins: SInst): boolean {
+  return ins.result >= 0 && ins.result < f.nvals && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < f.nvals && holds_result(ins, facts[ins.args[0]]);
 }
 
 function has_extension(f: SFunc): boolean {
@@ -4348,14 +4383,8 @@ function holds_result(ins: SInst, held: i32): boolean {
 
 function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: SInst): i32 {
   let k: i32 = ins.kind_tag;
-  if (k == 1) {
-    return const_facts(ins.imm as i64);
-  }
-  if (k == 2) {
-    return EXT_BYTE;
-  }
-  if (k == 3) {
-    return const_facts(util.lit_to_i64(ins.str));
+  if (k >= 1 && k <= 3) {
+    return constant_facts(ins);
   }
   if (k == 7 || k == 8) {
     return shared_facts(facts, ins.args, 0);
@@ -4373,6 +4402,16 @@ function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: S
     return unary_facts(ins, fact_of(facts, ins.args[0]));
   }
   return 0;
+}
+
+function constant_facts(ins: SInst): i32 {
+  if (ins.kind_tag == 1) {
+    return const_facts(ins.imm as i64);
+  }
+  if (ins.kind_tag == 2) {
+    return EXT_BYTE;
+  }
+  return const_facts(util.lit_to_i64(ins.str));
 }
 
 function const_facts(c: i64): i32 {
@@ -4408,27 +4447,41 @@ function binary_facts(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: S
   if (ins.args.len() != 2) {
     return 0;
   }
-  let op: string = ins.str;
-  if (op == "eq" || op == "ne" || util.str_has_prefix(op, "lt_") || util.str_has_prefix(op, "le_") || util.str_has_prefix(op, "gt_") || util.str_has_prefix(op, "ge_")) {
+  if (compare_op(ins.str)) {
     return EXT_BYTE;
   }
-  if (op == "and") {
-    let a: i32 = fact_of(facts, ins.args[0]) | fact_of(facts, ins.args[1]);
-    if (a == EXT_BYTE) {
-      return EXT_BYTE;
-    }
-    if ((fact_of(facts, ins.args[0]) & 3) == 3 || (fact_of(facts, ins.args[1]) & 3) == 3) {
-      return 3;
-    }
-    return a & EXT_U32;
+  if (ins.str == "and") {
+    return and_facts(fact_of(facts, ins.args[0]), fact_of(facts, ins.args[1]));
   }
-  if (op == "shr_u" && ins.imm == 64 && const_in(f, def_b, def_k, ins.args[1], 56i64, 63i64)) {
+  if (ins.str == "shr_u" && ins.imm == 64) {
+    return shifted_facts(f, def_b, def_k, ins.args[1]);
+  }
+  return 0;
+}
+
+function compare_op(op: string): boolean {
+  return op == "eq" || op == "ne" || util.str_has_prefix(op, "lt_") || util.str_has_prefix(op, "le_") || util.str_has_prefix(op, "gt_") || util.str_has_prefix(op, "ge_");
+}
+
+// An and with a byte is a byte, and one with a non-negative i32 is one.
+function and_facts(a: i32, b: i32): i32 {
+  if ((a | b) == EXT_BYTE) {
     return EXT_BYTE;
   }
-  if (op == "shr_u" && ins.imm == 64 && const_in(f, def_b, def_k, ins.args[1], 33i64, 63i64)) {
+  if ((a & 3) == 3 || (b & 3) == 3) {
     return 3;
   }
-  if (op == "shr_u" && ins.imm == 64 && const_in(f, def_b, def_k, ins.args[1], 32i64, 63i64)) {
+  return (a | b) & EXT_U32;
+}
+
+function shifted_facts(f: SFunc, def_b: i32[], def_k: i32[], count: i32): i32 {
+  if (const_in(f, def_b, def_k, count, 56i64, 63i64)) {
+    return EXT_BYTE;
+  }
+  if (const_in(f, def_b, def_k, count, 33i64, 63i64)) {
+    return 3;
+  }
+  if (const_in(f, def_b, def_k, count, 32i64, 63i64)) {
     return EXT_U32;
   }
   return 0;

@@ -1904,17 +1904,23 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 
 struct Fresh { rows: irtables.LowerResult[], types: HelperType[], seen: util.NameIndex }
 
+// A kernel helper comes in only when the function calls its builtin.
+function byte_helpers(f: ssasem.Func, done: util.NameIndex, own rows: irtables.LowerResult[]): irtables.LowerResult[] {
+  for h in ssabytes.helpers() {
+    let served: string = ssabytes.served_builtin(h.name);
+    if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0)) {
+      rows = rows.append(h);
+    }
+  }
+  return rows;
+}
+
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex): Fresh {
   let out = Fresh { rows: [], types: [], seen: seen };
   let grown: util.NameIndex = seen;
   let sc: SchemaScan = schema_scan(f);
   if (sc.bytes) {
-    for h in ssabytes.helpers() {
-      let served: string = ssabytes.served_builtin(h.name);
-      if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0)) {
-        out = Fresh { ...out, rows: out.rows.append(h) };
-      }
-    }
+    out = Fresh { ...out, rows: byte_helpers(f, done, out.rows) };
   }
   for rec in f.records.list {
     let k: string = ssasem.type_key(rec.ty);
