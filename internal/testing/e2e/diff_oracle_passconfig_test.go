@@ -47,10 +47,30 @@ func logPassConfig(t *testing.T, env []string) {
 
 func selfHostCompileCmd(fernBin string, env []string, args ...string) *exec.Cmd {
 	cmd := exec.Command(fernBin, args...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	// The ambient environment follows SelfHostVerify, so a FERN_IR_VERIFY set
+	// by whoever runs the leg wins.
+	cmd.Env = append(append([]string{e2eharness.SelfHostVerify}, os.Environ()...), env...)
 	return cmd
+}
+
+func TestSelfHostCompileCmdVerifiesTheIR(t *testing.T) {
+	verify := func() string {
+		for _, kv := range selfHostCompileCmd("fern", []string{"FERN_SEM_INLINE="}).Environ() {
+			if v, ok := strings.CutPrefix(kv, "FERN_IR_VERIFY="); ok {
+				return v
+			}
+		}
+		return "unset"
+	}
+	t.Setenv("FERN_IR_VERIFY", "")
+	os.Unsetenv("FERN_IR_VERIFY")
+	if got := verify(); got != "quiet" {
+		t.Errorf("a leg compile runs with FERN_IR_VERIFY=%s, want quiet", got)
+	}
+	t.Setenv("FERN_IR_VERIFY", "1")
+	if got := verify(); got != "1" {
+		t.Errorf("an ambient FERN_IR_VERIFY=1 became %s in a leg compile", got)
+	}
 }
 
 func TestSelfHostPassConfigMix(t *testing.T) {
