@@ -811,7 +811,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     if (f > 0) {
       fname = "__ev" + util.i32_to_string(f);
     }
-    fields = fields.append(parser.StructFieldDecl { name: fname, type_name: "", fn_ret: "", fn_param_types: "" });
+    fields = fields.append(parser.bare_field(fname, ""));
     f = f + 1;
   }
   return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
@@ -4483,9 +4483,12 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
       _ => {}
     }
   }
-  let rv: Value = eval_expr(b.right, env);
+  let rv: Value = eval_expr(float_operand(b.right, lv), env);
   if (is_err(rv)) {
     return rv;
+  }
+  if (parser.is_unsettled_int_literal(b.left)) {
+    lv = eval_expr(float_operand(b.left, rv), env);
   }
   let overload: string = struct_op_method(b.op, lv);
   if (overload.len() > 0) {
@@ -4504,6 +4507,21 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
     }
   }
   return eval_typed_binary(b.op, lv, rv, b.ty);
+}
+
+// An integer literal beside a float operand is a float of its width, as the
+// checker settles it.
+function float_operand(e: ast.Expr, other: Value): ast.Expr {
+  if (!parser.is_unsettled_int_literal(e)) {
+    return e;
+  }
+  if let VFloat(_) = other {
+    return parser.settle_int_tree(e, "f64");
+  }
+  if let VFloat32(_) = other {
+    return parser.settle_int_tree(e, "f32");
+  }
+  return e;
 }
 
 function struct_op_method(op: string, lv: Value): string {

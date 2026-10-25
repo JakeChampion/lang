@@ -1,0 +1,16 @@
+// An element assignment is refused (E056), and its value is still checked
+// against the element type, as a variable assignment's value is.
+function main(): i32 {
+    let xs: i32[] = [1, 2, 3];
+    xs[0] = "x";
+    xs[1] += "y";
+    xs[2] = 9;
+    let grid: i32[][] = [[1]];
+    grid[0][0] = "z";
+    grid[0] = 5;
+    let us: u8[] = [1];
+    us[0] = 300;
+    let fs: f64[] = [1.0];
+    fs[0] = false;
+    return xs[0];
+}

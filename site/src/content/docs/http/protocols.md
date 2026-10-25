@@ -37,7 +37,7 @@ function main(): i32 {
     };
     match (identity.from_pem(cert, key)) {
         Ok(id) => {
-            return serve.supervise(8443, serve.config().with_tls(server.config(id, random_bytes(32))), handle);
+            return serve.exit_code(serve.supervise(8443, serve.config().with_tls(server.config(id, random_bytes(32))), handle));
         },
         Err(e) => {
             eprint(e.message());

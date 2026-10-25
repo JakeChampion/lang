@@ -1,0 +1,14 @@
+// An integer-literal operand of a typed f32 takes the f32 type, as it does
+// beside an f64, in code and in a const initializer.
+const G: f32 = 1.5;
+const H: f32 = G + 1 / 2;
+const L: boolean = -2 < G;
+
+function main(): i32 {
+    let f: f32 = 1.5;
+    let a: f32 = f + 1 / 2;
+    let b: f32 = (3 / 2) * f;
+    let c: boolean = 1 / 2 < f;
+    print(f"{a} {b} {c} {H} {L}");
+    return 0;
+}

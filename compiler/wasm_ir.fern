@@ -2828,7 +2828,6 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
 }
 
 pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection): string {
-  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache);
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
   let ft: string[] = fn_value_table(ir_cache);
@@ -2862,6 +2861,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
 pub struct EmittedCore { wat: string, needs: string[] }
 
 pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): EmittedCore {
+  ircore.refuse_claims(sub.refused);
   let lm: parser.Module = ircore.with_records(route_normalized(mod), sub);
   let bad_import: string = wasm_unsupported_import(lm);
   if (bad_import.len() > 0) {
@@ -5025,16 +5025,19 @@ function frame_window_wat(cx: WasmOpCtx, data: i32, len: i32, at: i32): string {
     + "    local.get " + w + "\n    i32.const 1\n    i32.add\n";
 }
 
-// A byte view's string arm is a string {len, bytes} or a window {data, len}
-// at its address less 1.
+// A view's string arm is a string {len, bytes}, a window {data, len} at its
+// address less 1, or a borrowed descriptor {len | 1 << 31, data} (str_borrow_helper).
 function view_string_wat(o: ir.Op, tmp: i32): string {
   let t: string = util.i32_to_string(tmp);
   if (o.kind_tag == ir.K_STR_LEN) {
-    return "    local.tee " + t + "\n    local.get " + t + "\n    i32.const 1\n    i32.and\n    i32.const 3\n    i32.mul\n    i32.add\n    i32.load\n";
+    return "    local.tee " + t + "\n    local.get " + t + "\n    i32.const 1\n    i32.and\n    i32.const 3\n    i32.mul\n    i32.add\n    i32.load\n"
+      + "    i32.const 2147483647\n    i32.and\n";
   }
   return "    local.tee " + t + "\n    i32.const 1\n    i32.and\n    if (result i32)\n"
     + "    local.get " + t + "\n    i32.const 1\n    i32.sub\n    i32.load\n"
-    + "    else\n    local.get " + t + "\n    i32.const 4\n    i32.add\n    end\n";
+    + "    else\n    local.get " + t + "\n    i32.load\n    i32.const 0\n    i32.lt_s\n    if (result i32)\n"
+    + "    local.get " + t + "\n    i32.const 4\n    i32.add\n    i32.load\n"
+    + "    else\n    local.get " + t + "\n    i32.const 4\n    i32.add\n    end\n    end\n";
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -6291,12 +6294,14 @@ pub function substr_helper(): string {
   return o;
 }
 
+// A borrowed descriptor {len | 1 << 31, data}: a counted box that aliases the
+// storage it was made from. A string's length never has the top bit.
 pub function str_borrow_helper(): string {
   let o: string = "  (func $__fern_str_borrow (param $data i32) (param $len i32) (result i32)\n";
   o = o + "    (local $p i32)\n";
-  o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
-  o = o + "    (i32.store (local.get $p) (local.get $len))\n";
-  o = o + "    (memory.copy (i32.add (local.get $p) (i32.const 4)) (local.get $data) (local.get $len))\n";
+  o = o + "    (local.set $p (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $p) (i32.or (local.get $len) (i32.const -2147483648)))\n";
+  o = o + "    (i32.store (i32.add (local.get $p) (i32.const 4)) (local.get $data))\n";
   o = o + "    (local.get $p))\n";
   return o;
 }
@@ -8842,6 +8847,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   let lo: string = util.i32_to_string(heap_base);
   let o: string = "";
   o = o + "  (func $__fern_oob_abort (result i32) (call $__fern_abort_arr) (unreachable))\n";
+  o = o + "  (func $__fern_slice_abort (result i32) (call $__fern_abort_slice) (unreachable))\n";
   o = o + "  (func $__alloc (param $n i32) (result i32)\n";
   o = o + "    (call $__fern_alloc (local.get $n)))\n";
   o = o + "  (func $__free (param $p i32) (result i32)\n";
@@ -8968,21 +8974,29 @@ pub function bytes_into_helper(): string {
 }
 
 // Sets p and n to the bytes and length of the byte view in local v: an array
-// (tag 0), a string (tag 2) or a frame window (tag 3, frame_window_wat).
+// (tag 0), a string or a borrowed descriptor (tag 2) or a frame window (tag 3, frame_window_wat).
 function byte_view_decode(v: string, p: string, n: string): string {
   let at: string = "(local.get " + v + ")";
   let o: string = "    (if (i32.and " + at + " (i32.const 2)) (then (if (i32.and " + at + " (i32.const 1))\n";
   o = o + "      (then (local.set " + p + " (i32.load (i32.sub " + at + " (i32.const 3)))) (local.set " + n + " (i32.load (i32.add " + at + " (i32.const 1)))))\n";
-  o = o + "      (else (local.set " + p + " (i32.add " + at + " (i32.const 2))) (local.set " + n + " (i32.load (i32.sub " + at + " (i32.const 2)))))))\n";
+  o = o + "      (else (local.set " + p + " (i32.add " + at + " (i32.const 2))) (local.set " + n + " (i32.load (i32.sub " + at + " (i32.const 2))))"
+    + borrowed_decode(at + " (i32.const 2)", p, n) + ")))\n";
   return o + "    (else (local.set " + p + " (i32.add " + at + " (i32.const 8))) (local.set " + n + " (i32.load " + at + "))))\n";
 }
 
 // Sets p and n to the bytes and length of local s, a byte view's string arm:
-// a string, or a frame window at s less 1.
+// a string, a borrowed descriptor, or a frame window at s less 1.
 function view_string_decode(s: string, p: string, n: string): string {
   let at: string = "(local.get " + s + ")";
   let o: string = "    (local.set " + n + " (i32.load (i32.add " + at + " (i32.mul (i32.and " + at + " (i32.const 1)) (i32.const 3)))))\n";
-  return o + "    (local.set " + p + " (if (result i32) (i32.and " + at + " (i32.const 1)) (then (i32.load (i32.sub " + at + " (i32.const 1)))) (else (i32.add " + at + " (i32.const 4)))))\n";
+  o = o + "    (local.set " + p + " (if (result i32) (i32.and " + at + " (i32.const 1)) (then (i32.load (i32.sub " + at + " (i32.const 1)))) (else (i32.add " + at + " (i32.const 4)))))\n";
+  return o + "   " + borrowed_decode(at + " (i32.const 4)", p, n) + "\n";
+}
+
+// A borrowed descriptor marks its length's top bit; `data` is the address of its data word, as `x (i32.const k)` for an add.
+function borrowed_decode(data: string, p: string, n: string): string {
+  return " (if (i32.lt_s (local.get " + n + ") (i32.const 0)) (then (local.set " + p + " (i32.load (i32.add " + data + ")))"
+    + " (local.set " + n + " (i32.and (local.get " + n + ") (i32.const 2147483647)))))";
 }
 
 function bytes_copy_out(len: string, src: string, empty: i32): string {

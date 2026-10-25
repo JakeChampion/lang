@@ -59,37 +59,47 @@ function byte_view(t: typeinfo.Type): boolean {
   return false;
 }
 
-function frame_byte_slice(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.arr_slice() && byte_view(f.values[ins.result]) && p.frame_views[ins.result];
+function array_view(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return a.view;
+  }
+  return false;
 }
 
-function contains_byte_view(t: typeinfo.Type): boolean {
-  if (byte_view(t)) {
-    return true;
-  }
+// A view's elements belong to its source, but an untagged view is a box it
+// may hold the last count of.
+function counted_elems_view(t: typeinfo.Type): boolean {
+  return array_view(t) && ssasem.reference(elem_type(t));
+}
+
+function frame_view_slice(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.arr_slice() && array_view(f.values[ins.result]) && p.frame_views[ins.result];
+}
+
+function contains_view(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
-    return contains_byte_view(a.elem);
+    return a.view || contains_view(a.elem);
   }
   if let typeinfo.TypeTuple(tup) = t {
     for elem in tup.elements {
-      if (contains_byte_view(elem)) {
+      if (contains_view(elem)) {
         return true;
       }
     }
   }
   if let typeinfo.TypeMap(m) = t {
-    return contains_byte_view(m.key) || contains_byte_view(m.value);
+    return contains_view(m.key) || contains_view(m.value);
   }
   if let typeinfo.TypeStruct(st) = t {
     for arg in st.args {
-      if (contains_byte_view(arg)) {
+      if (contains_view(arg)) {
         return true;
       }
     }
   }
   if let typeinfo.TypeUnion(u) = t {
     for arg in u.args {
-      if (contains_byte_view(arg)) {
+      if (contains_view(arg)) {
         return true;
       }
     }
@@ -265,7 +275,10 @@ function walked(t: typeinfo.Type): boolean {
 }
 
 function release_name(t: typeinfo.Type, f: ssasem.Func): string {
-  if (byte_view(t)) {
+  if (counted_elems_view(t)) {
+    return release_helper_name(t);
+  }
+  if (array_view(t)) {
     return ssabytes.release_name();
   }
   if (ssasem.is_view(t)) {
@@ -615,7 +628,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     return false;
   }
   if let typeinfo.TypeArray(a) = t {
-    return ssasem.reference(a.elem);
+    return !a.view && ssasem.reference(a.elem);
   }
   if let typeinfo.TypeTuple(tup) = t {
     for elem in tup.elements {
@@ -1662,10 +1675,30 @@ function release_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult 
     ...empty(""), ok: true,
     n_params: 1, n_locals: 1, name: release_helper_name(t),
   };
-  r = drop_value_inline(r, 0, t, 1, f);
+  if (counted_elems_view(t)) {
+    r = view_release(r, t, f);
+  } else {
+    r = drop_value_inline(r, 0, t, 1, f);
+  }
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_return());
   return r;
+}
+
+// A tagged view frees only its descriptor; an untagged one is the box itself.
+function view_release(own r: irtables.LowerResult, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_const_i32(2));
+  r = emit(r, ir.op_bin("and", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_const_i32(0 - 2));
+  r = emit(r, ir.op_raw_addr());
+  r = emit(r, ir.op_call_direct("__fern_str_view_free", 1));
+  r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_else());
+  r = drop_value_inline(r, 0, typeinfo.TypeArray { elem: elem_type(t), view: false }, 1, f);
+  return emit(r, ir.op_end());
 }
 
 function boxed_columns(maps: typeinfo.Type[]): typeinfo.Type[] {
@@ -1708,10 +1741,10 @@ function routed_box_columns(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Typ
   return out;
 }
 
-struct SchemaScan { maps: typeinfo.Type[], bytes: boolean }
+struct SchemaScan { maps: typeinfo.Type[], views: boolean, counted_views: typeinfo.Type[] }
 
 function schema_scan(f: ssasem.Func): SchemaScan {
-  let sc: SchemaScan = SchemaScan { maps: [], bytes: false };
+  let sc: SchemaScan = SchemaScan { maps: [], views: false, counted_views: [] };
   for t in f.values {
     sc = scan_schema_type(sc, t);
   }
@@ -1731,13 +1764,49 @@ function schema_scan(f: ssasem.Func): SchemaScan {
 }
 
 function scan_schema_type(own sc: SchemaScan, t: typeinfo.Type): SchemaScan {
-  if (!sc.bytes && contains_byte_view(t)) {
-    sc = SchemaScan { ...sc, bytes: true };
+  if (contains_view(t)) {
+    sc = SchemaScan { ...sc, views: true, counted_views: counted_views_in(t, sc.counted_views) };
   }
   if (ssasem.is_map(t)) {
     sc = SchemaScan { ...sc, maps: sc.maps.append(t) };
   }
   return sc;
+}
+
+function counted_views_in(t: typeinfo.Type, own out: typeinfo.Type[]): typeinfo.Type[] {
+  if (counted_elems_view(t) && !has_type_key(out, t)) {
+    out = out.append(t);
+  }
+  let parts: typeinfo.Type[] = [];
+  if let typeinfo.TypeArray(a) = t {
+    parts = [a.elem];
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    parts = tup.elements;
+  }
+  if let typeinfo.TypeMap(m) = t {
+    parts = [m.key, m.value];
+  }
+  if let typeinfo.TypeStruct(st) = t {
+    parts = st.args;
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    parts = u.args;
+  }
+  for part in parts {
+    out = counted_views_in(part, out);
+  }
+  return out;
+}
+
+function has_type_key(ts: typeinfo.Type[], t: typeinfo.Type): boolean {
+  let key: string = ssasem.type_key(t);
+  for x in ts {
+    if (ssasem.type_key(x) == key) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function env_release_name(t: typeinfo.Type): string {
@@ -1902,7 +1971,7 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 struct Fresh { rows: irtables.LowerResult[], types: HelperType[], seen: util.NameIndex }
 
 // A kernel helper comes in only when the function calls its builtin.
-function byte_helpers(f: ssasem.Func, done: util.NameIndex, own rows: irtables.LowerResult[]): irtables.LowerResult[] {
+function view_helpers(f: ssasem.Func, done: util.NameIndex, own rows: irtables.LowerResult[]): irtables.LowerResult[] {
   for h in ssabytes.helpers() {
     let served: string = ssabytes.served_builtin(h.name);
     if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0)) {
@@ -1916,8 +1985,13 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   let out = Fresh { rows: [], types: [], seen: seen };
   let grown: util.NameIndex = seen;
   let sc: SchemaScan = schema_scan(f);
-  if (sc.bytes) {
-    out = Fresh { ...out, rows: byte_helpers(f, done, out.rows) };
+  if (sc.views) {
+    out = Fresh { ...out, rows: view_helpers(f, done, out.rows) };
+  }
+  for v in sc.counted_views {
+    if (!done.has(release_helper_name(v))) {
+      out = Fresh { ...out, rows: out.rows.append(release_helper(v, f)) };
+    }
   }
   for rec in f.records.list {
     let k: string = ssasem.type_key(rec.ty);
@@ -2034,6 +2108,16 @@ function types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
   return "";
 }
 
+function lane_view_read(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != ssasem.array_get() || ins.result < 0 || !array_view(f.values[ins.args[0]])) {
+    return false;
+  }
+  if let typeinfo.TypeLanes(_) = f.values[ins.result] {
+    return true;
+  }
+  return false;
+}
+
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, view: ssaunits.SchemaView): string {
   let why: string = "";
   if (util.verify_on()) {
@@ -2053,6 +2137,9 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtab
       }
       if (dyn_call(ins) && !consecutive(ins.args)) {
         return "dyn call operands are not consecutive slots";
+      }
+      if (lane_view_read(f, ins)) {
+        return "lane read of an array view";
       }
       if (builds(ins.kind_tag)) {
         why = construction_error(f, ins, structs);
@@ -2638,22 +2725,6 @@ function tuple_kinds(t: typeinfo.Type): string {
   return out;
 }
 
-function arr_slice(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irtables.LowerResult {
-  r = emit(r, ir.op_arr_slice(elem_width(elem)));
-  if (!ssasem.reference(elem)) {
-    return r;
-  }
-  return owned_copy(r, f, elem);
-}
-
-function owned_copy(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irtables.LowerResult {
-  let copy: i32 = scratch_base(f);
-  r = reserve(r, copy + 1);
-  r = emit(r, ir.op_store_local(copy));
-  r = own_copied(r, elem, copy, copy);
-  return emit(r, ir.op_load_local(copy));
-}
-
 function own_copied(own r: irtables.LowerResult, elem: typeinfo.Type, copy: i32, source: i32): irtables.LowerResult {
   if (!ssasem.is_view(elem)) {
     return helper(r, source, "__fern_arr_inc_elems");
@@ -2693,7 +2764,7 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
     if (ssasem.is_text(f.values[ins.args[0]])) {
       return emit(r, ir.op_str_len());
     }
-    if (byte_view(f.values[ins.args[0]])) {
+    if (array_view(f.values[ins.args[0]])) {
       return emit(r, ssabytes.read(ins.args[0], false, false));
     }
     return emit(r, ir.op_arr_len());
@@ -2702,10 +2773,7 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
     return emit(r, ir.op_str_slice());
   }
   if (ins.kind_tag == ssasem.arr_slice()) {
-    if (byte_view(f.values[ins.result])) {
-      return emit(r, ir.op_call_direct(ssabytes.slice_name(), 3));
-    }
-    return arr_slice(r, f, elem_type(f.values[ins.result]));
+    return emit(r, ir.op_call_direct(ssabytes.slice_name(elem_width(elem_type(f.values[ins.result]))), 3));
   }
   if (ins.kind_tag == ssasem.str_byte_view()) {
     r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
@@ -2725,11 +2793,14 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
     return emit(r, ir.op_str_index());
   }
   if (ins.kind_tag == ssasem.array_get()) {
+    if (array_view(f.values[ins.args[0]]) && ins.imm == ssasem.check_only()) {
+      return emit(r, ssabytes.check(ins.args[0]));
+    }
     if (byte_view(f.values[ins.args[0]])) {
-      if (ins.imm == ssasem.check_only()) {
-        return emit(r, ssabytes.check(ins.args[0]));
-      }
       return emit(r, ssabytes.read(ins.args[0], true, ins.imm == 1));
+    }
+    if (array_view(f.values[ins.args[0]])) {
+      return emit(r, ssabytes.element(ins.args[0], arr_get_op(f.values[ins.result], ins.imm == 1)));
     }
     if (ins.imm == ssasem.check_only()) {
       return emit(r, ir.check_only(arr_get_op(f.values[ins.result], false)));
@@ -3418,7 +3489,7 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_str_data());
     r = emit(r, ir.op_load_local(ins.args[1]));
-  } else if (!frame_byte_slice(f, p, ins)) {
+  } else if (!frame_view_slice(f, p, ins)) {
     for arg in ins.args {
       r = emit(r, ir.op_load_local(arg));
     }
@@ -3431,8 +3502,8 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   }
   if (ins.kind_tag == ssasem.slice() && p.frame_views[ins.result]) {
     r = emit(r, ir.op_str_slice_frame(0));
-  } else if (frame_byte_slice(f, p, ins)) {
-    for op in ssabytes.slice_frame(ins.args[0], ins.args[1], ins.args[2]) {
+  } else if (frame_view_slice(f, p, ins)) {
+    for op in ssabytes.slice_frame(ins.args[0], ins.args[1], ins.args[2], elem_width(elem_type(f.values[ins.result]))) {
       r = emit(r, op);
     }
   } else if (p.constants[ins.result] != "") {
@@ -6180,7 +6251,7 @@ function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.Lower
       && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")
       && before.kind_tag == load_local && before.i32_imm < f.values.len()) {
       let t: typeinfo.Type = f.values[before.i32_imm];
-      if (ssasem.reference(t) && !byte_view(t)) {
+      if (ssasem.reference(t) && !array_view(t)) {
         ops = ops.with(i, ir.Op { ...op, i64_imm: 4 });
       }
     }

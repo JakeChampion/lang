@@ -55,7 +55,7 @@ function users_show(req: HttpRequest, params: router.Params, plat: platform.Host
 }
 
 function main(): i32 {
-  return serve.run(0, serve.Config { ...serve.config(), trace: true }, router.new[platform.Host]().get("/users/{id}", users_show).handler());
+  return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), trace: true }, router.new[platform.Host]().get("/users/{id}", users_show).handler()));
 }
 `
 

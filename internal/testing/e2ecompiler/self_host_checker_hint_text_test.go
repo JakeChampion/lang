@@ -79,6 +79,7 @@ type hintTextCase struct {
 }
 
 var hintTextCases = []hintTextCase{
+	{name: "E009 ordering operands", src: `function main(): i32 { let x: i32 = 1 < true; return 0; }`, code: "E009", spelling: `requires matching numeric or string operands, got i32 and boolean`},
 	{name: "E043 matching IoError receiver", src: `function probe(x: Option[IoError]): void { x.failure(); } function main(): i32 { return 0; }`, code: "E043", spelling: `no stdlib module declares one`},
 	{name: "E043 matching nested Option receiver", src: `function probe(x: Option[Option[i32]]): void { x.flatten(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},
 	{name: "E043 matching Option Result receiver", src: `function probe(x: Option[Result[i32, string]]): void { x.transpose(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},

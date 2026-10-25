@@ -1061,10 +1061,6 @@ pub function doc_pos(maps: LineMap[], line: i32, col: i32): (i32, i32) {
 }
 
 pub function format_diags(diags: Diag[]): string {
-  return format_diags_in(diags, []);
-}
-
-pub function format_diags_in(diags: Diag[], files: string[]): string {
   let out: string = "";
   let i: i32 = 0;
   while (i < diags.len()) {
@@ -1076,9 +1072,9 @@ pub function format_diags_in(diags: Diag[], files: string[]): string {
     if (i > 0) {
       out = out + "\n";
     }
-    out = out + tag + d.message + " (" + pos_str("", files, d.line, d.col) + ")";
+    out = out + tag + d.message + " (" + pos_str("", [], d.line, d.col) + ")";
     for r in d.related {
-      out = out + "\n    note: " + r.message + " (" + pos_str("", files, r.line, r.col) + ")";
+      out = out + "\n    note: " + r.message + " (" + pos_str("", [], r.line, r.col) + ")";
     }
     i = i + 1;
   }

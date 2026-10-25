@@ -20,10 +20,14 @@ function main(): i32 {
   let events: i32[] = [0, 0, 0, 0];
   let alias: i32[] = events;
   let rows: i32[][] = [events];
+  let view: [i32] = events[0:2];
+  let whole: [i32] = events[:];
   let got: i32 = reactor_wait(r, events, 1000);
   print(f"reactor_wait: {got} readiness {events[1]} fd matches {events[0] == s}");
   print(f"alias: readiness {alias[1]} fd matches {alias[0] == s}");
   print(f"element: readiness {rows[0][1]} fd matches {rows[0][0] == s}");
+  print(f"view: readiness {view[1]} fd matches {view[0] == s} len {view.len()}");
+  print(f"whole view: readiness {whole[1]} fd matches {whole[0] == s} len {whole.len()}");
 
   let p: Poller = Poller { r: r, events: [0, 0, 0, 0] };
   let held: i32[] = p.events;

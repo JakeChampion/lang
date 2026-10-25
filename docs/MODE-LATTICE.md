@@ -186,28 +186,19 @@ three bits are stamped by the parser (`fip`, `fbip`, and the graded
 allowance), the E053 walk applies native's constructor rule and its
 asymmetric call rule, and the IR-side budget check
 (`compiler/irfipverify.fern`, #6639 slice 3) runs on every
-emit — the whole-program CLI path and the per-unit and per-module
+compile — the whole-program CLI path and the per-unit and per-module
 builds alike.
 
-`ircore.check_fip_claims` is called from each backend's EMIT entry,
-over the window of declarations that emit covers and against the
-lowering it will use — the caller's, where one was kept, and a fresh
-one for a claimed function otherwise, which costs one lowering per
-CLAIM rather than per function. A function carrying neither
+`ircore.fip_claim_diags` runs once, in the typed lowering
+(`semlower.substitution`), over every declaration and the body that
+lowering produced for it, and the substitution carries the verdicts out
+as `Sub.refused`. The driver reports them as `FILE:LINE:COL:
+error[E068]` diagnostics, at the claimed function, before any backend
+runs. Every build (the whole-program CLI path, the per-unit and the
+per-module builds) emits from that substitution's bodies, so none skips
+the check, and the routing and eligibility probes that only gate a
+module never see a verdict (#9655). A function carrying neither
 annotation returns before one op is examined.
-
-The verdicts do not ride the gate's `""` refusal, because that
-refusal is turned into "module is not IR-eligible" by its caller,
-which is the wrong thing to say about a module that lowered fine and
-broke a promise (#9623). Nor does the check ride the gate
-itself, where it started: gating is also what the routing and
-eligibility probes do — `wasm_ir.ir_route_ok` and `wasm_eligible`
-gate a module only to return a boolean, and
-`asm_ir.module_runtime_needs` runs the whole per-function emit and
-throws the text away — so hooking the lowering made all three exit on
-a claim they were only asked about, and left the per-unit and
-per-module builds, which re-lower outside the gate, checking nothing
-(#9655).
 
 Until #9623 only the diagnostic drivers called it (`irlower_run
 -verifyfip`, `irverify_run`), so an un-paired construction compiled
@@ -274,12 +265,16 @@ the two array namespaces is a method-surface decision, not an
 assignability one, and nothing declares a `[T]` receiver today.
 
 Self-host status: E063 and E065 are **ported** (`slc_walk`,
-`e065_stmts` in checker.fern). The self-host has no `{data,len}`
-view at runtime: a slice copies into an owned array, so `[T]` is
-a checker-only `view` flag on `typeinfo.TypeArray`, re-entered
-from the parser's erased spelling through `StmtVar.is_view`,
-`ParamDecl.is_view` and `FuncDecl.ret_slice`. (`str` needs no
-flag: its spelling reaches the checker unerased.) A slice and `.as_bytes()` are views; a view
+`e065_stmts` in checker.fern). `[T]` is a `view` flag on
+`typeinfo.TypeArray`, re-entered from the parser's erased spelling
+through `StmtVar.is_view`, `ParamDecl.is_view` and
+`FuncDecl.ret_slice`. (`str` needs no flag: its spelling reaches the
+checker unerased.) At runtime a slice of any element type is a view of
+its source's storage on every target and in both interpreters: a lent
+`T[]` box, or a `{data,len}` descriptor that points into the source
+(`ssabytes`, RC-DESIGN §1.5), so a write `reactor_wait` or
+`tcp_recv_into` makes into the array afterwards shows through it
+(#13188). A slice and `.as_bytes()` are views; a view
 and an owned `T[]` convert in neither direction (E003 / E002 /
 E043 / E038) except the owned-into-`[T]` argument lend, as in
 native (#9944). Still looser than native: method resolution does

@@ -61,5 +61,5 @@ function port(): i32 {
 
 function main(): i32 {
   let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
-  return serve.run_with(port(), opts, Recent { hits: map_new(512), order: [] }, handle);
+  return serve.exit_code(serve.run_with(port(), opts, Recent { hits: map_new(512), order: [] }, handle));
 }

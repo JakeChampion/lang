@@ -38,7 +38,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), workers: 1 };
-    return serve.supervise(0, opts, handle);
+    return serve.exit_code(serve.supervise(0, opts, handle));
 }
 `
 }

@@ -1,7 +1,9 @@
 # Re-pinned 2026-10-25 (#13276): x86_64/utf8_ingest_unchecked.text 8288 to 8196 and
 # utf8_ingest_validated.text 8802 to 8710, from a local perf-bench run on e5f90a40.
-# aarch64/utf8_ingest_unchecked.text 7802 to 8637, counted from `fern -target arm64-linux`
-# on the same tree; aarch64/utf8_ingest_validated.text reads 9100, within 1% of 9049.
+# Re-pinned 2026-10-25 from Perf run 40200803636 (main at 127eb63c), the aarch64 rows
+# #13251 pinned on x86_64 only: deflate_encode.ir -17%, deflate_decode.ir -7.8%,
+# http_hello.text -1.2%, string_find_byte.text -1.5%, and utf8_ingest_unchecked.text
+# +12.1% with utf8_ingest_validated.text +1.8% from #13153's utf8 module.
 # Re-pinned 2026-10-25 (#13251), x86_64 rows from a local perf-bench run on
 # f2a9fbef. The runtime word copy cuts byte_copy_*.ir by 73-74%, and the
 # register and release changes cut deflate_encode.ir by 18% and enum_match.ir
@@ -377,13 +379,13 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
-aarch64/deflate_decode.ir	46997989
-aarch64/deflate_decode.text	14061
-aarch64/deflate_encode.ir	58528654
-aarch64/deflate_encode.text	8508
+aarch64/deflate_decode.ir	43339918
+aarch64/deflate_decode.text	13305
+aarch64/deflate_encode.ir	48587342
+aarch64/deflate_encode.text	7749
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
-aarch64/http_hello.text	18604
+aarch64/http_hello.text	18384
 aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
@@ -411,7 +413,7 @@ aarch64/string_build.text	2242
 aarch64/string_build.ir	47131451
 aarch64/string_count_byte.text	1380
 aarch64/string_count_byte.ir	295207206
-aarch64/string_find_byte.text	1822
+aarch64/string_find_byte.text	1795
 aarch64/string_find_byte.ir	55945262
 aarch64/string_rfind_byte.text	1927
 aarch64/string_rfind_byte.ir	55959893
@@ -423,9 +425,9 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	8637
+aarch64/utf8_ingest_unchecked.text	8747
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	9049
+aarch64/utf8_ingest_validated.text	9210
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

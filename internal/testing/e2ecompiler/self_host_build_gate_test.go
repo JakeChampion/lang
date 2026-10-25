@@ -220,7 +220,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 		},
 		{
 			name:     "unimported-i32-method-E043",
-			src:      "function main(): i32 { let t: string = 7.to_string(); return t.len(); }\n",
+			src:      "function main(): i32 { let t: string = 7.to_string_radix(16); return t.len(); }\n",
 			wantDiag: "error[E043]",
 		},
 		{
