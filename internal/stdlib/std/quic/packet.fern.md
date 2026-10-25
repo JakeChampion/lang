@@ -523,7 +523,6 @@ pub function seal_long(l: Long, payload: [u8], k: Keys): u8[] {
 }
 
 pub function seal_short(dcid: [u8], pn: i64, n: i32, key_phase: boolean, spin: boolean, payload: [u8], k: Keys): u8[] {
-  let body: u8[] = __padded(payload, n);
   let b0: i32 = 64 | n - 1;
   if (key_phase) {
     b0 = b0 | 4;
@@ -531,8 +530,19 @@ pub function seal_short(dcid: [u8], pn: i64, n: i32, key_phase: boolean, spin: b
   if (spin) {
     b0 = b0 | 32;
   }
-  let head: u8[] = __empty(32).append(b0 as u8).concat(__copy(dcid));
-  let pn_at: i32 = head.len();
+  if (payload.len() + n < 4) {
+    return __sealed_short(b0, dcid, pn, n, __padded(payload, n), k);
+  }
+  return __sealed_short(b0, dcid, pn, n, payload, k);
+}
+
+// __sealed_short builds the header in a buffer the whole packet fits in,
+// so the sealed body is appended to it in place.
+function __sealed_short(b0: i32, dcid: [u8], pn: i64, n: i32, body: [u8], k: Keys): u8[] {
+  let pn_at: i32 = 1 + dcid.len();
+  let head: u8[] = __empty(pn_at + n + body.len() + TAG_LEN).append(b0 as u8);
+  __arr_set_len(head, pn_at);
+  head = __bytes_into(head, 1, dcid, 0, dcid.len());
   return __protect(__put_pn(head, pn, n), pn_at, pn, n, body, k, 31);
 }
 ```

@@ -24,11 +24,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function new(max_datagram: i32, server: boolean): Recovery>>
 
-<<5 pub struct Outcome>>
-
 <<6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now: i64, largest_sent: i64)...>>
 
-<<7 function __split_acked(sent: Sent[], ack: frames.Ack): (Sent[], Sent[])>>
+<<7 function __acked_of(sent: Sent[], ack: frames.Ack): Sent[]>>
 
 <<8 function (r: Recovery) __on_lost(lost: Sent[], now: i64): Recovery>>
 
@@ -36,7 +34,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 function (r: Recovery) __earliest_loss(): (i64, i32)>>
 
-<<11 pub function (r: Recovery) on_timeout(now: i64): Outcome>>
+<<11 pub function (r: Recovery) on_timeout(now: i64): Recovery>>
 ```
 
 ### `module introduction`
@@ -99,6 +97,13 @@ pub struct Recovery {
   recovery_start: i64,
   handshake_confirmed: boolean,
   peer_validated: boolean,
+  // What the last on_ack or on_timeout found, until outcome_taken: the
+  // packets newly acknowledged and those declared lost, the space to probe
+  // or -1, and the error code of an ACK of a packet never sent or 0.
+  acked: Sent[],
+  lost: Sent[],
+  probe: i32,
+  refused: i64,
 }
 ```
 
@@ -116,7 +121,7 @@ pub function new(max_datagram: i32, server: boolean): Recovery {
   if (window > 10 * md) {
     window = 10 * md;
   }
-  return Recovery { spaces: [empty, empty, empty], latest_rtt: 0 as i64, smoothed_rtt: INITIAL_RTT, rttvar: INITIAL_RTT / 2, min_rtt: 0 as i64, first_rtt_sample: 0 as i64, pto_count: 0, max_ack_delay: 0 as i64, max_datagram: md, bytes_in_flight: 0 as i64, cwnd: window, ssthresh: frames.MAX_VARINT, recovery_start: 0 - 1 as i64, handshake_confirmed: false, peer_validated: server };
+  return Recovery { spaces: [empty, empty, empty], latest_rtt: 0 as i64, smoothed_rtt: INITIAL_RTT, rttvar: INITIAL_RTT / 2, min_rtt: 0 as i64, first_rtt_sample: 0 as i64, pto_count: 0, max_ack_delay: 0 as i64, max_datagram: md, bytes_in_flight: 0 as i64, cwnd: window, ssthresh: frames.MAX_VARINT, recovery_start: 0 - 1 as i64, handshake_confirmed: false, peer_validated: server, acked: [], lost: [], probe: 0 - 1, refused: 0 as i64 };
 }
 
 pub function (r: Recovery) with_max_ack_delay(ns: i64): Recovery {
@@ -164,60 +169,70 @@ pub function (r: Recovery) on_sent(space: i32, p: Sent): Recovery {
 }
 ```
 
-### `5 pub struct Outcome`
-
-```fern
-<<5 pub struct Outcome>>=
-pub struct Outcome { recovery: Recovery, acked: Sent[], lost: Sent[], probe: i32 }
-```
-
 ### `6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now: i64, largest_sent: i64)...`
 
 ```fern
 <<6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now: i64, largest_sent: i64)...>>=
-pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now: i64, largest_sent: i64): Result[Outcome, i64] {
+pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now: i64, largest_sent: i64): Recovery {
   let largest: i64 = ack.ranges[0].high;
   if (largest > largest_sent) {
-    return Err(frames.PROTOCOL_VIOLATION);
+    return Recovery { ...r, acked: [], lost: [], probe: 0 - 1, refused: frames.PROTOCOL_VIOLATION };
   }
-  let s: Space = r.spaces[space];
-  if (largest > s.largest_acked) {
-    s = Space { ...s, largest_acked: largest };
-  }
-  let (acked, kept) = __split_acked(s.sent, ack);
+  let acked: Sent[] = __acked_of(r.spaces[space].sent, ack);
+  let cur: Recovery = Recovery { ...r, spaces: r.spaces.with(space, r.spaces[space].__after_ack(ack, largest, acked.len() > 0)), acked: acked, lost: [], probe: 0 - 1, refused: 0 as i64 };
   if (acked.len() == 0) {
-    return Ok(Outcome { recovery: Recovery { ...r, spaces: r.spaces.with(space, s) }, acked: [], lost: [], probe: 0 - 1 });
+    return cur;
   }
-  let cur: Recovery = Recovery { ...r, spaces: r.spaces.with(space, Space { ...s, sent: kept }) };
   let newest: Sent = acked[acked.len() - 1];
   if (newest.pn == largest && __any_eliciting(acked)) {
     cur = cur.__rtt_sample(now - newest.at, ack_delay, space);
   }
-  cur = cur.__on_acked(acked);
-  let (after, lost) = cur.__detect_lost(space, now);
-  after = after.__on_lost(lost, now);
-  if (!(space == INITIAL && !after.peer_validated)) {
-    after = Recovery { ...after, pto_count: 0 };
+  cur = cur.__on_acked(acked).__detect_lost(space, now);
+  cur = cur.__on_lost(cur.lost, now);
+  if (!(space == INITIAL && !cur.peer_validated)) {
+    cur = Recovery { ...cur, pto_count: 0 };
   }
-  return Ok(Outcome { recovery: after, acked: acked, lost: lost, probe: 0 - 1 });
+  return cur;
+}
+
+pub function (r: Recovery) outcome_taken(): Recovery {
+  return Recovery { ...r, acked: [], lost: [], probe: 0 - 1, refused: 0 as i64 };
+}
+
+function (s: Space) __after_ack(ack: frames.Ack, largest: i64, any: boolean): Space {
+  let top: i64 = s.largest_acked;
+  if (largest > top) {
+    top = largest;
+  }
+  if (!any) {
+    return Space { ...s, largest_acked: top };
+  }
+  return Space { ...s, largest_acked: top, sent: __unacked(s.sent, ack) };
 }
 ```
 
-### `7 function __split_acked(sent: Sent[], ack: frames.Ack): (Sent[], Sent[])`
+### `7 function __acked_of(sent: Sent[], ack: frames.Ack): Sent[]`
 
 ```fern
-<<7 function __split_acked(sent: Sent[], ack: frames.Ack): (Sent[], Sent[])>>=
-function __split_acked(sent: Sent[], ack: frames.Ack): (Sent[], Sent[]) {
+<<7 function __acked_of(sent: Sent[], ack: frames.Ack): Sent[]>>=
+function __acked_of(sent: Sent[], ack: frames.Ack): Sent[] {
   let acked: Sent[] = [];
-  let kept: Sent[] = [];
   for p in sent {
     if (__covers(ack, p.pn)) {
       acked = acked.append(p);
-    } else {
+    }
+  }
+  return acked;
+}
+
+function __unacked(sent: Sent[], ack: frames.Ack): Sent[] {
+  let kept: Sent[] = [];
+  for p in sent {
+    if (!__covers(ack, p.pn)) {
       kept = kept.append(p);
     }
   }
-  return (acked, kept);
+  return kept;
 }
 
 function __covers(ack: frames.Ack, pn: i64): boolean {
@@ -296,26 +311,39 @@ function (r: Recovery) __loss_delay(): i64 {
   return d;
 }
 
-function (r: Recovery) __detect_lost(space: i32, now: i64): (Recovery, Sent[]) {
-  let s: Space = r.spaces[space];
-  let lost_before: i64 = now - r.__loss_delay();
+function (r: Recovery) __detect_lost(space: i32, now: i64): Recovery {
+  let delay: i64 = r.__loss_delay();
+  let lost: Sent[] = __lost_of(r.spaces[space], now - delay);
+  return Recovery { ...r, spaces: r.spaces.with(space, r.spaces[space].__past_loss(now - delay, delay)), lost: lost };
+}
+
+function __lost_of(s: Space, lost_before: i64): Sent[] {
   let lost: Sent[] = [];
+  for p in s.sent {
+    if (__is_lost(s, p, lost_before)) {
+      lost = lost.append(p);
+    }
+  }
+  return lost;
+}
+
+function __is_lost(s: Space, p: Sent, lost_before: i64): boolean {
+  return p.pn <= s.largest_acked && (p.at <= lost_before || s.largest_acked >= p.pn + PACKET_THRESHOLD);
+}
+
+function (s: Space) __past_loss(lost_before: i64, delay: i64): Space {
   let kept: Sent[] = [];
   let loss_time: i64 = 0;
   for p in s.sent {
-    if (p.pn > s.largest_acked) {
+    if (!__is_lost(s, p, lost_before)) {
       kept = kept.append(p);
-    } else if (p.at <= lost_before || s.largest_acked >= p.pn + PACKET_THRESHOLD) {
-      lost = lost.append(p);
-    } else {
-      kept = kept.append(p);
-      let due: i64 = p.at + r.__loss_delay();
-      if (loss_time == 0 || due < loss_time) {
+      let due: i64 = p.at + delay;
+      if (p.pn <= s.largest_acked && (loss_time == 0 || due < loss_time)) {
         loss_time = due;
       }
     }
   }
-  return (Recovery { ...r, spaces: r.spaces.with(space, Space { ...s, sent: kept, loss_time: loss_time }) }, lost);
+  return Space { ...s, sent: kept, loss_time: loss_time };
 }
 ```
 
@@ -450,21 +478,22 @@ function __eliciting_in(s: Space): boolean {
 }
 ```
 
-### `11 pub function (r: Recovery) on_timeout(now: i64): Outcome`
+### `11 pub function (r: Recovery) on_timeout(now: i64): Recovery`
 
 ```fern
-<<11 pub function (r: Recovery) on_timeout(now: i64): Outcome>>=
-pub function (r: Recovery) on_timeout(now: i64): Outcome {
+<<11 pub function (r: Recovery) on_timeout(now: i64): Recovery>>=
+pub function (r: Recovery) on_timeout(now: i64): Recovery {
   let (loss, space) = r.__earliest_loss();
-  if (loss > 0 && loss <= now) {
-    let (after, lost) = r.__detect_lost(space, now);
-    return Outcome { recovery: after.__on_lost(lost, now), acked: [], lost: lost, probe: 0 - 1 };
-  }
   let (pto, pspace) = r.__pto_time();
-  if (pto == 0 || pto > now) {
-    return Outcome { recovery: r, acked: [], lost: [], probe: 0 - 1 };
+  let cur: Recovery = r.outcome_taken();
+  if (loss > 0 && loss <= now) {
+    cur = cur.__detect_lost(space, now);
+    return cur.__on_lost(cur.lost, now);
   }
-  return Outcome { recovery: Recovery { ...r, pto_count: r.pto_count + 1 }, acked: [], lost: [], probe: pspace };
+  if (pto == 0 || pto > now) {
+    return cur;
+  }
+  return Recovery { ...cur, pto_count: cur.pto_count + 1, probe: pspace };
 }
 
 pub function (r: Recovery) unacked(space: i32): Sent[] {
