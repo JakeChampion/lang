@@ -571,6 +571,67 @@ function f(): Result[i32, string] {
 }`)
 }
 
+func TestOwnGuardAllowsAPayloadBoundInALoop(t *testing.T) {
+	wantOK(t, "payload-bound-in-loop", ownConsumer+`
+enum Next { Part(i32[]), Done }
+function step(n: i32): Next { return Part([n]); }
+function f(): i32 {
+    let n: i32 = 0;
+    while (n < 3) {
+        match (step(n)) {
+            Part(r1) => {
+                n = n + consume(r1);
+            },
+            Done => {
+                return n;
+            }
+        }
+    }
+    return n;
+}`)
+}
+
+func TestOwnGuardAllowsATryPayloadBoundInALoop(t *testing.T) {
+	wantOK(t, "try-payload-bound-in-loop", ownConsumer+`
+enum Next { Part(i32[]), Done }
+function step(n: i32): Result[Next, string] { return Ok(Part([n])); }
+function f(): Result[i32, string] {
+    let n: i32 = 0;
+    while (n < 3) {
+        match (step(n)?) {
+            Part(r1) => {
+                n = n + consume(r1);
+            },
+            Done => {
+                return Ok(n);
+            }
+        }
+    }
+    return Ok(n);
+}`)
+}
+
+func TestOwnGuardRejectsATryPayloadBoundBeforeALoop(t *testing.T) {
+	wantE050(t, "try-payload-bound-before-loop", ownConsumer+`
+enum Next { Part(i32[]), Done }
+function step(n: i32): Result[Next, string] { return Ok(Part([n])); }
+function f(): Result[i32, string] {
+    match (step(1)?) {
+        Part(r1) => {
+            let n: i32 = 0;
+            while (n < 3) {
+                n = n + consume(r1);
+            }
+            return Ok(n);
+        },
+        Done => {
+            return Ok(0);
+        }
+    }
+    return Ok(0);
+}`)
+}
+
 func TestOwnGuardAllowsAFieldUnpackedFromAnOwnParam(t *testing.T) {
 	wantOK(t, "own-param-field-unpack", ownConsumer+`
 function f(own p: Pair): i32 {

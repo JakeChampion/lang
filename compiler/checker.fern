@@ -18060,7 +18060,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         }
         let ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
-        mv = ow_moved_join(mv, ra.moved, block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
+        mv = ow_moved_join(mv, ow_unbind_arm(ra.moved, rs.moved, actx, ctx), block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
       }
       return OwnWalk { moved: mv, diags: d };
     },
@@ -18171,6 +18171,17 @@ function ow_unmove(after: MovedEntry[], before: MovedEntry[], name: string): Mov
     }
     if (kept) {
       out = out.append(e);
+    }
+  }
+  return out;
+}
+
+// A name an arm binds goes out of scope with the arm, so its moves do not reach the statements after the match.
+function ow_unbind_arm(after: MovedEntry[], before: MovedEntry[], actx: OwnCtx, ctx: OwnCtx): MovedEntry[] {
+  let out: MovedEntry[] = after;
+  for n in actx.owned {
+    if (!util.has_str(ctx.owned, n)) {
+      out = ow_unmove(out, before, n);
     }
   }
   return out;
