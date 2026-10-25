@@ -1,3 +1,4 @@
+# 2026-10-25: Perf run 40200803636 (main at 127eb63c). The four array rows and ascii_scan grew 5 to 11% on x86-64 and wasm after today's merges (#13153, #13225, #13251).
 # 2026-10-23: combined source 160186731f, Perf run 40026009089. The TLS HTTP row uses the combined value.
 # 2026-10-23: integrated deflate, sort, and cold-call rows from 0b03aff204, Perf run 40015080180.
 # Emitted-size baseline for the SELF-HOSTED compiler over bench,
@@ -155,7 +156,7 @@ selfhost/arm64-linux/array_append.emit	1234
 selfhost/arm64-linux/array_index.emit	1231
 selfhost/arm64-linux/array_scale_f64.emit	1325
 selfhost/arm64-linux/array_with.emit	1383
-selfhost/arm64-linux/ascii_scan.emit	1461
+selfhost/arm64-linux/ascii_scan.emit	1536
 selfhost/arm64-linux/call_overhead.emit	148
 selfhost/arm64-linux/closure_call.emit	1011
 selfhost/arm64-linux/deflate_decode.emit	10723
@@ -183,10 +184,10 @@ selfhost/arm64-linux/struct_drop.emit	1922
 selfhost/arm64-linux/tokenize.emit	1203
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	7506
 selfhost/arm64-linux/utf8_ingest_validated.emit	7757
-selfhost/wasm32-wasi/array_append.emit	464
-selfhost/wasm32-wasi/array_index.emit	470
-selfhost/wasm32-wasi/array_scale_f64.emit	523
-selfhost/wasm32-wasi/array_with.emit	513
+selfhost/wasm32-wasi/array_append.emit	488
+selfhost/wasm32-wasi/array_index.emit	493
+selfhost/wasm32-wasi/array_scale_f64.emit	552
+selfhost/wasm32-wasi/array_with.emit	538
 selfhost/wasm32-wasi/ascii_scan.emit	1224
 selfhost/wasm32-wasi/call_overhead.emit	158
 selfhost/wasm32-wasi/closure_call.emit	503
@@ -215,11 +216,11 @@ selfhost/wasm32-wasi/struct_drop.emit	1411
 selfhost/wasm32-wasi/tokenize.emit	850
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	7506
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	8268
-selfhost/x86-64-linux/array_append.emit	935
-selfhost/x86-64-linux/array_index.emit	924
-selfhost/x86-64-linux/array_scale_f64.emit	1052
-selfhost/x86-64-linux/array_with.emit	1079
-selfhost/x86-64-linux/ascii_scan.emit	1187
+selfhost/x86-64-linux/array_append.emit	1042
+selfhost/x86-64-linux/array_index.emit	1042
+selfhost/x86-64-linux/array_scale_f64.emit	1168
+selfhost/x86-64-linux/array_with.emit	1197
+selfhost/x86-64-linux/ascii_scan.emit	1252
 selfhost/x86-64-linux/call_overhead.emit	88
 selfhost/x86-64-linux/closure_call.emit	818
 selfhost/x86-64-linux/deflate_decode.emit	9897
