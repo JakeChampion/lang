@@ -987,7 +987,7 @@ func TestRunnerHTTPGRPCExamplePasses(t *testing.T) {
 }
 
 func TestRunnerProtobufExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "protobuf", "std/protobuf", 5)
+	runnerSuitePasses(t, "protobuf", "std/protobuf", 7)
 }
 
 func TestRunnerHTTPCookieExamplePasses(t *testing.T) {
