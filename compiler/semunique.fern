@@ -1,0 +1,203 @@
+import "./ssa";
+import "./ssasem";
+import "./sourcepos";
+import "./typeinfo";
+import "./rtbytecopy";
+
+// A loop that grows a byte array it was handed checks the array's count at
+// every push, because the array may be shared on entry. One check before the
+// loop makes it sole there, and a push's result is sole when its receiver is,
+// so every push in the loop then tests only its capacity.
+
+pub function name(): string {
+  return "__sem_bytes_unique";
+}
+
+pub struct Hoisted { func: ssasem.Func, changed: boolean }
+
+pub function hoisted(f: ssasem.Func, contract: ssasem.Contract): Hoisted {
+  let at: i32[] = positions(f.graph);
+  let blocks: ssa.SBlock[] = f.graph.blocks;
+  let values: typeinfo.Type[] = f.values;
+  let changed: boolean = false;
+  for h in f.graph.blocks {
+    let hi: i32 = at[h.id];
+    let entry: i32 = entry_pred(at, h, hi);
+    if (entry < 0 || !jumps_only_to(f.graph.blocks[at[h.preds[entry]]], h.id)) {
+      continue;
+    }
+    let k: i32 = 0;
+    while (k < h.insts.len() && h.insts[k].kind_tag == 8) {
+      let phi: ssa.SInst = blocks[hi].insts[k];
+      let e: i32 = phi.args[entry];
+      if (wanted(f, phi, e, hi) && !used_after(f.graph, at, h.preds[entry], e, phi.result)) {
+        let v: i32 = values.len();
+        values = values.append(f.values[e]);
+        let pi: i32 = at[h.preds[entry]];
+        let pre: ssa.SBlock = blocks[pi];
+        blocks = blocks.with(pi, ssa.SBlock { ...pre, insts: pre.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [e], imm: 0, str: name() }) });
+        let hb: ssa.SBlock = blocks[hi];
+        blocks = blocks.with(hi, ssa.SBlock { ...hb, insts: hb.insts.with(k, ssa.SInst { ...phi, args: phi.args.with(entry, v) }) });
+        changed = true;
+      }
+      k = k + 1;
+    }
+  }
+  if (!changed) {
+    return Hoisted { func: f, changed: false };
+  }
+  let calls: ssasem.Contract[] = f.calls;
+  if (ssasem.find_contract_in(calls, name()) < 0) {
+    calls = calls.append(contract);
+  }
+  let graph: ssa.SFunc = ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() };
+  return Hoisted { func: ssasem.Func { ...f, values: values, calls: calls, graph: graph, source_positions: padded(f.source_positions, values.len()) }, changed: true };
+}
+
+function positions(g: ssa.SFunc): i32[] {
+  let top: i32 = 0;
+  for b in g.blocks {
+    if (b.id > top) {
+      top = b.id;
+    }
+  }
+  let at: i32[] = __alloc_i32(top + 1);
+  let i: i32 = 0;
+  while (i < g.blocks.len()) {
+    at = at.with(g.blocks[i].id, i);
+    i = i + 1;
+  }
+  return at;
+}
+
+// The one predecessor placed before a loop header, when every other
+// predecessor is a back edge, or -1.
+function entry_pred(at: i32[], h: ssa.SBlock, hi: i32): i32 {
+  let entry: i32 = 0 - 1;
+  let back: boolean = false;
+  let k: i32 = 0;
+  while (k < h.preds.len()) {
+    if (at[h.preds[k]] < hi) {
+      if (entry >= 0) {
+        return 0 - 1;
+      }
+      entry = k;
+    } else {
+      back = true;
+    }
+    k = k + 1;
+  }
+  if (!back) {
+    return 0 - 1;
+  }
+  return entry;
+}
+
+function jumps_only_to(b: ssa.SBlock, target: i32): boolean {
+  return b.term.kind_tag == 2 && b.term.target == target;
+}
+
+function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
+  return owned_bytes(f.values[phi.result]) && !fresh(f, e) && grown_in_loop(f.graph, phi.result, hi);
+}
+
+function owned_bytes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && ssasem.is_u8(a.elem);
+  }
+  return false;
+}
+
+function fresh(f: ssasem.Func, v: i32): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result == v) {
+        return ins.kind_tag == ssasem.bytes_new() || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.array_reserve()
+          || ins.kind_tag == ssasem.call() && (ins.str == name() || ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str));
+      }
+    }
+  }
+  return false;
+}
+
+// Whether a block reachable from the end of `from` reads v anywhere but in
+// the phi it enters: the consuming call would then need a retain, and a copy.
+function used_after(g: ssa.SFunc, at: i32[], from: i32, v: i32, phi: i32): boolean {
+  let seen: boolean[] = __alloc_bool(g.blocks.len());
+  let work: i32[] = [at[g.blocks[at[from]].term.target]];
+  let next: i32 = 0;
+  while (next < work.len()) {
+    let bi: i32 = work[next];
+    next = next + 1;
+    if (seen[bi]) {
+      continue;
+    }
+    seen = seen.with(bi, true);
+    let b: ssa.SBlock = g.blocks[bi];
+    if (reads(b, v, phi)) {
+      return true;
+    }
+    for t in successors(b.term) {
+      work = work.append(at[t]);
+    }
+  }
+  return false;
+}
+
+function reads(b: ssa.SBlock, v: i32, phi: i32): boolean {
+  for ins in b.insts {
+    if (ins.result != phi && has(ins.args, v)) {
+      return true;
+    }
+  }
+  return b.term.kind_tag == 1 && b.term.value == v || b.term.kind_tag == 3 && b.term.cond == v;
+}
+
+function has(xs: i32[], v: i32): boolean {
+  for x in xs {
+    if (x == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function successors(t: ssa.STerm): i32[] {
+  if (t.kind_tag == 2) {
+    return [t.target];
+  }
+  if (t.kind_tag == 3) {
+    return [t.t, t.f];
+  }
+  return [];
+}
+
+// Whether a block from the header on grows the phi itself: an append, a
+// write, or a byte-copy helper whose receiver it is.
+function grown_in_loop(g: ssa.SFunc, phi: i32, hi: i32): boolean {
+  let i: i32 = hi;
+  while (i < g.blocks.len()) {
+    for ins in g.blocks[i].insts {
+      if (ins.args.len() > 0 && ins.args[0] == phi && grows(ins)) {
+        return true;
+      }
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function grows(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.call() && rtbytecopy.is_helper(ins.str);
+}
+
+function padded(source: sourcepos.SourceInfo, n: i32): sourcepos.SourceInfo {
+  if (source.entry.line == 0) {
+    return source;
+  }
+  let values = source.values;
+  while (values.len() < n) {
+    values = values.append(sourcepos.SourcePos { line: 0, col: "0" });
+  }
+  return sourcepos.SourceInfo { ...source, values: values };
+}
