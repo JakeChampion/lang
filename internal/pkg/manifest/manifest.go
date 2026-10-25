@@ -22,6 +22,8 @@ type Dep struct {
 	Workspace    bool
 	Version      string
 	Capabilities []string
+	// Line is the dependency entry's line in fern.toml.
+	Line int
 }
 
 type Manifest struct {
@@ -221,6 +223,7 @@ func Parse(src string) (*Manifest, error) {
 			if !validDepName(key) {
 				return nil, lineError(ln+1, "invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", key)
 			}
+			dep.Line = ln + 1
 			m.Deps[key] = dep
 		case "workspace":
 			if key != "members" {

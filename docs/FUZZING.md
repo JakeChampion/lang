@@ -141,7 +141,7 @@ block changes their scope.
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
 | Compiler self-checks | a lowering the compiler's own verifiers reject: the typed lowering refusing part of a program, the rc certifier showing unbalanced counts, the IR verifier finding malformed IR | every self-host leg and the coverage loop fail such a seed (`compilerRefused`) rather than skip it as a coverage gap; their compiles run with `FERN_IR_VERIFY=quiet` so the IR verifier is on |
 | Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
-| EMI mutants | a miscompile of a real program, in shapes that fernsmith does not write: the corpus cases' own types, stdlib calls and control flow, with dead and wrapped code around them. The interpreter must give the case's expected output first, so a fault in the mutator or the interpreter is a failure too | `TestDifferential_SelfHostEMIX86_64` |
+| EMI mutants | a miscompile of a real program, in shapes that fernsmith does not write: the corpus cases' own types, stdlib calls and control flow, with dead and wrapped code around them. The interpreter must give the case's expected output first, so a fault in the mutator or the interpreter is a failure too. The sanitize leg builds the same mutants under `-sanitize` | `TestDifferential_SelfHostEMIX86_64`, `TestDifferential_SelfHostEMISanitizeX86_64` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
 
 ### Bisecting a failure to one decision
@@ -360,7 +360,7 @@ built. Citations are to the paper that introduced the technique.
    OOPSLA 2016; GraphicsFuzz, OOPSLA 2017): mutate real programs — the
    conformance corpus, coreutils, the compiler itself — in ways that must not
    change their output. Done for the conformance corpus at statement level,
-   on x86-64. Next are changes inside expressions, which need the checker's
+   on x86-64, with and without `-sanitize`. Next are changes inside expressions, which need the checker's
    types, and coreutils.
 8. **Type-checker fuzzing** (Hephaestus, PLDI 2022; Thalia, POPL 2024): erase
    annotations and overwrite types, and hold both checkers to one verdict.

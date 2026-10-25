@@ -380,7 +380,7 @@ function __ec_params(b: [u8], parts: der.Element[]): Result[Option[ecdsa.Curve],
 }
 
 function __ed25519_seed(seed: u8[]): Result[PrivateKey, KeyError] {
-  match (ed25519.public_key(seed)) {
+  match (ed25519.private_key(seed)) {
     Ok(_) => {
       return Ok(Ed25519Seed(seed));
     },
@@ -446,9 +446,9 @@ function __key_matches(public: x509.PublicKey, key: PrivateKey): boolean {
     Ed25519Seed(seed) => {
       match (public) {
         x509.Ed25519Key(p) => {
-          match (ed25519.public_key(seed)) {
+          match (ed25519.private_key(seed)) {
             Ok(q) => {
-              return __same(p, q);
+              return __same(p, q.public_point());
             },
             Err(_) => {
               return false;
@@ -498,7 +498,7 @@ pub function (key: PrivateKey) sign(scheme: i32, content: [u8]): Result[u8[], Ke
       if (scheme == 0x0503) {
         h = sha2.Sha384;
       }
-      match (ecdsa.sign(k, h, content)) {
+      match (k.sign(h, content)) {
         Ok(sig) => {
           return Ok(sig);
         },
@@ -508,9 +508,9 @@ pub function (key: PrivateKey) sign(scheme: i32, content: [u8]): Result[u8[], Ke
       }
     },
     Ed25519Seed(seed) => {
-      match (ed25519.sign(seed, content)) {
-        Ok(sig) => {
-          return Ok(sig);
+      match (ed25519.private_key(seed)) {
+        Ok(k) => {
+          return Ok(k.sign(content));
         },
         Err(e) => {
           return Err(Seed(e));

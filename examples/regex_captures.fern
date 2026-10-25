@@ -23,8 +23,8 @@ function main(): i32 {
 
   // Named extraction — `.group_named` resolves the label to its span. The
   // same groups are still positional: `.group_index("status")` is Some(3).
-  let status: i32 = require_regex_text(match (m.group_named("status")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }).parse_int_or(0);  // 200
-  let ms: i32 = require_regex_text(match (m.group_named("ms")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }).parse_int_or(0);  // 15
+  let status: i32 = i32.parse_i32(require_regex_text(match (m.group_named("status")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } })).unwrap_or(0);  // 200
+  let ms: i32 = i32.parse_i32(require_regex_text(match (m.group_named("ms")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } })).unwrap_or(0);  // 15
 
   // `${name}` template substitution: swap each `k=v` pair to `v=k`.
   let swapped: string = require_regex_text(match ({ let __checked_regex_1: regex.Regex = match (regex.compile("(?<k>\\w+)=(?<v>\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.replace_all_groups("a=1 b=2", "${v}=${k}") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } });

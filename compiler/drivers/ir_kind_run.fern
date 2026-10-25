@@ -71,7 +71,7 @@ function main(): i32 {
     "vsplat", "vextract", "vreplace", "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround", "veq", "vne", "vlt", "vle", "vgt", "vge",
     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
-    "vget", "vset", "vbitmask",
+    "vget", "vset", "vbitmask", "crc32_ieee", "crc32_ieee_array",
   ];
   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
     failures = failures + 1;
@@ -191,6 +191,7 @@ function main(): i32 {
     ir.op_aes_expand_key(), ir.op_aes_ctr32(), ir.op_ghash(), ir.op_clone_file(), ir.op_set_extproc(), ir.op_reader_copy_range(), ir.op_pipe(), ir.op_sha256_hw(), ir.op_sha256_hw_blocks(), ir.op_bswap(32),
     ir.op_open_dir(), ir.op_dir_open(), ir.op_dir_entries(), ir.op_dir_stat(0), ir.op_dir_access(), ir.op_dir_unlink(0), ir.op_dir_chmod(), ir.op_dir_chown(),
     ir.op_bin("mulhi_u", 64, true), ir.op_writer_splice_forever(), ir.op_utf8_blocks(), ir.op_sha1_hw(), ir.op_sha1_hw_blocks(), ir.op_aes_gcm_seal(), ir.op_aes_gcm_open(), ir.op_mismatch_bytes_str(), ir.op_opt_set_payload(), ir.op_lane("vbitmask", 64),
+    ir.op_crc32_ieee(), ir.op_crc32_ieee_array(),
   ];
   let names: string[] = [
     "const_i32", "const_str", "load_local",
@@ -230,6 +231,7 @@ function main(): i32 {
     "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
     "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal", "aes_gcm_open", "mismatch_bytes_str", "opt_set_payload", "vbitmask",
+    "crc32_ieee", "crc32_ieee_array",
   ];
   let tag_ok: i32 = 0;
   let tag_bad: i32 = 0;

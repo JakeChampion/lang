@@ -213,25 +213,25 @@ function ctx_update(c: Ctx, chunk: u8[]): Ctx {
 function ctx_bytes(c: Ctx): u8[] {
   match (c) {
     CMd5(h) => {
-      return h.final_bytes();
+      return h.finish();
     },
     CSha1(h) => {
-      return h.final_bytes();
+      return h.finish();
     },
     CSha2(h) => {
-      return h.final_bytes();
+      return h.finish();
     },
     CSha5(h) => {
-      return h.final_bytes();
+      return h.finish();
     },
     CB2(h) => {
-      return h.final_bytes();
+      return h.finish();
     },
     CSm3(h) => {
-      return h.final_bytes();
+      return h.finish();
     },
     CSha3(h) => {
-      return h.final_bytes();
+      return h.finish();
     }
   }
 }

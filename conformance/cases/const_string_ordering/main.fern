@@ -1,0 +1,11 @@
+// The ordering operators fold on string constants. They compare bytes.
+const A: boolean = "a" < "b";
+const B: boolean = "ab" >= "b";
+const C: boolean = "" <= "a";
+const D: boolean = "b" > "ab";
+const E: boolean = "Z" < "a";
+
+function main(): i32 {
+    print(f"{A} {B} {C} {D} {E}");
+    return 0;
+}

@@ -105,6 +105,23 @@ pub function field(name: string, value: string): Field {
 pub function sensitive(name: string, value: string): Field {
   return Field { name: name, value: value, sensitive: true };
 }
+
+// status is the :status field for code, the static table's own entry
+// when the table has one.
+pub function status(code: i32): Field {
+  let i: i32 = 0;
+  while (i < STATUS_CODES.len()) {
+    if (STATUS_CODES[i] == code) {
+      return STATIC[STATUS_AT[i]];
+    }
+    i = i + 1;
+  }
+  return field(":status", int.int_to_string(code));
+}
+
+const STATUS_CODES: i32[] = [200, 204, 304, 404, 103, 503, 100, 206, 302, 400, 403, 421, 425, 500];
+
+const STATUS_AT: i32[] = [25, 64, 26, 27, 24, 28, 63, 65, 66, 67, 68, 69, 70, 71];
 ```
 
 ### `5 pub enum QpackError`
@@ -325,10 +342,10 @@ function (t: Table) __entry(a: i64): Result[Field, QpackError] {
 }
 
 function __static(i: i64): Result[Field, QpackError] {
-  if (i < 0 || i >= STATIC_NAMES.len() as i64) {
+  if (i < 0 || i >= STATIC.len() as i64) {
     return Err(DecompressionFailed("no static table entry " + i.to_string()));
   }
-  return Ok(field(STATIC_NAMES[i as i32], STATIC_VALUES[i as i32]));
+  return Ok(STATIC[i as i32]);
 }
 ```
 
@@ -471,10 +488,10 @@ function __enc_error(code: i32): Option[QpackError] {
 }
 
 function __enc_static(i: i64): Result[Field, Option[QpackError]] {
-  if (i < 0 || i >= STATIC_NAMES.len() as i64) {
+  if (i < 0 || i >= STATIC.len() as i64) {
     return Err(Some(EncoderStreamError("no static table entry " + i.to_string())));
   }
-  return Ok(field(STATIC_NAMES[i as i32], ""));
+  return Ok(field(STATIC[i as i32].name, ""));
 }
 
 function __enc_entry(t: Table, a: i64): Result[Field, Option[QpackError]] {
@@ -809,13 +826,13 @@ function __find_static(name: string, value: string): (i32, i32) {
   let end: i32 = STATIC_LEN_AT[n + 1];
   while (g < end) {
     let i: i32 = STATIC_GROUP_FROM[g];
-    if (STATIC_NAMES[i] == name) {
+    if (STATIC[i].name == name) {
       if (named < 0) {
         named = i;
       }
       let to: i32 = STATIC_GROUP_TO[g];
       while (i < to) {
-        if (STATIC_VALUES[i] == value) {
+        if (STATIC[i].value == value) {
           return (i, i);
         }
         i = i + 1;
@@ -893,35 +910,105 @@ const STATIC_GROUP_FROM: i32[] = [2, 6, 7, 11, 59, 1, 55, 5, 29, 90, 92, 13, 15,
 
 const STATIC_GROUP_TO: i32[] = [3, 7, 8, 12, 61, 2, 56, 6, 31, 91, 93, 14, 22, 24, 29, 72, 84, 92, 13, 90, 88, 89, 1, 15, 87, 96, 55, 10, 11, 33, 42, 85, 5, 32, 73, 97, 99, 44, 63, 9, 4, 94, 62, 86, 59, 95, 36, 35, 76, 79, 80, 83, 81, 75];
 
-const STATIC_NAMES: string[] = [
-  ":authority", ":path", "age", "content-disposition", "content-length", "cookie", "date", "etag",
-  "if-modified-since", "if-none-match", "last-modified", "link", "location", "referer", "set-cookie", ":method",
-  ":method", ":method", ":method", ":method", ":method", ":method", ":scheme", ":scheme",
-  ":status", ":status", ":status", ":status", ":status", "accept", "accept", "accept-encoding",
-  "accept-ranges", "access-control-allow-headers", "access-control-allow-headers", "access-control-allow-origin", "cache-control", "cache-control", "cache-control", "cache-control",
-  "cache-control", "cache-control", "content-encoding", "content-encoding", "content-type", "content-type", "content-type", "content-type",
-  "content-type", "content-type", "content-type", "content-type", "content-type", "content-type", "content-type", "range",
-  "strict-transport-security", "strict-transport-security", "strict-transport-security", "vary", "vary", "x-content-type-options", "x-xss-protection", ":status",
-  ":status", ":status", ":status", ":status", ":status", ":status", ":status", ":status",
-  "accept-language", "access-control-allow-credentials", "access-control-allow-credentials", "access-control-allow-headers", "access-control-allow-methods", "access-control-allow-methods", "access-control-allow-methods", "access-control-expose-headers",
-  "access-control-request-headers", "access-control-request-method", "access-control-request-method", "alt-svc", "authorization", "content-security-policy", "early-data", "expect-ct",
-  "forwarded", "if-range", "origin", "purpose", "server", "timing-allow-origin", "upgrade-insecure-requests", "user-agent",
-  "x-forwarded-for", "x-frame-options", "x-frame-options",
-];
-
-const STATIC_VALUES: string[] = [
-  "", "/", "0", "", "0", "", "", "",
-  "", "", "", "", "", "", "", "CONNECT",
-  "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT", "http", "https",
-  "103", "200", "304", "404", "503", "*/*", "application/dns-message", "gzip, deflate, br",
-  "bytes", "cache-control", "content-type", "*", "max-age=0", "max-age=2592000", "max-age=604800", "no-cache",
-  "no-store", "public, max-age=31536000", "br", "gzip", "application/dns-message", "application/javascript", "application/json", "application/x-www-form-urlencoded",
-  "image/gif", "image/jpeg", "image/png", "text/css", "text/html; charset=utf-8", "text/plain", "text/plain;charset=utf-8", "bytes=0-",
-  "max-age=31536000", "max-age=31536000; includesubdomains", "max-age=31536000; includesubdomains; preload", "accept-encoding", "origin", "nosniff", "1; mode=block", "100",
-  "204", "206", "302", "400", "403", "421", "425", "500",
-  "", "FALSE", "TRUE", "*", "get", "get, post, options", "options", "content-length",
-  "content-type", "get", "post", "clear", "", "script-src 'none'; object-src 'none'; base-uri 'none'", "1", "",
-  "", "", "", "prefetch", "", "*", "1", "",
-  "", "deny", "sameorigin",
+const STATIC: Field[] = [
+  Field { name: ":authority", value: "", sensitive: false },
+  Field { name: ":path", value: "/", sensitive: false },
+  Field { name: "age", value: "0", sensitive: false },
+  Field { name: "content-disposition", value: "", sensitive: false },
+  Field { name: "content-length", value: "0", sensitive: false },
+  Field { name: "cookie", value: "", sensitive: false },
+  Field { name: "date", value: "", sensitive: false },
+  Field { name: "etag", value: "", sensitive: false },
+  Field { name: "if-modified-since", value: "", sensitive: false },
+  Field { name: "if-none-match", value: "", sensitive: false },
+  Field { name: "last-modified", value: "", sensitive: false },
+  Field { name: "link", value: "", sensitive: false },
+  Field { name: "location", value: "", sensitive: false },
+  Field { name: "referer", value: "", sensitive: false },
+  Field { name: "set-cookie", value: "", sensitive: false },
+  Field { name: ":method", value: "CONNECT", sensitive: false },
+  Field { name: ":method", value: "DELETE", sensitive: false },
+  Field { name: ":method", value: "GET", sensitive: false },
+  Field { name: ":method", value: "HEAD", sensitive: false },
+  Field { name: ":method", value: "OPTIONS", sensitive: false },
+  Field { name: ":method", value: "POST", sensitive: false },
+  Field { name: ":method", value: "PUT", sensitive: false },
+  Field { name: ":scheme", value: "http", sensitive: false },
+  Field { name: ":scheme", value: "https", sensitive: false },
+  Field { name: ":status", value: "103", sensitive: false },
+  Field { name: ":status", value: "200", sensitive: false },
+  Field { name: ":status", value: "304", sensitive: false },
+  Field { name: ":status", value: "404", sensitive: false },
+  Field { name: ":status", value: "503", sensitive: false },
+  Field { name: "accept", value: "*/*", sensitive: false },
+  Field { name: "accept", value: "application/dns-message", sensitive: false },
+  Field { name: "accept-encoding", value: "gzip, deflate, br", sensitive: false },
+  Field { name: "accept-ranges", value: "bytes", sensitive: false },
+  Field { name: "access-control-allow-headers", value: "cache-control", sensitive: false },
+  Field { name: "access-control-allow-headers", value: "content-type", sensitive: false },
+  Field { name: "access-control-allow-origin", value: "*", sensitive: false },
+  Field { name: "cache-control", value: "max-age=0", sensitive: false },
+  Field { name: "cache-control", value: "max-age=2592000", sensitive: false },
+  Field { name: "cache-control", value: "max-age=604800", sensitive: false },
+  Field { name: "cache-control", value: "no-cache", sensitive: false },
+  Field { name: "cache-control", value: "no-store", sensitive: false },
+  Field { name: "cache-control", value: "public, max-age=31536000", sensitive: false },
+  Field { name: "content-encoding", value: "br", sensitive: false },
+  Field { name: "content-encoding", value: "gzip", sensitive: false },
+  Field { name: "content-type", value: "application/dns-message", sensitive: false },
+  Field { name: "content-type", value: "application/javascript", sensitive: false },
+  Field { name: "content-type", value: "application/json", sensitive: false },
+  Field { name: "content-type", value: "application/x-www-form-urlencoded", sensitive: false },
+  Field { name: "content-type", value: "image/gif", sensitive: false },
+  Field { name: "content-type", value: "image/jpeg", sensitive: false },
+  Field { name: "content-type", value: "image/png", sensitive: false },
+  Field { name: "content-type", value: "text/css", sensitive: false },
+  Field { name: "content-type", value: "text/html; charset=utf-8", sensitive: false },
+  Field { name: "content-type", value: "text/plain", sensitive: false },
+  Field { name: "content-type", value: "text/plain;charset=utf-8", sensitive: false },
+  Field { name: "range", value: "bytes=0-", sensitive: false },
+  Field { name: "strict-transport-security", value: "max-age=31536000", sensitive: false },
+  Field { name: "strict-transport-security", value: "max-age=31536000; includesubdomains", sensitive: false },
+  Field { name: "strict-transport-security", value: "max-age=31536000; includesubdomains; preload", sensitive: false },
+  Field { name: "vary", value: "accept-encoding", sensitive: false },
+  Field { name: "vary", value: "origin", sensitive: false },
+  Field { name: "x-content-type-options", value: "nosniff", sensitive: false },
+  Field { name: "x-xss-protection", value: "1; mode=block", sensitive: false },
+  Field { name: ":status", value: "100", sensitive: false },
+  Field { name: ":status", value: "204", sensitive: false },
+  Field { name: ":status", value: "206", sensitive: false },
+  Field { name: ":status", value: "302", sensitive: false },
+  Field { name: ":status", value: "400", sensitive: false },
+  Field { name: ":status", value: "403", sensitive: false },
+  Field { name: ":status", value: "421", sensitive: false },
+  Field { name: ":status", value: "425", sensitive: false },
+  Field { name: ":status", value: "500", sensitive: false },
+  Field { name: "accept-language", value: "", sensitive: false },
+  Field { name: "access-control-allow-credentials", value: "FALSE", sensitive: false },
+  Field { name: "access-control-allow-credentials", value: "TRUE", sensitive: false },
+  Field { name: "access-control-allow-headers", value: "*", sensitive: false },
+  Field { name: "access-control-allow-methods", value: "get", sensitive: false },
+  Field { name: "access-control-allow-methods", value: "get, post, options", sensitive: false },
+  Field { name: "access-control-allow-methods", value: "options", sensitive: false },
+  Field { name: "access-control-expose-headers", value: "content-length", sensitive: false },
+  Field { name: "access-control-request-headers", value: "content-type", sensitive: false },
+  Field { name: "access-control-request-method", value: "get", sensitive: false },
+  Field { name: "access-control-request-method", value: "post", sensitive: false },
+  Field { name: "alt-svc", value: "clear", sensitive: false },
+  Field { name: "authorization", value: "", sensitive: false },
+  Field { name: "content-security-policy", value: "script-src 'none'; object-src 'none'; base-uri 'none'", sensitive: false },
+  Field { name: "early-data", value: "1", sensitive: false },
+  Field { name: "expect-ct", value: "", sensitive: false },
+  Field { name: "forwarded", value: "", sensitive: false },
+  Field { name: "if-range", value: "", sensitive: false },
+  Field { name: "origin", value: "", sensitive: false },
+  Field { name: "purpose", value: "prefetch", sensitive: false },
+  Field { name: "server", value: "", sensitive: false },
+  Field { name: "timing-allow-origin", value: "*", sensitive: false },
+  Field { name: "upgrade-insecure-requests", value: "1", sensitive: false },
+  Field { name: "user-agent", value: "", sensitive: false },
+  Field { name: "x-forwarded-for", value: "", sensitive: false },
+  Field { name: "x-frame-options", value: "deny", sensitive: false },
+  Field { name: "x-frame-options", value: "sameorigin", sensitive: false },
 ];
 ```

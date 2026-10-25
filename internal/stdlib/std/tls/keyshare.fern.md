@@ -286,7 +286,7 @@ function __p256_key(entropy: [u8]): Result[ecdsa.PrivateKey, KeyShareError] {
 }
 
 function __p256_agree(k: ecdsa.PrivateKey, peer: [u8]): Result[u8[], KeyShareError] {
-  match (ecdsa.ecdh(k, peer)) {
+  match (k.ecdh(peer)) {
     Ok(shared) => {
       return Ok(shared);
     },

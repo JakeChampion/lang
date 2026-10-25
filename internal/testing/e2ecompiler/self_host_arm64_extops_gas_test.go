@@ -903,3 +903,24 @@ lbl:
 		"adr x0",
 	})
 }
+
+func TestSelfHostArm64CrcGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"crc32x w0, w0, x2", 0x9ac24c00},
+		{"crc32x w23, w9, x28", 0x9adc4d37},
+		{"crc32b w0, w0, w2", 0x1ac24000},
+		{"crc32b w23, w9, w28", 0x1adc4137},
+		{"crc32h w3, w4, w5", 0x1ac54483},
+		{"crc32w w30, wzr, w1", 0x1ac14bfe},
+	})
+	checkRefusedSelfHost(t, bin, runner, []string{
+		"crc32x w0, w1, w2",
+		"crc32x x0, x1, x2",
+		"crc32b w0, w1, x2",
+		"crc32w x0, w1, w2",
+		"crc32h w0, w1",
+		"crc32b w0, w1, #1",
+	})
+}

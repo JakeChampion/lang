@@ -533,7 +533,7 @@ struct Conn {
 ```fern
 <<12 function __conn(): Conn>>=
 function __conn(): Conn {
-  let none: record.Protection = record.Protection { suite: keyschedule.Aes128GcmSha256, key: [], iv: [], seq: 0 as u64, gcm: None };
+  let none: record.Protection = record.Protection { suite: keyschedule.Aes128GcmSha256, key: [], iv: [], seq: 0 as u64, gcm: None, chacha: None };
   return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [], quic: false, kernel: false, crypto: [], secrets: [] };
 }
 

@@ -1,0 +1,19 @@
+// A parameter whose type parameter is bound to str takes a string literal, as a
+// parameter written as str does. A str argument fits a parameter bound to string.
+import "std/i32";
+
+function identity[T](x: T): T {
+  return x;
+}
+
+function pair[T](a: T, b: T): i32 {
+  return 2;
+}
+
+function main(): i32 {
+  let lit: str = identity[str]("de");
+  let raw: str = "abc";
+  print(lit.len().to_string());
+  print(pair("x", raw).to_string());
+  return 0;
+}
