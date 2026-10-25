@@ -337,7 +337,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       buf_push_range(h, pad, 0, pending);
     }
     if (buf_len(h) >= block_size()) {
-      o = o.flush();
+      o = gnu.flush(o);
     }
   }
 

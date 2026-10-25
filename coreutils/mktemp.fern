@@ -354,15 +354,11 @@ function plan(s: Settings, template: string): Plan {
 
 function emit(s: Settings, name: string): i32 {
   let o: io_buffered.BufWriter = gnu.out_new();
-  o = o.write_string(name + "\n");
   let failed: boolean = false;
   let text: string = "";
-  match (o.error()) {
-    Some(e) => {
-      failed = true;
-      text = gnu.io_error_text(e);
-    },
-    None => {}
+  if let Err(e) = o.write_string(name + "\n") {
+    failed = true;
+    text = gnu.io_error_text(e);
   }
   if (!failed) {
     if let Err(e) = o.close() {

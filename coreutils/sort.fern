@@ -1477,46 +1477,31 @@ function out_die(o: Out, stage: string, e: IoError): void {
 }
 
 function out_put(o: Out, s: string): Out {
-  let w: io_buffered.BufWriter = o.w.write_string(s);
-  match (w.error()) {
-    Some(e) => {
-      out_die(o, "write failed", e);
-    },
-    None => {}
-  }
-  return Out { ...o, w: w };
+  return out_written(o, o.w.write_string(s), "write failed");
 }
 
 function out_put_bytes(o: Out, bytes: u8[]): Out {
-  let w: io_buffered.BufWriter = o.w.write_bytes(bytes);
-  match (w.error()) {
-    Some(e) => {
-      out_die(o, "write failed", e);
-    },
-    None => {}
-  }
-  return Out { ...o, w: w };
+  return out_written(o, o.w.write_bytes(bytes), "write failed");
 }
 
 function out_settle(o: Out): Out {
-  let w: io_buffered.BufWriter = o.w.settle();
-  match (w.error()) {
-    Some(e) => {
-      out_die(o, "write failed", e);
+  return out_written(o, o.w.settle(), "write failed");
+}
+
+function out_written(o: Out, written: Result[io_buffered.BufWriter, IoError], what: string): Out {
+  match (written) {
+    Ok(w) => {
+      return Out { ...o, w: w };
     },
-    None => {}
+    Err(e) => {
+      out_die(o, what, e);
+    }
   }
-  return Out { ...o, w: w };
+  return o;
 }
 
 function out_finish(o: Out): void {
-  let w: io_buffered.BufWriter = o.w.flush();
-  match (w.error()) {
-    Some(e) => {
-      out_die(o, "fflush failed", e);
-    },
-    None => {}
-  }
+  let w: io_buffered.BufWriter = out_written(o, o.w.flush(), "fflush failed").w;
   gnu.close_stdout_with(w, false, sort_failure());
 }
 

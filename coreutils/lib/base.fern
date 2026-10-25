@@ -373,9 +373,9 @@ function bad_wrap(arg: string): void {
 }
 
 function fail(o: io_buffered.BufWriter, msg: string): void {
-  let w: io_buffered.BufWriter = o.flush();
+  o.flush();
   gnu.error(msg);
-  gnu.close_stdout(w, false);
+  gnu.close_stdout(o, false);
   exit(1);
 }
 

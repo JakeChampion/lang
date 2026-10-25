@@ -492,7 +492,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
       wrote = true;
     }
     if (wrote) {
-      out = gnu.check(out);
+      out = gnu.check_kept(out);
     }
     if (buf_len(h) >= block) {
       out = gnu.settle(out);
