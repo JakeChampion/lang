@@ -140,44 +140,47 @@
 
 /* ---------------------------------------------------------------- *
  * Tokens. The values are the documentation theme's, so both sites
- * share one palette. Dark is the default. Light swaps to warm paper.
- * A plate is a stage for a canvas. It stays dark in both themes,
- * because the applications draw on it with fixed colors.
+ * share one palette. Light swaps to warm paper.
+ * A plate is a stage for a canvas. It sets color-scheme: dark, so the
+ * tokens inside it take their dark values in both themes. The
+ * applications draw on it with fixed colors.
  * ---------------------------------------------------------------- */
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light dark;
 
+    /* Each pair is light-dark(light, dark). The documentation theme
+     * defines the same values; showcase_theme_test.go keeps them equal. */
     --fern-forest: #143026;
     --fern-pine: #2d6a4f;
     --fern-green: #40916c;
     --fern-frond: #74c69d;
     --fern-mint: #d8f3dc;
     --fern-paper: #faf7f0;
-    --fern-bark: #6f6350;
-    --fern-spore: #b08331;
+    --fern-bark: light-dark(#5f5442, #6f6350);
+    --fern-spore: light-dark(#8a6520, #b08331);
     --fern-spore-soft: #d9b169;
-    --fern-rust: #d98466;
+    --fern-rust: light-dark(#a4472d, #d98466);
 
-    --accent-low: #12291f;
-    --accent: #3f9169;
-    --accent-high: #9ddcbc;
-    --text-accent: var(--accent-high);
+    --accent-low: light-dark(#d8f3dc, #12291f);
+    --accent: light-dark(#2b6a4d, #3f9169);
+    --accent-high: light-dark(#16382a, #9ddcbc);
+    --text-accent: light-dark(#2b6a4d, #9ddcbc);
 
-    --white: #f2f7f3;
-    --gray-1: #e0eae3;
-    --gray-2: #b9c8be;
-    --gray-3: #8ba394;
-    --gray-4: #566c5e;
-    --gray-5: #384a3f;
-    --gray-6: #24332b;
-    --gray-7: #1a2620;
-    --black: #101a15;
+    --white: light-dark(#16241d, #f2f7f3);
+    --gray-1: light-dark(#23342b, #e0eae3);
+    --gray-2: light-dark(#3b4d43, #b9c8be);
+    --gray-3: light-dark(#5d6f64, #8ba394);
+    --gray-4: light-dark(#8b978d, #566c5e);
+    --gray-5: light-dark(#cdd3c9, #384a3f);
+    --gray-6: light-dark(#e8e6dc, #24332b);
+    --gray-7: light-dark(#f3f0e7, #1a2620);
+    --black: light-dark(#faf7f0, #101a15);
 
-    --hairline: #2c3d33;
+    --hairline: light-dark(#ddd8c9, #2c3d33);
     --bg: var(--black);
-    --bg-nav: #141f19;
-    --bg-raised: #131e18;
+    --bg-nav: light-dark(#f6f2e9, #141f19);
+    --bg-raised: light-dark(#f5f1e7, #131e18);
 
     --plate: #0c1510;
     --plate-raised: #15211b;
@@ -204,33 +207,12 @@
     line-height: 1.65;
   }
 
-  @media (prefers-color-scheme: light) {
-    :root {
-      color-scheme: light;
-
-      --fern-spore: #8a6520;
-      --fern-bark: #5f5442;
-      --fern-rust: #a4472d;
-
-      --accent-low: var(--fern-mint);
-      --accent: #2b6a4d;
-      --accent-high: #16382a;
-      --text-accent: var(--accent);
-
-      --white: #16241d;
-      --gray-1: #23342b;
-      --gray-2: #3b4d43;
-      --gray-3: #5d6f64;
-      --gray-4: #8b978d;
-      --gray-5: #cdd3c9;
-      --gray-6: #e8e6dc;
-      --gray-7: #f3f0e7;
-      --black: var(--fern-paper);
-
-      --hairline: #ddd8c9;
-      --bg-nav: #f6f2e9;
-      --bg-raised: #f5f1e7;
-    }
+  /* The theme control sets data-theme. Without it, the system decides. */
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
   }
 
   body {
@@ -398,6 +380,19 @@
   .app-nav nav a:hover {
     color: var(--white);
     background: color-mix(in oklab, var(--accent-low) 70%, transparent);
+  }
+  .theme-toggle {
+    margin-left: 0.35rem;
+    padding: 0.3rem 0.7rem;
+    border: var(--rule);
+    border-radius: 999rem;
+    font: 500 0.72rem var(--font-mono);
+    color: var(--gray-2);
+    white-space: nowrap;
+  }
+  .theme-toggle:hover {
+    border-color: var(--accent);
+    color: var(--white);
   }
 
   .shell,
@@ -692,7 +687,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 1.75rem;
-    font: 500 0.62rem/1.5 var(--font-mono);
+    font: 500 0.68rem/1.5 var(--font-mono);
     letter-spacing: 0.12em;
     color: var(--gray-3);
   }
@@ -705,6 +700,7 @@
   }
 
   .plate {
+    color-scheme: dark;
     position: relative;
     overflow: hidden;
     border: 1px solid var(--plate-line);
@@ -791,15 +787,31 @@
     fill: none;
     stroke: var(--hairline);
   }
-  .diagram-node {
+  .diagram-app circle {
     fill: var(--bg);
     stroke: var(--fern-spore);
     stroke-width: 1.2;
+    transition: fill 0.15s var(--ease);
   }
-  .diagram-label {
+  .diagram-app text {
     font: 500 9.5px var(--font-mono);
     letter-spacing: 0.12em;
     fill: var(--gray-2);
+    transition: fill 0.15s var(--ease);
+  }
+  .diagram-app:hover circle,
+  .diagram-app:focus-visible circle {
+    fill: var(--fern-spore);
+  }
+  .diagram-app:hover text,
+  .diagram-app:focus-visible text {
+    fill: var(--white);
+  }
+  .diagram-app:focus-visible {
+    outline: none;
+  }
+  .diagram-app:focus-visible text {
+    text-decoration: underline;
   }
   .diagram-core {
     fill: var(--fern-forest);
@@ -830,7 +842,7 @@
     display: flex;
     justify-content: space-between;
     gap: 1rem;
-    font: 500 0.62rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.14em;
     color: var(--gray-3);
   }
@@ -852,7 +864,7 @@
     border-left: var(--rule);
   }
   .build-strip span {
-    font: 500 0.66rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--gray-3);
@@ -953,6 +965,7 @@
     outline-offset: 4px;
   }
   .example-preview {
+    color-scheme: dark;
     position: relative;
     height: 13.5rem;
     overflow: hidden;
@@ -1008,7 +1021,7 @@
     padding: 0.1rem 0.4rem;
     border: var(--rule);
     border-radius: 0.25rem;
-    font: 500 0.6rem/1.6 var(--font-mono);
+    font: 500 0.68rem/1.6 var(--font-mono);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--gray-3);
@@ -1018,7 +1031,7 @@
     z-index: 1;
     left: 0.9rem;
     bottom: 0.75rem;
-    font: 500 0.58rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.14em;
     color: var(--plate-muted);
   }
@@ -1150,7 +1163,7 @@
   .mini-note small {
     display: block;
     margin-top: 1rem;
-    font: 500 0.58rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.14em;
     color: #6f6350;
   }
@@ -1160,7 +1173,7 @@
   .pulse-mini-top {
     display: flex;
     justify-content: space-between;
-    font: 500 0.58rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.14em;
     color: var(--plate-muted);
   }
@@ -1199,7 +1212,7 @@
     opacity: 0.8;
   }
   .swarm-preview {
-    background: radial-gradient(ellipse at 50% 45%, #1b3a2c, var(--plate) 70%);
+    background: var(--plate) radial-gradient(ellipse at 50% 45%, #1b3a2c, var(--plate) 70%);
   }
   .swarm-orbit {
     position: absolute;
@@ -1253,7 +1266,7 @@
   }
   .gather-preview-label span {
     margin-top: 0.4rem;
-    font: 500 0.6rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.16em;
     color: var(--plate-muted);
   }
@@ -1269,7 +1282,7 @@
     border: 1px solid var(--plate-line);
     border-radius: 999rem;
     background: var(--plate-raised);
-    font: 0.62rem var(--font-mono);
+    font: 0.68rem var(--font-mono);
     color: var(--plate-text);
   }
 
@@ -1305,11 +1318,12 @@
     gap: 1.5rem;
   }
   .court-wrap {
+    color-scheme: dark;
     position: relative;
     overflow: hidden;
     border: 1px solid var(--plate-line);
     border-radius: var(--radius);
-    background: radial-gradient(ellipse at center, #17281f, var(--plate));
+    background: var(--plate) radial-gradient(ellipse at center, #17281f, var(--plate));
   }
   .court-wrap canvas {
     width: 100%;
@@ -1371,7 +1385,7 @@
   }
   .game-score small {
     display: block;
-    font: 500 0.62rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.14em;
     color: var(--gray-3);
   }
@@ -1445,10 +1459,11 @@
   }
   .mosaic-meta {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: 0.75rem;
     margin-top: 0.9rem;
-    font: 500 0.62rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.12em;
     color: var(--gray-3);
   }
@@ -1462,6 +1477,7 @@
 
   /* Wave lab */
   .wave-panel {
+    color-scheme: dark;
     padding: 1.5rem;
     border: 1px solid var(--plate-line);
     border-radius: var(--radius);
@@ -1477,7 +1493,7 @@
   }
   .wave-panel-top h2,
   .wave-meter {
-    font: 500 0.66rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.14em;
     color: var(--plate-muted);
   }
@@ -1493,7 +1509,7 @@
     display: grid;
     grid-template-rows: repeat(8, 1fr);
     align-items: center;
-    font: 0.58rem var(--font-mono);
+    font: 0.68rem var(--font-mono);
     color: var(--plate-muted);
   }
   .wave-page .sequencer {
@@ -1534,7 +1550,7 @@
     gap: 4px;
     margin: 0.6rem 0 0 2.6rem;
     text-align: center;
-    font: 0.56rem var(--font-mono);
+    font: 0.68rem var(--font-mono);
     color: var(--plate-muted);
   }
   .wave-controls {
@@ -1559,12 +1575,6 @@
     font: 0.8rem var(--font-mono);
     color: var(--plate-text);
   }
-  .wave-panel .button:not(.primary),
-  .wave-panel select {
-    border-color: var(--plate-line);
-    background: var(--plate-raised);
-    color: var(--plate-text);
-  }
   .wave-panel .button.primary {
     background: var(--fern-frond);
     border-color: var(--fern-frond);
@@ -1585,7 +1595,7 @@
   }
   .waveform-info {
     min-width: 8.5rem;
-    font: 500 0.62rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.1em;
     color: var(--plate-muted);
   }
@@ -1690,7 +1700,7 @@
     margin-top: 1.5rem;
     padding-top: 0.6rem;
     border-top: 1px solid #3d342422;
-    font: 500 0.62rem var(--font-mono);
+    font: 500 0.68rem var(--font-mono);
     letter-spacing: 0.1em;
     color: #6f6350;
   }
@@ -1739,7 +1749,7 @@
   .runtime-list dt,
   .chart-caption {
     display: block;
-    font: 500 0.62rem/1.5 var(--font-mono);
+    font: 500 0.68rem/1.5 var(--font-mono);
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--gray-3);
@@ -1765,16 +1775,17 @@
     margin-top: 1.25rem;
   }
   .chart-panel {
-    --chart-grid: var(--gray-5);
-    --chart-text: var(--gray-3);
-    --chart-line: var(--text-accent);
     min-width: 0;
     padding: 1.25rem;
     border: var(--rule);
     border-radius: var(--radius);
     background: color-mix(in oklab, var(--bg-raised) 70%, transparent);
   }
+  /* The chart script reads these resolved colors: line, grid, labels. */
   .chart-panel canvas {
+    color: var(--text-accent);
+    border: 0 solid var(--gray-5);
+    outline: 0 none var(--gray-3);
     width: 100%;
     height: 155px;
     margin-top: 1.1rem;
@@ -1812,7 +1823,7 @@
   .request-table th {
     padding: 0.8rem 0 0.5rem;
     border-bottom: 1px solid var(--gray-4);
-    font-size: 0.62rem;
+    font-size: 0.68rem;
     font-weight: 500;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1987,7 +1998,8 @@
     min-height: 3.5rem;
     gap: 0.75rem;
   }
-  .brand-suffix {
+  .brand-suffix,
+  .theme-name {
     display: none;
   }
   .site-nav nav,
@@ -2057,7 +2069,7 @@
     padding: 0.6rem;
   }
   .mosaic-meta {
-    font-size: 0.52rem;
+    font-size: 0.68rem;
   }
   .wave-panel {
     padding: 1rem 0.75rem;

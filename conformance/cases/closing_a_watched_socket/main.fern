@@ -1,0 +1,30 @@
+// Closing a socket a reactor still watches is safe on every target, and the
+// reactor stops reporting it (#13311): a listener, a connection and its
+// accepted end are each closed while watched, and the reactor then reports
+// only the pair watched after them. On wasm a watch holds pollables that are
+// children of the socket, so the close unwatches it first.
+import "std/string";
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: i32 = tcp_accept(ls);
+  let r: i32 = reactor_new();
+  print(f"watch: {reactor_ctl(r, 1, ls, 1)} {reactor_ctl(r, 1, c, 3)} {reactor_ctl(r, 1, s, 3)}");
+  print(f"send: {tcp_send_bytes(c, "ABC".bytes())}");
+  print(f"close while watched: {tcp_close(s)} {tcp_close(c)}");
+
+  let events: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  let c2: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s2: i32 = tcp_accept(ls);
+  print(f"close the listener while watched: {tcp_close(ls)}");
+  print(f"idle wait: {reactor_wait(r, events, 10)}");
+
+  print(f"watch the new pair: {reactor_ctl(r, 1, s2, 1)}");
+  print(f"send: {tcp_send_bytes(c2, "D".bytes())}");
+  let got: i32 = reactor_wait(r, events, 1000);
+  print(f"reactor_wait: {got} fd {events[0] == s2} readable {(events[1] & 1) == 1}");
+  print(f"close: {tcp_close(s2)} {tcp_close(c2)} {reactor_ctl(r, 3, 0, 0)}");
+  return 0;
+}

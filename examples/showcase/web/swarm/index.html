@@ -6,6 +6,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Swarm · Fern, in your browser</title>
     <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body class="app-page swarm-page">
@@ -92,6 +93,46 @@
           <div><b id="renderer">—</b><span>RENDERER</span></div>
         </div>
       </div>
+      <section class="kernel-editor" aria-labelledby="editor-title">
+        <div class="editor-head">
+          <div>
+            <div class="eyebrow"><span>Live</span>Edit the Fern kernel</div>
+            <h2 id="editor-title">Change the physics. Recompile here.</h2>
+            <p>
+              The Fern compiler runs in this page as WebAssembly. It compiles
+              your version of the kernel, and the field and the audio change to
+              it. The server receives nothing.
+            </p>
+          </div>
+          <div class="editor-actions">
+            <button class="button primary" id="editor-open">
+              Open the editor
+            </button>
+            <span id="compile-status" class="status" role="status"
+              >2.4 MB compiler, loaded on request</span
+            >
+          </div>
+        </div>
+        <div id="editor" hidden>
+          <textarea
+            id="kernel-source"
+            spellcheck="false"
+            autocapitalize="off"
+            aria-label="Fern kernel source"
+          ></textarea>
+          <div class="toolbar">
+            <div class="button-group">
+              <button class="button primary" id="compile">
+                Compile and run ▶</button
+              ><button class="button" id="revert">Restore the original</button>
+            </div>
+            <span class="fine-print">Ctrl+Enter compiles. Try a new radius in
+              <code>particle</code>, or new note ratios in
+              <code>sample</code>.</span>
+          </div>
+          <pre id="diagnostics" class="diagnostics" role="alert" hidden></pre>
+        </div>
+      </section>
       <p class="fine-print">
         The field follows a procedural flow, with no saved simulation history.
         Pause stops its animation loop. Audio starts only after your click. No
