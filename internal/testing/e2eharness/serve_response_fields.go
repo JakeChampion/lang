@@ -29,7 +29,7 @@ function main(): i32 {
 
 func CheckResponseFields(t *testing.T, addr string) {
 	t.Helper()
-	WaitServerReady(t, addr, 10*time.Second)
+	WaitServerReady(t, addr)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
