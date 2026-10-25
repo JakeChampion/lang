@@ -86,7 +86,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<28 pub function (e: Exporter) close[D: async.Driver](drv: D): void>>
 
-<<29 function __without_i32(xs: i32[], at: i32): i32[]>>
+<<29 function __without[T](xs: T[], at: i32): T[]>>
 
 <<30 pub function exposition(body: string): HttpResponse>>
 ```
@@ -639,7 +639,7 @@ function __family_of(key: string): string {
 
 ```fern
 <<21 pub struct Exporter>>=
-pub struct Exporter { listener: i32, scrapes: i32[], heads: string[] }
+pub struct Exporter { listener: i32, scrapes: i32[], heads: string[], unsent: u8[][] }
 ```
 
 ### `22 pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.NetError]`
@@ -657,7 +657,7 @@ pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.Ne
     tcp_close(fd);
     return Err(net.error_from_host(watched));
   }
-  return Ok(Exporter { listener: fd, scrapes: [], heads: [] });
+  return Ok(Exporter { listener: fd, scrapes: [], heads: [], unsent: [] });
 }
 ```
 
@@ -717,6 +717,9 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
   if (at < 0) {
     return e;
   }
+  if (e.unsent[at].len() > 0) {
+    return e.send(drv, at, e.unsent[at]);
+  }
   let got: u8[] = [];
   match (net.read_up_to(fd, 4096)) {
     Ok(bytes) => {
@@ -726,19 +729,36 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
       if (err.eq(net.WouldBlock)) {
         return e;
       }
-      drv.unwatch(fd);
-      tcp_close(fd);
-      return Exporter { ...e, scrapes: __without_i32(e.scrapes, at), heads: __without_str(e.heads, at) };
+      return e.drop(drv, at);
     }
   }
   let head: string = e.heads[at] + string_from_bytes_unchecked(got);
   if (got.len() > 0 && !head.contains("\r\n\r\n") && head.len() < 8192) {
     return Exporter { ...e, heads: e.heads.with(at, head) };
   }
-  __answer(fd, head, answer);
-  drv.unwatch(fd);
-  tcp_close(fd);
-  return Exporter { ...e, scrapes: __without_i32(e.scrapes, at), heads: __without_str(e.heads, at) };
+  return e.send(drv, at, __answer(head, answer));
+}
+
+// send writes what the scrape's socket takes now and keeps the rest for the wake that finds it writable.
+function (e: Exporter) send[D: async.Driver](drv: D, at: i32, out: u8[]): Exporter {
+  match (net.write_rest(e.scrapes[at], out)) {
+    Ok(rest) => {
+      if (rest.len() > 0) {
+        if (e.unsent[at].len() == 0) {
+          drv.watch(e.scrapes[at], 2);
+        }
+        return Exporter { ...e, unsent: e.unsent.with(at, rest) };
+      }
+    },
+    Err(_) => {}
+  }
+  return e.drop(drv, at);
+}
+
+function (e: Exporter) drop[D: async.Driver](drv: D, at: i32): Exporter {
+  drv.unwatch(e.scrapes[at]);
+  tcp_close(e.scrapes[at]);
+  return Exporter { ...e, scrapes: __without(e.scrapes, at), heads: __without(e.heads, at), unsent: __without(e.unsent, at) };
 }
 ```
 
@@ -756,10 +776,11 @@ function (e: Exporter) accept[D: async.Driver](drv: D): Exporter {
     tcp_close(fd);
     return e;
   }
-  return Exporter { ...e, scrapes: e.scrapes.append(fd), heads: e.heads.append("") };
+  let none: u8[] = [];
+  return Exporter { ...e, scrapes: e.scrapes.append(fd), heads: e.heads.append(""), unsent: e.unsent.append(none) };
 }
 
-function __answer(fd: i32, head: string, answer: (string) => HttpResponse): void {
+function __answer(head: string, answer: (string) => HttpResponse): u8[] {
   let resp: HttpResponse = http.text(400, "");
   match (__path_of(head)) {
     Some(path) => {
@@ -767,7 +788,7 @@ function __answer(fd: i32, head: string, answer: (string) => HttpResponse): void
     },
     None => {}
   }
-  let sent: Result[i32, net.NetError] = net.write(fd, http.http_serialize_response_conn(resp, false).bytes());
+  return http.http_serialize_response_conn(resp, false).bytes();
 }
 
 function __path_of(head: string): Option[string] {
@@ -801,24 +822,12 @@ pub function (e: Exporter) close[D: async.Driver](drv: D): void {
 }
 ```
 
-### `29 function __without_i32(xs: i32[], at: i32): i32[]`
+### `29 function __without[T](xs: T[], at: i32): T[]`
 
 ```fern
-<<29 function __without_i32(xs: i32[], at: i32): i32[]>>=
-function __without_i32(xs: i32[], at: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < xs.len()) {
-    if (i != at) {
-      out = out.append(xs[i]);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-function __without_str(xs: string[], at: i32): string[] {
-  let out: string[] = [];
+<<29 function __without[T](xs: T[], at: i32): T[]>>=
+function __without[T](xs: T[], at: i32): T[] {
+  let out: T[] = [];
   let i: i32 = 0;
   while (i < xs.len()) {
     if (i != at) {

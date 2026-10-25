@@ -1353,6 +1353,30 @@ pub function read_up_to(sock: i32, max: i32): Result[u8[], NetError] {
 pub function write(sock: i32, data: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_send_bytes(sock, data));
 }
+
+// write_rest sends what a non-blocking socket takes now and returns the bytes it did not take, empty once all are sent.
+pub function write_rest(sock: i32, data: u8[]): Result[u8[], NetError] {
+  let n: i32 = tcp_send_bytes(sock, data);
+  if (n >= data.len()) {
+    let none: u8[] = [];
+    return Ok(none);
+  }
+  if (n < 0) {
+    let e: NetError = error_from_host(n);
+    if (!e.eq(WouldBlock)) {
+      return Err(e);
+    }
+    return Ok(data);
+  }
+  if (n == 0) {
+    return Ok(data);
+  }
+  let b: usize = buf_new(data.len() - n);
+  buf_push_bytes_range(b, data, n, data.len());
+  let rest: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return Ok(rest);
+}
 ```
 
 ### `33 pub enum Recv`
