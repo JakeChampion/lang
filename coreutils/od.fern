@@ -1406,7 +1406,7 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
     push_address(h, t, s, off);
     buf_push_byte(h, 10);
   }
-  return (gnu.check(w), src);
+  return (w, src);
 }
 
 function pad_block(chunk: u8[], at: i32, n: i32): u8[] {
@@ -1478,7 +1478,7 @@ function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: S
     push_run(h, t, s, start, held);
   }
   buf_free(held);
-  return (gnu.check(w), src);
+  return (w, src);
 }
 
 function push_run(h: usize, t: Tables, s: Settings, at: u64, held: usize): void {

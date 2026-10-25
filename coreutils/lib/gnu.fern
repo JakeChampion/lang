@@ -62,20 +62,19 @@ pub function error(msg: string): void {
   eprint(prog() + ": " + msg);
 }
 
+// Like GNU error(), these flush stdout first and ignore a failure there: the
+// writer keeps it, and close_stdout reports it.
 pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWriter {
-  if (!stdout_open()) {
-    error(msg);
-    return o;
+  if (stdout_open()) {
+    o.flush();
   }
-  let w: io_buffered.BufWriter = o.flush();
   error(msg);
-  return w;
+  return o;
 }
 
 pub function error_out_bytes(o: io_buffered.BufWriter, msg: u8[]): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = o;
   if (stdout_open()) {
-    w = w.flush();
+    o.flush();
   }
   let h: usize = buf_new(msg.len());
   buf_push(h, prog());
@@ -86,7 +85,7 @@ pub function error_out_bytes(o: io_buffered.BufWriter, msg: u8[]): io_buffered.B
   buf_free(h);
   let diagnostic: Writer = stderr();
   diagnostic.write_bytes(bytes);
-  return w;
+  return o;
 }
 
 function stdout_open(): boolean {
@@ -512,15 +511,17 @@ pub function stream_put_bytes_range(o: Stream, bytes: u8[], lo: i32, hi: i32): S
   return stream_written(o, o.w.write_bytes_range(bytes, lo, hi));
 }
 
-function stream_written(o: Stream, w: io_buffered.BufWriter): Stream {
-  match (w.error()) {
-    Some(e) => {
+function stream_written(o: Stream, written: Result[io_buffered.BufWriter, IoError]): Stream {
+  match (written) {
+    Ok(w) => {
+      return Stream { ...o, w: w };
+    },
+    Err(e) => {
       error("error writing " + quotea("standard output") + ": " + io_error_text(e));
       exit(1);
-    },
-    None => {}
+    }
   }
-  return Stream { ...o, w: w };
+  return o;
 }
 
 pub function stream_fail(o: Stream, msg: string): Stream {
@@ -872,32 +873,23 @@ pub function put_bytes(o: io_buffered.BufWriter, bytes: u8[]): io_buffered.BufWr
 }
 
 pub function put_bytes_with(o: io_buffered.BufWriter, bytes: u8[], status: i32): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = o.write_bytes(bytes);
-  die_on_write_error(w, status);
-  return w;
+  return written_or_die(o.write_bytes(bytes), status);
 }
 
 pub function put_with(o: io_buffered.BufWriter, s: string, status: i32): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = o.write_string(s);
-  die_on_write_error(w, status);
-  return w;
+  return written_or_die(o.write_string(s), status);
 }
 
-pub function check(o: io_buffered.BufWriter): io_buffered.BufWriter {
-  die_on_write_error(o, 1);
-  return o;
+pub function check(written: Result[io_buffered.BufWriter, IoError]): io_buffered.BufWriter {
+  return written_or_die(written, 1);
 }
 
 pub function settle(o: io_buffered.BufWriter): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = o.settle();
-  die_on_write_error(w, 1);
-  return w;
+  return written_or_die(o.settle(), 1);
 }
 
 pub function flush(o: io_buffered.BufWriter): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = o.flush();
-  die_on_write_error(w, 1);
-  return w;
+  return written_or_die(o.flush(), 1);
 }
 
 pub function finish(o: io_buffered.BufWriter): void {
@@ -933,14 +925,17 @@ pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, sta
   }
 }
 
-function die_on_write_error(w: io_buffered.BufWriter, status: i32): void {
-  match (w.error()) {
-    Some(e) => {
+function written_or_die(written: Result[io_buffered.BufWriter, IoError], status: i32): io_buffered.BufWriter {
+  match (written) {
+    Ok(w) => {
+      return w;
+    },
+    Err(e) => {
       error("write error: " + io_error_text(e));
       exit(status);
-    },
-    None => {}
+    }
   }
+  return out_new();
 }
 
 pub struct Stdio { w: Writer, buf: u8[], cap: i32, alloc: boolean, err: Option[IoError] }

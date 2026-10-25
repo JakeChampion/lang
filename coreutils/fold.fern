@@ -365,7 +365,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             }
           }
           if (buf_len(h) >= block_size()) {
-            o = o.flush();
+            o = gnu.flush(o);
           }
         }
       }
@@ -394,7 +394,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             m = m + 1;
           }
           if (buf_len(h) >= block_size()) {
-            o = o.flush();
+            o = gnu.flush(o);
           }
         } else {
           column = next;
@@ -416,7 +416,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       specat = special_at(chunk, pos, specials);
     }
     if (buf_len(h) >= block_size()) {
-      o = o.flush();
+      o = gnu.flush(o);
     }
   }
 

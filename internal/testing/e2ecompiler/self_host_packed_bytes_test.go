@@ -102,6 +102,7 @@ const packedBytesContainersWant = "keys 3 9090\nvals 405\nrev 2946\nrec 9 4005\n
 
 const packedBytesRuntimeSrc = `import "std/i32";
 import "std/io_buffered";
+import "std/result";
 
 function table(n: i32, f: (i32) => i32): u8[] {
     let t: u8[] = [];
@@ -122,11 +123,11 @@ function main(): i32 {
         return 0;
     });
     let b: io_buffered.BufWriter = io_buffered.buf_writer_new(stdout(), 4096);
-    b = b.write_mapped("hello, world\n", upper);
-    b = b.write_filtered("foo bar boo\n", drop);
-    b = b.write_expanded("a,b,c\n", exp);
-    b = b.write_mapped("abc\n", [0 as u8, 1 as u8]);
-    b = b.flush();
+    b = b.write_mapped("hello, world\n", upper).unwrap_or(b);
+    b = b.write_filtered("foo bar boo\n", drop).unwrap_or(b);
+    b = b.write_expanded("a,b,c\n", exp).unwrap_or(b);
+    b = b.write_mapped("abc\n", [0 as u8, 1 as u8]).unwrap_or(b);
+    b = b.flush().unwrap_or(b);
     let ws: u8[] = table(256, (c: i32) => { if (c == 32 || c == 10) { return 1; } return 0; });
     let line: string = "one two  three\nfour";
     print("scan " + __scan_set(line, 0, ws).to_string() + " " + __scan_set(line, 4, ws).to_string() + " " + __scan_set(line, 15, ws).to_string());

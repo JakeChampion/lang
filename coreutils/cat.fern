@@ -287,7 +287,7 @@ function format_chunk(st: State, chunk: u8[], f: Fmt): State {
       pos = nl + 1;
     }
   }
-  return State { ...s, w: gnu.check(gnu.settle(w)), num: num, head: head, base: base, at_start: at_start, prev_blank: prev_blank, pending_cr: pending_cr };
+  return State { ...s, w: gnu.settle(w), num: num, head: head, base: base, at_start: at_start, prev_blank: prev_blank, pending_cr: pending_cr };
 }
 
 function spell_chunk(st: State, chunk: u8[], f: Fmt): State {
@@ -329,7 +329,7 @@ function squeeze_chunk(st: State, chunk: u8[]): State {
     pos = end;
     w = gnu.settle(w);
   }
-  return State { ...s, w: gnu.check(w), at_start: at_start, prev_blank: prev_blank };
+  return State { ...s, w: w, at_start: at_start, prev_blank: prev_blank };
 }
 
 function fail(st: State, msg: string): State {

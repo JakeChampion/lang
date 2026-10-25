@@ -254,7 +254,15 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
   let hint: i64 = 0;
   let lr: io_buffered.ByteLineReader = io_buffered.byte_line_reader_new(r, 10, 65536);
   while (true) {
-    let next: (Option[u8[]], io_buffered.ByteLineReader) = lr.next_line_bytes();
+    let next: (Option[u8[]], io_buffered.ByteLineReader) = (None, lr);
+    match (lr.next_line_bytes()) {
+      Ok(read) => {
+        next = read;
+      },
+      Err(e) => {
+        gnu.die(w, gnu.quotef(shown) + ": read error: " + gnu.io_error_text(e), 1);
+      }
+    }
     lr = next.1;
     match (next.0) {
       Some(full) => {
@@ -286,12 +294,6 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
         break;
       }
     }
-  }
-  match (lr.error()) {
-    Some(e) => {
-      gnu.die(w, gnu.quotef(shown) + ": read error: " + gnu.io_error_text(e), 1);
-    },
-    None => {}
   }
   if (name != "-") {
     if let Err(e) = r.close() {
