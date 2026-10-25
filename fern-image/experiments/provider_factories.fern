@@ -1,0 +1,78 @@
+enum ProbeFault { Bounds, Order, Cancelled }
+
+struct Cursor { next: i32, bytes: u8[] }
+
+struct ProbeReader { read: (i32, () => boolean) => Result[u8[], ProbeFault] }
+
+struct Factory { open: () => Result[ProbeReader, ProbeFault] }
+
+struct ProbeSession { node: i32, reader: ProbeReader }
+
+struct Ledger { sessions: ProbeSession[], hits: i32 }
+
+function factory(bytes: u8[]): Factory {
+  let open = (): Result[ProbeReader, ProbeFault] => {
+    let state = cell_new(Cursor { next: 0, bytes: bytes });
+    let read = (y: i32, cancelled: () => boolean): Result[u8[], ProbeFault] => {
+      if (cancelled()) {
+        return Err(ProbeFault.Cancelled);
+      }
+      let current = state.get();
+      if (y < 0 || y >= current.bytes.len()) {
+        return Err(ProbeFault.Bounds);
+      }
+      if (y != current.next) {
+        return Err(ProbeFault.Order);
+      }
+      let row: u8[] = [current.bytes[y]];
+      state.set(Cursor { ...current, next: y + 1 });
+      return Ok(row);
+    };
+    return Ok(ProbeReader { read: read });
+  };
+  return Factory { open: open };
+}
+
+function capability(): i32 {
+  let input: u8[] = [17, 23];
+  input = input.append(args()[0].len() as u8);
+  let source = factory(input);
+  let alias = source;
+  let first = match (source.open()) { Ok(v) => v, Err(_) => { return 1; } };
+  let second = match (alias.open()) { Ok(v) => v, Err(_) => { return 2; } };
+  let never = (): boolean => false;
+  let row = match (first.read(0, never)) { Ok(v) => v, Err(_) => { return 3; } };
+  let next = match (first.read(1, never)) { Ok(v) => v, Err(_) => { return 4; } };
+  let independent = match (second.read(0, never)) { Ok(v) => v, Err(_) => { return 5; } };
+  let order = match (first.read(0, never)) { Err(ProbeFault.Order()) => true, _ => false };
+  let cancel = match (second.read(1, (): boolean => true)) { Err(ProbeFault.Cancelled()) => true, _ => false };
+  let after = match (second.read(1, never)) { Ok(v) => v, Err(_) => { return 6; } };
+  let changed = row.with(0, 200 as u8);
+  input = input.with(0, 240 as u8);
+  let third = match (source.open()) { Ok(v) => v, Err(_) => { return 7; } };
+  let original = match (third.read(0, never)) { Ok(v) => v, Err(_) => { return 8; } };
+  let ledger = Ledger { sessions: [], hits: 0 };
+  let i = 0;
+  while (i < 3) {
+    let reader = match (source.open()) { Ok(v) => v, Err(_) => { return 10; } };
+    ledger = Ledger { ...ledger, sessions: ledger.sessions.append(ProbeSession { node: i, reader: reader }) };
+    i = i + 1;
+  }
+  let entry = ledger.sessions[1];
+  let stored = match (entry.reader.read(0, never)) { Ok(v) => v, Err(_) => { return 11; } };
+  ledger = Ledger { ...ledger, hits: ledger.hits + 1 };
+  if (!order || !cancel || row[0] != 17 as u8 || changed[0] != 200 as u8 || original[0] != 17 as u8
+    || independent[0] != 17 as u8 || next[0] != 23 as u8 || after[0] != 23 as u8 || input[0] != 240 as u8
+    || stored[0] != 17 as u8 || ledger.hits != 1) {
+    return 9;
+  }
+  return 42;
+}
+
+function main(): i32 {
+  if (capability() != 42) {
+    return 1;
+  }
+
+  return 0;
+}

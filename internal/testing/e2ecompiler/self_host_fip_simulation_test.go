@@ -190,7 +190,7 @@ func testSimulation(t *testing.T, variant string) {
 			if variant != "persistent" {
 				src.WriteString("if (__heap_alloc_count() != mark) { return 13; }\n")
 			}
-			src.WriteString("let saved: simulation_fip.World = w; w = simulation_fip.step(w);\n")
+			src.WriteString("let saved: simulation_fip.World = simulation_fip.World { ...w }; w = simulation_fip.step(w);\n")
 			fmt.Fprintf(&src, "if (!same(saved, expected, %d) || saved.checksum != hashes[%d] as i64 || saved.tick != %d) { return 14; }\nif (!same(w, expected, %d) || w.checksum != hashes[%d] as i64) { return 15; }\nreturn 0; }, None => { return 16; } } }\n", tc.count*9*tc.ticks, tc.ticks, tc.ticks, tc.count*9*(tc.ticks+1), tc.ticks+1)
 			dir := t.TempDir()
 			simulationFiles(t, dir)
@@ -308,7 +308,7 @@ function main(): i32 {
         i = i + 1;
       }
       w = simulation_fbip.rebuild(w);
-      let saved: simulation_fbip.World = w;
+      let saved: simulation_fbip.World = simulation_fbip.World { ...w };
       w = simulation_fbip.proximity(w);
       let expected: i32[] = [4, 2, 2, 1, 2, 1, 2];
       i = 0;
@@ -323,7 +323,7 @@ function main(): i32 {
       row = simulation_fbip.get(w, 6);
       row = simulation_entity.Entity { ...row, vy: 4 };
       w = simulation_fbip.World { ...w, entities: w.entities.with(6, row) };
-      let before_move: simulation_fbip.World = w;
+      let before_move: simulation_fbip.World = simulation_fbip.World { ...w };
       w = simulation_fbip.move(w);
       if (simulation_fbip.get(w, 0).x != 4092 || simulation_fbip.get(w, 6).y != 3
           || simulation_fbip.get(before_move, 0).x != 0 || simulation_fbip.get(before_move, 6).y != 4095) { return 18; }
@@ -337,7 +337,7 @@ function main(): i32 {
       if (simulation_fbip.get(w, 0).health != 20 || simulation_fbip.get(w, 0).mode != 2
           || simulation_fbip.get(w, 1).health != 77 || simulation_fbip.get(w, 1).mode != 0) { return 19; }
       w = simulation_fbip.World { ...w, tick: 1000000 };
-      let stopped: simulation_fbip.World = w;
+      let stopped: simulation_fbip.World = simulation_fbip.World { ...w };
       w = simulation_fbip.step(w);
       w = simulation_fbip.step(w);
       if (w.tick != 1000000 || w.refused != 1 || w.checksum != stopped.checksum
