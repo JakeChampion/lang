@@ -64,7 +64,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<24 function __put_sym(w: __Bits, c: __Code, sym: i32): __Bits>>
 
-<<25 function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: __Code): __Bits>>
+<<25 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[]>>
 
 <<26 struct __Span>>
 
@@ -1238,28 +1238,14 @@ function __dist_extra_of(di: i32): i32 {
 }
 
 function __log2(x: i32): i32 {
-  let k: i32 = 0;
-  while (x > 1) {
-    x = x >> 1;
-    k = k + 1;
-  }
-  return k;
+  return 31 - __clz32(x as u32);
 }
 ```
 
-### `25 function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: __Code): __Bits`
+### `25 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[]`
 
 ```fern
-<<25 function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: __Code): __Bits>>=
-function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: __Code): __Bits {
-  let li: i32 = __len_sym(length);
-  w = __put_sym(w, lit, 257 + li);
-  w = __put(w, length - __len_base_of(li), __len_extra_of(li));
-  let di: i32 = __dist_sym(distance);
-  w = __put_sym(w, dist, di);
-  return __put(w, distance - __dist_base_of(di), __dist_extra_of(di));
-}
-
+<<25 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[]>>=
 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
   return __deflated_tokens(input, __tokens(input, 1 << window_bits), final);
 }
@@ -1413,18 +1399,61 @@ function __joined_range(out: u8[], more: [u8], from: i32, to: i32): u8[] {
   return out;
 }
 
+// A token adds at most 48 bits to fewer than 8 held ones, so one flush of
+// whole bytes after each token keeps the 64-bit buffer from overflowing.
 function __put_tokens(w: __Bits, toks: i32[], s: __Span, lit: __Code, dist: __Code): __Bits {
+  let words: i64[] = __length_words(lit);
+  let lcodes: i32[] = lit.codes;
+  let llens: i32[] = lit.lens;
+  let dcodes: i32[] = dist.codes;
+  let dlens: i32[] = dist.lens;
+  let out: u8[] = w.out;
+  let acc: u64 = w.acc as u64;
+  let n: i32 = w.n;
   let i: i32 = s.at;
   while (i < s.end) {
     let t: i32 = toks[i];
     if (t < 256) {
-      w = __put_sym(w, lit, t);
+      acc = acc | lcodes[t] as u64 << n as u64;
+      n = n + llens[t];
     } else {
-      w = __put_match(w, t >> 16, t & 65535, lit, dist);
+      let e: i64 = words[t >> 16];
+      acc = acc | (e >> 8) as u64 << n as u64;
+      n = n + (e & 255i64) as i32;
+      let x: i32 = (t & 65535) - 1;
+      let di: i32 = x;
+      let nb: i32 = 0;
+      if (x >= 4) {
+        let k: i32 = __log2(x);
+        di = 2 * k + (x >> k - 1 & 1);
+        nb = k - 1;
+      }
+      acc = acc | (dcodes[di] | (x & (1 << nb) - 1) << dlens[di]) as u64 << n as u64;
+      n = n + dlens[di] + nb;
+    }
+    while (n >= 8) {
+      out = out.append((acc & 255u64) as u8);
+      acc = acc >> 8u64;
+      n = n - 8;
     }
     i = i + 1;
   }
-  return __put_sym(w, lit, 256);
+  return __put_sym(__Bits { out: out, acc: acc as i32, n: n }, lit, 256);
+}
+
+// For each match length, its symbol's code and extra bits as one word, the
+// bits above bit 8 and their count below.
+function __length_words(lit: __Code): i64[] {
+  let out: i64[] = __alloc_i64(259);
+  let length: i32 = 3;
+  while (length <= 258) {
+    let li: i32 = __len_sym(length);
+    let sym: i32 = 257 + li;
+    let bits: i64 = (lit.codes[sym] | length - __len_base_of(li) << lit.lens[sym]) as i64;
+    out = out.with(length, bits << 8 | (lit.lens[sym] + __len_extra_of(li)) as i64);
+    length = length + 1;
+  }
+  return out;
 }
 ```
 
@@ -1804,6 +1833,7 @@ function __common(input: [u8], from: i32, pos: i32): i32 {
 // search visits at most 35 candidates and stops at a match of 65 bytes. The
 // search for the lazy step visits half as many. A match of 3 bytes further
 // back than 8192 costs more than its literals.
+@inline
 function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], window: i32, held: i32): (i32, i32) {
   let max: i32 = cmp.min(258, input.len() - pos);
   let nice: i32 = cmp.min(65, max);
