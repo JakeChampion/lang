@@ -71,9 +71,6 @@ func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
 	done := make(chan error, 1)
 	go func() {
 		buf := make([]byte, len(data)+1)
@@ -103,6 +100,10 @@ func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
 }`, conn.LocalAddr().(*net.UDPAddr).Port, data, len(data))
 	return src, func() {
 		t.Helper()
+		// The deadline starts once the program has run, not before its compile.
+		if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
@@ -124,9 +125,6 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { listener.Close() })
-	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
 	done := make(chan error, 1)
 	go func() {
 		for i := 0; i < 32; i++ {
@@ -170,17 +168,9 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
     return 0;
 }`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
 	if receive {
-		src = fmt.Sprintf(`// read waits for c to be readable, since a wasi:sockets read never
-// blocks, then reads into buf, waiting again while a wake finds nothing
-// (-EAGAIN, 6 in the WASI numbering).
+		src = fmt.Sprintf(`// read waits for bytes on c, reads them into buf and checks each is an x.
 function read(c: i32, buf: u8[]): i32 {
-    let n: i32 = 0 - 6;
-    while (n == 0 - 6) {
-        let p: i32 = tcp_pollable(c);
-        wasm_block(p);
-        wasm_pollable_drop(p);
-        n = tcp_recv_into(c, buf);
-    }
+    let n: i32 = tcp_recv_into(c, buf);
     let i: i32 = 0;
     while (i < n) {
         if (buf[i] != 120u8) { return 0 - 1000; }
@@ -206,6 +196,10 @@ function main(): i32 {
 	}
 	return src, func() {
 		t.Helper()
+		// The deadline starts once the program has run, not before its compile.
+		if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
