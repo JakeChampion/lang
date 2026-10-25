@@ -1,0 +1,94 @@
+# Native worker failure qualification
+
+Issue #13332 is a child of aggregate memory issue #13222.
+This slice tests disposable native Fern workers under local Docker cgroup v2 controls.
+The Python collector is an offline test tool.
+All image operations execute in Fern.
+The fixture does not implement a production worker pool or an HTTP service.
+
+## Controls and workload
+
+Each container starts one static x86-64 Fern executable from a scratch image.
+The image requires no external library, package, or network download.
+The worker runs as UID and GID 1000 with no capabilities or extra mounts.
+Its root filesystem is read-only, and its network mode is `none`.
+The container also sets `no-new-privileges` and a private cgroup namespace.
+
+The memory limit is 64 MiB, with zero swap allowance.
+The CPU quota is 50000 microseconds per 100000 microseconds.
+The PID limit is 16.
+The collector verifies these controls through Docker inspection.
+Completed and busy workers also read their own cgroup control files.
+Every worker rejects a different memory or swap limit before its workload starts.
+
+Each valid worker renders a cached 64 by 16 tile from a virtual bilinear graph.
+The graph maps 1024 by 10000 pixels to 512 by 20000 pixels.
+The worker checks all four channels at a tile corner.
+It also encodes and decodes a 16 by 16 RGBA PNG with one colored pixel.
+The worker compares every decoded byte with the original image.
+This small restricted PNG does not qualify broad PNG compatibility.
+
+The retained-image fixture keeps distinct 512 by 512 RGBA frames through copy-on-write updates.
+Each frame contains 1 MiB of pixel data.
+The OOM mode attempts to retain 128 frames under the 64 MiB cgroup limit.
+The pressure modes retain 48 frames, then render tiles or test cancellation.
+The worker accesses retained images after cancellation to preserve their ownership during that test.
+Cancellation stops at callback polls 1, 8, 24, and 64.
+
+## Failure and recovery contract
+
+The collector runs three sequences of nine fresh containers, with no concurrent workers.
+Each sequence contains five valid workers, one OOM worker, two deadline workers, and one cancellation worker.
+A valid worker runs before and after each forced failure.
+The collector requires exit code 137 and Docker `OOMKilled=true` for the OOM worker.
+The deadline workers must report `OOMKilled=false` after an explicit `SIGKILL`.
+Every completed valid or cancellation worker must report balanced allocations and zero final live bytes.
+
+The deadline starts when the collector observes the worker's ready message.
+The collector polls Docker, waits at least one second, then kills the worker.
+Startup has a separate fifteen-second observation limit.
+Docker commands also have timeouts.
+The collector waits for termination and verifies a zero process ID before container removal.
+It verifies removal before the next worker starts.
+
+The raw record includes source, library, stdlib, compiler, binary, collector, and Docker CLI hashes.
+The collector checks source and tool hashes before and after the sequence.
+It records the scratch image ID, safe daemon fields, controls, worker output, and final process state.
+It does not record Docker environment values or registry credentials.
+
+## Evidence limits
+
+The cgroup memory limit controls kernel memory charge for one container.
+It is not an exact RSS limit, an allocator limit, or a mathematical process memory bound.
+The worker reads `memory.peak` at explicit phases.
+Those observations concern cgroup charge, with kernel accounting limits and observation costs.
+They do not replace the separate [RSS observations](rss-observations.md).
+
+The CPU quota controls bandwidth.
+It does not promise an exact elapsed deadline or qualify representative image throughput.
+The deadline observations include collector polls, Docker commands, scheduling, and process termination.
+The record does not qualify hard real-time deadlines or service latency.
+
+A forced kill does not execute Fern destructors or the final leak census.
+A later valid worker proves recovery in a fresh process.
+It does not prove recovery inside the killed worker or recoverable allocation failure.
+The fixture does not test collector crashes, daemon restarts, simultaneous workers, or malicious input isolation.
+The collector and Docker daemon remain outside each worker's memory limit.
+Aggregate service admission, worker pools, physical scratch accounting, and production gates remain incomplete.
+
+## Reproduce
+
+Use native x86-64 Linux with Docker and cgroup v2 memory, swap, CPU, and PID controls.
+Use the repository's supported compiler and CPU baseline.
+Run this command from the repository root:
+
+```sh
+FERN="$PWD/bin/fern" ./fern-image/scripts/qualify-workers.sh
+```
+
+The script enables the leak census without sanitizer quarantine.
+It writes a fresh record to `fern-image/build/worker-qualification.json`.
+The native image CI job runs the same script and uploads that record.
+Unavailable cgroup controls cause failure, not a skipped qualification.
+The [committed record](../benchmarks/results/worker-isolation-m4.json) preserves one local observation set.
+Kernel charge and elapsed observations can vary between runs.
