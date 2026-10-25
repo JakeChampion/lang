@@ -598,23 +598,27 @@ pub function headers_room(data_len: i32): u8[] {
   return out;
 }
 
+// The DATA frame goes on by appends, which use the room headers_room left
+// when the block still has it and grow the array when it does not.
 pub function headers_data(own out: u8[], stream: i32, data: [u8], n: i32): u8[] {
   let block_len: i32 = out.len() - HEADER_LEN;
-  let total: i32 = out.len();
-  if (n > 0) {
-    total = total + HEADER_LEN + n;
-  }
-  if (block_len > BLOCK_ROOM) {
-    out = __bytes_into(__alloc_u8(total), 0, out[0:out.len()], 0, out.len());
-  } else {
-    __arr_set_len(out, total);
-  }
   if (n == 0) {
     return header_into(out, 0, HEADERS, 5, stream, block_len);
   }
   out = header_into(out, 0, HEADERS, 4, stream, block_len);
-  out = header_into(out, HEADER_LEN + block_len, DATA, 1, stream, n);
-  return __bytes_into(out, HEADER_LEN + block_len + HEADER_LEN, data, 0, n);
+  let at: i32 = out.len();
+  let i: i32 = 0;
+  while (i < HEADER_LEN) {
+    out = out.append(0 as u8);
+    i = i + 1;
+  }
+  out = header_into(out, at, DATA, 1, stream, n);
+  i = 0;
+  while (i < n) {
+    out = out.append(data[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 pub function headers_bytes(stream: i32, end_stream: boolean, end_headers: boolean, block: u8[]): u8[] {

@@ -1,0 +1,35 @@
+import "std/i32";
+import "std/string";
+import "core/cmp";
+
+struct Poller { r: i32, events: i32[] }
+
+function wait(p: Poller, ms: i32): i32 {
+  return reactor_wait(p.r, p.events, ms);
+}
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: i32 = tcp_accept(ls);
+  let r: i32 = reactor_new();
+  print(f"watch: {reactor_ctl(r, 1, s, 1)}");
+  print(f"send: {tcp_send_bytes(c, "ready".bytes())}");
+
+  let events: i32[] = [0, 0, 0, 0];
+  let alias: i32[] = events;
+  let rows: i32[][] = [events];
+  let got: i32 = reactor_wait(r, events, 1000);
+  print(f"reactor_wait: {got} readiness {events[1]} fd matches {events[0] == s}");
+  print(f"alias: readiness {alias[1]} fd matches {alias[0] == s}");
+  print(f"element: readiness {rows[0][1]} fd matches {rows[0][0] == s}");
+
+  let p: Poller = Poller { r: r, events: [0, 0, 0, 0] };
+  let held: i32[] = p.events;
+  got = wait(p, 1000);
+  print(f"through a field: {got} readiness {held[1]} fd matches {held[0] == s} {p.events[0] == s}");
+
+  print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)} {reactor_ctl(r, 3, 0, 0)}");
+  return 0;
+}

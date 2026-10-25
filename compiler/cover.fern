@@ -215,28 +215,10 @@ function transfers(st: ast.Stmt): boolean {
 }
 
 function is_exit(st: ast.Stmt): boolean {
-  match (st) {
-    ast.StmtExpr(x) => {
-      match (x.value) {
-        ast.ExprCall(c) => {
-          match (c.callee) {
-            ast.ExprIdent(id) => {
-              return id.name == "exit";
-            },
-            _ => {
-              return false;
-            }
-          }
-        },
-        _ => {
-          return false;
-        }
-      }
-    },
-    _ => {
-      return false;
-    }
+  if let ast.StmtExpr(x) = st {
+    return parser.calls_exit(x.value);
   }
+  return false;
 }
 
 function guarded(cond: ast.Expr, c: Ctx, line: i32, exprs: boolean): ast.Expr {

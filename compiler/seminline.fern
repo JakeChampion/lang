@@ -8,6 +8,7 @@ import "./semrecords";
 import "./sempair";
 import "./semdead";
 import "./ownership";
+import "./ssabytes";
 
 function max_leaf_insts(): i32 {
   return 40;
@@ -68,10 +69,10 @@ pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolea
 
 struct Rewrite { f: ssasem.Func, changed: boolean }
 
-pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], size: boolean): Inlined {
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], always: boolean[], size: boolean): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
-  let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, size);
+  let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, always, size);
   let done: Rounds = splice_rounds(funcs0, rewrite, modes, sp);
   let rounds: Inlined = done.out;
   sp = grown_leaves(rounds, done.sp);
@@ -81,7 +82,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   return Inlined { ...out, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
 
-function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], inlinable: boolean[], unnamed: boolean[], size: boolean): Spliceable {
+function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], inlinable: boolean[], unnamed: boolean[], always: boolean[], size: boolean): Spliceable {
   let cycle: i32[] = ownership.cycles(callees_of_all(funcs0, ix));
   let leaves: boolean[] = [];
   let once: boolean[] = [];
@@ -99,7 +100,7 @@ function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], in
     once = once.append(is_shared || other && once_spliceable(f, calls[i]));
     i = i + 1;
   }
-  return Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, cycle: cycle, size: size };
+  return Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, always: always, cycle: cycle, size: size };
 }
 
 function dump_wanted(funcs: ssasem.Func[]): void {
@@ -140,6 +141,32 @@ function leaf_spliceable(f: ssasem.Func, inlinable: boolean, size: boolean): boo
 
 function once_spliceable(f: ssasem.Func, calls: i32): boolean {
   return calls == 1 && !lends_view(f) && spliceable(f, max_once_insts());
+}
+
+// An @inline function is spliced at every call, as one called once is. Its
+// view parameters may only be read, as a leaf's are.
+function forced_spliceable(f: ssasem.Func, cycle: i32): boolean {
+  if (cycle >= 0 || ssasem.holds_view(f, f.result) || !spliceable(f, max_once_insts())) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.param() && ssasem.holds_view(f, f.values[ins.result]) && !read_view_param(f, ins)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A body that splicing makes forced_spliceable joins the once set.
+function grown_forced(sofar: Inlined, sp: Spliceable, own once: boolean[]): boolean[] {
+  for i in 0..sofar.funcs.len() {
+    if (!once[i] && sp.always[i] && sp.inlinable[i] && !sp.leaves[i] && forced_spliceable(sofar.funcs[i], sp.cycle[i])) {
+      once = once.with(i, true);
+    }
+  }
+  return once;
 }
 
 function shared_spliceable(f: ssasem.Func, calls: i32, cycle: i32): boolean {
@@ -229,7 +256,7 @@ function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[
   return out;
 }
 
-struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], small: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[], cycle: i32[], size: boolean }
+struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], small: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[], always: boolean[], cycle: i32[], size: boolean }
 
 struct Rounds { out: Inlined, sp: Spliceable }
 
@@ -255,6 +282,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       s = grown_shared(out, s);
       once = s.once;
     }
+    once = grown_forced(out, s, once);
     let ctors: boolean[] = constructor_leaves(out.funcs, s);
     let ready: boolean[] = [];
     let j: i32 = 0;
@@ -442,14 +470,14 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     return funcs;
   }
   let ix: util.NameIndex = util.name_index(names);
-  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, false).funcs;
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false).funcs;
   let callbacks: boolean[] = [];
   let ci: i32 = 0;
   while (ci < candidates.len()) {
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
     ci = ci + 1;
   }
-  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, false).funcs;
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false).funcs;
   let leaves: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
@@ -554,6 +582,9 @@ function leaf_kind(k: i32): boolean {
 }
 
 function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (leaf_element_read(f, ins)) {
+    return true;
+  }
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return false;
   }
@@ -561,6 +592,51 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
     return !a.view && scalar(a.elem);
   }
   return false;
+}
+
+// A scalar element or word read, or a length, borrows its array or view and
+// carries no ownership units.
+function leaf_element_read(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.result < 0 || !scalar(f.values[ins.result]) && !ssasem.is_usize(f.values[ins.result])) {
+    return false;
+  }
+  if (ins.kind_tag == ssasem.array_get()) {
+    return ins.args.len() == 2;
+  }
+  if (ins.kind_tag == ssasem.length()) {
+    return ins.args.len() == 1;
+  }
+  return ins.kind_tag == ssasem.call() && word_read(ins.str);
+}
+
+// A view parameter that only element and word reads use ends its borrow
+// inside the leaf, so the leaf may be spliced.
+function read_view_param(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != ssasem.param()) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    for reader in b.insts {
+      for k in 0..reader.args.len() {
+        if (reader.args[k] == ins.result && (k != 0 || !leaf_element_read(f, reader))) {
+          return false;
+        }
+      }
+    }
+    if (term_reads(b.term, ins.result)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function term_reads(t: ssa.STerm, v: i32): boolean {
+  return t.value == v && t.kind_tag == 1 || t.cond == v && t.kind_tag == 3;
+}
+
+function word_read(name: string): boolean {
+  return name == ssabytes.word_name(4) || name == ssabytes.word_name(8) || name == ssabytes.swap_name(4) || name == ssabytes.swap_name(8)
+    || name == "__raw_arr_ptr" || name == "__load_i32" || name == "__load_i64";
 }
 
 // Scalar fields carry no ownership units. Keep finalizers out of this rule.
@@ -791,7 +867,7 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
         let t: typeinfo.Type = f.values[ins.result];
         if (record(t)) {
           records = records + 1;
-        } else if (!leaf_word(f, t) && !void_type(t)) {
+        } else if (!leaf_word(f, t) && !void_type(t) && !read_view_param(f, ins)) {
           return 0 - 1;
         }
       }

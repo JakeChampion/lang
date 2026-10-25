@@ -1,0 +1,11 @@
+// assert(false, ...) is not a terminator: -O deletes every assert, and this
+// body would then fall off the end. Only exit, todo, return and an infinite
+// loop end a value-returning body.
+
+function unreachable_value(): i32 {
+  assert(false, "never called");
+}
+
+function main(): i32 {
+  return 0;
+}

@@ -1,0 +1,16 @@
+// Only a call that resolves to the builtin exit diverges. A parameter or
+// local named exit is an ordinary callable that returns, so a body ending in
+// a call to it can fall off the end.
+
+function through_param(exit: (i32) => void): i32 {
+  exit(4);
+}
+
+function through_local(): i32 {
+  let exit: (i32) => void = (n: i32): void => { print("local"); };
+  exit(4);
+}
+
+function main(): i32 {
+  return 0;
+}

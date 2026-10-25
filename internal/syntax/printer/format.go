@@ -1094,6 +1094,16 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.formatForEach(x.Sugar, depth)
 			return
 		}
+		if x.IsTodo {
+			if x.TodoMsg != nil {
+				f.b.WriteString("todo(")
+				f.formatExpr(x.TodoMsg, precLowest)
+				f.b.WriteString(");")
+			} else {
+				f.b.WriteString("todo;")
+			}
+			return
+		}
 		f.formatBlock(x, depth)
 	case *ast.ForEach:
 		f.formatForEach(x, depth)
@@ -1117,16 +1127,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString(") ")
 		f.formatStmt(x.Body, depth)
 	case *ast.Loop:
-		if x.IsTodo {
-			if x.TodoMsg != nil {
-				f.b.WriteString("todo(")
-				f.formatExpr(x.TodoMsg, precLowest)
-				f.b.WriteString(");")
-			} else {
-				f.b.WriteString("todo;")
-			}
-			return
-		}
 		f.formatLoopLabel(x.Label)
 		f.b.WriteString("loop ")
 		f.formatStmt(x.Body, depth)

@@ -1,0 +1,31 @@
+// spec: IS-16
+// Each const evaluates at its declared width: the wrapping operators wrap
+// there and a shift count masks to it, giving the value the same expression
+// gives as code. WIDE is the sum that wraps to 0 at i32; at i64 it does not,
+// so QUOT divides by 2^32.
+import "std/i32";
+import "std/i64";
+import "std/u32";
+
+const HALF: i32 = (2147483647 + 1) / 2;
+const REM: i32 = (0 - 7) % 3;
+const BYTE: u8 = 200u8 + 100u8;
+const SHIFTED: i32 = 1 << 33;
+const LOGICAL: u32 = 4294967288u32 >> 2;
+const WIDE: i64 = 2147483647 + 1 + 2147483647 + 1;
+const QUOT: i64 = 8589934592 / WIDE;
+const QUARTER: f64 = 1.0 / 4.0;
+
+function main(): i32 {
+    print(HALF.to_string());
+    print(REM.to_string());
+    print((BYTE as i32).to_string());
+    print(SHIFTED.to_string());
+    print(LOGICAL.to_string());
+    print(WIDE.to_string());
+    print(QUOT.to_string());
+    if (QUARTER * 4.0 == 1.0) {
+        print("quarter");
+    }
+    return 0;
+}
