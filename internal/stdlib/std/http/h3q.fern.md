@@ -382,7 +382,7 @@ function __map(fields: qpack.Field[]): HeaderMap {
 }
 
 function __response_fields(resp: HttpResponse, length: i64): qpack.Field[] {
-  let fs: qpack.Field[] = [qpack.field(":status", int.int_to_string(resp.status))];
+  let fs: qpack.Field[] = [qpack.status(resp.status)];
   let has_length: boolean = false;
   let i: i32 = 0;
   while (i < resp.headers.names.len()) {

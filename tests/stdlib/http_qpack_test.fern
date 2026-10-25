@@ -203,6 +203,16 @@ function test_encoder(): test.TestOutcome {
     + "7f4506736563726574f5 " + int.int_to_string(coded.len()) + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
 }
 
+function test_status(): test.TestOutcome {
+  let out: string = "";
+  for code in [200, 404, 425, 418, 999] {
+    let f: qpack.Field = qpack.status(code);
+    out = out + f.name + "=" + f.value + " ";
+  }
+  let block: u8[] = qpack.encoder().without_huffman().encode([qpack.status(200), qpack.status(418)]);
+  return test.assert_eq(out + hex.encode(block), ":status=200 :status=404 :status=425 :status=418 :status=999 0000d95f0903343138");
+}
+
 function test_errors(): test.TestOutcome {
   let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 40 as i64);
   let too_big: string = result_text(section(d, 0 as i64, "0000510b2f696e6465782e68746d6c"));
@@ -448,6 +458,7 @@ function main(): i32 {
   r = r.it("a blocked section, and the blocked-streams limit", test_blocked);
   r = r.it("an instruction split across reads", test_split_instruction);
   r = r.it("the encoder", test_encoder);
+  r = r.it("a :status field from the static table where it has one", test_status);
   r = r.it("errors", test_errors);
   r = r.it("a trace from ls-qpack", test_lsqpack_trace);
   r = r.it("oversized integers are typed errors rather than wrapped values", test_integer_overflow);

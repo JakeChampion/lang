@@ -105,6 +105,23 @@ pub function field(name: string, value: string): Field {
 pub function sensitive(name: string, value: string): Field {
   return Field { name: name, value: value, sensitive: true };
 }
+
+// status is the :status field for code, the static table's own entry
+// when the table has one.
+pub function status(code: i32): Field {
+  let i: i32 = 0;
+  while (i < STATUS_CODES.len()) {
+    if (STATUS_CODES[i] == code) {
+      return STATIC[STATUS_AT[i]];
+    }
+    i = i + 1;
+  }
+  return field(":status", int.int_to_string(code));
+}
+
+const STATUS_CODES: i32[] = [200, 204, 304, 404, 103, 503, 100, 206, 302, 400, 403, 421, 425, 500];
+
+const STATUS_AT: i32[] = [25, 64, 26, 27, 24, 28, 63, 65, 66, 67, 68, 69, 70, 71];
 ```
 
 ### `5 pub enum QpackError`
