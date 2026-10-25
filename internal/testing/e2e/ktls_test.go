@@ -357,10 +357,10 @@ function serve_conn(first: server.Connection): string {
 }
 
 function serve(count: i32): i32 {
-  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) });
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, random_bytes(32));
   match (identity_of()) {
     Ok(id) => {
-      cfg = server.config(id);
+      cfg = server.config(id, random_bytes(32));
     },
     Err(e) => {
       print("identity: " + e);

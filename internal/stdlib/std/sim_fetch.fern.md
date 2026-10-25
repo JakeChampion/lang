@@ -232,6 +232,13 @@ impl fetch.Transport for Net {
   function wall_ms(self: Net): i64 {
     return self.drv.clock_ns.get() / 1000000;
   }
+  function random_bytes(self: Net, n: i32): u8[] {
+    let out: u8[] = [];
+    while (out.len() < n) {
+      out = out.append((self.drv.random_i32() & 255) as u8);
+    }
+    return out;
+  }
   function lookup(self: Net, host: string, checked: boolean): Result[fetch.Lookup, dns.DnsError] {
     let found: net.IpAddr[] = __addrs_of(self, host);
     if (found.len() == 0) {

@@ -99,7 +99,7 @@ function setting(name: string, fallback: string): string {
 
 function configured(): Result[server.Config, string] {
   let id: identity.Identity = identity_of(setting("TLS_CERT", "leaf.pem"), setting("TLS_KEY", "leaf.key"))?;
-  let cfg: server.Config = server.config(id).with_alpn(["http/1.1"]);
+  let cfg: server.Config = server.config(id, random_bytes(32)).with_alpn(["http/1.1"]);
   match (env("TLS_CLIENT_CA")) {
     Some(path) => {
       match (verify.roots_from_file(path)) {
@@ -140,7 +140,7 @@ function listening(): Result[i32, string] {
 }
 
 function main(): i32 {
-  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) });
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, random_bytes(32));
   match (configured()) {
     Ok(c) => {
       cfg = c;

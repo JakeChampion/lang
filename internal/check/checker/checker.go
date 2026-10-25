@@ -2057,6 +2057,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.intrinsicSigs = map[*ast.FuncType]IntrinsicKind{
 		c.info.FuncSigs["__method_Array_push"]: IntrinsicArrayAppend,
+		c.info.FuncSigs["exit"]:                IntrinsicExit,
 	}
 	c.info.Methods["Array.set"] = "__method_Array_set"
 	c.info.FuncSigs["__method_Array_set"] = &ast.FuncType{
@@ -5430,11 +5431,11 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 	})
 }
 
-func blockDiverges(b *ast.Block) bool {
+func (c *checker) blockDiverges(b *ast.Block) bool {
 	if b == nil || len(b.Stmts) == 0 {
 		return false
 	}
-	return stmtDiverges(b.Stmts[len(b.Stmts)-1])
+	return c.stmtDiverges(b.Stmts[len(b.Stmts)-1])
 }
 
 func letElseDivergentArm(m *ast.Match, i int) bool {
@@ -5490,10 +5491,12 @@ func loopCanBreak(body ast.Stmt, label string) bool {
 	return found
 }
 
-func stmtDiverges(s ast.Stmt) bool {
+func (c *checker) stmtDiverges(s ast.Stmt) bool {
 	switch x := s.(type) {
 	case *ast.Return, *ast.Break, *ast.Continue:
 		return true
+	case *ast.ExprStmt:
+		return c.callsExit(x.Expr)
 	case *ast.Loop:
 		return !loopCanBreak(x.Body, x.Label)
 	case *ast.While:
@@ -5502,18 +5505,18 @@ func stmtDiverges(s ast.Stmt) bool {
 		}
 		return false
 	case *ast.Block:
-		return blockDiverges(x)
+		return c.blockDiverges(x)
 	case *ast.If:
 		if x.Else == nil {
 			return false
 		}
-		return stmtDiverges(x.Then) && stmtDiverges(x.Else)
+		return c.stmtDiverges(x.Then) && c.stmtDiverges(x.Else)
 	case *ast.Match:
 		for i, arm := range x.Arms {
 			if letElseDivergentArm(x, i) {
 				continue
 			}
-			if !blockDiverges(arm.Body) {
+			if !c.blockDiverges(arm.Body) {
 				return false
 			}
 		}
@@ -5522,27 +5525,38 @@ func stmtDiverges(s ast.Stmt) bool {
 	return false
 }
 
-func funcBodyExits(b *ast.Block) bool {
+// callsExit reports a call that resolved to the builtin exit, which never returns.
+func (c *checker) callsExit(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	return ok && c.info.IntrinsicCalls[call].Kind == IntrinsicExit
+}
+
+func (c *checker) funcBodyExits(b *ast.Block) bool {
 	if b == nil || len(b.Stmts) == 0 {
 		return false
 	}
-	return stmtExits(b.Stmts[len(b.Stmts)-1])
+	return c.stmtExits(b.Stmts[len(b.Stmts)-1])
 }
 
-func stmtExits(s ast.Stmt) bool {
+func (c *checker) stmtExits(s ast.Stmt) bool {
 	switch x := s.(type) {
 	case *ast.Return:
 		return true
+	case *ast.ExprStmt:
+		return c.callsExit(x.Expr)
 	case *ast.Block:
-		return funcBodyExits(x)
+		return c.funcBodyExits(x)
 	case *ast.If:
+		if x.IsAssert {
+			return false // -O deletes it
+		}
 		if lit, ok := x.Cond.(*ast.BoolLit); ok {
 			if lit.Value {
-				return stmtExits(x.Then)
+				return c.stmtExits(x.Then)
 			}
-			return x.Else != nil && stmtExits(x.Else)
+			return x.Else != nil && c.stmtExits(x.Else)
 		}
-		return x.Else != nil && stmtExits(x.Then) && stmtExits(x.Else)
+		return x.Else != nil && c.stmtExits(x.Then) && c.stmtExits(x.Else)
 	case *ast.Match:
 		if len(x.Arms) == 0 {
 			return false
@@ -5551,7 +5565,7 @@ func stmtExits(s ast.Stmt) bool {
 			if letElseDivergentArm(x, i) {
 				continue
 			}
-			if !funcBodyExits(arm.Body) {
+			if !c.funcBodyExits(arm.Body) {
 				return false
 			}
 		}
@@ -8414,7 +8428,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	}
 	c.checkOwnedParams(fn)
 	c.checkMustConsume(fn)
-	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !funcBodyExits(fn.Body) {
+	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !c.funcBodyExits(fn.Body) {
 		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
 	}
 	c.checkCaptureCycleStores()
@@ -9622,8 +9636,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if x.Else != nil {
 				walkStmt(x.Else, elseMoved)
 			}
-			joinInto(moved, thenMoved, stmtDiverges(x.Then))
-			joinInto(moved, elseMoved, x.Else != nil && stmtDiverges(x.Else))
+			joinInto(moved, thenMoved, c.stmtDiverges(x.Then))
+			joinInto(moved, elseMoved, x.Else != nil && c.stmtDiverges(x.Else))
 		case *ast.While:
 			recordExprUses(x.Cond, moved)
 			loopBody(x.Body, nil, moved)
@@ -9655,7 +9669,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
 				unbindArm(added, lent, armMoved)
-				joinInto(moved, armMoved, arm.Body != nil && blockDiverges(arm.Body))
+				joinInto(moved, armMoved, arm.Body != nil && c.blockDiverges(arm.Body))
 			}
 		default:
 			ast.Walk(st, func(n ast.Node) bool {
@@ -9716,7 +9730,7 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 	}
 	c.mutualRecSiblings = prevMutualRec
 	if n.Tail == nil {
-		if stmtsDiverge(n.Stmts) {
+		if c.stmtsDiverge(n.Stmts) {
 			return ast.NeverType{}
 		}
 		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
@@ -9725,11 +9739,11 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 	return c.checkExpr(n.Tail, s)
 }
 
-func stmtsDiverge(stmts []ast.Stmt) bool {
+func (c *checker) stmtsDiverge(stmts []ast.Stmt) bool {
 	if len(stmts) == 0 {
 		return false
 	}
-	return stmtDiverges(stmts[len(stmts)-1])
+	return c.stmtDiverges(stmts[len(stmts)-1])
 }
 
 func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
@@ -10974,12 +10988,18 @@ func (c *checker) poisonedMatchScope(s *scope, binders []string, guard ast.Expr)
 	return armScope
 }
 
+// The let-else check follows the arms' check: whether an else branch's
+// trailing call is the builtin exit is known only once that call resolves.
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
+	c.checkMatchArms(n, s)
 	if n.Origin == ast.OriginLetElse && len(n.Arms) >= 2 {
-		if els := n.Arms[len(n.Arms)-1].Body; !blockDiverges(els) {
-			c.errfCode(els.P, "E022", "let-else: else branch must diverge (return / break / continue)")
+		if els := n.Arms[len(n.Arms)-1].Body; !c.blockDiverges(els) {
+			c.errfCode(els.P, "E022", "let-else: else branch must diverge (return / break / continue / exit)")
 		}
 	}
+}
+
+func (c *checker) checkMatchArms(n *ast.Match, s *scope) {
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
 		for _, arm := range n.Arms {

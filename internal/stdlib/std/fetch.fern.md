@@ -661,6 +661,7 @@ function __asks_codings(req: Request): boolean {
 pub trait Transport {
   function now_ns(self: Self): i64;
   function wall_ms(self: Self): i64;
+  function random_bytes(self: Self, n: i32): u8[];
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: u8[]): i32;
@@ -1452,6 +1453,9 @@ impl Transport for Sockets {
   }
   function wall_ms(self: Sockets): i64 {
     return now_unix_ms();
+  }
+  function random_bytes(self: Sockets, n: i32): u8[] {
+    return random_bytes(n);
   }
   function lookup(self: Sockets, host: string, checked: boolean): Result[Lookup, dns.DnsError] {
     let none: net.IpAddr[] = [];
@@ -2403,7 +2407,8 @@ function __tunnel_status(head: string): Result[void, FetchError] {
 
 function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
   let roots: verify.Roots = __roots(given)?;
-  let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]), tr.wall_ms()))?;
+  let cfg: client.Config = client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]);
+  let step: client.Step = __tls(client.start(cfg, tr.random_bytes(client.entropy(cfg)), tr.wall_ms()))?;
   __write_all(tr, fd, step.output)?;
   let s: client.Session = step.session;
   while (!s.connected()) {

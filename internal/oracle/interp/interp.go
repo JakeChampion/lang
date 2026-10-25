@@ -62,23 +62,82 @@ func ExitStatus(v Value) (int, bool) {
 	return 0, false
 }
 
+// An Array is a compiled array's box, or a view onto part of one. Every holder
+// of the array shares the box, so a builtin that fills it in place or sets its
+// length reaches them all.
 type Array struct {
-	E []Value
-	h *arrHeader
+	b   *arrBox
+	off int
+	n   int // the view's length, or wholeBox
 }
 
-type arrHeader struct {
+const wholeBox = -1
+
+// len(e) is the array's length and cap(e) its storage. A box made by
+// appending into spare capacity shares that storage with the box it grew
+// from until one of them is filled in place (privatise).
+type arrBox struct {
+	e      []Value
+	st     *arrStore
 	owners int32
 	paths  int32
+	held   int // the most elements the box has had; later slots are not its own
 }
 
-func newArray(n int) Array { return Array{E: make([]Value, n), h: &arrHeader{}} }
+// arrStore sums owners and paths over every box on one storage.
+type arrStore struct {
+	owners int32
+	paths  int32
+	boxes  int32
+}
 
-func arrayOf(vs ...Value) Array { return Array{E: vs, h: &arrHeader{}} }
+func boxOf(e []Value) Array {
+	return Array{b: &arrBox{e: e, st: &arrStore{boxes: 1}, held: len(e)}, n: wholeBox}
+}
 
-func (a Array) view(lo, hi int) Array { return Array{E: a.E[lo:hi], h: a.h} }
+func newArray(n int) Array { return boxOf(make([]Value, n)) }
 
-func (a Array) exclusive() bool { return a.h != nil && a.h.owners == 0 }
+func arrayOf(vs ...Value) Array { return boxOf(vs) }
+
+func (a Array) Elems() []Value {
+	if a.n == wholeBox {
+		return a.b.e
+	}
+	return a.b.e[a.off : a.off+a.n : a.off+a.n]
+}
+
+func (a Array) view(lo, hi int) Array {
+	if a.n != wholeBox {
+		lo, hi = a.off+lo, a.off+hi
+	}
+	return Array{b: a.b, off: lo, n: hi - lo}
+}
+
+func (a Array) exclusive() bool { return a.b.st.owners == 0 }
+
+// intoElems returns the elements a builtin fills in place.
+func (a Array) intoElems() []Value {
+	a.b.privatise(0)
+	return a.Elems()
+}
+
+// privatise gives the box storage of its own, of at least capacity slots,
+// when it shares its storage with another box or has fewer slots.
+func (b *arrBox) privatise(capacity int) {
+	if b.st.boxes == 1 && capacity <= cap(b.e) {
+		return
+	}
+	s := make([]Value, max(capacity, cap(b.e)))
+	copy(s, b.e[:b.held])
+	for k := b.held; k < len(s); k++ {
+		s[k] = unclaimedSlot
+	}
+	b.st.boxes--
+	b.st.owners -= b.owners
+	b.st.paths -= b.paths
+	b.st = &arrStore{owners: b.owners, paths: b.paths, boxes: 1}
+	b.e = s[:len(b.e)]
+}
 
 type Cell struct{ V Value }
 
@@ -153,6 +212,8 @@ func release(v Value) { adjustRC(v, -1) }
 
 func retainReplacing(v, old Value) {
 	if tail, ok := appendedTail(old, v); ok {
+		v.(Array).b.paths++
+		old.(Array).b.paths--
 		for _, e := range tail {
 			retain(e)
 		}
@@ -171,21 +232,24 @@ func appendedTail(old, next Value) ([]Value, bool) {
 	if !ok {
 		return nil, false
 	}
-	if oa.h == nil || oa.h != na.h || len(na.E) < len(oa.E) {
+	ne, oe := na.Elems(), oa.Elems()
+	if oa.b.st != na.b.st || len(ne) < len(oe) {
 		return nil, false
 	}
-	return na.E[len(oa.E):], true
+	return ne[len(oe):], true
 }
 
 func arrOwn(v Value) {
-	if a, ok := v.(Array); ok && a.h != nil {
-		a.h.owners++
+	if a, ok := v.(Array); ok {
+		a.b.owners++
+		a.b.st.owners++
 	}
 }
 
 func arrDisown(v Value) {
-	if a, ok := v.(Array); ok && a.h != nil {
-		a.h.owners--
+	if a, ok := v.(Array); ok {
+		a.b.owners--
+		a.b.st.owners--
 	}
 }
 
@@ -202,11 +266,11 @@ func adjustRC(v Value, delta int) {
 			adjustRC(vv, delta)
 		}
 	case Array:
-		if x.h != nil {
-			x.h.paths += int32(delta)
-		}
-		rcWalked.Add(int64(len(x.E)))
-		for _, e := range x.E {
+		x.b.paths += int32(delta)
+		x.b.st.paths += int32(delta)
+		els := x.Elems()
+		rcWalked.Add(int64(len(els)))
+		for _, e := range els {
 			adjustRC(e, delta)
 		}
 	case *Struct:
@@ -352,7 +416,7 @@ func (Void) String() string     { return "" }
 func (a Array) String() string {
 	var b strings.Builder
 	b.WriteByte('[')
-	for i, v := range a.E {
+	for i, v := range a.Elems() {
 		if i > 0 {
 			b.WriteString(", ")
 		}
@@ -595,6 +659,7 @@ func New() *Interp {
 	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
 	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
+	i.Builtins["__arr_set_len"] = &Builtin{Fn: builtinArrSetLen}
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
 	i.Builtins["__alloc_i64"] = &Builtin{Fn: builtinAllocFilled("__alloc_i64", Number(0))}
 	i.Builtins["__alloc_bool"] = &Builtin{Fn: builtinAllocFilled("__alloc_bool", Bool(false))}
@@ -761,7 +826,7 @@ func New() *Interp {
 				}
 				sum = uint32(seed) & 0xffff
 			}
-			for at, value := range bytes.E {
+			for at, value := range bytes.Elems() {
 				b, ok := value.(Number)
 				if !ok || b < 0 || b > 255 {
 					return nil, fmt.Errorf("%s: element %d is not u8", name, at)
@@ -793,10 +858,10 @@ func New() *Interp {
 			return Number(0), nil
 		}
 		count := 0
-		for at := 0; at < len(bytes.E); at++ {
-			b, ok := bytes.E[at].(Number)
+		for at := 0; at < len(bytes.Elems()); at++ {
+			b, ok := bytes.Elems()[at].(Number)
 			if !ok {
-				return nil, fmt.Errorf("__count_byte_bytes: element %d is %T, not u8", at, bytes.E[at])
+				return nil, fmt.Errorf("__count_byte_bytes: element %d is %T, not u8", at, bytes.Elems()[at])
 			}
 			if b == needle {
 				count++
@@ -824,10 +889,10 @@ func New() *Interp {
 			return Number(-1), nil
 		}
 		from := max(int(start), 0)
-		for at := from; at < len(bytes.E); at++ {
-			b, ok := bytes.E[at].(Number)
+		for at := from; at < len(bytes.Elems()); at++ {
+			b, ok := bytes.Elems()[at].(Number)
 			if !ok {
-				return nil, fmt.Errorf("__memchr_bytes: element %d is %T, not u8", at, bytes.E[at])
+				return nil, fmt.Errorf("__memchr_bytes: element %d is %T, not u8", at, bytes.Elems()[at])
 			}
 			if b == needle {
 				return Number(at), nil
@@ -854,11 +919,11 @@ func New() *Interp {
 		if needle < 0 || needle > 255 {
 			return Number(-1), nil
 		}
-		from := min(int(start), len(bytes.E)-1)
+		from := min(int(start), len(bytes.Elems())-1)
 		for at := from; at >= 0; at-- {
-			b, ok := bytes.E[at].(Number)
+			b, ok := bytes.Elems()[at].(Number)
 			if !ok {
-				return nil, fmt.Errorf("__rmemchr_bytes: element %d is %T, not u8", at, bytes.E[at])
+				return nil, fmt.Errorf("__rmemchr_bytes: element %d is %T, not u8", at, bytes.Elems()[at])
 			}
 			if b == needle {
 				return Number(at), nil
@@ -886,11 +951,11 @@ func New() *Interp {
 			}
 			nums[k] = int(int64(v))
 		}
-		ao, bo := clampOffset(nums[0], len(a.E)), clampOffset(nums[1], len(b.E))
-		n := max(0, min(nums[2], len(a.E)-ao, len(b.E)-bo))
+		ao, bo := clampOffset(nums[0], len(a.Elems())), clampOffset(nums[1], len(b.Elems()))
+		n := max(0, min(nums[2], len(a.Elems())-ao, len(b.Elems())-bo))
 		for at := 0; at < n; at++ {
-			av, aok := a.E[ao+at].(Number)
-			bv, bok := b.E[bo+at].(Number)
+			av, aok := a.Elems()[ao+at].(Number)
+			bv, bok := b.Elems()[bo+at].(Number)
 			if !aok || !bok {
 				return nil, fmt.Errorf("__mismatch_bytes: non-byte element at %d", at)
 			}
@@ -921,10 +986,10 @@ func New() *Interp {
 			nums[k] = int(int64(v))
 		}
 		bb := []byte(string(bs))
-		ao, bo := clampOffset(nums[0], len(a.E)), clampOffset(nums[1], len(bb))
-		n := max(0, min(nums[2], len(a.E)-ao, len(bb)-bo))
+		ao, bo := clampOffset(nums[0], len(a.Elems())), clampOffset(nums[1], len(bb))
+		n := max(0, min(nums[2], len(a.Elems())-ao, len(bb)-bo))
 		for at := 0; at < n; at++ {
-			av, aok := a.E[ao+at].(Number)
+			av, aok := a.Elems()[ao+at].(Number)
 			if !aok {
 				return nil, fmt.Errorf("__mismatch_bytes_str: non-byte element at %d", at)
 			}
@@ -1105,10 +1170,10 @@ func New() *Interp {
 		runs := 0
 		for _, c := range []byte(string(s)) {
 			member := false
-			if int(c) < len(set.E) {
-				e, ok := set.E[c].(Number)
+			if int(c) < len(set.Elems()) {
+				e, ok := set.Elems()[c].(Number)
 				if !ok {
-					return nil, fmt.Errorf("__count_runs: set element %d is %T, not a byte", c, set.E[c])
+					return nil, fmt.Errorf("__count_runs: set element %d is %T, not a byte", c, set.Elems()[c])
 				}
 				member = int64(e) != 0
 			}
@@ -1137,17 +1202,17 @@ func New() *Interp {
 		}
 		prev := int64(inside) != 0
 		runs := 0
-		for idx, value := range s.E {
+		for idx, value := range s.Elems() {
 			n, ok := value.(Number)
 			if !ok {
 				return nil, fmt.Errorf("__count_runs_bytes: element %d is %T, not u8", idx, value)
 			}
 			c := uint8(n)
 			member := false
-			if int(c) < len(set.E) {
-				e, ok := set.E[c].(Number)
+			if int(c) < len(set.Elems()) {
+				e, ok := set.Elems()[c].(Number)
 				if !ok {
-					return nil, fmt.Errorf("__count_runs_bytes: set element %d is %T, not a byte", c, set.E[c])
+					return nil, fmt.Errorf("__count_runs_bytes: set element %d is %T, not a byte", c, set.Elems()[c])
 				}
 				member = int64(e) != 0
 			}
@@ -1176,8 +1241,8 @@ func New() *Interp {
 		if !ok {
 			return nil, fmt.Errorf("__scan_set_bytes: expected an array, got %T", args[0])
 		}
-		b := make([]byte, len(arr.E))
-		for at, e := range arr.E {
+		b := make([]byte, len(arr.Elems()))
+		for at, e := range arr.Elems() {
 			n, ok := e.(Number)
 			if !ok {
 				return nil, fmt.Errorf("__scan_set_bytes: element %d is %T, not u8", at, e)
@@ -1212,13 +1277,13 @@ func New() *Interp {
 		if !ok {
 			return nil, fmt.Errorf("__scale_f64: expected an f64 factor, got %T", args[1])
 		}
-		out := newArray(len(xs.E))
-		for j, e := range xs.E {
+		out := newArray(len(xs.Elems()))
+		for j, e := range xs.Elems() {
 			f, ok := e.(Float)
 			if !ok {
 				return nil, fmt.Errorf("__scale_f64: element %d is %T, not f64", j, e)
 			}
-			out.E[j] = Float{V: f.V * k.V, Width: 64}
+			out.Elems()[j] = Float{V: f.V * k.V, Width: 64}
 		}
 		return out, nil
 	}}
@@ -1239,8 +1304,8 @@ func New() *Interp {
 				if !ok {
 					return nil, fmt.Errorf("%s: expected an array, got %T", name, args[1])
 				}
-				data = make([]byte, len(a.E))
-				for at, value := range a.E {
+				data = make([]byte, len(a.Elems()))
+				for at, value := range a.Elems() {
 					b, ok := value.(Number)
 					if !ok || b < 0 || b > 255 {
 						return nil, fmt.Errorf("%s: element %d is not u8", name, at)
@@ -1539,8 +1604,8 @@ func builtinTcpSendBytes(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_send_bytes: expected u8[] data arg, got %T", args[1])
 	}
-	bytes := make([]byte, len(data.E))
-	for n, value := range data.E {
+	bytes := make([]byte, len(data.Elems()))
+	for n, value := range data.Elems() {
 		bytes[n] = byte(value.(Number))
 	}
 	return tcpSendData(i, id, bytes)
@@ -1726,11 +1791,11 @@ func ipArg(name string, v Value) (net.IP, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s: expected u8[] addr arg, got %T", name, v)
 	}
-	if len(arr.E) != 4 && len(arr.E) != 16 {
+	if len(arr.Elems()) != 4 && len(arr.Elems()) != 16 {
 		return nil, nil
 	}
-	ip := make(net.IP, len(arr.E))
-	for k, e := range arr.E {
+	ip := make(net.IP, len(arr.Elems()))
+	for k, e := range arr.Elems() {
 		n, ok := e.(Number)
 		if !ok {
 			return nil, fmt.Errorf("%s: expected u8 in addr, got %T", name, e)
@@ -1999,7 +2064,7 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(buf))
 	for i, b := range buf {
-		out.E[i] = Number(b)
+		out.Elems()[i] = Number(b)
 	}
 	return out, nil
 }
@@ -2113,17 +2178,17 @@ func (unclaimed) String() string { return "<unclaimed>" }
 var unclaimedSlot Value = unclaimed{}
 
 func growArray(arr Array) Array {
-	want := len(arr.E) + 1
+	want := len(arr.Elems()) + 1
 	capacity := 2 * want
 	if capacity < 8 {
 		capacity = 8
 	}
-	buf := newArray(capacity)
-	n := copy(buf.E, arr.E)
+	e := make([]Value, capacity)
+	n := copy(e, arr.Elems())
 	for i := n; i < capacity; i++ {
-		buf.E[i] = unclaimedSlot
+		e[i] = unclaimedSlot
 	}
-	return buf.view(0, want)
+	return boxOf(e[:want])
 }
 
 func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
@@ -2135,17 +2200,50 @@ func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Array_push: receiver must be array, got %T", args[0])
 	}
 	storeArray(args[1])
-	n := len(arr.E)
-	if n < cap(arr.E) {
-		if grown := arr.view(0, n+1); grown.E[n] == unclaimedSlot {
-			grown.E[n] = args[1]
-			return grown, nil
-		}
+	e := arr.Elems()
+	n := len(e)
+	if arr.n == wholeBox && n < cap(e) && e[:n+1][n] == unclaimedSlot {
+		e = e[:n+1]
+		e[n] = args[1]
+		arr.b.st.boxes++
+		return Array{b: &arrBox{e: e, st: arr.b.st, held: n + 1}, n: wholeBox}, nil
 	}
 	out := growArray(arr)
-	out.E[n] = args[1]
+	out.Elems()[n] = args[1]
 	ip.arrayGrowCopies += n
 	return out, nil
+}
+
+func builtinArrSetLen(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__arr_set_len: expected 2 args (arr, n), got %d", len(args))
+	}
+	a, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("__arr_set_len: expected an array, got %T", args[0])
+	}
+	if a.n != wholeBox {
+		return nil, fmt.Errorf("__arr_set_len: expected an array, not a slice of one")
+	}
+	n, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__arr_set_len: expected number length, got %T", args[1])
+	}
+	if n < 0 {
+		return nil, fmt.Errorf("__arr_set_len: length %d below zero", int64(n))
+	}
+	b := a.b
+	if int(n) <= b.held {
+		b.e = b.e[:n]
+		return Void{}, nil
+	}
+	b.privatise(int(n))
+	b.e = b.e[:n]
+	for k := b.held; k < int(n); k++ {
+		b.e[k] = Number(0)
+	}
+	b.held = int(n)
+	return Void{}, nil
 }
 
 func builtinArraySet(ip *Interp, args []Value) (Value, error) {
@@ -2160,8 +2258,8 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__method_Array_set: index must be number, got %T", args[1])
 	}
-	if idx < 0 || int(idx) >= len(arr.E) {
-		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.E))
+	if idx < 0 || int(idx) >= len(arr.Elems()) {
+		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.Elems()))
 	}
 	storeArray(args[2])
 	inPlace, err := ip.arrayWriteInPlace(arr)
@@ -2169,15 +2267,15 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	if inPlace {
-		adjustRC(args[2], int(arr.h.paths))
-		adjustRC(arr.E[int(idx)], -int(arr.h.paths))
-		arr.E[int(idx)] = args[2]
+		adjustRC(args[2], int(arr.b.st.paths))
+		adjustRC(arr.Elems()[int(idx)], -int(arr.b.st.paths))
+		arr.Elems()[int(idx)] = args[2]
 		return arr, nil
 	}
-	out := newArray(len(arr.E))
-	copy(out.E, arr.E)
-	out.E[int(idx)] = args[2]
-	ip.arraySetCopies += len(arr.E)
+	out := newArray(len(arr.Elems()))
+	copy(out.Elems(), arr.Elems())
+	out.Elems()[int(idx)] = args[2]
+	ip.arraySetCopies += len(arr.Elems())
 	return out, nil
 }
 
@@ -2196,7 +2294,7 @@ func (i *Interp) arrayWriteInPlace(arr Array) (bool, error) {
 func (i *Interp) verifyExclusive(arr Array) error {
 	allowed := 0
 	for _, m := range i.moving {
-		if ma, ok := m.(Array); ok && ma.h == arr.h {
+		if ma, ok := m.(Array); ok && ma.b.st == arr.b.st {
 			allowed++
 		}
 	}
@@ -2211,43 +2309,43 @@ func (i *Interp) verifyExclusive(arr Array) error {
 				seen[slot] = true
 				v = slot.value
 			}
-			holders += coversBuffer(v, arr.h, 0)
+			holders += coversBuffer(v, arr.b.st, 0)
 		}
 	}
 	if holders <= allowed {
 		return nil
 	}
 	return fmt.Errorf("FERN_INTERP_ARRAY_COW=verify: in-place write to a %d-element array covered by %d live bindings, %d of them moving",
-		len(arr.E), holders, allowed)
+		len(arr.Elems()), holders, allowed)
 }
 
-func coversBuffer(v Value, h *arrHeader, depth int) int {
+func coversBuffer(v Value, st *arrStore, depth int) int {
 	if depth > 12 {
 		return 0
 	}
 	n := 0
 	switch x := v.(type) {
 	case Array:
-		if x.h == h {
+		if x.b.st == st {
 			n++
 		}
-		for _, e := range x.E {
-			n += coversBuffer(e, h, depth+1)
+		for _, e := range x.Elems() {
+			n += coversBuffer(e, st, depth+1)
 		}
 	case *Struct:
 		for _, f := range x.Fields {
-			n += coversBuffer(f, h, depth+1)
+			n += coversBuffer(f, st, depth+1)
 		}
 	case *Enum:
 		for _, p := range x.Payloads {
-			n += coversBuffer(p, h, depth+1)
+			n += coversBuffer(p, st, depth+1)
 		}
 	case *Map:
 		for _, mv := range x.vals {
-			n += coversBuffer(mv, h, depth+1)
+			n += coversBuffer(mv, st, depth+1)
 		}
 	case *Cell:
-		n += coversBuffer(x.V, h, depth+1)
+		n += coversBuffer(x.V, st, depth+1)
 	}
 	return n
 }
@@ -2466,7 +2564,7 @@ func builtinMapKeys(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Map_keys: expected 1 arg (receiver), got %d", len(args))
 	}
 	out := newArray(len(m.keys))
-	copy(out.E, m.keys)
+	copy(out.Elems(), m.keys)
 	return out, nil
 }
 
@@ -2479,7 +2577,7 @@ func builtinMapValues(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Map_values: expected 1 arg (receiver), got %d", len(args))
 	}
 	out := newArray(len(m.vals))
-	copy(out.E, m.vals)
+	copy(out.Elems(), m.vals)
 	return out, nil
 }
 
@@ -2496,8 +2594,8 @@ func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, 
 			return nil, &Abort{CauseAllocSize, fmt.Sprintf("%s length %d", name, int64(n))}
 		}
 		out := newArray(int(n))
-		for i := range out.E {
-			out.E[i] = zero
+		for i := range out.Elems() {
+			out.Elems()[i] = zero
 		}
 		return out, nil
 	}
@@ -2511,8 +2609,8 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("string_from_bytes_unchecked: arg must be array, got %T", args[0])
 	}
-	buf := make([]byte, len(arr.E))
-	for i, v := range arr.E {
+	buf := make([]byte, len(arr.Elems()))
+	for i, v := range arr.Elems() {
 		n, ok := v.(Number)
 		if !ok {
 			return nil, fmt.Errorf("string_from_bytes_unchecked: element %d not a number (%T)", i, v)
@@ -2535,10 +2633,10 @@ func builtinStringFromBytesRange(in *Interp, args []Value) (Value, error) {
 	if !fok || !eok {
 		return nil, fmt.Errorf("string_from_bytes_range_unchecked: bounds must be numbers")
 	}
-	if from < 0 || int(end) > len(arr.E) || from > end {
-		return nil, fmt.Errorf("string_from_bytes_range_unchecked: range [%d:%d] out of bounds for length %d", int(from), int(end), len(arr.E))
+	if from < 0 || int(end) > len(arr.Elems()) || from > end {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: range [%d:%d] out of bounds for length %d", int(from), int(end), len(arr.Elems()))
 	}
-	return builtinStringFromBytes(in, []Value{Array{E: arr.E[int(from):int(end)]}})
+	return builtinStringFromBytes(in, []Value{arr.view(int(from), int(end))})
 }
 
 func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
@@ -2575,7 +2673,7 @@ func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
 	raw := []byte(s)
 	out := newArray(len(raw))
 	for i, b := range raw {
-		out.E[i] = Number(int64(b))
+		out.Elems()[i] = Number(int64(b))
 	}
 	return out, nil
 }
@@ -2651,7 +2749,7 @@ func builtinReadFileBytes(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(data))
 	for i, b := range data {
-		out.E[i] = Number(b)
+		out.Elems()[i] = Number(b)
 	}
 	return resultOk(out), nil
 }
@@ -2687,8 +2785,8 @@ func builtinWriteFileBytes(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("write_file_bytes: expected byte array, got %T", args[1])
 	}
-	data := make([]byte, len(content.E))
-	for n, value := range content.E {
+	data := make([]byte, len(content.Elems()))
+	for n, value := range content.Elems() {
 		data[n] = byte(value.(Number))
 	}
 	if err := os.WriteFile(string(path), data, 0o644); err != nil {
@@ -2866,7 +2964,7 @@ func builtinReadDirBytes(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(entries))
 	for k, e := range entries {
-		out.E[k] = byteArray([]byte(e.name))
+		out.Elems()[k] = byteArray([]byte(e.name))
 	}
 	return resultOk(out), nil
 }
@@ -2894,7 +2992,7 @@ func readDirInoLike(name string, skipDots bool, args []Value) (Value, error) {
 	}
 	out := newArray(len(entries))
 	for i, e := range entries {
-		out.E[i] = &Struct{
+		out.Elems()[i] = &Struct{
 			TypeName: "DirEntry",
 			Fields:   map[string]Value{"name": String(e.name), "ino": Number(int64(e.ino)), "kind": Number(int64(e.kind))},
 		}
@@ -2909,7 +3007,7 @@ func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
 	}
 	out := newArray(len(entries))
 	for i, e := range entries {
-		out.E[i] = String(e.name)
+		out.Elems()[i] = String(e.name)
 	}
 	return resultOk(out), nil
 }
@@ -3296,7 +3394,7 @@ func builtinGetgroups(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(gs))
 	for k, g := range gs {
-		out.E[k] = Number(g)
+		out.Elems()[k] = Number(g)
 	}
 	return out, nil
 }
@@ -3313,14 +3411,14 @@ func builtinEnviron(i *Interp, args []Value) (Value, error) {
 		sort.Strings(names)
 		out := newArray(len(names))
 		for k, n := range names {
-			out.E[k] = String(n + "=" + i.Env[n])
+			out.Elems()[k] = String(n + "=" + i.Env[n])
 		}
 		return out, nil
 	}
 	e := os.Environ()
 	out := newArray(len(e))
 	for k, entry := range e {
-		out.E[k] = String(entry)
+		out.Elems()[k] = String(entry)
 	}
 	return out, nil
 }
@@ -3489,8 +3587,8 @@ func builtinSysctl(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("sysctl: expected i32[] arg, got %T", args[0])
 	}
-	mib := make([]int32, len(arr.E))
-	for k, v := range arr.E {
+	mib := make([]int32, len(arr.Elems()))
+	for k, v := range arr.Elems() {
 		n, ok := v.(Number)
 		if !ok {
 			return nil, fmt.Errorf("sysctl: expected i32 element, got %T", v)
@@ -3503,7 +3601,7 @@ func builtinSysctl(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(data))
 	for k, b := range data {
-		out.E[k] = Number(b)
+		out.Elems()[k] = Number(b)
 	}
 	return resultOk(out), nil
 }
@@ -3521,7 +3619,7 @@ func builtinMounts(_ *Interp, args []Value) (Value, error) {
 		if !utf8.ValidString(m.source) || !utf8.ValidString(m.target) || !utf8.ValidString(m.fstype) {
 			return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
 		}
-		out.E[i] = &Struct{
+		out.Elems()[i] = &Struct{
 			TypeName: "MountEntry",
 			Fields: map[string]Value{
 				"source": String(m.source),
@@ -3778,7 +3876,7 @@ func readLinkResult(args []Value, raw bool) (Value, error) {
 			if raw {
 				out := newArray(n)
 				for j, b := range buf[:n] {
-					out.E[j] = Number(b)
+					out.Elems()[j] = Number(b)
 				}
 				return resultOk(out), nil
 			}
@@ -3819,7 +3917,7 @@ func xattrResult(name string, args []Value, follow, raw bool) (Value, error) {
 	if raw {
 		out := newArray(len(v))
 		for i, b := range v {
-			out.E[i] = Number(b)
+			out.Elems()[i] = Number(b)
 		}
 		return resultOk(out), nil
 	}
@@ -3866,8 +3964,8 @@ func setxattrBytesResult(name string, args []Value, follow bool) (Value, error) 
 	if !ok {
 		return nil, fmt.Errorf("%s: expected byte array, got %T", name, args[2])
 	}
-	data := make([]byte, len(content.E))
-	for n, value := range content.E {
+	data := make([]byte, len(content.Elems()))
+	for n, value := range content.Elems() {
 		data[n] = byte(value.(Number))
 	}
 	return ioResult(p[0], setxattrBytes(p[0], p[1], data, follow)), nil
@@ -4111,8 +4209,8 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("subprocess: expected string stdin, got %T", args[2])
 	}
-	argv := make([]string, len(argsArr.E))
-	for i, a := range argsArr.E {
+	argv := make([]string, len(argsArr.Elems()))
+	for i, a := range argsArr.Elems() {
 		s, isStr := a.(String)
 		if !isStr {
 			return nil, fmt.Errorf("subprocess: args[%d] not a string (%T)", i, a)
@@ -4410,7 +4508,7 @@ func builtinReaderReadChunkBytes(i *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(n)
 	for j, b := range buf[:n] {
-		out.E[j] = Number(b)
+		out.Elems()[j] = Number(b)
 	}
 	return resultOk(out), nil
 }
@@ -4683,26 +4781,26 @@ func builtinInnerMulAddF64(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__inner_mul_add_f64: invalid argument types")
 	}
 	m, k, n := int64(rows), int64(extent), int64(columns)
-	if m < 0 || k < 0 || n < 0 || m > 2147483647 || k > 2147483647 || n > 2147483647 || m*k != int64(len(a.E)) || k*n != int64(len(b.E)) || m*n > 2147483647 {
+	if m < 0 || k < 0 || n < 0 || m > 2147483647 || k > 2147483647 || n > 2147483647 || m*k != int64(len(a.Elems())) || k*n != int64(len(b.Elems())) || m*n > 2147483647 {
 		return builtinExit(i, []Value{Number(134)})
 	}
 	out := newArray(int(m * n))
-	if len(out.E) == 0 {
+	if len(out.Elems()) == 0 {
 		return out, nil
 	}
 	for row := int64(0); row < m; row++ {
 		for col := int64(0); col < n; col++ {
 			acc := init.V
 			for at := int64(0); at < k; at++ {
-				x, okx := a.E[row*k+at].(Float)
-				y, oky := b.E[at*n+col].(Float)
+				x, okx := a.Elems()[row*k+at].(Float)
+				y, oky := b.Elems()[at*n+col].(Float)
 				if !okx || !oky {
 					return nil, fmt.Errorf("__inner_mul_add_f64: elements must be f64")
 				}
 				product := float64(x.V * y.V)
 				acc = acc + product
 			}
-			out.E[row*n+col] = Float{V: acc, Width: 64}
+			out.Elems()[row*n+col] = Float{V: acc, Width: 64}
 		}
 	}
 	return out, nil
@@ -4717,21 +4815,21 @@ func builtinOuterMulF64(i *Interp, args []Value) (Value, error) {
 	if !aok || !bok {
 		return nil, fmt.Errorf("__outer_mul_f64: inputs must be arrays")
 	}
-	if len(b.E) > 0 && len(a.E) > 2147483647/len(b.E) {
+	if len(b.Elems()) > 0 && len(a.Elems()) > 2147483647/len(b.Elems()) {
 		return builtinExit(i, []Value{Number(134)})
 	}
-	out := newArray(len(a.E) * len(b.E))
-	for ai, left := range a.E {
+	out := newArray(len(a.Elems()) * len(b.Elems()))
+	for ai, left := range a.Elems() {
 		x, ok := left.(Float)
 		if !ok {
 			return nil, fmt.Errorf("__outer_mul_f64: elements must be f64")
 		}
-		for bi, right := range b.E {
+		for bi, right := range b.Elems() {
 			y, ok := right.(Float)
 			if !ok {
 				return nil, fmt.Errorf("__outer_mul_f64: elements must be f64")
 			}
-			out.E[ai*len(b.E)+bi] = Float{V: x.V * y.V, Width: 64}
+			out.Elems()[ai*len(b.Elems())+bi] = Float{V: x.V * y.V, Width: 64}
 		}
 	}
 	return out, nil
@@ -4781,7 +4879,7 @@ func builtinArgs(i *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(i.Args))
 	for k, a := range i.Args {
-		out.E[k] = String(a)
+		out.Elems()[k] = String(a)
 	}
 	return out, nil
 }
@@ -4794,8 +4892,8 @@ func builtinSetArgs(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("set_args: expected string[] arg, got %T", args[0])
 	}
-	argv := make([]string, len(arr.E))
-	for k, e := range arr.E {
+	argv := make([]string, len(arr.Elems()))
+	for k, e := range arr.Elems() {
 		s, ok := e.(String)
 		if !ok {
 			return nil, fmt.Errorf("set_args: element %d is %T, not a string", k, e)
@@ -4857,7 +4955,7 @@ func builtinLen(_ *Interp, args []Value) (Value, error) {
 	case String:
 		return Number(int64(len(string(v)))), nil
 	case Array:
-		return Number(int64(len(v.E))), nil
+		return Number(int64(len(v.Elems()))), nil
 	}
 	return nil, fmt.Errorf(".len(): expected string, array, or slice receiver, got %T", args[0])
 }
@@ -4916,7 +5014,7 @@ func builtinPoll(i *Interp, args []Value) (Value, error) {
 	r := &reactor{fd: set, handles: map[int]int64{}}
 	index := map[int]int{}
 	hit := -1
-	for k, v := range fds.E {
+	for k, v := range fds.Elems() {
 		handle, ok := v.(Number)
 		if !ok || handle < 0 {
 			continue
@@ -5025,7 +5123,7 @@ func builtinTermiosGet(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(words))
 	for i, w := range words {
-		out.E[i] = Number(w)
+		out.Elems()[i] = Number(w)
 	}
 	return resultOk(out), nil
 }
@@ -5046,8 +5144,8 @@ func builtinTermiosSet(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("termios_set: expected number[] words, got %T", args[2])
 	}
-	words := make([]int64, len(arr.E))
-	for i, e := range arr.E {
+	words := make([]int64, len(arr.Elems()))
+	for i, e := range arr.Elems() {
 		n, ok := e.(Number)
 		if !ok {
 			return nil, fmt.Errorf("termios_set: word %d is %T, not a number", i, e)
@@ -5143,11 +5241,11 @@ func builtinBufPushBytesRange(i *Interp, args []Value) (Value, error) {
 	if !lok || !hik {
 		return nil, fmt.Errorf("buf_push_bytes_range: bounds must be numbers")
 	}
-	low, high := max(int64(lo), 0), min(int64(hi), int64(len(a.E)))
+	low, high := max(int64(lo), 0), min(int64(hi), int64(len(a.Elems())))
 	for at := low; at < high; at++ {
-		n, ok := a.E[at].(Number)
+		n, ok := a.Elems()[at].(Number)
 		if !ok {
-			return nil, fmt.Errorf("buf_push_bytes_range: element %d is %T", at, a.E[at])
+			return nil, fmt.Errorf("buf_push_bytes_range: element %d is %T", at, a.Elems()[at])
 		}
 		b = append(b, byte(n))
 	}
@@ -5201,13 +5299,13 @@ func builtinBufPushBytesTable(i *Interp, args []Value, mode string) (Value, erro
 		return nil, fmt.Errorf("%s: expected a byte table", name)
 	}
 	entry := func(k int) (byte, error) {
-		v, ok := table.E[k].(Number)
+		v, ok := table.Elems()[k].(Number)
 		if !ok {
 			return 0, fmt.Errorf("%s: table element %d is not a byte", name, k)
 		}
 		return byte(int64(v)), nil
 	}
-	for at, value := range src.E {
+	for at, value := range src.Elems() {
 		v, ok := value.(Number)
 		if !ok {
 			return nil, fmt.Errorf("%s: input element %d is not a byte", name, at)
@@ -5215,7 +5313,7 @@ func builtinBufPushBytesTable(i *Interp, args []Value, mode string) (Value, erro
 		c := byte(int64(v))
 		if mode == "expanded" {
 			start := int(c) * 8
-			if start+8 <= len(table.E) {
+			if start+8 <= len(table.Elems()) {
 				n, err := entry(start)
 				if err != nil {
 					return nil, err
@@ -5232,7 +5330,7 @@ func builtinBufPushBytesTable(i *Interp, args []Value, mode string) (Value, erro
 				}
 				continue
 			}
-		} else if int(c) < len(table.E) {
+		} else if int(c) < len(table.Elems()) {
 			x, err := entry(int(c))
 			if err != nil {
 				return nil, err
@@ -5268,10 +5366,10 @@ func builtinBufPushMapped(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_mapped: expected a u8[] table, got %T", args[2])
 	}
 	for _, c := range []byte(string(s)) {
-		if int(c) < len(table.E) {
-			e, ok := table.E[c].(Number)
+		if int(c) < len(table.Elems()) {
+			e, ok := table.Elems()[c].(Number)
 			if !ok {
-				return nil, fmt.Errorf("buf_push_mapped: table element %d is %T, not a byte", c, table.E[c])
+				return nil, fmt.Errorf("buf_push_mapped: table element %d is %T, not a byte", c, table.Elems()[c])
 			}
 			c = byte(int64(e))
 		}
@@ -5298,10 +5396,10 @@ func builtinBufPushFiltered(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_filtered: expected a u8[] table, got %T", args[2])
 	}
 	for _, c := range []byte(string(s)) {
-		if int(c) < len(drop.E) {
-			e, ok := drop.E[c].(Number)
+		if int(c) < len(drop.Elems()) {
+			e, ok := drop.Elems()[c].(Number)
 			if !ok {
-				return nil, fmt.Errorf("buf_push_filtered: table element %d is %T, not a byte", c, drop.E[c])
+				return nil, fmt.Errorf("buf_push_filtered: table element %d is %T, not a byte", c, drop.Elems()[c])
 			}
 			if int64(e) != 0 {
 				continue
@@ -5330,15 +5428,15 @@ func builtinBufPushExpanded(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_expanded: expected a u8[] table, got %T", args[2])
 	}
 	entry := func(k int) (byte, error) {
-		e, ok := table.E[k].(Number)
+		e, ok := table.Elems()[k].(Number)
 		if !ok {
-			return 0, fmt.Errorf("buf_push_expanded: table element %d is %T, not a byte", k, table.E[k])
+			return 0, fmt.Errorf("buf_push_expanded: table element %d is %T, not a byte", k, table.Elems()[k])
 		}
 		return byte(int64(e)), nil
 	}
 	for _, c := range []byte(string(s)) {
 		at := int(c) * 8
-		if at+8 > len(table.E) {
+		if at+8 > len(table.Elems()) {
 			b = append(b, c)
 			continue
 		}
@@ -5430,7 +5528,7 @@ func builtinBufTakeBytes(i *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(b))
 	for j, value := range b {
-		out.E[j] = Number(value)
+		out.Elems()[j] = Number(value)
 	}
 	i.bufs[h] = b[:0]
 	return out, nil
@@ -5938,11 +6036,11 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if !ok {
 			return result{}, fmt.Errorf("destructure requires a tuple, got %T", v)
 		}
-		if len(arr.E) != len(x.Names) {
-			return result{}, fmt.Errorf("tuple has %d elements, but %d names given", len(arr.E), len(x.Names))
+		if len(arr.Elems()) != len(x.Names) {
+			return result{}, fmt.Errorf("tuple has %d elements, but %d names given", len(arr.Elems()), len(x.Names))
 		}
 		for i2, name := range x.Names {
-			e.declare(name, arr.E[i2])
+			e.declare(name, arr.Elems()[i2])
 		}
 		for i2 := range x.Nested {
 			if x.Nested[i2] == nil {
@@ -6071,7 +6169,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 						armEnv.declare(arm.AtBinding, arr)
 					}
 					for k, el := range arm.TupleElems {
-						bindTupleElem(armEnv, el, arr.E[k])
+						bindTupleElem(armEnv, el, arr.Elems()[k])
 					}
 				}
 				if arm.Guard != nil {
@@ -6176,11 +6274,11 @@ func tupleElemVariantMatches(v Value, variantName string) bool {
 }
 
 func (i *Interp) tupleElemsMatch(elems []ast.TuplePatElem, arr Array, e *env) (bool, error) {
-	if len(elems) != len(arr.E) {
+	if len(elems) != len(arr.Elems()) {
 		return false, nil
 	}
 	for k, el := range elems {
-		ok, err := i.tupleElemMatches(el, arr.E[k], e)
+		ok, err := i.tupleElemMatches(el, arr.Elems()[k], e)
 		if err != nil || !ok {
 			return false, err
 		}
@@ -6317,8 +6415,8 @@ func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 			return
 		}
 		for k, nel := range el.Nested {
-			if k < len(sub.E) {
-				bindTupleElem(armEnv, nel, sub.E[k])
+			if k < len(sub.Elems()) {
+				bindTupleElem(armEnv, nel, sub.Elems()[k])
 			}
 		}
 		return
@@ -6411,11 +6509,11 @@ func valuesEqual(a, b Value) bool {
 		return ok && ax.V == bx.V && ax.Width == bx.Width
 	case Array:
 		bx, ok := b.(Array)
-		if !ok || len(ax.E) != len(bx.E) {
+		if !ok || len(ax.Elems()) != len(bx.Elems()) {
 			return false
 		}
-		for i := range ax.E {
-			if !valuesEqual(ax.E[i], bx.E[i]) {
+		for i := range ax.Elems() {
+			if !valuesEqual(ax.Elems()[i], bx.Elems()[i]) {
 				return false
 			}
 		}
@@ -6607,7 +6705,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				return nil, err
 			}
 			storeArray(v)
-			out.E[k] = v
+			out.Elems()[k] = v
 		}
 		return out, nil
 	case *ast.MapLit:
@@ -6664,10 +6762,10 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("indexing non-array %T", arrV)
 		}
-		if idx < 0 || idx >= Number(len(arr.E)) {
-			return nil, indexAbort(CauseArrOOB, idxText, len(arr.E))
+		if idx < 0 || idx >= Number(len(arr.Elems())) {
+			return nil, indexAbort(CauseArrOOB, idxText, len(arr.Elems()))
 		}
-		return arr.E[idx], nil
+		return arr.Elems()[idx], nil
 	case *ast.SliceExpr:
 		srcV, err := i.evalExpr(x.Source, env)
 		if err != nil {
@@ -6678,7 +6776,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		var slen int64
 		switch v := srcV.(type) {
 		case Array:
-			slen = int64(len(v.E))
+			slen = int64(len(v.Elems()))
 		case String:
 			slen = int64(len(v))
 		default:
@@ -6894,7 +6992,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 						armEnv.declare(arm.AtBinding, arr)
 					}
 					for k, el := range arm.TupleElems {
-						bindTupleElem(armEnv, el, arr.E[k])
+						bindTupleElem(armEnv, el, arr.Elems()[k])
 					}
 				}
 				if arm.Guard != nil {
@@ -7004,7 +7102,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				return nil, err
 			}
 			storeArray(v)
-			out.E[i2] = v
+			out.Elems()[i2] = v
 		}
 		return out, nil
 	case *ast.FieldAccess:
@@ -7028,10 +7126,10 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			if err != nil {
 				return nil, fmt.Errorf("tuple access requires numeric index, got %q", x.Field)
 			}
-			if idx < 0 || idx >= len(arr.E) {
-				return nil, fmt.Errorf("tuple has %d elements; index %d out of range", len(arr.E), idx)
+			if idx < 0 || idx >= len(arr.Elems()) {
+				return nil, fmt.Errorf("tuple has %d elements; index %d out of range", len(arr.Elems()), idx)
 			}
-			return arr.E[idx], nil
+			return arr.Elems()[idx], nil
 		}
 		s, ok := tv.(*Struct)
 		if !ok {
@@ -7112,9 +7210,6 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("calling non-function %q (%T)", id.Name, v)
 		}
-		if id.Name == "__arr_set_len" && len(c.Args) == 2 {
-			return i.arrSetLen(c.Args[0], args, env)
-		}
 		if b, ok := i.Builtins[id.Name]; ok {
 			return b.Fn(i, args)
 		}
@@ -7135,43 +7230,6 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		return i.callClosure(fv, args)
 	}
 	return nil, fmt.Errorf("interp: not a function: %T", cv)
-}
-
-func (i *Interp) arrSetLen(target ast.Expr, args []Value, env *env) (Value, error) {
-	a, ok := args[0].(Array)
-	if !ok {
-		return nil, fmt.Errorf("__arr_set_len: expected array arg, got %T", args[0])
-	}
-	n, ok := args[1].(Number)
-	if !ok {
-		return nil, fmt.Errorf("__arr_set_len: expected number length, got %T", args[1])
-	}
-	if n < 0 {
-		return nil, fmt.Errorf("__arr_set_len: length %d below zero", int64(n))
-	}
-	id, ok := target.(*ast.Ident)
-	if !ok {
-		return nil, fmt.Errorf("__arr_set_len: the array must be a variable")
-	}
-	e := a.E
-	if int(n) <= len(e) {
-		e = e[:int(n)]
-	} else {
-		if int(n) > cap(e) {
-			grown := make([]Value, int(n))
-			copy(grown, e)
-			e = grown
-		} else {
-			e = e[:int(n)]
-		}
-		for k := range e {
-			if e[k] == nil || e[k] == unclaimedSlot {
-				e[k] = Number(0)
-			}
-		}
-	}
-	env.set(id.Name, Array{E: e, h: a.h})
-	return Void{}, nil
 }
 
 func disownAll(vs []Value) {
@@ -7606,30 +7664,6 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 		return nil, err
 	}
 	switch t := a.Target.(type) {
-	case *ast.Index:
-		arrV, err := i.evalExpr(t.Array, env)
-		if err != nil {
-			return nil, err
-		}
-		idxV, err := i.evalExpr(t.Idx, env)
-		if err != nil {
-			return nil, err
-		}
-		arr, ok := arrV.(Array)
-		if !ok {
-			return nil, fmt.Errorf("array assignment to non-array %T", arrV)
-		}
-		idx, ok := idxV.(Number)
-		if !ok {
-			return nil, fmt.Errorf("array index must be number, got %T", idxV)
-		}
-		if idx < 0 || int(idx) >= len(arr.E) {
-			return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.E))
-		}
-		retainReplacing(v, arr.E[idx])
-		storeArray(v)
-		arr.E[idx] = v
-		return v, nil
 	case *ast.FieldAccess:
 		tv, err := i.evalExpr(t.Target, env)
 		if err != nil {
@@ -7743,12 +7777,12 @@ func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
 	from := max(int(int64(fn)), 0)
 	for idx := from; idx < len(b); idx++ {
 		c := int(b[idx])
-		if c >= len(set.E) {
+		if c >= len(set.Elems()) {
 			continue
 		}
-		e, ok := set.E[c].(Number)
+		e, ok := set.Elems()[c].(Number)
 		if !ok {
-			return nil, fmt.Errorf("%s: set element %d is %T, not a byte", name, c, set.E[c])
+			return nil, fmt.Errorf("%s: set element %d is %T, not a byte", name, c, set.Elems()[c])
 		}
 		if int64(e) != 0 {
 			return Number(idx), nil

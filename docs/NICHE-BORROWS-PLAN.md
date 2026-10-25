@@ -47,13 +47,12 @@ acceptable.
 
 **A1. `todo` statement builtin.** [status: shipped]
 Shipped as designed, with two refinements over the sketch below:
-the desugar wraps in `loop { … }` / `while (true) { … }` (native /
-self-host) instead of a bare statement pair, which makes the stub
-**diverge** for E052 missing-return and `let else` — so `todo;`
-can be a whole non-void function body, no checker changes needed —
-and the formatter round-trips the sugar via `IsTodo`/`TodoMsg` on
-`ast.Loop` (deliberately better than `assert`, which formats as
-its desugared body). `-check` warns per remaining entry-module
+the stub **diverges** for E052 missing-return and `let else`,
+because its desugar ends in a call to the builtin `exit`, which
+both checkers treat as a terminator — so `todo;` can be a whole
+non-void function body — and the formatter round-trips the sugar
+via `IsTodo`/`TodoMsg` on `ast.Block` (the self-host parser tags
+the block's `if` with origin `todo`). `-check` warns per remaining entry-module
 stub; runtime message is `todo: not implemented` / `todo: <msg>`
 (byte-identical native vs self-host), exit 101.
 Gleam-inspired typed hole, scoped first to statement position

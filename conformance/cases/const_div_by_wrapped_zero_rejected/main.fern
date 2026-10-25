@@ -1,0 +1,9 @@
+// spec: IS-15
+// ZERO wraps to 0 at its declared width, i32. At i64 it would be 2^32 and the
+// division below would be accepted.
+const ZERO: i32 = 2147483647 + 1 + 2147483647 + 1;
+const A: i32 = 5 / ZERO;
+
+function main(): i32 {
+    return A;
+}

@@ -133,8 +133,8 @@ func laneWindow(name string, arr Value, idx Value, lanes int) (Array, int, error
 		return Array{}, 0, fmt.Errorf("%s: expected an index, got %T", name, idx)
 	}
 	i := int(n)
-	if i < 0 || i+lanes > len(a.E) {
-		return Array{}, 0, fmt.Errorf("%s: lanes %d to %d are out of bounds for length %d", name, i, i+lanes-1, len(a.E))
+	if i < 0 || i+lanes > len(a.Elems()) {
+		return Array{}, 0, fmt.Errorf("%s: lanes %d to %d are out of bounds for length %d", name, i, i+lanes-1, len(a.Elems()))
 	}
 	return a, i, nil
 }
@@ -277,9 +277,9 @@ func (i *Interp) registerLaneBuiltins() {
 			}
 			out := Lanes{Width: width, Bits: make([]uint64, lanes)}
 			for k := range out.Bits {
-				f, ok := a.E[at+k].(Float)
+				f, ok := a.Elems()[at+k].(Float)
 				if !ok {
-					return nil, fmt.Errorf("%sload: expected float elements, got %T", p, a.E[at+k])
+					return nil, fmt.Errorf("%sload: expected float elements, got %T", p, a.Elems()[at+k])
 				}
 				out.Bits[k] = laneBits(width, f.V)
 			}
@@ -297,8 +297,8 @@ func (i *Interp) registerLaneBuiltins() {
 			if !ok {
 				return nil, fmt.Errorf("%swith: expected a lane value, got %T", p, args[2])
 			}
-			e := make([]Value, len(a.E))
-			copy(e, a.E)
+			e := make([]Value, len(a.Elems()))
+			copy(e, a.Elems())
 			for k := range l.Bits {
 				e[at+k] = l.lane(k)
 			}

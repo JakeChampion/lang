@@ -1,0 +1,3 @@
+main.fern:5:1: error[E093]: const XS: division by zero in constant expression
+main.fern:6:1: error[E093]: const T: modulo by zero in constant expression
+main.fern:7:1: error[E093]: const P: division by zero in constant expression
