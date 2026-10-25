@@ -190,7 +190,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     let Ok(k) = identity.private_key_from_pem(ED_PKCS8) else { return 2; };
     let Ok(id) = identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k) else { return 3; };
-    return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id)).with_h3(), keep_alive_requests: %d }, handle);
+    return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))).with_h3(), keep_alive_requests: %d }, handle);
 }
 
 // Decode a valid fixture. Report a malformed fixture before ending the test.
