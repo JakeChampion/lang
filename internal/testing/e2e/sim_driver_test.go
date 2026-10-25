@@ -29,8 +29,8 @@ import "std/sim";
 function tie_winner(seed: i64): i32 {
     let d: sim.Sim = sim.new(seed);
     let fs: async.Future[i32][] = [
-        sim.future_at(d, 5000000, 100),
-        sim.future_at(d, 5000000, 200)
+        sim.future_at(d, sim.at(time.duration_nanos(5000000)), 100),
+        sim.future_at(d, sim.at(time.duration_nanos(5000000)), 200)
     ];
     let (w, v) = async.race_on(d, fs, -1);
     if (w == 0 && v != 100) { return -2; }
@@ -41,13 +41,13 @@ function tie_winner(seed: i64): i32 {
 function main(): i32 {
     let d: sim.Sim = sim.new(7);
     let fs: async.Future[string][] = [
-        sim.future_at(d, 40000000, "late"),
-        sim.future_at(d, 10000000, "early")
+        sim.future_at(d, sim.at(time.duration_nanos(40000000)), "late"),
+        sim.future_at(d, sim.at(time.duration_nanos(10000000)), "early")
     ];
     let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) { Some(v) => { return 1; }, None => { } }
     match (got[1]) { Some(v) => { if (v != "early") { return 2; } }, None => { return 3; } }
-    if (d.now_ns() != 25000000) { return 4; }
+    if (d.elapsed().as_nanos() != 25000000) { return 4; }
     if (tie_winner(1) != tie_winner(1)) { return 5; }
     // Two seeds picking opposite sides of a tie -- the pair is what proves the
     // tie-break is a real draw and not a fixed order. Re-recorded when sim's
@@ -57,18 +57,18 @@ function main(): i32 {
     if (tie_winner(2) != 1) { return 7; }
     let g: sim.Sim = sim.new(1);
     let gf: async.Future[i32][] = [
-        sim.future_at(g, 30000000, 10),
-        sim.future_at(g, 10000000, 20),
-        sim.future_at(g, 20000000, 30)
+        sim.future_at(g, sim.at(time.duration_nanos(30000000)), 10),
+        sim.future_at(g, sim.at(time.duration_nanos(10000000)), 20),
+        sim.future_at(g, sim.at(time.duration_nanos(20000000)), 30)
     ];
     let order: i32[] = async.gather_on(g, gf, -1);
     if (order[0] != 10 || order[1] != 20 || order[2] != 30) { return 8; }
-    if (g.now_ns() != 30000000) { return 9; }
+    if (g.elapsed().as_nanos() != 30000000) { return 9; }
     let c: sim.Sim = sim.new(1);
-    let cf: async.Future[i32][] = [sim.future_chain(c, 10000000, 5000000, 3, 9)];
+    let cf: async.Future[i32][] = [sim.future_chain(c, sim.at(time.duration_nanos(10000000)), time.duration_nanos(5000000), 3, 9)];
     let res: i32[] = async.gather_on(c, cf, -1);
     if (res[0] != 9) { return 10; }
-    if (c.now_ns() != 25000000) { return 11; }
+    if (c.elapsed().as_nanos() != 25000000) { return 11; }
     return 42;
 }
 `

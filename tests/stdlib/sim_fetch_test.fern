@@ -36,7 +36,7 @@ function __public(): fetch.Policy {
 }
 
 function __net(d: sim.Sim): sim_fetch.Net {
-  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5);
+  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, time.duration_millis(5));
 }
 
 function __message(got: Result[HttpResponse, fetch.FetchError]): string {
@@ -72,7 +72,7 @@ function __body(got: Result[HttpResponse, fetch.FetchError]): string {
 
 function test_answer_at_its_time(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hello").after(20)]);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hello").after(time.duration_millis(20))]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__body(got) != "hello") {
     return test.fail("body: " + __body(got));
@@ -84,24 +84,24 @@ function test_answer_at_its_time(): test.TestOutcome {
   if (!sent.starts_with("GET / HTTP/1.1\r\n") || !sent.contains("Host: example.test\r\n")) {
     return test.fail("request: " + sent);
   }
-  return test.assert_eq(d.now_ns(), 25 * MS);
+  return test.assert_eq(d.elapsed().as_nanos(), 25 * MS);
 }
 
 function test_chunked_arrival(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "abcdef").in_chunks(1, 2)]);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "abcdef").in_chunks(1, time.duration_millis(2))]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   return test.assert_eq(__body(got), "abcdef");
 }
 
 function test_connect_timeout(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 20000);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, time.duration_millis(20000));
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__message(got) != "timed out connecting") {
     return test.fail(__message(got));
   }
-  return test.assert_eq(d.now_ns(), 10000 * MS);
+  return test.assert_eq(d.elapsed().as_nanos(), 10000 * MS);
 }
 
 function test_refused(): test.TestOutcome {
@@ -113,32 +113,32 @@ function test_refused(): test.TestOutcome {
 
 function test_addresses_raced(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen(ORIGIN, 80, 20000).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen(ORIGIN, 80, time.duration_millis(20000)).listen("93.184.216.35", 80, time.duration_millis(5)).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__body(got) != "second address") {
     return test.fail(__body(got));
   }
-  return test.assert_eq(d.now_ns(), 305 * MS);
+  return test.assert_eq(d.elapsed().as_nanos(), 305 * MS);
 }
 
 function test_refusal_hands_on(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen("93.184.216.35", 80, time.duration_millis(5)).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__body(got) != "second address") {
     return test.fail(__body(got));
   }
-  return test.assert_eq(d.now_ns(), 5 * MS);
+  return test.assert_eq(d.elapsed().as_nanos(), 5 * MS);
 }
 
 function test_listener_at_zero(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 0).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "at once")]);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, time.duration_millis(0)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "at once")]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__body(got) != "at once") {
     return test.fail(__body(got));
   }
-  return test.assert_eq(d.now_ns(), 0 as i64);
+  return test.assert_eq(d.elapsed().as_nanos(), 0 as i64);
 }
 
 function test_zero_connect_bound(): test.TestOutcome {
@@ -166,27 +166,27 @@ function test_inactivity_timeout(): test.TestOutcome {
   if (__message(got) != "timed out waiting for the response") {
     return test.fail(__message(got));
   }
-  return test.assert_eq(d.now_ns(), 5 * MS + 30000 * MS);
+  return test.assert_eq(d.elapsed().as_nanos(), 5 * MS + 30000 * MS);
 }
 
 function test_held_open_times_out(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\n\r\npartial").after(10).held()]);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\n\r\npartial").after(time.duration_millis(10)).held()]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__message(got) != "timed out waiting for the response") {
     return test.fail(__message(got));
   }
-  return test.assert_eq(d.now_ns(), 15 * MS + 30000 * MS);
+  return test.assert_eq(d.elapsed().as_nanos(), 15 * MS + 30000 * MS);
 }
 
 function test_total_timeout(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "slow").in_chunks(1, 20000)]);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "slow").in_chunks(1, time.duration_millis(20000))]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__message(got) != "timed out in all") {
     return test.fail(__message(got));
   }
-  return test.assert_eq(d.now_ns(), 60000 * MS);
+  return test.assert_eq(d.elapsed().as_nanos(), 60000 * MS);
 }
 
 function test_redirect_followed(): test.TestOutcome {
@@ -204,7 +204,7 @@ function test_redirect_followed(): test.TestOutcome {
 
 function test_cross_origin_drops_credentials(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
+  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, time.duration_millis(5)).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
   let req: fetch.Request = fetch.get("http://example.test/").with_header("Authorization", "Bearer t").with_header("X-Trace", "kept");
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, req, __open());
   if (__body(got) != "there") {
@@ -251,7 +251,7 @@ function test_reset_not_retried_when_not_idempotent(): test.TestOutcome {
 
 function test_block_list(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = sim_fetch.net(d).host("inside.test", ["10.0.0.7"]).listen("10.0.0.7", 80, 1).route("10.0.0.7", 80, "/", [sim_fetch.reply(200, "inside")]);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("inside.test", ["10.0.0.7"]).listen("10.0.0.7", 80, time.duration_millis(1)).route("10.0.0.7", 80, "/", [sim_fetch.reply(200, "inside")]);
   let blocked: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://inside.test/"), __public());
   if (__message(blocked) != "blocked: 10.0.0.7 is not a global address") {
     return test.fail(__message(blocked));
@@ -303,7 +303,7 @@ function test_allow_list_entries(): test.TestOutcome {
 
 function test_allow_list_route(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("api.example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).listen("93.184.216.35", 8080, 5).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "api")]).route("93.184.216.35", 8080, "/", [sim_fetch.reply(200, "other")]);
+  let n: sim_fetch.Net = __net(d).host("api.example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, time.duration_millis(5)).listen("93.184.216.35", 8080, time.duration_millis(5)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "api")]).route("93.184.216.35", 8080, "/", [sim_fetch.reply(200, "other")]);
   let p: fetch.Policy = __allowing(["*.example.test", "other.test:8080"]);
   let apex: string = __message(fetch.send_on(n, fetch.get("http://example.test/"), p));
   let port: string = __message(fetch.send_on(n, fetch.get("http://other.test/"), p));
@@ -316,7 +316,7 @@ function test_allow_list_route(): test.TestOutcome {
 
 function test_allow_list_redirect(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
+  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, time.duration_millis(5)).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
   let got: string = __message(fetch.send_on(n, fetch.get("http://example.test/"), __allowing(["example.test"])));
   if (n.sent_count() != 1) {
     return test.fail("sent " + n.sent_count().to_string() + " requests");
@@ -396,8 +396,8 @@ function test_pool_reuses_kept(): test.TestOutcome {
   if (__body(first) != "one" || __body(second) != "two") {
     return test.fail(__body(first) + " then " + __body(second));
   }
-  if (n.connects() != 1 || d.now_ns() != 5 * MS) {
-    return test.fail("connects " + n.connects().to_string() + " at " + d.now_ns().to_string());
+  if (n.connects() != 1 || d.elapsed().as_nanos() != 5 * MS) {
+    return test.fail("connects " + n.connects().to_string() + " at " + d.elapsed().as_nanos().to_string());
   }
   if (n.open() != 1) {
     return test.fail("the kept connection is not in the pool");
@@ -453,7 +453,7 @@ function test_idle_expired_closed(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
   let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
-  d.clock_ns.set(d.now_ns() + 90001 * MS);
+  d.clock_ns.set(d.elapsed().as_nanos() + 90001 * MS);
   let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__body(second) != "two" || n.connects() != 2) {
     return test.fail(__body(second) + ", connects " + n.connects().to_string());
@@ -465,7 +465,7 @@ function test_idle_at_bound_reused(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
   let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
-  d.clock_ns.set(d.now_ns() + 90000 * MS);
+  d.clock_ns.set(d.elapsed().as_nanos() + 90000 * MS);
   let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (__body(second) != "two") {
     return test.fail(__message(second));
@@ -498,7 +498,7 @@ function test_trailing_bytes_not_kept(): test.TestOutcome {
 function test_pool_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let other: string = "93.184.216.35";
-  let n: sim_fetch.Net = __net(d).host("other.test", [other]).listen(other, 80, 5).pooling(fetch.idle_limited(1, time.duration_seconds(90 as i64))).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a").kept()]).route(other, 80, "/", [sim_fetch.reply(200, "b").kept()]);
+  let n: sim_fetch.Net = __net(d).host("other.test", [other]).listen(other, 80, time.duration_millis(5)).pooling(fetch.idle_limited(1, time.duration_seconds(90 as i64))).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a").kept()]).route(other, 80, "/", [sim_fetch.reply(200, "b").kept()]);
   let a: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   let b: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), __open());
   if (n.open() != 1) {
@@ -529,7 +529,7 @@ function __via_proxy(public_only: boolean, no_proxy: string, cgi: boolean): fetc
 }
 
 function __proxy_net(d: sim.Sim, answers: sim_fetch.Answer[]): sim_fetch.Net {
-  return sim_fetch.net(d).listen(PROXY, 3128, 5).route(PROXY, 3128, "http://example.test/", answers);
+  return sim_fetch.net(d).listen(PROXY, 3128, time.duration_millis(5)).route(PROXY, 3128, "http://example.test/", answers);
 }
 
 function test_proxied(): test.TestOutcome {
@@ -555,7 +555,7 @@ function __proxy_spec(spec: string): fetch.Policy {
 
 function test_proxy_bare_host(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = sim_fetch.net(d).listen(PROXY, 80, 5).route(PROXY, 80, "http://example.test/", [sim_fetch.reply(200, "via port 80")]);
+  let n: sim_fetch.Net = sim_fetch.net(d).listen(PROXY, 80, time.duration_millis(5)).route(PROXY, 80, "http://example.test/", [sim_fetch.reply(200, "via port 80")]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __proxy_spec(PROXY));
   return test.assert_eq(__body(got), "via port 80");
 }
@@ -713,7 +713,7 @@ function test_raw_write_journal(): test.TestOutcome {
   let Ok(found) = n.lookup("example.test", false) else {
     return test.fail("lookup");
   };
-  let Ok(conn) = n.connect(found.dial, 80, 100) else {
+  let Ok(conn) = n.connect(found.dial, 80, time.duration_millis(100)) else {
     return test.fail("connect");
   };
   let none: u8[] = [];
@@ -771,14 +771,14 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
   let Ok(found) = n.lookup("example.test", false) else {
     return test.fail("lookup");
   };
-  let Ok(conn) = n.connect(found.dial, 80, 100) else {
+  let Ok(conn) = n.connect(found.dial, 80, time.duration_millis(100)) else {
     return test.fail("connect");
   };
   let garbage: u8[] = "GET / HTTP/1.1\r\nContent-Length: 10\r\n\r\nshort".bytes();
   if (n.write(conn, garbage) != garbage.len()) {
     return test.fail("write");
   }
-  match (n.read(conn, 4096, 100)) {
+  match (n.read(conn, 4096, time.duration_millis(100))) {
     Ok(net.Chunk(bytes)) => {
       let Some(text) = utf8.from_bytes(bytes) else {
         return test.fail("not utf-8");
@@ -797,7 +797,7 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
       return test.fail(e.message());
     }
   }
-  match (n.read(conn, 4096, 100)) {
+  match (n.read(conn, 4096, time.duration_millis(100))) {
     Ok(net.Chunk(bytes)) => {
       return test.assert_eq(bytes.len(), 0);
     },

@@ -28,13 +28,13 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 pub struct Session>>
 
-<<6 pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError]>>
+<<6 pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[Step, tls.TlsError]>>
 
-<<7 function __offer(config: Config, now: i64): Option[handshake.Resumption]>>
+<<7 function __offer(config: Config, now: time.Timestamp): Option[handshake.Resumption]>>
 
-<<8 pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure]>>
+<<8 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure]>>
 
-<<9 function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure]>>
+<<9 function __record(s: Session, record: [u8], now: time.Timestamp): Result[Step, tls.Failure]>>
 
 <<10 pub function (s: Session) write(data: [u8]): Result[Step, tls.TlsError]>>
 
@@ -44,7 +44,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 function __step(r: Result[handshake.ClientStep, handshake.HandshakeError]): Result[handshake.ClientStep, tl...>>
 
-<<14 function __trusted(s: Session, v: handshake.Verification, now: i64): Result[void, tls.TlsError]>>
+<<14 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError]>>
 
 <<15 pub struct Connection>>
 
@@ -81,6 +81,7 @@ import "std/dns";
 import "std/i32";
 import "std/net";
 import "std/time";
+import "std/clock";
 import "std/tls";
 import "std/tls/handshake";
 import "std/tls/identity";
@@ -98,7 +99,7 @@ import "std/tls/x509";
 <<3 pub struct Config>>=
 pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity] }
 
-pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: u32, age_add: u32, received_ms: i64, server_name: string }
+pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, age_add: u32, received: time.Timestamp, server_name: string }
 ```
 
 ### `4 pub function config(server_name: string, roots: verify.Roots): Config`
@@ -131,11 +132,11 @@ pub struct Session { client: handshake.Client, name: string, roots: verify.Roots
 pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, tickets: Ticket[], rekeyed: handshake.KernelKeys }
 ```
 
-### `6 pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError]`
+### `6 pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[Step, tls.TlsError]`
 
 ```fern
-<<6 pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError]>>=
-pub function start(config: Config, entropy: [u8], now: i64): Result[Step, tls.TlsError] {
+<<6 pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[Step, tls.TlsError]>>=
+pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[Step, tls.TlsError] {
   let hc: handshake.ClientConfig = handshake.ClientConfig { ...__hello(config), resume: __offer(config, now) };
   match (handshake.client_start(hc, entropy)) {
     Ok(step) => {
@@ -169,20 +170,20 @@ function __hello(config: Config): handshake.ClientConfig {
 }
 ```
 
-### `7 function __offer(config: Config, now: i64): Option[handshake.Resumption]`
+### `7 function __offer(config: Config, now: time.Timestamp): Option[handshake.Resumption]`
 
 ```fern
-<<7 function __offer(config: Config, now: i64): Option[handshake.Resumption]>>=
-function __offer(config: Config, now: i64): Option[handshake.Resumption] {
+<<7 function __offer(config: Config, now: time.Timestamp): Option[handshake.Resumption]>>=
+function __offer(config: Config, now: time.Timestamp): Option[handshake.Resumption] {
   match (config.resume) {
     Some(t) => {
-      let age: i64 = now - t.received_ms;
-      if (t.server_name != config.server_name || age < 0 as i64 || age >= t.lifetime as i64 * (1000 as i64)) {
+      let age: Duration = now.since(t.received);
+      if (t.server_name != config.server_name || age.is_negative() || age.cmp(t.lifetime) >= 0) {
         return None;
       }
       match (keyschedule.cipher_suite(t.suite)) {
         Some(suite) => {
-          let obfuscated: i64 = age + t.age_add as i64 & 0xffffffff as i64;
+          let obfuscated: i64 = age.as_millis() + t.age_add as i64 & 0xffffffff as i64;
           return Some(handshake.Resumption { identity: t.identity, psk: t.psk, suite: suite, obfuscated_age: obfuscated as u32 });
         },
         None => {
@@ -210,11 +211,11 @@ function __is_address(name: string): boolean {
 }
 ```
 
-### `8 pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure]`
+### `8 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure]`
 
 ```fern
-<<8 pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure]>>=
-pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure] {
+<<8 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure]>>=
+pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure] {
   let buf: u8[] = __copy(s.held);
   buf = __cat(buf, input);
   let session: Session = Session { ...s, held: [] };
@@ -244,11 +245,11 @@ pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure]
 }
 ```
 
-### `9 function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure]`
+### `9 function __record(s: Session, record: [u8], now: time.Timestamp): Result[Step, tls.Failure]`
 
 ```fern
-<<9 function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure]>>=
-function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure] {
+<<9 function __record(s: Session, record: [u8], now: time.Timestamp): Result[Step, tls.Failure]>>=
+function __record(s: Session, record: [u8], now: time.Timestamp): Result[Step, tls.Failure] {
   match (s.client.read(record)) {
     Ok(step) => {
       return __judged(s, step, now);
@@ -388,7 +389,7 @@ function __handshake_ok(r: Result[u8[], handshake.HandshakeError]): Result[u8[],
   return Err(tls.ClosedEarly);
 }
 
-function __judged(s: Session, first: handshake.ClientStep, now: i64): Result[Step, tls.Failure] {
+function __judged(s: Session, first: handshake.ClientStep, now: time.Timestamp): Result[Step, tls.Failure] {
   let c: handshake.Client = first.client;
   let output: u8[] = first.output;
   let data: u8[] = first.data;
@@ -421,10 +422,10 @@ function __no_keys(): handshake.KernelKeys {
   return handshake.KernelKeys { transmit: [], receive: [] };
 }
 
-function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: message.NewSessionTicket, now: i64): Ticket[] {
+function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: message.NewSessionTicket, now: time.Timestamp): Ticket[] {
   match (c.resumption_psk(t.nonce)) {
     Ok(psk) => {
-      return tickets.append(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: t.lifetime, age_add: t.age_add, received_ms: now, server_name: s.name });
+      return tickets.append(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: time.duration_seconds(t.lifetime as i64), age_add: t.age_add, received: now, server_name: s.name });
     },
     Err(_) => {
       return tickets;
@@ -433,7 +434,7 @@ function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: messa
   return tickets;
 }
 
-function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: i64): Result[handshake.ClientStep, tls.Failure] {
+function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: time.Timestamp): Result[handshake.ClientStep, tls.Failure] {
   match (e) {
     handshake.VerifyServer(v) => {
       match (__trusted(s, v, now)) {
@@ -482,12 +483,12 @@ function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Re
 }
 ```
 
-### `14 function __trusted(s: Session, v: handshake.Verification, now: i64): Result[void, tls.TlsError]`
+### `14 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError]`
 
 ```fern
-<<14 function __trusted(s: Session, v: handshake.Verification, now: i64): Result[void, tls.TlsError]>>=
-function __trusted(s: Session, v: handshake.Verification, now: i64): Result[void, tls.TlsError] {
-  match (verify.verify_server(v.chain, s.roots, s.name, now / 1000)) {
+<<14 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError]>>=
+function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError] {
+  match (verify.verify_server(v.chain, s.roots, s.name, now)) {
     Ok(leaf) => {
       if (!verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
         return Err(tls.SignatureInvalid);
@@ -580,7 +581,7 @@ function __handshake_by(fd: i32, config: Config, deadline: i64): Result[Connecti
 }
 
 function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, tls.TlsError] {
-  let step: Step = start(config, random_bytes(entropy(config)), now_unix_ms())?;
+  let step: Step = start(config, random_bytes(entropy(config)), clock.now())?;
   __send_fd(fd, step.output)?;
   let s: Session = step.session;
   let tickets: Ticket[] = [];
@@ -789,7 +790,7 @@ function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.Tl
 }
 
 function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, tls.TlsError] {
-  match (s.read(input, now_unix_ms())) {
+  match (s.read(input, clock.now())) {
     Ok(step) => {
       __send_out(fd, s, step.output)?;
       let r: i32 = ktls.install(fd, step.rekeyed);

@@ -1,0 +1,176 @@
+/* Shared layout for the JSON lab, the compression bench, and the handshake. */
+.bench-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem 1.5rem;
+  padding: 1.1rem 1.25rem;
+  border: var(--rule);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg-raised) 70%, transparent);
+}
+.bench-controls label {
+  display: grid;
+  gap: 0.35rem;
+  font: 500 0.68rem var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray-3);
+}
+.bench-controls label > * {
+  font: 0.875rem var(--font-body);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.bench-controls input[type="number"] {
+  width: 7rem;
+}
+.bench-controls .button-group {
+  margin-left: auto;
+}
+.bench-summary {
+  margin: 1.25rem 0 0.75rem;
+  font-size: 0.95rem;
+  color: var(--gray-1);
+}
+.bench-summary strong {
+  color: var(--white);
+}
+.bench-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.bench-table th {
+  padding: 0.6rem 0.75rem 0.5rem 0;
+  border-bottom: 1px solid var(--gray-4);
+  font: 500 0.68rem var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--gray-3);
+}
+.bench-table td {
+  padding: 0.7rem 0.75rem 0.7rem 0;
+  border-bottom: var(--rule);
+  vertical-align: middle;
+}
+.bench-table td.number {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.bench-table .engine strong {
+  display: block;
+  color: var(--white);
+  font-weight: 600;
+}
+.bench-table .engine span {
+  font: 0.72rem var(--font-mono);
+  color: var(--gray-3);
+}
+.bench-table .rate {
+  width: 40%;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font: 0.8rem var(--font-mono);
+  white-space: nowrap;
+}
+.bar i {
+  display: block;
+  height: 0.55rem;
+  min-width: 2px;
+  border-radius: 999rem;
+  background: var(--text-accent);
+}
+.bar.fern i {
+  background: var(--fern-spore);
+}
+.verdict {
+  font: 0.75rem var(--font-mono);
+  color: var(--text-accent);
+}
+.verdict.failed {
+  color: var(--fern-rust);
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.bench-note {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--gray-3);
+}
+
+/* Handshake steps */
+.steps {
+  display: grid;
+  gap: 0;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.steps li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+  gap: 0.25rem 1rem;
+  padding: 1rem 0;
+  border-top: var(--rule);
+  counter-increment: step;
+}
+.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  grid-row: span 2;
+  padding-top: 0.2rem;
+  font: 500 0.75rem var(--font-mono);
+  color: var(--fern-spore);
+}
+.steps h3 {
+  font-size: 1.15rem;
+}
+.steps .where {
+  font: 0.72rem var(--font-mono);
+  color: var(--gray-3);
+  text-align: right;
+}
+.steps p {
+  grid-column: 2 / -1;
+  font-size: 0.875rem;
+}
+.steps code {
+  font-size: 0.78rem;
+  color: var(--gray-1);
+  overflow-wrap: anywhere;
+}
+.steps li[data-state="waiting"] h3,
+.steps li[data-state="waiting"] p {
+  color: var(--gray-3);
+}
+.steps li[data-state="done"] .where {
+  color: var(--text-accent);
+}
+.secret {
+  margin-top: 1.25rem;
+  padding: 1rem 1.2rem;
+  border-inline-start: 2px solid var(--fern-spore);
+  border-radius: 0 0.35rem 0.35rem 0;
+  background: color-mix(in oklab, var(--accent-low) 55%, transparent);
+  font: 600 1.15rem/1.4 var(--font-display);
+  color: var(--white);
+}
+@media (max-width: 720px) {
+  .bench-controls .button-group {
+    margin-left: 0;
+  }
+  .steps li {
+    grid-template-columns: 2rem minmax(0, 1fr);
+  }
+  .steps .where {
+    grid-column: 2;
+    text-align: left;
+  }
+}

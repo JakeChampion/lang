@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 const simRollUniformProg = `
+import "std/time";
 import "std/async";
 import "std/sim";
 import "std/i32";
@@ -14,9 +15,9 @@ import "std/string";
 function tie3(seed: i64): i32 {
     let d: sim.Sim = sim.new(seed);
     let fs: async.Future[i32][] = [
-        sim.future_at(d, 5000000, 0),
-        sim.future_at(d, 5000000, 1),
-        sim.future_at(d, 5000000, 2)
+        sim.future_at(d, sim.at(time.duration_nanos(5000000)), 0),
+        sim.future_at(d, sim.at(time.duration_nanos(5000000)), 1),
+        sim.future_at(d, sim.at(time.duration_nanos(5000000)), 2)
     ];
     let (w, v) = async.race_on(d, fs, -1);
     // The winner's index and its value must agree, or the draw is not what

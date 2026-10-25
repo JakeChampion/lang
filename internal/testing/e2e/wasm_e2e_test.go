@@ -8130,7 +8130,8 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "envecho.fern")
-	src := `import "std/net";
+	src := `import "std/time";
+import "std/net";
 
 function port_from_env(): i32 {
     match (env("PORT")) {
@@ -8155,7 +8156,7 @@ function main(): i32 {
     if (sock < 0) { return 1; }
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+    let msg: u8[] = match (net.read_watched(conn, 1024, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => b,
         _ => { return 4; },
     };

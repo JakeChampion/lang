@@ -56,6 +56,8 @@ func buildMem() *buildMemLimiter {
 func withBuildMemory(weightMB int, fn func() error) error {
 	release := buildMem().acquire(weightMB)
 	defer release()
+	releaseSlot := acquireHostBuildSlot()
+	defer releaseSlot()
 	return fn()
 }
 

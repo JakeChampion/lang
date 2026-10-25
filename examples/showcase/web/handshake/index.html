@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Agree on a session key with ML-KEM-768 and X25519. Fern runs the browser half in WebAssembly and the server half natively." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Post-quantum handshake · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/bench/style.css" />
+  </head>
+  <body class="app-page handshake-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/" aria-label="Fern, in action home"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/handshake.fern.md">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow"><span>18</span>Quantum-safe key agreement</div>
+          <h1>Post-quantum <em>handshake.</em></h1>
+          <p>Agree on a secret key with the server, safe against a future quantum computer. Fern runs your half in this page as WebAssembly and the server half natively.</p>
+          <div class="tech-chips"><span>ML-KEM-768</span><span>X25519</span><span>HMAC-SHA-256</span><span>ChaCha20-Poly1305</span></div>
+        </section>
+        <div id="connection" class="status" role="status">Load the Fern kernel</div>
+      </div>
+      <div class="button-group">
+        <button class="button primary" id="start">Start a handshake ▶</button>
+      </div>
+      <ol class="steps" id="steps">
+        <li data-state="waiting" data-step="keys">
+          <h3>Make key pairs in your browser</h3><span class="where">Fern Wasm</span>
+          <p>An ML-KEM-768 key pair and an X25519 key pair, from 96 random bytes that your browser supplies.</p>
+        </li>
+        <li data-state="waiting" data-step="send">
+          <h3>Send the public keys</h3><span class="where">HTTPS</span>
+          <p>Only public values travel: the 1,184-byte encapsulation key and the 32-byte X25519 key.</p>
+        </li>
+        <li data-state="waiting" data-step="server">
+          <h3>The server encapsulates a secret</h3><span class="where">Native Fern</span>
+          <p>The server answers with a 1,088-byte ciphertext, its X25519 key, a confirmation, and a sealed message.</p>
+        </li>
+        <li data-state="waiting" data-step="derive">
+          <h3>Derive the same key in your browser</h3><span class="where">Fern Wasm</span>
+          <p>Your browser opens the ciphertext and combines both shared secrets with the transcript of every public value.</p>
+        </li>
+        <li data-state="waiting" data-step="confirm">
+          <h3>Confirm the server and read its message</h3><span class="where">Fern Wasm</span>
+          <p>The server's HMAC must match, and only the shared key can open the ChaCha20-Poly1305 message.</p>
+        </li>
+      </ol>
+      <p class="secret" id="secret" hidden></p>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          ML-KEM-768 is the post-quantum key encapsulation standard (FIPS 203). X25519 is the classical exchange most
+          connections use today. The session key depends on both, as in the X25519MLKEM768 hybrid that TLS uses, so an
+          attacker must break both. Neither side sends a secret. A change to any public value changes the transcript,
+          so the confirmation fails. Your browser supplies the random seed. The Wasm kernel itself has no random source.
+        </p>
+        <a href="/_src/showcase/handshake.fern.md">Read the handshake ↗</a> · <a href="/_src/showcase/bench.fern.md">Read the endpoint ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

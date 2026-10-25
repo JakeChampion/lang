@@ -55,7 +55,7 @@ function test_parks_agrees(): test.TestOutcome {
   match (pipe()) {
     Ok(q) => {
       let fd: i32 = q.r.fd;
-      let t: async.Task[i32] = async.task_new((): i32 => async.wait_any([fd, 1], 0));
+      let t: async.Task[i32] = async.task_new((): i32 => async.wait_any([fd, 1], Some(time.duration_millis(0))));
       let parked: boolean = false;
       match (async.task_start(t)) {
         Suspended(w) => {

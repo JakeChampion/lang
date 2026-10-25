@@ -1,6 +1,6 @@
 # Fern, in action
 
-Fifteen web applications share one native Fern server. The homepage links each application and its source lesson.
+Eighteen web applications share one native Fern server. The homepage links each application and its source lesson.
 The application modules use literate Fern. Named sections explain the code that Fern compiles.
 
 | Application | URL | Server behavior |
@@ -20,6 +20,9 @@ The application modules use literate Fern. Named sections explain the code that 
 | Wave lab | `/wave/` | Sixteen-step sequencer, four oscillators, native PCM WAV synthesis |
 | Guestbook | `/notes/` | HTML forms without JavaScript, signed tokens, 303 redirects, Atom feed |
 | Pulse | `/pulse/` | Live process memory and CPU, request counters, SSE, Prometheus export |
+| JSON lab | `/json/` | Native Fern, Fern Wasm, and JSON.parse on identical generated JSON, tree and tape parsers |
+| Compression bench | `/compress/` | Fern gzip, Brotli, and zstd natively and in Wasm, browser gzip, browser decoders check Fern output |
+| Post-quantum handshake | `/handshake/` | ML-KEM-768 and X25519 hybrid key agreement, Fern Wasm client, native Fern server |
 
 ## Run locally
 
@@ -159,6 +162,18 @@ The server wakes each room subscriber through a loopback datagram descriptor. Id
 Reconnects receive a full snapshot. The HTTP mutation and resumable SSE APIs remain available for other clients.
 
 Both applications report network round-trip time separately from server work. Network distance still contributes to round-trip time.
+
+## Measured labs
+
+The JSON lab, the compression bench, and the post-quantum handshake run one Fern module on both sides.
+`measure.fern.md` and `handshake.fern.md` compile natively into the server and to the `web/bench` kernels.
+The kernels take and return strings and byte lists through the canonical ABI.
+
+A deterministic generator produces each corpus from a seed and a size, so every engine reads identical bytes.
+The server checks its checksum against the browser's checksum. Each benchmark parses at most 4 MiB, or encodes at most 1 MiB per codec.
+A benchmark waits 1.5 seconds after the previous one, so it cannot hold up the game rooms.
+
+The handshake combines ML-KEM-768 and X25519. The browser supplies the client's random seed. The server draws its values from the operating system.
 
 ## Browser Wasm
 

@@ -67,13 +67,15 @@ import "std/utf8";
 import "std/url";
 import "std/json";
 import "std/headers";
+import "std/time";
 ```
 
 ### `2 pub struct Answer`
 
 ```fern
 <<2 pub struct Answer>>=
-pub struct Answer { bytes: u8[], first_ms: i64, chunk_ms: i64, chunk: i32, close: boolean }
+// `delay` passes before the first byte; `every` passes between chunks of `chunk` bytes.
+pub struct Answer { bytes: u8[], delay: Duration, every: Duration, chunk: i32, close: boolean }
 ```
 
 ### `3 pub function reply(status: i32, body: string): Answer`
@@ -105,7 +107,7 @@ pub function raw(text: string): Answer {
 }
 
 pub function raw_bytes(bytes: u8[]): Answer {
-  return Answer { bytes: bytes, first_ms: 0, chunk_ms: 0, chunk: 0, close: true };
+  return Answer { bytes: bytes, delay: time.DURATION_ZERO, every: time.DURATION_ZERO, chunk: 0, close: true };
 }
 
 pub function reset(): Answer {
@@ -117,12 +119,12 @@ pub function silent(): Answer {
   return Answer { ...reset(), close: false };
 }
 
-pub function (a: Answer) after(ms: i64): Answer {
-  return Answer { ...a, first_ms: ms };
+pub function (a: Answer) after(delay: Duration): Answer {
+  return Answer { ...a, delay: delay };
 }
 
-pub function (a: Answer) in_chunks(size: i32, every_ms: i64): Answer {
-  return Answer { ...a, chunk: size, chunk_ms: every_ms };
+pub function (a: Answer) in_chunks(size: i32, every: Duration): Answer {
+  return Answer { ...a, chunk: size, every: every };
 }
 
 pub function (a: Answer) held(): Answer {
@@ -151,7 +153,7 @@ pub function (a: Answer) kept(): Answer {
 <<6 pub struct Name>>=
 pub struct Name { host: string, addrs: string[] }
 
-pub struct Listener { addr: string, port: i32, connect_ms: i64 }
+pub struct Listener { addr: string, port: i32, connect: Duration }
 
 pub struct Route { addr: string, port: i32, path: string, answers: Answer[] }
 
@@ -180,8 +182,9 @@ pub function (n: Net) host(name: string, addrs: string[]): Net {
   return Net { ...n, names: n.names.append(Name { host: name, addrs: addrs }) };
 }
 
-pub function (n: Net) listen(addr: string, port: i32, connect_ms: i64): Net {
-  return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect_ms: connect_ms }) };
+// A dial to the listener takes `connect` of virtual time.
+pub function (n: Net) listen(addr: string, port: i32, connect: Duration): Net {
+  return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect: connect }) };
 }
 
 pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answer[]): Net {
@@ -189,7 +192,7 @@ pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answ
 }
 
 pub function (n: Net) serve(addr: string, port: i32, handler: (HttpRequest) => HttpResponse): Net {
-  let listening: Net = n.listen(addr, port, 0);
+  let listening: Net = n.listen(addr, port, time.DURATION_ZERO);
   return Net { ...listening, servers: listening.servers.append(Server { addr: __canon(addr), port: port, handler: handler }) };
 }
 
@@ -226,11 +229,12 @@ pub function (n: Net) sent(i: i32): u8[] {
 ```fern
 <<8 impl fetch.Transport for Net>>=
 impl fetch.Transport for Net {
-  function now_ns(self: Net): i64 {
-    return self.drv.clock_ns.get();
+  function now(self: Net): Instant {
+    return time.instant_from_nanos(self.drv.clock_ns.get());
   }
-  function wall_ms(self: Net): i64 {
-    return self.drv.clock_ns.get() / 1000000;
+  function wall(self: Net): time.Timestamp {
+    let d: Duration = time.duration_nanos(self.drv.clock_ns.get());
+    return time.Timestamp { sec: d.sec, nsec: d.nsec };
   }
   function random_bytes(self: Net, n: i32): u8[] {
     let out: u8[] = [];
@@ -250,7 +254,8 @@ impl fetch.Transport for Net {
     }
     return Ok(fetch.Lookup { dial: found, named: found, judged: found });
   }
-  function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
+  function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError] {
+    let timeout_ms: i64 = timeout.as_millis();
     let fallback_ms: i64 = dns.dial_options().fallback.as_millis();
     let start_ms: i64 = 0;
     let best_ms: i64 = 0 - 1;
@@ -273,13 +278,13 @@ impl fetch.Transport for Net {
     if (best_ms < 0) {
       return Err(net.ConnectionRefused);
     }
-    if (best_ms > timeout_ms as i64) {
-      if (!self.drv.advance_to(self.drv.clock_ns.get() + timeout_ms as i64 * 1000000)) {
+    if (best_ms > timeout_ms) {
+      if (!self.drv.advance_to(time.instant_from_nanos(self.drv.clock_ns.get()).add(timeout))) {
         return Err(net.Interrupted);
       }
       return Err(net.TimedOut);
     }
-    if (!self.drv.advance_to(self.drv.clock_ns.get() + best_ms * 1000000)) {
+    if (!self.drv.advance_to(time.instant_from_nanos(self.drv.clock_ns.get()).add(time.duration_millis(best_ms)))) {
       return Err(net.Interrupted);
     }
     let id: i32 = self.next.get();
@@ -316,15 +321,15 @@ impl fetch.Transport for Net {
     }
     let first_ms: i64 = 0;
     if (route >= 0) {
-      first_ms = __answer(self, route, answer).first_ms;
+      first_ms = __answer(self, route, answer).delay.as_millis();
     }
     __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
     return bytes.len();
   }
-  function read(self: Net, conn: i32, max: i32, wait_ms: i64): Result[net.Recv, net.NetError] {
+  function read(self: Net, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
     let row: string[] = __conn(self, conn);
     let now: i64 = self.drv.clock_ns.get();
-    let deadline: i64 = now + wait_ms * 1000000;
+    let deadline: i64 = now + wait.as_nanos();
     let route: i32 = __field(row, 3);
     if (row.len() == 0 || route == 0 - 1) {
       return Ok(__elapsed(self, deadline));
@@ -342,7 +347,7 @@ impl fetch.Transport for Net {
     if (ready > deadline) {
       return Ok(__elapsed(self, deadline));
     }
-    if (!self.drv.advance_to(ready)) {
+    if (!self.drv.advance_to(time.instant_from_nanos(ready))) {
       return Ok(net.Abandoned);
     }
     let size: i32 = a.bytes.len() - offset;
@@ -358,7 +363,7 @@ impl fetch.Transport for Net {
       out = out.append(a.bytes[offset + k]);
       k = k + 1;
     }
-    __set_conn(self, conn, __row(conn, row[1], __field(row, 2), route, __field(row, 4), offset + size, self.drv.clock_ns.get() + a.chunk_ms * 1000000, 1));
+    __set_conn(self, conn, __row(conn, row[1], __field(row, 2), route, __field(row, 4), offset + size, self.drv.clock_ns.get() + a.every.as_nanos(), 1));
     return Ok(net.Chunk(out));
   }
   function close(self: Net, conn: i32): i32 {
@@ -595,7 +600,7 @@ function __replayed(n: Net, e: __Exchange): Net {
     out = out.host(e.host, [addr]);
   }
   if (__connect_ms(out, addr, e.port) < 0) {
-    out = out.listen(addr, e.port, 0);
+    out = out.listen(addr, e.port, time.DURATION_ZERO);
   }
   let i: i32 = 0;
   while (i < out.routes.len()) {
@@ -659,7 +664,7 @@ function __canon(addr: string): string {
 function __connect_ms(n: Net, addr: string, port: i32): i64 {
   for l in n.listeners {
     if (l.addr == addr && l.port == port) {
-      return l.connect_ms;
+      return l.connect.as_millis();
     }
   }
   return 0 - 1;
@@ -689,7 +694,7 @@ function __addrs_of(n: Net, host: string): net.IpAddr[] {
 }
 
 function __elapsed(n: Net, to_ns: i64): net.Recv {
-  if (!n.drv.advance_to(to_ns)) {
+  if (!n.drv.advance_to(time.instant_from_nanos(to_ns))) {
     return net.Abandoned;
   }
   return net.Elapsed;
@@ -812,7 +817,7 @@ function __refused_entry(): string {
 function __answer(n: Net, route: i32, i: i32): Answer {
   if (route <= 0 - 3) {
     let entry: string = __journal_all(n.made.get())[0 - 3 - route];
-    return Answer { bytes: __journal_bytes(slice_unchecked(entry, 1, entry.len()).to_owned()), first_ms: 0, chunk_ms: 0, chunk: 0, close: entry[0] == b'c' };
+    return Answer { bytes: __journal_bytes(slice_unchecked(entry, 1, entry.len()).to_owned()), delay: time.DURATION_ZERO, every: time.DURATION_ZERO, chunk: 0, close: entry[0] == b'c' };
   }
   if (route < 0) {
     return reply(404, "");

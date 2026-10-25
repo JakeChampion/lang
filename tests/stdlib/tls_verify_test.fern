@@ -5,6 +5,7 @@ import "std/codec";
 import "std/tls/pem";
 import "std/tls/verify";
 import "std/tls/x509";
+import "std/time";
 
 function ec_root(): u8[] {
   return __codec_bytes(hex.decode("308201433081eaa003020102020101300a06082a8648ce3d04030230193117301506035504030c0e4665726e205465737420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a30193117301506035504030c0e4665726e205465737420526f6f743059301306072a8648ce3d020106082a8648ce3d030107034200040dcc7648c78a3118f2612866fe83ef19f40304f623399e1211a10f2b3d1c05cf30e8027677bcb912943e99ff71140ea9bc24713be1b75c31ff4054724c4f9d00a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300a06082a8648ce3d0403020348003045022051b74a89e235c981464cae54764206d65f11184dc5e78a5298441305ef3e72db022100d538cc2287d10ead1e561d7ecc33bf752db02620f12924df9728d20b5b4bd863"));
@@ -114,8 +115,8 @@ function emudhra_forged_leaf(): u8[] {
   return __codec_bytes(hex.decode("3082019130820137a003020102020110300a06082a8648ce3d040302303f310b3009060355040613024e4c31133011060355040a0c0a654d7564687261204256311b301906035504030c12454d20445620544c53204341202d20473342301e170d3236303130313030303030305a170d3237303130313030303030305a30163114301206035504030c0b6578616d706c652e636f6d3059301306072a8648ce3d020106082a8648ce3d03010703420004e3cb64c681d2e29ebe1f16db9d4e3d320685909cdc2bc9f9e471962e1fc310cc5e62e7066f5850c767f893205d280d610472019758c2f2ed1889a87746666f0ea34d304b300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130160603551d11040f300d820b6578616d706c652e636f6d300a06082a8648ce3d040302034800304502206e25054a2f5631cafaa9a923614ca08a1abfdf19a53dbe4f80887318c873e01202210085d08ea484b2d42a1c3f3a1f1f118c6faa7bf02e4126dee5ee946ea9e0d66224"));
 }
 
-function now(): i64 {
-  return 1780000000 as i64;
+function now(): time.Timestamp {
+  return time.timestamp_from_unix(1780000000);
 }
 
 function ec_roots(): verify.Roots {
@@ -188,7 +189,7 @@ function test_time(): test.TestOutcome {
   if (outcome(verify.verify_server([ec_leaf_expired(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: certificate 0 has expired") {
     return test.fail("expired");
   }
-  return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots(), "example.com", 1700000000 as i64)), "tls verify: certificate 0 is not yet valid");
+  return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots(), "example.com", time.timestamp_from_unix(1700000000))), "tls verify: certificate 0 is not yet valid");
 }
 
 function test_distrust_after(): test.TestOutcome {
@@ -201,11 +202,11 @@ function test_distrust_after(): test.TestOutcome {
       return test.fail("the leaf does not parse");
     }
   }
-  let before: verify.Roots = ec_roots().distrusting(0, issued - 1 as i64);
+  let before: verify.Roots = ec_roots().distrusting(0, time.timestamp_from_unix(issued - 1 as i64));
   if (outcome(verify.verify_server([ec_leaf(), ec_int()], before, "example.com", now())) != "tls verify: the leaf was issued after the date root 2 is distrusted from") {
     return test.fail("a leaf issued after the date: " + outcome(verify.verify_server([ec_leaf(), ec_int()], before, "example.com", now())));
   }
-  if (outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots().distrusting(0, issued), "example.com", now())) != "ok example.com") {
+  if (outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots().distrusting(0, time.timestamp_from_unix(issued)), "example.com", now())) != "ok example.com") {
     return test.fail("a leaf issued on the date");
   }
   return test.assert_eq(outcome(verify.verify_client([ec_leaf_client(), ec_int()], before, now())).starts_with("ok "), true);

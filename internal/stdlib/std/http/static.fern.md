@@ -234,7 +234,7 @@ struct Rep { path: string, st: FileStat, coding: string }
 <<9 function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: platform.Platform): HttpResponse>>=
 function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: platform.Platform): HttpResponse {
   let rep: Rep = __representation(req, d.options.precompressed, Rep { path: path, st: st, coding: "" }, plat);
-  let now: time.Timestamp = time.timestamp_from_unix(plat.now_ms() / (1000 as i64));
+  let now: time.Timestamp = plat.now();
   let v: cache.Validators = cache.Validators { etag: Some(__etag(rep)), last_modified: Some(time.timestamp_from_unix(rep.st.mtime)) };
   let full: HttpResponse = __headed(rep, d.options, content_type(path)).with_validators(v, now);
   match (cache.evaluate(req, v, now)) {

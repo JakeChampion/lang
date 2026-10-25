@@ -86,14 +86,15 @@ impl platform.Platform for MockPlatform {
     self.record("log", msg);
   }
 
-  function now_ms(self: MockPlatform): i64 {
-    self.record("now_ms", "");
-    return __canned_i64(self, "now_ms", 0i64);
+  function now(self: MockPlatform): time.Timestamp {
+    self.record("now", "");
+    let d: Duration = time.duration_nanos(__canned_i64(self, "now", 0i64));
+    return time.Timestamp { sec: d.sec, nsec: d.nsec };
   }
 
-  function elapsed_ns(self: MockPlatform): i64 {
-    self.record("elapsed_ns", "");
-    return __canned_i64(self, "elapsed_ns", 0i64);
+  function instant(self: MockPlatform): Instant {
+    self.record("instant", "");
+    return time.instant_from_nanos(__canned_i64(self, "instant", 0i64));
   }
 
   function env(self: MockPlatform, name: string): Option[string] {
@@ -138,24 +139,24 @@ impl platform.Platform for MockPlatform {
     self.record("stat", path);
     match (self.canned("file " + path)) {
       Some(content) => {
-        return Ok(__file_stat(false, content.len() as i64, __canned_i64(self, "mtime " + path, 0 as i64)));
+        return Ok(__file_stat(false, content.len() as i64, __canned_i64(self, "mtime " + path, 0 as i64), __canned_i64(self, "mtime_nsec " + path, 0 as i64)));
       },
       None => {}
     }
     match (self.canned("dir " + path)) {
       Some(d) => {
-        return Ok(__file_stat(true, 0 as i64, 0 as i64));
+        return Ok(__file_stat(true, 0 as i64, 0 as i64, 0 as i64));
       },
       None => {}
     }
     return Err(NotFound(path));
   }
 
-  function deadline(self: MockPlatform): Option[i64] {
+  function deadline(self: MockPlatform): Option[Instant] {
     self.record("deadline", "");
     match (self.canned("deadline")) {
       Some(at) => {
-        return Some(__canned_i64(self, "deadline", 0 as i64));
+        return Some(time.instant_from_nanos(__canned_i64(self, "deadline", 0 as i64)));
       },
       None => {
         return None;
@@ -240,12 +241,12 @@ pub function (m: MockPlatform) secret_set(name: string, value: string): void {
   m.can("secret " + name, value);
 }
 
-pub function (m: MockPlatform) now_set(ms: i64): void {
-  m.can("now_ms", ms.to_string());
+pub function (m: MockPlatform) now_set(t: time.Timestamp): void {
+  m.can("now", Duration { sec: t.sec, nsec: t.nsec }.as_nanos().to_string());
 }
 
-pub function (m: MockPlatform) elapsed_set(ns: i64): void {
-  m.can("elapsed_ns", ns.to_string());
+pub function (m: MockPlatform) instant_set(i: Instant): void {
+  m.can("instant", time.instant_nanos(i).to_string());
 }
 
 pub function (m: MockPlatform) random_set(v: i32): void {
@@ -256,17 +257,18 @@ pub function (m: MockPlatform) http_set(method: string, url: string, status: i32
   m.can("http " + method + " " + url, status.to_string() + " " + body);
 }
 
-pub function (m: MockPlatform) file_set(path: string, content: string, mtime: i64): void {
+pub function (m: MockPlatform) file_set(path: string, content: string, mtime: time.Timestamp): void {
   m.can("file " + path, content);
-  m.can("mtime " + path, mtime.to_string());
+  m.can("mtime " + path, mtime.sec.to_string());
+  m.can("mtime_nsec " + path, mtime.nsec.to_string());
 }
 
 pub function (m: MockPlatform) peer_set(addr: string): void {
   m.can("peer", addr);
 }
 
-pub function (m: MockPlatform) deadline_set(at: i64): void {
-  m.can("deadline", at.to_string());
+pub function (m: MockPlatform) deadline_set(at: Instant): void {
+  m.can("deadline", time.instant_nanos(at).to_string());
 }
 
 pub function (m: MockPlatform) trace_set(traceparent: string): void {
@@ -465,10 +467,10 @@ function __canned_range(content: string, offset: i64, len: i64): Option[u8[]] {
   return Some((slice_unchecked(content, offset as i32, (offset + len) as i32) + "").bytes());
 }
 
-function __file_stat(is_dir: boolean, size: i64, mtime: i64): FileStat {
+function __file_stat(is_dir: boolean, size: i64, mtime: i64, mtime_nsec: i64): FileStat {
   let z: i64 = 0 as i64;
   let u: u32 = 0 as u32;
-  return FileStat { is_file: !is_dir, is_dir: is_dir, size: size, mode: u, nlink: 1 as u32, uid: u, gid: u, dev: z, rdev: z, ino: z, blksize: z, blocks: z, atime: mtime, atime_nsec: z, mtime: mtime, mtime_nsec: z, ctime: mtime, ctime_nsec: z, btime: mtime, btime_nsec: z };
+  return FileStat { is_file: !is_dir, is_dir: is_dir, size: size, mode: u, nlink: 1 as u32, uid: u, gid: u, dev: z, rdev: z, ino: z, blksize: z, blocks: z, atime: mtime, atime_nsec: mtime_nsec, mtime: mtime, mtime_nsec: mtime_nsec, ctime: mtime, ctime_nsec: mtime_nsec, btime: mtime, btime_nsec: mtime_nsec };
 }
 
 function __canned_response(v: string): HttpResponse {
