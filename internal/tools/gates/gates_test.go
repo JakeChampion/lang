@@ -101,11 +101,14 @@ func TestCheckWarnsOfTodoStubs(t *testing.T) {
 	if len(ws) != 1 {
 		t.Fatalf("want one warning, got %v", ws)
 	}
-	if got, want := ws[0].Format("<stdin>"), "<stdin>:2:3: warning: `todo` stub remaining"; got != want {
+	if got, want := ws[0].Format("<stdin>"), "<stdin>:2:3: warning[W001]: `todo` stub remaining"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	if got, want := (Warning{Msg: "m"}).Format("x.fern"), "warning: m"; got != want {
+	if got, want := (Warning{Code: "W002", Msg: "m"}).Format("x.fern"), "warning[W002]: m"; got != want {
 		t.Errorf("a positionless warning: got %q, want %q", got, want)
+	}
+	if got, want := (Warning{Pos: ast.Position{Line: 4, Col: 1}, Path: "dep/lib.fern", Code: "W002", Msg: "m"}).Format("x.fern"), "dep/lib.fern:4:1: warning[W002]: m"; got != want {
+		t.Errorf("a warning in another file: got %q, want %q", got, want)
 	}
 }
 

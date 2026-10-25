@@ -66,7 +66,7 @@ func (c *checker) checkForEach(fe *ast.ForEach, parent *scope) ast.Stmt {
 
 func (c *checker) notIterable(fe *ast.ForEach, t ast.Type) ast.Stmt {
 	c.errfCode(fe.Iter.Pos(), "E083",
-		"cannot iterate over a value of type %s: `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", typeLabel(t))
+		"cannot iterate over a value of type %s: `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", t)
 	return &ast.Block{P: fe.P, Stmts: nil, Sugar: fe}
 }
 

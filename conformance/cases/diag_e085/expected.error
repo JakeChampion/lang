@@ -2,6 +2,7 @@ f64x2[] holds a lane value inside another type
 (f64x2, i32) holds a lane value inside another type
 simd.Dual[f64x2] holds a lane value inside another type
 a field or payload of type f64x2 holds a lane value
+main.fern:12:14: error[E085]: a field or payload of type f64x2 holds a lane value
 function twice takes or returns a lane value and cannot be used as a value
 a lambda cannot take or return a lane value
 a lambda cannot capture "c" of type f64x2
