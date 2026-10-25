@@ -5,6 +5,8 @@ pub enum Filter { Nearest, Bilinear }
 
 pub struct Dimensions { width: i32, height: i32 }
 
+pub struct BilinearAxis { first: i32, second: i32, weight: f64 }
+
 pub function nearest_index(index: i32, source_size: i32, output_size: i32): Result[i32, pixels.ImageError] {
   if (source_size <= 0 || output_size <= 0) {
     return Err(pixels.Dimensions);
@@ -48,6 +50,21 @@ function clamp(value: i32, maximum: i32): i32 {
   return value;
 }
 
+pub function bilinear_axis(index: i32, source_size: i32, output_size: i32): Result[BilinearAxis, pixels.ImageError] {
+  if (source_size <= 0 || output_size <= 0) {
+    return Err(pixels.Dimensions);
+  }
+  if (index < 0 || index >= output_size) {
+    return Err(pixels.Bounds);
+  }
+  let position: f64 = (index as f64 + 0.5) * (source_size as f64) / (output_size as f64) - 0.5;
+  if (position < 0.0) {
+    position = 0.0;
+  }
+  let first = clamp(position as i32, source_size - 1);
+  return Ok(BilinearAxis { first: first, second: clamp(first + 1, source_size - 1), weight: position - first as f64 });
+}
+
 function byte(value: f64): u8 {
   if (value <= 0.0) {
     return 0 as u8;
@@ -75,26 +92,10 @@ function channel(a: u8, b: u8, c: u8, d: u8, aa: f64, ba: f64, ca: f64, da: f64,
   return byte(color.linear_to_srgb(linear));
 }
 
-function bilinear(source: pixels.Image, x: f64, y: f64): Result[pixels.Pixel, pixels.ImageError] {
-  // Clamp the continuous map before truncation to an integer index.
-  let sx: f64 = x;
-  let sy: f64 = y;
-  if (sx < 0.0) {
-    sx = 0.0;
+pub function interpolate(a: pixels.Pixel, b: pixels.Pixel, c: pixels.Pixel, d: pixels.Pixel, fx: f64, fy: f64): Result[pixels.Pixel, pixels.ImageError] {
+  if (fx != fx || fy != fy || fx < 0.0 || fx > 1.0 || fy < 0.0 || fy > 1.0) {
+    return Err(pixels.Bounds);
   }
-  if (sy < 0.0) {
-    sy = 0.0;
-  }
-  let x0: i32 = clamp(sx as i32, source.layout.width - 1);
-  let y0: i32 = clamp(sy as i32, source.layout.height - 1);
-  let x1: i32 = clamp(x0 + 1, source.layout.width - 1);
-  let y1: i32 = clamp(y0 + 1, source.layout.height - 1);
-  let fx: f64 = sx - x0 as f64;
-  let fy: f64 = sy - y0 as f64;
-  let a = pixels.read_pixel(source, x0, y0)?;
-  let b = pixels.read_pixel(source, x1, y0)?;
-  let c = pixels.read_pixel(source, x0, y1)?;
-  let d = pixels.read_pixel(source, x1, y1)?;
   let aa: f64 = a.a as f64 / 255.0;
   let ba: f64 = b.a as f64 / 255.0;
   let ca: f64 = c.a as f64 / 255.0;
@@ -105,6 +106,14 @@ function bilinear(source: pixels.Image, x: f64, y: f64): Result[pixels.Pixel, pi
     g: channel(a.g, b.g, c.g, d.g, aa, ba, ca, da, alpha, fx, fy),
     b: channel(a.b, b.b, c.b, d.b, aa, ba, ca, da, alpha, fx, fy), a: byte(alpha),
   });
+}
+
+function bilinear(source: pixels.Image, x: BilinearAxis, y: BilinearAxis): Result[pixels.Pixel, pixels.ImageError] {
+  let a = pixels.read_pixel(source, x.first, y.first)?;
+  let b = pixels.read_pixel(source, x.second, y.first)?;
+  let c = pixels.read_pixel(source, x.first, y.second)?;
+  let d = pixels.read_pixel(source, x.second, y.second)?;
+  return interpolate(a, b, c, d, x.weight, y.weight);
 }
 
 pub function resize(source: pixels.Image, width: i32, height: i32, filter: Filter, limits: pixels.Limits): Result[pixels.Image, pixels.ImageError] {
@@ -118,15 +127,13 @@ pub function resize(source: pixels.Image, width: i32, height: i32, filter: Filte
   while (y < height) {
     let x: i32 = 0;
     while (x < width) {
-      let sx: f64 = (x as f64 + 0.5) * (source.layout.width as f64) / (width as f64);
-      let sy: f64 = (y as f64 + 0.5) * (source.layout.height as f64) / (height as f64);
       let value: pixels.Pixel = first;
       match (filter) {
         Nearest => {
           value = pixels.read_pixel(source, nearest_index(x, source.layout.width, width)?, nearest_index(y, source.layout.height, height)?)?;
         },
         Bilinear => {
-          value = bilinear(source, sx - 0.5, sy - 0.5)?;
+          value = bilinear(source, bilinear_axis(x, source.layout.width, width)?, bilinear_axis(y, source.layout.height, height)?)?;
         }
       }
       output = pixels.write_pixel(output, x, y, value)?;

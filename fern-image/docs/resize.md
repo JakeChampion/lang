@@ -34,6 +34,11 @@ Cancellation, no-upscale, cover, crop, rotation, and SIMD remain future work.
 
 ## Verification
 
+`bilinear_axis` exposes the checked center map for row providers.
+`interpolate` combines four pixels with finite weights in the inclusive range from zero to one.
+Invalid dimensions, indices, or weights return an explicit error.
+Both eager and row execution use these helpers.
+
 Eight native cases check solid colors, single rows, single columns, odd dimensions, and extreme aspect ratios.
 Golden outputs check nearest selection, two-dimensional RGB and mixed-alpha interpolation, and transparent color isolation.
 Rejection cases cover invalid dimensions, multiplication overflow, caller budgets, and malformed source storage.

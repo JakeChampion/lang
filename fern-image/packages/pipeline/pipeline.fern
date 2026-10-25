@@ -2,7 +2,7 @@ import "../pixels/pixels";
 import "../resize/resize";
 import "core/cmp";
 
-pub enum Operation { ImageSource(pixels.Image), SolidSource(pixels.Pixel), NearestSource(i32) }
+pub enum Operation { ImageSource(pixels.Image), SolidSource(pixels.Pixel), NearestSource(i32), BilinearSource(i32) }
 
 pub struct Node { width: i32, height: i32, format: pixels.Format, operation: Operation }
 
@@ -69,6 +69,18 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
           return Err(InvalidGraph);
         }
         cost = Cost { scratch: cost.scratch + costs[parent].scratch, samples: cost.samples + costs[parent].samples };
+      },
+      BilinearSource(parent) => {
+        if (parent < 0 || parent >= i) {
+          return Err(InvalidGraph);
+        }
+        let input = graph.nodes[parent];
+        if (pixels.channels(node.format) != pixels.channels(input.format)) {
+          return Err(InvalidGraph);
+        }
+        let input_bytes: i64 = input.width as i64 * (pixels.channels(input.format) as i64);
+        cost = Cost { scratch: cost.scratch + input_bytes + costs[parent].scratch,
+          samples: cost.samples + costs[parent].samples * 2 };
       }
     }
     if (cost.scratch > limits.max_scratch_bytes as i64 || cost.samples > limits.max_samples as i64) {
@@ -101,6 +113,15 @@ pub function nearest(graph: Graph, width: i32, height: i32, limits: Limits): Res
   return Ok(output);
 }
 
+pub function bilinear(graph: Graph, width: i32, height: i32, limits: Limits): Result[Graph, PipelineError] {
+  analyze(graph, limits)?;
+  let parent = graph.nodes.len() - 1;
+  let node = Node { width: width, height: height, format: graph.nodes[parent].format, operation: BilinearSource(parent) };
+  let output = Graph { nodes: graph.nodes.append(node) };
+  analyze(output, limits)?;
+  return Ok(output);
+}
+
 pub function metadata(graph: Graph, limits: Limits): Result[Metadata, PipelineError] {
   analyze(graph, limits)?;
   let node = graph.nodes[graph.nodes.len() - 1];
@@ -112,31 +133,70 @@ pub function required_scratch(graph: Graph, limits: Limits): Result[i32, Pipelin
   return Ok(cost.scratch as i32);
 }
 
-function render_node(graph: Graph, at: i32, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
-  if (cancelled()) {
-    return Err(Cancelled);
-  }
-  let node = graph.nodes[at];
+function fill_row(node: Node, limits: Limits, cancelled: () => boolean, sample: (i32) => Result[pixels.Pixel, PipelineError]): Result[pixels.Image, PipelineError] {
   let row_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_row_bytes };
-  let source_row: Option[pixels.Image] = None;
-  match (node.operation) {
-    NearestSource(parent) => {
-      let source_y = match (resize.nearest_index(y, graph.nodes[parent].height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
-      source_row = Some(render_node(graph, parent, source_y, limits, cancelled)?);
-    },
-    _ => {}
-  }
   let row = match (pixels.create(node.width, 1, node.width * pixels.channels(node.format), node.format, row_limits)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
   let x = 0;
   while (x < node.width) {
     if (x % 64 == 0 && cancelled()) {
       return Err(Cancelled);
     }
-    let pixel = match (node.operation) { ImageSource(image) => match (pixels.read_pixel(image, x, y)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } }, SolidSource(value) => value, NearestSource(parent) => { let input = match (source_row) { Some(v) => v, None => { return Err(InvalidGraph); } }; let source_x = match (resize.nearest_index(x, graph.nodes[parent].width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } }; match (pixels.read_pixel(input, source_x, 0)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } } } };
+    let pixel = sample(x)?;
     row = match (pixels.write_pixel(row, x, 0, pixel)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
     x = x + 1;
   }
   return Ok(row);
+}
+
+function read(image: pixels.Image, x: i32, y: i32): Result[pixels.Pixel, PipelineError] {
+  return match (pixels.read_pixel(image, x, y)) { Ok(v) => Ok(v), Err(e) => Err(Pixel(e)) };
+}
+
+function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+  let input = graph.nodes[parent];
+  let axis = match (resize.bilinear_axis(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
+  let first = render_node(graph, parent, axis.first, limits, cancelled)?;
+  let second = first;
+  if (axis.second != axis.first) {
+    second = render_node(graph, parent, axis.second, limits, cancelled)?;
+  }
+  let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
+    let horizontal = match (resize.bilinear_axis(x, input.width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
+    let a = read(first, horizontal.first, 0)?;
+    let b = read(first, horizontal.second, 0)?;
+    let c = read(second, horizontal.first, 0)?;
+    let d = read(second, horizontal.second, 0)?;
+    return match (resize.interpolate(a, b, c, d, horizontal.weight, axis.weight)) { Ok(v) => Ok(v), Err(e) => Err(Pixel(e)) };
+  };
+  return fill_row(node, limits, cancelled, sample);
+}
+
+function render_node(graph: Graph, at: i32, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {
+  if (cancelled()) {
+    return Err(Cancelled);
+  }
+  let node = graph.nodes[at];
+  match (node.operation) {
+    ImageSource(image) => {
+      return fill_row(node, limits, cancelled, (x: i32): Result[pixels.Pixel, PipelineError] => read(image, x, y));
+    },
+    SolidSource(value) => {
+      return fill_row(node, limits, cancelled, (_x: i32): Result[pixels.Pixel, PipelineError] => Ok(value));
+    },
+    NearestSource(parent) => {
+      let input = graph.nodes[parent];
+      let source_y = match (resize.nearest_index(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
+      let row = render_node(graph, parent, source_y, limits, cancelled)?;
+      let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
+        let source_x = match (resize.nearest_index(x, input.width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
+        return read(row, source_x, 0);
+      };
+      return fill_row(node, limits, cancelled, sample);
+    },
+    BilinearSource(parent) => {
+      return render_bilinear(graph, node, parent, y, limits, cancelled);
+    }
+  }
 }
 
 pub function render_row(graph: Graph, y: i32, limits: Limits, cancelled: () => boolean): Result[pixels.Image, PipelineError] {

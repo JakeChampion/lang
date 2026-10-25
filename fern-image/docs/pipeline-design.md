@@ -1,9 +1,13 @@
 # Row pipeline and future region engine
 
 The first pipeline slice renders individual RGB8/RGBA8 rows on demand.
-It supports materialized image sources, generated solid sources, and nearest-neighbor nodes.
+It supports materialized image sources, generated solid sources, nearest-neighbor nodes, and bilinear nodes.
 A solid source needs no complete image allocation.
 Each nearest node requests one input row for the requested output row.
+Each bilinear node requests at most two input rows.
+
+The bilinear kernel shares the coordinate map and linear-light premultiplied-alpha interpolation with eager resize.
+Successive nodes retain intermediate byte rounding, so their output matches successive eager operations.
 
 `metadata` returns complete output dimensions. `render_row` returns an owned image with height one.
 The graph's final node is its output.
@@ -17,12 +21,16 @@ The graph contains at most 64 nodes. Row and scratch byte limits cannot exceed 6
 Dimensions and metadata products use i64 arithmetic before bounds checks.
 Nearest coordinates share the checked integer center map with the eager resize module.
 
-For each input path, the scratch estimate is twice the sum of row sizes.
+Source scratch is twice its row size. Nearest scratch adds twice the output row size to parent scratch.
+Bilinear scratch also adds one parent row size, because the first row remains live during the second request.
 The factor of two accounts for temporary copies during immutable updates.
 The estimate excludes allocator overhead, graph metadata, retained source images, and caller-retained output rows.
 It does not establish a hard process memory limit or a recoverable OOM guarantee.
 
-The sample budget sums row widths along the path.
+The nearest sample budget adds the output row width to parent samples.
+The bilinear sample budget adds the output row width to twice the parent samples.
+This conservative estimate also covers boundary requests that reuse one row.
+Each intermediate cost must pass the budget before another node can multiply it.
 It bounds sample evaluations, not instructions, copy costs, or elapsed CPU time.
 Every node must satisfy the limits, even when the output does not use that node.
 
@@ -39,10 +47,12 @@ No threading or concurrent mutation guarantee follows from these contracts.
 
 ## Verification
 
-Eight cases cover virtual sources, eager agreement, budgets, graph safety, cancellation, and row isolation.
+Thirteen cases cover virtual sources, eager agreement, budgets, graph safety, cancellation, and row isolation.
 The virtual-source case represents ten million pixels and returns only a 2,000-byte row.
 Depth tests execute a 64-node path and reject the next node.
 Coordinate tests exercise i32 boundary dimensions without allocation of a large image.
+Bilinear cases cover padded RGB/RGBA chains, single rows and columns, mixed-alpha goldens, and recursive work limits.
+Cancellation cases retain the first input row or both input rows and a partial output row.
 
 Native x86-64 and ARM64 under QEMU use the heap sanitizer.
 The same cases also execute through Wasmtime.
@@ -57,7 +67,7 @@ A scheduler must enforce scratch budgets and release rows after their final cons
 Codec access patterns determine whether a node can request arbitrary regions.
 Sequential codecs cannot promise efficient arbitrary tile access.
 
-Tiles, caching, fusion, bilinear row execution, and decoder row providers remain future work.
+Tiles, caching, fusion, and decoder row providers remain future work.
 PNG decoding still materializes its complete decoded image.
 The row interface does not assume that every codec supports efficient arbitrary regions.
 
