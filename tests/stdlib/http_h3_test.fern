@@ -171,12 +171,15 @@ function writes_on(s: h3.Session, id: i64): i32 {
   return n;
 }
 
-function test_send_response(): test.TestOutcome {
+function test_send_section(): test.TestOutcome {
   let p: Link = linked();
   p = flow(Link { ...p, c: p.c.send_headers(0 as i64, get("/"), true).send_headers(4 as i64, get("/t"), true).send_headers(8 as i64, get("/e"), true), log: "" });
-  let s: h3.Session = p.s.send_response(0 as i64, [qpack.field(":status", "200"), qpack.field("content-type", "text/plain")], "hello".bytes(), true);
-  s = s.send_response(4 as i64, [qpack.field(":status", "200")], "ab".bytes(), false).send_trailers(4 as i64, [qpack.field("x-done", "1")]);
-  s = s.send_response(8 as i64, [qpack.field(":status", "200")], [], true);
+  let enc: qpack.Encoder = p.s.enc;
+  let head: u8[] = enc.put_status(enc.section(16), 200);
+  head = enc.put(head, "content-type", "text/plain");
+  let s: h3.Session = p.s.send_section(0 as i64, head, "hello".as_bytes(), true);
+  s = s.send_section(4 as i64, enc.encode([qpack.field(":status", "200")]), "ab".as_bytes(), false).send_trailers(4 as i64, [qpack.field("x-done", "1")]);
+  s = s.send_section(8 as i64, enc.put_status(enc.section(0), 200), [], true);
   let writes: string = writes_on(s, 0 as i64).to_string() + "/" + writes_on(s, 4 as i64).to_string() + "/" + writes_on(s, 8 as i64).to_string();
   p = flow(Link { ...p, s: s, log: "" });
   return test.assert_eq(writes + " | " + p.log, "1/2/1 | client headers 0 [:status=200 content-type=text/plain ]; client data 0 hello; client end 0; client headers 4 [:status=200 ]; client data 4 ab; client trailers 4 [x-done=1 ]; client end 4; client headers 8 [:status=200 ]; client end 8; ");
@@ -337,7 +340,7 @@ function int_text(n: i32): string {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h3");
   r = r.it("a request and its response", test_request_response);
-  r = r.it("a response's header section and body go out as one write", test_send_response);
+  r = r.it("a response's header section and body go out as one write", test_send_section);
   r = r.it("a body and trailers a byte at a time, and an interim response", test_body_trailers_interim);
   r = r.it("HEAD and 304 responses carry no body", test_bodiless);
   r = r.it("malformed messages are stream errors", test_malformed);

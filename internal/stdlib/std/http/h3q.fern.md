@@ -51,6 +51,7 @@ import "std/unicode";
 ```fern
 <<dependencies 2>>=
 import "std/quic/conn";
+import "std/quic/streams";
 import "std/http/h3";
 import "std/http/qpack";
 import "std/headers";
@@ -155,34 +156,43 @@ pub function (c: Conn) close(now: i64): Conn {
 <<5 function (c: Conn) __stepped(now: i64): Conn>>=
 function (c: Conn) __stepped(now: i64): Conn {
   let evs: conn.Event[] = c.quic.events;
-  if (evs.len() == 0) {
+  let notes: streams.Event[] = c.quic.stream_events();
+  if (evs.len() == 0 && notes.len() == 0) {
     return c.__applied(now);
   }
   let cur: Conn = Conn { ...c, quic: c.quic.events_taken() };
   for e in evs {
-    cur = cur.__quic_event(e, now);
+    cur = cur.__quic_event(e);
+  }
+  for n in notes {
+    cur = cur.__stream_event(n);
   }
   return cur.__applied(now);
 }
 
-function (c: Conn) __quic_event(e: conn.Event, now: i64): Conn {
+function (c: Conn) __quic_event(e: conn.Event): Conn {
   match (e) {
     conn.Connected => {
       return c.__started();
     },
-    conn.StreamReadable(id) => {
-      return c.__readable(id);
-    },
-    conn.StreamReset(id, code) => {
-      return Conn { ...c, session: c.session.on_reset(id, code) };
-    },
-    conn.StreamStopped(id, code) => {
-      return Conn { ...c, session: c.session.on_reset(id, code) };
-    },
     conn.Closed(why) => {
       return Conn { ...c, events: c.events.append(Ended(why)) };
+    }
+  }
+}
+
+function (c: Conn) __stream_event(n: streams.Event): Conn {
+  match (n) {
+    streams.Readable(id) => {
+      return c.__readable(id);
     },
-    _ => {
+    streams.ResetByPeer(id, code) => {
+      return Conn { ...c, session: c.session.on_reset(id, code) };
+    },
+    streams.StopRequested(id, code) => {
+      return Conn { ...c, session: c.session.on_reset(id, code) };
+    },
+    streams.Opened(_) => {
       return c;
     }
   }
@@ -239,11 +249,50 @@ function (c: Conn) __applied(now: i64): Conn {
       return cur;
     }
     cur = Conn { ...cur, session: cur.session.taken(), quic: __acts(cur.quic, acts, now) };
-    for e in evs {
-      cur = cur.__session_event(e);
+    let k: i32 = 0;
+    while (k < evs.len()) {
+      let id: i64 = __ended_by(evs, k);
+      if (id >= 0) {
+        cur = cur.__whole(id, evs[k]);
+        k = k + 2;
+      } else {
+        cur = cur.__session_event(evs[k]);
+        k = k + 1;
+      }
     }
   }
   return cur;
+}
+
+// __ended_by is the stream whose header section at evs[k] the next event
+// ends, or -1: a whole message with no body, taken without a Partial to
+// gather one.
+function __ended_by(evs: h3.Event[], k: i32): i64 {
+  if (k + 1 >= evs.len()) {
+    return 0 - 1 as i64;
+  }
+  let Some(id) = __headers_of(evs[k]) else {
+    return 0 - 1 as i64;
+  };
+  match (evs[k + 1]) {
+    h3.StreamEnded(end) => {
+      if (end == id) {
+        return id;
+      }
+    },
+    _ => {}
+  }
+  return 0 - 1 as i64;
+}
+
+function __headers_of(e: h3.Event): Option[i64] {
+  match (e) {
+    h3.HeadersReceived(id, _) => {
+      return Some(id);
+    },
+    _ => {}
+  }
+  return None;
 }
 
 function __acts(q: conn.Conn, acts: h3.Action[], now: i64): conn.Conn {
@@ -300,17 +349,48 @@ function (c: Conn) __session_event(e: h3.Event): Conn {
 }
 
 function (c: Conn) __headers(id: i64, fields: qpack.Field[]): Conn {
-  let next: i64 = c.next;
-  if (c.session.is_server()) {
-    if (c.stopping && id >= next) {
-      return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
-    }
-    if (id + 4 > next) {
-      next = id + 4;
-    }
+  if (c.__rejects(id)) {
+    return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
   }
   let kept: Partial[] = __without(c.partials, id);
-  return Conn { ...c, partials: kept.append(Partial { id: id, fields: fields, body: [], trailers: [] }), next: next };
+  return Conn { ...c, partials: kept.append(Partial { id: id, fields: fields, body: [], trailers: [] }), next: c.__next_for(id) };
+}
+
+// __whole takes a message whose header section, the event e, ends its
+// stream.
+function (c: Conn) __whole(id: i64, e: h3.Event): Conn {
+  if (c.__rejects(id)) {
+    return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
+  }
+  let none: qpack.Field[] = [];
+  let next: i64 = c.__next_for(id);
+  let rest: Partial[] = c.partials;
+  if (__find(rest, id) >= 0) {
+    rest = __without(rest, id);
+  }
+  match (e) {
+    h3.HeadersReceived(_, fields) => {
+      if (c.session.is_server()) {
+        return Conn { ...c, partials: rest, next: next, events: c.events.append(Requested(id, __request(fields, [], none))) };
+      }
+      return Conn { ...c, partials: rest, next: next, events: c.events.append(Responded(id, __response(fields, [], none))) };
+    },
+    _ => {}
+  }
+  return Conn { ...c, partials: rest, next: next };
+}
+
+// __rejects says a server that is shutting down refuses request stream id.
+function (c: Conn) __rejects(id: i64): boolean {
+  return c.session.is_server() && c.stopping && id >= c.next;
+}
+
+// __next_for is the request stream a server's GOAWAY names once id opens.
+function (c: Conn) __next_for(id: i64): i64 {
+  if (c.session.is_server() && id + 4 > c.next) {
+    return id + 4;
+  }
+  return c.next;
 }
 
 function (c: Conn) __data(id: i64, data: u8[]): Conn {
@@ -342,17 +422,17 @@ function (c: Conn) __ended(id: i64): Conn {
   let p: Partial = c.partials[i];
   let rest: Partial[] = __without(c.partials, id);
   if (c.session.is_server()) {
-    return Conn { ...c, partials: rest, events: c.events.append(Requested(id, __request(p))) };
+    return Conn { ...c, partials: rest, events: c.events.append(Requested(id, __request(p.fields, p.body, p.trailers))) };
   }
-  return Conn { ...c, partials: rest, events: c.events.append(Responded(id, __response(p))) };
+  return Conn { ...c, partials: rest, events: c.events.append(Responded(id, __response(p.fields, p.body, p.trailers))) };
 }
 
-function __request(p: Partial): HttpRequest {
+function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpRequest {
   let hs: HeaderMap = headers.header_map_new();
   let authority: string = "";
   let method: string = "";
   let path: string = "";
-  for f in p.fields {
+  for f in fields {
     if (f.name == ":method") {
       method = f.value;
     } else if (f.name == ":path") {
@@ -366,20 +446,20 @@ function __request(p: Partial): HttpRequest {
   if (authority.len() > 0 && !hs.has("host")) {
     hs = hs.append("host", authority);
   }
-  return HttpRequest { method: method, path: path, body: ByteStream { data: p.body, pos: 0, source: None }, headers: hs, trailers: __map(p.trailers) };
+  return HttpRequest { method: method, path: path, body: ByteStream { data: body, pos: 0, source: None }, headers: hs, trailers: __map(trailers) };
 }
 
-function __response(p: Partial): HttpResponse {
+function __response(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpResponse {
   let status: i32 = 0;
   let hs: HeaderMap = headers.header_map_new();
-  for f in p.fields {
+  for f in fields {
     if (f.name == ":status") {
       status = i32.parse_i32(f.value).unwrap_or(0);
     } else if (!f.name.starts_with(":")) {
       hs = hs.append(f.name, f.value);
     }
   }
-  return HttpResponse { status: status, body: BodyBytes(p.body), headers: hs, trailers: __map(p.trailers), background: None };
+  return HttpResponse { status: status, body: BodyBytes(body), headers: hs, trailers: __map(trailers), background: None };
 }
 
 function __map(fields: qpack.Field[]): HeaderMap {
@@ -390,27 +470,33 @@ function __map(fields: qpack.Field[]): HeaderMap {
   return hs;
 }
 
-function __response_fields(resp: HttpResponse, length: i64, date: string): qpack.Field[] {
-  let fs: qpack.Field[] = [qpack.status(resp.status)];
+// __response_section encodes a response's header section, adding date
+// and content-length when the response has none, without building its
+// field list.
+function __response_section(enc: qpack.Encoder, resp: HttpResponse, length: i64, date: string): u8[] {
+  let names: string[] = resp.headers.names;
+  let room: i32 = date.len() + 32;
+  for i in 0..names.len() {
+    room = room + names[i].len() + resp.headers.values[i].len() + 4;
+  }
+  let out: u8[] = enc.put_status(enc.section(room), resp.status);
   let has_length: boolean = false;
   let has_date: boolean = false;
-  let i: i32 = 0;
-  while (i < resp.headers.names.len()) {
-    let name: string = resp.headers.names[i].to_lower();
+  for i in 0..names.len() {
+    let name: string = names[i].to_lower();
     has_length = has_length || name == "content-length";
     has_date = has_date || name == "date";
     if (!__connection_specific(name)) {
-      fs = fs.append(qpack.field(name, resp.headers.values[i]));
+      out = enc.put(out, name, resp.headers.values[i]);
     }
-    i = i + 1;
   }
   if (!has_date && date.len() > 0) {
-    fs = fs.append(qpack.field("date", date));
+    out = enc.put(out, "date", date);
   }
   if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
-    fs = fs.append(qpack.field("content-length", length.to_string()));
+    out = enc.put_length(out, length);
   }
-  return fs;
+  return out;
 }
 
 function __connection_specific(name: string): boolean {
@@ -452,12 +538,23 @@ function __trailer_fields(t: HeaderMap): qpack.Field[] {
 ```fern
 <<8 pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn>>=
 pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
-  let body: u8[] = resp.body_bytes();
+  match (resp.body) {
+    BodyText(s) => {
+      return c.__respond_with(id, resp, s.as_bytes());
+    },
+    _ => {
+      return c.__respond_with(id, resp, resp.body_bytes());
+    }
+  }
+}
+
+function (c: Conn) __respond_with(id: i64, resp: HttpResponse, bytes: [u8]): Conn {
+  let n: i32 = bytes.len();
   if (http.http_bodiless(resp.status)) {
-    body = [];
+    n = 0;
   }
   let whole: boolean = resp.trailers.names.len() == 0;
-  let sent: Conn = Conn { ...c, session: c.session.send_response(id, __response_fields(resp, body.len() as i64, c.date), body, whole) }.__applied(0 as i64);
+  let sent: Conn = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, n as i64, c.date), bytes[0:n], whole) }.__applied(0 as i64);
   if (whole) {
     return sent;
   }
@@ -465,7 +562,7 @@ pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
 }
 
 pub function (c: Conn) respond_head(id: i64, resp: HttpResponse, length: i64): Conn {
-  return Conn { ...c, session: c.session.send_headers(id, __response_fields(resp, length, c.date), false) }.__applied(0 as i64);
+  return Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, length, c.date), [], false) }.__applied(0 as i64);
 }
 
 pub function (c: Conn) write(id: i64, bytes: [u8]): Conn {

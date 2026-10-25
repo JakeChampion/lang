@@ -190,6 +190,12 @@ function pick(name: string): Case {
     if (name == "pair-word-unreleased-on-a-payload-tag") {
         return Case { f: pair_word_case("pair7"), modes: [], returns_unit: false };
     }
+    if (name == "pair-lane-holds-no-unit") {
+        // A paired call's 64-bit lane (op 1) holds an integer, not a
+        // reference, so the frame owes nothing for it under any tag.
+        let b0: ssa.SBlock = block(0, [], [call(0, "pair3", []), inst(59, 1, [], 1, "call_word"), const_int(2, 0)], ret(2));
+        return Case { f: func(0, 3, [b0]), modes: [], returns_unit: false };
+    }
     if (name == "token-retain-under-test-consumed-after-join") {
         // #12181: a field read off the token's box before any test of the
         // token, retained where the token is null (where the box is released
@@ -439,7 +445,9 @@ function main(): i32 {
     // a reference under tag 0, under tags 0 and 1, and under every tag of
     // 0..2.
     let abis: rccertify.Abis = rccertify.abis_of(["case", "pair1", "pair3", "pair7", "take"], [c.modes, [], [], [], [rccertify.counted_mode()]], [c.returns_unit, false, false, false, false], [false, false, false, false, false], [0, 1, 3, 7, 0], [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]], [false, false, false, false, false]);
-    let irops: ir.Op[] = [];
+    // A case's call_word names op 0, the first pair word, or op 1, the
+    // first slot's lane.
+    let irops: ir.Op[] = [ir.op_call_pair_word(0), ir.op_call_scalar_word(0)];
     let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), rcsigs.op_table());
     for x in r.findings {
         print(rccertify.render("case", x));
@@ -490,6 +498,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},
 		{"pair-word-released-on-each-payload-tag", nil, 0, ""},
 		{"pair-word-unreleased-on-a-payload-tag", []string{"leaked where it dies of v1"}, 0, ""},
+		{"pair-lane-holds-no-unit", nil, 0, ""},
 		{"token-retain-under-test-consumed-after-join", []string{"spent without a unit of v4"}, 0, ""},
 		{"token-retain-under-test-released-under-test", nil, 0, ""},
 		{"derived-token-test-skips-the-shell", nil, 0, ""},
