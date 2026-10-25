@@ -310,6 +310,17 @@ widened before conversion to nanoseconds, and each call releases the temporary
 list, returned indices, return area and timer. Direct `wasm_poll` remains an
 indefinite wait.
 
+`poll` is the `now` capability: its timeout is a wakeup driven by a clock,
+and the tokens it waits on carry their own capability (`tcp_pollable` is
+`tcp`). `wasm_timer_pollable`, `wasm_pollable_drop`, `wasm_block` and
+`wasm_poll` are the `pollable` capability, the wasi:io pollable a wait blocks
+on, which only the two wasi profiles grant, so E066 refuses them on the
+natives and the freestanding targets. A native readiness token is the
+descriptor itself, a native deadline is the wait's timeout, and `timer_fd`
+is the native timer. std/async reaches the timer and the drop under a
+`target_os()` branch. Both interpreters answer them as a host without
+pollables would: -1 for a timer and a `wasm_poll`, 0 for a block and a drop.
+
 ## CPU baseline
 
 Fern emits **static binaries with no runtime CPU dispatch**, so every

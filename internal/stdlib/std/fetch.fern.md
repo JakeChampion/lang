@@ -3548,7 +3548,7 @@ function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
       let none: u8[] = [];
       return Ready(none);
     }
-    let dropped: i32 = wasm_pollable_drop(woken);
+    let dropped: i32 = async.drop_pollable(woken);
     match (net.read_up_to(c, 4096)) {
       Ok(got) => {
         if (got.len() == 0) {
