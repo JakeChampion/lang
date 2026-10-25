@@ -24,8 +24,6 @@ Insert and copy lengths use the base and extra-bit tables from section 5 of the 
 
 ```fern
 <<Types and length codes>>=
-import "std/array";
-
 struct Writer { bytes: u8[], at: i32, acc: u64, used: i32 }
 
 const REVERSE_BYTE: u8[] = [0, 128, 64, 192, 32, 160, 96, 224, 16, 144, 80, 208, 48, 176, 112, 240, 8, 136, 72, 200, 40, 168, 104, 232, 24, 152, 88, 216, 56, 184, 120, 248, 4, 132, 68, 196, 36, 164, 100, 228, 20, 148, 84, 212, 52, 180, 116, 244, 12, 140, 76, 204, 44, 172, 108, 236, 28, 156, 92, 220, 60, 188, 124, 252, 2, 130, 66, 194, 34, 162, 98, 226, 18, 146, 82, 210, 50, 178, 114, 242, 10, 138, 74, 202, 42, 170, 106, 234, 26, 154, 90, 218, 58, 186, 122, 250, 6, 134, 70, 198, 38, 166, 102, 230, 22, 150, 86, 214, 54, 182, 118, 246, 14, 142, 78, 206, 46, 174, 110, 238, 30, 158, 94, 222, 62, 190, 126, 254, 1, 129, 65, 193, 33, 161, 97, 225, 17, 145, 81, 209, 49, 177, 113, 241, 9, 137, 73, 201, 41, 169, 105, 233, 25, 153, 89, 217, 57, 185, 121, 249, 5, 133, 69, 197, 37, 165, 101, 229, 21, 149, 85, 213, 53, 181, 117, 245, 13, 141, 77, 205, 45, 173, 109, 237, 29, 157, 93, 221, 61, 189, 125, 253, 3, 131, 67, 195, 35, 163, 99, 227, 19, 147, 83, 211, 51, 179, 115, 243, 11, 139, 75, 203, 43, 171, 107, 235, 27, 155, 91, 219, 59, 187, 123, 251, 7, 135, 71, 199, 39, 167, 103, 231, 23, 151, 87, 215, 55, 183, 119, 247, 15, 143, 79, 207, 47, 175, 111, 239, 31, 159, 95, 223, 63, 191, 127, 255];
@@ -97,6 +95,18 @@ function align(own w: Writer): Writer {
   }
   return w;
 }
+
+// The written bytes, with the last byte padded. The buffer becomes the
+// result, so no byte is copied.
+function finish(own w: Writer): u8[] {
+  w = align(w);
+  let bytes: u8[] = w.bytes;
+  let none: u8[] = [];
+  let at: i32 = w.at;
+  w = Writer { ...w, bytes: none };
+  __arr_set_len(bytes, at);
+  return bytes;
+}
 ```
 
 ## Describe prefix trees
@@ -165,17 +175,49 @@ The final command can end after its literals. A repeated distance needs no extra
 
 ```fern
 <<Encode commands>>=
-function length_code(length: i32, bases: i32[]): i32 {
-  let at: i32 = 0;
-  while (at < 23 && bases[at + 1] <= length) {
-    at = at + 1;
+function log2(x: i32): i32 {
+  return 31 - __clz32(x as u32);
+}
+
+// The insert length code: the last code whose base is not past `length`.
+function insert_code(length: i32): i32 {
+  if (length < 6) {
+    return length;
   }
-  return at;
+  if (length < 130) {
+    let nbits: i32 = log2(length - 2) - 1;
+    return (nbits << 1) + (length - 2 >> nbits) + 2;
+  }
+  if (length < 2114) {
+    return log2(length - 66) + 10;
+  }
+  if (length < 6210) {
+    return 21;
+  }
+  if (length < 22594) {
+    return 22;
+  }
+  return 23;
+}
+
+// The copy length code: the last code whose base is not past `length`.
+function copy_code(length: i32): i32 {
+  if (length < 10) {
+    return length - 2;
+  }
+  if (length < 134) {
+    let nbits: i32 = log2(length - 6) - 1;
+    return (nbits << 1) + (length - 6 >> nbits) + 4;
+  }
+  if (length < 2118) {
+    return log2(length - 70) + 12;
+  }
+  return 23;
 }
 
 function command(own w: Writer, insert: i32, copy: i32): Writer {
-  let ic: i32 = length_code(insert, INSERT_BASE);
-  let cc: i32 = length_code(copy, COPY_BASE);
+  let ic: i32 = insert_code(insert);
+  let cc: i32 = copy_code(copy);
   let cell: i32 = [2, 3, 6, 4, 5, 8, 7, 9, 10][ic / 8 * 3 + cc / 8];
   let symbol: i32 = cell * 64 + ic % 8 * 8 + cc % 8;
   if (symbol < 320) {
@@ -196,10 +238,7 @@ function distance(own w: Writer, value: i32, last: Option[i32]): Writer {
     },
     None => {}
   }
-  let n: i32 = 1;
-  while (1 << n + 2 <= value + 3) {
-    n = n + 1;
-  }
+  let n: i32 = log2(value + 3) - 1;
   let high: i32 = (value + 3 >> n) - 2;
   w = code(w, 16 + 2 * (n - 1) + high, 6);
   return put(w, value + 3 - (2 + high << n), n);
@@ -292,8 +331,7 @@ pub function compress(input: u8[]): u8[] {
     w = block(w, input, start, end, end == input.len());
     start = end;
   }
-  w = align(w);
-  let encoded: u8[] = w.bytes.take(w.at);
+  let encoded: u8[] = finish(w);
   let raw_size: i32 = input.len() + (input.len() + 65535) / 65536 * 3 + 1;
   if (encoded.len() > raw_size) {
     return stored(input);
@@ -325,7 +363,6 @@ function stored(input: [u8]): u8[] {
       start = start + 1;
     }
   }
-  w = align(put(w, 3, 2));
-  return w.bytes.take(w.at);
+  return finish(put(w, 3, 2));
 }
 ```
