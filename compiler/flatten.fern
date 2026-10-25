@@ -1222,11 +1222,8 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
   let i: i32 = 0;
   while (i < params.len()) {
     out = out.append(ast.ParamDecl {
-      name: params[i].name,
+      ...params[i],
       type_name: rewrite_type_name(params[i].type_name, ctx),
-      own: params[i].own,
-      has_default: params[i].has_default,
-      default_value: params[i].default_value,
       fn_ret: rewrite_type_name(params[i].fn_ret, ctx),
       fn_param_types: rewrite_type_name_list(params[i].fn_param_types, ctx),
     });
@@ -1315,7 +1312,7 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
   let i: i32 = 0;
   while (i < fields.len()) {
     out = out.append(parser.StructFieldDecl {
-      name: fields[i].name,
+      ...fields[i],
       type_name: rewrite_type_name(fields[i].type_name, ctx),
       fn_ret: rewrite_type_name(fields[i].fn_ret, ctx),
       fn_param_types: rewrite_type_name_list(fields[i].fn_param_types, ctx),

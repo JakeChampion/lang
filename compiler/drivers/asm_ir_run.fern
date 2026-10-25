@@ -110,6 +110,7 @@ function run(): i32 {
 
 function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boolean, ns: string, extra: string[], target: string): string {
   let t: TypedUnits = typed_units(mod, siblings, target);
+  ircore.refuse_claims(t.d.sub.refused);
   let needs: string[] = [];
   if (is_entry) {
     needs = extra;
