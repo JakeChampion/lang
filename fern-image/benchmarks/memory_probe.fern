@@ -1,5 +1,6 @@
 import "../packages/pipeline/pipeline";
 import "../packages/pixels/pixels";
+import "../packages/resize/resize";
 import "std/i32";
 import "std/i64";
 
@@ -121,6 +122,33 @@ function rows(count: i32, keep: boolean, cancel: boolean): i32 {
   return total;
 }
 
+@noinline
+function eager(count: i32, keep: boolean): i32 {
+  let source = match (source_image()) { Ok(v) => v, Err(_) => { return 0 - 1; } };
+  let retained: pixels.Image[] = [];
+  let total = 0;
+  let i = 0;
+  while (i < count) {
+    let output = match (resize.resize(source, 32, 32, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return 0 - 2; } };
+    let p = match (pixels.read_pixel(output, 31, 31)) { Ok(v) => v, Err(_) => { return 0 - 3; } };
+    if (output.data.len() != 4096 || p.r != 0 as u8 || p.g != 0 as u8 || p.b != 0 as u8 || p.a != 0 as u8) {
+      return 0 - 4;
+    }
+    total = total + 17;
+    if (keep) {
+      retained = retained.append(output);
+    }
+    i = i + 1;
+  }
+  for output in retained {
+    let p = match (pixels.read_pixel(output, 31, 31)) { Ok(v) => v, Err(_) => { return 0 - 5; } };
+    if (p.a != 0 as u8 || output.data.len() != 4096) {
+      return 0 - 6;
+    }
+  }
+  return total;
+}
+
 function main(): i32 {
   let av = args();
   if (av.len() != 3 || (av[2] != "16" && av[2] != "128")) {
@@ -140,6 +168,8 @@ function main(): i32 {
     "rows" => rows(count, false, false),
     "rows-retained" => rows(count, true, false),
     "rows-cancelled" => rows(count, false, true),
+    "eager" => eager(count, false),
+    "eager-retained" => eager(count, true),
     _ => { return 2; }
   };
   let used: i64 = __heap_alloc_count() - allocations;

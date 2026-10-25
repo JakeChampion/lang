@@ -16,6 +16,10 @@ A bilinear node produces dimensions of 32x20000 and returns 128 storage bytes pe
 Separate modes discard rows, retain rows, or cancel after input rows and output storage exist.
 The cancellation mode checks an explicit cancellation error on every request.
 
+The eager modes repeatedly resize a transparent 64x64 RGBA source to 32x32 with bilinear interpolation.
+Each output contains 4,096 bytes. Separate modes discard or retain those outputs.
+The transparent input does not qualify representative color-processing throughput.
+
 Each mode executes 16 or 128 operations in a fresh process.
 Three processes repeat each configuration. All three produce identical counters for that configuration.
 The probe checks output bytes and alias preservation before it returns success.
@@ -48,10 +52,14 @@ The dirty state includes documentation and test integration changes.
 | Retained output rows | 128 | 354,834 | 38,352 |
 | Cancelled output rows | 16 | 18,988 | 1,544 |
 | Cancelled output rows | 128 | 151,820 | 1,544 |
+| Discarded eager outputs | 16 | 754,104 | 26,248 |
+| Discarded eager outputs | 128 | 6,032,776 | 26,248 |
+| Retained eager outputs | 16 | 754,251 | 105,144 |
+| Retained eager outputs | 128 | 6,033,934 | 693,888 |
 
 The shared-input path costs more fresh storage than the unique-input path in this probe.
 Retained image versions and retained rows increase fresh demand as the operation count increases.
-Discarded and cancelled rows reuse allocator storage across these two request counts.
+Discarded eager outputs, discarded rows, and cancelled rows reuse allocator storage across these two request counts.
 These observations do not prove a bound for other dimensions, graphs, input codecs, or longer executions.
 
 The row path still performs many allocations per request.

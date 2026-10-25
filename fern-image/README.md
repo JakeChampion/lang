@@ -54,7 +54,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-Forty-five TAP cases pass across the essential, compression, pixel, color, resize, PNG, and row-pipeline suites.
+Forty-seven TAP cases pass across the essential, compression, pixel, color, resize, PNG, and row-pipeline suites.
 The file I/O probe and pixel example also exit successfully.
 All thirteen executables report zero live bytes under the sanitizer.
 

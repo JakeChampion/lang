@@ -23,7 +23,8 @@ def main():
                "packages/pixels/pixels.fern"]
     fingerprints = {"fern-image/" + p: digest(root / p) for p in sources}
     samples = []
-    for mode in ["unique", "shared", "retained", "rows", "rows-retained", "rows-cancelled"]:
+    for mode in ["unique", "shared", "retained", "rows", "rows-retained", "rows-cancelled",
+                 "eager", "eager-retained"]:
         for count in [16, 128]:
             for repeat in range(3):
                 result = subprocess.run([str(binary), mode, str(count)],
@@ -43,12 +44,13 @@ def main():
     if fingerprints != {"fern-image/" + p: digest(root / p) for p in sources}:
         raise SystemExit("benchmark sources changed during measurement")
     record = {
-        "workload": "64x64 RGBA pixel updates, or rows from a virtual 64x10000 RGBA source and a bilinear 32x20000 node.",
+        "workload": "64x64 RGBA pixel updates, rows from a virtual 64x10000 RGBA source and a bilinear 32x20000 node, or repeated 64x64 to 32x32 eager bilinear transforms of transparent RGBA pixels.",
         "image_bytes": 16384, "output_row_bytes": 128,
         "concurrency": 1, "warmup_processes": 0,
         "flags": "-target x86-64-linux with FERN_LEAKCHECK=1, no quarantine",
         "compiler": subprocess.check_output([str(compiler), "-version"], text=True).strip(),
         "compiler_sha256": digest(compiler), "binary_sha256": digest(binary),
+        "collector_sha256": digest(Path(__file__)),
         "sources_sha256": fingerprints, "host": platform.platform(), "samples": samples,
         "limitations": "Fresh-process allocator observations only. Bump bytes measure fresh allocator demand, not live bytes, peak RSS, or a process memory bound. Counters exclude report construction. They include input, graph, temporary, and retained-output allocations during each workload. No timing, throughput, OOM-recovery, or production-safety claim."
     }

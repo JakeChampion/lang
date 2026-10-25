@@ -107,6 +107,38 @@ function rgb_grid(): test.TestOutcome {
   return test.assert_true(mid.r == 188 as u8 && mid.g == 188 as u8 && mid.b == 137 as u8 && mid.a == 255 as u8);
 }
 
+function gradient(): test.TestOutcome {
+  let source = match (pixels.create(4, 1, 12, pixels.RGB8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let x = 0;
+  while (x < 4) {
+    let value = (x * 85) as u8;
+    source = match (pixels.write_pixel(source, x, 0, color.rgb(value, value, value))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+    x = x + 1;
+  }
+  let output = match (resize.resize(source, 1, 1, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
+  let p = match (pixels.read_pixel(output, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(p.r == 136 as u8 && p.g == 136 as u8 && p.b == 136 as u8 && p.a == 255 as u8);
+}
+
+function checkerboard(): test.TestOutcome {
+  let source = match (pixels.create(16, 16, 48, pixels.RGB8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let y = 0;
+  while (y < 16) {
+    let x = 0;
+    while (x < 16) {
+      let value = (((x + y) % 2) * 255) as u8;
+      source = match (pixels.write_pixel(source, x, y, color.rgb(value, value, value))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  let output = match (resize.resize(source, 1, 1, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("bilinear"); } };
+  let nearest = match (resize.resize(source, 1, 1, resize.Nearest, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("nearest"); } };
+  let p = match (pixels.read_pixel(output, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  let n = match (pixels.read_pixel(nearest, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(p.r == 188 as u8 && p.g == 188 as u8 && p.b == 188 as u8 && n.r == 0 as u8);
+}
+
 function main(): i32 {
   let r = test.test_new("resize M2");
   r = r.it("solid images, odd dimensions, single rows and columns", edges);
@@ -117,5 +149,7 @@ function main(): i32 {
   r = r.it("aspect ratio and extreme dimensions", aspect);
   r = r.it("unsafe output and source rejection", rejection);
   r = r.it("RGB8 two-dimensional bilinear grid", rgb_grid);
+  r = r.it("independent linear-light gradient golden", gradient);
+  r = r.it("checkerboard downscale follows the scalar sampling contract", checkerboard);
   return r.finish();
 }
