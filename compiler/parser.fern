@@ -8433,9 +8433,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   }
   structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
   structs = add_builtin_struct2(structs, "Duration", "sec", "i64", "nsec", "i32");
-  structs = add_builtin_struct2(structs, "TimeZone", "name", "string", "offset_seconds", "i32");
   structs = add_builtin_struct2(structs, "DateTime", "date", "Date", "time", "Time");
-  structs = add_builtin_struct2(structs, "Zoned", "instant", "Instant", "zone", "TimeZone");
   if (!name_declared(structs, "Date")) {
     let df: StructFieldDecl[] = [];
     df = df.append(bare_field("year", "i32"));
@@ -17991,8 +17989,7 @@ pub function is_reserved_struct_name(name: string): boolean {
     "BodySource", "ByteStream", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Dir", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MountEntry", "Pipe", "ProcessResult",
-    "Reader", "Span", "Time", "TimeZone", "Url", "WinSize", "Writer",
-    "Zoned",
+    "Reader", "Span", "Time", "Url", "WinSize", "Writer",
   ];
   return util.index_of_str(reserved, name) >= 0;
 }

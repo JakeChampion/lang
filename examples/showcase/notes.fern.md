@@ -171,10 +171,10 @@ pub function feed(state: State): HttpResponse {
   if (entries.len() > 0) {
     updated_ms = entries[entries.len() - 1].timestamp;
   }
-  let updated: string = time.instant_from_unix(updated_ms / 1000).format_rfc3339();
+  let updated: string = time.timestamp_from_unix(updated_ms / 1000).format_rfc3339();
   let xml: string = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"><id>urn:fern:guestbook</id><title>The Fern guestbook</title><author><name>Fern community</name></author><updated>" + updated + "</updated>";
   for note in entries {
-    xml = xml + "<entry><id>urn:fern:note:" + note.id + "</id><author><name>" + common.escape(note.name) + "</name></author><title>" + common.escape(note.name) + "</title><updated>" + time.instant_from_unix(note.timestamp / 1000).format_rfc3339() + "</updated><content type=\"text\">" + common.escape(note.text) + "</content></entry>";
+    xml = xml + "<entry><id>urn:fern:note:" + note.id + "</id><author><name>" + common.escape(note.name) + "</name></author><title>" + common.escape(note.name) + "</title><updated>" + time.timestamp_from_unix(note.timestamp / 1000).format_rfc3339() + "</updated><content type=\"text\">" + common.escape(note.text) + "</content></entry>";
   }
   return http.text(200, xml + "</feed>").with_content_type("application/atom+xml; charset=utf-8").with_header("Cache-Control", "no-cache");
 }

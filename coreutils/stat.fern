@@ -4,6 +4,7 @@ import "std/i64";
 import "std/u64";
 import "std/io_buffered";
 import "./lib/gnu";
+import "std/time";
 import "std/tz";
 import "./lib/pwdb";
 import "./lib/canon";
@@ -565,8 +566,8 @@ function pad9(n: i64): string {
 }
 
 function human_time(z: tz.Zone, sec: i64, nsec: i64): string {
-  let dt: DateTime = z.civil(sec);
-  let off: i32 = z.offset_at(sec);
+  let dt: DateTime = z.at(time.timestamp_from_unix(sec)).to_datetime();
+  let off: i32 = z.offset_at(time.timestamp_from_unix(sec));
   let sign: string = "+";
   let mag: i32 = off;
   if (off < 0) {

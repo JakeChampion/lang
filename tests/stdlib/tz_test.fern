@@ -1,4 +1,5 @@
 import "std/test";
+import "std/time";
 import "std/tz";
 import "std/option";
 
@@ -8,74 +9,74 @@ function us_rule(): tz.Zone {
 
 function test_rule_standard_before_spring(): test.TestOutcome {
   let z: tz.Zone = us_rule();
-  if (z.offset_at(1710054000i64 - 1i64) != 0 - 18000) {
+  if (z.offset_at(time.timestamp_from_unix(1710054000i64 - 1i64)) != 0 - 18000) {
     return test.fail("EST before the gap");
   }
-  if (z.abbrev_at(1710054000i64 - 1i64) != "EST") {
+  if (z.abbrev_at(time.timestamp_from_unix(1710054000i64 - 1i64)) != "EST") {
     return test.fail("abbrev before the gap");
   }
-  return test.assert_eq(z.is_dst_at(1710054000i64 - 1i64), false);
+  return test.assert_eq(z.is_dst_at(time.timestamp_from_unix(1710054000i64 - 1i64)), false);
 }
 
 function test_rule_daylight_after_spring(): test.TestOutcome {
   let z: tz.Zone = us_rule();
-  if (z.offset_at(1710054000i64) != 0 - 14400) {
+  if (z.offset_at(time.timestamp_from_unix(1710054000i64)) != 0 - 14400) {
     return test.fail("EDT at the gap");
   }
-  if (z.abbrev_at(1710054000i64) != "EDT") {
+  if (z.abbrev_at(time.timestamp_from_unix(1710054000i64)) != "EDT") {
     return test.fail("abbrev at the gap");
   }
-  return test.assert_eq(z.is_dst_at(1710054000i64), true);
+  return test.assert_eq(z.is_dst_at(time.timestamp_from_unix(1710054000i64)), true);
 }
 
 function test_rule_fall_back(): test.TestOutcome {
   let z: tz.Zone = us_rule();
-  if (z.offset_at(1730613600i64 - 1i64) != 0 - 14400) {
+  if (z.offset_at(time.timestamp_from_unix(1730613600i64 - 1i64)) != 0 - 14400) {
     return test.fail("EDT before the overlap");
   }
-  return test.assert_eq(z.offset_at(1730613600i64), 0 - 18000);
+  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1730613600i64)), 0 - 18000);
 }
 
 function test_rule_southern_hemisphere(): test.TestOutcome {
   let z: tz.Zone = tz.zone_from_tz("AEST-10AEDT,M10.1.0,M4.1.0/3");
-  if (z.offset_at(1712419200i64 - 1i64) != 39600) {
+  if (z.offset_at(time.timestamp_from_unix(1712419200i64 - 1i64)) != 39600) {
     return test.fail("AEDT before April's fall-back");
   }
-  if (z.offset_at(1712419200i64) != 36000) {
+  if (z.offset_at(time.timestamp_from_unix(1712419200i64)) != 36000) {
     return test.fail("AEST after April's fall-back");
   }
-  if (z.offset_at(1728144000i64 - 1i64) != 36000) {
+  if (z.offset_at(time.timestamp_from_unix(1728144000i64 - 1i64)) != 36000) {
     return test.fail("AEST before October's spring-forward");
   }
-  return test.assert_eq(z.offset_at(1728144000i64), 39600);
+  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1728144000i64)), 39600);
 }
 
 function test_rule_quoted_fixed(): test.TestOutcome {
   let z: tz.Zone = tz.zone_from_tz("<+0545>-5:45");
-  if (z.offset_at(0i64) != 20700) {
+  if (z.offset_at(time.timestamp_from_unix(0i64)) != 20700) {
     return test.fail("offset");
   }
-  if (z.is_dst_at(1700000000i64)) {
+  if (z.is_dst_at(time.timestamp_from_unix(1700000000i64))) {
     return test.fail("dst");
   }
-  return test.assert_eq(z.abbrev_at(0i64), "+0545");
+  return test.assert_eq(z.abbrev_at(time.timestamp_from_unix(0i64)), "+0545");
 }
 
 function test_rule_time_past_24_hours(): test.TestOutcome {
   let z: tz.Zone = tz.zone_from_tz("IST-2IDT,M3.4.4/26,M10.5.0");
-  if (z.offset_at(1774569600i64 - 1i64) != 7200) {
+  if (z.offset_at(time.timestamp_from_unix(1774569600i64 - 1i64)) != 7200) {
     return test.fail("IST before 26:00 on the Thursday");
   }
-  return test.assert_eq(z.offset_at(1774569600i64), 10800);
+  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1774569600i64)), 10800);
 }
 
 function test_rule_time_negative(): test.TestOutcome {
   match (tz.iana_zone("America/Nuuk")) {
     Some(z) => {
-      if (z.offset_at(13576813200i64 - 1i64) != 0 - 7200) {
+      if (z.offset_at(time.timestamp_from_unix(13576813200i64 - 1i64)) != 0 - 7200) {
         return test.fail("-02 before -1:00 on the Sunday");
       }
-      return test.assert_eq(z.offset_at(13576813200i64), 0 - 3600);
+      return test.assert_eq(z.offset_at(time.timestamp_from_unix(13576813200i64)), 0 - 3600);
     },
     None => {
       return test.fail("America/Nuuk missing");
@@ -91,10 +92,10 @@ function test_rule_time_past_167_hours_refused(): test.TestOutcome {
 function test_iana_zone_london(): test.TestOutcome {
   match (tz.iana_zone("Europe/London")) {
     Some(z) => {
-      if (z.abbrev_at(1720000000i64) != "BST" || z.offset_at(1720000000i64) != 3600) {
+      if (z.abbrev_at(time.timestamp_from_unix(1720000000i64)) != "BST" || z.offset_at(time.timestamp_from_unix(1720000000i64)) != 3600) {
         return test.fail("BST in July 2024");
       }
-      return test.assert_eq(z.abbrev_at(1700000000i64), "GMT");
+      return test.assert_eq(z.abbrev_at(time.timestamp_from_unix(1700000000i64)), "GMT");
     },
     None => {
       return test.fail("Europe/London missing");
@@ -105,7 +106,7 @@ function test_iana_zone_london(): test.TestOutcome {
 function test_iana_zone_far_future(): test.TestOutcome {
   match (tz.iana_zone("US/Pacific")) {
     Some(z) => {
-      return test.assert_eq(z.abbrev_at(13585190400i64), "PDT");
+      return test.assert_eq(z.abbrev_at(time.timestamp_from_unix(13585190400i64)), "PDT");
     },
     None => {
       return test.fail("US/Pacific missing");
@@ -120,14 +121,42 @@ function test_iana_zone_unknown(): test.TestOutcome {
   return test.assert_eq(tz.iana_zone("UTC;Europe/London").is_some(), false);
 }
 
-function test_at_is_the_offset_then(): test.TestOutcome {
+function test_at_is_the_local_time_then(): test.TestOutcome {
   let z: tz.Zone = us_rule();
-  let summer: TimeZone = z.at(1720000000i64);
-  let winter: TimeZone = z.at(1700000000i64);
-  if (summer.offset_seconds != 0 - 14400 || summer.name != "EDT") {
+  let summer: tz.Zoned = z.at(time.timestamp_from_unix(1720000000i64));
+  if (summer.format_rfc3339() != "2024-07-03T05:46:40-04:00" || summer.to_datetime().time.hour != 5) {
     return test.fail("summer");
   }
-  return test.assert_eq(winter.offset_seconds, 0 - 18000);
+  return test.assert_eq(z.at(time.timestamp_from_unix(1700000000i64)).format_rfc3339(), "2023-11-14T17:13:20-05:00");
+}
+
+function test_zoned_parse_keeps_the_offset(): test.TestOutcome {
+  let Some(zt) = tz.zoned_parse_rfc3339("2026-05-19T14:30:00.25+09:00") else {
+    return test.fail("an offset time was refused");
+  };
+  if (zt.timestamp.format_rfc3339() != "2026-05-19T05:30:00.250000000Z" || zt.zone.abbrev_at(zt.timestamp) != "UTC+09:00") {
+    return test.fail("the timestamp or the zone name");
+  }
+  return test.assert_eq(zt.format_rfc3339(), "2026-05-19T14:30:00.250000000+09:00");
+}
+
+function test_zoned_parse_utc(): test.TestOutcome {
+  let Some(zt) = tz.zoned_parse_rfc3339("2026-05-19T05:30:00Z") else {
+    return test.fail("a UTC time was refused");
+  };
+  if (zt.zone.abbrev_at(zt.timestamp) != "UTC" || !zt.zone.is_fixed()) {
+    return test.fail("the zone");
+  }
+  return test.assert_eq(tz.zoned_parse_rfc3339("2026-05-19T05:30:00+0900").is_none(), true);
+}
+
+function test_fixed_zone_negative_offset(): test.TestOutcome {
+  let z: tz.Zone = tz.fixed_zone(0 - (9 * 3600 + 30 * 60), "MART");
+  let zt: tz.Zoned = z.at(time.timestamp_from_unix(0i64));
+  if (z.offset_at(zt.timestamp) != 0 - 34200 || z.abbrev_at(zt.timestamp) != "MART") {
+    return test.fail("offset or abbreviation");
+  }
+  return test.assert_eq(zt.format_rfc3339(), "1969-12-31T14:30:00-09:30");
 }
 
 function push_be32(own out: u8[], v: i64): u8[] {
@@ -217,13 +246,13 @@ function fixture(): u8[] {
 function test_tzif_before_and_after_transition(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
     Some(z) => {
-      if (z.offset_at(999999i64) != 3600 || z.abbrev_at(999999i64) != "AAA") {
+      if (z.offset_at(time.timestamp_from_unix(999999i64)) != 3600 || z.abbrev_at(time.timestamp_from_unix(999999i64)) != "AAA") {
         return test.fail("before the transition");
       }
-      if (z.offset_at(1000000i64) != 7200 || z.abbrev_at(1000000i64) != "BBB") {
+      if (z.offset_at(time.timestamp_from_unix(1000000i64)) != 7200 || z.abbrev_at(time.timestamp_from_unix(1000000i64)) != "BBB") {
         return test.fail("at the transition");
       }
-      if (!z.is_dst_at(1500000i64)) {
+      if (!z.is_dst_at(time.timestamp_from_unix(1500000i64))) {
         return test.fail("dst flag of the second type");
       }
       return test.pass();
@@ -237,7 +266,7 @@ function test_tzif_before_and_after_transition(): test.TestOutcome {
 function test_tzif_reads_the_64_bit_table(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
     Some(z) => {
-      return test.assert_eq(z.offset_at(1999999i64), 7200);
+      return test.assert_eq(z.offset_at(time.timestamp_from_unix(1999999i64)), 7200);
     },
     None => {
       return test.fail("refused");
@@ -248,10 +277,10 @@ function test_tzif_reads_the_64_bit_table(): test.TestOutcome {
 function test_tzif_footer_governs_the_future(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
     Some(z) => {
-      if (z.abbrev_at(4000000000i64) != "+03") {
+      if (z.abbrev_at(time.timestamp_from_unix(4000000000i64)) != "+03") {
         return test.fail("footer abbreviation");
       }
-      return test.assert_eq(z.offset_at(4000000000i64), 10800);
+      return test.assert_eq(z.offset_at(time.timestamp_from_unix(4000000000i64)), 10800);
     },
     None => {
       return test.fail("refused");
@@ -336,7 +365,10 @@ function main(): i32 {
   t = t.it("iana zone by name", test_iana_zone_london);
   t = t.it("iana zone past its table", test_iana_zone_far_future);
   t = t.it("iana zone unknown name", test_iana_zone_unknown);
-  t = t.it("at is the offset in force then", test_at_is_the_offset_then);
+  t = t.it("at is the local time then", test_at_is_the_local_time_then);
+  t = t.it("zoned parse keeps the offset", test_zoned_parse_keeps_the_offset);
+  t = t.it("zoned parse of a UTC time", test_zoned_parse_utc);
+  t = t.it("fixed zone with a negative offset", test_fixed_zone_negative_offset);
   t = t.it("tzif before and after its transition", test_tzif_before_and_after_transition);
   t = t.it("tzif reads the 64-bit table", test_tzif_reads_the_64_bit_table);
   t = t.it("tzif footer governs the future", test_tzif_footer_governs_the_future);
