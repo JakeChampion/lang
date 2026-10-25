@@ -4806,7 +4806,9 @@ function main(): i32 {
     return n % 256;
 }
 `},
-	{name: "arr-slice-takes-the-typed-path", atLeast: 1, want: "20|", nativeOnly: true,
+	// A slice is a view and copies nothing; the copy a write to a shared array
+	// makes is what still calls __fern_arr_slice.
+	{name: "arr-slice-takes-the-typed-path", atLeast: 1, want: "30|", nativeOnly: true,
 		reports: []string{"runtime __fern_arr_slice: produced"}, src: `
 struct P { x: i32, name: string }
 function main(): i32 {
@@ -4818,6 +4820,9 @@ function main(): i32 {
     let qs: [P] = ps[0:2];
     let n: i32 = b.len() * 100 + b[0] * 10 + b[2];
     n = n + t[1].len() * 1000 + qs[1].name.len() * 10000;
+    let shared: i32[] = a;
+    let w: i32[] = shared.with(0, 9);
+    n = n + w[0] + a[0];
     return n % 256;
 }
 `},

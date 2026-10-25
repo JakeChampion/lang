@@ -260,7 +260,7 @@ function main(): i32 {
   if (env("H3").is_some()) {
     opts = opts.with_h3();
   }
-  return serve.supervise(8080, opts, handle);
+  return serve.exit_code(serve.supervise(8080, opts, handle));
 }
 `
 
@@ -307,7 +307,7 @@ function main(): i32 {
     },
     None => {}
   }
-  return serve.supervise(8080, opts, handle);
+  return serve.exit_code(serve.supervise(8080, opts, handle));
 }
 `
 

@@ -36,14 +36,14 @@ function main(): i32 {
     let basket: metrics.Histogram = metrics.histogram("shop_basket_items", "Items per order.", [1.0, 2.0, 5.0, 10.0, 20.0]);
     let reg: metrics.Registry = metrics.registry().with_counter(orders).with_histogram(basket);
     let cfg: serve.Config = serve.Config { ...serve.config(), metrics: reg, metrics_port: 9090 };
-    return serve.supervise(8080, cfg, (req: HttpRequest, plat: platform.Host): HttpResponse => {
+    return serve.exit_code(serve.supervise(8080, cfg, (req: HttpRequest, plat: platform.Host): HttpResponse => {
         if (req.method == "POST" && req.path == "/orders") {
             orders.inc();
             basket.observe(3.0);
             return http.created("ok\n");
         }
         return http.not_found();
-    });
+    }));
 }
 ```
 
