@@ -308,7 +308,6 @@ generic_enum_method_builds_a_variant                 0
 generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
 generic_enum_payload_settles_its_parameter           0
-generic_char_ordering                                0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
