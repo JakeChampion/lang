@@ -1489,7 +1489,7 @@ function (c: Conn) __datagram_guarded(now: i64): Conn {
     let n: i32 = cur.plans[space].payload.len();
     if (n > 0) {
       room = room - n - 64;
-      planned = planned | (1 << space);
+      planned = planned | 1 << space;
     }
   }
   if (planned == 0) {
@@ -1719,7 +1719,7 @@ function (c: Conn) __seal(planned: i32, now: i64): Conn {
       let plan: Plan = cur.plans[space];
       let extra: i32 = 0;
       let bytes: u8[] = cur.__sealed(plan, 0);
-      if (pad && planned >> (space + 1) == 0 && out.len() + bytes.len() < packet.MIN_INITIAL_DATAGRAM) {
+      if (pad && planned >> space + 1 == 0 && out.len() + bytes.len() < packet.MIN_INITIAL_DATAGRAM) {
         extra = packet.MIN_INITIAL_DATAGRAM - out.len() - bytes.len();
         bytes = cur.__sealed(plan, extra);
       }
@@ -1744,7 +1744,7 @@ function (c: Conn) __seal(planned: i32, now: i64): Conn {
 }
 
 function __planned_in(planned: i32, space: i32): boolean {
-  return ((planned >> space) & 1) != 0;
+  return (planned >> space & 1) != 0;
 }
 
 function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
@@ -1801,7 +1801,7 @@ function (c: Conn) __close_datagram(): Conn {
   for space in 0..3 {
     let s: Space = c.spaces[space];
     if (!s.discarded && s.send.is_some()) {
-      planned = planned | (1 << space);
+      planned = planned | 1 << space;
       cur = Conn { ...cur, plans: cur.plans.with(space, Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [], sized: false }) };
     }
   }
