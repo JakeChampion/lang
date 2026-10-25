@@ -14,7 +14,7 @@ root=../..
 "$fern" -target wasm32-wasi -emit core-module -O -o web/swarm/kernel.wasm swarm.fern.md "$root/internal/stdlib"
 "$fern" -target wasm32-wasi -emit core-module -O -o web/blockyard/kernel.wasm voxel.fern.md "$root/internal/stdlib"
 mkdir -p web/bench
-for kernel in measure handshake imaging; do
+for kernel in measure handshake imaging torrent; do
   "$fern" -target wasm32-wasi -emit core-module -O -o "web/bench/$kernel.wasm" "$kernel.fern.md" "$root/internal/stdlib"
 done
 for kernel in foundry circuit patchbay prism; do

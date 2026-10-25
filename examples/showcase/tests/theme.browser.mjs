@@ -31,6 +31,7 @@ const routes = [
   "/compress/",
   "/handshake/",
   "/image/",
+  "/torrent/",
   "/fractal/",
   "/_src/",
   "/_src/showcase/rally.fern.md",

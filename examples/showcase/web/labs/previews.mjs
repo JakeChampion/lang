@@ -119,6 +119,30 @@ const draw = {
     c.fillText("PNG", 520, 188);
     c.textAlign = "left";
   },
+  torrent(c) {
+    const nodes = [[110, 140, "you"], [330, 60, "peer"], [550, 140, "peer"], [330, 220, "peer"]];
+    c.strokeStyle = spore;
+    for (const [a, b] of [[0, 1], [0, 2], [0, 3], [1, 2], [2, 3]]) {
+      c.beginPath();
+      c.moveTo(nodes[a][0], nodes[a][1]);
+      c.lineTo(nodes[b][0], nodes[b][1]);
+      c.stroke();
+    }
+    c.textAlign = "center";
+    for (const [x, y, label] of nodes) {
+      c.fillStyle = "#15211b";
+      c.beginPath();
+      c.arc(x, y, 26, 0, Math.PI * 2);
+      c.fill();
+      c.strokeStyle = "#384a3f";
+      c.stroke();
+      c.fillStyle = label === "you" ? frond : muted;
+      c.fillText(label, x, y + 5);
+    }
+    c.fillStyle = muted;
+    c.fillText("tracker introduces · bytes go peer to peer", 330, 268);
+    c.textAlign = "left";
+  },
   handshake(c) {
     const box = (x, label, sub) => {
       c.fillStyle = "#15211b";
