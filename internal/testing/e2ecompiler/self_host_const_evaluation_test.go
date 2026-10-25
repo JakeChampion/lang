@@ -60,6 +60,9 @@ func TestSelfHostConstEvaluationErrors(t *testing.T) {
 						if !strings.Contains(string(out), "error["+tc.code+"]") {
 							t.Errorf("expected diagnostic %s\n%s", tc.code, out)
 						}
+						if tc.code == "E009" && (strings.Contains(string(out), "error[E093]") || strings.Count(string(out), "error[E009]") != 1) {
+							t.Errorf("want the type error alone, once:\n%s", out)
+						}
 						if _, err := os.Stat(output); !os.IsNotExist(err) {
 							t.Errorf("refused program left an executable: %v", err)
 						}

@@ -8738,3 +8738,16 @@ function main(): i32 { let m: Map[string, i32] = map_new(4); if (m.contains("a")
 		t.Errorf("a user `contains` on Map should redeclare the builtin (E006), got %v", err)
 	}
 }
+
+func TestBoundGenericParameterTakesWhatItsTypeTakes(t *testing.T) {
+	src := `function identity[T](x: T): T { return x; }
+function pair[T](a: T, b: T): i32 { return 2; }
+function main(): i32 {
+    let lit: str = identity[str]("de");
+    let raw: str = "abc";
+    return lit.len() + pair("x", raw);
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

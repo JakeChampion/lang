@@ -304,6 +304,41 @@ function test_window_updates(): test.TestOutcome {
   }
 }
 
+// served answers and retires one request stream: the peer's data with FIN,
+// a reply with FIN, the reply sent and acknowledged and the data read.
+function served(s: streams.Streams, id: i64): Result[streams.Streams, string] {
+  let t: streams.Streams = s.on_frame(data(id, 0 as i64, 3, true)).write(id, bytes(2, 0), true).fill([], 1200);
+  let resend: recovery.Resend[] = t.resend;
+  let cur: streams.Streams = t.fill_taken().read(id);
+  if (cur.refused != "") {
+    return Err(cur.refused);
+  }
+  for item in resend {
+    cur = cur.acked(item);
+  }
+  return Ok(cur);
+}
+
+function test_limit_steps(): test.TestOutcome {
+  let s: streams.Streams = server(16 as i64);
+  let log: string = "";
+  let k: i64 = 0;
+  while (k < 5) {
+    match (served(s, k * 4)) {
+      Ok(t) => {
+        let f: streams.Streams = t.fill([], 1200);
+        log = log + k.to_string() + ": " + sent(f.filled) + "| ";
+        s = f.fill_taken();
+      },
+      Err(e) => {
+        return test.fail(e);
+      }
+    }
+    k = k + 1;
+  }
+  return test.assert_eq(log, "0: | 1: MAX_STREAMS true 18 | 2: | 3: MAX_STREAMS true 20 | 4: | ");
+}
+
 function test_stream_credit(): test.TestOutcome {
   let s: streams.Streams = server(1 as i64);
   match (fed(s, [data(0 as i64, 0 as i64, 3, true)])) {
@@ -578,6 +613,7 @@ function main(): i32 {
   r = r.it("the peer opens streams up to the limit", test_peer_opens);
   r = r.it("each frame needs its half", test_directions);
   r = r.it("windows and final sizes", test_limits);
+  r = r.it("the peer's stream limit rises in steps of an eighth", test_limit_steps);
   r = r.it("sending within the peer's windows", test_send_windows);
   r = r.it("reading opens the windows again", test_window_updates);
   r = r.it("a closed stream lets the peer open another", test_stream_credit);

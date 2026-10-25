@@ -167,6 +167,9 @@ function event_text(ev: h3q.Event): string {
       if (resp.trailers.names.len() > 0) {
         trailer = " trailer " + resp.trailers.names[0] + "=" + resp.trailers.values[0];
       }
+      if let Some(d) = resp.headers.get("date") {
+        trailer = trailer + " date=" + d;
+      }
       return "response " + id.to_string() + " " + int.int_to_string(resp.status) + " " + string_from_bytes_unchecked(resp.body_bytes()) + trailer;
     },
     h3q.StreamDropped(id, code) => {
@@ -400,6 +403,39 @@ function test_shutdown_late(): test.TestOutcome {
   return test.assert_eq(e.requests.len().to_string() + " " + e.client.ready().to_string(), "0 false");
 }
 
+function test_date(): test.TestOutcome {
+  match (begin()) {
+    Ok(e0) => {
+      let e: Ends = Ends { ...settled(e0, 12), log: "" };
+      match (asked(e, get("/a"))) {
+        Ok(e1) => {
+          match (asked(settled(e1, 6), get("/b"))) {
+            Ok(e2) => {
+              let e3: Ends = settled(e2, 6);
+              let Some(s) = e3.server else {
+                return test.fail("no server");
+              };
+              let own: HttpResponse = HttpResponse { ...text(200, "b"), headers: headers.header_map_new().append("Date", "Mon, 01 Jan 2029 00:00:00 GMT") };
+              let dated: h3q.Conn = s.with_date("Tue, 01 Jan 2030 00:00:00 GMT").respond(e3.ids[0], text(200, "a")).respond(e3.ids[1], own);
+              let e4: Ends = settled(Ends { ...e3, server: Some(dated), log: "" }, 6);
+              return test.assert_eq(e4.log, "client response 0 200 a date=Tue, 01 Jan 2030 00:00:00 GMT; client response 4 200 b date=Mon, 01 Jan 2029 00:00:00 GMT; ");
+            },
+            Err(why) => {
+              return test.fail(why);
+            }
+          }
+        },
+        Err(why) => {
+          return test.fail(why);
+        }
+      }
+    },
+    Err(why) => {
+      return test.fail(why);
+    }
+  }
+}
+
 function test_limit(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
@@ -470,6 +506,7 @@ function test_blocked_backpressure(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
+  r = r.it("a response without a date is sent with the connection's", test_date);
   r = r.it("an upload through loss and reordering, answered with a trailer", test_upload_lossy);
   r = r.it("three requests answered out of order", test_concurrent);
   r = r.it("the stream limit grants back as streams close", test_limit);

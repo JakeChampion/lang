@@ -122,6 +122,7 @@ bool_to_string_receivers                             0
 boolean_logic                                        0
 boolean_scalar_dispatch                              0
 both_arms_read_p                                     0
+bound_generic_parameter_takes_a_string_literal       0
 break_continue                                       0
 byte_slice_after_set_len_regrows                     0
 byte_stream_and_async_channel                       0
