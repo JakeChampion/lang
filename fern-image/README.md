@@ -54,9 +54,9 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-Forty-seven TAP cases pass across the essential, compression, pixel, color, resize, PNG, and row-pipeline suites.
+Fifty-five TAP cases pass across the essential, compression, pixel, color, resize, PNG, row-pipeline, and region suites.
 The file I/O probe and pixel example also exit successfully.
-All thirteen executables report zero live bytes under the sanitizer.
+All fourteen executables report zero live bytes under the sanitizer.
 
 Three negative probes confirm compiler restrictions.
 The formatter regression also passes before and after the format check.
@@ -76,3 +76,4 @@ PNG requires the static-append compiler fix in PR #13208.
 
 The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor or bilinear chains on demand.
 It enforces logical row budgets and cooperative cancellation. It is not the complete M4 region engine.
+The [region interface](docs/regions.md) plans checked cropped tiles and direct dependency rows.

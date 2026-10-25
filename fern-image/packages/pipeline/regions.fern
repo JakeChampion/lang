@@ -1,0 +1,85 @@
+import "./pipeline";
+import "../pixels/pixels";
+import "../resize/resize";
+
+pub struct Region { x: i32, y: i32, width: i32, height: i32 }
+
+pub struct InputRows { node: i32, first: i32, last: i32 }
+
+pub struct Plan { layout: pixels.Layout, scratch_bytes: i32, samples: i32 }
+
+pub function dependency_rows(graph: pipeline.Graph, at: i32, y: i32, limits: pipeline.Limits): Result[Option[InputRows], pipeline.PipelineError] {
+  pipeline.metadata(graph, limits)?;
+  if (at < 0 || at >= graph.nodes.len()) {
+    return Err(pipeline.PipelineError.Bounds);
+  }
+  let node = graph.nodes[at];
+  if (y < 0 || y >= node.height) {
+    return Err(pipeline.PipelineError.Bounds);
+  }
+  match (node.operation) {
+    pipeline.NearestSource(parent) => {
+      let row = match (resize.nearest_index(y, graph.nodes[parent].height, node.height)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+      return Ok(Some(InputRows { node: parent, first: row, last: row }));
+    },
+    pipeline.BilinearSource(parent) => {
+      let axis = match (resize.bilinear_axis(y, graph.nodes[parent].height, node.height)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+      return Ok(Some(InputRows { node: parent, first: axis.first, last: axis.second }));
+    },
+    _ => { return Ok(None); }
+  }
+}
+
+pub function plan(graph: pipeline.Graph, region: Region, limits: pipeline.Limits): Result[Plan, pipeline.PipelineError] {
+  let metadata = pipeline.metadata(graph, limits)?;
+  if (region.width <= 0 || region.height <= 0) {
+    return Err(pipeline.PipelineError.Dimensions);
+  }
+  if (region.x < 0 || region.y < 0
+    || region.x as i64 + region.width as i64 > metadata.width as i64
+    || region.y as i64 + region.height as i64 > metadata.height as i64) {
+    return Err(pipeline.PipelineError.Bounds);
+  }
+  let stride = match (region.width *? pixels.channels(metadata.format)) { Some(v) => v, None => { return Err(pipeline.Pixel(pixels.Overflow)); } };
+  let output_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes };
+  let layout = match (pixels.checked_layout(region.width, region.height, stride, metadata.format, output_limits)) {
+    Ok(v) => v,
+    Err(pixels.Limit()) => { return Err(pipeline.Budget); },
+    Err(e) => { return Err(pipeline.Pixel(e)); }
+  };
+  let row_scratch = pipeline.required_scratch(graph, limits)?;
+  let row_samples = pipeline.required_samples(graph, limits)?;
+  let scratch: i64 = row_scratch as i64 + layout.bytes as i64 * 2;
+  let samples: i64 = row_samples as i64 * (region.height as i64) + region.width as i64 * (region.height as i64);
+  if (scratch > limits.max_scratch_bytes as i64 || samples > limits.max_samples as i64) {
+    return Err(pipeline.Budget);
+  }
+  return Ok(Plan { layout: layout, scratch_bytes: scratch as i32, samples: samples as i32 });
+}
+
+pub function render_tile(graph: pipeline.Graph, region: Region, limits: pipeline.Limits, cancelled: () => boolean): Result[pixels.Image, pipeline.PipelineError] {
+  if (cancelled()) {
+    return Err(pipeline.Cancelled);
+  }
+  let request = plan(graph, region, limits)?;
+  if (cancelled()) {
+    return Err(pipeline.Cancelled);
+  }
+  let tile = match (pixels.create(request.layout.width, request.layout.height, request.layout.stride, request.layout.format,
+    pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes })) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+  let y = 0;
+  while (y < region.height) {
+    let row = pipeline.render_row(graph, region.y + y, limits, cancelled)?;
+    let x = 0;
+    while (x < region.width) {
+      if (x % 64 == 0 && cancelled()) {
+        return Err(pipeline.Cancelled);
+      }
+      let pixel = match (pixels.read_pixel(row, region.x + x, 0)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+      tile = match (pixels.write_pixel(tile, x, y, pixel)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(tile);
+}
