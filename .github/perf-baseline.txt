@@ -1,3 +1,6 @@
+# Re-pinned 2026-10-25 (#13276), aarch64 `.text` counted the way scripts/perf-bench counts it
+# (indented lines of fern -target arm64-linux) on main 1aaec0fd plus the semunique fix, which
+# main now carries: deflate_decode 13460, deflate_encode 7851, utf8_ingest_unchecked 8637.
 # Re-pinned 2026-10-25 (h3-hello-allocs-2), x86_64 .text rows from a local perf-bench run on
 # b9ca4974a1, the merge of main at 89756b51: deflate_decode 12488 to 12626, deflate_encode
 # 7144 to 7250, http_hello 17206 to 17393, utf8_ingest_validated 8710 to 8803. Main alone
@@ -384,9 +387,9 @@ aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
 aarch64/deflate_decode.ir	43339918
-aarch64/deflate_decode.text	13305
+aarch64/deflate_decode.text	13460
 aarch64/deflate_encode.ir	48587342
-aarch64/deflate_encode.text	7749
+aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
 aarch64/http_hello.text	18384
@@ -429,7 +432,7 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	8747
+aarch64/utf8_ingest_unchecked.text	8637
 aarch64/utf8_ingest_unchecked.ir	2683450
 aarch64/utf8_ingest_validated.text	9210
 aarch64/utf8_ingest_validated.ir	6269853
