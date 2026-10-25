@@ -3432,8 +3432,7 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   }
   r = emit(r, ir.op_store_local(ins.result));
   if (ins.kind_tag == ssasem.call() && ins.imm > 0) {
-    r = emit(r, ir.op_call_word());
-    r = emit(r, ir.op_store_local(ins.imm - 1));
+    r = capture_pair_words(r, ins.imm);
   }
   if (ins.kind_tag == ssasem.call() && ins.imm < 0) {
     r = capture_scalar_words(r, ins.imm);
@@ -4485,14 +4484,14 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 }
 
 function paired_op(name: string): boolean {
-  return scalar_op(name) || name == sempair.pair_word_name() || util.str_has_prefix(name, sempair.word_as_prefix()) || util.str_has_prefix(name, sempair.pair_set_prefix());
+  return scalar_op(name) || sempair.pair_word_slot(name) >= 0 || util.str_has_prefix(name, sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
 }
 
 function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (scalar_op(ins.str)) {
     return scalar_site(r, f, ins);
   }
-  if (ins.str == sempair.pair_word_name()) {
+  if (sempair.pair_word_slot(ins.str) >= 0) {
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_load_local(ins.result));
   }
@@ -4501,6 +4500,17 @@ function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   }
   r = emit(r, ir.op_drop());
   return emit(r, ir.op_const_i32(0));
+}
+
+function capture_pair_words(own r: irtables.LowerResult, imm: i32): irtables.LowerResult {
+  let base: i32 = ssasem.pair_capture_base(imm);
+  let slot: i32 = ssasem.pair_capture_count(imm) - 1;
+  while (slot >= 0) {
+    r = emit(r, ir.op_call_pair_word(slot));
+    r = emit(r, ir.op_store_local(base + slot));
+    slot = slot - 1;
+  }
+  return r;
 }
 
 function capture_scalar_words(own r: irtables.LowerResult, imm: i32): irtables.LowerResult {
@@ -4573,10 +4583,10 @@ function return_scalar_words(own r: irtables.LowerResult, b: ssa.SBlock): irtabl
   return r;
 }
 
-function pair_payload(b: ssa.SBlock): i32 {
+function pair_payload(b: ssa.SBlock, slot: i32): i32 {
   let found: i32 = 0 - 1;
   for ins in b.insts {
-    if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, sempair.pair_set_prefix())) {
+    if (ins.kind_tag == ssasem.call() && sempair.pair_set_slot(ins.str) == slot) {
       if (found >= 0) {
         return 0 - 2;
       }
@@ -5856,14 +5866,18 @@ function set_return_words(own e: Emit, b: ssa.SBlock): Emit {
     return e;
   }
   e = Emit { ...e, r: return_scalar_words(e.r, b) };
-  let payload: i32 = pair_payload(b);
-  if (payload == 0 - 2) {
-    return Emit { ...e, why: "a paired return sets its word twice" };
-  }
-  if (payload >= 0) {
-    e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
-    e = Emit { ...e, r: emit(e.r, ir.op_ret_word()) };
-    e = Emit { ...e, r: emit(e.r, ir.op_drop()) };
+  let slot: i32 = 1;
+  while (slot >= 0) {
+    let payload: i32 = pair_payload(b, slot);
+    if (payload == 0 - 2) {
+      return Emit { ...e, why: "a paired return sets its word twice" };
+    }
+    if (payload >= 0) {
+      e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
+      e = Emit { ...e, r: emit(e.r, ir.op_ret_pair_word(slot)) };
+      e = Emit { ...e, r: emit(e.r, ir.op_drop()) };
+    }
+    slot = slot - 1;
   }
   return e;
 }

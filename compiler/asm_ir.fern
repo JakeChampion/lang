@@ -4003,10 +4003,7 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 384 || o.kind_tag == 385) {
-    let reg: string = "rdx";
-    if (o.width == 64) {
-      reg = ["rdx", "rcx", "r11"][o.i32_imm];
-    }
+    let reg: string = ["rdx", "rcx", "r11"][o.i32_imm];
     if (o.kind_tag == 384) {
       return s.write("    popq %" + reg + "\n    pushq %" + reg + "\n");
     }

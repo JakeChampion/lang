@@ -4,6 +4,7 @@ import "./semrecords";
 import "./typeinfo";
 import "./rccertify";
 import "./semscalarreturn";
+import "./sempair";
 
 pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
 
@@ -92,6 +93,7 @@ pub function abis(c: Collection): rccertify.Abis {
   let results: boolean[] = [];
   let firsts: boolean[] = [];
   let seconds: i32[] = [];
+  let splits: i32[][] = [];
   let words: boolean[] = [];
   for m in c.producers {
     for k in m.contracts {
@@ -100,10 +102,41 @@ pub function abis(c: Collection): rccertify.Abis {
       results = results.append(ssasem.reference(k.result));
       firsts = firsts.append(pair_first(k.result));
       seconds = seconds.append(pair_second(m.enums, k.result));
+      splits = splits.append([split_word(m, k.result, 0), split_word(m, k.result, 1)]);
       words = words.append(ssasem.is_usize(k.result));
     }
   }
-  return rccertify.abis_of(names, modes, results, firsts, seconds, words);
+  return rccertify.abis_of(names, modes, results, firsts, seconds, splits, words);
+}
+
+// The variants whose pair word `slot` holds a unit when the variant returns
+// in three words, a two-word payload split across both pair words.
+function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
+  let at: i32 = semrecords.find_enum(m.enums, t);
+  if (at < 0 || semscalarreturn.variant_in_lanes(m.enums[at])) {
+    return 0;
+  }
+  let mask: i32 = 0;
+  let tag: i32 = 0;
+  for v in m.enums[at].variants {
+    let held: boolean = false;
+    if (v.fields.len() == 1) {
+      let parts: typeinfo.Type[] = sempair.split_parts(m.records, m.finalizers, v.fields[0].ty);
+      if (parts.len() == 2) {
+        held = ssasem.reference(parts[slot]);
+      } else {
+        held = slot == 0 && ssasem.reference(v.fields[0].ty);
+      }
+    }
+    if (held && tag >= 31) {
+      return 0 - 2;
+    }
+    if (held) {
+      mask = mask | 1 << tag;
+    }
+    tag = tag + 1;
+  }
+  return mask;
 }
 
 function pair_first(t: typeinfo.Type): boolean {
