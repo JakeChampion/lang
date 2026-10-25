@@ -1,0 +1,5 @@
+main.fern:14:3: error[E003]: variable "all": expected [u8][], got u8[][]
+main.fern:15:3: error[E003]: variable "t": expected ([u8], i32), got (u8[], i32)
+main.fern:16:3: error[E003]: variable "o": expected Option[[u8]], got Option[u8[]]
+main.fern:17:16: error[E036]: variant A payload 0 type u8[], expected [u8]
+main.fern:18:16: error[E038]: argument 1 to "takes": expected [u8][], got u8[][]
