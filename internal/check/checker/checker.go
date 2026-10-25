@@ -950,8 +950,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
-	for _, n := range []string{"__aes_gcm_seal", "__aes_gcm_open"} {
-		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u8View, u8View}, Result: u8Arr}
+	u64 := ast.NumberType{Width: 64, Signed: false}
+	for _, n := range []string{"__aes_gcm_seal_into", "__aes_gcm_open_into"} {
+		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u64, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
@@ -9302,8 +9303,19 @@ func traitSelfIsOwn(m ast.TraitMethod) bool {
 	return !m.Assoc && len(m.Params) > 0 && m.Params[0].Own
 }
 
+// selfReassignCall is the call of x = f(x) or x = f(x)?: on the error path of
+// the second the function returns, so x is not read again either way.
+func selfReassignCall(asn *ast.Assign) (*ast.Call, bool) {
+	v := asn.Value
+	if try, ok := v.(*ast.TryOp); ok {
+		v = try.Inner
+	}
+	call, ok := v.(*ast.Call)
+	return call, ok
+}
+
 func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Ident {
-	call, ok := asn.Value.(*ast.Call)
+	call, ok := selfReassignCall(asn)
 	if !ok {
 		return nil
 	}
@@ -9322,7 +9334,7 @@ func selfReassignOwnMoveArgWith(asn *ast.Assign, flags []bool) *ast.Ident {
 	if !ok {
 		return nil
 	}
-	call, ok := asn.Value.(*ast.Call)
+	call, ok := selfReassignCall(asn)
 	if !ok {
 		return nil
 	}
@@ -9355,7 +9367,7 @@ func (c *checker) selfReassignOwnMoveArg(asn *ast.Assign) *ast.Ident {
 	if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
 		return arg
 	}
-	call, ok := asn.Value.(*ast.Call)
+	call, ok := selfReassignCall(asn)
 	if !ok {
 		return nil
 	}
@@ -9473,6 +9485,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
+		case *ast.TryOp:
+			return isOwnedExpr(x.Inner)
 		case *ast.Ident:
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true

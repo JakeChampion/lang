@@ -1067,6 +1067,45 @@ func (f *formatter) formatAssert(x *ast.If) {
 	f.b.WriteString(");")
 }
 
+func headerNeedsParens(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.StructLit, *ast.MapLit, *ast.BlockExpr:
+		return true
+	case *ast.FieldAccess:
+		return headerNeedsParens(x.Target)
+	case *ast.Index:
+		return headerNeedsParens(x.Array)
+	case *ast.SliceExpr:
+		return headerNeedsParens(x.Source)
+	case *ast.Unary:
+		return headerNeedsParens(x.Operand)
+	case *ast.CastExpr:
+		return headerNeedsParens(x.Inner)
+	case *ast.DowncastExpr:
+		return headerNeedsParens(x.Inner)
+	case *ast.TryOp:
+		return headerNeedsParens(x.Inner)
+	case *ast.Binary:
+		return headerNeedsParens(x.Left) || headerNeedsParens(x.Right)
+	case *ast.Assign:
+		return headerNeedsParens(x.Target) || headerNeedsParens(x.Value)
+	case *ast.Call:
+		return headerNeedsParens(x.Callee)
+	}
+	return false
+}
+
+func (f *formatter) formatHeaderExpr(e ast.Expr) {
+	parenthesize := headerNeedsParens(e)
+	if parenthesize {
+		f.b.WriteByte('(')
+	}
+	f.formatExpr(e, precLowest)
+	if parenthesize {
+		f.b.WriteByte(')')
+	}
+}
+
 func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 	f.formatLoopLabel(fe.Label)
 	f.b.WriteString("for ")
@@ -1080,14 +1119,14 @@ func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 		f.b.WriteString(fe.Var)
 	}
 	f.b.WriteString(" in ")
-	f.formatExpr(fe.Iter, precLowest)
+	f.formatHeaderExpr(fe.Iter)
 	if fe.RangeHigh != nil {
 		if fe.RangeIncl {
 			f.b.WriteString("..=")
 		} else {
 			f.b.WriteString("..")
 		}
-		f.formatExpr(fe.RangeHigh, precLowest)
+		f.formatHeaderExpr(fe.RangeHigh)
 	}
 	f.b.WriteByte(' ')
 	f.formatStmt(fe.Body, depth)
@@ -1219,7 +1258,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 				f.formatArmPattern(arm)
 			}
 			f.b.WriteString(" = ")
-			f.formatExpr(x.Tag, precLowest)
+			if x.Origin == ast.OriginLetElse {
+				f.formatExpr(x.Tag, precLowest)
+			} else {
+				f.formatHeaderExpr(x.Tag)
+			}
 			if x.Origin == ast.OriginLetElse {
 				f.b.WriteString(" else ")
 				f.formatBlock(els, depth)
@@ -1809,7 +1852,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				f.formatExprArmPattern(arm)
 			}
 			f.b.WriteString(" = ")
-			f.formatExpr(x.Tag, precLowest)
+			f.formatHeaderExpr(x.Tag)
 			f.b.WriteByte(' ')
 			f.formatBranch(x.Arms[0].Body)
 			f.formatElseBranch(x.Arms[len(x.Arms)-1].Body, x.ElseChained)

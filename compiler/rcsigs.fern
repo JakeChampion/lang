@@ -190,12 +190,17 @@ function move_ops(): string[] {
   return ["scale_f64_in_place"];
 }
 
+function sealing_ops(): string[] {
+  return ["aes_gcm_seal_into", "aes_gcm_open_into"];
+}
+
 pub struct OpTable { names: util.NameIndex, sigs: Sig[] }
 
 pub function op_table(): OpTable {
   let rows: Rows = Rows { names: [], sigs: [] };
   rows = add(rows, fresh_ops(), inert(result_fresh()));
   rows = add(rows, move_ops(), sig(0, effect_move(), result_fresh()));
+  rows = add(rows, sealing_ops(), sig(4, effect_move(), result_fresh()));
   rows = add(rows, ["ret_word"], inert(result_none()));
   rows = add(rows, ["call_word"], inert(result_unknown()));
   rows = add(rows, ["arr_push_owned", "arr_push_owned_i64", "arr_push_owned_f64", "arr_push_owned_u8"], sig(0, effect_move(), result_fresh()));

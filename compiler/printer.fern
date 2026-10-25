@@ -126,6 +126,50 @@ function print_expr(e: ast.Expr, depth: i32): string {
   return print_expr_prec(e, prec_lowest(), depth);
 }
 
+function header_needs_parens(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprStructLit(_) => {
+      return true;
+    },
+    ast.ExprMapLit(_) => {
+      return true;
+    },
+    ast.ExprFieldAccess(f) => {
+      return header_needs_parens(f.obj);
+    },
+    ast.ExprIndex(i) => {
+      return header_needs_parens(i.array);
+    },
+    ast.ExprSlice(s) => {
+      return header_needs_parens(s.array);
+    },
+    ast.ExprUnary(u) => {
+      return header_needs_parens(u.operand);
+    },
+    ast.ExprBinary(b) => {
+      return header_needs_parens(b.left) || header_needs_parens(b.right);
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprLambda(l) = c.callee {
+        return l.origin == parser.ORIGIN_BLOCK;
+      }
+      return header_needs_parens(c.callee);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function print_header_expr(e: ast.Expr, depth: i32): string {
+  let text = print_expr(e, depth);
+  if (header_needs_parens(e)) {
+    return "(" + text + ")";
+  }
+  return text;
+}
+
 function print_lit(e: ast.Expr): string {
   return print_expr(e, 0);
 }
@@ -541,7 +585,7 @@ function print_sugared_match_expr(sg: ast.MatchSugar, v: string, depth: i32): st
     if (sg.else_chained) {
       else_text = no;
     }
-    return "if let " + head + " = " + print_expr(sg.scrut, depth) + " " + value_branch_text(yes) + " else " + else_text;
+    return "if let " + head + " = " + print_header_expr(sg.scrut, depth) + " " + value_branch_text(yes) + " else " + else_text;
   }
   let out: string = "match (" + print_expr(sg.scrut, depth) + ") { ";
   let i: i32 = 0;
@@ -1643,7 +1687,7 @@ function print_sugared_if_let(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, 
     out = out + arms[i].head;
     i = i + 1;
   }
-  out = out + " = " + print_expr(sg.scrut, depth) + " " + then_block;
+  out = out + " = " + print_header_expr(sg.scrut, depth) + " " + then_block;
   let (else_text, g2) = print_else(arms[arms.len() - 1].body, sg.else_chained, depth, g);
   return (out + else_text, g2);
 }
@@ -1714,7 +1758,7 @@ function print_if_let(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     out = out + print_pattern(arms[i].pattern);
     i = i + 1;
   }
-  out = out + " = " + print_expr(m.scrutinee, depth) + " " + then_block;
+  out = out + " = " + print_header_expr(m.scrutinee, depth) + " " + then_block;
   let (else_text, g2) = print_else(arms[arms.len() - 1].body, m.else_chained, depth, g);
   return (out + else_text, g2);
 }
@@ -2195,10 +2239,10 @@ function print_for_iter(e: ast.Expr, depth: i32): string {
         match (c.callee) {
           ast.ExprIdent(id) => {
             if (id.name == "__range") {
-              return print_expr(c.args[0], depth) + ".." + print_expr(c.args[1], depth);
+              return print_header_expr(c.args[0], depth) + ".." + print_header_expr(c.args[1], depth);
             }
             if (id.name == "__range_incl") {
-              return print_expr(c.args[0], depth) + "..=" + print_expr(c.args[1], depth);
+              return print_header_expr(c.args[0], depth) + "..=" + print_header_expr(c.args[1], depth);
             }
           },
           _ => {}
@@ -2207,7 +2251,7 @@ function print_for_iter(e: ast.Expr, depth: i32): string {
     },
     _ => {}
   }
-  return print_expr(e, depth);
+  return print_header_expr(e, depth);
 }
 
 function print_stmt(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {

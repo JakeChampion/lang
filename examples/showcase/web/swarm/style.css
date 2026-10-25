@@ -1,9 +1,10 @@
 .swarm-stage {
+  color-scheme: dark;
   position: relative;
   overflow: hidden;
   border: 1px solid var(--plate-line);
   border-radius: var(--radius);
-  background: radial-gradient(ellipse at 50% 45%, #15281e, var(--plate) 70%);
+  background: var(--plate) radial-gradient(ellipse at 50% 45%, #15281e, var(--plate) 70%);
 }
 .swarm-stage canvas {
   display: block;
@@ -22,7 +23,7 @@
   display: flex;
   justify-content: space-between;
   gap: 1.25rem;
-  font: 500 0.62rem var(--font-mono);
+  font: 500 0.68rem var(--font-mono);
   letter-spacing: 0.14em;
   color: var(--plate-muted);
   pointer-events: none;
@@ -65,9 +66,75 @@
   font-variant-numeric: tabular-nums;
 }
 .swarm-readings span {
-  font: 500 0.6rem var(--font-mono);
+  font: 500 0.68rem var(--font-mono);
   letter-spacing: 0.12em;
   color: var(--gray-3);
+}
+.kernel-editor {
+  position: relative;
+  margin: 2rem 0 1.5rem;
+  padding-top: 1.4rem;
+  border-top: var(--rule);
+}
+.kernel-editor::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 2.5rem;
+  height: 2px;
+  background: var(--fern-spore);
+}
+.editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+}
+.editor-head h2 {
+  margin: 0.7rem 0 0.5rem;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+.editor-head p {
+  max-width: 44rem;
+}
+.editor-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+#kernel-source {
+  display: block;
+  width: 100%;
+  min-height: 26rem;
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--plate-line);
+  border-radius: var(--radius);
+  background: var(--plate);
+  color: var(--plate-text);
+  color-scheme: dark;
+  font: 0.85rem/1.65 var(--font-mono);
+  tab-size: 2;
+  resize: vertical;
+  white-space: pre;
+}
+#kernel-source:focus-visible {
+  outline: 2px solid var(--fern-spore);
+  outline-offset: 2px;
+}
+.diagnostics {
+  margin: 0;
+  padding: 0.8rem 1rem;
+  border-inline-start: 2px solid var(--fern-rust);
+  border-radius: 0 0.35rem 0.35rem 0;
+  background: color-mix(in oklab, var(--fern-rust) 10%, transparent);
+  color: var(--white);
+  font: 0.8rem/1.6 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .swarm-player.is-fullscreen {
   display: flex;
@@ -87,6 +154,9 @@
   margin: 0;
 }
 @media (max-width: 650px) {
+  .editor-actions {
+    align-items: flex-start;
+  }
   .swarm-readings {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -98,7 +168,7 @@
   }
   .swarm-caption {
     inset: auto 1rem 1rem;
-    font-size: 0.52rem;
+    font-size: 0.68rem;
   }
   .swarm-caption span:last-child {
     max-width: 9rem;

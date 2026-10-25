@@ -401,7 +401,21 @@ function lends_view(f: ssasem.Func): boolean {
       return true;
     }
   }
-  return ssasem.holds_view(f, f.result);
+  return ssasem.holds_view(f, f.result) || loops_view(f);
+}
+
+// A loop that rebinds a view starts from a fresh box of the caller's view on
+// the function's entry edge. Spliced into the caller, the loop would start
+// from the caller's own view, which the plan cannot retain.
+function loops_view(f: ssasem.Func): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 8 && ssasem.is_view(f.values[ins.result])) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function call_counts(funcs: ssasem.Func[], ix: util.NameIndex): i32[] {

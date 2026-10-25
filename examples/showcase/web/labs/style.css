@@ -57,7 +57,7 @@
   display: grid;
   gap: 0.35rem;
   margin: 0.8rem 0;
-  font: 500 0.66rem var(--font-mono);
+  font: 500 0.68rem var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--gray-3);
@@ -101,18 +101,6 @@
   font: 500 0.75rem var(--font-mono);
   cursor: pointer;
 }
-/* Controls on the plate keep plate colors in both themes. */
-.labs-page .stage input,
-.labs-page .stage select,
-.labs-page .stage textarea {
-  border-color: var(--plate-line);
-  background: var(--plate-raised);
-  color: var(--plate-text);
-}
-.labs-page .lab .stage button:not([aria-pressed="true"], .active) {
-  border-color: var(--plate-line);
-  color: var(--plate-text);
-}
 .labs-page details {
   margin-top: 0.9rem;
   padding-top: 0.6rem;
@@ -137,6 +125,7 @@
   color: var(--gray-3);
 }
 .labs-page .stage {
+  color-scheme: dark;
   position: relative;
   min-width: 0;
   min-height: 420px;
@@ -203,7 +192,7 @@
   overflow-wrap: anywhere;
 }
 .labs-page th {
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -213,13 +202,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: 0.8rem/1.6 var(--font-mono);
-}
-.labs-page .stage h2,
-.labs-page .stage h3 {
-  color: var(--plate-text);
-}
-.labs-page .stage .hint {
-  color: var(--plate-muted);
 }
 .labs-page .result {
   padding: 0.9rem 0;
