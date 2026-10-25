@@ -87,6 +87,12 @@ try {
     1,
   );
   assert.ok((await archive.call("export")).includes("violetrpc"));
+  const metrics = await (await fetch(base + "/pulse/snapshot")).json();
+  assert.ok(
+    metrics.websocket_connections >= 3,
+    "Pulse omitted command connections",
+  );
+  assert.ok(metrics.websocket_messages >= 8, "Pulse omitted command messages");
   const rejected = new Promise(
     (resolve) => (db2.ws.onclose = (event) => resolve(event.code)),
   );

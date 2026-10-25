@@ -40,7 +40,7 @@ struct SavedArchive { revision: i64, documents: lantern.Document[] }
 
 pub struct Room { name: string, database: fernbase.Database, archive: lantern.Index, revision: i64, fault: string }
 
-pub struct State { directory: string, rooms: Cell[Room[]], preview: Cell[Option[u8[]]], connections: Cell[i32] }
+pub struct State { directory: string, rooms: Cell[Room[]], preview: Cell[Option[u8[]]], connections: Cell[i32], inputs: Cell[i64] }
 
 @derive(json.FromJson)
 struct Query { sql: string, revision: i64, preview: boolean }
@@ -61,7 +61,7 @@ struct ArchiveStatus { revision: i64, documents: i32, terms: i32, words: i32, pe
 struct SearchResult { revision: i64, result: lantern.Results, server_us: i64 }
 
 pub function state(): State {
-  return State { directory: env("FERN_LABS_DATA").unwrap_or(""), rooms: cell_new([] as Room[]), preview: cell_new(None as Option[u8[]]), connections: cell_new(0) };
+  return State { directory: env("FERN_LABS_DATA").unwrap_or(""), rooms: cell_new([] as Room[]), preview: cell_new(None as Option[u8[]]), connections: cell_new(0), inputs: cell_new(0i64) };
 }
 
 function failure(message: string): http.HttpError {
@@ -266,6 +266,7 @@ pub function socket(state: State, application: string, req: HttpRequest): Result
         connection.close(1008, "Command belongs to another application or room.");
         return;
       }
+      state.inputs.set(state.inputs.get() + 1);
       let action = common.path(request).drop(prefix.len());
       let mutates = action == "query" || action == "import" || action == "recover";
       let response = http.text(405, "Use the operation method.");

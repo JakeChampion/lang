@@ -63,9 +63,10 @@ pub function state(binary_bytes: i64, version: string): State {
   let arena = gather.state(renderer.instance);
   let voxels = blockyard.state(renderer.instance);
   let studios = studio.state();
-  let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels, studios);
+  let lab_state = labs.state();
+  let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels, studios, lab_state);
   return State {
-    studios: studios, labs: labs.state(), voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
+    studios: studios, labs: lab_state, voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry,
     fractal: renderer,
   };
 }
