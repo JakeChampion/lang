@@ -313,14 +313,17 @@ bytes on demand.
 
 **The stream pulls.** `Stream` grows a third field, `source:
 Option[BodySource]`, and `BodySource { next: () => Option[u8[]], fault:
-Cell[i32] }` is a checker-injected record like `ChunkProducer` (both
+Cell[Option[StreamFault]] }` is a checker-injected record like `ChunkProducer` (both
 compilers' builtin tables; `Stream` literals go through
 `stream.stream_from_bytes`). A read that exhausts `data` asks `next()` for
 the next chunk and replaces `data` with it, so a streamed body is never
 held whole; `None` ends the stream, and `fault` says why when it ended
-early: 413 past the cap, 408 stalled under the minimum data rate, 400 for
-a chunked body that breaks its rules or a peer that closed short, and
-`async.cancelled()` for a cancelled task. `(s: Stream).fault()` reads it;
+early, as a builtin `StreamFault`: `StreamTooLarge` past the cap,
+`StreamFramingTooLarge` for a chunk-size line or trailers past the header
+budget, `StreamTimeout` stalled under the minimum data rate,
+`StreamMalformed` for a chunked body that breaks its rules or a TLS record
+that does not open, `StreamCutShort` for a peer that closed short or reset
+the stream, and `StreamCancelled` for a cancelled task. `(s: Stream).fault()` reads it;
 `req.body_string()` maps it onto `BodyError.EndedEarly(fault)`
 (`ToResponse` with the fault's status), so a handler written
 `Result[HttpResponse, BodyError]` refuses a bad upload with `?` as it
@@ -329,11 +332,9 @@ the source; `body_len` answers the declared `Content-Length` for a lazy
 body (-1 when chunked); `len`, `remaining` and `is_empty` keep describing
 the buffer — the whole body of an in-memory `Stream`, the chunk being read
 of a sourced one — and the reader methods are the truth about a sourced
-stream's end. `fault` holds one of: 0, the framing ran to its end or has
-not yet; 400, 413 or 431, the chunked decoder's refusals (the walk's
-statuses); 408, the data-rate stall; `async.cancelled()` (-2), the task
-was cancelled. `EndedEarly`'s `ToResponse` answers a status it holds and
-500 for the cancellation, which a handler only ever observes on its way
+stream's end. `fault` holds `None` while the framing has run to its end
+or has not yet. `EndedEarly`'s `ToResponse` answers 413, 431, 408 or 400
+for the first five faults and 500 for the cancellation, which a handler only ever observes on its way
 into a connection the loop has closed. An in-memory `Stream` has no source
 and allocates nothing new, but the readers that contain the `next()` call
 site — `read_n`, `read_all`, `read_byte`, `read_line`, `__fill`, and the

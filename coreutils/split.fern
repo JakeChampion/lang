@@ -468,14 +468,15 @@ function out_put_range(o: Out, data: u8[], lo: i32, hi: i32): Out {
   if (o.to_stdout) {
     return Out { ...o, so: gnu.check(o.so.write_bytes_range(data, lo, hi)) };
   }
-  let w: io_buffered.BufWriter = o.w.write_bytes_range(data, lo, hi);
-  match (w.error()) {
-    Some(e) => {
-      write_failed(o.s, o.so, o.name, e);
+  match (o.w.write_bytes_range(data, lo, hi)) {
+    Ok(w) => {
+      return Out { ...o, w: w };
     },
-    None => {}
+    Err(e) => {
+      write_failed(o.s, o.so, o.name, e);
+    }
   }
-  return Out { ...o, w: w };
+  return o;
 }
 
 function out_end(o: Out): Out {
@@ -646,13 +647,14 @@ function spool(s: Src, first: u8[]): (Src, i64) {
   let src: Src = s;
   while (block.len() > 0) {
     total = total + block.len() as i64;
-    buf = buf.write_bytes(block);
-    match (buf.error()) {
-      Some(e) => {
+    match (buf.write_bytes(block)) {
+      Ok(w) => {
+        buf = w;
+      },
+      Err(e) => {
         gnu.error(path + ": " + gnu.io_error_text(e));
         exit(1);
-      },
-      None => {}
+      }
     }
     let r: (u8[], Src) = src_read(src, read_size());
     block = r.0;

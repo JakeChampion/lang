@@ -43,21 +43,28 @@ func TestBufferedWriterBytesInterp(t *testing.T) {
 }
 
 const bufferedWriterFreshBytesProgram = `import "std/io_buffered" as io;
-function main(): i32 {
+function run(): Result[i32, IoError] {
   let seed = buf_new(3);
   for capacity in [1, 64] {
     let b = io.buf_writer_new(stdout(), capacity);
     for iteration in 0..32 {
       buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
-      b = b.write_bytes(buf_take_bytes(seed));
+      b = b.write_bytes(buf_take_bytes(seed))?;
       buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
-      b = b.write_bytes_range(buf_take_bytes(seed), 1, 2);
-      b = b.write_bytes(buf_take_bytes(seed));
-      b = b.flush();
+      b = b.write_bytes_range(buf_take_bytes(seed), 1, 2)?;
+      b = b.write_bytes(buf_take_bytes(seed))?;
+      b = b.flush()?;
     }
   }
   buf_free(seed);
-  return 0;
+  return Ok(0);
+}
+
+function main(): i32 {
+  match (run()) {
+    Ok(code) => { return code; },
+    Err(_) => { return 99; }
+  }
 }`
 
 func checkBufferedWriterBytesCensus(t *testing.T, out, diagnostic string, code int) {

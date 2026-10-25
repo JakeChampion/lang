@@ -9,6 +9,11 @@ import "std/option";
 import "std/deflate";
 import "std/utf8";
 
+function no_fault(): Cell[Option[StreamFault]] {
+  let none: Option[StreamFault] = None;
+  return cell_new(none);
+}
+
 function handshake(path: string): HttpRequest {
   let r: HttpRequest = http.request("GET", path);
   r = r.with_header("Upgrade", "websocket").with_header("Connection", "keep-alive, Upgrade");
@@ -33,7 +38,7 @@ function wired(req: HttpRequest, bytes: u8[], k: i32): (HttpRequest, Cell[u8[]])
       at.set(to);
       return Some(array.slice(bytes, from, to));
     },
-    fault: cell_new(0),
+    fault: no_fault(),
     send: (b: u8[]): i32 => {
       out.set(out.get().concat(b));
       return b.len();
