@@ -1253,10 +1253,14 @@ function numeric_operand_diags(op: string, lt: typeinfo.Type, rt: typeinfo.Type,
     return [dg_at("E009", "operator \"" + op + "\" requires both operands to share a float type; got " + type_label(lt) + " and " + type_label(rt) + " — use `as` for explicit conversion", line, col)];
   }
   for operand in [lt, rt] {
+    let msg: string = "";
     if (want_float && !is_float(operand)) {
-      out = out.append(dg_at("E009", "operator \"" + op + "\" requires float, got " + type_label(operand), line, col));
+      msg = "operator \"" + op + "\" requires float, got " + type_label(operand);
     } else if (!want_float && !is_integer(operand)) {
-      out = out.append(dg_at("E009", "operator \"" + op + "\" requires an integer type, got " + type_label(operand), line, col));
+      msg = "operator \"" + op + "\" requires an integer type, got " + type_label(operand);
+    }
+    if (msg.len() > 0 && (out.len() == 0 || out[0].message != msg)) {
+      out = out.append(dg_at("E009", msg, line, col));
     }
   }
   return out;
@@ -7795,6 +7799,32 @@ function keep_code(diags: util.Diag[], code: string): util.Diag[] {
   return out;
 }
 
+// The diagnostics for `value` flowing into a slot of type `ty`; `what` names
+// the slot in the E002 for a mismatch.
+function value_dest_diags(value: ast.Expr, cur: Scope, ty: typeinfo.Type, unions: UnionSig[], what: string, line: i32, col: i32): util.Diag[] {
+  let t: typeinfo.Type = check_expr(value, cur);
+  let out: util.Diag[] = int_dest_range_diags(value, ty);
+  out = util.append_diags(out, ctor_payload_diags(value, ty, cur));
+  let bound: util.Diag[] = dest_bound_diags(value, ty, cur);
+  out = util.append_diags(out, bound);
+  if (!use_untyped_call(value) && bound.len() == 0 && !is_unknown(t) && !settles_to(value, ty, cur) && !(type_assignable(t, ty, unions) && dyn_conforms(t, ty, cur))) {
+    out = out.append(dg_at("E002", what + ": expected " + type_label(ty) + ", got " + type_label(t) + str_copy_hint(t, ty), line, col));
+  }
+  return out;
+}
+
+function const_value_diags(fd: parser.FuncDecl, s: Scope, ty: typeinfo.Type, unions: UnionSig[]): util.Diag[] {
+  if (is_unknown(ty)) {
+    return [];
+  }
+  for st in fd.body {
+    if let ast.StmtReturn(r) = st {
+      return value_dest_diags(r.value, s, ty, unions, "const " + fd.name, fd.line, fd.col);
+    }
+  }
+  return [];
+}
+
 function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: UnionSig[]): util.Diag[] {
   let out: util.Diag[] = [];
   if (is_unknown(ret_ty)) {
@@ -7817,14 +7847,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         if (bare) {
           out = out.append(dg_at("E012", "return without value in function returning " + type_label(ret_ty), r.line, r.col));
         } else {
-          let t: typeinfo.Type = check_expr(r.value, cur);
-          out = util.append_diags(out, int_dest_range_diags(r.value, ret_ty));
-          out = util.append_diags(out, ctor_payload_diags(r.value, ret_ty, cur));
-          let rbound: util.Diag[] = dest_bound_diags(r.value, ret_ty, cur);
-          out = util.append_diags(out, rbound);
-          if (!use_untyped_call(r.value) && rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
-            out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
-          }
+          out = util.append_diags(out, value_dest_diags(r.value, cur, ret_ty, unions, "return value", r.line, r.col));
         }
       },
       ast.StmtIf(f) => {
@@ -21523,7 +21546,11 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       if (is_unknown(rty) && util.index_of_str(fsc.tparams, rname) < 0 && e064_unknown_bare(rname, fsc.type_names())) {
         rty = typeinfo.TypeStruct { name: rname, args: [] };
       }
-      function_diags = util.append_diags(function_diags, ret_diags(dbody, fsc, rty, unions));
+      if (mod.funcs[i].is_const && mod.funcs[i].receiver_type.len() == 0) {
+        function_diags = util.append_diags(function_diags, const_value_diags(mod.funcs[i], fsc, rty, unions));
+      } else {
+        function_diags = util.append_diags(function_diags, ret_diags(dbody, fsc, rty, unions));
+      }
       if (mod.funcs[i].import_iface.len() == 0 && !block_exits(mod.funcs[i].body, fsc.defines("exit"))) {
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
       }
