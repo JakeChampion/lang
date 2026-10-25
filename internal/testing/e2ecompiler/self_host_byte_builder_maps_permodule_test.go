@@ -70,6 +70,13 @@ func TestSelfHostByteBuilderMapsPerModule(t *testing.T) {
 			}
 			bin := filepath.Join(t.TempDir(), "builders")
 			args := append([]string{"-static", "-nostdlib", "-no-pie", "-o", bin}, units...)
+			if target == "x86-64-linux" {
+				probe := filepath.Join(t.TempDir(), "copy.s")
+				if err := os.WriteFile(probe, []byte(memcpyExternalProbe), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, probe, "-e", "__memcpy_probe")
+			}
 			if out, err := exec.Command(linker, args...).CombinedOutput(); err != nil {
 				t.Fatalf("link: %v\n%s", err, out)
 			}
@@ -83,3 +90,32 @@ func TestSelfHostByteBuilderMapsPerModule(t *testing.T) {
 		})
 	}
 }
+
+const memcpyExternalProbe = `.text
+.globl __memcpy_probe
+__memcpy_probe:
+    leaq copy_target+1(%rip), %rdi
+    leaq copy_source(%rip), %rsi
+    movq $65, %rdx
+    call __fern_memcpy
+    leaq copy_target+1(%rip), %rdi
+    leaq copy_source(%rip), %rsi
+    movq $65, %rcx
+    repe cmpsb
+    jne copy_failed
+    cmpb $0, copy_target(%rip)
+    jne copy_failed
+    cmpb $0, copy_target+66(%rip)
+    jne copy_failed
+    jmp _start
+copy_failed:
+    movq $1, %rdi
+    movq $60, %rax
+    syscall
+.section .rodata
+copy_source:
+    .ascii "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+-!"
+.data
+copy_target:
+    .zero 67
+`
