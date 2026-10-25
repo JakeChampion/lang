@@ -266,7 +266,7 @@ function hidden(): i32 { return 42; }
 	check(t, "public_variant_precedence",
 		`import "./shared"; function main(): i32 { let node: shared.Open = shared.Shared("ok"); match (node) { shared.Shared(s) => { return s.len(); } } return 0; }`, 0, "")
 	check(t, "entry_variant_does_not_hide_library_builtin",
-		`import "std/json"; enum Reply { Ok, Full } function main(): i32 { let r: Reply = Reply.Ok; match (json.json_parse_result("1")) { Ok(_) => {}, Err(_) => { return 1; } } return match (r) { Ok => 0, Full => 2 }; }`, 0, "")
+		`import "std/json"; enum Reply { Ok, Full } function main(): i32 { let r: Reply = Reply.Ok; match (json.parse("1")) { Ok(_) => {}, Err(_) => { return 1; } } return match (r) { Ok => 0, Full => 2 }; }`, 0, "")
 
 	src := "import \"./lib\";\nfunction main(): i32 { return lib.hidden(); }\n"
 	path := filepath.Join(dir, "private_build.fern")
