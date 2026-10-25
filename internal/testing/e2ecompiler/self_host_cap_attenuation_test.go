@@ -26,6 +26,18 @@ func writeAttenuationProject(t *testing.T, files map[string]string) string {
 	return filepath.Join(dir, "app", "main.fern")
 }
 
+// errorHeaders is each diagnostic's `FILE:LINE:COL: error[CODE]: ...` line,
+// without the source excerpt beneath it.
+func errorHeaders(out string) string {
+	var heads []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, ": error[") && !strings.HasPrefix(line, " ") {
+			heads = append(heads, line)
+		}
+	}
+	return strings.Join(heads, "\n")
+}
+
 func attenuationChain(rootGrant, middleGrants string) map[string]string {
 	return map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\"" + rootGrant + " }\n",
@@ -84,8 +96,7 @@ func TestSelfHostCapabilityAttenuation(t *testing.T) {
 						t.Fatalf("success = %v, want %v: %v\n%s", runErr == nil, c.wantOK, runErr, out)
 					}
 					if oracleErr != nil {
-						got := strings.TrimSpace(strings.TrimPrefix(string(out), "fern: "))
-						if got != oracleErr.Error() {
+						if got := errorHeaders(string(out)); got != oracleErr.Error() {
 							t.Errorf("attenuation diagnostics differ:\ngot:  %s\nwant: %s", got, oracleErr)
 						}
 					}
@@ -134,7 +145,7 @@ func TestSelfHostCapabilityAttenuationDiamond(t *testing.T) {
 			if (runErr != nil) != bad {
 				t.Fatalf("success = %v, want %v: %v\n%s", runErr == nil, !bad, runErr, out)
 			}
-			if bad && !strings.Contains(string(out), oracleErr.Error()) {
+			if bad && errorHeaders(string(out)) != oracleErr.Error() {
 				t.Errorf("got %s; want %s", out, oracleErr)
 			}
 		})
@@ -182,7 +193,7 @@ func TestSelfHostCapabilityAttenuationDependencyForms(t *testing.T) {
 				if (runErr != nil) != bad {
 					t.Fatalf("success = %v, want %v: %v\n%s", runErr == nil, !bad, runErr, out)
 				}
-				if bad && !strings.Contains(string(out), oracleErr.Error()) {
+				if bad && errorHeaders(string(out)) != oracleErr.Error() {
 					t.Errorf("got %s; want %s", out, oracleErr)
 				}
 			})

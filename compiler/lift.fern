@@ -845,7 +845,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     ctys = ctys.append(cty);
     ci = ci + 1;
   }
-  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
   let pj: i32 = 0;
   while (pj < lam.params.len()) {
     ps = ps.append(lam.params[pj]);
@@ -900,7 +900,7 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 }
 
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
-  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
   let pj: i32 = 0;
   while (pj < lam.params.len()) {
     ps = ps.append(lam.params[pj]);
@@ -916,7 +916,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
   while (fi < mfuncs.decls.len()) {
     if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
       let tgt: parser.FuncDecl = mfuncs.decls[fi];
-      let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "" }];
+      let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
       let args: ast.Expr[] = [];
       let pj: i32 = 0;
       while (pj < tgt.params.len()) {
