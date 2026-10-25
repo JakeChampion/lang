@@ -1020,7 +1020,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__mismatch_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.SliceType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__mismatch_bytes_str"] = &ast.FuncType{
