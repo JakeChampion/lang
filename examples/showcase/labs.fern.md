@@ -5,6 +5,8 @@ Transactions compare the submitted revision before publication. A stale writer r
 
 Set `FERN_LABS_DATA` to retain checkpoints on a persistent volume. Storage errors block later writes until explicit recovery.
 Temporary rooms start again from the sample archive and an empty database after recovery or process restart.
+The browser sends commands through one persistent WebSocket. This connection keeps its process active on request-driven container hosts.
+The HTTP APIs remain available. Multiple owners still require connection affinity or separate public origins.
 
 ```fern
 <<*>>=
@@ -19,6 +21,7 @@ The server admits twelve rooms. File, document, query, and transaction limits bo
 ```fern
 <<Application routes>>=
 import "std/http";
+import "std/http/websocket";
 import "std/png";
 import "std/f64";
 import "std/json";
@@ -36,7 +39,7 @@ struct SavedArchive { revision: i64, documents: lantern.Document[] }
 
 pub struct Room { name: string, database: fernbase.Database, archive: lantern.Index, revision: i64, fault: string }
 
-pub struct State { directory: string, rooms: Cell[Room[]], preview: Cell[Option[u8[]]] }
+pub struct State { directory: string, rooms: Cell[Room[]], preview: Cell[Option[u8[]]], connections: Cell[i32] }
 
 @derive(json.FromJson)
 struct Query { sql: string, revision: i64, preview: boolean }
@@ -57,7 +60,7 @@ struct ArchiveStatus { revision: i64, documents: i32, terms: i32, words: i32, pe
 struct SearchResult { revision: i64, result: lantern.Results, server_us: i64 }
 
 pub function state(): State {
-  return State { directory: env("FERN_LABS_DATA").unwrap_or(""), rooms: cell_new([] as Room[]), preview: cell_new(None as Option[u8[]]) };
+  return State { directory: env("FERN_LABS_DATA").unwrap_or(""), rooms: cell_new([] as Room[]), preview: cell_new(None as Option[u8[]]), connections: cell_new(0) };
 }
 
 function failure(message: string): http.HttpError {
@@ -212,6 +215,81 @@ pub function handle(state: State, application: string, action: string, request: 
     return Ok(http.json_of(SearchResult { revision: current.revision, result: results, server_us: (monotonic_ns() - started) / 1000 }).with_header("Cache-Control", "no-store"));
   }
   return Ok(http.json_of(ArchiveStatus { revision: current.revision, documents: current.archive.documents.len(), terms: current.archive.terms.len(), words: current.archive.words, persistent: state.directory != "", fault: current.fault }).with_header("Cache-Control", "no-store"));
+}
+
+@derive(json.FromJson)
+struct Command { seq: i64, path: string, body: string, post: boolean }
+
+@derive(json.Json)
+struct Reply { seq: i64, status: i32, body: string }
+
+pub function socket(state: State, application: string, req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
+  let at = room(state, req)?;
+  if (state.connections.get() >= 64) {
+    return Err(http.fail(503, "All database and archive connections are in use."));
+  }
+  let name = state.rooms.get()[at].name;
+  let sequence = cell_new(0i64);
+  let credits = cell_new(32i64);
+  let last = cell_new(monotonic_ns());
+  let handlers = websocket.Handlers {
+    open: (connection: websocket.Conn): void => {},
+    message: (connection: websocket.Conn, message: websocket.Message): void => {
+      let Text(text) = message else {
+        connection.close(1003, "Send JSON commands.");
+        return;
+      };
+      let Ok(input) = Command.from_json(text) else {
+        connection.close(1008, "Invalid command.");
+        return;
+      };
+      let now = monotonic_ns();
+      let refill = (now - last.get()) / 5000000;
+      let available = (credits.get() + refill).min(32i64);
+      if (input.seq <= sequence.get() || available <= 0 || input.path.len() > 16384 || input.body.len() > 16384) {
+        connection.close(1008, "Command exceeds this connection limit.");
+        return;
+      }
+      sequence.set(input.seq);
+      credits.set(available - 1);
+      if (refill > 0) {
+        last.set(last.get() + refill * 5000000);
+      }
+      let method = "GET";
+      if (input.post) {
+        method = "POST";
+      }
+      let request = http.request(method, input.path).with_json(input.body);
+      let prefix = "/" + application + "/";
+      if (!common.path(request).starts_with(prefix) || common.query(request, "room", "commons") != name) {
+        connection.close(1008, "Command belongs to another application or room.");
+        return;
+      }
+      let action = common.path(request).drop(prefix.len());
+      let mutates = action == "query" || action == "import" || action == "recover";
+      let response = http.text(405, "Use the operation method.");
+      if (input.post == mutates) {
+        response = http.respond(handle(state, application, action, request));
+      }
+      let reply = Reply { seq: input.seq, status: response.status, body: response.body_string() };
+      if let websocket.Dropped = connection.send_text(reply.to_json()) {
+        connection.close(1013, "Command receiver is too slow.");
+      }
+    },
+    drain: (connection: websocket.Conn): void => {},
+    close: (connection: websocket.Conn, code: i32, reason: string): void => state.connections.set(state.connections.get() - 1),
+  };
+  state.connections.set(state.connections.get() + 1);
+  let options = websocket.Options { ...websocket.options(), max_message: 65536, backpressure: 16777216, max_backpressure: 33554432 };
+  match (websocket.accept(req, options, handlers)) {
+    Ok(response) => {
+      return Ok(response);
+    },
+    Err(error) => {
+      state.connections.set(state.connections.get() - 1);
+      return Err(error);
+    }
+  }
 }
 
 @derive(json.Json)

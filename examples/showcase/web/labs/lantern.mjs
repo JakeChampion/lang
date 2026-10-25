@@ -1,3 +1,4 @@
+import { rpcText } from "./rpc.mjs";
 import {
   shell,
   $,
@@ -190,7 +191,9 @@ action("Refresh index", async () => {
 state().then(search).catch(error);
 
 action("Export archive", async () => {
-  const response = await fetch(endpoint("export"));
-  if (!response.ok) throw Error("Archive export failed.");
-  download("lantern.ndjson", await response.blob(), "application/x-ndjson");
+  download(
+    "lantern.ndjson",
+    await rpcText(endpoint("export")),
+    "application/x-ndjson",
+  );
 });

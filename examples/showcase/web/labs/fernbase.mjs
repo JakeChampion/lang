@@ -25,8 +25,7 @@ const endpoint = (action) =>
 let revision = 0,
   draft = null,
   transactionRevision = 0,
-  busy = false,
-  latest;
+  busy = false;
 function table(rows) {
   $("results").replaceChildren();
   for (const row of rows) {
@@ -41,16 +40,29 @@ function table(rows) {
 }
 function transaction() {
   const active = draft !== null;
-  $("begin").disabled = active;
-  $("commit").disabled = $("rollback").disabled = !active;
+  $("begin").disabled = busy || active;
+  $("commit").disabled = $("rollback").disabled = busy || !active;
+  for (const id of ["run", "seed", "recover"]) $(id).disabled = busy;
   $("transaction").textContent = active
     ? `Private draft at revision ${transactionRevision}. Other visitors cannot see it.`
     : "Each request is one atomic transaction.";
   $("draft").textContent = draft || "No draft.";
 }
+async function perform(operation) {
+  if (busy) return;
+  busy = true;
+  transaction();
+  try {
+    await operation();
+  } catch (problem) {
+    error(problem);
+  } finally {
+    busy = false;
+    transaction();
+  }
+}
 async function refresh() {
   const data = await request(endpoint("state"));
-  latest = data;
   revision = data.revision;
   table(data.rows);
   $("index").textContent =
@@ -70,9 +82,7 @@ async function refresh() {
   return data;
 }
 async function run() {
-  if (busy) return;
-  busy = true;
-  try {
+  await perform(async () => {
     const sql = (draft ?? "") + "\n" + $("sql").value;
     const at = performance.now();
     const data = await request(endpoint("query"), {
@@ -100,26 +110,19 @@ async function run() {
         ? "Draft evaluated. Nothing committed."
         : "Transaction complete.",
     );
-  } catch (e) {
-    error(e);
-  } finally {
-    busy = false;
-  }
+  });
 }
 $("run").onclick = run;
-$("begin").onclick = async () => {
-  try {
+$("begin").onclick = () =>
+  perform(async () => {
     const data = await refresh();
     transactionRevision = data.revision;
     draft = "";
     transaction();
     notice("Private transaction started.");
-  } catch (e) {
-    error(e);
-  }
-};
-$("commit").onclick = async () => {
-  try {
+  });
+$("commit").onclick = () =>
+  perform(async () => {
     const data = await request(endpoint("query"), {
       sql: draft || "",
       revision: transactionRevision,
@@ -130,20 +133,14 @@ $("commit").onclick = async () => {
     transaction();
     await refresh();
     notice("Commit confirmed.");
-  } catch (e) {
-    error(e);
-  }
-};
-$("rollback").onclick = async () => {
-  draft = null;
-  transaction();
-  try {
+  });
+$("rollback").onclick = () =>
+  perform(async () => {
+    draft = null;
+    transaction();
     await refresh();
     notice("Draft discarded.");
-  } catch (e) {
-    error(e);
-  }
-};
+  });
 const samples = {
   select: "SELECT * FROM entries;",
   lookup: "SELECT * FROM entries WHERE key = 'hello';",
@@ -154,22 +151,16 @@ const samples = {
 };
 $("load-example").onclick = () =>
   ($("sql").value = samples[$("example").value]);
-$("recover").onclick = async () => {
-  try {
+$("recover").onclick = () =>
+  perform(async () => {
     await request(endpoint("recover"), {});
     draft = null;
     transaction();
     await refresh();
     notice("Recovery complete.");
-  } catch (e) {
-    error(e);
-  }
-};
-$("seed").onclick = async () => {
-  if (busy) return;
-  busy = true;
-  $("seed").disabled = true;
-  try {
+  });
+$("seed").onclick = () =>
+  perform(async () => {
     const start = performance.now(),
       number = Number($("rows").value),
       prefix = Date.now().toString(36);
@@ -192,45 +183,43 @@ $("seed").onclick = async () => {
     notice(
       `${number} rows inserted in ${(performance.now() - start).toFixed(0)} ms, including network and checkpoints.`,
     );
-  } catch (e) {
-    error(e);
-  } finally {
-    busy = false;
-    $("seed").disabled = false;
-  }
-};
-action("Refresh", refresh);
+  });
+action("Refresh", () => perform(refresh));
 action("Export rows", async () => {
   const data = await request(endpoint("export"));
   download("fernbase.json", JSON.stringify(data, null, 2));
 });
-fileInput(".json", async (file) => {
-  if (file.size > 8388608) throw Error("Database import exceeds 8 MiB.");
-  const data = JSON.parse(await file.text()),
-    rows = Array.isArray(data) ? data : data.rows;
-  if (!Array.isArray(rows) || rows.length > 10000)
-    throw Error("Expected a database export with at most 10000 rows.");
-  for (const row of rows)
-    if (
-      typeof row.key !== "string" ||
-      typeof row.value !== "string" ||
-      new TextEncoder().encode(row.key).length > 128 ||
-      new TextEncoder().encode(row.value).length > 4096
-    )
-      throw Error("Invalid database row.");
-  for (const row of rows) {
-    const state = await request(endpoint("state"));
-    const quote = (value) => "'" + value.replaceAll("'", "''") + "'";
-    const result = await request(endpoint("query"), {
-      sql: `INSERT INTO entries VALUES (${quote(row.key)},${quote(row.value)});`,
-      revision: state.revision,
-      preview: false,
-    });
-    revision = result.revision;
-  }
-  await refresh();
-  notice(`${rows.length} rows imported. Each row used an atomic transaction.`);
-});
+fileInput(".json", (file) =>
+  perform(async () => {
+    if (file.size > 8388608) throw Error("Database import exceeds 8 MiB.");
+    const data = JSON.parse(await file.text()),
+      rows = Array.isArray(data) ? data : data.rows;
+    if (!Array.isArray(rows) || rows.length > 10000)
+      throw Error("Expected a database export with at most 10000 rows.");
+    for (const row of rows)
+      if (
+        typeof row.key !== "string" ||
+        typeof row.value !== "string" ||
+        new TextEncoder().encode(row.key).length > 128 ||
+        new TextEncoder().encode(row.value).length > 4096
+      )
+        throw Error("Invalid database row.");
+    for (const row of rows) {
+      const state = await request(endpoint("state"));
+      const quote = (value) => "'" + value.replaceAll("'", "''") + "'";
+      const result = await request(endpoint("query"), {
+        sql: `INSERT INTO entries VALUES (${quote(row.key)},${quote(row.value)});`,
+        revision: state.revision,
+        preview: false,
+      });
+      revision = result.revision;
+    }
+    await refresh();
+    notice(
+      `${rows.length} rows imported. Each row used an atomic transaction.`,
+    );
+  }),
+);
 
 transaction();
-refresh().catch(error);
+perform(refresh);

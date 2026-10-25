@@ -94,6 +94,11 @@ The current compiler builds the showcase and browser Wasm module. The script the
 Each server process owns its rooms and notes. A restart clears temporary state.
 Blockyard can retain block edits through `FERN_BLOCKYARD_DATA`.
 The six new applications use `FERN_LABS_DATA` for optional persistent checkpoints.
+
+Fernbase and Lantern keep one WebSocket command connection open per page.
+This connection retains one owner while request-driven hosts keep that process active.
+The HTTP APIs remain available for scripts. Independent server instances still require affinity.
+
 Fernbase and Lantern synchronize each successful mutation before publication.
 Foundry, Patchbay, and Circuit retain a project when you select Save checkpoint.
 
@@ -317,12 +322,13 @@ The browser gate checks touch edits, live audio, audio export, worker parity, tr
 ```sh
 node examples/showcase/tests/labs-kernels.test.mjs examples/showcase/web/labs
 node examples/showcase/tests/labs-server.test.mjs http://localhost:8080
+node examples/showcase/tests/labs-rpc.test.mjs http://localhost:8080
 node examples/showcase/tests/labs.load.mjs http://localhost:8080 256 3
 PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
   node examples/showcase/tests/labs.browser.mjs http://localhost:8080
 ```
 
 An optimized x86-64 Linux loopback run sustained 10 factory updates per second with 256 actual connections.
-Acknowledgement latency was 2.96 ms at the median and 4.79 ms at p95. Server RSS was 22.3 MiB.
-The three-second sample transferred 1.03 MiB of factory data across all peers.
+Acknowledgement latency was 2.58 ms at the median and 3.79 ms at p95. Server RSS was 25.0 MiB.
+The three-second sample transferred 1.07 MiB of factory data across all peers.
 These measurements exclude Internet latency and hosting limits. Use the load command to measure another machine.

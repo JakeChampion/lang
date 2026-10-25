@@ -93,6 +93,68 @@ try {
   await a.waitForFunction(
     () => Number(document.querySelector("#view").dataset.tick) >= 0,
   );
+  await a.evaluate(async () => {
+    const { Session } = await import("/labs/session.mjs");
+    const NativeSocket = window.WebSocket;
+    class TestSocket {
+      static OPEN = 1;
+      readyState = 1;
+      bufferedAmount = 0;
+      sent = [];
+      send(text) {
+        this.sent.push(JSON.parse(text));
+      }
+      close() {}
+    }
+    window.WebSocket = TestSocket;
+    let session;
+    try {
+      session = new Session("circuit", () => {});
+      const ws = session.socket;
+      const receive = (data) => ws.onmessage({ data: JSON.stringify(data) });
+      receive({
+        kind: "snapshot",
+        cells: [0],
+        revision: 0,
+        program: [],
+        client_id: "test",
+        server_ms: Date.now(),
+      });
+      session.lastSync = Date.now();
+      session.edit([0], [1]);
+      session.flush();
+      const first = ws.sent.at(-1).seq;
+      session.edit([0], [2]);
+      session.flush();
+      session.edit([0], [1]);
+      session.flush();
+      const latest = ws.sent.at(-1).seq;
+      receive({
+        kind: "change",
+        revision: 1,
+        points: [0],
+        values: [1],
+        sender: "test",
+      });
+      receive({ kind: "ack", seq: first });
+      if (!session.draft.has(0))
+        throw Error("An older acknowledgement cleared the latest edit");
+      receive({ kind: "ack", seq: latest });
+      if (session.draft.has(0))
+        throw Error("The latest acknowledgement did not clear its draft");
+      session.edit([0], [2]);
+      session.flush();
+      session.edit([0], [3]);
+      session.flush();
+      ws.onclose({ code: 1006 });
+      if (session.pending.get(0) !== 3)
+        throw Error("Reconnect restored an obsolete edit");
+    } finally {
+      session?.dispose();
+      clearTimeout(session?.reconnect);
+      window.WebSocket = NativeSocket;
+    }
+  });
   const initial = snapshots.get(a),
     point = 9 * 256 + 9,
     kind = initial.cells[point] === 1 ? 2 : 1;
@@ -331,6 +393,25 @@ try {
   console.log(
     "six apps: shared touch edits, native factory control, CPU programs, live audio and recording, parallel rendering parity, transaction isolation, streamed search import, XSS escaping, mobile widths, and fullscreen OK",
   );
+} catch (problem) {
+  console.error({
+    first: {
+      url: a.url(),
+      status: await a
+        .locator("#connection")
+        .textContent()
+        .catch(() => "unavailable"),
+    },
+    second: {
+      url: b.url(),
+      status: await b
+        .locator("#connection")
+        .textContent()
+        .catch(() => "unavailable"),
+    },
+    errors,
+  });
+  throw problem;
 } finally {
   await browser.close();
 }

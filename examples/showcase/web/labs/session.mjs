@@ -8,6 +8,8 @@ export class Session {
     this.seq = 0;
     this.pending = new Map();
     this.draft = new Map();
+    this.versions = new Map();
+    this.editVersion = 0;
     this.sent = new Map();
     this.latencies = [];
     this.serverUs = 0;
@@ -70,8 +72,6 @@ export class Session {
               const at = data.points[i],
                 value = data.values[i];
               this.cells[at] = value;
-              if (data.sender === this.clientID && this.draft.get(at) === value)
-                this.draft.delete(at);
             }
             this.changed(this.cells, data.points, false);
           }
@@ -83,9 +83,14 @@ export class Session {
             if (Number.isFinite(data.server_ms) && sent.wall)
               this.clockOffset = data.server_ms - (Date.now() + sent.wall) / 2;
             if (sent.entries)
-              for (const [at, value] of sent.entries)
-                if (this.cells[at] === value && this.draft.get(at) === value)
+              for (const [at, value, version] of sent.entries)
+                if (
+                  this.versions.get(at) === version &&
+                  this.draft.get(at) === value
+                ) {
                   this.draft.delete(at);
+                  this.versions.delete(at);
+                }
             this.sent.delete(data.seq);
           }
           this.serverUs = data.server_us;
@@ -96,12 +101,7 @@ export class Session {
       }
     };
     ws.onclose = (event) => {
-      for (const sent of this.sent.values())
-        if (sent.entries)
-          for (const [at, value] of sent.entries)
-            if (!this.pending.has(at)) this.pending.set(at, value);
-      for (const [at, value] of this.draft)
-        if (!this.pending.has(at)) this.pending.set(at, value);
+      for (const [at, value] of this.draft) this.pending.set(at, value);
       this.sent.clear();
       if (event.code === 1008) {
         this.closed = true;
@@ -198,6 +198,7 @@ export class Session {
     for (let i = 0; i < points.length; i++) {
       this.pending.set(points[i], values[i]);
       this.draft.set(points[i], values[i]);
+      this.versions.set(points[i], ++this.editVersion);
     }
     this.onDraft?.();
   }
@@ -232,7 +233,9 @@ export class Session {
       this.sent.size >= 16
     )
       return;
-    const entries = [...this.pending].slice(0, 128);
+    const entries = [...this.pending]
+      .slice(0, 128)
+      .map(([at, value]) => [at, value, this.versions.get(at)]);
     const seq = ++this.seq;
     this.socket.send(
       JSON.stringify({

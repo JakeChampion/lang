@@ -1,8 +1,9 @@
 package e2ecompiler
 
 import (
+	"bytes"
 	"fmt"
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostLabsCore(t *testing.T) {
@@ -83,6 +86,27 @@ func TestSelfHostLabsHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := cli.x86Binary(t, filepath.Join(root, "showcase/server.fern.md"))
+	prepared := filepath.Join(t.TempDir(), "web", ".source")
+	if out, err := runX86_64Bin(cli.runner, bin, "--prepare", root, prepared).CombinedOutput(); err != nil {
+		t.Fatalf("prepare lessons and thumbnail: %v\n%s", err, out)
+	}
+	thumbnail, err := os.ReadFile(filepath.Join(prepared, "..", "prism", "preview.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := png.DecodeConfig(bytes.NewReader(thumbnail))
+	if err != nil || image.Width != 320 || image.Height != 200 {
+		t.Fatalf("native thumbnail: %#v, %v", image, err)
+	}
+	for _, name := range []string{"foundry", "patchbay", "prism", "fernbase", "circuit", "lantern"} {
+		lesson, err := os.ReadFile(filepath.Join(prepared, "showcase", name+".fern.md.html"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(lesson, []byte("href=")) || !bytes.Contains(lesson, []byte("Implementation")) {
+			t.Fatalf("%s lesson lacks linked code sections", name)
+		}
+	}
 	data := t.TempDir()
 	start := func() (*exec.Cmd, string) {
 		cmd := runX86_64Bin(cli.runner, bin, root)
@@ -100,6 +124,11 @@ func TestSelfHostLabsHTTP(t *testing.T) {
 	}
 	if out, err := exec.Command(node, "../../../examples/showcase/tests/labs-server.test.mjs", base).CombinedOutput(); err != nil {
 		t.Fatalf("live lab gate: %v\n%s", err, out)
+	} else {
+		t.Log(string(out))
+	}
+	if out, err := exec.Command(node, "../../../examples/showcase/tests/labs-rpc.test.mjs", base).CombinedOutput(); err != nil {
+		t.Fatalf("persistent command sessions: %v\n%s", err, out)
 	} else {
 		t.Log(string(out))
 	}

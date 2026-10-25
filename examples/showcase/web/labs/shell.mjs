@@ -1,3 +1,4 @@
+import { rpcRequest } from "./rpc.mjs";
 import { mountFullscreen, toast } from "/assets/ui.mjs";
 export const $ = (id) => document.getElementById(id);
 export function shell(
@@ -35,6 +36,7 @@ export function notice(text) {
   $("connection").classList.remove("error");
 }
 export async function request(path, body) {
+  if (/^\/(fernbase|lantern)\//.test(path)) return rpcRequest(path, body);
   const r = await fetch(
     path,
     body === undefined

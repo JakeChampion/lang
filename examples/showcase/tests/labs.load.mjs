@@ -44,6 +44,9 @@ try {
       "missing input acknowledgements",
     );
   }
+  const measuredFrames = peers.reduce((sum, p) => sum + p.frames, 0),
+    measuredBytes = peers.reduce((sum, p) => sum + p.bytes, 0),
+    latencies = peers.flatMap((p) => p.latencies).sort((a, b) => a - b);
   peers[0].command("pause");
   await until(
     () => peers.every((p) => p.frame && !p.frame.running),
@@ -68,11 +71,8 @@ try {
     assert.equal(opened, false, "257th live subscription was accepted");
     extra.close();
   }
-  const latencies = peers.flatMap((p) => p.latencies).sort((a, b) => a - b),
-    percent = (q) =>
-      latencies[
-        Math.min(latencies.length - 1, Math.floor(latencies.length * q))
-      ];
+  const percent = (q) =>
+    latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * q))];
   assert.ok(
     percent(0.95) < 1000,
     "p95 acknowledgement exceeded the stall guard",
@@ -82,12 +82,11 @@ try {
     JSON.stringify({
       clients: count,
       seconds: elapsed,
-      updates_per_second:
-        peers.reduce((sum, p) => sum + p.frames, 0) / count / elapsed,
+      updates_per_second: measuredFrames / count / elapsed,
       p50_ms: percent(0.5),
       p95_ms: percent(0.95),
       p99_ms: percent(0.99),
-      traffic_bytes: peers.reduce((sum, p) => sum + p.bytes, 0),
+      traffic_bytes: measuredBytes,
       rss: snapshot.memory.rss,
       tick: first.tick,
     }),
