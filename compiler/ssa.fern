@@ -3210,12 +3210,9 @@ pub function thread_forwarding(f: SFunc): Threading {
       }
     }
     if (t.kind_tag == 3) {
-      let tt: i32 = forwarded(f, at, t.t);
-      let tf: i32 = forwarded(f, at, t.f);
-      if (tt != t.t || tf != t.f) {
-        t = STerm { ...t, t: tt, f: tf };
-        moved = true;
-      }
+      let nt: STerm = forwarded_branch(f, at, t);
+      moved = nt.kind_tag != 3 || nt.t != t.t || nt.f != t.f;
+      t = nt;
     }
     if (moved) {
       if (!copying) {
@@ -3270,6 +3267,16 @@ pub function thread_forwarding(f: SFunc): Threading {
     out = SFunc { ...g, blocks: kept };
   }
   return Threading { f: SFunc { ...out, blocks: refreshed_preds(out) }, changed: copying || dropping };
+}
+
+// A branch whose two targets meet in a block with no phi is a jump.
+function forwarded_branch(f: SFunc, at: i32[], t: STerm): STerm {
+  let tt: i32 = forwarded(f, at, t.t);
+  let tf: i32 = forwarded(f, at, t.f);
+  if (tt == tf && tt >= 0 && tt < at.len() && at[tt] >= 0 && !has_phi(f.blocks[at[tt]])) {
+    return t_br(tt);
+  }
+  return STerm { ...t, t: tt, f: tf };
 }
 
 function forwarded(f: SFunc, at: i32[], id: i32): i32 {

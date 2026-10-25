@@ -296,6 +296,9 @@ function main(): i32 {
 	{name: "be_word_i32_sign_extends", fn: "bword32", exit: 125, src: signedWordSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bbswapl %(e\w+|r\d+d)\n\s*movslq`}, "arm64-linux": {`\brev w\d+, w\d+\n\s*sxtw x\d+`}},
 		forbid: wordForbid},
+	{name: "copy_loop_leaves_no_compare", fn: "run", exit: 0, src: copyLoopSrc,
+		want:   map[string][]string{"x86-64-linux": {`call __fn___fern_bytes_append_range`}, "arm64-linux": {`bl __fn___fern_bytes_append_range`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bset[a-z]+ %`}, "arm64-linux": {`\bcset\b`}}},
 	{name: "le_word_bytes_scrambled", fn: "scrambled", exit: 5, src: wordLoadSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
@@ -666,6 +669,33 @@ const maskTestSrc = `
 function main(): i32 {
     let p: u8[] = pad([1u8, 2u8, 3u8]);
     return masked(args().len() * 300, "set") * 10 + p.len();
+}
+`
+
+// The copy loop in exec becomes one runtime call, and its count test
+// leaves the loop with nothing to branch on.
+const copyLoopSrc = `
+@inline
+function exec(own out: u8[], lits: u8[], li: i32, ll: i32): u8[] {
+  let k: i32 = 0;
+  while (k < ll) {
+    out = out.append(lits[li + k]);
+    k = k + 1;
+  }
+  return out;
+}
+@noinline
+function run(own out: u8[], lits: u8[], lens: i32[]): u8[] {
+  let li: i32 = 0;
+  for ll in lens {
+    out = exec(out, lits, li, ll);
+    li = li + ll;
+  }
+  return out;
+}
+function main(): i32 {
+  let lits: u8[] = [1, 2, 3, 4, 5, 6];
+  return run([], lits, [2, 0, 4]).len() - 6;
 }
 `
 
