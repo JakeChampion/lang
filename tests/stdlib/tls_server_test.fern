@@ -602,8 +602,8 @@ function drawn(n: i32, seed: i64): u8[] {
   let out: u8[] = [];
   let x: i64 = seed;
   while (out.len() < n) {
-    x = x * (1103515245 as i64) + (12345 as i64) & (0x7fffffff as i64);
-    out = out.append((x >> (16 as i64) & (255 as i64)) as u8);
+    x = x * (1103515245 as i64) + 12345 as i64 & 0x7fffffff as i64;
+    out = out.append((x >> 16 as i64 & 255 as i64) as u8);
   }
   return out;
 }
@@ -612,7 +612,7 @@ function replayed(seed: i64): Result[string, string] {
   let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), drawn(32, 1 as i64)).with_alpn(["http/1.1"]);
   let c0: client.Step = started_with(cc, drawn(client.entropy(cc), seed))?;
-  let s0: server.Session = listening_with(sc, drawn(server.entropy(sc), seed + (1 as i64)))?;
+  let s0: server.Session = listening_with(sc, drawn(server.entropy(sc), seed + 1 as i64))?;
   let s1: server.Step = srd(s0, c0.output)?;
   let c1: client.Step = crd(c0.session, s1.output)?;
   let s2: server.Step = srd(s1.session, c1.output)?;
