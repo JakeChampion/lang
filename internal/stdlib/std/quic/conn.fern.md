@@ -42,8 +42,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 pub function (c: Conn) events_taken(): Conn>>
 
-<<14 function __stream_event(n: streams.Event): Event>>
-
 <<15 pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string]>>
 
 <<16 function (c: Conn) __checked(): Result[Conn, string]>>
@@ -173,7 +171,7 @@ pub function (c: Config) server_side(id: identity.Identity): Config {
 <<5 pub struct Close>>=
 pub struct Close { code: i64, frame_type: i64, reason: string, app: boolean, remote: boolean }
 
-pub enum Event { Connected, Closed(Close), StreamOpened(i64), StreamReadable(i64), StreamReset(i64, i64), StreamStopped(i64, i64) }
+pub enum Event { Connected, Closed(Close) }
 
 struct Space {
   send: Option[packet.Keys],
@@ -398,17 +396,6 @@ function __earliest(a: i64, b: i64): i64 {
   return a;
 }
 
-function (c: Conn) __stepped(): Conn {
-  let notes: streams.Event[] = c.streams.events;
-  if (notes.len() == 0) {
-    return c;
-  }
-  let events: Event[] = c.events;
-  for n in notes {
-    events = events.append(__stream_event(n));
-  }
-  return Conn { ...c, streams: c.streams.events_taken(), events: events };
-}
 ```
 
 ### `13 pub function (c: Conn) events_taken(): Conn`
@@ -416,7 +403,13 @@ function (c: Conn) __stepped(): Conn {
 ```fern
 <<13 pub function (c: Conn) events_taken(): Conn>>=
 pub function (c: Conn) events_taken(): Conn {
-  return Conn { ...c, events: [] };
+  return Conn { ...c, events: [], streams: c.streams.events_taken() };
+}
+
+// stream_events lists the streams' events since events_taken. A step's
+// connection events come before its stream events.
+pub function (c: Conn) stream_events(): streams.Event[] {
+  return c.streams.events;
 }
 
 pub function (c: Conn) datagrams(): u8[][] {
@@ -425,28 +418,6 @@ pub function (c: Conn) datagrams(): u8[][] {
 
 pub function (c: Conn) sent(): Conn {
   return Conn { ...c, out: [] };
-}
-```
-
-### `14 function __stream_event(n: streams.Event): Event`
-
-```fern
-<<14 function __stream_event(n: streams.Event): Event>>=
-function __stream_event(n: streams.Event): Event {
-  match (n) {
-    streams.Opened(id) => {
-      return StreamOpened(id);
-    },
-    streams.Readable(id) => {
-      return StreamReadable(id);
-    },
-    streams.ResetByPeer(id, code) => {
-      return StreamReset(id, code);
-    },
-    streams.StopRequested(id, code) => {
-      return StreamStopped(id, code);
-    }
-  }
 }
 ```
 
@@ -598,20 +569,20 @@ pub function (c: Conn) tick(now: i64): Conn {
 function (c: Conn) __tick(now: i64): Conn {
   if (c.state == CLOSING || c.state == DRAINING) {
     if (now >= c.close_until) {
-      return Conn { ...c, state: CLOSED }.__stepped();
+      return Conn { ...c, state: CLOSED };
     }
-    return c.__stepped();
+    return c;
   }
   if (c.state == CLOSED) {
-    return c.__stepped();
+    return c;
   }
   if (c.idle_until > 0 && now >= c.idle_until) {
     let why: Close = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "idle timeout", app: false, remote: false };
-    return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) }.__stepped();
+    return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) };
   }
   let t: i64 = c.recovery.timer();
   if (t == 0 || now < t) {
-    return c.__stepped();
+    return c;
   }
   let cur: Conn = Conn { ...c, recovery: c.recovery.on_timeout(now) };
   let lost: recovery.Sent[] = cur.recovery.lost;
@@ -620,7 +591,7 @@ function (c: Conn) __tick(now: i64): Conn {
   if (probe >= 0) {
     after = Conn { ...after, probes: after.probes.append(probe) };
   }
-  return after.__stepped();
+  return after;
 }
 ```
 
@@ -740,14 +711,14 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
 <<23 pub function (c: Conn) receive(datagram: [u8], now: i64): Conn>>=
 pub function (c: Conn) receive(datagram: [u8], now: i64): Conn {
   if (c.state == CLOSED) {
-    return c.__stepped();
+    return c;
   }
   let cur: Conn = Conn { ...c, received_bytes: c.received_bytes + datagram.len() as i64 };
   if (cur.state == CLOSING) {
-    return Conn { ...cur, close_pending: true }.__stepped();
+    return Conn { ...cur, close_pending: true };
   }
   cur = cur.__datagram(datagram, now);
-  return cur.__retry_held(now).__stepped();
+  return cur.__retry_held(now);
 }
 ```
 

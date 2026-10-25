@@ -51,6 +51,7 @@ import "std/unicode";
 ```fern
 <<dependencies 2>>=
 import "std/quic/conn";
+import "std/quic/streams";
 import "std/http/h3";
 import "std/http/qpack";
 import "std/headers";
@@ -155,34 +156,43 @@ pub function (c: Conn) close(now: i64): Conn {
 <<5 function (c: Conn) __stepped(now: i64): Conn>>=
 function (c: Conn) __stepped(now: i64): Conn {
   let evs: conn.Event[] = c.quic.events;
-  if (evs.len() == 0) {
+  let notes: streams.Event[] = c.quic.stream_events();
+  if (evs.len() == 0 && notes.len() == 0) {
     return c.__applied(now);
   }
   let cur: Conn = Conn { ...c, quic: c.quic.events_taken() };
   for e in evs {
-    cur = cur.__quic_event(e, now);
+    cur = cur.__quic_event(e);
+  }
+  for n in notes {
+    cur = cur.__stream_event(n);
   }
   return cur.__applied(now);
 }
 
-function (c: Conn) __quic_event(e: conn.Event, now: i64): Conn {
+function (c: Conn) __quic_event(e: conn.Event): Conn {
   match (e) {
     conn.Connected => {
       return c.__started();
     },
-    conn.StreamReadable(id) => {
-      return c.__readable(id);
-    },
-    conn.StreamReset(id, code) => {
-      return Conn { ...c, session: c.session.on_reset(id, code) };
-    },
-    conn.StreamStopped(id, code) => {
-      return Conn { ...c, session: c.session.on_reset(id, code) };
-    },
     conn.Closed(why) => {
       return Conn { ...c, events: c.events.append(Ended(why)) };
+    }
+  }
+}
+
+function (c: Conn) __stream_event(n: streams.Event): Conn {
+  match (n) {
+    streams.Readable(id) => {
+      return c.__readable(id);
     },
-    _ => {
+    streams.ResetByPeer(id, code) => {
+      return Conn { ...c, session: c.session.on_reset(id, code) };
+    },
+    streams.StopRequested(id, code) => {
+      return Conn { ...c, session: c.session.on_reset(id, code) };
+    },
+    streams.Opened(_) => {
       return c;
     }
   }
