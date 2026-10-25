@@ -215,7 +215,7 @@ jobs:
 
   verify-heavy:
     name: test-units-${{ matrix.host }}-heavy
-    if: always()
+    if: ${{ !cancelled() }}
     needs: test
     strategy:
       matrix:

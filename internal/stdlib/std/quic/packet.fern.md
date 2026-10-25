@@ -36,7 +36,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 const ZERO_MASK: u8[]>>
 
-<<11 function __nonce(iv: [u8], pn: i64): u8[]>>
+<<11 function __seal(k: Keys, pn: i64, own packet: u8[], at: i32, n: i32): u8[]>>
 
 <<12 pub struct Unprotected>>
 
@@ -46,7 +46,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<15 pub function seal_long(l: Long, payload: [u8], k: Keys): u8[]>>
 
-<<16 function __padded(payload: [u8], n: i32): u8[]>>
+<<16 function __padded_len(len: i32, n: i32): i32>>
 
 <<17 pub function version_negotiation(h: Header): u8[]>>
 
@@ -376,30 +376,21 @@ pub function mask(k: Keys, sample: [u8]): u8[] {
 const ZERO_MASK: u8[] = [0, 0, 0, 0, 0];
 ```
 
-### `11 function __nonce(iv: [u8], pn: i64): u8[]`
+### `11 function __seal(k: Keys, pn: i64, own packet: u8[], at: i32, n: i32): u8[]`
 
 ```fern
-<<11 function __nonce(iv: [u8], pn: i64): u8[]>>=
-function __nonce(iv: [u8], pn: i64): u8[] {
-  let out: u8[] = __copy(iv);
-  let i: i32 = 0;
-  while (i < 8) {
-    let at: i32 = 11 - i;
-    out = out.with(at, (out[at] as i64 ^ pn >> (i * 8) as i64 & 255) as u8);
-    i = i + 1;
-  }
-  return out;
-}
-
-function __seal(k: Keys, pn: i64, plaintext: [u8], aad: [u8]): u8[] {
+<<11 function __seal(k: Keys, pn: i64, own packet: u8[], at: i32, n: i32): u8[]>>=
+// Seals packet[at:at + n] in place under the nonce iv ^ pn, the header packet[0:at] its additional data and the tag
+// behind it; an empty packet when the keys do not fit the suite.
+function __seal(k: Keys, pn: i64, own packet: u8[], at: i32, n: i32): u8[] {
   match (k.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
       let Some(c) = k.chacha else {
         return [];
       };
-      match (c.seal(__nonce(k.iv, pn), plaintext, aad)) {
-        Ok(ct) => {
-          return ct;
+      match (c.seal_in_place(k.iv, pn as u64, packet, 0, at, at, n)) {
+        Ok(sealed) => {
+          return sealed;
         },
         Err(_) => {
           return [];
@@ -410,9 +401,9 @@ function __seal(k: Keys, pn: i64, plaintext: [u8], aad: [u8]): u8[] {
       let Some(g) = k.gcm else {
         return [];
       };
-      match (g.seal(__nonce(k.iv, pn), plaintext, aad)) {
-        Ok(ct) => {
-          return ct;
+      match (g.seal_in_place(k.iv, pn as u64, packet, 0, at, at, n)) {
+        Ok(sealed) => {
+          return sealed;
         },
         Err(_) => {
           return [];
@@ -422,14 +413,17 @@ function __seal(k: Keys, pn: i64, plaintext: [u8], aad: [u8]): u8[] {
   }
 }
 
-function __open(k: Keys, pn: i64, sealed: [u8], aad: [u8]): Option[u8[]] {
+// Opens buf[0:n] in place, the tag behind it and the header, the additional data, behind the tag.
+function __open(k: Keys, pn: i64, own buf: u8[], n: i32): Option[u8[]] {
+  let aad_n: i32 = buf.len() - n - 16;
   match (k.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
       let Some(c) = k.chacha else {
         return None;
       };
-      match (c.open(__nonce(k.iv, pn), sealed, aad)) {
+      match (c.open_in_place(k.iv, pn as u64, buf, n + 16, aad_n, 0, n)) {
         Ok(pt) => {
+          __arr_set_len(pt, n);
           return Some(pt);
         },
         Err(_) => {
@@ -441,8 +435,9 @@ function __open(k: Keys, pn: i64, sealed: [u8], aad: [u8]): Option[u8[]] {
       let Some(g) = k.gcm else {
         return None;
       };
-      match (g.open(__nonce(k.iv, pn), sealed, aad)) {
+      match (g.open_in_place(k.iv, pn as u64, buf, n + 16, aad_n, 0, n)) {
         Ok(pt) => {
+          __arr_set_len(pt, n);
           return Some(pt);
         },
         Err(_) => {
@@ -497,7 +492,12 @@ pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result
 }
 
 pub function open_unprotected(datagram: [u8], h: Header, u: Unprotected, k: Keys): Result[Opened, string] {
-  match (__open(k, u.pn, datagram[u.body_at:h.end], u.header)) {
+  let sealed: i32 = h.end - u.body_at;
+  if (sealed < 16) {
+    return Err("packet does not decrypt");
+  }
+  let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(sealed + u.header.len()), 0, datagram, u.body_at, sealed), sealed, u.header, 0, u.header.len());
+  match (__open(k, u.pn, buf, sealed - 16)) {
     Some(payload) => {
       return Ok(Opened { pn: u.pn, payload: payload, key_phase: u.key_phase, spin: u.spin, reserved_ok: u.reserved_ok });
     },
@@ -525,7 +525,7 @@ pub struct Long { kind: Kind, dcid: u8[], scid: u8[], token: u8[], pn: i64, pn_l
 ```fern
 <<15 pub function seal_long(l: Long, payload: [u8], k: Keys): u8[]>>=
 pub function seal_long(l: Long, payload: [u8], k: Keys): u8[] {
-  let body: u8[] = __padded(payload, l.pn_len);
+  let blen: i32 = __padded_len(payload.len(), l.pn_len);
   let kind: i32 = 0;
   match (l.kind) {
     ZeroRtt => {
@@ -536,19 +536,20 @@ pub function seal_long(l: Long, payload: [u8], k: Keys): u8[] {
     },
     _ => {}
   }
-  let head: u8[] = __empty(64);
+  let head: u8[] = __empty(32 + l.dcid.len() + l.scid.len() + l.token.len() + blen + TAG_LEN);
   head = head.append((192 | kind << 4 | l.pn_len - 1) as u8);
   head = __put_be32(head, VERSION_1);
   head = head.append(l.dcid.len() as u8).concat(l.dcid).append(l.scid.len() as u8).concat(l.scid);
   if (kind == 0) {
     head = frames.put_varint(head, l.token.len() as i64).concat(l.token);
   }
-  head = frames.put_varint(head, (l.pn_len + body.len() + 16) as i64);
+  head = frames.put_varint(head, (l.pn_len + blen + 16) as i64);
   let pn_at: i32 = head.len();
-  return __protect(__put_pn(head, l.pn, l.pn_len), pn_at, l.pn, l.pn_len, body, k, 15);
+  return __protect(__put_pn(head, l.pn, l.pn_len), pn_at, l.pn, l.pn_len, payload, blen, k, 15);
 }
 
 pub function seal_short(dcid: [u8], pn: i64, n: i32, key_phase: boolean, spin: boolean, payload: [u8], k: Keys): u8[] {
+  let blen: i32 = __padded_len(payload.len(), n);
   let b0: i32 = 64 | n - 1;
   if (key_phase) {
     b0 = b0 | 4;
@@ -556,37 +557,36 @@ pub function seal_short(dcid: [u8], pn: i64, n: i32, key_phase: boolean, spin: b
   if (spin) {
     b0 = b0 | 32;
   }
-  if (payload.len() + n < 4) {
-    return __sealed_short(b0, dcid, pn, n, __padded(payload, n), k);
-  }
-  return __sealed_short(b0, dcid, pn, n, payload, k);
-}
-
-// __sealed_short builds the header in a buffer the whole packet fits in,
-// so the sealed body is appended to it in place.
-function __sealed_short(b0: i32, dcid: [u8], pn: i64, n: i32, body: [u8], k: Keys): u8[] {
   let pn_at: i32 = 1 + dcid.len();
-  let head: u8[] = __empty(pn_at + n + body.len() + TAG_LEN).append(b0 as u8);
+  let head: u8[] = __empty(pn_at + n + blen + TAG_LEN).append(b0 as u8);
   __arr_set_len(head, pn_at);
   head = __bytes_into(head, 1, dcid, 0, dcid.len());
-  return __protect(__put_pn(head, pn, n), pn_at, pn, n, body, k, 31);
+  return __protect(__put_pn(head, pn, n), pn_at, pn, n, payload, blen, k, 31);
 }
 ```
 
-### `16 function __padded(payload: [u8], n: i32): u8[]`
+### `16 function __padded_len(len: i32, n: i32): i32`
 
 ```fern
-<<16 function __padded(payload: [u8], n: i32): u8[]>>=
-function __padded(payload: [u8], n: i32): u8[] {
-  let out: u8[] = __copy(payload);
-  while (out.len() + n < 4) {
-    out = out.append(0 as u8);
+<<16 function __padded_len(len: i32, n: i32): i32>>=
+// A payload is padded so the packet number and the payload give the header protection's sample four bytes.
+function __padded_len(len: i32, n: i32): i32 {
+  if (len + n < 4) {
+    return 4 - n;
   }
-  return out;
+  return len;
 }
 
-function __protect(header: u8[], pn_at: i32, pn: i64, n: i32, body: [u8], k: Keys, low: i32): u8[] {
-  let packet: u8[] = header.concat(__seal(k, pn, body, header));
+// Seals the payload, padded to blen, behind the header in the header's own buffer, which has room for the
+// payload and the tag.
+function __protect(own packet: u8[], pn_at: i32, pn: i64, n: i32, payload: [u8], blen: i32, k: Keys, low: i32): u8[] {
+  let at: i32 = packet.len();
+  __arr_set_len(packet, at + blen + TAG_LEN);
+  packet = __bytes_into(packet, at, payload, 0, payload.len());
+  for i in at + payload.len()..at + blen {
+    packet = packet.with(i, 0 as u8);
+  }
+  packet = __seal(k, pn, packet, at, blen);
   let m: u8[] = mask(k, packet[pn_at + 4:pn_at + 20]);
   packet = packet.with(0, (packet[0] as i32 ^ m[0] as i32 & low) as u8);
   let i: i32 = 0;

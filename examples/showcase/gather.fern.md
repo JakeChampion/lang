@@ -13,6 +13,7 @@ The load test uses real WebSocket connections. The game does not populate its pa
 <<Movement and collection>>
 <<Binary protocol>>
 <<WebSocket session>>
+<<Spectator snapshot>>
 ```
 
 ## State and seats
@@ -475,6 +476,25 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
       return Err(error);
     }
   }
+}
+```
+
+## Spectator snapshot
+
+A visitor who has not joined can watch the arena. The page requests the shared snapshot packet twice per second.
+This request takes no seat and no WebSocket slot. While players are connected, it returns their shared packet.
+An empty arena does no simulation work, so the request then encodes the current seeds directly.
+
+```fern
+<<Spectator snapshot>>=
+pub function spectate(state: State): HttpResponse {
+  let now = monotonic_ns();
+  advance(state, now);
+  let packet = state.packet.get();
+  if (state.count.get() == 0 || packet.len() == 0) {
+    packet = snapshot(state, now);
+  }
+  return http.bytes(200, packet).with_content_type("application/octet-stream").with_header("Cache-Control", "no-store");
 }
 ```
 

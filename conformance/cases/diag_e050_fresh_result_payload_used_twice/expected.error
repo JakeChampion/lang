@@ -1,0 +1,1 @@
+main.fern:9:29: error[E050]: use of owned parameter "xs" after it was consumed (moved at line 8)

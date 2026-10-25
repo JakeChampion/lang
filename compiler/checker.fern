@@ -339,10 +339,11 @@ function byte_kernel_arity(name: string): i32 {
   if (name == "__aes_ctr32" || name == "__ghash") {
     return 3;
   }
-  if (name == "__aes_gcm_seal" || name == "__aes_gcm_open") {
-    return 5;
-  }
   return 0 - 1;
+}
+
+function is_aes_gcm_into(name: string): boolean {
+  return name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into";
 }
 
 function t_view(elem: typeinfo.Type): typeinfo.Type {
@@ -638,7 +639,7 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__bytes_owned" || argc == 3 && name == "__bytes_range" || argc == 5 && name == "__bytes_into") {
     return t_array(t_u8());
   }
-  if (argc == byte_kernel_arity(name)) {
+  if (argc == byte_kernel_arity(name) || argc == 9 && is_aes_gcm_into(name)) {
     return t_array(t_u8());
   }
   if (argc == 0 && is_sha_hw_builtin(name)) {
@@ -886,6 +887,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (is_sha_hw_builtin(name)) {
     return ([], true);
+  }
+  if (is_aes_gcm_into(name)) {
+    return ([t_view(t_u8()), t_view(t_u8()), t_view(t_u8()), t_u64(), t_array(t_u8()), t_i32(), t_i32(), t_i32(), t_i32()], true);
   }
   if (byte_kernel_arity(name) > 0) {
     let views: typeinfo.Type[] = [];
@@ -16188,7 +16192,7 @@ function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
-    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open", "__aes_gcm_seal", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
@@ -16772,6 +16776,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
+    ast.ExprUnary(u) => {
+      return u.op == "try_" && ow_is_owned_expr(u.operand, ctx);
+    },
     ast.ExprIdent(id) => {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
         return true;
@@ -16825,7 +16832,7 @@ struct LuSel { obj: string, field: string }
 
 struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[] }
 
-struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFuncs }
+struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs }
 
 struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, fresh: string[], in_iife: boolean }
 
@@ -16972,7 +16979,15 @@ function lu_fresh_init(fx: LuFn, name: string): boolean {
   return li.ok && lu_fresh_expr(li.init);
 }
 
+// An own parameter holds its fields as a fresh local does, so a field unpacked from it is owned the same way.
+function lu_own_param(fx: LuFn, name: string): boolean {
+  return util.has_str(fx.owned, name) && lu_decl_count(fx, name) == 0;
+}
+
 function lu_fresh_expr(e: ast.Expr): boolean {
+  if let ast.ExprUnary(u) = e {
+    return u.op == "try_" && lu_fresh_expr(u.operand);
+  }
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(_) = c.callee {
       return true;
@@ -17000,7 +17015,7 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
   }
   if let ast.ExprFieldAccess(fa) = li.init {
     let h: string = ow_ident_name(fa.obj);
-    if (h.len() == 0 || !lu_fresh_init(fx, h)) {
+    if (h.len() == 0 || !lu_fresh_init(fx, h) && !lu_own_param(fx, h)) {
       return false;
     }
     let reads: i32 = 0;
@@ -17458,7 +17473,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_nested_fn, lu_outside_nested_fn);
   }
-  let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), ofuncs: ofuncs };
+  let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), owned: ow_own_param_names(fn), ofuncs: ofuncs };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let out: string[] = lu_stmts(fn.body, false, [], false, none, false, fx, []);
   for lm in nested {
@@ -17512,7 +17527,13 @@ function ow_count_ident(e: ast.Expr, name: string): i32 {
   return astwalk.fold_expr(e, 0, tally);
 }
 
+// `x = f(x)?` moves x as `x = f(x)` does: on the error path the function returns and x is not read again.
 function ow_self_move_admits(target: string, value: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprUnary(u) = value {
+    if (u.op == "try_") {
+      return ow_self_move_admits(target, u.operand, ctx);
+    }
+  }
   if let ast.ExprCall(c) = value {
     let oc: OwnCall = ow_own_call(c, ctx);
     if (oc.flags.len() == 0 || ow_count_ident_list(oc.args, target) != 1) {
@@ -17791,12 +17812,12 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return ow_walk_call(c, moved, ctx);
     },
     ast.ExprBinary(b) => {
-      let r1: OwnWalk = ru_expr(b.left, moved, ctx);
-      let r2: OwnWalk = ru_expr(b.right, r1.moved, ctx);
+      let r1: OwnWalk = ru_borrow(b.left, moved, ctx);
+      let r2: OwnWalk = ru_borrow(b.right, r1.moved, ctx);
       return OwnWalk { moved: r2.moved, diags: util.append_diags(r1.diags, r2.diags) };
     },
     ast.ExprUnary(u) => {
-      return ru_expr(u.operand, moved, ctx);
+      return ru_borrow(u.operand, moved, ctx);
     },
     ast.ExprArray(a) => {
       let m: MovedEntry[] = moved;
@@ -17969,10 +17990,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     ast.StmtMatch(m) => {
       let scrut_owned: boolean = ow_is_owned_scrutinee(m.scrutinee, ctx);
       let rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
+      let whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       if let ast.ExprIdent(sid) = m.scrutinee {
         let takes: boolean = false;
         for arm in m.arms {
-          takes = takes || ow_arm_takes_pointer(ctx, arm.pattern);
+          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern);
         }
         if (!takes) {
           rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
@@ -17980,7 +18002,6 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       }
       let mv: MovedEntry[] = rs.moved;
       let d: util.Diag[] = rs.diags;
-      let whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       for arm in m.arms {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
@@ -17991,7 +18012,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         }
         let ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
-        mv = ow_moved_join(mv, ra.moved, block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
+        let arm_moved: MovedEntry[] = ra.moved;
+        for name in actx.owned {
+          if (!util.has_str(ctx.owned, name)) {
+            arm_moved = ow_unmove(arm_moved, rs.moved, name);
+          }
+        }
+        mv = ow_moved_join(mv, arm_moved, block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
       }
       return OwnWalk { moved: mv, diags: d };
     },
@@ -18035,6 +18062,16 @@ function ow_param_names(fn: parser.FuncDecl): string[] {
   let out: string[] = [];
   for p in fn.params {
     out = out.append(p.name);
+  }
+  return out;
+}
+
+function ow_own_param_names(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for p in fn.params {
+    if (p.own) {
+      out = out.append(p.name);
+    }
   }
   return out;
 }
@@ -18132,7 +18169,9 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
       return ctx;
     }
     let names: string[] = ctx.owned;
+    let declared: boolean = false;
     for sd in ctx.structs {
+      declared = declared || sd.name == vname;
       if (sd.name == vname && sd.enum_owner.len() == 0) {
         if (binds[0] != "_" && !util.has_str(names, binds[0])) {
           names = names.append(binds[0]);
@@ -18148,9 +18187,18 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
         }
       }
     }
+    if (!declared && ow_builtin_payload_variant(vname) && binds[0] != "_" && !util.has_str(names, binds[0])
+      && ow_type_is_pointer_name(typeinfo.spelling(ctx.scope.lookup(binds[0])), ctx.ofuncs)) {
+      names = names.append(binds[0]);
+    }
     return OwnCtx { ...ctx, owned: names };
   }
   return ctx;
+}
+
+// Some, Ok and Err have no struct declaration, so the arm scope gives the payload's type.
+function ow_builtin_payload_variant(vname: string): boolean {
+  return vname == "Some" || vname == "Ok" || vname == "Err";
 }
 
 function collect_own_funcs(mod: parser.Module): OwnFuncs {
@@ -18571,7 +18619,7 @@ function ow_fresh_builtins(): string[] {
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
     "termios_get", "uname_field", "window_size",
-    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal", "__aes_gcm_open", "__sha256_hw_blocks", "__sha1_hw_blocks",
+    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",
   ];
   return out;
 }

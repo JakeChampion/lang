@@ -44,7 +44,7 @@ export class Session {
           this.epoch = data.epoch_ms;
           this.clockOffset = data.server_ms - Date.now();
           const save = document.getElementById("checkpoint");
-          if (save) save.disabled = !this.persistent;
+          if (save) save.hidden = !this.persistent;
           this.revision = data.revision;
           this.delay = 250;
           notice(

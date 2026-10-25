@@ -1,0 +1,54 @@
+name: Showcase
+
+# Builds the application showcase (examples/showcase and the fractal
+# explorer) from this checkout and runs its browser suites: theme contrast
+# and overflow in both color schemes, multiplayer games, shared canvases,
+# audio, the six labs applications, and Blockyard.
+# examples/showcase/tests/ci-browser.sh is the whole recipe; run it locally
+# with the same result.
+
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It decides from the changed files
+# whether this lane runs (its path filter is the lane table's `showcase`
+# row) and cancels the rest of the run when a lane goes red.
+# `workflow_dispatch` stays so the lane can be run on its own.
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-fern
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: examples/showcase/tests/package.json
+
+      # Ahead of the browser download, so a broken build fails first.
+      - name: Build the compiler
+        run: make build
+
+      - name: Cache the Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/showcase/tests/package.json') }}
+
+      - uses: ./.github/actions/disable-chrome-apt
+      - name: Install Playwright
+        working-directory: examples/showcase/tests
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Run the browser suites
+        run: examples/showcase/tests/ci-browser.sh
