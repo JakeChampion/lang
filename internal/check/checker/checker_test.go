@@ -8641,6 +8641,7 @@ func TestExplicitCharAndStrTypeArguments(t *testing.T) {
 	src := `struct Box[T] { v: T }
 function identity[T](x: T): T { return x; }
 function boxed[T](x: T): Box[T] { return Box { v: x }; }
+function pair[T](a: T, b: T): i32 { return 2; }
 function pick(): i32 {
     let char: i32 = 1;
     let fs: ((i32) => i32)[] = [(x: i32) => x, (x: i32) => x + 1];
@@ -8651,7 +8652,9 @@ function main(): i32 {
     let b: Box[Box[char]] = boxed[Box[char]](Box { v: 'z' });
     let raw: str = "abc";
     let s: str = identity[str](raw);
-    return c as i32 + b.v.v as i32 + s.len() + pick();
+    let lit: str = identity[str]("de");
+    let n: i32 = pair("x", raw);
+    return c as i32 + b.v.v as i32 + s.len() + pick() + lit.len() + n;
 }`
 	if err := checkSource(t, src); err != nil {
 		t.Fatalf("unexpected error: %v", err)

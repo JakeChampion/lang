@@ -1,5 +1,6 @@
 // char and str are contextual type names, so f[char] and f[str] are generic calls.
-// A value named char is still an index.
+// A value named char is still an index. A parameter whose type parameter is bound to
+// str takes a string literal, as a parameter written as str does.
 import "std/i32";
 
 struct Box[T] { v: T }
@@ -10,6 +11,10 @@ function identity[T](x: T): T {
 
 function boxed[T](x: T): Box[T] {
   return Box { v: x };
+}
+
+function pair[T](a: T, b: T): i32 {
+  return 2;
 }
 
 function pick(): i32 {
@@ -23,9 +28,13 @@ function main(): i32 {
   let b: Box[Box[char]] = boxed[Box[char]](Box { v: 'z' });
   let raw: str = "abc";
   let s: str = identity[str](raw);
+  let lit: str = identity[str]("de");
+  let n: i32 = pair("x", raw);
   print((c as i32).to_string());
   print((b.v.v as i32).to_string());
   print(s.len().to_string());
   print(pick().to_string());
+  print(lit.len().to_string());
+  print(n.to_string());
   return 0;
 }
