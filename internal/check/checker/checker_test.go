@@ -6919,6 +6919,48 @@ func TestSliceEscapeRejected(t *testing.T) {
 	}
 }
 
+func TestAggregateViewEscapeRejected(t *testing.T) {
+	for _, tc := range []struct{ src, code string }{
+		{`struct H { xs: [i32] } function f(): H { let a: i32[] = [1, 2, 3]; return H { xs: a[0:2] }; }`, "E063"},
+		{`struct H { xs: [i32] } function f(): H { return H { xs: [1, 2, 3][0:2] }; }`, "E063"},
+		{`struct H { xs: [i32] } function f(): H { let a: i32[] = [1, 2, 3]; let h: H = H { xs: a[0:2] }; return h; }`, "E063"},
+		{`struct H { xs: [i32], n: i32 } function f(h: H): H { let a: i32[] = [1, 2, 3]; return H { ...h, xs: a[0:2] }; }`, "E063"},
+		{`function f(): ([i32], i32) { let a: i32[] = [1, 2, 3]; return (a[0:2], 1); }`, "E063"},
+		{`enum E { V([i32]), N } function f(): E { let a: i32[] = [1, 2, 3]; return E.V(a[0:2]); }`, "E063"},
+		{`function f(): Option[[i32]] { let a: i32[] = [1, 2, 3]; return Some(a[0:2]); }`, "E063"},
+		{`function f(): [i32][] { let a: i32[] = [1, 2, 3]; return [a[0:2]]; }`, "E063"},
+		{`struct B[T] { v: T } function f(): B[[i32]] { let a: i32[] = [1, 2, 3]; return B { v: a[0:2] }; }`, "E063"},
+		{`struct H { xs: [i32] } function wrap(xs: [i32]): H { return H { xs: xs }; } function f(): H { let a: i32[] = [1, 2, 3]; return wrap(a[0:2]); }`, "E063"},
+		{`struct H { xs: [i32] } function wrap(xs: i32[]): H { return H { xs: xs[0:1] }; } function f(): H { let a: i32[] = [1, 2, 3]; return wrap(a); }`, "E063"},
+		{`struct H[T] { v: T } function wrap[T](x: T): H[T] { return H { v: x }; } function f(): H[[i32]] { let a: i32[] = [1, 2, 3]; return wrap(a[0:2]); }`, "E063"},
+		{`struct O { h: H, n: i32 } struct H { xs: [i32] } function f(): O { let a: i32[] = [1, 2, 3]; return O { h: H { xs: a[0:2] }, n: 1 }; }`, "E063"},
+		{`struct T { s: str } function f(): T { let s: string = "a" + "b"; return T { s: slice_unchecked(s, 0, 1) }; }`, "E065"},
+		{`function f(): Option[str] { let s: string = "a" + "b"; let v: str = slice_unchecked(s, 0, 1); return Some(v); }`, "E065"},
+	} {
+		err := checkSource(t, tc.src)
+		if !hasCode(err, tc.code) {
+			t.Errorf("%q: want %s, got %v", tc.src, tc.code, err)
+		}
+	}
+}
+
+func TestAggregateViewEscapeAllowed(t *testing.T) {
+	for _, src := range []string{
+		`struct H { xs: [i32] } function f(a: i32[]): H { return H { xs: a[0:2] }; }`,
+		`struct H { xs: [i32] } function f(v: [i32]): H { let h: H = H { xs: v }; return h; }`,
+		`struct H { xs: [i32] } function n(h: H): i32 { return h.xs.len(); } function f(): i32 { let a: i32[] = [1, 2, 3]; let h: H = H { xs: a[0:2] }; return n(h); }`,
+		`struct H { xs: i32[] } function f(): H { let a: i32[] = [1, 2, 3]; return H { xs: a }; }`,
+		`struct T { s: string } function f(): T { let s: string = "a" + "b"; return T { s: s }; }`,
+		`function f(s: string): (str, i32) { return (slice_unchecked(s, 0, 1), 1); }`,
+		`struct P[T] { tail: T[] } function mk[T](x: T): T[] { let t: T[] = [x]; return t; } function f[T](x: T): P[T] { let t: T[] = mk(x); return P { tail: t }; }`,
+		`struct P { parts: [i32][] } function mk(a: i32[]): [i32][] { return [a[0:1]]; } function f(a: i32[]): P { let p = mk(a); return P { parts: p }; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
 func TestSliceEscapeAllowed(t *testing.T) {
 	for _, src := range []string{
 		`function f(xs: i32[]): [i32] { return xs[0:2]; }`,
