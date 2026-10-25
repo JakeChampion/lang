@@ -208,6 +208,7 @@ defer_control_flow                                   0
 defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
+derive_default_generic_enum                          0
 derive_default_generic_primitive                     0
 derive_from_json                                     0
 derive_from_json_i64                                 0

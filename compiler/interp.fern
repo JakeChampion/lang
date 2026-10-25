@@ -5306,7 +5306,17 @@ function variant_simple_name(name: string): string {
   return name;
 }
 
-function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[]): parser.TypeAlias[] {
+function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
+  for ed in enums {
+    if (ed.name == name) {
+      return ed.type_params;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+
+function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
   let out: parser.TypeAlias[] = aliases;
   let base: i32 = aliases.len();
   let i: i32 = 0;
@@ -5318,7 +5328,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
         k = k + 1;
       }
       if (k == out.len()) {
-        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: [], line: 0, col: 0, is_pub: true, is_package: false, module: "" });
+        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: enum_type_params(enums, owner), line: 0, col: 0, is_pub: true, is_package: false, module: "" });
       } else {
         out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
       }
@@ -5408,10 +5418,15 @@ function applied_in_ref(r: parser.TypeRef, base: string): string {
   return "";
 }
 
-function struct_type_params(decls: parser.StructDecl[], name: string): string[] {
+function decl_type_params(decls: parser.StructDecl[], aliases: parser.TypeAlias[], name: string): string[] {
   for d in decls {
     if (d.name == name) {
       return d.type_params;
+    }
+  }
+  for a in aliases {
+    if (a.name == name) {
+      return a.type_params;
     }
   }
   let none: string[] = [];
@@ -5431,7 +5446,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
   let tps: string[] = fd.type_params;
   if (tps.len() == 0) {
-    tps = struct_type_params(type_decls, util.base_type_name(type_name));
+    tps = decl_type_params(type_decls, aliases, util.base_type_name(type_name));
   }
   let t: i32 = 0;
   while (t < tps.len() && t < targs.len()) {
@@ -8056,7 +8071,7 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   set_args(argv);
   let mod: parser.Module = lowered(raw_mod);
   let all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
-  let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants);
+  let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants, mod.enums);
   let outs: OutTable = out_table(mod.funcs);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -8119,7 +8134,7 @@ pub function (s: Session) declare(m: parser.Module): Session {
   let decls: parser.Module = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
   let mod: parser.Module = lowered(decls);
   let types: parser.StructDecl[] = module_type_decls(mod.structs);
-  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types), type_decls: types, outs: out_table(mod.funcs) } };
+  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types, outs: out_table(mod.funcs) } };
 }
 
 function declares_func(m: parser.Module, name: string): boolean {
