@@ -1,0 +1,6 @@
+struct Value { x: i32 }
+function main(): i32 {
+  let v: Value = Value { x: 0 };
+  v.x = 1;
+  return 0;
+}
