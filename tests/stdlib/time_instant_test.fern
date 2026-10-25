@@ -1,16 +1,17 @@
 import "std/test";
 import "std/time";
+import "std/clock";
 import "core/cmp";
 
 const I64_MAX: i64 = 9223372036854775807;
 
 function test_now_is_monotonic(): test.TestOutcome {
-  let a: Instant = time.instant_now();
-  let b: Instant = time.instant_now();
+  let a: Instant = clock.instant();
+  let b: Instant = clock.instant();
   if (b.cmp(a) < 0 || b.since(a).is_negative()) {
     return test.fail("the clock went backwards");
   }
-  return test.assert_true(!a.elapsed().is_negative());
+  return test.assert_true(!clock.elapsed(a).is_negative());
 }
 
 function test_add_sub_since(): test.TestOutcome {

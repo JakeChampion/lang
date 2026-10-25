@@ -8,6 +8,7 @@ A `Duration` is a signed span of time. It holds whole seconds and a nanosecond p
 An `Instant` is a reading of a monotonic clock, in the same two parts. Its origin is not specified, so only the difference between two instants has a meaning. Use instants for deadlines and for elapsed time.
 A `Timestamp` is a wall-clock time in seconds and nanoseconds since 1970-01-01T00:00:00Z. Use timestamps for dates and for values that other systems read.
 Calendar dates use the proleptic Gregorian calendar.
+This module never reads a clock, so it reaches no host capability. The clock module reads the wall clock as a `Timestamp` and the monotonic clock as an `Instant`.
 The time-zone module holds the time-zone type and converts timestamps to local civil time.
 
 ## Contracts
@@ -25,7 +26,7 @@ import "std/time";
 function main(): i32 {
   let budget: Duration = time.duration_seconds(2).add(time.duration_millis(500));
   if (budget.as_millis() != 2500 || budget.mul(2).as_seconds() != 5) { return 1; }
-  let start: Instant = time.instant_now();
+  let start: Instant = Instant { sec: 100, nsec: 0 };
   let deadline: Instant = start.add(budget);
   if (deadline.since(start).cmp(budget) != 0) { return 2; }
   return 0;
@@ -128,11 +129,6 @@ pub struct Timestamp { sec: i64, nsec: i32 }
 
 pub function timestamp_from_unix(sec: i64): Timestamp {
   return Timestamp { sec: sec, nsec: 0 };
-}
-
-pub function timestamp_now(): Timestamp {
-  let d: Duration = duration_millis(now_unix_ms());
-  return Timestamp { sec: d.sec, nsec: d.nsec };
 }
 
 // Saturates like `Duration.add`.
@@ -423,11 +419,6 @@ pub function (d: Duration) to_string(): string {
 
 ```fern
 <<monotonic instants>>=
-pub function instant_now(): Instant {
-  let d: Duration = duration_nanos(monotonic_ns());
-  return Instant { sec: d.sec, nsec: d.nsec };
-}
-
 pub function (i: Instant) add(d: Duration): Instant {
   let r: Duration = Duration { sec: i.sec, nsec: i.nsec }.add(d);
   return Instant { sec: r.sec, nsec: r.nsec };
@@ -441,10 +432,6 @@ pub function (i: Instant) sub(d: Duration): Instant {
 // Negative when `earlier` is later than `i`.
 pub function (i: Instant) since(earlier: Instant): Duration {
   return Duration { sec: i.sec, nsec: i.nsec }.sub(Duration { sec: earlier.sec, nsec: earlier.nsec });
-}
-
-pub function (i: Instant) elapsed(): Duration {
-  return instant_now().since(i);
 }
 
 pub function (a: Instant) eq(b: Instant): boolean {

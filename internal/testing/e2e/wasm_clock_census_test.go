@@ -4,7 +4,8 @@ import "testing"
 
 func TestWasmClockCensus(t *testing.T) {
 	loop := func(call string) string {
-		return `import "std/time";
+		return `import "std/clock";
+import "std/time";
 function main(): i32 {
     let last: i64 = 1 as i64;
     let s: string = "";
@@ -23,7 +24,7 @@ function main(): i32 {
 		{"now_unix_ms", "last = now_unix_ms();"},
 		{"now_ns", "last = now_ns();"},
 		{"monotonic_ns", "last = monotonic_ns();"},
-		{"timestamp_now_formatted", "s = time.timestamp_now().format_http_date();"},
+		{"clock_now_formatted", "s = clock.now().format_http_date();"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			component := buildLeakCheckCLIComponent(t, loop(tc.call), false)

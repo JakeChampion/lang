@@ -817,9 +817,10 @@ func TestInterpScriptTimestampNow(t *testing.T) {
 	src := `
 import "std/string";
 import "std/time";
+import "std/clock";
 
 function main(): i32 {
-    let ts: time.Timestamp = time.timestamp_now();
+    let ts: time.Timestamp = clock.now();
     // 1700000000 = 2023-11-14T22:13:20Z. Anything before is
     // either a badly wrong clock or a sign-handling bug.
     if (ts.sec < (1700000000 as i64)) { return 1; }

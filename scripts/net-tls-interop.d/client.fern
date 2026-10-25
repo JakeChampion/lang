@@ -20,6 +20,7 @@ import "std/fetch";
 import "std/http";
 import "std/string";
 import "std/time";
+import "std/clock";
 import "std/tls";
 import "std/tls/client";
 import "std/tls/identity";
@@ -170,11 +171,11 @@ function describe(r: Result[Outcome, tls.TlsError], resumption: boolean): string
 }
 
 function millis_since(started: Instant): string {
-  return started.elapsed().as_millis().to_string();
+  return clock.elapsed(started).as_millis().to_string();
 }
 
 function bulk(base: string): string {
-  let started: Instant = time.instant_now();
+  let started: Instant = clock.instant();
   let roomy: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 17 * 1048576 };
   match (fetch.send(fetch.get(base + "/bulk").with_limits(roomy))) {
     Ok(resp) => {
@@ -188,7 +189,7 @@ function bulk(base: string): string {
 }
 
 function handshakes(cfg: client.Config, port: i32): string {
-  let started: Instant = time.instant_now();
+  let started: Instant = clock.instant();
   let n: i32 = 0;
   while (n < 20) {
     match (client.connect("localhost", port, cfg, time.duration_seconds(10 as i64))) {

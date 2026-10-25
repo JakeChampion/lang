@@ -2,11 +2,11 @@
 
 Status: [reference] shipped.
 
-The standard library has 158 source modules. Of these, 152 use literate Fern documents.
+The standard library has 159 source modules. Of these, 153 use literate Fern documents.
 These documents contain handwritten code, STE prose, and named chunks.
 Seven documents also contain generated regions. Each generated region stays inside one complete chunk with its boundary markers intact.
 
-The library has 71 executable examples across 68 documents.
+The library has 72 executable examples across 69 documents.
 The root chunk preserves the original declaration order. Module imports retain their public names.
 The compiler expands each source document in memory and maps diagnostics back to its document lines.
 
@@ -66,6 +66,7 @@ They are outside the public library inventory below.
 | `std/binary` | [Network-order integer fields](../internal/stdlib/std/binary.fern.md) |
 | `std/brotli` | [Brotli decompression](../internal/stdlib/std/brotli.fern.md) |
 | `std/cli` | [Command-line specifications](../internal/stdlib/std/cli.fern.md) |
+| `std/clock` | [Wall and monotonic clocks](../internal/stdlib/std/clock.fern.md) |
 | `std/codec` | [Shared codec errors](../internal/stdlib/std/codec.fern.md) |
 | `std/constmap` | [Immutable maps for known string keys](../internal/stdlib/std/constmap.fern.md) |
 | `std/convert` | [Value conversion traits](../internal/stdlib/std/convert.fern.md) |

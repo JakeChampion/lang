@@ -340,19 +340,20 @@ function main(): i32 {
 so a calendar day, a wall-clock time and a monotonic clock reading
 cannot be mixed up. A `Timestamp` is a point in UTC; an `Instant` only
 measures elapsed time and deadlines. `std/time` holds the functions
-that make and convert them.
+that make and convert them, and `std/clock` reads the clocks.
 
 ```fern
+import "std/clock";
 import "std/time";
 
 function main(): i32 {
-    let start: Instant = time.instant_now();
+    let start: Instant = clock.instant();
     let d: Date = time.date_make(2028, 2, 27);
     print(d.add_days(3).format_iso());                // 2028-03-01
     print(d.weekday_name());                          // Sunday
     print(time.days_in_month(2028, 2).to_string());   // 29
-    print(time.timestamp_now().format_rfc3339());     // the current UTC time
-    print("took " + start.elapsed().to_string());
+    print(clock.now().format_rfc3339());              // the current UTC time
+    print("took " + clock.elapsed(start).to_string());
     let budget: Duration = time.duration_millis(1500).mul(2);
     print(budget.to_string());                        // 3s
     return 0;
