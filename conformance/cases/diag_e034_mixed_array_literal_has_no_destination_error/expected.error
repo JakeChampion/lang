@@ -1,0 +1,5 @@
+2:54: error[E034]: array element: expected i32[], got i64[]
+7:26: error[E034]: array element: expected i32[], got i64[]
+8:22: error[E034]: array element: expected i32[], got i64[]
+10:3: error[E003]: variable "bad": expected u8[][], got [u8][]
+10:32: error[E034]: array element: expected [u8], got u8[]
