@@ -17993,10 +17993,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     ast.StmtMatch(m) => {
       let scrut_owned: boolean = ow_is_owned_scrutinee(m.scrutinee, ctx);
       let rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
+      let whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       if let ast.ExprIdent(sid) = m.scrutinee {
         let takes: boolean = false;
         for arm in m.arms {
-          takes = takes || ow_arm_takes_pointer(ctx, arm.pattern);
+          takes = takes || ow_arm_takes_pointer(ctx, arm, whole);
         }
         if (!takes) {
           rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
@@ -18004,7 +18005,6 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       }
       let mv: MovedEntry[] = rs.moved;
       let d: util.Diag[] = rs.diags;
-      let whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       for arm in m.arms {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
@@ -18142,8 +18142,8 @@ function ow_unbind_arm(after: MovedEntry[], before: MovedEntry[], actx: OwnCtx, 
   return out;
 }
 
-function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
-  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat);
+function ow_arm_takes_pointer(ctx: OwnCtx, arm: ast.MatchArm, whole: typeinfo.Type): boolean {
+  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [], scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern);
   for n in bound.owned {
     if (n != "_") {
       return true;
@@ -18177,7 +18177,9 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
       return ctx;
     }
     let names: string[] = ctx.owned;
+    let declared: boolean = false;
     for sd in ctx.structs {
+      declared = declared || sd.name == vname;
       if (sd.name == vname && sd.enum_owner.len() == 0) {
         if (binds[0] != "_" && !util.has_str(names, binds[0])) {
           names = names.append(binds[0]);
@@ -18193,9 +18195,41 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
         }
       }
     }
+    if (!declared) {
+      names = ow_typed_payloads(ctx, binds, names);
+    }
     return OwnCtx { ...ctx, owned: names };
   }
   return ctx;
+}
+
+// A variant the module does not declare (Ok, Err, Some, an imported one) owns each payload its arm scope types as a pointer.
+function ow_typed_payloads(ctx: OwnCtx, binds: string[], names: string[]): string[] {
+  let out: string[] = names;
+  for b in binds {
+    if (b.len() > 0 && b != "_" && !util.has_str(out, b) && ow_is_pointer_t(ctx.scope.lookup(b))) {
+      out = out.append(b);
+    }
+  }
+  return out;
+}
+
+function ow_is_pointer_t(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeString(_) => {
+      return true;
+    },
+    typeinfo.TypeFunc(_) => {
+      return true;
+    },
+    typeinfo.TypeDyn(_) => {
+      return true;
+    },
+    _ => {
+      return is_composite_type(t);
+    }
+  }
+  return false;
 }
 
 function collect_own_funcs(mod: parser.Module): OwnFuncs {
