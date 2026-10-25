@@ -1398,7 +1398,7 @@ function __tls_session(opts: Config): Result[__Tls, tls.TlsError] {
       if (opts.h2) {
         offered = cfg.with_alpn(["h2", "http/1.1"]);
       }
-      let sess: server.Session = server.start(offered)?;
+      let sess: server.Session = server.start(offered, random_bytes(server.entropy(offered)))?;
       return Ok(Secured(sess));
     },
     None => {
