@@ -21,6 +21,7 @@ const (
 	featGenericDecl
 	featOwnRecv
 	featRecData
+	featLanes
 	numFeatures
 )
 

@@ -207,6 +207,8 @@ type Generator struct {
 	genCounter        int
 	ownRecv           bool
 	ownRecvCounter    int
+	lanes             bool
+	laneCounter       int
 }
 
 type structShape struct {
@@ -444,7 +446,7 @@ func (g *Generator) MainProgram() string {
 func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
-		g.maybeEmitTraitCluster(b, sc) || g.maybeEmitGenericCluster(b, sc) || g.maybeEmitOwnRecvCluster(b, sc) ||
+		g.maybeEmitTraitCluster(b, sc) || g.maybeEmitGenericCluster(b, sc) || g.maybeEmitOwnRecvCluster(b, sc) || g.maybeEmitLaneCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, tI32) {
 		return
 	}
@@ -712,6 +714,7 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	g.declareGenerics(b)
 	g.declareOwnRecv(b)
 	g.declareRecData(b)
+	g.declareLanes(b)
 }
 
 func (g *Generator) declareDynamicNominals(b *strings.Builder) {
@@ -867,7 +870,7 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
-		g.maybeEmitTraitCluster(b, sc) || g.maybeEmitGenericCluster(b, sc) || g.maybeEmitOwnRecvCluster(b, sc) ||
+		g.maybeEmitTraitCluster(b, sc) || g.maybeEmitGenericCluster(b, sc) || g.maybeEmitOwnRecvCluster(b, sc) || g.maybeEmitLaneCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, retT) {
 		return
 	}
@@ -1998,12 +2001,7 @@ func (g *Generator) dynStructLiteral(b *strings.Builder, sc *scope, t gtype, sh 
 func (g *Generator) dynEnumLiteral(b *strings.Builder, sc *scope, sh *enumShape, depth int) {
 	v := sh.variants[g.ch.intN(len(sh.variants))]
 	if g.ch.exhausted() {
-		for _, cand := range sh.variants {
-			if len(cand.payload) == 0 {
-				v = cand
-				break
-			}
-		}
+		v, _ = g.cheapestVariant(sh, depth)
 	}
 	if len(v.payload) == 0 {
 		b.WriteString(v.name)

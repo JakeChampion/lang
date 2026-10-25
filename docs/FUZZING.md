@@ -120,6 +120,22 @@ A rebuild of a unique value can reuse its boxes. A helper sometimes keeps
 its input alive past a rebuild, so the rebuild must copy instead. A list of
 up to 2047 cells goes only through the loops, which tests a deep drop.
 
+**SIMD lanes**: `featLanes` builds `f64x2` and `f32x4` values from the
+program's i32 state. Each lane is an integer from -32 to 31. An expression
+has at most one multiplication, so every lane operation is exact. The
+operations are these:
+
+- `+`, `-`, `*` and unary minus
+- `min`, `max`, `abs` and `floor`
+- `select` on a lane compare
+- a call that takes and returns lanes
+- a load from an array and a store into an array
+
+Each lane goes back into an i32 local, which the state fold reads. A lane
+is a float type, so only the printable profile writes lanes. The runnable
+profile stays free of floats. `TestDifferential_PrintableStdout` runs these
+programs on every backend.
+
 The other generators are narrower: `genNumProgram` (numeric properties),
 `genSimProgram` (deterministic-simulation properties), and `std/fuzz` inside
 the language.

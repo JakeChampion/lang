@@ -821,6 +821,37 @@ func TestGenPrintableFloatsReachAggregates(t *testing.T) {
 	}
 }
 
+// Lanes are floats, so only the printable profile writes them.
+func TestGenPrintableReachesLanes(t *testing.T) {
+	const seeds = 1024
+	landmarks := []struct {
+		name  string
+		floor float64
+		re    *regexp.Regexp
+	}{
+		{"f32x4 lane cluster (4.5%)", 0.02, regexp.MustCompile(`let __ln_c\d+: f32x4 = `)},
+		{"f64x2 lane cluster (5.3%)", 0.025, regexp.MustCompile(`let __ln_c\d+: f64x2 = `)},
+		{"lane load from an array (4.8%)", 0.02, regexp.MustCompile(`let __ln_xs\d+_v: `)},
+		{"lane store into an array (2.6%)", 0.01, regexp.MustCompile(`let __ln_xs\d+_w: `)},
+		{"lanes through a call (1.8%)", 0.008, regexp.MustCompile(`(\(|= |, )ln_(f64x2|f32x4)\(`)},
+		{"lane select on a compare (2.5%)", 0.01, regexp.MustCompile(`__(f64x2|f32x4)_select\(`)},
+	}
+	hits := make([]int, len(landmarks))
+	for seed := uint64(0); seed < seeds; seed++ {
+		src := fernsmith.GenPrintableMain(seed)
+		for i, l := range landmarks {
+			if l.re.MatchString(src) {
+				hits[i]++
+			}
+		}
+	}
+	for i, l := range landmarks {
+		if got := float64(hits[i]) / seeds; got < l.floor {
+			t.Errorf("%s: %d/%d seeds (%.1f%%), want at least %.1f%%", l.name, hits[i], seeds, 100*got, 100*l.floor)
+		}
+	}
+}
+
 func mainLocalIs(typeName string) func(src, body string) bool {
 	return func(_, body string) bool {
 		for _, m := range reMainLocalDecl.FindAllStringSubmatch(body, -1) {
