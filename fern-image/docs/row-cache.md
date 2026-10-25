@@ -12,6 +12,11 @@ Cache state exists only during one batch call. Callers cannot supply or share th
 Keys contain the node index and row index within the validated graph.
 The uncached `render_row` interface keeps its existing behavior.
 
+`fold_rows` transfers an explicit accumulator through each consumer and returns `RowFold` with its final value and statistics.
+Its generic consumer accepts the accumulator and row, then returns the next accumulator or a consumer error.
+`render_rows` uses this same engine with a consumer that does not return stored state.
+The [cached tile interface](regions.md) uses a fold to fill its checked output rectangle.
+
 ## Capacity and admission
 
 The cache byte limit counts row payload storage. Zero disables cache storage.
@@ -74,4 +79,4 @@ python fern-image/benchmarks/measure_row_cache.py \
 
 The earlier allocation record describes its own compiler and source hashes.
 It does not describe the new cache implementation.
-Cached tile integration, decoder providers, fusion, aggregate memory, and worker isolation remain separate work.
+Decoder providers, fusion, aggregate memory, and worker isolation remain separate work.

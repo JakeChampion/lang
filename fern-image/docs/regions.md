@@ -41,7 +41,7 @@ Every successful plan fits the configured limits before its values convert to i3
 
 The tile scheduler processes one output row at a time.
 It copies the requested columns into the tile and releases that row after its final use.
-The scheduler does not retain a row cache.
+The `render_tile` interface does not retain a row cache.
 
 Cancellation checks occur before planning, before tile allocation, inside row execution, and before each group of 64 copy pixels.
 A cancellation error releases input rows, partial output rows, and partial tile storage.
@@ -57,4 +57,24 @@ Large-plan cases reject storage overflow and excessive recursive work before pix
 These cases execute natively with heap sanitization, on ARM64 under QEMU, and in Wasmtime.
 They do not qualify process memory, codec access patterns, throughput, or production service behavior.
 
-Caching, fusion, decoder row providers, isolated workers, and aggregate memory qualification remain separate work under #13215.
+## Cached tile execution
+
+`cached_plan` adds an explicit cache payload limit to the logical scratch estimate.
+`render_cached_tile` repeats this validation before tile allocation and returns `CachedTile` with the image and row statistics.
+Zero cache bytes disable storage. Negative cache bytes return `Budget`.
+Total sample work retains the uncached estimate, including the tile copy pixels.
+Cache hits do not increase the admitted work.
+
+One `fold_rows` call processes the complete tile through a private per-call row cache.
+The fold transfers the tile accumulator through each row consumer and returns its final value.
+The consumer does not place the tile in a shared mutable cell.
+The [row cache](row-cache.md) retains its payload, entry, eviction, cancellation, and ownership rules.
+
+A four-column, eight-row RGBA tile from a 4x2 to 8x8 bilinear graph needs 464 logical scratch bytes with a 96-byte cache.
+Its conservative work estimate is 160 samples. It reports 12 hits, ten rendered node rows, and four peak cache entries.
+The scratch estimate includes 112 row bytes, twice the 128-byte tile storage, and 96 cache payload bytes.
+These values exclude metadata, allocator overhead, source retention, and consumer-owned storage.
+
+Six additional cases cover exact admission, RGB/RGBA crops across cache sizes, cancellation, tile isolation, and generic fold state with heap errors.
+The original uncached row and tile interfaces keep their existing contracts.
+Fusion, decoder row providers, isolated workers, and aggregate memory qualification remain separate work under #13215.

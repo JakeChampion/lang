@@ -54,9 +54,9 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-Sixty-one TAP cases pass across the essential, compression, pixel, color, resize, PNG, row-pipeline, region, and cache suites.
+Sixty-seven TAP cases cover the essential, compression, pixel, color, resize, PNG, row-pipeline, region, and cache suites.
 The file I/O probe and pixel example also exit successfully.
-All sixteen native executables report zero live bytes under the sanitizer.
+The native script checks seventeen executables with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
 
 Three negative probes confirm compiler restrictions.

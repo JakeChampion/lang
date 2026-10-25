@@ -19,6 +19,8 @@ struct Cost { scratch: i64, samples: i64 }
 
 pub struct RowStats { rows: i32, hits: i32, misses: i32, peak_cache_bytes: i32, peak_cache_entries: i32 }
 
+pub struct RowFold[S] { value: S, stats: RowStats }
+
 pub enum RowFailure[E] { GraphFailure(PipelineError), ConsumerFailure(E) }
 
 struct CacheEntry { node: i32, y: i32, row: pixels.Image }
@@ -294,6 +296,16 @@ pub function render_row(graph: Graph, y: i32, limits: Limits, cancelled: () => b
 
 pub function render_rows[E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean,
   consume: (pixels.Image) => Result[void, E]): Result[RowStats, RowFailure[E]] {
+  let result = fold_rows(graph, first, count, limits, cache_bytes, cancelled, 0,
+    (_state: i32, row: pixels.Image): Result[i32, E] => {
+      consume(row)?;
+      return Ok(0);
+    })?;
+  return Ok(result.stats);
+}
+
+pub function fold_rows[S, E](graph: Graph, first: i32, count: i32, limits: Limits, cache_bytes: i32, cancelled: () => boolean,
+  value: S, consume: (S, pixels.Image) => Result[S, E]): Result[RowFold[S], RowFailure[E]] {
   if (cancelled()) {
     return Err(GraphFailure(Cancelled));
   }
@@ -311,16 +323,17 @@ pub function render_rows[E](graph: Graph, first: i32, count: i32, limits: Limits
   }
   let stats = RowStats { rows: 0, hits: 0, misses: 0, peak_cache_bytes: 0, peak_cache_entries: 0 };
   let cache = cell_new(RowCache { entries: [], bytes: 0, limit: cache_bytes, max_entries: graph.nodes.len() * 2, stats: stats });
+  let value = value;
   let i = 0;
   while (i < count) {
     let row = match (render_node(graph, output, first + i, limits, Some(cache), cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
-    match (consume(row)) {
-      Ok(_) => {},
+    value = match (consume(value, row)) {
+      Ok(next) => next,
       Err(e) => { return Err(ConsumerFailure(e)); }
-    }
+    };
     let state = cache.get();
     cache.set(RowCache { ...state, stats: RowStats { ...state.stats, rows: state.stats.rows + 1 } });
     i = i + 1;
   }
-  return Ok(cache.get().stats);
+  return Ok(RowFold[S] { value: value, stats: cache.get().stats });
 }
