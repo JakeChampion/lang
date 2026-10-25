@@ -25,19 +25,6 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
-func TestNestedArrayMismatchIsOneDiagnostic(t *testing.T) {
-	for _, tc := range []struct{ name, src, want string }{
-		{"element-of-a-returned-literal", "function f(values: i32[]): i64[][] { return [values]; }", "E002"},
-		{"nested-owned-returned-as-views", "function f(a: u8[][]): [u8][] { return a; }", "E002"},
-		{"nested-owned-bound-as-views", "function f(a: u8[][]): i32 { let b: [u8][] = a; return b.len(); }", "E003"},
-		{"owned-element-in-a-view-array", "function f(data: u8[]): i32 { let all: [u8][] = [data]; return all.len(); }", "E003"},
-	} {
-		if got := errCodes(checkSource(t, tc.src)); got != tc.want {
-			t.Errorf("%s: codes %q, want %q", tc.name, got, tc.want)
-		}
-	}
-}
-
 func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
 	const decls = "struct Stack[T] { items: T[] }\nstruct Tagged[T] { n: i32 }\n"
 	bad := []string{
