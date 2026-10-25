@@ -4,6 +4,11 @@ Status: [tracker] living per-feature, per-backend audit matrix and audit log.
 
 Dated entries preserve their original results. Descriptions of the retired Go emitters and their tests are historical.
 
+The `TestRunner*ExamplePasses` interpreter gates named below for suites in
+`selfHostStdTestCases` were deleted on 2026-10-25: the self-host stdtest lane
+runs each of those suites under the interpreter and compiled, and now also
+requires the interpreter run to pass.
+
 This document is the **living record** of an ongoing audit of every
 built-in language feature and every standard-library function in Fern.
 The goal: confirm each feature works **correctly on every backend of the
