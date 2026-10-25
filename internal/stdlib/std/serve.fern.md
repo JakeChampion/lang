@@ -4535,8 +4535,8 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         continue;
       }
       if (__quic_owns(conns, fd)) {
-        let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop);
-        let started: (__Conns, __Flight[]) = __h3_start_all(drv, datagrams.0, datagrams.1, datagrams.2, handler, host_for, opts, stop);
+        let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop, host_for);
+        let started: (__Conns, __Flight[]) = __h3_start_all(drv, datagrams.0, datagrams.1, datagrams.2, handler, opts, stop);
         conns = started.0;
         flights = started.1;
         continue;
@@ -4583,7 +4583,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
     flights = woken.1;
     if (__quic_on(conns)) {
       let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
-      let started_late: (__Conns, __Flight[]) = __h3_start_all(drv, ticked.0, ticked.1, ticked.2, handler, host_for, opts, stop);
+      let started_late: (__Conns, __Flight[]) = __h3_start_all(drv, ticked.0, ticked.1, ticked.2, handler, opts, stop);
       conns = started_late.0;
       flights = started_late.1;
     }
@@ -4733,8 +4733,8 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         continue;
       }
       if (__quic_owns(conns, fd)) {
-        let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop);
-        let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, datagrams.0, datagrams.1, datagrams.2, st, handler, host_for);
+        let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop, host_for);
+        let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, datagrams.0, datagrams.1, datagrams.2, st, handler);
         conns = answered.0;
         flights = answered.1;
         st = answered.2;
@@ -4814,7 +4814,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     flights = woken.1;
     if (__quic_on(conns)) {
       let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
-      let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, ticked.0, ticked.1, ticked.2, st, handler, host_for);
+      let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, ticked.0, ticked.1, ticked.2, st, handler);
       conns = answered.0;
       flights = answered.1;
       st = answered.2;
@@ -5379,7 +5379,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
 
 ```fern
 <<73 struct __Quic>>=
-struct __Quic { sock: i32, port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][], origs: u8[][], peers: net.SocketAddr[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
+struct __Quic { sock: i32, port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][], origs: u8[][], peers: net.SocketAddr[], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
 
 struct __H3Producer { serial: i32, stream: i64, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
 ```
@@ -5397,7 +5397,7 @@ function __h3_burst(): i32 {
 }
 
 function __quic_none(): __Quic {
-  return __Quic { sock: 0 - 1, port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
+  return __Quic { sock: 0 - 1, port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
 }
 
 function __quic_socket(port: i32): i32 {
@@ -5538,7 +5538,7 @@ function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void {
 
 ```fern
 <<76 struct __H3Req>>=
-struct __H3Req { serial: i32, id: i64, req: HttpRequest, peer: net.SocketAddr }
+struct __H3Req { serial: i32, id: i64, req: HttpRequest, host: platform.Host }
 
 struct __H3Burst { reqs: __H3Req[], touched: i32[] }
 ```
@@ -5554,7 +5554,7 @@ function __h3_touched(b: __H3Burst, serial: i32): __H3Burst {
   return __H3Burst { ...b, touched: b.touched.append(serial) };
 }
 
-function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
+function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flight[], __H3Burst) {
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   let burst: __H3Burst = __H3Burst { reqs: [], touched: [] };
@@ -5563,7 +5563,7 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
     let Ok(got) = net.recv_into(cur.quic.sock, cur.quic.buf, cur.quic.from) else {
       return (cur, fs, burst);
     };
-    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, cur.quic.buf[0:got], cur.quic.from, burst, opts, stop);
+    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, cur.quic.buf[0:got], cur.quic.from, burst, opts, stop, host_for);
     cur = r.0;
     fs = r.1;
     burst = r.2;
@@ -5572,8 +5572,8 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
   return (cur, fs, burst);
 }
 
-function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: [u8], from: [u8], burst: __H3Burst, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
-  let found: (__Conns, i32) = __h3_route(c, d, from, opts, stop);
+function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: [u8], from: [u8], burst: __H3Burst, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flight[], __H3Burst) {
+  let found: (__Conns, i32) = __h3_route(c, d, from, opts, stop, host_for);
   let cur: __Conns = found.0;
   let i: i32 = found.1;
   if (i < 0) {
@@ -5590,7 +5590,7 @@ function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: 
 // __h3_route finds the connection a datagram is for, accepting a new one
 // for an Initial; a short header naming an ID this server issued is
 // matched without parsing the header.
-function __h3_route(c: __Conns, d: [u8], from: [u8], opts: Config, stop: __Stop): (__Conns, i32) {
+function __h3_route(c: __Conns, d: [u8], from: [u8], opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, i32) {
   let known: i32 = __h3_short_find(c.quic, d);
   if (known >= 0) {
     return (c, known);
@@ -5602,7 +5602,7 @@ function __h3_route(c: __Conns, d: [u8], from: [u8], opts: Config, stop: __Stop)
   if (i >= 0) {
     return (c, i);
   }
-  return __h3_accept(c, h, d, net.sender(from), opts, stop);
+  return __h3_accept(c, h, d, net.sender(from), opts, stop, host_for);
 }
 
 function __h3_short_find(q: __Quic, d: [u8]): i32 {
@@ -5669,7 +5669,7 @@ function __h3_from_ip(q: __Quic, ip: net.IpAddr): i32 {
   return n;
 }
 
-function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr, opts: Config, stop: __Stop): (__Conns, i32) {
+function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, i32) {
   let q: __Quic = c.quic;
   let initial: boolean = false;
   match (h.kind) {
@@ -5688,7 +5688,7 @@ function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr
     return (c, 0 - 1);
   };
   let conn: h3q.Conn = h3q.server(made, h3.config()).with_max_body(opts.limits.body as i64);
-  let grown: __Quic = __Quic { ...q, conns: q.conns.append(conn), keys: q.keys.append(made.scid()), origs: q.origs.append(h.dcid), peers: q.peers.append(from), serials: q.serials.append(q.next), next: q.next + 1 };
+  let grown: __Quic = __Quic { ...q, conns: q.conns.append(conn), keys: q.keys.append(made.scid()), origs: q.origs.append(h.dcid), peers: q.peers.append(from), hosts: q.hosts.append(host_for(Some(from))), serials: q.serials.append(q.next), next: q.next + 1 };
   return (__Conns { ...c, quic: grown }, grown.conns.len() - 1);
 }
 
@@ -5701,7 +5701,7 @@ function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst)
   for e in evs {
     match (e) {
       h3q.Requested(id, req) => {
-        b = __H3Burst { ...b, reqs: b.reqs.append(__H3Req { serial: serial, id: id, req: req, peer: q.peers[i] }) };
+        b = __H3Burst { ...b, reqs: b.reqs.append(__H3Req { serial: serial, id: id, req: req, host: q.hosts[i] }) };
       },
       h3q.StreamDropped(id, _) => {
         producers = __h3_producer_dropped(producers, serial, id);
@@ -5717,14 +5717,14 @@ function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst)
 
 ```fern
 <<78 function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, handler: (H...>>=
-function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, handler: (HttpRequest, platform.Host) => HttpResponse, host_for: (Option[net.SocketAddr]) => platform.Host, opts: Config, stop: __Stop): (__Conns, __Flight[]) {
+function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): (__Conns, __Flight[]) {
   if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
     return (c, fls);
   }
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   for r in burst.reqs {
-    let started: __Started = __serve_start(handler, host_for(Some(r.peer)), r.req, "HTTP/3", true, Idle, opts, stop);
+    let started: __Started = __serve_start(handler, r.host, r.req, "HTTP/3", true, Idle, opts, stop);
     let done: (__Conns, __Flight[]) = __h3_request(drv, cur, fs, r.serial, r.id, r.req, started);
     cur = done.0;
     fs = done.1;
@@ -5732,7 +5732,7 @@ function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], bu
   return (__h3_flush_all(cur, burst.touched), fs);
 }
 
-function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flight[], S) {
+function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse)): (__Conns, __Flight[], S) {
   if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
     return (c, fls, st);
   }
@@ -5740,7 +5740,7 @@ function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flig
   let fs: __Flight[] = fls;
   let state: S = st;
   for r in burst.reqs {
-    let (next, resp) = handler(state, r.req, host_for(Some(r.peer)));
+    let (next, resp) = handler(state, r.req, r.host);
     state = next;
     let done: (__Conns, __Flight[]) = __h3_request(drv, cur, fs, r.serial, r.id, r.req, HandlerDone(resp));
     cur = done.0;
@@ -6041,14 +6041,14 @@ function __h3_forget_done(c: __Conns): __Conns {
     return c;
   }
   let q: __Quic = c.quic;
-  let kept: __Quic = __Quic { ...q, conns: [], keys: [], origs: [], peers: [], serials: [] };
+  let kept: __Quic = __Quic { ...q, conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [] };
   let producers: __H3Producer[] = q.producers;
   let i: i32 = 0;
   while (i < q.conns.len()) {
     if (q.conns[i].done()) {
       producers = __h3_producers_of_gone(producers, q.serials[i]);
     } else {
-      kept = __Quic { ...kept, conns: kept.conns.append(q.conns[i]), keys: kept.keys.append(q.keys[i]), origs: kept.origs.append(q.origs[i]), peers: kept.peers.append(q.peers[i]), serials: kept.serials.append(q.serials[i]) };
+      kept = __Quic { ...kept, conns: kept.conns.append(q.conns[i]), keys: kept.keys.append(q.keys[i]), origs: kept.origs.append(q.origs[i]), peers: kept.peers.append(q.peers[i]), hosts: kept.hosts.append(q.hosts[i]), serials: kept.serials.append(q.serials[i]) };
     }
     i = i + 1;
   }
