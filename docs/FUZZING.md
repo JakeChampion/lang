@@ -305,7 +305,8 @@ built. Citations are to the paper that introduced the technique.
 3. **Swarm configuration and generation policies** (Groce et al., ISSTA 2012:
    42% more distinct crash bugs than Csmith's tuned default; YARPGen, OOPSLA
    2020 and PLDI 2023: biased value distributions and loop shapes). Swarm done;
-   policies partly (boundary-heavy integer literals).
+   policies partly (boundary-heavy integer literals, and string literals with
+   escapes: control bytes, `\xNN` and `\u{…}` scalars of two to four bytes).
 4. **Pass-configuration differential with a fuel-bisectable chaos mode**
    (Cranelift's `cranelift-control`, LLVM's opt-bisect-limit). The compiler has
    switches (`FERN_SELFHOST_NO_REUSE`, `FERN_SEM_INLINE`,

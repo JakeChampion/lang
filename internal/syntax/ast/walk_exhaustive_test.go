@@ -15,7 +15,7 @@ var walkSkips = map[string]string{
 	"Binary.CheckedLowered": "checker-stamped desugar, spliced in by RewriteProgramExprs before any later pass sees the Binary",
 	"TryOp.Lowered":         "checker-stamped desugar, spliced in by RewriteProgramExprs before any later pass sees the TryOp",
 	"DowncastExpr.Lowered":  "checker-stamped desugar, spliced in by RewriteProgramExprs before any later pass sees the DowncastExpr",
-	"Loop.TodoMsg":          "the `todo(\"msg\")` message, read by the checker rather than evaluated as an expression",
+	"Block.TodoMsg":         "the `todo(\"msg\")` message, read by the checker rather than evaluated as an expression",
 	"ForEach.RangeHigh":     "range bound consumed by the ForEach desugars, which run before any Walk consumer",
 }
 

@@ -1,0 +1,1 @@
+main.fern:4:1: error[E093]: const A: division by zero in constant expression
