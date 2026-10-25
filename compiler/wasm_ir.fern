@@ -3357,7 +3357,7 @@ pub function reactor_new_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_reactor_new (result i32)\n";
   o = o + "    (local $hdr i32)\n";
-  o = o + "    (local.set $hdr (call $__fern_alloc (i32.const 28)))\n";
+  o = o + "    (local.set $hdr (call $__fern_alloc (i32.const 32)))\n";
   o = o + "    (i32.store (local.get $hdr) (i32.const 0))\n";
   o = o + "    (i32.store offset=4 (local.get $hdr) (i32.const 16))\n";
   o = o + "    (i32.store offset=8 (local.get $hdr) (call $__fern_alloc (i32.const 256)))\n";
@@ -3365,6 +3365,8 @@ pub function reactor_new_func(): string {
   o = o + "    (i32.store offset=16 (local.get $hdr) (call $__fern_alloc (i32.const 264)))\n";
   o = o + "    (i32.store offset=20 (local.get $hdr) (i32.const 33))\n";
   o = o + "    (i32.store offset=24 (local.get $hdr) (call $__fern_alloc (i32.const 132)))\n";
+  o = o + "    (i32.store offset=28 (local.get $hdr) (global.get $__fern_reactors))\n";
+  o = o + "    (global.set $__fern_reactors (local.get $hdr))\n";
   o = o + "    (local.get $hdr))\n";
   return o;
 }
@@ -3384,10 +3386,27 @@ function reactor_subscribe(kind: i32, read_sub: string, write_sub: string, read_
   return o;
 }
 
+pub function reactor_list_global(): string {
+  return "  (global $__fern_reactors (mut i32) (i32.const 0))\n";
+}
+
+pub function reactor_forget_func(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_reactor_forget (param $fd i32)\n";
+  o = o + "    (local $r i32)\n";
+  o = o + "    (local.set $r (global.get $__fern_reactors))\n";
+  o = o + "    (block $done (loop $each\n";
+  o = o + "      (br_if $done (i32.eqz (local.get $r)))\n";
+  o = o + "      (drop (call $__fern_reactor_ctl (local.get $r) (i32.const 2) (local.get $fd) (i32.const 0)))\n";
+  o = o + "      (local.set $r (i32.load offset=28 (local.get $r)))\n";
+  o = o + "      (br $each))))\n";
+  return o;
+}
+
 pub function reactor_ctl_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_reactor_ctl (param $r i32) (param $op i32) (param $fd i32) (param $arg i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $ents i32) (local $i i32) (local $e i32) (local $interest i32) (local $kind i32) (local $cap i32) (local $grown i32)\n";
+  o = o + "    (local $n i32) (local $ents i32) (local $i i32) (local $e i32) (local $interest i32) (local $kind i32) (local $cap i32) (local $grown i32) (local $prev i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $r)))\n";
   o = o + "    (local.set $cap (i32.load offset=4 (local.get $r)))\n";
   o = o + "    (local.set $ents (i32.load offset=8 (local.get $r)))\n";
@@ -3403,7 +3422,18 @@ pub function reactor_ctl_func(): string {
   o = o + "      (call $__fern_raw_free (i32.load offset=12 (local.get $r)) (i32.mul (i32.load offset=20 (local.get $r)) (i32.const 4)))\n";
   o = o + "      (call $__fern_raw_free (i32.load offset=16 (local.get $r)) (i32.mul (i32.load offset=20 (local.get $r)) (i32.const 8)))\n";
   o = o + "      (call $__fern_raw_free (i32.load offset=24 (local.get $r)) (i32.mul (i32.load offset=20 (local.get $r)) (i32.const 4)))\n";
-  o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 28))\n";
+  o = o + "      (if (i32.eq (global.get $__fern_reactors) (local.get $r))\n";
+  o = o + "        (then (global.set $__fern_reactors (i32.load offset=28 (local.get $r))))\n";
+  o = o + "        (else\n";
+  o = o + "          (local.set $prev (global.get $__fern_reactors))\n";
+  o = o + "          (block $unlinked (loop $walk\n";
+  o = o + "            (br_if $unlinked (i32.eqz (local.get $prev)))\n";
+  o = o + "            (if (i32.eq (i32.load offset=28 (local.get $prev)) (local.get $r)) (then\n";
+  o = o + "              (i32.store offset=28 (local.get $prev) (i32.load offset=28 (local.get $r)))\n";
+  o = o + "              (br $unlinked)))\n";
+  o = o + "            (local.set $prev (i32.load offset=28 (local.get $prev)))\n";
+  o = o + "            (br $walk)))))\n";
+  o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 32))\n";
   o = o + "      (return (i32.const 0))))\n";
   o = o + "    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 4)) (i32.const 3)) (then (return (i32.const -58))))\n";
   o = o + "    (if (i32.ge_u (i32.sub (local.get $op) (i32.const 1)) (i32.const 2)) (then (return (i32.const -28))))\n";
@@ -3782,9 +3812,12 @@ pub function tcp_send_buf_func(): string {
   return o;
 }
 
-pub function tcp_close_func(udp: boolean): string {
+pub function tcp_close_func(udp: boolean, watched: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
+  if (watched) {
+    o = o + "    (call $__fern_reactor_forget (local.get $c))\n";
+  }
   if (udp) {
     o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (call $__fern_udp_close (local.get $c)))))\n";
   }
@@ -9866,7 +9899,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(pollable_drop_func());
   }
   if (need(needs, "tcp_close")) {
-    parts = parts.append(tcp_close_func(need_udp_socket(needs)));
+    parts = parts.append(tcp_close_func(need_udp_socket(needs), need(needs, "reactor_ctl")));
   }
   if (need(needs, "tcp_send_bytes")) {
     parts = parts.append(tcp_send_bytes_func());
@@ -9916,11 +9949,15 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "udp_recvfrom")) {
     parts = parts.append(udp_recvfrom_func());
   }
+  if (need_any(needs, ["reactor_new", "reactor_ctl"])) {
+    parts = parts.append(reactor_list_global());
+  }
   if (need(needs, "reactor_new")) {
     parts = parts.append(reactor_new_func());
   }
   if (need(needs, "reactor_ctl")) {
     parts = parts.append(reactor_ctl_func());
+    parts = parts.append(reactor_forget_func());
   }
   if (need(needs, "reactor_wait")) {
     parts = parts.append(reactor_wait_func());
