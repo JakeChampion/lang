@@ -110,6 +110,9 @@ pub function (r: Reassembly) add(offset: i64, data: u8[]): Reassembly {
     return __hold(r, offset, data);
   }
   let skip: i32 = (front - offset) as i32;
+  if (skip == 0 && r.ready.len() == 0) {
+    return __drain(Reassembly { ...r, ready: data });
+  }
   return __drain(Reassembly { ...r, ready: __append_range(r.ready, data, skip, data.len()) });
 }
 
@@ -1226,12 +1229,13 @@ function __rest_i64(xs: i64[]): i64[] {
 }
 
 function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
-  let b: usize = buf_new(out.len() + (to - from));
-  buf_push_bytes_range(b, out, 0, out.len());
-  buf_push_bytes_range(b, src, from, to);
-  let grown: u8[] = buf_take_bytes(b);
-  buf_free(b);
-  return grown;
+  if (from == to) {
+    return out;
+  }
+  if (out.len() == 0) {
+    return __slice_range(src, from, to);
+  }
+  return out.concat(__slice_range(src, from, to));
 }
 
 function __slice_range(src: u8[], from: i32, to: i32): u8[] {
