@@ -26,6 +26,10 @@ func checkShardDenominators(t *testing.T, env string) {
 
 	literal := regexp.MustCompile(env + `:\s*"[^"]*/(\d+)"`)
 	derived := regexp.MustCompile(env + `:\s*"[^"]*/\$\{\{\s*matrix\.[A-Za-z0-9_.]*nshard\s*\}\}"`)
+	// The unit lane's heavy group takes its denominator from the group:
+	// `${{ matrix.group == 'heavy' && 4 || 1 }}`, where 4 must be the
+	// matrix's shard count.
+	grouped := regexp.MustCompile(env + `:\s*"[^"]*/\$\{\{\s*matrix\.group == 'heavy' && (\d+) \|\| 1\s*\}\}"`)
 
 	var checked int
 	for _, e := range ents {
@@ -60,7 +64,14 @@ func checkShardDenominators(t *testing.T, env string) {
 						"rather than restating it here", e.Name(), jobName, env, n, buckets)
 				}
 			}
-			if !literal.MatchString(job) && !derived.MatchString(job) {
+			for _, m := range grouped.FindAllStringSubmatch(job, -1) {
+				n, _ := strconv.Atoi(m[1])
+				if !containsInt(buckets, n) {
+					t.Errorf("%s job %q: %s derives %d heavy buckets from the group but its "+
+						"matrix schedules %v shards", e.Name(), jobName, env, n, buckets)
+				}
+			}
+			if !literal.MatchString(job) && !derived.MatchString(job) && !grouped.MatchString(job) {
 				t.Errorf("%s job %q: sets %s in a shape this guard "+
 					"does not recognise, so its denominator is no longer checked "+
 					"against the matrix — update the patterns here alongside the "+
