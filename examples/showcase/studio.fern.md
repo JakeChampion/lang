@@ -29,6 +29,7 @@ import "std/json";
 import "std/array";
 import "std/result";
 import "std/option";
+import "std/time";
 import "./common";
 import "./live";
 import "./foundry";
@@ -309,15 +310,15 @@ pub function socket(state: State, app: string, req: HttpRequest): Result[HttpRes
   }
 }
 
-function push_delay(room: Room, app: string): i32 {
+function push_delay(room: Room, app: string): Option[Duration] {
   if (app != "foundry") {
-    return -1;
+    return None;
   }
   let p = room.state.projects.get()[room.at];
   if (!p.running) {
-    return -1;
+    return None;
   }
-  return ((p.updated + foundry.PERIOD - monotonic_ns() + 999999) / 1000000).max(1i64).min(100i64) as i32;
+  return Some(time.duration_millis(((p.updated + foundry.PERIOD - monotonic_ns() + 999999) / 1000000).max(1i64).min(100i64)));
 }
 
 function put32(bytes: u8[], at: i32, value: i32): u8[] {
