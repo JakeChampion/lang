@@ -17791,13 +17791,13 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     ast.ExprIndex(ix) => {
       let r1: OwnWalk = ru_borrow(ix.array, moved, ctx);
-      let r2: OwnWalk = ru_expr(ix.index, r1.moved, ctx);
+      let r2: OwnWalk = ru_borrow(ix.index, r1.moved, ctx);
       return OwnWalk { moved: r2.moved, diags: util.append_diags(r1.diags, r2.diags) };
     },
     ast.ExprSlice(sl) => {
       let r1: OwnWalk = ru_borrow(sl.array, moved, ctx);
-      let r2: OwnWalk = ru_expr(sl.start, r1.moved, ctx);
-      let r3: OwnWalk = ru_expr(sl.end, r2.moved, ctx);
+      let r2: OwnWalk = ru_borrow(sl.start, r1.moved, ctx);
+      let r3: OwnWalk = ru_borrow(sl.end, r2.moved, ctx);
       return OwnWalk { moved: r3.moved, diags: util.append_diags(util.append_diags(r1.diags, r2.diags), r3.diags) };
     },
     ast.ExprCall(c) => {
@@ -17812,12 +17812,15 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return ow_walk_call(c, moved, ctx);
     },
     ast.ExprBinary(b) => {
-      let r1: OwnWalk = ru_expr(b.left, moved, ctx);
-      let r2: OwnWalk = ru_expr(b.right, r1.moved, ctx);
+      let r1: OwnWalk = ru_borrow(b.left, moved, ctx);
+      let r2: OwnWalk = ru_borrow(b.right, r1.moved, ctx);
       return OwnWalk { moved: r2.moved, diags: util.append_diags(r1.diags, r2.diags) };
     },
     ast.ExprUnary(u) => {
-      return ru_expr(u.operand, moved, ctx);
+      if (u.op == "try_") {
+        return ru_expr(u.operand, moved, ctx);
+      }
+      return ru_borrow(u.operand, moved, ctx);
     },
     ast.ExprArray(a) => {
       let m: MovedEntry[] = moved;

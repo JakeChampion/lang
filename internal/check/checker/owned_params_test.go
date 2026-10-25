@@ -632,6 +632,29 @@ function f(): Result[i32, string] {
 }`)
 }
 
+func TestOwnedOperandIsBorrowed(t *testing.T) {
+	const keepStr = "function keepStr(own s: string): i32 { return s.len(); }\n"
+	wantOK(t, "own-compared-then-used", keepStr+`
+function f(own s: string, t: string): string {
+    if (s != t) {
+        return "a" + s;
+    }
+    return "";
+}`)
+	wantOK(t, "own-concatenated-twice", keepStr+`
+function f(own s: string): string {
+    let a: string = s + "x";
+    return a + s;
+}`)
+	wantE050(t, "own-compared-then-moved-twice", keepStr+`
+function f(own s: string): i32 {
+    if (s == "x") {
+        return keepStr(s) + keepStr(s);
+    }
+    return 0;
+}`)
+}
+
 func TestOwnGuardAllowsAFieldUnpackedFromAnOwnParam(t *testing.T) {
 	wantOK(t, "own-param-field-unpack", ownConsumer+`
 function f(own p: Pair): i32 {
