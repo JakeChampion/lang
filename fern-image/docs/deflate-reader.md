@@ -19,7 +19,7 @@ The history length never exceeds 32768 bytes.
 Length/distance copies resume across chunk boundaries and permit overlap within the history ring.
 
 `total` counts the decompressed bytes so far.
-`consumed` counts the compressed bytes that the parser has read.
+`consumed` counts the compressed bytes that the parser read.
 A pending match can emit more bytes without another compressed input byte.
 Only `done` identifies the exact compressed-stream endpoint.
 Trailing bytes remain outside that consumed count.
@@ -62,6 +62,8 @@ RFC 1951 section 3.2.7 permits an empty distance alphabet when no match uses it.
 The shared validator now accepts that alphabet and still rejects a subsequent distance use.
 Incomplete nonempty alphabets require exactly one one-bit code.
 Oversubscribed tables, a missing end code, and invalid incomplete alphabets remain errors.
+
+The shared parser rejects headers with more than 286 literal/length codes or 30 distance codes.
 Independent Python zlib checks cover the accepted fixture and malformed controls.
 
 ## Logical storage and remaining work

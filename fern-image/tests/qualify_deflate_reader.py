@@ -91,7 +91,7 @@ def corpus():
         data = bytearray(base)
         data[index] ^= 1 << (index % 8)
         add(f"bit-{index}", bytes(data))
-    for data in [b"\7", b"\1\1\0\0\0*", b"\1\2\0\xfd\xff*", b"\3\3"]:
+    for data in [b"\7", b"\1\1\0\0\0*", b"\1\2\0\xfd\xff*", b"\3\3", b"\xfd\0\0", b"\5\x1f\0"]:
         add("invalid-" + data.hex(), data)
     return cases
 

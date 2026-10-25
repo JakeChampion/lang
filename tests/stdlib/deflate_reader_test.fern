@@ -186,9 +186,11 @@ function errors_and_limits(): test.TestOutcome {
   let after = match (valid.read(3, never_cancel)) { Ok(v) => same(v.bytes, "abc".bytes()) && v.done, _ => false };
   let reserved = deflate.Malformed("a reserved block type").message();
   let length = deflate.Malformed("a stored block's length and its complement disagree").message();
+  let symbols = deflate.Malformed("too many length or distance codes").message();
   let good = rejected([], 3, truncated) && rejected([7], 3, reserved)
     && rejected([1, 1, 0, 0, 0, 42], 3, length) && rejected([1, 2, 0, 253, 255, 42], 3, truncated)
-    && rejected(input, 2, limit) && rejected(__codec_bytes(hex.decode("cb48cdc9c957c8402701")), 4, limit);
+    && rejected(input, 2, limit) && rejected(__codec_bytes(hex.decode("cb48cdc9c957c8402701")), 4, limit)
+    && rejected([253, 0, 0], 3, symbols) && rejected([5, 31, 0], 3, symbols);
   return test.assert_true(good && bad_request && large_request && negative && after);
 }
 
