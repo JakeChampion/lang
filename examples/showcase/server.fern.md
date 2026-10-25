@@ -19,7 +19,8 @@ The HTML source view links each section and each local import.
 ## Imports and state
 
 The router receives one explicit state record. Each application owns bounded process-local state.
-Multiple server instances require process affinity for shared rooms. This demo does not claim durable or distributed storage.
+Multiple server instances require process affinity for shared rooms. Blockyard can retain block edits on a persistent volume.
+Its world directory assigns separate worlds to separate server processes.
 
 ```fern
 <<Imports and state>>=

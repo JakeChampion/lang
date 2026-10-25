@@ -153,7 +153,7 @@ export function predict(kernel, get, player, input, seconds) {
       z,
       vy * dt,
       1,
-      ...collisionMask(get, x, p.y, p.z),
+      ...collisionMask(get, x, p.y, z),
     );
     const clipped = Math.abs(y - p.y - vy * dt) > 0.000001;
     Object.assign(p, {
