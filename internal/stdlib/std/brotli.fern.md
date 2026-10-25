@@ -105,13 +105,13 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
   return Ok(d.out);
 }
 
-struct __D { pos: i32, buf: u64, cnt: i32, v: i32, failed: boolean, what: string, last: boolean, raw: boolean, lens: i32[], tab: i32[], offs: i32[], cat: __Cat, m: __Mb, out: u8[], cap: i32, r0: i32, r1: i32, r2: i32, r3: i32 }
+struct __D { pos: i32, buf: u64, cnt: i32, v: i32, failed: boolean, what: string, last: boolean, raw: boolean, lens: i32[], syms: i32[], tab: i32[], offs: i32[], cat: __Cat, m: __Mb, out: u8[], cap: i32, r0: i32, r1: i32, r2: i32, r3: i32 }
 
 function __start(): __D {
   let none: u8[] = [];
   let c: __Cat = __Cat { n: 1, types: 0, lens: 0, left: 0 };
   let m: __Mb = __Mb { lit: c, cmd: c, dist: c, btab: [], postfix: 0, direct: 0, modes: [], fixed: [], lmap: [], dmap: [], ltab: [], ctab: [], coff: [], dtab: [], dcodes: [] };
-  return __D { pos: 0, buf: 0u64, cnt: 0, v: 0, failed: false, what: "", last: false, raw: false, lens: [], tab: [], offs: [], cat: c, m: m, out: none, cap: 0, r0: 4, r1: 11, r2: 15, r3: 16 };
+  return __D { pos: 0, buf: 0u64, cnt: 0, v: 0, failed: false, what: "", last: false, raw: false, lens: [], syms: [], tab: [], offs: [], cat: c, m: m, out: none, cap: 0, r0: 4, r1: 11, r2: 15, r3: 16 };
 }
 
 function __fail(own d: __D, what: string): __D {
@@ -373,29 +373,22 @@ A code with one symbol uses no bits. The callers check that all other codes are 
 
 ```fern
 <<Build prefix code tables>>=
-// Appends the table of the code with the lengths `lens` to `tab`. Its root
+// Appends the table of the code with the lengths `lens` to `tab`. `syms`
+// lists the symbols that have a code, in increasing order. The root table
 // has `1 << root` entries, and only a root of 8 bits has links.
-function __table(lens: i32[], own tab: i32[], root: i32): i32[] {
+function __table(lens: i32[], syms: i32[], own tab: i32[], root: i32): i32[] {
   let at: i32 = tab.len();
   let count: i32[] = __alloc_i32(16);
-  let only: i32 = 0;
-  let used: i32 = 0;
   let longest: i32 = 0;
-  let s: i32 = 0;
-  while (s < lens.len()) {
+  for s in syms {
     let l: i32 = lens[s];
-    if (l > 0) {
-      count = count.with(l, count[l] + 1);
-      only = s;
-      used = used + 1;
-      longest = cmp.max(longest, l);
-    }
-    s = s + 1;
+    count = count.with(l, count[l] + 1);
+    longest = cmp.max(longest, l);
   }
-  if (used <= 1) {
-    return tab.concat(__doubled([only << 16], 1 << root));
+  if (syms.len() <= 1) {
+    return tab.concat(__doubled([__only(syms) << 16], 1 << root));
   }
-  let sorted: i32[] = __sorted(lens, count, used);
+  let sorted: i32[] = __sorted(lens, syms, count);
   let fill: i32 = cmp.min(longest, root);
   tab = tab.concat(__doubled(__root(__alloc_i32(1 << fill), count, sorted, fill), 1 << root));
   if (fill < 8) {
@@ -413,25 +406,42 @@ function __doubled(own r: i32[], n: i32): i32[] {
   return r;
 }
 
+// The one symbol of a code with at most one symbol.
+function __only(syms: i32[]): i32 {
+  if (syms.len() == 0) {
+    return 0;
+  }
+  return syms[0];
+}
+
 // The symbols with a code, ordered by code length and then by symbol.
-function __sorted(lens: i32[], count: i32[], used: i32): i32[] {
+function __sorted(lens: i32[], syms: i32[], count: i32[]): i32[] {
   let next: i32[] = __alloc_i32(16);
   let len: i32 = 1;
   while (len < 15) {
     next = next.with(len + 1, next[len] + count[len]);
     len = len + 1;
   }
-  let sorted: i32[] = __alloc_i32(used);
+  let sorted: i32[] = __alloc_i32(syms.len());
+  for s in syms {
+    let l: i32 = lens[s];
+    sorted = sorted.with(next[l], s);
+    next = next.with(l, next[l] + 1);
+  }
+  return sorted;
+}
+
+// The symbols that have a code length, in increasing order.
+function __used(lens: i32[]): i32[] {
+  let syms: i32[] = [];
   let s: i32 = 0;
   while (s < lens.len()) {
-    let l: i32 = lens[s];
-    if (l > 0) {
-      sorted = sorted.with(next[l], s);
-      next = next.with(l, next[l] + 1);
+    if (lens[s] > 0) {
+      syms = syms.append(s);
     }
     s = s + 1;
   }
-  return sorted;
+  return syms;
 }
 
 function __root(own tab: i32[], count: i32[], sorted: i32[], root: i32): i32[] {
@@ -566,7 +576,7 @@ function __simple(own d: __D, data: [u8], size: i32): __D {
     lens = lens.with(syms[k], shape[k]);
     k = k + 1;
   }
-  return __D { ...d, lens: lens };
+  return __D { ...d, lens: lens, syms: __used(lens) };
 }
 
 function __has(xs: i32[], x: i32): boolean {
@@ -598,13 +608,14 @@ function __complex(own d: __D, data: [u8], hskip: i32, size: i32): __D {
   if (space != 0 && used != 1) {
     return __fail(d, "code length code");
   }
-  return __lengths(d, data, __table(lens, [], 5), size);
+  return __lengths(d, data, __table(lens, __used(lens), [], 5), size);
 }
 
 // Reads the code lengths of `size` symbols with the code-length code `clc`.
 // That code has no code longer than five bits.
 function __lengths(own d: __D, data: [u8], clc: i32[], size: i32): __D {
   let lens: i32[] = __alloc_i32(size);
+  let syms: i32[] = [];
   let k: i32 = 0;
   let prev: i32 = 8;
   let repeat: i32 = 0;
@@ -618,6 +629,7 @@ function __lengths(own d: __D, data: [u8], clc: i32[], size: i32): __D {
     if (c < 16) {
       if (c != 0) {
         lens = lens.with(k, c);
+        syms = syms.append(k);
         prev = c;
         space = space - (32768 >> c);
       }
@@ -640,6 +652,7 @@ function __lengths(own d: __D, data: [u8], clc: i32[], size: i32): __D {
         return __fail(d, "code lengths");
       }
       lens = __set_run(lens, k, more, len);
+      syms = __run_syms(syms, k, more, len);
       k = k + more;
       if (len != 0) {
         space = space - (more << 15 - len);
@@ -650,7 +663,7 @@ function __lengths(own d: __D, data: [u8], clc: i32[], size: i32): __D {
   if (space != 0) {
     return __fail(d, "incomplete prefix code");
   }
-  return __D { ...d, lens: lens };
+  return __D { ...d, lens: lens, syms: syms };
 }
 
 // Code 16 repeats the last length that is not zero, and code 17 repeats zero.
@@ -660,6 +673,18 @@ function __repeat_value(c: i32, prev: i32): i32 {
     return prev;
   }
   return 0;
+}
+
+function __run_syms(own syms: i32[], at: i32, n: i32, value: i32): i32[] {
+  if (value == 0) {
+    return syms;
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    syms = syms.append(at + i);
+    i = i + 1;
+  }
+  return syms;
 }
 
 function __set_run(own lens: i32[], at: i32, n: i32, value: i32): i32[] {
@@ -759,7 +784,7 @@ function __built(own tab: i32[], d: __D): i32[] {
   if (d.failed) {
     return tab;
   }
-  return __table(d.lens, tab, 8);
+  return __table(d.lens, d.syms, tab, 8);
 }
 
 // Reads `n` codes of `size` symbols into `d.tab`, with the offset of each code in `d.offs`.
@@ -793,7 +818,7 @@ function __cmap(own d: __D, data: [u8], size: i32): __D {
   if (d.failed) {
     return d;
   }
-  let code: i32[] = __table(d.lens, [], 8);
+  let code: i32[] = __table(d.lens, d.syms, [], 8);
   let map: i32[] = __alloc_i32(size);
   let k: i32 = 0;
   while (k < size) {
@@ -1206,9 +1231,11 @@ function __word(own out: u8[], id: i32, len: i32): u8[] {
   let from: i32 = at + __head_cut(kind, len);
   let to: i32 = at + len - __tail_cut(kind, len);
   let start: i32 = out.len();
-  let i: i32 = from;
-  while (i < to) {
-    out = out.append(dictionary.WORDS[i]);
+  let words: u8[] = dictionary.WORDS;
+  let n: i32 = to - from;
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(words[from + i]);
     i = i + 1;
   }
   if (kind == 10 || kind == 11) {
@@ -1218,9 +1245,12 @@ function __word(own out: u8[], id: i32, len: i32): u8[] {
 }
 
 function __affix(own out: u8[], k: i32): u8[] {
-  let i: i32 = AFFIX_AT[k];
-  while (i < AFFIX_AT[k + 1]) {
-    out = out.append(AFFIX[i]);
+  let affix: u8[] = AFFIX;
+  let from: i32 = AFFIX_AT[k];
+  let n: i32 = AFFIX_AT[k + 1] - from;
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(affix[from + i]);
     i = i + 1;
   }
   return out;
