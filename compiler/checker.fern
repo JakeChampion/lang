@@ -18200,18 +18200,7 @@ function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Typ
 
 function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): OwnCtx {
   if let ast.PatVariant(pv) = pat {
-    let vname: string = util.base_type_name(pv.type_name);
-    let di: i32 = 0;
-    let dot: i32 = 0 - 1;
-    while (di < vname.len()) {
-      if (vname[di] == b'.') {
-        dot = di;
-      }
-      di = di + 1;
-    }
-    if (dot >= 0) {
-      vname = slice_unchecked(vname, dot + 1, vname.len()) + "";
-    }
+    let vname: string = ow_last_segment(util.base_type_name(pv.type_name));
     let binds: string[] = [];
     if (pv.binding.len() > 0) {
       binds = binds.append(pv.binding);
@@ -18252,6 +18241,19 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type)
     return OwnCtx { ...ctx, owned: names };
   }
   return ctx;
+}
+
+function ow_last_segment(name: string): string {
+  let dot: i32 = 0 - 1;
+  for i in 0..name.len() {
+    if (name[i] == b'.') {
+      dot = i;
+    }
+  }
+  if (dot < 0) {
+    return name;
+  }
+  return slice_unchecked(name, dot + 1, name.len()) + "";
 }
 
 // The enum the scrutinee's type names for the arm's variant, which a same-named variant elsewhere must not stand in for.
