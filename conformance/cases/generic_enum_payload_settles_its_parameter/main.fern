@@ -1,0 +1,52 @@
+// A payload that spells a parameter inside another type (`T[]`, `(T, i32)`)
+// settles it as a bare `T` payload does, and an empty array settles nothing:
+// it fits a bare `Bag` (whose T is never) and any `Bag[X]`.
+
+import "std/i32";
+import "std/i64";
+
+enum Bag[T] { Items(T[]), Pairs((T, i32)), Count(i32), Empty }
+
+function size(b: Bag): i32 {
+    match (b) {
+        Items(xs) => { return xs.len(); },
+        Count(n) => { return n; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+function total(b: Bag[i64]): i64 {
+    match (b) {
+        Items(xs) => {
+            let t: i64 = 0;
+            for x in xs {
+                t = t + x;
+            }
+            return t;
+        },
+        Pairs(p) => { return p.0 + p.1; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+function count(b: Bag[string]): i32 {
+    match (b) {
+        Items(xs) => { return xs.len(); },
+        _ => { return 0 - 1; }
+    }
+    return 0;
+}
+
+function main(): i32 {
+    let empty: Bag[string] = Items([]);
+    let wide: Bag[i64] = Items([1, 2]);
+    let pair: Bag[i64] = Pairs((5, 6));
+    print((size(Items([])) + size(Count(6)) + size(Empty)).to_string());
+    print(count(empty).to_string());
+    print(count(Items(["a", "b"])).to_string());
+    print((total(wide) + total(Items([3, 4])) + total(pair)).to_string());
+    print(total(Items([])).to_string());
+    return size(Count(7));
+}
