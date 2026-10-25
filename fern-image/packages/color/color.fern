@@ -101,3 +101,34 @@ pub function source_over(source: pixels.Pixel, background: pixels.Pixel): pixels
     b: over_channel(source.b, background.b, sa, ba, alpha), a: byte(alpha),
   };
 }
+
+function convert_image(source: pixels.Image, format: pixels.Format, background: pixels.Pixel, limits: pixels.Limits): Result[pixels.Image, pixels.ImageError] {
+  pixels.read_pixel(source, 0, 0)?;
+  let stride = match (source.layout.width *? pixels.channels(format)) { Some(n) => n, None => { return Err(pixels.Overflow); } };
+  let output = pixels.create(source.layout.width, source.layout.height, stride, format, limits)?;
+  let y = 0;
+  while (y < source.layout.height) {
+    let x = 0;
+    while (x < source.layout.width) {
+      let pixel = pixels.read_pixel(source, x, y)?;
+      if (pixels.channels(format) == 3) {
+        pixel = source_over(pixel, background);
+      }
+      output = pixels.write_pixel(output, x, y, pixel)?;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(output);
+}
+
+pub function to_rgba(source: pixels.Image, limits: pixels.Limits): Result[pixels.Image, pixels.ImageError] {
+  return convert_image(source, pixels.RGBA8, rgb(0 as u8, 0 as u8, 0 as u8), limits);
+}
+
+pub function flatten_rgb(source: pixels.Image, background: pixels.Pixel, limits: pixels.Limits): Result[pixels.Image, pixels.ImageError] {
+  if (background.a != 255 as u8) {
+    return Err(pixels.Alpha);
+  }
+  return convert_image(source, pixels.RGB8, background, limits);
+}
