@@ -254,8 +254,8 @@ function main(): i32 {
     if (z.to_ascii_lower() as i32 == 122) { t = t + 8; }  // already lower: unchanged
     if (d.is_ascii_digit() && !A.is_ascii_digit()) { t = t + 16; }
     if (z.is_ascii_lower() && A.is_ascii_upper()) { t = t + 32; }
-    if (A.is_ascii_alpha() && A.is_ascii_letter() && d.is_ascii_alnum()) { t = t + 1; }
-    if (!sp.is_ascii_alnum() && !sp.is_ascii_alpha()) { t = t + 2; }
+    if (A.is_ascii_letter() && A.is_ascii_letter() && d.is_ascii_alphanumeric()) { t = t + 1; }
+    if (!sp.is_ascii_alphanumeric() && !sp.is_ascii_letter()) { t = t + 2; }
     if (f.is_ascii_hex_digit() && d.is_ascii_hex_digit() && !g.is_ascii_hex_digit()) { t = t + 4; }
     if ((66 as u8).to_ascii_lower() as i32 == 98) { t = t + 8; }
     let s: string = "Q";

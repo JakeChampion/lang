@@ -251,8 +251,9 @@ var foreignHintCases = []struct {
 		bad: foreignProg(`    if (a == b) { return 1; }
     return 0;`),
 		orphan: `import "std/regex";
+import "std/result";
 import "core/cmp";
-impl cmp.Eq for regex.RMatch {
+impl cmp.Eq for regex.Match {
     function eq(self: Self, other: Self): boolean { return true; }
 }
 function main(): i32 { return 0; }`,
@@ -262,8 +263,9 @@ function main(): i32 { return 0; }`,
 		bad: foreignProg(`    if (a < b) { return 1; }
     return 0;`),
 		orphan: `import "std/regex";
+import "std/result";
 import "core/cmp";
-impl cmp.Ord for regex.RMatch {
+impl cmp.Ord for regex.Match {
     function cmp(self: Self, other: Self): i32 { return 0; }
 }
 function main(): i32 { return 0; }`,
@@ -273,15 +275,17 @@ function main(): i32 { return 0; }`,
 		bad: foreignProg(`    print(a);
     return 0;`),
 		orphan: `import "std/regex";
+import "std/result";
 import "core/cmp";
-impl cmp.Display for regex.RMatch {
+impl cmp.Display for regex.Match {
     function to_string(self: Self): string { return "m"; }
 }
 function main(): i32 { return 0; }`,
 		local: `import "std/regex";
-pub function (m: regex.RMatch) to_string(): string { return "m"; }
+import "std/result";
+pub function (m: regex.Match) to_string(): string { return "m"; }
 function main(): i32 {
-    let a: regex.RMatch = regex.RMatch { start: 0, end: 0 };
+    let a: regex.Match = regex.Match { start: 0, end: 0 };
     print(a);
     return 0;
 }`,
@@ -289,10 +293,11 @@ function main(): i32 {
 	{
 		name: "E045 map key",
 		bad: `import "std/regex";
+import "std/result";
 import "core/map";
 function main(): i32 {
-    let m: Map[regex.RMatch, i32] = Map {};
-    m = m.insert(regex.RMatch { start: 0, end: 0 }, 1);
+    let m: Map[regex.Match, i32] = Map {};
+    m = m.insert(regex.Match { start: 0, end: 0 }, 1);
     return 0;
 }`,
 	},
@@ -300,9 +305,10 @@ function main(): i32 {
 
 func foreignProg(body string) string {
 	return `import "std/regex";
+import "std/result";
 function main(): i32 {
-    let a: regex.RMatch = regex.RMatch { start: 0, end: 0 };
-    let b: regex.RMatch = regex.RMatch { start: 0, end: 0 };
+    let a: regex.Match = regex.Match { start: 0, end: 0 };
+    let b: regex.Match = regex.Match { start: 0, end: 0 };
 ` + body + `
 }`
 }
@@ -315,10 +321,10 @@ func TestDeriveHintsForForeignTypesNameAWritableFix(t *testing.T) {
 				t.Fatalf("expected a diagnostic for:\n%s", tc.bad)
 			}
 			msg := err.Error()
-			if strings.Contains(msg, "regex__RMatch") {
+			if strings.Contains(msg, "regex__Match") {
 				t.Errorf("hint leaks the mangled name, which is not a spelling anyone can write: %v", msg)
 			}
-			for _, w := range []string{"regex.RMatch", "in module `regex`, which declares it"} {
+			for _, w := range []string{"regex.Match", "in module `regex`, which declares it"} {
 				if !strings.Contains(msg, w) {
 					t.Errorf("hint is missing %q, got: %v", w, msg)
 				}

@@ -344,11 +344,11 @@ function parse_header(h: string): Result[i32[], string] {
   let out: i32[] = [];
   let raw: string[] = [a_nums[0], a_nums[1], b_nums[0], b_nums[1]];
   for k in 0..4 {
-    match (raw[k].parse_int()) {
-      None => {
+    match (i32.parse_i32(raw[k])) {
+      Err(_) => {
         return Err("non-numeric range in: " + h);
       },
-      Some(v) => {
+      Ok(v) => {
         out = out.append(v);
       }
     }

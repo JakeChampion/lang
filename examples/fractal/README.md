@@ -21,7 +21,7 @@ Use `-target arm64-linux` or `-target arm64-darwin` for those hosts.
 `series.fern` builds the shared Taylor prefix.
 
 `server.fern.md` contains the routes, statistics, and WebSocket protocol.
-`std/png`, `std/binary`, and `std/parse` supply the reusable codecs and integer parser.
+`std/png`, `std/binary`, and `std/i64` supply the reusable codecs and integer parser.
 `source.fern` serves the source browser at `/_src/`.
 `web/` contains the browser assets.
 

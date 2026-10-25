@@ -1,0 +1,57 @@
+{
+  "source_commit": "fb89d886c0dbfba47a9c3778b9b2f74445e5313b",
+  "prior_public_head": "8697f40a1ac4d10f09fe560148b58f8cb22f2d69",
+  "tests": 7,
+  "passed": 6,
+  "skipped": 1,
+  "skip_reason": "Darwin execution requires Apple Silicon",
+  "darwin_builds": 2,
+  "darwin_local_execution": false,
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 568,
+      "sha256": "20daaf16d2dd9912ce23c12951b3b7b055e57f29e9bf4c7102519f4c5b91bbd9"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 344,
+      "sha256": "0a836d26877911d79689e13b78cf1b8e2d83445e893d91375702314250110fe3"
+    },
+    {
+      "path": "fixture-regressions.jsonl.gz",
+      "bytes": 775,
+      "sha256": "c03ada1ed6af63c871291533c453f71d6cc635454bb8fd1d04c31f1b321b5d75"
+    },
+    {
+      "path": "darwin-builds.json.gz",
+      "bytes": 467,
+      "sha256": "af6466ad1494f625e598af59449d30e1f38120e97f160a0b8160e5692ab01621"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body.md.gz",
+      "bytes": 1337,
+      "sha256": "39343f7411f20238c6179f958706d3bd5be87ff5c40d49e9031af6d5d3371d1c"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1256,
+      "sha256": "8721676c07f340c8e6ab91ce87e4496eca3ba752c09f2804bce84585077636e0"
+    }
+  ]
+}

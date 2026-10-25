@@ -9,10 +9,10 @@ import "./checker";
 import "./aesref";
 import "./platforms";
 import "./typeinfo";
-import "std/io_outcome";
 import "std/utf8";
+import "std/f64";
 
-pub struct VInt { v: i32, is_char: boolean }
+pub struct VInt { v: i32, is_char: boolean, is_byte: boolean }
 
 pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean, ptr: boolean }
 
@@ -43,7 +43,7 @@ pub struct VStruct { type_name: string, field_names: string[], field_values: Val
 
 pub struct VErr { msg: string, abort: boolean }
 
-pub struct VCellI { c: Cell[i32], is_char: boolean, is_bool: boolean }
+pub struct VCellI { c: Cell[i32], is_char: boolean, is_byte: boolean, is_bool: boolean }
 
 pub struct VCellF { c: Cell[f64] }
 
@@ -65,7 +65,12 @@ pub struct VLanes { width: i32, bits: i64[] }
 pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VControl | VType | VHandle | VCellV;
 
 function v_int(n: i32): Value {
-  return VInt { v: n, is_char: false };
+  return VInt { v: n, is_char: false, is_byte: false };
+}
+
+// A byte keeps its own receiver namespace, including generic inference.
+function v_byte(n: i32): Value {
+  return VInt { v: n & 255, is_char: false, is_byte: true };
 }
 
 function char_value(v: Value): Value {
@@ -75,7 +80,7 @@ function char_value(v: Value): Value {
     }
   }
   if (is_int_like(v)) {
-    return VInt { v: vint_as_i64(v) as i32, is_char: true };
+    return VInt { v: vint_as_i64(v) as i32, is_char: true, is_byte: false };
   }
   return v;
 }
@@ -83,6 +88,9 @@ function char_value(v: Value): Value {
 function int_type_name(n: VInt): string {
   if (n.is_char) {
     return "char";
+  }
+  if (n.is_byte) {
+    return "u8";
   }
   return "i32";
 }
@@ -207,7 +215,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
     return v_int(vint_as_i64(val) as i32);
   }
   if (type_name == "u8" && is_int_like(val)) {
-    return v_int(vint_as_i64(val) as i32 & 255);
+    return v_byte(vint_as_i64(val) as i32);
   }
   if (type_name == "u32") {
     match (val) {
@@ -586,9 +594,9 @@ function arr_len(a: VArr): i32 {
 function arr_at(a: VArr, i: i32): Value {
   let st: i64[] = a.store.get();
   if (st.len() == 0) {
-    return a.items[i];
+    return coerce_int_width(a.items[i], a.elem);
   }
-  return v_int(st[1 + a.offset + i] as i32);
+  return coerce_int_width(v_int(st[1 + a.offset + i] as i32), a.elem);
 }
 
 function arr_els(a: VArr): Value[] {
@@ -1031,7 +1039,7 @@ function deref_cell(v: Value): Value {
       if (ci.is_bool) {
         return VBool { v: ci.c.get() != 0 };
       }
-      return VInt { v: ci.c.get(), is_char: ci.is_char };
+      return VInt { v: ci.c.get(), is_char: ci.is_char, is_byte: ci.is_byte };
     },
     VCellF(cf) => {
       return VFloat { v: cf.c.get() };
@@ -1254,13 +1262,13 @@ function is_cell(v: Value): boolean {
 function cell_for(v: Value): Value {
   match (v) {
     VInt(n) => {
-      return VCellI { c: cell_new(n.v), is_char: n.is_char, is_bool: false };
+      return VCellI { c: cell_new(n.v), is_char: n.is_char, is_byte: n.is_byte, is_bool: false };
     },
     VBool(bb) => {
       if (bb.v) {
-        return VCellI { c: cell_new(1), is_char: false, is_bool: true };
+        return VCellI { c: cell_new(1), is_char: false, is_byte: false, is_bool: true };
       }
-      return VCellI { c: cell_new(0), is_char: false, is_bool: true };
+      return VCellI { c: cell_new(0), is_char: false, is_byte: false, is_bool: true };
     },
     VFloat(f) => {
       return VCellF { c: cell_new(f.v) };
@@ -1285,6 +1293,9 @@ function cell_value(v: Value): Value {
       c.ci.set(n.v);
       if (n.is_char) {
         return VCell { ...c, kind: "char" };
+      }
+      if (n.is_byte) {
+        return VCell { ...c, kind: "u8" };
       }
       return VCell { ...c, kind: "i32" };
     },
@@ -1357,6 +1368,9 @@ function cell_scalar_text(h: usize, v: Value): boolean {
       let tag: i32 = 105;
       if (n.is_char) {
         tag = 99;
+      }
+      if (n.is_byte) {
+        tag = 121;
       }
       cell_bits_text(h, tag, n.v as i64);
     },
@@ -1461,11 +1475,14 @@ function cell_value_text(v: Value): Value {
 }
 
 function cell_scalar_value(tag: i32, bits: i64): Value {
+  if (tag == 121) {
+    return v_byte(bits as i32);
+  }
   if (tag == 105) {
     return v_int(bits as i32);
   }
   if (tag == 99) {
-    return VInt { v: bits as i32, is_char: true };
+    return VInt { v: bits as i32, is_char: true, is_byte: false };
   }
   if (tag == 110) {
     return VUint { v: bits as i32 };
@@ -1563,7 +1580,7 @@ function cell_set_value(c: VCell, v: Value): Value {
     }
     return encoded;
   }
-  if ((c.kind == "i32" || c.kind == "u32" || c.kind == "char") && is_i32_arg(v)) {
+  if ((c.kind == "i32" || c.kind == "u32" || c.kind == "char" || c.kind == "u8") && is_i32_arg(v)) {
     c.ci.set(vint_bits(v));
     return v_void();
   }
@@ -1612,8 +1629,11 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "i32") {
       return v_int(c.ci.get());
     }
+    if (c.kind == "u8") {
+      return v_byte(c.ci.get());
+    }
     if (c.kind == "char") {
-      return VInt { v: c.ci.get(), is_char: true };
+      return VInt { v: c.ci.get(), is_char: true, is_byte: false };
     }
     if (c.kind == "u32") {
       return v_uint(c.ci.get());
@@ -1744,17 +1764,6 @@ function call_xattr(name: string, args: Value[]): Value {
     },
     Err(e) => {
       return v_variant("Err", [io_error_value(e)]);
-    }
-  }
-}
-
-function io_failure_value(error: Option[IoError]): Value {
-  match (error) {
-    Some(e) => {
-      return io_err_value(e);
-    },
-    None => {
-      return ok_value(v_tuple([]));
     }
   }
 }
@@ -3130,7 +3139,7 @@ function reader_method(r: Reader, name: string, args: Value[]): Value {
     return read_chunk_value(r, arg_i32(args, 0));
   }
   if (name == "close") {
-    return io_failure_value(r.close().failure());
+    return void_result_value(r.close());
   }
   if (name == "splice_to" || name == "copy_range_to") {
     return io_err_value(Unsupported);
@@ -3181,29 +3190,29 @@ function reader_fd_method(r: Reader, name: string, args: Value[]): Value {
     return v_bool(r.isatty());
   }
   if (name == "fsync") {
-    return io_failure_value(r.fsync().failure());
+    return void_result_value(r.fsync());
   }
   if (name == "fdatasync") {
-    return io_failure_value(r.fdatasync().failure());
+    return void_result_value(r.fdatasync());
   }
   if (name == "syncfs") {
-    return io_failure_value(r.syncfs().failure());
+    return void_result_value(r.syncfs());
   }
   if (name == "drop_cache") {
-    return io_failure_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)).failure());
+    return void_result_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
   }
-  return io_failure_value(r.dup_onto(arg_i32(args, 0)).failure());
+  return void_result_value(r.dup_onto(arg_i32(args, 0)));
 }
 
 function writer_method(w: Writer, name: string, args: Value[]): Value {
   if (name == "write") {
-    return io_failure_value(w.write(arg_str(args, 0)).failure());
+    return void_result_value(w.write(arg_str(args, 0)));
   }
   if (name == "write_some") {
     return i64_result_value(w.write_some(arg_str(args, 0)));
   }
   if (name == "write_bytes") {
-    return io_failure_value(w.write_bytes(arg_bytes(args, 0)).failure());
+    return void_result_value(w.write_bytes(arg_bytes(args, 0)));
   }
   if (name == "write_some_bytes") {
     return i64_result_value(w.write_some_bytes(arg_bytes(args, 0)));
@@ -3212,10 +3221,10 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
     return io_err_value(Unsupported);
   }
   if (name == "close") {
-    return io_failure_value(w.close().failure());
+    return void_result_value(w.close());
   }
   if (name == "truncate") {
-    return io_failure_value(w.truncate(arg_i64(args, 0)).failure());
+    return void_result_value(w.truncate(arg_i64(args, 0)));
   }
   return writer_fd_method(w, name, args);
 }
@@ -3234,18 +3243,18 @@ function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
     return v_bool(w.isatty());
   }
   if (name == "fsync") {
-    return io_failure_value(w.fsync().failure());
+    return void_result_value(w.fsync());
   }
   if (name == "fdatasync") {
-    return io_failure_value(w.fdatasync().failure());
+    return void_result_value(w.fdatasync());
   }
   if (name == "syncfs") {
-    return io_failure_value(w.syncfs().failure());
+    return void_result_value(w.syncfs());
   }
   if (name == "drop_cache") {
-    return io_failure_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)).failure());
+    return void_result_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
   }
-  return io_failure_value(w.dup_onto(arg_i32(args, 0)).failure());
+  return void_result_value(w.dup_onto(arg_i32(args, 0)));
 }
 
 function call_dir_method(d: Dir, name: string, args: Value[]): Value {
@@ -3274,7 +3283,7 @@ function dir_method(d: Dir, name: string, args: Value[]): Value {
     return stat_result_value(d.lstat(entry));
   }
   if (name == "close") {
-    return io_failure_value(d.close().failure());
+    return void_result_value(d.close());
   }
   return dir_change_method(d, name, entry, args);
 }
@@ -4188,19 +4197,19 @@ function eval_unary(op: string, ov: Value): Value {
   if (op == "as_u8" || op == "as_byte") {
     match (ov) {
       VInt(i) => {
-        return v_int(i.v & 255);
+        return v_byte(i.v & 255);
       },
       VInt64(i) => {
-        return v_int((unpack_i64(i) & 255) as i32);
+        return v_byte((unpack_i64(i) & 255) as i32);
       },
       VUint(u) => {
-        return v_int(u.v & 255);
+        return v_byte(u.v & 255);
       },
       VFloat(f) => {
-        return v_int(f64_trunc_u32(f.v) & 255);
+        return v_byte(f64_trunc_u32(f.v) & 255);
       },
       VFloat32(f) => {
-        return v_int(f64_trunc_u32(f.v) & 255);
+        return v_byte(f64_trunc_u32(f.v) & 255);
       },
       _ => {
         return v_err("`as` integer cast operand not numeric");
@@ -4605,9 +4614,9 @@ function eval_expr(e: ast.Expr, env: Env): Value {
     ast.ExprBytes(bs) => {
       let elems: Value[] = [];
       for b in bs.value {
-        elems = elems.append(v_int(b as i32));
+        elems = elems.append(v_byte(b as i32));
       }
-      return v_arr(elems);
+      return v_arr_of(elems, "u8");
     },
     ast.ExprIndex(x) => {
       return eval_expr_index(x, env);
@@ -4925,7 +4934,7 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
       if (si < 0) {
         return index_abort(aborts.str_oob(), value_text(iv), s.v.len());
       }
-      return v_int(s.v[si] as i32);
+      return v_byte(s.v[si] as i32);
     },
     _ => {
       return v_err("can only index into an array or string");
@@ -5417,10 +5426,13 @@ function tyarg_match(decl: string, tp: string, v: Value): string {
   if (decl == tp + "[]" || decl == "[" + tp + "]") {
     match (v) {
       VArr(a) => {
+        if (a.elem.len() > 0) {
+          return a.elem;
+        }
         if (arr_len(a) > 0) {
           return tyarg_of_value(arr_at(a, 0));
         }
-        return a.elem;
+        return "";
       },
       _ => {}
     }
@@ -5620,7 +5632,7 @@ function string_method(sv: VString, name: string, args: Value[]): Option[Value] 
     let bs: Value[] = [];
     let bi: i32 = 0;
     while (bi < sv.v.len()) {
-      bs = bs.append(v_int(sv.v[bi] as i32));
+      bs = bs.append(v_byte(sv.v[bi] as i32));
       bi = bi + 1;
     }
     if (name == "as_bytes") {
@@ -5806,20 +5818,20 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     },
     _ => {}
   }
+  return call_declared_method(recv, name, args, type_args, funcs, aliases, type_decls);
+}
+
+function call_declared_method(recv: Value, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type: string = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
   let own_method: boolean = has_receiver_method(funcs, recv_type, name);
-  let byte_recv: boolean = recv_type == "i32" && !own_method;
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: parser.FuncDecl = funcs[i];
     let receiver_base: string = runtime_receiver_name(fd.receiver_type);
     let rt_match: boolean = receiver_base == recv_type;
-    if (!rt_match && byte_recv && fd.receiver_type == "u8") {
-      rt_match = true;
-    }
     if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
       rt_match = true;
     }
@@ -5845,6 +5857,32 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
       return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
     }
     i = i + 1;
+  }
+  if (name == "to_string" && args.len() == 0) {
+    match (recv) {
+      VInt(_) => {
+        return v_string(value_text(recv));
+      },
+      VInt64(_) => {
+        return v_string(value_text(recv));
+      },
+      VUint(_) => {
+        return v_string(value_text(recv));
+      },
+      VBool(_) => {
+        return v_string(value_text(recv));
+      },
+      VString(t) => {
+        return v_string(t.v);
+      },
+      VFloat(f) => {
+        return v_string(f.v.to_string());
+      },
+      VFloat32(f) => {
+        return v_string((f.v as f32).to_string());
+      },
+      _ => {}
+    }
   }
   match (recv) {
     VStruct(sv2) => {
@@ -7706,6 +7744,14 @@ function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
   if (name_ends_with(iter_ty, "[]")) {
     elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
   }
+  if (elem_ty.len() == 0) {
+    if let VArr(a) = iv {
+      elem_ty = a.elem;
+    }
+    if let VString(_) = iv {
+      elem_ty = "u8";
+    }
+  }
   let base: i32 = env.names.len();
   let cur: Env = env;
   let i: i32 = 0;
@@ -7848,7 +7894,7 @@ function for_elements(iv: Value): Option[Value[]] {
     },
     VString(sv) => {
       for b in sv.v {
-        elems = elems.append(v_int(b as i32));
+        elems = elems.append(v_byte(b as i32));
       }
       return Some(elems);
     },
@@ -8136,7 +8182,7 @@ function value_text(v: Value): string {
   match (v) {
     VInt(n) => {
       if (n.is_char) {
-        return utf8.utf8_encode(n.v as char);
+        return utf8.encode(n.v as char);
       }
       return util.i32_to_string(n.v);
     },

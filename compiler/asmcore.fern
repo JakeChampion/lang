@@ -5497,7 +5497,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative")) {
     return ty_bool();
   }
-  if (ty_is_u8(rt) && (fa.field == "is_ascii_digit" || fa.field == "is_ascii_alpha" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_alnum" || fa.field == "is_ascii_lower" || fa.field == "is_ascii_upper" || fa.field == "is_ascii_hex_digit" || fa.field == "is_ascii" || fa.field == "is_ascii_punct" || fa.field == "is_ascii_white_space" || fa.field == "is_ascii_newline" || fa.field == "is_ascii_vowel" || fa.field == "is_ascii_printable" || fa.field == "is_ascii_control" || fa.field == "matches_any")) {
+  if (ty_is_u8(rt) && (fa.field == "is_ascii_digit" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_alphanumeric" || fa.field == "is_ascii_lower" || fa.field == "is_ascii_upper" || fa.field == "is_ascii_hex_digit" || fa.field == "is_ascii" || fa.field == "is_ascii_punct" || fa.field == "is_ascii_whitespace" || fa.field == "is_ascii_newline" || fa.field == "is_ascii_vowel" || fa.field == "is_ascii_printable" || fa.field == "is_ascii_control" || fa.field == "matches_any")) {
     return ty_bool();
   }
   if (fa.field == "len"
@@ -7024,7 +7024,7 @@ function display_named(label: string): boolean {
   }
   let i: i32 = 0;
   while (i < label.len()) {
-    if (!lexer.is_alnum(label[i] as i32)) {
+    if (!lexer.is_alphanumeric(label[i] as i32)) {
       return false;
     }
     i = i + 1;

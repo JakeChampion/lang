@@ -54,6 +54,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module provides a scripted HTTP network with virtual time.
+import "std/i32";
 import "std/sim";
 import "std/fetch";
 import "std/http";
@@ -464,8 +465,8 @@ struct __Exchange { host: string, port: i32, target: string, answer: Answer }
 ```fern
 <<13 function __exchange(line: string): Option[__Exchange]>>=
 function __exchange(line: string): Option[__Exchange] {
-  match (json.json_parse(line)) {
-    Some(v) => {
+  match (json.parse(line)) {
+    Ok(v) => {
       match (v) {
         json.JObject(o) => {
           return __exchange_of(o);
@@ -475,7 +476,7 @@ function __exchange(line: string): Option[__Exchange] {
         }
       }
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }
@@ -879,11 +880,11 @@ function __int(s: string): i32 {
   if (s.len() > 0 && s[0] == b'-') {
     return 0 - __int(s.split("-")[1]);
   }
-  match (int.parse_int_radix(s, 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(s, 10)) {
+    Ok(v) => {
       return v;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }

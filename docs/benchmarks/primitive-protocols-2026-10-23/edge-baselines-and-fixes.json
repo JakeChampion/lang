@@ -1,0 +1,322 @@
+[
+  {
+    "issue": 13081,
+    "phase": "baseline",
+    "compiler": "Go",
+    "compiler_sha256": "d9e960df82354f5036c93484c1570960524b546de42590f917cf3a41d74681e2",
+    "source": "trait Fresh { function fresh(): Self; }\nimpl Fresh for usize { function fresh(): usize { return 42 as usize; } }\nimpl Fresh for char { function fresh(): char { return 'a'; } }\nfunction main(): i32 { let n: usize = usize.fresh(); let c: char = char.fresh(); return n as i32 + c as i32; }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/associated-primitive-types.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/associated-primitive-types.fern:4:39: error[E001]: cannot find \"usize\" in this scope\n    function main(): i32 { let n: usize = usize.fresh(); let c: char = char.fresh(); return n as i32 + c as i32; }\n                                          ^~~~~\n/workspace/scratch/lang-primitive-protocols/associated-primitive-types.fern:4:68: error[E001]: cannot find \"char\" in this scope\n    function main(): i32 { let n: usize = usize.fresh(); let c: char = char.fresh(); return n as i32 + c as i32; }\n                                                                       ^~~~\n    help: replace `char` with `chdir`\n"
+  },
+  {
+    "issue": 13081,
+    "phase": "baseline",
+    "compiler": "self",
+    "compiler_sha256": "7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599",
+    "source": "trait Fresh { function fresh(): Self; }\nimpl Fresh for usize { function fresh(): usize { return 42 as usize; } }\nimpl Fresh for char { function fresh(): char { return 'a'; } }\nfunction main(): i32 { let n: usize = usize.fresh(); let c: char = char.fresh(); return n as i32 + c as i32; }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/associated-primitive-types.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "issue": 13081,
+    "phase": "fixed",
+    "compiler": "Go",
+    "compiler_sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735",
+    "source": "trait Fresh { function fresh(): Self; }\nimpl Fresh for usize { function fresh(): usize { return 42 as usize; } }\nimpl Fresh for char { function fresh(): char { return 'a'; } }\nfunction main(): i32 { let n: usize = usize.fresh(); let c: char = char.fresh(); return n as i32 + c as i32; }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/associated-primitive-types.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "issue": 13081,
+    "phase": "fixed",
+    "compiler": "self",
+    "compiler_sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8",
+    "source": "trait Fresh { function fresh(): Self; }\nimpl Fresh for usize { function fresh(): usize { return 42 as usize; } }\nimpl Fresh for char { function fresh(): char { return 'a'; } }\nfunction main(): i32 { let n: usize = usize.fresh(); let c: char = char.fresh(); return n as i32 + c as i32; }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/associated-primitive-types.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "issue": 13082,
+    "phase": "baseline",
+    "compiler": "Go",
+    "compiler_sha256": "d9e960df82354f5036c93484c1570960524b546de42590f917cf3a41d74681e2",
+    "source": "function (x: i32) kind(): string { return \"i32\"; }\nfunction (x: u8) kind(): string { return \"u8\"; }\nfunction main(): i32 { let b: u8 = 42; print(b.kind()); print((42 as u8).kind()); let bs: u8[] = [42]; print(bs[0].kind()); return 0; }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-interp",
+      "/workspace/scratch/lang-primitive-protocols/u8-dispatch-baseline.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "u8\nu8\nu8\n",
+    "stderr": ""
+  },
+  {
+    "issue": 13082,
+    "phase": "baseline",
+    "compiler": "self",
+    "compiler_sha256": "7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599",
+    "source": "function (x: i32) kind(): string { return \"i32\"; }\nfunction (x: u8) kind(): string { return \"u8\"; }\nfunction main(): i32 { let b: u8 = 42; print(b.kind()); print((42 as u8).kind()); let bs: u8[] = [42]; print(bs[0].kind()); return 0; }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/scratch/lang-primitive-protocols/u8-dispatch-baseline.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "i32\ni32\ni32\n",
+    "stderr": ""
+  },
+  {
+    "issue": 13082,
+    "phase": "fixed",
+    "compiler": "Go",
+    "compiler_sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735",
+    "source": "function (x: i32) kind(): string { return \"i32\"; }\nfunction (x: u8) kind(): string { return \"u8\"; }\nfunction main(): i32 { let b: u8 = 42; print(b.kind()); print((42 as u8).kind()); let bs: u8[] = [42]; print(bs[0].kind()); return 0; }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+      "-interp",
+      "/workspace/scratch/lang-primitive-protocols/u8-dispatch-baseline.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "u8\nu8\nu8\n",
+    "stderr": ""
+  },
+  {
+    "issue": 13082,
+    "phase": "fixed",
+    "compiler": "self",
+    "compiler_sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8",
+    "source": "function (x: i32) kind(): string { return \"i32\"; }\nfunction (x: u8) kind(): string { return \"u8\"; }\nfunction main(): i32 { let b: u8 = 42; print(b.kind()); print((42 as u8).kind()); let bs: u8[] = [42]; print(bs[0].kind()); return 0; }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/scratch/lang-primitive-protocols/u8-dispatch-baseline.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "u8\nu8\nu8\n",
+    "stderr": ""
+  },
+  {
+    "issue": 13083,
+    "phase": "baseline",
+    "compiler": "Go",
+    "compiler_sha256": "d9e960df82354f5036c93484c1570960524b546de42590f917cf3a41d74681e2",
+    "source": "function identity[T](x: T): T { return x; }\nfunction main(): i32 {\n let c: char = identity[char]('\u00e9');\n let source: string = \"hello\";\n let view: str = slice_unchecked(source, 1, 4);\n let same: str = identity[str](view);\n if (c != '\u00e9' || same != \"ell\") { return 1; }\n return 0;\n}\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:3:16: error[E040]: generic function identity cannot be used as a value \u2014 nothing here determines its type parameter T. Wrap it in a lambda, which does: (x: T) => identity(x)\n     let c: char = identity[char]('\u00e9');\n                   ^\n/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:3:25: error[E001]: cannot find \"char\" in this scope\n     let c: char = identity[char]('\u00e9');\n                            ^~~~\n    help: replace `char` with `chdir`\n/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:6:18: error[E040]: generic function identity cannot be used as a value \u2014 nothing here determines its type parameter T. Wrap it in a lambda, which does: (x: T) => identity(x)\n     let same: str = identity[str](view);\n                     ^\n/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:6:27: error[E001]: cannot find \"str\" in this scope\n     let same: str = identity[str](view);\n                              ^~~\n"
+  },
+  {
+    "issue": 13083,
+    "phase": "baseline",
+    "compiler": "self",
+    "compiler_sha256": "7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599",
+    "source": "function identity[T](x: T): T { return x; }\nfunction main(): i32 {\n let c: char = identity[char]('\u00e9');\n let source: string = \"hello\";\n let view: str = slice_unchecked(source, 1, 4);\n let same: str = identity[str](view);\n if (c != '\u00e9' || same != \"ell\") { return 1; }\n return 0;\n}\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:3:16: error[E040]: generic function identity cannot be used as a value \u2014 nothing here determines its type parameter T. Wrap it in a lambda, which does: (x: T) => identity(x)\n     let c: char = identity[char]('\u00e9');\n                   ^\n/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:3:25: error[E001]: cannot find \"char\" in this scope\n     let c: char = identity[char]('\u00e9');\n                            ^~~~\n    help: replace `char` with `chdir`\n/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:6:18: error[E040]: generic function identity cannot be used as a value \u2014 nothing here determines its type parameter T. Wrap it in a lambda, which does: (x: T) => identity(x)\n     let same: str = identity[str](view);\n                     ^\n/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern:6:27: error[E001]: cannot find \"str\" in this scope\n     let same: str = identity[str](view);\n                              ^~~\n"
+  },
+  {
+    "issue": 13083,
+    "phase": "fixed",
+    "compiler": "Go",
+    "compiler_sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735",
+    "source": "function identity[T](x: T): T { return x; }\nfunction main(): i32 {\n let c: char = identity[char]('\u00e9');\n let source: string = \"hello\";\n let view: str = slice_unchecked(source, 1, 4);\n let same: str = identity[str](view);\n if (c != '\u00e9' || same != \"ell\") { return 1; }\n return 0;\n}\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "issue": 13083,
+    "phase": "fixed",
+    "compiler": "self",
+    "compiler_sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8",
+    "source": "function identity[T](x: T): T { return x; }\nfunction main(): i32 {\n let c: char = identity[char]('\u00e9');\n let source: string = \"hello\";\n let view: str = slice_unchecked(source, 1, 4);\n let same: str = identity[str](view);\n if (c != '\u00e9' || same != \"ell\") { return 1; }\n return 0;\n}\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/contextual-type-probe.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "issue": 13084,
+    "phase": "baseline",
+    "compiler": "Go",
+    "compiler_sha256": "d9e960df82354f5036c93484c1570960524b546de42590f917cf3a41d74681e2",
+    "source": "function main(): i32 { return true.to_string(1).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern:1:45: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n    function main(): i32 { return true.to_string(1).len(); }\n                                                ^\n"
+  },
+  {
+    "issue": 13084,
+    "phase": "baseline",
+    "compiler": "self",
+    "compiler_sha256": "7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599",
+    "source": "function main(): i32 { return true.to_string(1).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern:1:24: error: internal: the checker could not type this statement in \"main\" (method call: receiver isn't a typed value) and has no diagnostic for it; this is a compiler bug, please report it\n    function main(): i32 { return true.to_string(1).len(); }\n                           ^\n"
+  },
+  {
+    "issue": 13084,
+    "phase": "fixed",
+    "compiler": "Go",
+    "compiler_sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735",
+    "source": "function main(): i32 { return true.to_string(1).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern:1:45: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n    function main(): i32 { return true.to_string(1).len(); }\n                                                ^\n"
+  },
+  {
+    "issue": 13084,
+    "phase": "fixed",
+    "compiler": "self",
+    "compiler_sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8",
+    "source": "function main(): i32 { return true.to_string(1).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-bool-display-arity.fern:1:45: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n    function main(): i32 { return true.to_string(1).len(); }\n                                                ^\n"
+  },
+  {
+    "issue": 13085,
+    "phase": "baseline",
+    "compiler": "Go",
+    "compiler_sha256": "d9e960df82354f5036c93484c1570960524b546de42590f917cf3a41d74681e2",
+    "source": "function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/final-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern:1:48: error[E043]: no method \"to_string_radix\" on u32 \u2014 add `import \"std/u32\"`\n    function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n                                                   ^\n"
+  },
+  {
+    "issue": 13085,
+    "phase": "baseline",
+    "compiler": "self",
+    "compiler_sha256": "7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599",
+    "source": "function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-manifest-package/committed-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern",
+      "/workspace/lang-manifest-package-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern:1:48: error[E043]: no method \"to_string_radix\" on u32 \u2014 add `import \"std/u32\"`\n    function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n                                                   ^\n"
+  },
+  {
+    "issue": 13085,
+    "phase": "fixed",
+    "compiler": "Go",
+    "compiler_sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735",
+    "source": "function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern:1:48: error[E043]: field access on non-struct value of type u32\n    function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n                                                   ^\n"
+  },
+  {
+    "issue": 13085,
+    "phase": "fixed",
+    "compiler": "self",
+    "compiler_sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8",
+    "source": "function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n",
+    "args": [
+      "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern",
+      "/workspace/lang-primitive-protocols-current/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-primitive-protocols/bad-format-import-hint.fern:1:48: error[E043]: field access on non-struct value of type u32\n    function main(): i32 { let x: u32 = 7; return x.to_string_radix(16).len(); }\n                                                   ^\n"
+  }
+]

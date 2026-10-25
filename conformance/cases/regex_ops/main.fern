@@ -1,14 +1,10 @@
-
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
   let r: i32 = 0;
 
-  let ms: regex.RMatch[] = regex.regex_find_all("[0-9]+", "a12b345c6");
+  let ms: regex.Match[] = { let __checked_regex_6: regex.Regex = match (regex.compile("[0-9]+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.find_all("a12b345c6") };
   if (ms.len() == 3) {
     r = r + 1;
   }
@@ -16,25 +12,25 @@ function main(): i32 {
     r = r + 2;
   }
 
-  if (require_regex_text(regex.regex_replace_all("a", "banana", "X")) == "bXnXnX") {
+  if (require_regex_text(match ({ let __checked_regex_5: regex.Regex = match (regex.compile("a")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.replace_all("banana", "X") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "bXnXnX") {
     r = r + 4;
   }
-  if (require_regex_text(regex.regex_replace_all("[0-9]+", "x12y3", "#")) == "x#y#") {
+  if (require_regex_text(match ({ let __checked_regex_4: regex.Regex = match (regex.compile("[0-9]+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.replace_all("x12y3", "#") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "x#y#") {
     r = r + 8;
   }
-  if (require_regex_text(regex.regex_replace_all("(cat|dog)", "cat and dog", "pet")) == "pet and pet") {
+  if (require_regex_text(match ({ let __checked_regex_3: regex.Regex = match (regex.compile("(cat|dog)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.replace_all("cat and dog", "pet") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "pet and pet") {
     r = r + 16;
   }
-  if (require_regex_text(regex.regex_replace_all("z", "abc", "Q")) == "abc") {
+  if (require_regex_text(match ({ let __checked_regex_2: regex.Regex = match (regex.compile("z")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.replace_all("abc", "Q") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "abc") {  // no match → unchanged
     r = r + 32;
   }
 
-  let parts: string[] = require_regex_parts(regex.regex_split("a,b,,c", ","));
+  let parts: string[] = require_regex_parts(match ({ let __checked_regex_1: regex.Regex = match (regex.compile(",")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.split("a,b,,c") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } });
   if (parts.len() == 4 && parts[0] == "a" && parts[2] == "" && parts[3] == "c") {
     r = r + 64;
   }
 
-  let ws: string[] = require_regex_parts(regex.regex_split("one  two   three", " +"));
+  let ws: string[] = require_regex_parts(match ({ let __checked_regex_0: regex.Regex = match (regex.compile(" +")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.split("one  two   three") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } });
   if (ws.len() == 3 && ws[0] == "one" && ws[1] == "two" && ws[2] == "three") {
     r = r + 128;
   }

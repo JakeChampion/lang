@@ -8,5 +8,5 @@ err field "wide": expected an integer in the u32 range, got -1
 err field "huge": expected an integer in the u64 range, got 18446744073709551616
 err field "ok": expected a boolean, got a string
 err expected an object, got an array
-err invalid JSON: 1:7: unexpected end of input
+err 1:7: unexpected end of input
 {"city":"Dale","zip":3}

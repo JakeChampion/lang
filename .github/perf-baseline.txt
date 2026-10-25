@@ -4,6 +4,7 @@
 # by 7%. struct_drop.ir (+7.2%) and string_build.ir (+2.6%) count more because
 # callgrind counts a short rep movsb as one instruction. Their wall time is 6%
 # and 22% lower. __fern_memcpy adds 1-5% `.text` to the string and sort rows.
+# 2026-10-25: the x86_64 perceus_rbtree rows re-pinned from a local perf-bench for the carried-token change (ssaunits.dying_unclaimed).
 # Re-pinned 2026-10-25 (#13177) from Perf run 40168342835 on both arches. The
 # word-refill decoder and the hash-chain matcher cut deflate_decode.ir by 36-41%
 # and deflate_encode.ir by 40-42%. The map, ordmap and pvec rows are 1-6% faster.
@@ -428,10 +429,10 @@ x86_64/perceus_deriv.text	2580
 x86_64/perceus_deriv.ir	66902002
 x86_64/perceus_nqueens.text	1460
 x86_64/perceus_nqueens.ir	93164076
-x86_64/perceus_rbtree.text	2765
-x86_64/perceus_rbtree.ir	56730015
-x86_64/perceus_rbtree_ck.text	2981
-x86_64/perceus_rbtree_ck.ir	55908895
+x86_64/perceus_rbtree.text	2769
+x86_64/perceus_rbtree.ir	56477535
+x86_64/perceus_rbtree_ck.text	3009
+x86_64/perceus_rbtree_ck.ir	55981855
 aarch64/perceus_cfold.text	2042
 aarch64/perceus_cfold.ir	61163127
 aarch64/perceus_deriv.text	2872

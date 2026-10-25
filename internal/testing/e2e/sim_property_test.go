@@ -11,51 +11,123 @@ import (
 	"testing"
 )
 
-const simImports = `import "std/async";
+// simPrelude scripts an upstream's futures under the sim clock: drain
+// resolves to body at the last scheduled chunk, drip wakes for k chunks
+// and then stalls, and faulty spends one draw of the sim's PRNG.
+const simPrelude = `import "std/async";
 import "std/time";
 import "std/sim";
 import "std/i32";
 import "std/i64";
 
+function stall(): async.Future[string] {
+    function resume(woken: i32): async.Future[string] {
+        return stall();
+    }
+    return Pending(0 - 1, resume);
+}
+
+function drip(at_ms: i32[], i: i32, k: i32): async.Future[string] {
+    if (i >= k) {
+        return stall();
+    }
+    function resume(woken: i32): async.Future[string] {
+        return drip(at_ms, i + 1, k);
+    }
+    return Pending(at_ms[i], resume);
+}
+
+function drain(at_ms: i32[], body: string, i: i32): async.Future[string] {
+    function resume(woken: i32): async.Future[string] {
+        if (i + 1 >= at_ms.len()) {
+            return Ready(body);
+        }
+        return drain(at_ms, body, i + 1);
+    }
+    return Pending(at_ms[i], resume);
+}
+
+function schedule(d: sim.Sim, first_ms: i32, chunk_ms: i32, chunks: i32): i32[] {
+    let now: i32 = (d.now_ns() / 1000000) as i32;
+    let at: i32[] = [];
+    let c: i32 = 0;
+    while (c < chunks) {
+        at = at.append(now + first_ms + c * chunk_ms);
+        c = c + 1;
+    }
+    return at;
+}
+
+function faulty(d: sim.Sim, pct: i32): boolean {
+    return (d.random_i32() & 1023) % 100 < pct;
+}
+
 `
+
+// simUpstream is one scripted upstream: fault is "" (healthy), "fail",
+// "stall" or "partial"; flakyPc is the percentage of calls the fault
+// takes, or -1 for every call.
+type simUpstream struct {
+	body              string
+	firstMs, chunkMs  int
+	chunks            int
+	fault             string
+	partialK, flakyPc int
+}
+
+func (u simUpstream) faultExpr() string {
+	switch u.fault {
+	case "fail":
+		return `Ready("")`
+	case "stall":
+		return "stall()"
+	default:
+		k := min(max(u.partialK, 0), u.chunks)
+		return fmt.Sprintf("drip(schedule(d, %d, %d, %d), 0, %d)", u.firstMs, u.chunkMs, u.chunks, k)
+	}
+}
+
+func (u simUpstream) function(name string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "function %s(d: sim.Sim): async.Future[string] {\n", name)
+	if u.fault != "" {
+		if u.flakyPc >= 0 {
+			fmt.Fprintf(&b, "    if (faulty(d, %d)) {\n        return %s;\n    }\n", u.flakyPc, u.faultExpr())
+		} else {
+			fmt.Fprintf(&b, "    return %s;\n", u.faultExpr())
+		}
+	}
+	fmt.Fprintf(&b, "    return drain(schedule(d, %d, %d, %d), %q, 0);\n}\n\n", u.firstMs, u.chunkMs, u.chunks, u.body)
+	return b.String()
+}
 
 func genSimProgram(r *rand.Rand) string {
 	var b strings.Builder
-	b.WriteString(simImports)
-	b.WriteString("function main(): i32 {\n")
-	fmt.Fprintf(&b, "    let d: sim.Sim = sim.new(%d as i64);\n", 1+r.Int63n(1<<30))
-	b.WriteString("    let n: sim.Net = sim.net(d);\n")
+	b.WriteString(simPrelude)
 
 	bodies := []string{"alpha", "x", "abcdefghij", "the-quick-brown-fox", "payload-0123456789"}
-	nEp := 1 + r.Intn(3)
-	for i := 0; i < nEp; i++ {
-		host, path := i+1, fmt.Sprintf("/e%d", i)
-		body := pick(r, bodies)
+	nUp := 1 + r.Intn(3)
+	for i := 0; i < nUp; i++ {
+		u := simUpstream{body: pick(r, bodies), chunks: 1, flakyPc: -1}
 		if r.Intn(2) == 0 {
-			fmt.Fprintf(&b, "    n = n.serve(%d, 80, %q, %q, time.duration_nanos(%d as i64));\n",
-				host, path, body, pick(r, []int{1, 5, 10, 25, 40})*1000000)
+			u.firstMs = pick(r, []int{1, 5, 10, 25, 40})
 		} else {
-			fmt.Fprintf(&b, "    n = n.serve_chunked(%d, 80, %q, %q, time.duration_nanos(%d as i64), time.duration_nanos(%d as i64), sim.chunks_of(%d, %d));\n",
-				host, path, body,
-				pick(r, []int{1, 2, 5, 10})*1000000, pick(r, []int{1, 2, 5})*1000000,
-				len(body), 1+r.Intn(5))
+			u.firstMs, u.chunkMs = pick(r, []int{1, 2, 5, 10}), pick(r, []int{1, 2, 5})
+			size := 1 + r.Intn(5)
+			u.chunks = (len(u.body) + size - 1) / size
 		}
 		if r.Intn(2) == 0 {
-			switch r.Intn(3) {
-			case 0:
-				fmt.Fprintf(&b, "    n = n.fault_fail(%d, 80, %q);\n", host, path)
-			case 1:
-				fmt.Fprintf(&b, "    n = n.fault_stall(%d, 80, %q);\n", host, path)
-			default:
-				fmt.Fprintf(&b, "    n = n.fault_partial(%d, 80, %q, %d);\n", host, path, r.Intn(4))
-			}
+			u.fault = []string{"fail", "stall", "partial"}[r.Intn(3)]
+			u.partialK = r.Intn(4)
 			if r.Intn(2) == 0 {
-				fmt.Fprintf(&b, "    n = n.fault_flaky(%d, 80, %q, %d);\n",
-					host, path, pick(r, []int{0, 25, 50, 75, 100}))
+				u.flakyPc = pick(r, []int{0, 25, 50, 75, 100})
 			}
 		}
+		b.WriteString(u.function(fmt.Sprintf("up%d", i)))
 	}
 
+	b.WriteString("function main(): i32 {\n")
+	fmt.Fprintf(&b, "    let d: sim.Sim = sim.new(%d as i64);\n", 1+r.Int63n(1<<30))
 	nStages := 1 + r.Intn(3)
 	for s := 0; s < nStages; s++ {
 		nf := 2 + r.Intn(3)
@@ -73,10 +145,9 @@ func genSimProgram(r *rand.Rand) string {
 				fmt.Fprintf(&b, "        sim.future_chain(d, %d as i64, %d as i64, %d, \"c%d_%d\")%s\n",
 					(1+r.Intn(40))*1000000, (1+r.Intn(8))*1000000, r.Intn(4), s, k, sep)
 			case 4:
-				fmt.Fprintf(&b, "        n.fetch_future(9, 80, \"/nope\")%s\n", sep)
+				fmt.Fprintf(&b, "        Ready(\"\")%s\n", sep)
 			default:
-				ep := r.Intn(nEp)
-				fmt.Fprintf(&b, "        n.fetch_future(%d, 80, \"/e%d\")%s\n", ep+1, ep, sep)
+				fmt.Fprintf(&b, "        up%d(d)%s\n", r.Intn(nUp), sep)
 			}
 		}
 		b.WriteString("    ];\n")
@@ -106,9 +177,6 @@ func genSimProgram(r *rand.Rand) string {
 
 	b.WriteString("    print(\"now=\" + d.now_ns().to_string());\n")
 	b.WriteString("    print(\"rng=\" + d.rng_state().to_string());\n")
-	for i := 0; i < nEp; i++ {
-		fmt.Fprintf(&b, "    print(\"hits%d=\" + n.hits(%d, 80, \"/e%d\").to_string());\n", i, i+1, i)
-	}
 	b.WriteString("    return 0;\n}\n")
 	return b.String()
 }
@@ -199,22 +267,21 @@ func FuzzSimProperty(f *testing.F) {
 	})
 }
 
-const simRegressionStallPartialDeadline = `import "std/async";
-import "std/time";
-import "std/sim";
-import "std/i32";
-import "std/i64";
+const simRegressionStallPartialDeadline = simPrelude + `function up0(d: sim.Sim): async.Future[string] {
+    return stall();
+}
+
+function up1(d: sim.Sim): async.Future[string] {
+    if (faulty(d, 75)) {
+        return drip(schedule(d, 25, 0, 1), 0, 0);
+    }
+    return drain(schedule(d, 25, 0, 1), "x", 0);
+}
 
 function main(): i32 {
     let d: sim.Sim = sim.new(538118593 as i64);
-    let n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/e0", "payload-0123456789", time.duration_nanos(10000000 as i64));
-    n = n.fault_stall(1, 80, "/e0");
-    n = n.serve(2, 80, "/e1", "x", time.duration_nanos(25000000 as i64));
-    n = n.fault_partial(2, 80, "/e1", 0);
-    n = n.fault_flaky(2, 80, "/e1", 75);
     let fs0: async.Future[string][] = [
-        n.fetch_future(9, 80, "/nope"),
+        Ready(""),
         sim.future_chain(d, 8000000 as i64, 6000000 as i64, 2, "c0_1")
     ];
     let o0: Option[string][] = async.with_deadline_on(d, time.duration_millis(60), fs0);
@@ -227,16 +294,16 @@ function main(): i32 {
         j0 = j0 + 1;
     }
     let fs1: async.Future[string][] = [
-        n.fetch_future(2, 80, "/e1"),
-        n.fetch_future(2, 80, "/e1"),
-        n.fetch_future(1, 80, "/e0")
+        up1(d),
+        up1(d),
+        up0(d)
     ];
     let (w1, v1) = async.race_on(d, fs1, "!");
     print("r1=" + w1.to_string() + ":" + v1);
     let fs2: async.Future[string][] = [
         sim.future_at(d, 3000000 as i64, "a2_0"),
         sim.future_at(d, 58000000 as i64, "a2_1"),
-        n.fetch_future(2, 80, "/e1")
+        up1(d)
     ];
     let o2: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs2);
     let j2: i32 = 0;
@@ -249,28 +316,23 @@ function main(): i32 {
     }
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
-    print("hits0=" + n.hits(1, 80, "/e0").to_string());
-    print("hits1=" + n.hits(2, 80, "/e1").to_string());
     return 0;
 }
 `
 
-const simRegressionFlakyChunkedGather = `import "std/async";
-import "std/time";
-import "std/sim";
-import "std/i32";
-import "std/i64";
+const simRegressionFlakyChunkedGather = simPrelude + `function up0(d: sim.Sim): async.Future[string] {
+    if (faulty(d, 75)) {
+        return stall();
+    }
+    return drain(schedule(d, 1, 5, 7), "the-quick-brown-fox", 0);
+}
 
 function main(): i32 {
     let d: sim.Sim = sim.new(88997876 as i64);
-    let n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(1000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(19, 3));
-    n = n.fault_stall(1, 80, "/e0");
-    n = n.fault_flaky(1, 80, "/e0", 75);
     let fs0: async.Future[string][] = [
         sim.future_chain(d, 32000000 as i64, 1000000 as i64, 0, "c0_0"),
-        n.fetch_future(1, 80, "/e0"),
-        n.fetch_future(1, 80, "/e0"),
+        up0(d),
+        up0(d),
         sim.future_chain(d, 4000000 as i64, 8000000 as i64, 1, "c0_3")
     ];
     let g0: string[] = async.gather_on(d, fs0, "!");
@@ -282,32 +344,28 @@ function main(): i32 {
     }
     let fs1: async.Future[string][] = [
         sim.future_at(d, 14000000 as i64, "a1_0"),
-        n.fetch_future(1, 80, "/e0"),
-        n.fetch_future(1, 80, "/e0")
+        up0(d),
+        up0(d)
     ];
     let (w1, v1) = async.race_on(d, fs1, "!");
     print("r1=" + w1.to_string() + ":" + v1);
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
-    print("hits0=" + n.hits(1, 80, "/e0").to_string());
     return 0;
 }
 `
 
-const simRegressionFlakyStallThreeStage = `import "std/async";
-import "std/time";
-import "std/sim";
-import "std/i32";
-import "std/i64";
+const simRegressionFlakyStallThreeStage = simPrelude + `function up0(d: sim.Sim): async.Future[string] {
+    if (faulty(d, 75)) {
+        return stall();
+    }
+    return drain(schedule(d, 1, 2, 5), "the-quick-brown-fox", 0);
+}
 
 function main(): i32 {
     let d: sim.Sim = sim.new(338788670 as i64);
-    let n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(1000000 as i64), time.duration_nanos(2000000 as i64), sim.chunks_of(19, 4));
-    n = n.fault_stall(1, 80, "/e0");
-    n = n.fault_flaky(1, 80, "/e0", 75);
     let fs0: async.Future[string][] = [
-        n.fetch_future(1, 80, "/e0"),
+        up0(d),
         sim.future_at(d, 60000000 as i64, "a0_1")
     ];
     let g0: string[] = async.gather_on(d, fs0, "!");
@@ -319,7 +377,7 @@ function main(): i32 {
     }
     let fs1: async.Future[string][] = [
         sim.future_at(d, 21000000 as i64, "a1_0"),
-        n.fetch_future(1, 80, "/e0")
+        up0(d)
     ];
     let o1: Option[string][] = async.with_deadline_on(d, time.duration_millis(5), fs1);
     let j1: i32 = 0;
@@ -331,63 +389,47 @@ function main(): i32 {
         j1 = j1 + 1;
     }
     let fs2: async.Future[string][] = [
-        n.fetch_future(1, 80, "/e0"),
-        n.fetch_future(1, 80, "/e0"),
+        up0(d),
+        up0(d),
         sim.future_chain(d, 24000000 as i64, 7000000 as i64, 2, "c2_2"),
-        n.fetch_future(1, 80, "/e0")
+        up0(d)
     ];
     let (w2, v2) = async.race_on(d, fs2, "!");
     print("r2=" + w2.to_string() + ":" + v2);
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
-    print("hits0=" + n.hits(1, 80, "/e0").to_string());
     return 0;
 }
 `
 
-const simRegressionRaceFailWins = `import "std/async";
-import "std/time";
-import "std/sim";
-import "std/i32";
-import "std/i64";
-
-function main(): i32 {
+const simRegressionRaceFailWins = simPrelude + `function main(): i32 {
     let d: sim.Sim = sim.new(477987043 as i64);
-    let n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(2000000 as i64), time.duration_nanos(2000000 as i64), sim.chunks_of(19, 5));
-    n = n.serve(2, 80, "/e1", "x", time.duration_nanos(10000000 as i64));
-    n = n.fault_fail(2, 80, "/e1");
     let fs0: async.Future[string][] = [
         sim.future_at(d, 47000000 as i64, "a0_0"),
         sim.future_at(d, 9000000 as i64, "a0_1"),
-        n.fetch_future(2, 80, "/e1")
+        Ready("")
     ];
     let (w0, v0) = async.race_on(d, fs0, "!");
     print("r0=" + w0.to_string() + ":" + v0);
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
-    print("hits0=" + n.hits(1, 80, "/e0").to_string());
-    print("hits1=" + n.hits(2, 80, "/e1").to_string());
     return 0;
 }
 `
 
-const simRegressionGatherResuspendClosure = `import "std/async";
-import "std/time";
-import "std/sim";
-import "std/i32";
-import "std/i64";
+const simRegressionGatherResuspendClosure = simPrelude + `function up0(d: sim.Sim): async.Future[string] {
+    if (faulty(d, 25)) {
+        return stall();
+    }
+    return drain(schedule(d, 40, 0, 1), "abcdefghij", 0);
+}
 
 function main(): i32 {
     let d: sim.Sim = sim.new(193102384 as i64);
-    let n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/e0", "abcdefghij", time.duration_nanos(40000000 as i64));
-    n = n.fault_stall(1, 80, "/e0");
-    n = n.fault_flaky(1, 80, "/e0", 25);
     let fs0: async.Future[string][] = [
         sim.future_chain(d, 26000000 as i64, 1000000 as i64, 0, "c0_0"),
         sim.future_chain(d, 36000000 as i64, 1000000 as i64, 1, "c0_1"),
-        n.fetch_future(1, 80, "/e0"),
+        up0(d),
         sim.future_chain(d, 14000000 as i64, 3000000 as i64, 2, "c0_3")
     ];
     let g0: string[] = async.gather_on(d, fs0, "!");
@@ -399,6 +441,5 @@ function main(): i32 {
     }
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
-    print("hits0=" + n.hits(1, 80, "/e0").to_string());
     return 0;
 }`

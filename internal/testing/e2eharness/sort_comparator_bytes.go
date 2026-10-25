@@ -9,7 +9,7 @@ import (
 func WriteSortComparatorBytesFixture(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"byte_input", "vercmp", "ld", "gnu"} {
+	for _, name := range []string{"byte_input", "vercmp", "ld", "cached_powers", "gnu"} {
 		body, err := os.ReadFile(RepoPath("coreutils", "lib", name+".fern"))
 		if err != nil {
 			t.Fatal(err)

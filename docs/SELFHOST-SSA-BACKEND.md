@@ -223,26 +223,39 @@ The rest of the track, in order:
    first six and pushes the rest where the stack ABI puts them.
 4. Once nothing refers to a stack entry, the shims go.
 
-## A variant or a pair returned in two words
+## A variant or a pair returned in two or three words
 
 A function whose result is an enum, an Option or a Result with at most one
 payload per variant, where the payload fits a word (a pointer, or an integer
 no wider than one), returns the variant's position as its result and the
 payload beside it: in `%rdx` on x86-64, x1 on arm64 and the global
-`$__fern_ret_word` on wasm (`ir.op_ret_word`, `ir.op_call_word`). Neither
-register is in either pool, and neither an epilogue nor a call's result store
-touches it, so the callee sets the word as the last thing before it returns
-and the caller reads it as the first thing after it stores the call's result.
-The suspend pass keeps that read in a site's group with the call and its
-store, ahead of the mode test it adds after a call that may park
-(`suspend.group_end`), so a function that may suspend returns in two words
-like any other.
+`$__fern_ret_word` on wasm (`ir.op_ret_pair_word(0)`,
+`ir.op_call_pair_word(0)`). Neither register is in either pool, and neither
+an epilogue nor a call's result store touches it, so the callee sets the word
+as the last thing before it returns and the caller reads it as the first thing
+after it stores the call's result. The suspend pass keeps those reads in a
+site's group with the call and its store, ahead of the mode test it adds after
+a call that may park (`suspend.group_end`), so a function that may suspend
+returns in two or three words like any other.
+
+A variant whose payload is a pair, or a record of two fields, where each part
+fits a word, returns in three: the position, and the two parts in the two pair
+words. The second is `%rcx` on x86-64, x2 on arm64 and `$__fern_ret_word1` on
+wasm (`ir.op_ret_pair_word(1)`), the registers the first two scalar lanes use.
+A paired call's immediate names where its words land (`ssasem.pair_capture_imm`),
+and the caller reads the second word before the first. It rebuilds the payload
+as a construction inside the variant's, so split takes both apart and neither
+the variant nor the payload is built. The record need not be built in the
+callee either: a return of a construction hands on its arguments, and any
+other return reads the two fields out. On the TLS hello path this spares
+`Sealed`, `Wrote`, `ServerRun`, `Absorbed` and `Deframed`, six boxes a
+request.
 A function whose result is a tuple of two values returns the same way when
 the second fits a word: the first element is its result, which may be as
 wide as any result (an i64, a u64, a float), and the second the word. A caller rebuilds the pair from the two, and split reads
 its projections off the construction, so the pair is never built; a return
 that is not a construction (a join of two, a parameter) is projected in the
-callee. A tuple of three or four scalars returns in scalar lanes, as a record of scalars does. A pair of scalars whose second element is wider than a word also returns in scalar lanes. A tuple of five or more elements stays boxed. A tuple of three or four that holds a reference also stays boxed. Wasm spells a paired function's result from its lowered body, not its declaration. `TestSelfHostPairReturn` covers both shapes on the three targets, a pair and a Result returned across a park among them.
+callee. A tuple of three or four scalars returns in scalar lanes, as a record of scalars does. A pair of scalars whose second element is wider than a word also returns in scalar lanes. A tuple of five or more elements stays boxed. A tuple of three or four that holds a reference also stays boxed. Wasm spells a paired function's result from its lowered body, not its declaration. `TestSelfHostPairReturn` covers the shapes on the three targets, a pair and a Result returned across a park among them, and its `split` program pins a loop of three-word returns at no allocations.
 
 `sempair`, which `seminline` runs once nothing more is spliced, chooses the
 functions: nothing outside the bodies names one and every body that names
@@ -258,6 +271,18 @@ it in the box of a node it was consuming, as `std/pvec`'s path rebuild does,
 that box was free. Pairing `__pv_with_in` regardless took `pvec_with` from
 995 allocations to 1.1 million, every write copying the arrays on its path,
 and five times the instructions.
+
+The same rule holds one level down. A function returns a payload in two words
+only while every caller takes the payload apart as well
+(`sempair.payloads_whole`): a payload a caller keeps whole, by storing it,
+passing it on or returning it from a function that hands it on in one word,
+leaves the function in the two-word form with the payload in its box. A
+payload read out of a split call is a construction for this purpose, so a
+payload carried round a loop, as `__server_drain` carries its `ServerRun`,
+still splits. The certifier reads which pair word holds a unit for which
+variant from the declared result type (`rccertify.Abi.split_second`,
+`split_third`), and a call that captures two words reads the first word's
+mask from the split form.
 
 ## What the lift admits, and what declines
 

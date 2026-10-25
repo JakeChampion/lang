@@ -654,7 +654,7 @@ function main(): i32 {
 			t.Fatalf("abs stdlib root: %v", err)
 		}
 		srcPath := filepath.Join(dir, "derived_assoc.fern")
-		src := "import \"std/json\";\n@derive(json.FromJson) struct User { id: i32 }\nfunction main(): i32 { let r: Result[User, string] = User.from_json(\"{\\\"id\\\":7}\"); match (r) { Ok(u) => { return u.id; }, Err(e) => { return 1; } } }\n"
+		src := "import \"std/json\";\n@derive(json.FromJson) struct User { id: i32 }\nfunction main(): i32 { let r: Result[User, json.JsonError] = User.from_json(\"{\\\"id\\\":7}\"); match (r) { Ok(u) => { return u.id; }, Err(e) => { return 1; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -1651,6 +1651,106 @@ function main(): i32 {
 		}
 		if string(out1) != string(out2) {
 			t.Errorf("-fmt is not idempotent on a const:\n--- first ---\n%s\n--- second ---\n%s", out1, out2)
+		}
+	})
+
+	t.Run("fmt-else-if-let", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "else_if_let_fmt.fern")
+		const src = `enum Box { Full(i32), Half(i32), Empty }
+
+function chain(flag: boolean, box: Box): i32 {
+  if let Full(v) = box {
+    return v;
+  } else if let Half(h) = box {
+    return h;
+  } else if (flag) {
+    return 1;
+  } else if let Empty = box {
+    return 2;
+  } else {
+    return 0;
+  }
+}
+
+function nested(box: Box): i32 {
+  if let Full(v) = box {
+    return v;
+  } else {
+    if let Half(h) = box {
+      return h;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  return chain(false, Half(3)) + nested(Empty);
+}
+`
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out1, code := runDriver(t, "-fmt", srcPath)
+		if code != 0 {
+			t.Fatalf("-fmt exited %d, want 0", code)
+		}
+		if string(out1) != src {
+			t.Errorf("-fmt rewrote an already-formatted if-let chain:\n--- in ---\n%s\n--- out ---\n%s", src, out1)
+		}
+		fmtPath := filepath.Join(dir, "else_if_let_fmt_out.fern")
+		if err := os.WriteFile(fmtPath, out1, 0o644); err != nil {
+			t.Fatalf("write formatted: %v", err)
+		}
+		out2, code2 := runDriver(t, "-fmt", fmtPath)
+		if code2 != 0 {
+			t.Fatalf("second -fmt exited %d, want 0", code2)
+		}
+		if string(out1) != string(out2) {
+			t.Errorf("-fmt is not idempotent on an if-let chain:\n--- first ---\n%s\n--- second ---\n%s", out1, out2)
+		}
+	})
+
+	t.Run("fmt-value-else-if", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "value_else_if_fmt.fern")
+		const src = `enum Box { Full(i32), Half(i32), Empty }
+
+function chain(box: Box, n: i32): i32 {
+  let r: i32 = if let Full(v) = box { v } else if let Half(h) = box { h } else if (n > 1) { n } else { 0 };
+  let s: i32 = if (n > 1) { 1 } else if (n > 0) { 2 } else { 3 };
+  let w: i32 = if (n > 1) { 1 } else if let Half(h) = box { h } else if let Empty = box { 4 } else { 3 };
+  return r + s + w;
+}
+
+function nested(box: Box, n: i32): i32 {
+  let t: i32 = if (n > 1) { 1 } else { if (n > 0) { 2 } else { 3 } };
+  let u: i32 = if let Full(v) = box { v } else { if let Half(h) = box { h } else { 0 } };
+  return t + u;
+}
+
+function main(): i32 {
+  return chain(Half(3), 1) + nested(Empty, 0);
+}
+`
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out1, code := runDriver(t, "-fmt", srcPath)
+		if code != 0 {
+			t.Fatalf("-fmt exited %d, want 0", code)
+		}
+		if string(out1) != src {
+			t.Errorf("-fmt rewrote an already-formatted value-position else-if chain:\n--- in ---\n%s\n--- out ---\n%s", src, out1)
+		}
+		fmtPath := filepath.Join(dir, "value_else_if_fmt_out.fern")
+		if err := os.WriteFile(fmtPath, out1, 0o644); err != nil {
+			t.Fatalf("write formatted: %v", err)
+		}
+		out2, code2 := runDriver(t, "-fmt", fmtPath)
+		if code2 != 0 {
+			t.Fatalf("second -fmt exited %d, want 0", code2)
+		}
+		if string(out1) != string(out2) {
+			t.Errorf("-fmt is not idempotent on a value-position else-if chain:\n--- first ---\n%s\n--- second ---\n%s", out1, out2)
 		}
 	})
 

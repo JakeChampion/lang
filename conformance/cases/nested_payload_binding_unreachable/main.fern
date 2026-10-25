@@ -1,0 +1,6 @@
+enum Color { Red, Blue }
+
+function main(): i32 {
+  let value: Option[Color] = Some(Color.Blue);
+  return match (value) { Some(color) => 1, Some(Color.Blue()) => 2, None => 0 };
+}

@@ -2113,7 +2113,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
 	registerStringMethod("len", nil, ast.NumberType{})
-	c.info.FuncSigs["__method_boolean_to_string"] = &ast.FuncType{Params: []ast.Type{ast.BoolType{}}, Result: ast.StringType{}}
+	// A scalar builtin method is a signature with no Methods entry, so a
+	// declared method of the name takes over the dispatch and the signature
+	// (builtinScalarMethod, isScalarBuiltinMethod).
+	for name, recv := range map[string]ast.Type{
+		"i32": ast.NumberType{}, "i64": ast.NumberType{Width: 64, Signed: true},
+		"u8": ast.NumberType{Width: 8}, "u32": ast.NumberType{Width: 32}, "u64": ast.NumberType{Width: 64},
+		"usize": ast.NumberType{Width: ast.WidthPtr}, "f32": ast.FloatType{Width: 32}, "f64": ast.FloatType{Width: 64},
+		"boolean": ast.BoolType{}, "char": ast.CharType{}, "string": ast.StringType{},
+	} {
+		method, _ := builtinScalarMethod(name, "to_string")
+		c.info.FuncSigs[method] = &ast.FuncType{Params: []ast.Type{recv}, Result: ast.StringType{}}
+	}
 
 	c.info.FuncSigs["string_from_bytes_unchecked"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
@@ -2291,6 +2302,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 
+	// First pass: gather all top-level signatures so functions can call
+	// each other in any order. Methods are hoisted to mangled
+	// top-level names (`__method_<Type>_<Name>`) with the receiver
+	// prepended to the parameter list, so codegen never has to know
+	// about methods.
+	declaredFunctions := make(map[string]bool, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
 			c.checkMainSignature(fn)
@@ -2377,10 +2394,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		} else if fn.MethodRecv != "" {
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
 		}
-		if _, dup := c.info.FuncSigs[fn.Name]; dup && !isScalarBuiltinMethod(fn.Name) {
+		if _, dup := c.info.FuncSigs[fn.Name]; dup && (!isScalarBuiltinMethod(fn.Name) || declaredFunctions[fn.Name]) {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
 			continue
 		}
+		declaredFunctions[fn.Name] = true
 		params := make([]ast.Type, len(fn.Params))
 		owns := make([]bool, len(fn.Params))
 		for i, p := range fn.Params {
@@ -2391,7 +2409,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		if fn.AssocConst {
 			c.info.AssocConsts[fn.Name] = true
 		}
-		if fn.MethodRecv == "" {
+		// Method dispatch already checks visibility, including calls from a
+		// trait default to methods on its implementing type. The trait's
+		// module need not import that type's module.
+		if fn.MethodRecv == "" && !isScalarBuiltinMethod(fn.Name) {
 			c.funcSources[fn.Name] = fn.SourceModule
 		}
 		if len(fn.TypeParams) > 0 {
@@ -3589,7 +3610,7 @@ func deriveKind(name string) string {
 
 func hasStdJson(prog *ast.Program) bool {
 	for _, pf := range prog.Funcs {
-		if pf.Name == "json__json_parse" {
+		if pf.Name == "json__parse" {
 			return true
 		}
 	}
@@ -3600,7 +3621,7 @@ func fromJsonFieldTypes(types []ast.Type) ([]ast.Type, int, bool) {
 	out := make([]ast.Type, len(types))
 	for i, t := range types {
 		e := fromJsonElem(t)
-		if _, nested := fromJsonContainer(e); nested {
+		if container, nested := fromJsonContainer(e); nested && container != "option" {
 			return nil, i, false
 		}
 		switch e.(type) {
@@ -4706,7 +4727,7 @@ func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       body,
 	}
 }
@@ -4741,13 +4762,13 @@ func synthEnumFromJsonValue(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 				{VariantName: "Err", Bindings: []string{"__fj_e"}, Body: fjReturn(fjVariant("Err", &ast.Ident{Name: "__fj_e"}))},
 			},
 		},
-		&ast.Return{Value: fjVariant("Err", &ast.StringLit{Value: ""})},
+		&ast.Return{Value: fjVariant("Err", fjCall("error", &ast.StringLit{Value: ""}))},
 	}}
 	return &ast.FuncDecl{
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       body,
 	}
 }
@@ -4860,7 +4881,7 @@ func synthFromJsonText(name string, recv ast.Type) *ast.FuncDecl {
 		Name:       "from_json",
 		AssocType:  name,
 		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
-		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StructType{Name: "json__JsonError"}}},
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: call}}},
 	}
 }
@@ -5206,15 +5227,29 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 func builtinScalarMethod(typeName, name string) (string, bool) {
-	if typeName == "boolean" && name == "to_string" {
-		return "__method_boolean_to_string", true
+	if name == "to_string" {
+		if typeName == "boolean" {
+			return "__method_boolean_to_string", true
+		}
+		switch typeName {
+		case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "string":
+			return "__primitive_" + typeName + "_to_string", true
+		}
 	}
 	return "", false
 }
 
 func isScalarBuiltinMethod(mangled string) bool {
-	return mangled == "__method_boolean_to_string"
+	if mangled == "__method_boolean_to_string" {
+		return true
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(mangled, "__primitive_"), "_to_string")
+	method, ok := builtinScalarMethod(name, "to_string")
+	return ok && method == mangled
 }
+
+// IsPrimitiveDisplayMethod lets the oracle replace a builtin with its source body.
+func IsPrimitiveDisplayMethod(name string) bool { return isScalarBuiltinMethod(name) }
 
 type checker struct {
 	entryModule string
@@ -5945,7 +5980,8 @@ func (c *checker) visibleVariants(name string) []variantRef {
 	from := c.currentModule()
 	var out []variantRef
 	for _, vr := range all {
-		if c.moduleSeesVariant(from, vr.srcModule) {
+		ed := c.info.Enums[vr.enumName]
+		if c.moduleSeesVariant(from, vr.srcModule) && (ed.VisibleFrom == nil || ed.VisibleFrom[from]) {
 			out = append(out, vr)
 		}
 	}
@@ -12071,6 +12107,14 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if _, bound := c.identValueBinding(x.Name, s); bound {
 			return nil, false
 		}
+		// Contextual primitive names are identifier tokens too. A value
+		// binding above still wins over their type spelling.
+		if x.Name == "char" {
+			return ast.CharType{}, true
+		}
+		if x.Name == "str" {
+			return ast.StrType{}, true
+		}
 		_, isStruct := c.info.Structs[x.Name]
 		_, isEnum := c.info.Enums[x.Name]
 		_, isResource := c.info.Resources[x.Name]
@@ -12087,7 +12131,10 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 		if !ok {
 			return nil, false
 		}
-		st := head.(ast.StructType)
+		st, nominal := head.(ast.StructType)
+		if !nominal {
+			return nil, false
+		}
 		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
 	}
 	return nil, false
@@ -14360,7 +14407,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "f64x2", "f32x4", "string", "boolean":
+	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
 		return true
 	}
 	return false
@@ -16199,6 +16246,10 @@ func isBareNumericLiteral(e ast.Expr) bool {
 }
 
 func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) bool {
+	if ed.VisibleFrom != nil && !ed.VisibleFrom[c.currentModule()] {
+		c.errfCode(p, "E087", "enum %s is not visible from this package", c.enumHintName(ed.Name))
+		return false
+	}
 	if qualifier == "" {
 		return false
 	}

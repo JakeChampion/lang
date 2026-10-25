@@ -974,6 +974,15 @@ func (f *formatter) formatBranch(e ast.Expr) {
 	f.b.WriteString(" }")
 }
 
+func (f *formatter) formatElseBranch(e ast.Expr, chained bool) {
+	f.b.WriteString(" else ")
+	if chained {
+		f.formatExpr(e, 0)
+		return
+	}
+	f.formatBranch(e)
+}
+
 func (f *formatter) formatArmBody(e ast.Expr) {
 	if be, ok := e.(*ast.BlockExpr); ok {
 		f.formatBlockExpr(be)
@@ -1225,7 +1234,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.formatBlock(success, depth)
 			if len(els.Stmts) > 0 {
 				f.b.WriteString(" else ")
-				f.formatBlock(els, depth)
+				if x.ElseChained && len(els.Stmts) == 1 {
+					f.formatStmt(els.Stmts[0], depth)
+				} else {
+					f.formatBlock(els, depth)
+				}
 			}
 			return
 		}
@@ -1779,8 +1792,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.formatExpr(x.Cond, 0)
 		f.b.WriteString(") ")
 		f.formatBranch(x.Then)
-		f.b.WriteString(" else ")
-		f.formatBranch(x.Else)
+		f.formatElseBranch(x.Else, x.ElseChained)
 		if needsParens {
 			f.b.WriteByte(')')
 		}
@@ -1800,8 +1812,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.formatExpr(x.Tag, precLowest)
 			f.b.WriteByte(' ')
 			f.formatBranch(x.Arms[0].Body)
-			f.b.WriteString(" else ")
-			f.formatBranch(x.Arms[len(x.Arms)-1].Body)
+			f.formatElseBranch(x.Arms[len(x.Arms)-1].Body, x.ElseChained)
 			break
 		}
 		f.b.WriteString("match (")

@@ -1,3 +1,4 @@
+import "std/unicode";
 import "core/map";
 import "std/io";
 import "std/string";

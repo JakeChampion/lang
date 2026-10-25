@@ -11,11 +11,11 @@ function main(): i32 {
   while (i < argv.len()) {
     let a: string = argv[i];
     if (a == "-n" && i + 1 < argv.len()) {
-      match (argv[i + 1].parse_int()) {
-        Some(n) => {
+      match (i32.parse_i32(argv[i + 1])) {
+        Ok(n) => {
           limit = n;
         },
-        None => {}
+        Err(_) => {}
       }
       i = i + 1;
     } else {

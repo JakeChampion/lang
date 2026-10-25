@@ -1,0 +1,99 @@
+{
+  "core_commit": "578d51988b8d548490603a323ee0699cfaf5d8f7",
+  "binaries": {
+    "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3": {
+      "bytes": 14310752,
+      "sha256": "5298d78bac0c6e0ba34b716d7c9388cc5f41224777a94d584597cf54f1f0e7f8"
+    },
+    "/workspace/scratch/lang-primitive-protocols/reachability-oracle": {
+      "bytes": 32470385,
+      "sha256": "0305a84408a7d80d262290d635d3eeef486657478af78b77463af75775f7a735"
+    }
+  },
+  "commands": [
+    {
+      "name": "primitive_display_bad_arity",
+      "compiler": "go",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:2:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:6:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:10:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:14:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:18:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:22:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:26:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:30:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:34:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:38:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:42:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_bad_arity",
+      "compiler": "self",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:2:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:6:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:10:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:14:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:18:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:22:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:26:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:30:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:34:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:38:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_bad_arity/main.fern:42:21: error[E004]: method \"to_string\" takes 0 arguments but was given 1\n      return x.to_string(1);\n                        ^\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_keeps_method_scope",
+      "compiler": "go",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_method_scope/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_method_scope/main.fern:3:12: error[E043]: field access on non-struct value of type i32\n      return 42.gcd(2);\n               ^\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_keeps_method_scope",
+      "compiler": "self",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_method_scope/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_method_scope/main.fern:3:12: error[E043]: field access on non-struct value of type i32\n      return 42.gcd(2);\n               ^\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_keeps_module_scope",
+      "compiler": "go",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-oracle",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_module_scope/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_module_scope/main.fern:3:19: error[E001]: cannot find \"cmp\" in this scope\n      let xs: i32[] = cmp.sort([2, 1]);\n                      ^~~\n",
+      "pass_": true
+    },
+    {
+      "name": "primitive_display_keeps_module_scope",
+      "compiler": "self",
+      "args": [
+        "/workspace/scratch/lang-primitive-protocols/reachability-validation/bootstrap/stage3",
+        "-check",
+        "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_module_scope/main.fern",
+        "/workspace/lang-primitive-protocols-current/internal/stdlib"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/lang-primitive-protocols-current/conformance/cases/primitive_display_keeps_module_scope/main.fern:3:19: error[E001]: cannot find \"cmp\" in this scope\n      let xs: i32[] = cmp.sort([2, 1]);\n                      ^~~\n",
+      "pass_": true
+    }
+  ]
+}

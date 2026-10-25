@@ -636,6 +636,14 @@ pub function op_call_word(): Op {
   return op0(385);
 }
 
+pub function op_ret_pair_word(slot: i32): Op {
+  return Op { ...op_ret_word(), i32_imm: slot };
+}
+
+pub function op_call_pair_word(slot: i32): Op {
+  return Op { ...op_call_word(), i32_imm: slot };
+}
+
 pub function op_ret_scalar_word(slot: i32): Op {
   return Op { ...op_ret_word(), width: 64, i32_imm: slot };
 }

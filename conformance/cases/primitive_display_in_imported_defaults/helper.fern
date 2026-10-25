@@ -1,0 +1,8 @@
+pub function label(text: string = "7"): string {
+  return text;
+}
+
+pub function nested(): string {
+  let render = (): string => f"{42}";
+  return render();
+}

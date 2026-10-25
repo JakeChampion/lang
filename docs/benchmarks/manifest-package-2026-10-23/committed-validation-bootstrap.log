@@ -1,0 +1,3 @@
+{'stage': 'stage1', 'producer_sha256': '6c5cdeed770e5db0aadbdb663efe2d29e3304acacb76229b951ca549e951f6e2', 'seconds': 21.98357386099815, 'bytes': 14289968, 'sha256': '91d65768d57db51b7fca99f505f47a1b564f62a738eec4f34df173f7ceb84aa8'}
+{'stage': 'stage2', 'producer_sha256': '91d65768d57db51b7fca99f505f47a1b564f62a738eec4f34df173f7ceb84aa8', 'seconds': 20.29916632300592, 'bytes': 14289968, 'sha256': '7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599'}
+{'stage': 'stage3', 'producer_sha256': '7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599', 'seconds': 20.358191179009737, 'bytes': 14289968, 'sha256': '7eeb5d226d79bfbd2f91e752ee5aac051b8c1bd35283019c1a8855eb2e939599'}

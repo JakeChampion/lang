@@ -1,3 +1,43 @@
+// tests/proposals/csv2json.fern — proposal turn, line 4:
+// "A CSV-to-JSON converter that handles quoted fields, embedded commas and
+// embedded newlines."
+//
+// The drawn line names the three things that break CSV parsers, and they break
+// it in the same way: a parser written as `split(line, ",")` over
+// `split(text, "\n")` handles every file nobody had trouble with. So the tests
+// are not a table of expected JSON — they are a ROUND TRIP.
+//
+// Every table in the corpus is serialised to CSV, parsed back, and required to
+// be identical cell for cell. Serialising is where the quoting rules live
+// (quote a field iff it contains a comma, a quote or a newline; double an
+// embedded quote), parsing is where they are undone, and a round trip fails
+// the moment the two disagree about any of it. On top of that the corpus is
+// generated: every combination of a small set of awkward cell values, at every
+// position of a 2x2 table, which is ~2 400 tables nobody had to think up and
+// which contains the cases an author would not have.
+//
+// The generator is the essential part, so it is checked too: a test asserts
+// the sweep actually covered the shapes it claims (a cell containing a comma,
+// one containing a quote, one containing a newline, and an empty one), because
+// a sweep that silently stopped generating would pass every comparison it made.
+//
+// Parsing is checked against the shape of the input as well as its content: a
+// table's rows must all have the same width as the header, and a parser that
+// loses a row or merges two is caught by that even when every cell it did
+// produce is correct.
+//
+// The JSON side gets the property that matters for JSON: the output must
+// PARSE. A minimal reader validates it and hands back the values, which are
+// then compared to the table — so a converter that emits a plausible-looking
+// string with an unescaped quote in it fails here rather than downstream.
+//
+// Two decisions, stated because CSV dialects differ and both are tested:
+// RFC 4180 quoting (double the quote, not backslash it), and a trailing
+// newline at the end of the file being optional rather than an empty final row.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/result";
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -246,7 +286,7 @@ function json_flatten(s: string): JsonRead {
           return k;
         }
         out = out.append(k.values[0]);
-        i = k.values[1].parse_int_or(-1);
+        i = i32.parse_i32(k.values[1]).unwrap_or(-1);
         if (i < 0 || i >= s.len() || s[i] != 58) {
           return JsonRead { ok: false, values: none, err: "expected :" };
         }
@@ -256,7 +296,7 @@ function json_flatten(s: string): JsonRead {
           return v;
         }
         out = out.append(v.values[0]);
-        i = v.values[1].parse_int_or(-1);
+        i = i32.parse_i32(v.values[1]).unwrap_or(-1);
         if (i >= 0 && i < s.len() && s[i] == 44) {
           i = i + 1;
         } else {

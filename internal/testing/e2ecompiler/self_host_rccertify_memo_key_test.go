@@ -16,7 +16,7 @@ function base(): ir.Op {
 
 function key_of(op: ir.Op): string {
     let f: ssa.SFunc = ssa.SFunc { name: "k", nparams: 0, nvals: 2, blocks: [], entry: 0, takes_env: false };
-    let abis: rccertify.Abis = rccertify.abis_of(["k"], [[]], [false], [false], [0], [false]);
+    let abis: rccertify.Abis = rccertify.abis_of(["k"], [[]], [false], [false], [0], [[0, 0]], [false]);
     return rcmemo.key(rcmemo.off(), "k", f, [ir.op_const_i32(1), op], abis);
 }
 

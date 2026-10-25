@@ -418,10 +418,7 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 384 || o.kind_tag == 385) {
-    let reg: string = "x1";
-    if (o.width == 64) {
-      reg = "x" + util.i32_to_string(o.i32_imm + 1);
-    }
+    let reg: string = "x" + util.i32_to_string(o.i32_imm + 1);
     if (o.kind_tag == 384) {
       return s.write("    ldr " + reg + ", [sp], #16\n    str " + reg + ", [sp, #-16]!\n");
     }
@@ -6486,6 +6483,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cbnz x8, .Lapo_cap\n");
   s = s.write("    mov x8, #4\n");
   s = s.write(".Lapo_cap:\n");
+  s = s.write("    add x9, x21, #1\n    cmp x8, x9\n    csel x8, x8, x9, hs\n");
   s = s.write("    add x1, x8, #3\n");
   s = s.write("    lsl x1, x1, #3\n");
   s = s.write("    cmp x1, #2048\n");
@@ -6643,7 +6641,7 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x3, __fern_arr_push_copied\n    add x3, x3, :lo12:__fern_arr_push_copied\n    ldr x4, [x3]\n    add x4, x4, x21\n    str x4, [x3]\n");
   s = s.write("    b .Larr_push_u8_cap\n");
   s = s.write(".Larr_push_u8_dbl:\n    lsl x2, x22, #1\n");
-  s = s.write(".Larr_push_u8_cap:\n    mov x0, x2\n    bl __fern_arr_box\n");
+  s = s.write(".Larr_push_u8_cap:\n    add x3, x21, #8\n    lsr x3, x3, #3\n    cmp x2, x3\n    csel x2, x2, x3, hs\n    mov x0, x2\n    bl __fern_arr_box\n");
   s = s.write("    add x1, x21, #1\n    str x1, [x0]\n");
   s = s.write("    add x2, x19, #8\n    add x3, x0, #8\n    add x4, x21, #7\n    lsr x4, x4, #3\n");
   s = s.write(".Larr_push_u8_copy:\n    cbz x4, .Larr_push_u8_copied\n    ldr x5, [x2], #8\n    str x5, [x3], #8\n    sub x4, x4, #1\n    b .Larr_push_u8_copy\n");
@@ -9120,6 +9118,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write(".Larr_push_dbl:\n");
     s = s.write("    lsl x2, x22, #1\n");
     s = s.write(".Larr_push_cap:\n");
+    s = s.write("    add x9, x21, #1\n    cmp x2, x9\n    csel x2, x2, x9, hs\n");
     s = s.write("    mov x22, x2\n");
     s = s.write("    mov x0, x2\n");
     s = s.write("    bl __fern_arr_box\n");

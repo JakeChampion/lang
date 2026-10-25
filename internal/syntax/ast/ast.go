@@ -1225,6 +1225,8 @@ type IfExpr struct {
 	Then    Expr
 	Else    Expr
 	IsFloat bool
+	// ElseChained records that the else was written `else if`.
+	ElseChained bool
 }
 
 type StructLit struct {
@@ -1581,6 +1583,8 @@ type Match struct {
 	Arms        []*MatchArm
 	StructMatch string
 	Origin      string
+	// ElseChained records that an if-let's else was written `else if`.
+	ElseChained bool
 }
 
 type TuplePatElem struct {
@@ -1668,6 +1672,8 @@ type MatchExpr struct {
 	Arms        []*MatchExprArm
 	IsFloat     bool
 	StructMatch string
+	// ElseChained records that an if-let's else was written `else if`.
+	ElseChained bool
 }
 
 type MatchExprArm struct {
@@ -1929,6 +1935,7 @@ type EnumDecl struct {
 	Public        bool
 	PackageScoped bool
 	SourceModule  string
+	VisibleFrom   map[string]bool
 }
 
 type EnumVariant struct {

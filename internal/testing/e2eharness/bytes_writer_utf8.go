@@ -1,6 +1,7 @@
 package e2eharness
 
-const BytesWriterUTF8Program = `import "std/io_buffered" as io;
+const BytesWriterUTF8Program = `import "std/utf8";
+import "std/io_buffered" as io;
 import "std/string";
 import "std/array";
 function main(): i32 {
@@ -37,7 +38,7 @@ function main(): i32 {
     }
     let max = empty.write_bytes([244 as u8, 143 as u8, 191 as u8, 191 as u8]);
     match (max.into_string()) {
-        Some(s) => { if (s != string.string_from_codepoint(1114111 as char)) { return 17; } },
+        Some(s) => { if (s != utf8.encode(1114111 as char)) { return 17; } },
         None => { return 18; },
     }
     if (!empty.is_empty()) { return 19; }

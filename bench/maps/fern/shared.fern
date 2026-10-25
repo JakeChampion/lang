@@ -1,3 +1,6 @@
+// bench/maps/fern/shared — what the three lookup programs share: the
+// command line (`<n> <rounds>`), the probe order and the report line.
+import "std/result";
 import "std/string";
 import "std/i32";
 import "std/i64";
@@ -8,10 +11,10 @@ pub function params(argv: string[]): Params {
   let n: i32 = 4000;
   let rounds: i32 = 40;
   if (argv.len() > 1) {
-    n = argv[1].parse_int_or(n);
+    n = i32.parse_i32(argv[1]).unwrap_or(n);
   }
   if (argv.len() > 2) {
-    rounds = argv[2].parse_int_or(rounds);
+    rounds = i32.parse_i32(argv[2]).unwrap_or(rounds);
   }
   return Params { n: n, rounds: rounds };
 }

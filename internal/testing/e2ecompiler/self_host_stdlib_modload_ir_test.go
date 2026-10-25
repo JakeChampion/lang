@@ -19,11 +19,11 @@ var stdlibModloadIRCases = []struct {
 	{"i64-pow", "import \"std/i64\";\nfunction main(): i32 { let a: i64 = 2; return a.pow(6) as i32; }\n"},
 	{"sort-i32-desc", "import \"core/cmp\";\nfunction main(): i32 { let a: i32[] = [3, 1, 4, 1, 5]; let s = cmp.sort_desc(a); return s[0] + s[4]; }\n"},
 	{"sort-u32-asc", "import \"core/cmp\";\nfunction main(): i32 { let a: u32[] = [9 as u32, 2 as u32, 7 as u32]; let s = cmp.sort(a); return s[0] as i32; }\n"},
-	{"utf8-decode", "import \"std/string\";\nfunction main(): i32 { return \"é\".chars()[0] as i32; }\n"},
-	{"utf8-chars-len", "import \"std/string\";\nfunction main(): i32 { return \"aé😀\".chars().len() * 10 + \"aé😀\".len(); }\n"},
-	{"utf8-chars-astral", "import \"std/string\";\nfunction main(): i32 { return (\"aé😀\".chars()[2] as i32) % 1000; }\n"},
-	{"utf8-count", "import \"std/string\";\nfunction main(): i32 { return \"a€\".codepoint_count() * 10 + \"a€\".len(); }\n"},
-	{"utf8-encode", "import \"std/string\";\nfunction main(): i32 { return string.string_from_codepoint(8364 as char).len() * 10 + (string.string_from_codepoint(8364 as char).chars()[0] as i32) % 100; }\n"},
+	{"utf8-decode", "import \"std/utf8\";\nimport \"std/string\";\nfunction main(): i32 { return \"é\".chars()[0] as i32; }\n"},
+	{"utf8-chars-len", "import \"std/utf8\";\nimport \"std/string\";\nfunction main(): i32 { return \"aé😀\".chars().len() * 10 + \"aé😀\".len(); }\n"},
+	{"utf8-chars-astral", "import \"std/utf8\";\nimport \"std/string\";\nfunction main(): i32 { return (\"aé😀\".chars()[2] as i32) % 1000; }\n"},
+	{"utf8-count", "import \"std/utf8\";\nimport \"std/string\";\nfunction main(): i32 { return \"a€\".codepoint_count() * 10 + \"a€\".len(); }\n"},
+	{"utf8-encode", "import \"std/utf8\";\nimport \"std/string\";\nfunction main(): i32 { return utf8.encode(8364 as char).len() * 10 + (utf8.encode(8364 as char).chars()[0] as i32) % 100; }\n"},
 }
 
 func TestSelfHostStdlibModloadIRX86_64(t *testing.T) {

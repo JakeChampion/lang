@@ -1,67 +1,63 @@
-
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
   let r: i32 = 0;
 
-  let m: regex.RCaps = require_caps(regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07 x"));
-  if (require_regex_text(m.group_named("year")) == "2026" && require_regex_text(m.group_named("mon")) == "07") {
+  let m: regex.Captures = require_caps({ let __checked_regex_6: regex.Regex = match (regex.compile("(?<year>\\d{4})-(?<mon>\\d{2})")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.captures("date 2026-07 x") });
+  if (require_regex_text(match (m.group_named("year")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "2026" && require_regex_text(match (m.group_named("mon")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "07") {
     r = r + 1;
   }
-
-  if (require_regex_text(m.group(1)) == "2026" && at(m.group_index("year"), 1) && at(m.group_index("mon"), 2)) {
+  // a named group is still positional: group 1 == year, index lookup agrees
+  if (require_regex_text(match (m.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "2026" && at(m.group_index("year"), 1) && at(m.group_index("mon"), 2)) {
     r = r + 2;
   }
 
-
-  let mix: regex.RCaps = require_caps(regex.regex_captures("(\\w+)@(?<host>\\w+)", "a@b"));
-  if (require_regex_text(mix.group(1)) == "a" && require_regex_text(mix.group_named("host")) == "b" && at(mix.group_index("host"), 2)) {
+  // mixed named + unnamed, numbered by `(` order
+  let mix: regex.Captures = require_caps({ let __checked_regex_5: regex.Regex = match (regex.compile("(\\w+)@(?<host>\\w+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.captures("a@b") });
+  if (require_regex_text(match (mix.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a" && require_regex_text(match (mix.group_named("host")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "b" && at(mix.group_index("host"), 2)) {
     r = r + 4;
   }
 
-
-  if (require_regex_text(m.group_named("nope")) == "" && none(m.group_index("nope"))) {
+  // unknown name → "" / None
+  if (match (m.group_named("nope")) { Ok(None()) => true, _ => false } && none(m.group_index("nope"))) {
     r = r + 8;
   }
 
-
-  let absent: regex.RCaps = require_caps(regex.regex_captures("a(?<b>bc)?d", "ad"));
-  let present: regex.RCaps = require_caps(regex.regex_captures("a(?<b>bc)?d", "abcd"));
-  if (!absent.has_group_named("b") && present.has_group_named("b") && require_regex_text(present.group_named("b")) == "bc") {
+  // has_group_named: optional named group absent vs present
+  let absent: regex.Captures = require_caps({ let __checked_regex_4: regex.Regex = match (regex.compile("a(?<b>bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.captures("ad") });
+  let present: regex.Captures = require_caps({ let __checked_regex_3: regex.Regex = match (regex.compile("a(?<b>bc)?d")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.captures("abcd") });
+  if (!absent.has_group_named("b") && present.has_group_named("b") && require_regex_text(match (present.group_named("b")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "bc") {
     r = r + 16;
   }
 
-
-  let q: regex.RCaps = require_caps(regex.regex_captures("(?<pair>(a|b)c)+", "acbc"));
-  if (require_regex_text(q.group_named("pair")) == "bc" && at(q.group_index("pair"), 1)) {
+  // named group inside a quantified subexpression still names its index (last iteration)
+  let q: regex.Captures = require_caps({ let __checked_regex_2: regex.Regex = match (regex.compile("(?<pair>(a|b)c)+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.captures("acbc") });
+  if (require_regex_text(match (q.group_named("pair")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "bc" && at(q.group_index("pair"), 1)) {
     r = r + 32;
   }
 
-
-  if (require_regex_text(regex.regex_replace_all_groups("(?<k>\\w+)=(?<v>\\d+)", "a=1 b=22", "${v}:${k}")) == "1:a 22:b") {
+  // ${name} template substitution (and $0 still works alongside)
+  if (require_regex_text(match ({ let __checked_regex_1: regex.Regex = match (regex.compile("(?<k>\\w+)=(?<v>\\d+)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.replace_all_groups("a=1 b=22", "${v}:${k}") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "1:a 22:b") {
     r = r + 64;
   }
 
-
-  let ci: regex.RCaps = require_caps(regex.regex_captures("(?i)(?<g>HEL+O)", "say hello"));
-  if (require_regex_text(ci.group_named("g")) == "hello") {
+  // (?i) flag composes with named groups
+  let ci: regex.Captures = require_caps({ let __checked_regex_0: regex.Regex = match (regex.compile("(?i)(?<g>HEL+O)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.captures("say hello") });
+  if (require_regex_text(match (ci.group_named("g")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "hello") {
     r = r + 128;
   }
 
   return r;
 }
 
-
-function require_caps(result: Option[regex.RCaps]): regex.RCaps {
+// require_caps is the match, exiting 1 when there is none.
+function require_caps(result: Option[regex.Captures]): regex.Captures {
   if let Some(c) = result {
     return c;
   }
   exit(1);
-  return regex.RCaps { text: "", starts: [], ends: [], names: [] };
+  return regex.Captures { text: "", starts: [], ends: [], names: [] };
 }
 
 function none(o: Option[i32]): boolean {

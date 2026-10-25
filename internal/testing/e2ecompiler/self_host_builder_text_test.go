@@ -26,7 +26,7 @@ func runBuilderTextInterpreter(t *testing.T, compiler string, runner []string, t
 		t.Fatal(err)
 	}
 	source := strings.Replace(string(data), "import \"std/utf8\";\n", "", 1)
-	source = strings.Replace(source, "  if (!utf8.is_valid_utf8(first) || !utf8.is_valid_utf8(second)) { return false; }\n", "", 1)
+	source = strings.Replace(source, "  if (!utf8.is_valid(first) || !utf8.is_valid(second)) { return false; }\n", "", 1)
 	cmd = runX86_64Bin(runner, bin)
 	cmd.Stdin = bytes.NewBufferString(source)
 	if out, err := cmd.CombinedOutput(); err != nil {

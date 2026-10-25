@@ -1,10 +1,7 @@
+import "std/unicode";
 import "core/int";
 import "std/string";
 import "std/array";
-
-
-
-
 
 function main(): i32 {
   if ("hello".to_upper() != "HELLO") {
@@ -52,7 +49,6 @@ function main(): i32 {
     return 19;
   }
 
-
   let parts: string[] = "a,b,c".split(",");
   if (parts.len() != 3) {
     print("FAIL split-len");
@@ -62,8 +58,6 @@ function main(): i32 {
     print("FAIL split-elem");
     return 21;
   }
-
-
 
   match ("hello".index_of("ll")) {
     Some(i) => {

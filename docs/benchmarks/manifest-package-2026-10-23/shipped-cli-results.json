@@ -1,0 +1,37 @@
+{
+  "binary": "/workspace/scratch/lang-manifest-package/committed-fern",
+  "sha256": "9cba662da2a775d66c315b15b76a86414a79e3913389e4e8b190fdeddde70f46",
+  "bytes": 21512576,
+  "commands": [
+    {
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-fern",
+        "-check",
+        "/workspace/lang-manifest-package-current/conformance/cases/package_scoped_stdlib_helpers/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-fern",
+        "-interp",
+        "/workspace/lang-manifest-package-current/conformance/cases/package_scoped_stdlib_helpers/main.fern"
+      ],
+      "exit": 0,
+      "stdout": "package helpers ok\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "/workspace/scratch/lang-manifest-package/committed-fern",
+        "-check",
+        "/workspace/scratch/lang-manifest-package/stdlib-internal-access.fern"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "/workspace/scratch/lang-manifest-package/stdlib-internal-access.fern:1:58: error[E087]: string.__utf8_step is `pub(package)` \u2014 only modules in the same package as string may use it\n    import \"std/string\"; function main(): i32 { return string.__utf8_step(\"a\", 0, 1); }\n                                                             ^\n"
+    }
+  ]
+}
