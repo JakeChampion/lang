@@ -1253,10 +1253,14 @@ function numeric_operand_diags(op: string, lt: typeinfo.Type, rt: typeinfo.Type,
     return [dg_at("E009", "operator \"" + op + "\" requires both operands to share a float type; got " + type_label(lt) + " and " + type_label(rt) + " — use `as` for explicit conversion", line, col)];
   }
   for operand in [lt, rt] {
+    let msg: string = "";
     if (want_float && !is_float(operand)) {
-      out = out.append(dg_at("E009", "operator \"" + op + "\" requires float, got " + type_label(operand), line, col));
+      msg = "operator \"" + op + "\" requires float, got " + type_label(operand);
     } else if (!want_float && !is_integer(operand)) {
-      out = out.append(dg_at("E009", "operator \"" + op + "\" requires an integer type, got " + type_label(operand), line, col));
+      msg = "operator \"" + op + "\" requires an integer type, got " + type_label(operand);
+    }
+    if (msg.len() > 0 && (out.len() == 0 || out[0].message != msg)) {
+      out = out.append(dg_at("E009", msg, line, col));
     }
   }
   return out;
@@ -2631,6 +2635,14 @@ function (s: Scope) with_block_ret(rt: typeinfo.Type): Scope {
   return Scope { ...s, ret_type: rt };
 }
 
+// The local an identifier names: none for one that names a builtin.
+function (s: Scope) ident_binding(id: ast.ExprIdent): i32 {
+  if (id.builtin) {
+    return 0 - 1;
+  }
+  return s.binding_index(id.name);
+}
+
 function (s: Scope) binding_index(name: string): i32 {
   let i: i32 = s.names.len() - 1;
   while (i >= 0) {
@@ -3394,10 +3406,31 @@ function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.Ex
         payload = join_result_types(args[ti], payload);
       }
       args = args.with(ti, payload);
+    } else {
+      args = nested_payload_args(s, us, payload_spelling(s, us, name, k), inferred_payload(c.args[k], s), args);
     }
     k = k + 1;
   }
   return typeinfo.TypeUnion { name: union_name, args: args };
+}
+
+function nested_payload_args(s: Scope, us: UnionSig, spelling: string, at: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Type[] {
+  if (spelling.len() == 0) {
+    return args;
+  }
+  let none_n: string[] = [];
+  let none_t: typeinfo.Type[] = [];
+  let (bn, bt) = gc_bind_param(parser.parse_type_ref(spelling), at, us.type_params, s.type_names(), none_n, none_t);
+  let out: typeinfo.Type[] = args;
+  let i: i32 = 0;
+  while (i < bn.len()) {
+    let ti: i32 = util.index_of_str(us.type_params, bn[i]);
+    if (ti >= 0 && unbound_enum_argument(out[ti]) && !is_unknown(bt[i])) {
+      out = out.with(ti, bt[i]);
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, whole: typeinfo.Type): Scope {
@@ -4021,6 +4054,10 @@ function ctor_payload_slot(s: Scope, owner: string, vname: string, k: i32): i32 
 }
 
 function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 {
+  return util.index_of_str(us.type_params, payload_spelling(s, us, vname, k));
+}
+
+function payload_spelling(s: Scope, us: UnionSig, vname: string, k: i32): string {
   let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(vname), us.name);
   let want: string = "__ev";
   if (k > 0) {
@@ -4028,9 +4065,9 @@ function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 
   }
   let fi: i32 = util.index_of_str(ss.field_names, want);
   if (fi < 0 || fi >= ss.field_type_names.len()) {
-    return 0 - 1;
+    return "";
   }
-  return util.index_of_str(us.type_params, ss.field_type_names[fi]);
+  return ss.field_type_names[fi];
 }
 
 function promotes_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
@@ -5051,6 +5088,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
   }
   let bound_at: i32 = s.binding_index(name);
+  if let ast.ExprIdent(cid) = c.callee {
+    bound_at = s.ident_binding(cid);
+  }
   if (bound_at >= 0) {
     if let typeinfo.TypeFunc(tf) = s.types[bound_at] {
       if (!tf.params_known) {
@@ -5394,9 +5434,27 @@ function binds_nothing(e: ast.Expr, s: Scope): boolean {
     ast.ExprLambda(lm) => {
       return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
     },
+    ast.ExprCall(c) => {
+      return ctor_pins_nothing(c, s);
+    },
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+function ctor_pins_nothing(c: ast.ExprCall, s: Scope): boolean {
+  if (ctor_name_taken(c, s) || union_of_variant(ctor_variant_name(c), s.unions).len() == 0) {
+    return false;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (qual_variant_union(fa, s).len() == 0) {
+      return false;
+    }
+  }
+  if let typeinfo.TypeUnion(u) = check_expr(c, s) {
+    return u.args.len() > 0 && !settles_any_argument(u.args);
   }
   return false;
 }
@@ -6030,7 +6088,7 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
 }
 
 function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
-  let bi: i32 = s.binding_index(id.name);
+  let bi: i32 = s.ident_binding(id);
   if (bi >= 0 && !is_unknown(s.types[bi])) {
     return s.types[bi];
   }
@@ -7012,13 +7070,12 @@ function is_dyn_slot(t: typeinfo.Type): boolean {
 function fills_unsettled_argument(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if let typeinfo.TypeUnion(fu) = from {
     if let typeinfo.TypeUnion(tu) = to {
-      if (fu.name != tu.name) {
+      if (fu.name != tu.name || tu.args.len() == 0) {
         return false;
       }
       let i: i32 = 0;
-      while (i < fu.args.len()) {
-        let open: boolean = tu.args.len() == 0 || i < tu.args.len() && unbound_enum_argument(tu.args[i]);
-        if (open && !is_unknown(fu.args[i])) {
+      while (i < fu.args.len() && i < tu.args.len()) {
+        if (unbound_enum_argument(tu.args[i]) && !is_unknown(fu.args[i])) {
           return true;
         }
         i = i + 1;
@@ -7035,7 +7092,10 @@ function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: Unio
   let fa: typeinfo.Type[] = nominal_args(from);
   let ta: typeinfo.Type[] = nominal_args(to);
   if (fa.len() != ta.len()) {
-    return fa.len() > 0 && ta.len() > 0;
+    if (ta.len() == 0) {
+      return settles_any_argument(fa);
+    }
+    return fa.len() > 0;
   }
   let i: i32 = 0;
   while (i < fa.len()) {
@@ -7043,6 +7103,17 @@ function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: Unio
       return true;
     }
     i = i + 1;
+  }
+  return false;
+}
+
+// A generic type named without arguments binds every parameter to never, so
+// it holds no value whose construction settled one.
+function settles_any_argument(args: typeinfo.Type[]): boolean {
+  for a in args {
+    if (!is_unknown(a)) {
+      return true;
+    }
   }
   return false;
 }
@@ -7810,7 +7881,11 @@ function name_with_args_label(name: string, args: typeinfo.Type[]): string {
     if (i > 0) {
       out = out + ", ";
     }
-    out = out + type_label(args[i]);
+    if (unbound_enum_argument(args[i])) {
+      out = out + "_";
+    } else {
+      out = out + type_label(args[i]);
+    }
     i = i + 1;
   }
   return out + "]";
@@ -7930,6 +8005,32 @@ function keep_code(diags: util.Diag[], code: string): util.Diag[] {
   return out;
 }
 
+// The diagnostics for `value` flowing into a slot of type `ty`; `what` names
+// the slot in the E002 for a mismatch.
+function value_dest_diags(value: ast.Expr, cur: Scope, ty: typeinfo.Type, unions: UnionSig[], what: string, line: i32, col: i32): util.Diag[] {
+  let t: typeinfo.Type = check_expr(value, cur);
+  let out: util.Diag[] = int_dest_range_diags(value, ty);
+  out = util.append_diags(out, ctor_payload_diags(value, ty, cur));
+  let bound: util.Diag[] = dest_bound_diags(value, ty, cur);
+  out = util.append_diags(out, bound);
+  if (!use_untyped_call(value) && bound.len() == 0 && !is_unknown(t) && !settles_to(value, ty, cur) && !(type_assignable(t, ty, unions) && dyn_conforms(t, ty, cur))) {
+    out = out.append(dg_at("E002", what + ": expected " + type_label(ty) + ", got " + type_label(t) + str_copy_hint(t, ty), line, col));
+  }
+  return out;
+}
+
+function const_value_diags(fd: parser.FuncDecl, s: Scope, ty: typeinfo.Type, unions: UnionSig[]): util.Diag[] {
+  if (is_unknown(ty)) {
+    return [];
+  }
+  for st in fd.body {
+    if let ast.StmtReturn(r) = st {
+      return value_dest_diags(r.value, s, ty, unions, "const " + fd.name, fd.line, fd.col);
+    }
+  }
+  return [];
+}
+
 function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: UnionSig[]): util.Diag[] {
   let out: util.Diag[] = [];
   if (is_unknown(ret_ty)) {
@@ -7952,14 +8053,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         if (bare) {
           out = out.append(dg_at("E012", "return without value in function returning " + type_label(ret_ty), r.line, r.col));
         } else {
-          let t: typeinfo.Type = check_expr(r.value, cur);
-          out = util.append_diags(out, int_dest_range_diags(r.value, ret_ty));
-          out = util.append_diags(out, ctor_payload_diags(r.value, ret_ty, cur));
-          let rbound: util.Diag[] = dest_bound_diags(r.value, ret_ty, cur);
-          out = util.append_diags(out, rbound);
-          if (!use_untyped_call(r.value) && rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
-            out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
-          }
+          out = util.append_diags(out, value_dest_diags(r.value, cur, ret_ty, unions, "return value", r.line, r.col));
         }
       },
       ast.StmtIf(f) => {
@@ -9726,7 +9820,40 @@ function unsettled_marked_at(t: typeinfo.Type, e: ast.Expr, path: i32[], lits: s
       return typeinfo.TypeI32 { ...i, polymorphic: true };
     }
   }
+  if let typeinfo.TypeArray(a) = t {
+    return unsettled_array_marked(a, e, path, lits);
+  }
   return t;
+}
+
+function unsettled_array_marked(a: typeinfo.TypeArray, e: ast.Expr, path: i32[], lits: string[]): typeinfo.Type {
+  if let typeinfo.TypeI32(ei) = a.elem {
+    if (!a.view && !ei.is_char && unsettled_array_part(e, path, 0, lits)) {
+      return typeinfo.TypeArray { ...a, elem: typeinfo.TypeI32 { ...ei, polymorphic: true } };
+    }
+  }
+  return a;
+}
+
+function unsettled_array_part(e: ast.Expr, path: i32[], at: i32, lits: string[]): boolean {
+  if (at < path.len()) {
+    if let ast.ExprTuple(t) = e {
+      return path[at] < t.elements.len() && unsettled_array_part(t.elements[path[at]], path, at + 1, lits);
+    }
+    return false;
+  }
+  if let ast.ExprArray(al) = e {
+    if (al.elem_ty.len() > 0 || al.elements.len() == 0) {
+      return false;
+    }
+    for el in al.elements {
+      if (!unsettled_tree(el, lits)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 function value_block_body(e: ast.Expr): (ast.Stmt[], boolean) {
@@ -10214,7 +10341,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): b
   let bound: boolean = exit_bound || lets_bind_exit(stmts);
   match (last) {
     ast.StmtExpr(x) => {
-      return !bound && parser.calls_exit(x.value);
+      return parser.calls_exit(x.value, bound);
     },
     ast.StmtBreak(_) => {
       return jumps;
@@ -11674,9 +11801,10 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
 
 function declared_payloads_settle(c: ast.ExprCall, want: typeinfo.Type, s: Scope): boolean {
   let vname: string = ctor_variant_name(c);
+  let whole: typeinfo.Type = bare_at_never(want, s);
   let i: i32 = 0;
   while (i < c.args.len()) {
-    let field: typeinfo.Type = generic_variant_payload_type(s, vname, want, i);
+    let field: typeinfo.Type = generic_variant_payload_type(s, vname, whole, i);
     if (is_unknown(field) || !settles_or_assignable(c.args[i], field, s)) {
       return false;
     }
@@ -11728,6 +11856,19 @@ function struct_lit_settles(e: ast.Expr, want: typeinfo.TypeStruct, s: Scope): b
     return s.lookup_struct(sl.type_name).type_params.len() == want.args.len();
   }
   return false;
+}
+
+function bare_at_never(t: typeinfo.Type, s: Scope): typeinfo.Type {
+  if let typeinfo.TypeUnion(u) = t {
+    if (u.args.len() == 0) {
+      let args: typeinfo.Type[] = [];
+      while (args.len() < s.lookup_union(u.name).type_params.len()) {
+        args = args.append(typeinfo.TypeNever { tag: 0 });
+      }
+      return typeinfo.TypeUnion { name: u.name, args: args };
+    }
+  }
+  return t;
 }
 
 function settles_or_assignable(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
@@ -12847,6 +12988,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
   match (c.callee) {
     ast.ExprIdent(id) => {
       if (id.name == "__set_field" && c.args.len() == 3) {
+        out = util.append_diags(out, immutable_assignment_value_diags(c, s, true));
         let fld: string = "field";
         match (c.args[1]) {
           ast.ExprString(fs) => {
@@ -12857,9 +12999,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
         if let typeinfo.TypeStruct(ost) = check_expr(c.args[0], s) {
           out = util.append_diags(out, opaque_access_diags(s.lookup_struct(ost.name), s, "access a field of", expr_line(c.args[1]), expr_col(c.args[1])));
         }
-        out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
+        out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with `T { ...old, " + fld + ": value }`", expr_line(c.args[1]), expr_col(c.args[1])));
       }
       if (id.name == "__set_index" && c.args.len() == 3) {
+        out = util.append_diags(out, immutable_assignment_value_diags(c, s, false));
         out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", c.line, c.col));
       }
       if (id.name == "cell_new" && c.args.len() == 1) {
@@ -12878,7 +13021,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           }
         }
       }
-      if (!s.defines(id.name)) {
+      if (s.ident_binding(id) < 0) {
         let sig: FuncSig = s.lookup_sig(id.name);
         if (sig.name.len() > 0 && sig.all_type_params.len() > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.all_type_params.len()) {
           out = out.append(dg_at("E040", util.arity_message(id.name, sig.all_type_params.len(), c.type_args.len(), "type argument"), c.line, c.col));
@@ -14264,7 +14407,7 @@ function (s: Scope) callee_resolves(c: ast.ExprCall): boolean {
 function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   match (c.callee) {
     ast.ExprIdent(id) => {
-      if (!s.defines(id.name)) {
+      if (s.ident_binding(id) < 0) {
         return s.lookup_sig(id.name).param_types;
       }
       if let typeinfo.TypeFunc(f) = s.lookup(id.name) {
@@ -14496,7 +14639,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
 }
 
 function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
-  let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "" };
+  let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "", builtin: false };
   let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   return check_expr(call, s.bind("__for_iter", t));
 }
@@ -15434,6 +15577,33 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
   return out;
 }
 
+function immutable_assignment_type(c: ast.ExprCall, s: Scope, field: boolean): typeinfo.Type {
+  let target: typeinfo.Type = check_expr(c.args[0], s);
+  if (!field) {
+    return index_result_type(target, check_expr(c.args[1], s));
+  }
+  if let ast.ExprString(name) = c.args[1] {
+    let access: ast.ExprFieldAccess = ast.ExprFieldAccess { obj: c.args[0], field: name.value, line: name.line, col: name.col, ty: "", const_read: false };
+    return field_access_result_type(access, target, s);
+  }
+  return t_unknown("assignment field name");
+}
+
+function immutable_assignment_value_diags(c: ast.ExprCall, s: Scope, field: boolean): util.Diag[] {
+  let target: typeinfo.Type = immutable_assignment_type(c, s, field);
+  let value: ast.Expr = c.args[2];
+  let actual: typeinfo.Type = check_expr(value, s);
+  let out: util.Diag[] = int_dest_range_diags(value, target);
+  out = util.append_diags(out, ctor_payload_diags(value, target, s));
+  let bounds: util.Diag[] = dest_bound_diags(value, target, s);
+  out = util.append_diags(out, bounds);
+  let misfit: boolean = !settles_to(value, target, s) && !coercible(actual, target, s);
+  if (bounds.len() == 0 && !is_unknown(target) && !is_unknown(actual) && (misfit || fills_unsettled_argument(actual, target))) {
+    out = out.append(dg_at("E003", "assignment: expected " + type_label(target) + ", got " + type_label(actual) + str_copy_hint(actual, target), expr_line(c.callee), expr_col(c.callee)));
+  }
+  return out;
+}
+
 function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.Diag[] {
   let out: util.Diag[] = [];
   if (!cur.defines(a.target) && cur.lookup_sig(a.target).is_const) {
@@ -15443,16 +15613,21 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
   } else if (cur.is_const_param(a.target)) {
     out = out.append(dg_at("E091", "cannot assign to const parameter " + a.target + ": it is the constant its instance is made for", a.target_line, a.target_col));
   } else {
-    let tt: typeinfo.Type = cur.lookup(a.target);
-    let vt: typeinfo.Type = check_expr(a.value, cur);
-    out = util.append_diags(out, int_dest_range_diags(a.value, tt));
-    out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
-    let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
-    out = util.append_diags(out, abound);
-    let misfit: boolean = !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
-    if (!parser.is_iflet_value_local(a.target) && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
-      out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
-    }
+    out = assign_value_diags(a, cur, unions);
+  }
+  return out;
+}
+
+function assign_value_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  let tt: typeinfo.Type = cur.lookup(a.target);
+  let vt: typeinfo.Type = check_expr(a.value, cur);
+  let out: util.Diag[] = int_dest_range_diags(a.value, tt);
+  out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
+  let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
+  out = util.append_diags(out, abound);
+  let misfit: boolean = !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
+  if (!parser.is_iflet_value_local(a.target) && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
+    out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
   }
   return out;
 }
@@ -17567,7 +17742,7 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   match (callee) {
     ast.ExprIdent(id) => {
-      if (util.has_str(ctx.bound, id.name)) {
+      if (!id.builtin && util.has_str(ctx.bound, id.name)) {
         if let typeinfo.TypeFunc(ft) = check_expr(callee, ctx.scope) {
           return ft.param_own;
         }
@@ -17591,7 +17766,7 @@ function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
       let d: util.Diag[] = [];
-      if (ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
+      if (!id.builtin && ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
         d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(util.pos_line(ow_moved_line(moved, id.name))) + ")", id.line, id.col));
       }
       return OwnWalk { moved: moved, diags: d };
@@ -21824,7 +21999,11 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       if (is_unknown(rty) && util.index_of_str(fsc.tparams, rname) < 0 && e064_unknown_bare(rname, fsc.type_names())) {
         rty = typeinfo.TypeStruct { name: rname, args: [] };
       }
-      function_diags = util.append_diags(function_diags, ret_diags(dbody, fsc, rty, unions));
+      if (mod.funcs[i].is_const && mod.funcs[i].receiver_type.len() == 0) {
+        function_diags = util.append_diags(function_diags, const_value_diags(mod.funcs[i], fsc, rty, unions));
+      } else {
+        function_diags = util.append_diags(function_diags, ret_diags(dbody, fsc, rty, unions));
+      }
       if (mod.funcs[i].import_iface.len() == 0 && !block_exits(mod.funcs[i].body, fsc.defines("exit"))) {
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
       }
@@ -23363,7 +23542,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
   match (e) {
     ast.ExprIdent(id) => {
       let it: typeinfo.Type = check_ident_expr(id, s);
-      return Typed { e: ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(it) }, ty: it, known: true };
+      return Typed { e: ast.ExprIdent { ...id, ty: type_to_irtag(it) }, ty: it, known: true };
     },
     ast.ExprBinary(b) => {
       let lta: Typed = annotate_typed(b.left, s);

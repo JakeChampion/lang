@@ -22,29 +22,31 @@ pub function children_mode(): i32 {
   return 4;
 }
 
-pub struct Abi { known: boolean, modes: i32[], result_unit: boolean, pair_first: boolean, pair_second: i32, result_word: boolean }
+// split_second and split_third: the masks of the two pair words of a callee
+// that returns a two-word payload in three words.
+pub struct Abi { known: boolean, modes: i32[], result_unit: boolean, pair_first: boolean, pair_second: i32, split_second: i32, split_third: i32, result_word: boolean }
 
 pub function unknown_abi(): Abi {
-  return Abi { known: false, modes: [], result_unit: false, pair_first: false, pair_second: -2, result_word: false };
+  return Abi { known: false, modes: [], result_unit: false, pair_first: false, pair_second: -2, split_second: -2, split_third: -2, result_word: false };
 }
 
 pub function abi(modes: i32[], result_unit: boolean): Abi {
-  return Abi { known: true, modes: modes, result_unit: result_unit, pair_first: false, pair_second: -2, result_word: false };
+  return Abi { known: true, modes: modes, result_unit: result_unit, pair_first: false, pair_second: -2, split_second: -2, split_third: -2, result_word: false };
 }
 
 function second_holds(pair_second: i32): boolean {
   return pair_second == -1 || pair_second > 0;
 }
 
-pub struct Abis { names: util.NameIndex, modes: i32[][], results: boolean[], firsts: boolean[], seconds: i32[], words: boolean[] }
+pub struct Abis { names: util.NameIndex, modes: i32[][], results: boolean[], firsts: boolean[], seconds: i32[], splits: i32[][], words: boolean[] }
 
 pub function no_abis(): Abis {
   let none: string[] = [];
-  return Abis { names: util.name_index(none), modes: [], results: [], firsts: [], seconds: [], words: [] };
+  return Abis { names: util.name_index(none), modes: [], results: [], firsts: [], seconds: [], splits: [], words: [] };
 }
 
-pub function abis_of(names: string[], modes: i32[][], results: boolean[], firsts: boolean[], seconds: i32[], words: boolean[]): Abis {
-  return Abis { names: util.name_index(names), modes: modes, results: results, firsts: firsts, seconds: seconds, words: words };
+pub function abis_of(names: string[], modes: i32[][], results: boolean[], firsts: boolean[], seconds: i32[], splits: i32[][], words: boolean[]): Abis {
+  return Abis { names: util.name_index(names), modes: modes, results: results, firsts: firsts, seconds: seconds, splits: splits, words: words };
 }
 
 function env_abi(name: string): Abi {
@@ -73,7 +75,7 @@ function byte_view_abi(name: string): Abi {
 pub function (a: Abis) lookup(name: string): Abi {
   let at: i32 = a.names.find(name);
   if (at >= 0) {
-    return Abi { known: true, modes: a.modes[at], result_unit: a.results[at], pair_first: a.firsts[at], pair_second: a.seconds[at], result_word: a.words[at] };
+    return Abi { known: true, modes: a.modes[at], result_unit: a.results[at], pair_first: a.firsts[at], pair_second: a.seconds[at], split_second: a.splits[at][0], split_third: a.splits[at][1], result_word: a.words[at] };
   }
   if (rcsigs.is_children_drop(name)) {
     return abi([children_mode()], false);
@@ -1004,16 +1006,59 @@ function call_origin_at(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst):
 
 function word_origin_at(w: Walk, bi: i32, pos: i32): Found {
   let insts: ssa.SInst[] = w.f.blocks[bi].insts;
-  if (pos == 0 || insts[pos - 1].kind_tag != 11) {
+  let c: i32 = pos - 1;
+  while (c >= 0 && is_call_word(insts[c])) {
+    c = c - 1;
+  }
+  if (c < 0 || insts[c].kind_tag != 11) {
     return plain(org_unknown());
   }
-  let prev: ssa.SInst = insts[pos - 1];
-  let a: Abi = w.abis.lookup(prev.str);
-  let fd: Found = plain(word_origin(a, true));
-  if (a.pair_second > 0 && prev.result >= 0) {
-    fd = Found { ...fd, tag: prev.result, mask: a.pair_second };
+  let call: ssa.SInst = insts[c];
+  let a: Abi = w.abis.lookup(call.str);
+  let mask: i32 = word_mask(a, word_slot(w, insts[pos]), three_words(w, insts, c));
+  let fd: Found = plain(word_origin(Abi { ...a, pair_second: mask }, true));
+  if (mask > 0 && call.result >= 0) {
+    fd = Found { ...fd, tag: call.result, mask: mask };
   }
   return fd;
+}
+
+function is_call_word(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 59 && ins.str == "call_word";
+}
+
+// The pair word a call_word or ret_word moves, or -1 for a scalar lane.
+function word_slot(w: Walk, ins: ssa.SInst): i32 {
+  if (ins.imm < 0 || ins.imm >= w.irops.len() || w.irops[ins.imm].width == 64) {
+    return 0 - 1;
+  }
+  return w.irops[ins.imm].i32_imm;
+}
+
+// Whether the call at c hands back a second pair word.
+function three_words(w: Walk, insts: ssa.SInst[], c: i32): boolean {
+  let first: i32 = c + 1;
+  for k in first..insts.len() {
+    if (!is_call_word(insts[k])) {
+      return false;
+    }
+    if (word_slot(w, insts[k]) == 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The variants whose word at slot holds a unit. A callee's own first word
+// can read pair_second either way: it names every variant split_second does.
+function word_mask(a: Abi, slot: i32, split: boolean): i32 {
+  if (slot == 1) {
+    return a.split_third;
+  }
+  if (slot == 0 && split) {
+    return a.split_second;
+  }
+  return a.pair_second;
 }
 
 function named_origin(w: Walk, ins: ssa.SInst): i32 {
@@ -1600,7 +1645,7 @@ function touch_call(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
 
 function touch_named(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
   if (ins.str == "ret_word") {
-    if (w.self_abi.pair_second != 0) {
+    if (word_mask(w.self_abi, word_slot(w, ins), false) != 0) {
       t = touch_all(t, w, ins.args);
     }
     return t;
@@ -2278,10 +2323,11 @@ function apply_call(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progr
 }
 
 function apply_ret_word(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
-  if (second_holds(w.self_abi.pair_second)) {
-    return spend(p, w, ins.args[0], block, "returned as the second word");
+  let mask: i32 = word_mask(w.self_abi, word_slot(w, ins), false);
+  if (second_holds(mask)) {
+    return spend(p, w, ins.args[0], block, "returned as a pair word");
   }
-  if (w.self_abi.pair_second == -2) {
+  if (mask == -2) {
     return spend_if_held(p, w, ins.args[0]);
   }
   return p;

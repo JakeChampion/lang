@@ -2,7 +2,8 @@ import "./typeinfo";
 
 pub struct ExprNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
 
-pub struct ExprIdent { name: string, line: i32, col: i32, ty: string }
+// builtin: names the builtin itself, which no binding in scope can capture.
+pub struct ExprIdent { name: string, line: i32, col: i32, ty: string, builtin: boolean }
 
 pub struct ExprString { value: string, line: i32, col: i32 }
 
@@ -316,7 +317,7 @@ pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 
 pub struct StmtExpr { value: Expr, line: i32 }
 
-pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], lits: LitArm[], arms: MatchArm[], line: i32, col: i32, origin: string }
+pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], lits: LitArm[], arms: MatchArm[], line: i32, col: i32, origin: string, else_chained: boolean }
 
 pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32, else_chained: boolean, sugar: MatchSugar, origin: string }
 
@@ -332,7 +333,7 @@ pub type Pattern = PatVariant | PatWildcard;
 
 pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard: Expr, has_guard: boolean, alt_cont: boolean }
 
-pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[] }
+pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[], else_chained: boolean }
 
 pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32 }
 

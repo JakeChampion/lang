@@ -8,7 +8,11 @@ import "./semscalarreturn";
 
 pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
-struct Shape { ty: typeinfo.Type, names: string[], payloads: typeinfo.Type[], has: boolean[], tuple: boolean, lanes: boolean }
+// split: a variant whose payload is two words (parts) returns them in the two
+// pair words beside its position, so the payload is never built.
+struct Shape { ty: typeinfo.Type, names: string[], payloads: typeinfo.Type[], has: boolean[], tuple: boolean, lanes: boolean, split: boolean, parts: typeinfo.Type[][] }
+
+struct Pairing { ok: boolean[], split: boolean[] }
 
 function max_variants(): i32 {
   return 16;
@@ -16,48 +20,51 @@ function max_variants(): i32 {
 
 pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolean[], unnamed: boolean[]): Paired {
   let ix: util.NameIndex = util.name_index(names);
-  let paired: boolean[] = pairable(funcs, names, ix, rewrite, unnamed);
+  let pg: Pairing = pairable(funcs, names, ix, rewrite, unnamed);
+  let paired: boolean[] = pg.ok;
   let out: ssasem.Func[] = [];
   let changed: boolean[] = [];
-  let i: i32 = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     let f: ssasem.Func = funcs[i];
     let c: boolean = false;
     if (paired[i]) {
       if (semscalarreturn.eligible(f, f.result)) {
         f = semscalarreturn.callee(f);
       } else {
-        f = pair_callee(f, shape_of(f, f.result));
+        f = pair_callee(f, shape_of(f, f.result, pg.split[i]));
       }
       c = true;
     }
     if (rewrite[i] && calls_paired(f, ix, paired)) {
-      f = rebuild_calls(f, funcs, ix, paired);
+      f = rebuild_calls(f, funcs, ix, pg);
       c = true;
     }
     out = out.append(f);
     changed = changed.append(c);
-    i = i + 1;
   }
   return Paired { funcs: out, changed: changed };
 }
 
-function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[]): boolean[] {
+function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[]): Pairing {
   let refs: Refs = refs_of(funcs, ix, rewrite);
   let ok: boolean[] = [];
+  let split: boolean[] = [];
   let dead: boolean[] = [];
-  let i: i32 = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     let direct: boolean = refs.calls[i] > 0 && !refs.other[i];
-    ok = ok.append(direct && rewrite[i] && unnamed[i] && shaped(funcs[i]));
+    let paired: boolean = direct && rewrite[i] && unnamed[i] && shaped(funcs[i]);
+    ok = ok.append(paired);
+    split = split.append(paired && splits(funcs[i]));
     dead = dead.append(refs.calls[i] == 0 && !refs.other[i] && rewrite[i] && unnamed[i]);
-    i = i + 1;
   }
-  return taken_apart(funcs, ix, ok, dead);
+  return taken_apart(funcs, ix, Pairing { ok: ok, split: split }, dead);
 }
 
-function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], dead: boolean[]): boolean[] {
-  let ok: boolean[] = ok0;
+// A callee stays paired while no caller keeps its value whole, and returns a
+// payload in two words while no caller keeps that payload whole either.
+function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dead: boolean[]): Pairing {
+  let ok: boolean[] = pg0.ok;
+  let split: boolean[] = pg0.split;
   let changed: boolean = true;
   while (changed) {
     changed = false;
@@ -69,17 +76,24 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], d
       }
       let whole: boolean[] = [];
       let scalar_whole: boolean[] = [];
+      let inner: boolean[] = [];
       let computed: boolean = false;
       for b in funcs[j].graph.blocks {
         for ins in b.insts {
           let at: i32 = paired_callee(ins, ix, ok);
           if (at >= 0 && !computed) {
+            let defs: ssa.SInst[] = defs_of(funcs[j].graph);
             whole = whole_values(funcs[j], ix, ok, ok[j]);
-            scalar_whole = semscalarreturn.donors(funcs[j], defs_of(funcs[j].graph), whole);
+            scalar_whole = semscalarreturn.donors(funcs[j], defs, whole);
+            inner = payloads_whole(funcs[j], defs, ix, Pairing { ok: ok, split: split }, ok[j], ok[j] && !split[j]);
             computed = true;
           }
           if (at >= 0 && keeps_result(funcs[at], ins.result, whole, scalar_whole)) {
             ok = ok.with(at, false);
+            split = split.with(at, false);
+            changed = true;
+          } else if (at >= 0 && split[at] && inner[ins.result]) {
+            split = split.with(at, false);
             changed = true;
           }
         }
@@ -87,7 +101,25 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], d
       j = j + 1;
     }
   }
-  return ok;
+  return Pairing { ok: ok, split: split };
+}
+
+// The values whose two-word variant payload is kept whole: read out and used
+// whole, or returned whole by a callee that hands it on in one word.
+function payloads_whole(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, pg: Pairing, paired: boolean, returns_whole: boolean): boolean[] {
+  let whole: boolean[] = through_joins(defs, seeded(f, defs, ix, pg.ok, pg.split, paired));
+  let inner: boolean[] = __alloc_bool(f.graph.nvals);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.variant_get() && whole[ins.result] && may_split(f.values[ins.result])) {
+        inner = marked_all(inner, ins.args);
+      }
+    }
+    if (b.term.kind_tag == 1 && returns_whole) {
+      inner = marked_all(inner, [b.term.value]);
+    }
+  }
+  return through_joins(defs, inner);
 }
 
 function keeps_result(callee: ssasem.Func, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
@@ -107,10 +139,12 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
 
 pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
   let defs: ssa.SInst[] = defs_of(f.graph);
-  return through_joins(defs, seeded(f, defs, ix, ok, paired));
+  let none: boolean[] = [];
+  return through_joins(defs, seeded(f, defs, ix, ok, none, paired));
 }
 
-function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
+// split names the callees whose payloads a caller rebuilds as constructions.
+function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[], paired: boolean): boolean[] {
   let g: ssa.SFunc = f.graph;
   let whole: boolean[] = __alloc_bool(g.nvals);
   for b in g.blocks {
@@ -118,7 +152,7 @@ function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boole
       if (!reads_apart(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
         whole = marked_all(whole, ins.args);
       }
-      if (ins.kind_tag == 8 && !joins_apart(ins, defs, ix, ok)) {
+      if (ins.kind_tag == 8 && !joins_apart(ins, defs, ix, ok, split)) {
         whole = marked_all(whole, [ins.result]);
       }
       let donor: i32 = ssasem.update_base(ins);
@@ -168,15 +202,19 @@ pub function reads_apart(k: i32): boolean {
   return k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.tuple_get() || k == ssasem.record_get();
 }
 
-function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[]): boolean {
+function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[]): boolean {
   for a in phi.args {
     let d: ssa.SInst = through_copies(defs, a);
     let k: i32 = d.kind_tag;
-    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0) {
+    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0 && !split_payload(d, defs, ix, split)) {
       return false;
     }
   }
   return true;
+}
+
+function split_payload(d: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, split: boolean[]): boolean {
+  return split.len() > 0 && d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && paired_callee(through_copies(defs, d.args[0]), ix, split) >= 0;
 }
 
 function marked_all(own flags: boolean[], vs: i32[]): boolean[] {
@@ -214,7 +252,7 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
         let at: i32 = ix.find(ins.str);
         if (at >= 0 && ins.kind_tag == ssasem.call() && rewrite[j]) {
           calls = calls.with(at, calls[at] + 1);
-        } else if (at >= 0) {
+        } else if (at >= 0 && !names_data(ins.kind_tag)) {
           other = other.with(at, true);
         }
       }
@@ -222,6 +260,12 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
     j = j + 1;
   }
   return Refs { calls: calls, other: other };
+}
+
+// An instruction whose str is a string literal, a field or a variant, never
+// a function.
+function names_data(k: i32): boolean {
+  return k == 5 || reads_apart(k) || k == ssasem.record_new() || k == ssasem.variant_new();
 }
 
 function shaped(f: ssasem.Func): boolean {
@@ -259,8 +303,12 @@ function payloads_fit(f: ssasem.Func, e: semrecords.Enum): boolean {
 }
 
 function word(f: ssasem.Func, t: typeinfo.Type): boolean {
+  return fits_word(t) && !(ssasem.reference(t) && ssasem.holds_view(f, t));
+}
+
+function fits_word(t: typeinfo.Type): boolean {
   if (ssasem.reference(t)) {
-    return !ssasem.holds_view(f, t);
+    return true;
   }
   if (ssasem.is_wide(t) || ssasem.is_float(t)) {
     return false;
@@ -268,29 +316,92 @@ function word(f: ssasem.Func, t: typeinfo.Type): boolean {
   return ssasem.is_integer(t) || ssasem.is_bool(t) || ssasem.is_char(t) || semtypes.is_handle(t);
 }
 
+function may_split(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return true;
+  }
+  return false;
+}
+
+function splits(f: ssasem.Func): boolean {
+  let at: i32 = semrecords.find_enum(f.enums, f.result);
+  if (at < 0 || semscalarreturn.variant_in_lanes(f.enums[at])) {
+    return false;
+  }
+  for v in f.enums[at].variants {
+    if (v.fields.len() == 1 && split_parts(f.records, f.finalizers, v.fields[0].ty).len() == 2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The two words a variant payload splits into: a pair, or a record of two
+// fields, each of which fits a word. Empty when the payload stays one word.
+// The payload of a paired variant holds no view, so neither part does.
+pub function split_parts(records: semrecords.Records, finalizers: ssasem.Finalizer[], t: typeinfo.Type): typeinfo.Type[] {
+  if let typeinfo.TypeTuple(tup) = t {
+    return two_words(tup.elements);
+  }
+  let parts: typeinfo.Type[] = [];
+  if let typeinfo.TypeStruct(s) = t {
+    let at: i32 = semrecords.find(records, t);
+    if (at >= 0 && !records.list[at].views && ssasem.finalizer_index(finalizers, s.name) < 0) {
+      for field in records.list[at].fields {
+        parts = parts.append(field.ty);
+      }
+    }
+  }
+  return two_words(parts);
+}
+
+function two_words(parts: typeinfo.Type[]): typeinfo.Type[] {
+  if (parts.len() != 2 || !fits_word(parts[0]) || !fits_word(parts[1])) {
+    return [];
+  }
+  return parts;
+}
+
 function carried(f: ssasem.Func, t: typeinfo.Type): boolean {
   return word(f, t) || ssasem.is_wide(t) || ssasem.is_float(t);
 }
 
-function shape_of(f: ssasem.Func, ty: typeinfo.Type): Shape {
+function shape_of(f: ssasem.Func, ty: typeinfo.Type, split: boolean): Shape {
   if let typeinfo.TypeTuple(tup) = ty {
-    return Shape { ty: ty, names: [], payloads: tup.elements, has: [true, true], tuple: true, lanes: false };
+    return Shape { ty: ty, names: [], payloads: tup.elements, has: [true, true], tuple: true, lanes: false, split: false, parts: [] };
   }
   let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, ty)];
   let names: string[] = [];
   let payloads: typeinfo.Type[] = [];
   let has: boolean[] = [];
+  let parts: typeinfo.Type[][] = [];
   for v in e.variants {
     names = names.append(v.name);
+    let two: typeinfo.Type[] = [];
     if (v.fields.len() == 1) {
       payloads = payloads.append(v.fields[0].ty);
       has = has.append(true);
+      if (split) {
+        two = split_parts(f.records, f.finalizers, v.fields[0].ty);
+      }
     } else {
       payloads = payloads.append(ty);
       has = has.append(false);
     }
+    parts = parts.append(two);
   }
-  return Shape { ty: ty, names: names, payloads: payloads, has: has, tuple: false, lanes: semscalarreturn.variant_in_lanes(e) };
+  return Shape { ty: ty, names: names, payloads: payloads, has: has, tuple: false, lanes: semscalarreturn.variant_in_lanes(e), split: split, parts: parts };
+}
+
+// The types a variant's payload goes back in, one per pair word.
+function word_types(sh: Shape, at: i32): typeinfo.Type[] {
+  if (sh.parts[at].len() == 2) {
+    return sh.parts[at];
+  }
+  return [sh.payloads[at]];
 }
 
 function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
@@ -306,20 +417,23 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
         f = pair_return(f, bi, sh, d);
       } else if (d.kind_tag == ssasem.variant_new() && semtypes.equal(f.values[d.result], sh.ty)) {
         let at: i32 = util.index_of_str(sh.names, d.str);
-        let arm: Arm = arm_return(Arm { f: f, insts: b.insts, tag: 0 - 1 }, sh, at, d.args);
+        let arm: Arm = arm_return(Arm { f: f, insts: b.insts, tag: 0 - 1 }, sh, at, d.args, defs);
         f = with_block(arm.f, bi, ssa.SBlock { ...b, insts: arm.insts, term: ret(arm.tag) });
       } else {
-        f = return_tested(f, bi, sh);
+        f = return_tested(f, bi, sh, defs);
       }
     }
     bi = bi + 1;
   }
   let calls: ssasem.Contract[] = f.calls;
   if (sh.tuple) {
-    calls = with_contract(calls, pair_set_contract(sh.payloads[1]));
+    calls = with_contract(calls, pair_set_contract(sh.payloads[1], 0));
   } else if (!sh.lanes) {
-    for t in sh.payloads {
-      calls = with_contract(calls, pair_set_contract(t));
+    for i in 0..sh.payloads.len() {
+      let ts: typeinfo.Type[] = word_types(sh, i);
+      for slot in 0..ts.len() {
+        calls = with_contract(calls, pair_set_contract(ts[slot], slot));
+      }
     }
   }
   return ssasem.Func { ...f, result: pair_result(sh), calls: calls };
@@ -353,27 +467,62 @@ function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, d: ssa.SInst): ssasem.
   }
   let set: i32 = f.values.len();
   f = with_value(f, t_i32());
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [second], imm: 0, str: pair_set_name(sh.payloads[1]) });
+  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [second], imm: 0, str: pair_set_name(sh.payloads[1], 0) });
   return with_block(f, bi, ssa.SBlock { ...b, insts: insts, term: ret(first) });
 }
 
 struct Arm { f: ssasem.Func, insts: ssa.SInst[], tag: i32 }
 
-function arm_return(a: Arm, sh: Shape, at: i32, payload: i32[]): Arm {
+function arm_return(a0: Arm, sh: Shape, at: i32, payload: i32[], defs: ssa.SInst[]): Arm {
   if (sh.lanes) {
-    return arm_lanes(a, sh, at, payload);
+    return arm_lanes(a0, sh, at, payload);
+  }
+  let a: Arm = a0;
+  let words: i32[] = payload;
+  let ts: typeinfo.Type[] = word_types(sh, at);
+  if (payload.len() == 1 && ts.len() == 2) {
+    let p: Parts = parts_of(a, payload[0], sh.payloads[at], ts, defs);
+    a = p.a;
+    words = p.words;
   }
   let f: ssasem.Func = a.f;
   let insts: ssa.SInst[] = a.insts;
-  if (payload.len() == 1) {
+  for slot in 0..words.len() {
     let set: i32 = f.values.len();
     f = with_value(f, t_i32());
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: payload, imm: 0, str: pair_set_name(sh.payloads[at]) });
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [words[slot]], imm: 0, str: pair_set_name(ts[slot], slot) });
   }
   let tag: i32 = f.values.len();
   f = with_value(f, t_i32());
   insts = insts.append(ssa.SInst { kind_tag: 1, result: tag, args: [], imm: at, str: "" });
   return Arm { f: f, insts: insts, tag: tag };
+}
+
+struct Parts { a: Arm, words: i32[] }
+
+// A two-word payload's parts: a construction's arguments, or else read out of
+// the payload.
+function parts_of(a: Arm, v: i32, ty: typeinfo.Type, ts: typeinfo.Type[], defs: ssa.SInst[]): Parts {
+  let d: ssa.SInst = through_copies(defs, v);
+  let built: boolean = d.kind_tag == ssasem.record_new() || d.kind_tag == ssasem.tuple_new();
+  if (built && d.args.len() == 2 && semtypes.equal(a.f.values[d.result], ty)) {
+    return Parts { a: a, words: d.args };
+  }
+  let f: ssasem.Func = a.f;
+  let insts: ssa.SInst[] = a.insts;
+  let rec: i32 = semrecords.find(f.records, ty);
+  let words: i32[] = [];
+  for i in 0..ts.len() {
+    let x: i32 = f.values.len();
+    f = with_value(f, ts[i]);
+    if (rec >= 0) {
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: x, args: [v], imm: i, str: f.records.list[rec].fields[i].name });
+    } else {
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.tuple_get(), result: x, args: [v], imm: i, str: "" });
+    }
+    words = words.append(x);
+  }
+  return Parts { a: Arm { ...a, f: f, insts: insts }, words: words };
 }
 
 function arm_lanes(a: Arm, sh: Shape, at: i32, payload: i32[]): Arm {
@@ -385,7 +534,7 @@ function arm_lanes(a: Arm, sh: Shape, at: i32, payload: i32[]): Arm {
   return Arm { f: l.f, insts: l.insts, tag: l.value };
 }
 
-function return_tested(f0: ssasem.Func, bi: i32, sh: Shape): ssasem.Func {
+function return_tested(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): ssasem.Func {
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
   let v: i32 = b.term.value;
@@ -401,7 +550,7 @@ function return_tested(f0: ssasem.Func, bi: i32, sh: Shape): ssasem.Func {
       a = Arm { ...a, f: with_value(a.f, sh.payloads[i]), insts: [ssa.SInst { kind_tag: ssasem.variant_get(), result: x, args: [v], imm: 0, str: sh.names[i] }] };
       payload = [x];
     }
-    a = arm_return(a, sh, i, payload);
+    a = arm_return(a, sh, i, payload, defs);
     f = with_new_block(a.f, ssa.SBlock { id: first + i, insts: a.insts, term: ret(a.tag), preds: [tests[arm_test(i, n)]] });
     i = i + 1;
   }
@@ -432,14 +581,14 @@ function paired_call_at(b: ssa.SBlock, ix: util.NameIndex, paired: boolean[]): i
   return 0 - 1;
 }
 
-function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, paired: boolean[]): ssasem.Func {
+function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, pg: Pairing): ssasem.Func {
   let f: ssasem.Func = f0;
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
-    let k: i32 = paired_call_at(f.graph.blocks[bi], ix, paired);
+    let k: i32 = paired_call_at(f.graph.blocks[bi], ix, pg.ok);
     if (k >= 0) {
-      let callee: ssasem.Func = funcs[ix.find(f.graph.blocks[bi].insts[k].str)];
-      f = rebuild_at(f, bi, k, callee);
+      let at: i32 = ix.find(f.graph.blocks[bi].insts[k].str);
+      f = rebuild_at(f, bi, k, funcs[at], pg.split[at]);
     } else {
       bi = bi + 1;
     }
@@ -447,14 +596,14 @@ function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex
   return f;
 }
 
-function rebuild_at(f0: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
+function rebuild_at(f0: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func, split: boolean): ssasem.Func {
   if (semscalarreturn.eligible(callee, callee.result)) {
     return semscalarreturn.caller(f0, bi, k, callee);
   }
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
   let call: ssa.SInst = b.insts[k];
-  let sh: Shape = shape_of(callee, callee.result);
+  let sh: Shape = shape_of(callee, callee.result, split);
   if (sh.tuple) {
     return rebuild_pair(f, bi, k, sh);
   }
@@ -467,11 +616,21 @@ function captured(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
   if (sh.lanes) {
     return captured_lanes(f0, call, sh);
   }
+  let count: i32 = 1;
+  if (sh.split) {
+    count = 2;
+  }
   let tag: i32 = f0.values.len();
   let w: i32 = tag + 1;
-  let f: ssasem.Func = with_value(with_value(f0, t_i32()), t_usize());
-  let insts: ssa.SInst[] = [ssa.SInst { ...call, result: tag, imm: w + 1 }, ssa.SInst { kind_tag: ssasem.call(), result: w, args: [tag], imm: 0, str: pair_word_name() }];
-  return Captured { f: f, insts: insts, tag: tag, w: w, words: [] };
+  let f: ssasem.Func = with_value(f0, t_i32());
+  let insts: ssa.SInst[] = [ssa.SInst { ...call, result: tag, imm: ssasem.pair_capture_imm(w, count) }];
+  let words: i32[] = [];
+  for slot in 0..count {
+    f = with_value(f, t_usize());
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w + slot, args: [tag], imm: 0, str: pair_word_name(slot) });
+    words = words.append(w + slot);
+  }
+  return Captured { f: f, insts: insts, tag: tag, w: w, words: words };
 }
 
 function captured_lanes(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
@@ -505,9 +664,25 @@ function arm_payload(f: ssasem.Func, insts: ssa.SInst[], sh: Shape, i: i32, c: C
   if (sh.lanes) {
     return semscalarreturn.from_lanes(f, insts, c.words, sh.payloads[i]);
   }
-  let x: i32 = f.values.len();
-  let g: ssasem.Func = with_value(f, sh.payloads[i]);
-  return semscalarreturn.Lanes { f: g, insts: insts.append(ssa.SInst { kind_tag: ssasem.call(), result: x, args: [c.w], imm: 0, str: word_as_name(sh.payloads[i]) }), value: x };
+  let ts: typeinfo.Type[] = word_types(sh, i);
+  let g: ssasem.Func = f;
+  let out: ssa.SInst[] = insts;
+  let parts: i32[] = [];
+  for slot in 0..ts.len() {
+    let x: i32 = g.values.len();
+    g = with_value(g, ts[slot]);
+    out = out.append(ssa.SInst { kind_tag: ssasem.call(), result: x, args: [c.words[slot]], imm: 0, str: word_as_name(ts[slot]) });
+    parts = parts.append(x);
+  }
+  if (ts.len() == 1) {
+    return semscalarreturn.Lanes { f: g, insts: out, value: parts[0] };
+  }
+  let kind: i32 = ssasem.record_new();
+  if let typeinfo.TypeTuple(_) = sh.payloads[i] {
+    kind = ssasem.tuple_new();
+  }
+  let v: i32 = g.values.len();
+  return semscalarreturn.Lanes { f: with_value(g, sh.payloads[i]), insts: out.append(ssa.SInst { kind_tag: kind, result: v, args: parts, imm: 0, str: "" }), value: v };
 }
 
 function dispatched(bi: i32, k: i32, sh: Shape, c: Captured, callee: ssasem.Func): ssasem.Func {
@@ -572,18 +747,34 @@ function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape):
   if (sh.lanes) {
     return calls;
   }
-  calls = with_contract(calls, ssasem.Contract { name: pair_word_name(), params: [t_i32()], modes: [ssasem.value_mode()], result: t_usize() });
-  for t in sh.payloads {
-    calls = with_contract(calls, ssasem.Contract { name: word_as_name(t), params: [t_usize()], modes: [ssasem.value_mode()], result: t });
+  calls = with_contract(calls, word_contract(0));
+  if (sh.split) {
+    calls = with_contract(calls, word_contract(1));
+  }
+  for i in 0..sh.payloads.len() {
+    for t in word_types(sh, i) {
+      calls = with_contract(calls, ssasem.Contract { name: word_as_name(t), params: [t_usize()], modes: [ssasem.value_mode()], result: t });
+    }
   }
   return calls;
 }
 
-function with_callee_enum(f: ssasem.Func, callee: ssasem.Func, sh: Shape): ssasem.Func {
-  if (semrecords.find_enum(f.enums, sh.ty) >= 0) {
-    return f;
+function word_contract(slot: i32): ssasem.Contract {
+  return ssasem.Contract { name: pair_word_name(slot), params: [t_i32()], modes: [ssasem.value_mode()], result: t_usize() };
+}
+
+function with_callee_enum(f0: ssasem.Func, callee: ssasem.Func, sh: Shape): ssasem.Func {
+  let f: ssasem.Func = f0;
+  if (semrecords.find_enum(f.enums, sh.ty) < 0) {
+    f = ssasem.Func { ...f, enums: f.enums.append(callee.enums[semrecords.find_enum(callee.enums, sh.ty)]) };
   }
-  return ssasem.Func { ...f, enums: f.enums.append(callee.enums[semrecords.find_enum(callee.enums, sh.ty)]) };
+  for i in 0..sh.payloads.len() {
+    let at: i32 = semrecords.find(callee.records, sh.payloads[i]);
+    if (sh.parts[i].len() == 2 && at >= 0 && semrecords.find(f.records, sh.payloads[i]) < 0) {
+      f = ssasem.Func { ...f, records: semrecords.records_of(f.records.list.append(callee.records.list[at])) };
+    }
+  }
+  return f;
 }
 
 function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func {
@@ -599,9 +790,9 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   let p: i32 = 0;
   while (p < b.insts.len()) {
     if (p == k) {
-      insts = insts.append(ssa.SInst { ...call, result: first, imm: w + 1 });
+      insts = insts.append(ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1) });
       insts = insts.append(ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w, args: [zero], imm: 0, str: pair_word_name() });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w, args: [zero], imm: 0, str: pair_word_name(0) });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w], imm: 0, str: word_as_name(sh.payloads[1]) });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.tuple_new(), result: call.result, args: [first, second], imm: 0, str: "" });
     } else {
@@ -613,7 +804,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   let calls: ssasem.Contract[] = f.calls;
   let at: i32 = ssasem.find_contract_in(calls, call.str);
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
-  calls = with_contract(calls, ssasem.Contract { name: pair_word_name(), params: [t_i32()], modes: [ssasem.value_mode()], result: t_usize() });
+  calls = with_contract(calls, word_contract(0));
   calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
   return ssasem.Func { ...f, calls: calls };
 }
@@ -683,32 +874,60 @@ function test(f0: ssasem.Func, v: i32, j: i32, sh: Shape): Test {
   return Test { f: f, insts: insts, cond: cond };
 }
 
-pub function pair_word_name(): string {
+function pair_word_name(slot: i32): string {
+  if (slot == 1) {
+    return "__pair_word1";
+  }
   return "__pair_word";
+}
+
+// The pair word a caller's read names, or -1.
+pub function pair_word_slot(name: string): i32 {
+  if (name == "__pair_word") {
+    return 0;
+  }
+  if (name == "__pair_word1") {
+    return 1;
+  }
+  return 0 - 1;
 }
 
 pub function word_as_prefix(): string {
   return "__word_as:";
 }
 
-pub function pair_set_prefix(): string {
+function pair_set_prefix(slot: i32): string {
+  if (slot == 1) {
+    return "__pair_set1:";
+  }
   return "__pair_set:";
+}
+
+// The pair word a callee's set names, or -1.
+pub function pair_set_slot(name: string): i32 {
+  if (util.str_has_prefix(name, pair_set_prefix(0))) {
+    return 0;
+  }
+  if (util.str_has_prefix(name, pair_set_prefix(1))) {
+    return 1;
+  }
+  return 0 - 1;
 }
 
 function word_as_name(t: typeinfo.Type): string {
   return word_as_prefix() + typeinfo.spelling(t);
 }
 
-function pair_set_name(t: typeinfo.Type): string {
-  return pair_set_prefix() + typeinfo.spelling(t);
+function pair_set_name(t: typeinfo.Type, slot: i32): string {
+  return pair_set_prefix(slot) + typeinfo.spelling(t);
 }
 
-function pair_set_contract(t: typeinfo.Type): ssasem.Contract {
+function pair_set_contract(t: typeinfo.Type, slot: i32): ssasem.Contract {
   let mode: i32 = ssasem.value_mode();
   if (semtypes.needs_anchor(t)) {
     mode = ssasem.counted_mode();
   }
-  return ssasem.Contract { name: pair_set_name(t), params: [t], modes: [mode], result: t_i32() };
+  return ssasem.Contract { name: pair_set_name(t, slot), params: [t], modes: [mode], result: t_i32() };
 }
 
 function t_i32(): typeinfo.Type {
