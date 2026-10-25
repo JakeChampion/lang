@@ -27,6 +27,7 @@ Pixel values contain straight encoded sRGB and linear coverage alpha.
 `Premultiplied` explicitly identifies premultiplied encoded sRGB bytes.
 `premultiply` multiplies each encoded byte by alpha with integer nearest rounding.
 This operation does not convert the color to linear light.
+
 `unpremultiply` divides with integer nearest rounding and clamps inconsistent channels to 255.
 Zero alpha returns zero RGB. The original transparent color cannot survive premultiplication.
 Low alpha can lose substantial color precision. Round trips have no fixed one-byte error guarantee.
@@ -36,7 +37,7 @@ It composites premultiplied linear values with Porter-Duff source-over rules.
 It returns straight encoded sRGB and rounded coverage alpha.
 Two fully transparent inputs return transparent black.
 Half-opacity white over opaque black produces sRGB 188 at byte alpha 128.
-An encoded-channel blend would produce a different value.
+An encoded-channel blend produces a different value.
 
 ## Validation
 
