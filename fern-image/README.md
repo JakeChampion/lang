@@ -76,6 +76,7 @@ See [resize semantics](docs/resize.md) for coordinate and alpha rules.
 
 The [native compression audit](docs/compression-audit.md) verifies prerequisites for PNG.
 See [PNG compatibility](docs/png.md) before use.
+The separate [PNG corpus](docs/png-qualification.md) compares 964 generated cases with an offline Pillow reference.
 PNG requires the static-append compiler fix in PR #13208.
 
 The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor or bilinear chains on demand.
