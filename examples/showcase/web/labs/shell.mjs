@@ -1,14 +1,26 @@
 import { rpcRequest } from "./rpc.mjs";
 import { mountFullscreen, toast } from "/assets/ui.mjs";
 export const $ = (id) => document.getElementById(id);
+const eyebrows = {
+  Foundry: ["10", "Factory transport"],
+  Patchbay: ["11", "A shared music studio"],
+  Prism: ["12", "Progressive path tracing"],
+  Fernbase: ["13", "Transactions and recovery"],
+  Circuit: ["14", "Logic circuits"],
+  Lantern: ["15", "A searchable archive"],
+};
 export function shell(
   name,
   description,
   controls,
   stage = '<canvas id="view" tabindex="0" aria-label="Interactive application view"></canvas>',
 ) {
-  document.title = `${name} · Fern`;
-  document.body.innerHTML = `<a class="skip-link" href="#main">Skip to application</a><nav><a href="/">✳ fern / in action</a><a href="/_src/showcase/${name.toLowerCase()}.fern.md">Read the Fern source ↗</a></nav><header class="page-title"><div class="eyebrow">FERN / ${name.toUpperCase()}</div><h1>${name}</h1><p class="description">${description}</p></header><main class="lab" id="main"><div class="toolbar"><div id="actions"></div><div id="fullscreen"></div><span id="connection" class="status" role="status">Ready</span></div><aside class="sidebar">${controls}<details><summary>How this works</summary><p id="lesson" class="hint"></p><a href="/_src/showcase/${name.toLowerCase()}.fern.md">Open the source lesson</a></details></aside><section class="stage" id="stage">${stage}</section><output class="readout" id="metrics" aria-live="off">Start an experiment to measure it.</output></main>`;
+  const slug = name.toLowerCase(),
+    source = `/_src/showcase/${slug}.fern.md`,
+    [index, eyebrow] = eyebrows[name];
+  document.title = `${name} · Fern, in action`;
+  document.body.className = `app-page labs-page ${slug}-page`;
+  document.body.innerHTML = `<a class="skip-link" href="#main">Skip to application</a><header class="app-nav"><a class="brand" href="/" aria-label="Fern, in action home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Fern</span><span class="brand-suffix">in action</span></a><nav><a href="/">All examples</a><a href="${source}">View source ↗</a></nav></header><main id="main"><div class="app-heading"><section class="app-intro"><div class="eyebrow"><span>${index}</span>${eyebrow}</div><h1>${name}</h1><p>${description}</p></section></div><div class="lab"><div class="toolbar"><div id="actions"></div><div id="fullscreen"></div><span id="connection" class="status" role="status">Ready</span></div><aside class="sidebar">${controls}<details><summary>How this works</summary><p id="lesson" class="hint"></p><a href="${source}">Open the source lesson</a></details></aside><section class="stage" id="stage">${stage}</section><output class="readout" id="metrics" aria-live="off">Start an experiment to measure it.</output></div></main><footer class="app-footer"><span>Built with Fern.</span><a href="/_src/">Read the source ↗</a></footer>`;
   mountFullscreen(document.querySelector(".lab"), {
     container: $("fullscreen"),
   });

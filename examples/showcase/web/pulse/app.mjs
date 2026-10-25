@@ -37,8 +37,9 @@ function chart(id, key, format, fixedMax) {
     width = canvas.width,
     height = canvas.height;
   const values = samples.map((s) => s[key]).filter(Number.isFinite);
+  const style = getComputedStyle(canvas);
   context.clearRect(0, 0, width, height);
-  context.strokeStyle = "#68865a30";
+  context.strokeStyle = style.getPropertyValue("--chart-grid").trim();
   context.lineWidth = 1;
   for (let row = 0; row <= 3; row++) {
     const y = (row * (height - 22)) / 3 + 8;
@@ -47,15 +48,15 @@ function chart(id, key, format, fixedMax) {
     context.lineTo(width, y);
     context.stroke();
   }
-  context.font = `${Math.max(9, (width / canvas.getBoundingClientRect().width) * 9)}px monospace`;
-  context.fillStyle = "#93a38d";
+  context.font = `${Math.max(9, (width / canvas.getBoundingClientRect().width) * 9)}px "IBM Plex Mono", monospace`;
+  context.fillStyle = style.getPropertyValue("--chart-text").trim();
   if (!values.length) {
     context.fillText("No measurement available on this host.", 12, height / 2);
     return;
   }
   const maximum = Math.max(fixedMax || 1, ...values) * (fixedMax ? 1 : 1.15);
   context.fillText(format(maximum), 4, 12);
-  context.strokeStyle = "#c7df94";
+  context.strokeStyle = style.getPropertyValue("--chart-line").trim();
   context.lineWidth = 2;
   context.beginPath();
   let started = false,

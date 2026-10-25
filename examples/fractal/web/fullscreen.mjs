@@ -8,11 +8,12 @@ export function mountFullscreen(
     style.id = "fullscreen-controls-style";
     style.textContent = `
       .fullscreen-bar{grid-column:1/-1;display:flex;justify-content:flex-end;position:relative;z-index:5}
-      .fullscreen-toggle{font:inherit;font-size:12px;min-height:44px;padding:8px 14px;border:1px solid #768379;border-radius:7px;background:#f4f1e9;color:#183e32;cursor:pointer}
-      .fullscreen-toggle:focus-visible{outline:3px solid #869e48;outline-offset:3px}
+      .fullscreen-toggle{font:500 12px var(--font-mono,ui-monospace,monospace);min-height:40px;padding:8px 16px;border:1px solid var(--gray-5,#384a3f);border-radius:999rem;background:var(--bg-raised,#131e18);color:var(--white,#f2f7f3);cursor:pointer;transition:border-color .18s}
+      .fullscreen-toggle:hover{border-color:var(--accent,#3f9169)}
+      .fullscreen-toggle:focus-visible{outline:2px solid var(--fern-spore,#b08331);outline-offset:2px}
       .fullscreen-fallback{position:fixed!important;inset:0!important;z-index:10000!important;width:100%!important;height:100dvh!important;margin:0!important;box-sizing:border-box}
-      .is-fullscreen{overflow:auto;background:var(--paper,#f4f1e9);padding:12px;max-width:none!important;border-radius:0!important}
-      body.is-fullscreen{padding:0;background:var(--bg,#05060a)}
+      .is-fullscreen{overflow:auto;background:var(--bg,#101a15);padding:12px;max-width:none!important;border-radius:0!important}
+      body.is-fullscreen{padding:0;background:var(--bg,#101a15)}
     `;
     document.head.append(style);
   }
