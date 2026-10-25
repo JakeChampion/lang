@@ -128,6 +128,31 @@ function nested(box: Box): i32 {
 	}
 }
 
+func TestFormatKeepsValueElseIfChain(t *testing.T) {
+	const src = `enum Box { Full(i32), Half(i32), Empty }
+
+function chain(box: Box, n: i32): i32 {
+  let r: i32 = if let Full(v) = box { v } else if let Half(h) = box { h } else if (n > 1) { n } else { 0 };
+  let s: i32 = if (n > 1) { 1 } else if (n > 0) { 2 } else { 3 };
+  let w: i32 = if (n > 1) { 1 } else if let Half(h) = box { h } else { 3 };
+  return r + s + w;
+}
+
+function nested(box: Box, n: i32): i32 {
+  let t: i32 = if (n > 1) { 1 } else { if (n > 0) { 2 } else { 3 } };
+  let u: i32 = if let Full(v) = box { v } else { if let Half(h) = box { h } else { 0 } };
+  return t + u;
+}
+`
+	got := formatSrc(t, src)
+	if got != src {
+		t.Errorf("formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", got, src)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Errorf("format is not idempotent\n--- first ---\n%s\n--- second ---\n%s", got, again)
+	}
+}
+
 func TestFormatEmptyBlockStaysCompact(t *testing.T) {
 	got := formatSrc(t, `function f(): void {}`)
 	want := "function f(): void {}\n"

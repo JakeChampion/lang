@@ -2525,7 +2525,7 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
+		return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE, ElseChained: true}, nil
 	}
 	elseE, err := p.parseBranchBody()
 	if err != nil {
@@ -2559,7 +2559,8 @@ func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
 		return nil, err
 	}
 	var els ast.Expr
-	if p.match(lexer.Keyword, "if") {
+	chained := p.match(lexer.Keyword, "if")
+	if chained {
 		els, err = p.parseIfExpr()
 	} else {
 		els, err = p.parseBranchBody()
@@ -2577,7 +2578,7 @@ func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
 	}
 	arms := flatExprArms(raw)
 	arms = append(arms, &ast.MatchExprArm{P: pos, IsWildcard: true, Body: els})
-	return &ast.MatchExpr{P: pos, Tag: src, Arms: arms, Origin: ast.OriginIfLet}, nil
+	return &ast.MatchExpr{P: pos, Tag: src, Arms: arms, Origin: ast.OriginIfLet, ElseChained: chained}, nil
 }
 
 func (p *parser) parseBranchBody() (ast.Expr, error) {
