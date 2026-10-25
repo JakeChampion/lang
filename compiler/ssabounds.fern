@@ -6,7 +6,7 @@ import "./util";
 
 struct Rel { lo: i32, hi: i32, strict: boolean }
 
-struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[] }
+struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
 
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
@@ -21,12 +21,13 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     let insts: ssa.SInst[] = [];
     let marked: boolean = false;
     for ins in blk.insts {
-      if ((checked_index(ins) || checked_write(ins)) && g.i32s[ins.args[1]] && proven(g, b, ins.args[1], ins.args[0])) {
+      let proof: i32 = proof_of(g, b, ins);
+      if (proof == PROOF_UNCHECKED) {
         insts = insts.append(ssa.SInst { ...ins, imm: 1 });
-        marked = true;
-      } else {
+      } else if (proof == PROOF_NONE) {
         insts = insts.append(ins);
       }
+      marked = marked || proof != PROOF_NONE;
     }
     if (marked) {
       blk = ssa.SBlock { ...blk, insts: insts };
@@ -39,6 +40,23 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     return f;
   }
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+const PROOF_NONE: i32 = 0;
+
+const PROOF_UNCHECKED: i32 = 1;
+
+const PROOF_DROPPED: i32 = 2;
+
+// A checked access the facts prove becomes unchecked, and a proven group check goes.
+function proof_of(g: Graph, b: i32, ins: ssa.SInst): i32 {
+  if ((checked_index(ins) || checked_write(ins)) && g.i32s[ins.args[1]] && proven(g, b, ins.args[1], ins.args[0])) {
+    return PROOF_UNCHECKED;
+  }
+  if (group_check(ins) && group_proven(g, b, ins.args[1], ins.args[0])) {
+    return PROOF_DROPPED;
+  }
+  return PROOF_NONE;
 }
 
 function index_read(ins: ssa.SInst): boolean {
@@ -56,12 +74,44 @@ function checked_write(ins: ssa.SInst): boolean {
 function any_checked_index(f: ssasem.Func): boolean {
   for blk in f.graph.blocks {
     for ins in blk.insts {
-      if (checked_index(ins) || checked_write(ins)) {
+      if (checked_index(ins) || checked_write(ins) || group_check(ins)) {
         return true;
       }
     }
   }
   return false;
+}
+
+// The check grouped_reads places before a run of unchecked reads.
+function group_check(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.imm == ssasem.check_only();
+}
+
+// A group's index is a constant, or `(lo + span) | (lo >> 31)`: every read is in range when
+// lo is not negative and lo + span is below the length.
+function group_proven(g: Graph, b: i32, idx: i32, base: i32): boolean {
+  if (is_const(g, idx)) {
+    return const_value(g, idx) >= 0 && below(g, b, idx, base, [], depth());
+  }
+  let d: ssa.SInst = def_of(g, idx);
+  if (!binary(d, "|") || !g.i32s[root(g, idx)]) {
+    return false;
+  }
+  let top: i32 = d.args[0];
+  let sign: ssa.SInst = def_of(g, d.args[1]);
+  if (!binary(sign, ">>") || !is_const(g, sign.args[1]) || const_value(g, sign.args[1]) != 31) {
+    return false;
+  }
+  return nonneg(g, b, sign.args[0], [], depth()) && below(g, b, top, base, [], depth()) && plus_of(g, top, sign.args[0]);
+}
+
+// Whether `top` is `lo + c` for a constant c, or lo itself.
+function plus_of(g: Graph, top: i32, lo: i32): boolean {
+  if (same(g, top, lo)) {
+    return true;
+  }
+  let d: ssa.SInst = def_of(g, top);
+  return binary(d, "+") && same(g, d.args[0], lo) && is_const(g, d.args[1]) && const_value(g, d.args[1]) >= 0;
 }
 
 function any_index_read(f: ssasem.Func): boolean {
@@ -111,8 +161,8 @@ function graph_of(f: ssasem.Func): Graph {
     }
     b = b + 1;
   }
-  let g: Graph = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [] };
   let at: i32[] = ssadeps.position_of(f.graph);
+  let g: Graph = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
   b = 0;
   while (b < nb) {
     let blk: ssa.SBlock = f.graph.blocks[b];
@@ -130,6 +180,18 @@ function graph_of(f: ssasem.Func): Graph {
     b = b + 1;
   }
   return with_dominators(g, ssadeps.dominates(f.graph), nb);
+}
+
+function pred_positions(graph: ssa.SFunc, at: i32[]): i32[][] {
+  let preds: i32[][] = [];
+  for blk in graph.blocks {
+    let ps: i32[] = [];
+    for p in blk.preds {
+      ps = ps.append(at[p]);
+    }
+    preds = preds.append(ps);
+  }
+  return preds;
 }
 
 function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
@@ -348,16 +410,37 @@ function assumed(assume: i32[], v: i32): boolean {
   return false;
 }
 
+// The largest value of `y & K` for a constant K of any width that fits an
+// i32, read through a cast to i32, or -1.
 function masked(g: Graph, x: i32): i32 {
   let d: ssa.SInst = g.defs[x];
+  if (d.kind_tag == ssasem.cast() && d.args.len() == 1 && g.i32s[x]) {
+    return masked(g, root(g, d.args[0]));
+  }
   if (!binary(d, "&")) {
     return 0 - 1;
   }
-  if (is_const(g, d.args[1])) {
-    return const_value(g, d.args[1]);
+  let k: i32 = mask_const(g, d.args[1]);
+  if (k < 0) {
+    k = mask_const(g, d.args[0]);
   }
-  if (is_const(g, d.args[0])) {
-    return const_value(g, d.args[0]);
+  return k;
+}
+
+function mask_const(g: Graph, v: i32): i32 {
+  let d: ssa.SInst = def_of(g, v);
+  if (d.kind_tag != 1) {
+    return 0 - 1;
+  }
+  if (d.str.len() > 0) {
+    let n: i64 = util.lit_to_i64(d.str);
+    if (n >= 0i64 && n <= 2147483647i64) {
+      return n as i32;
+    }
+    return 0 - 1;
+  }
+  if (d.imm >= 0) {
+    return d.imm;
   }
   return 0 - 1;
 }
@@ -379,11 +462,10 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   }
   x = root(g, x);
   let d: ssa.SInst = g.defs[x];
-  let m: i32 = masked(g, x);
-  if (is_const(g, x)) {
-    m = const_value(g, x);
+  if (small_below(g, b, x, base)) {
+    return true;
   }
-  if (m >= 0 && m < literal_len(g, base)) {
+  if (binary(d, "+") && plus_fits(g, b, d, base)) {
     return true;
   }
   if (binary(d, "-") && is_const(g, d.args[1])) {
@@ -402,10 +484,10 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
     }
     let inner: i32[] = assume.append(x);
     let all: boolean = d.args.len() > 0;
-    for o in d.args {
-      if (all && !below(g, g.home[root(g, o)], o, base, inner, steps - 1)) {
-        all = false;
-      }
+    let k: i32 = 0;
+    while (all && k < d.args.len()) {
+      all = below(g, edge_block(g, x, k, d.args[k]), d.args[k], base, inner, steps - 1);
+      k = k + 1;
     }
     if (all) {
       return true;
@@ -463,6 +545,9 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     if (y >= 0 && nonneg(g, at, y, assume, steps - 1) && below_a_length(g, at, y)) {
       return true;
     }
+    if (plus_fits(g, b, d, 0 - 1) && nonneg(g, b, plus_base(g, d), assume, steps - 1)) {
+      return true;
+    }
   }
   if (binary(d, "-") && is_const(g, d.args[1]) && is_length(g, d.args[0])) {
     if (at_least(g, at, d.args[0], const_value(g, d.args[1]))) {
@@ -475,10 +560,10 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     }
     let inner: i32[] = assume.append(x);
     let all: boolean = d.args.len() > 0;
-    for o in d.args {
-      if (all && !nonneg(g, g.home[root(g, o)], o, inner, steps - 1)) {
-        all = false;
-      }
+    let k: i32 = 0;
+    while (all && k < d.args.len()) {
+      all = nonneg(g, edge_block(g, x, k, d.args[k]), d.args[k], inner, steps - 1);
+      k = k + 1;
     }
     if (all) {
       return true;
@@ -514,6 +599,74 @@ function nonneg_call(name: string): boolean {
     || name == "__clz64" || name == "__ctz64" || name == "__popcount64";
 }
 
+// The block whose dominating facts hold for a phi's operand `k`: its predecessor on that edge.
+function edge_block(g: Graph, phi: i32, k: i32, operand: i32): i32 {
+  let ps: i32[] = g.preds[g.home[phi]];
+  if (k < ps.len() && ps[k] >= 0) {
+    return ps[k];
+  }
+  return g.home[root(g, operand)];
+}
+
+// The largest value of a constant or a mask, or -1.
+function small_max(g: Graph, v: i32): i32 {
+  v = root(g, v);
+  if (is_const(g, v)) {
+    return if (const_value(g, v) >= 0) { const_value(g, v) } else { 0 - 1 };
+  }
+  return masked(g, v);
+}
+
+// The operand of `a + k` that is not the small one, or -1.
+function plus_base(g: Graph, d: ssa.SInst): i32 {
+  if (small_max(g, d.args[1]) >= 0) {
+    return d.args[0];
+  }
+  if (small_max(g, d.args[0]) >= 0) {
+    return d.args[1];
+  }
+  return 0 - 1;
+}
+
+// `a + k`, with k a small constant or mask, is below a length (of `base`, or
+// any when `base` is -1) when a dominating fact bounds `a` by that length
+// minus more than k. The same fact keeps the sum from overflowing.
+function plus_fits(g: Graph, b: i32, d: ssa.SInst, base: i32): boolean {
+  let a: i32 = plus_base(g, d);
+  if (a < 0 || b < 0) {
+    return false;
+  }
+  let k: i32 = small_max(g, d.args[1]);
+  if (a == d.args[1]) {
+    k = small_max(g, d.args[0]);
+  }
+  let c: i32 = g.up[b];
+  while (c >= 0) {
+    let i: i32 = g.first[c];
+    while (i < g.first[c] + g.count[c]) {
+      let r: Rel = g.rels[i];
+      if (same(g, r.lo, a) && length_minus(g, r.hi, base) - (if (r.strict) { 0 } else { 1 }) >= k) {
+        return true;
+      }
+      i = i + 1;
+    }
+    c = g.above[c];
+  }
+  return false;
+}
+
+// n for a value `len - n` of a length (of `base`, or any when `base` is -1), or -1.
+function length_minus(g: Graph, v: i32, base: i32): i32 {
+  let d: ssa.SInst = def_of(g, v);
+  if (!binary(d, "-") || !is_const(g, d.args[1]) || const_value(g, d.args[1]) < 0) {
+    return 0 - 1;
+  }
+  if (base < 0 && is_length(g, d.args[0]) || base >= 0 && is_length_of(g, d.args[0], base)) {
+    return const_value(g, d.args[1]);
+  }
+  return 0 - 1;
+}
+
 function below_a_length(g: Graph, b: i32, y: i32): boolean {
   if (b < 0) {
     return false;
@@ -526,6 +679,82 @@ function below_a_length(g: Graph, b: i32, y: i32): boolean {
       let r: Rel = g.rels[k];
       if (r.strict && same(g, r.lo, y)) {
         return true;
+      }
+      k = k + 1;
+    }
+    c = g.above[c];
+  }
+  return false;
+}
+
+const NOT_FOLDED: i64 = 0i64 - 9223372036854775807i64;
+
+// The value of an i32 constant, or of a shift, sum, difference, product or
+// mask of them, while it stays within 32 bits.
+function folded(g: Graph, v: i32, steps: i32): i64 {
+  v = root(g, v);
+  if (is_const(g, v)) {
+    return const_value(g, v) as i64;
+  }
+  let d: ssa.SInst = g.defs[v];
+  if (steps <= 0 || d.kind_tag != 9 || d.args.len() != 2 || !g.i32s[v]) {
+    return NOT_FOLDED;
+  }
+  let a: i64 = folded(g, d.args[0], steps - 1);
+  let b: i64 = folded(g, d.args[1], steps - 1);
+  if (a == NOT_FOLDED || b == NOT_FOLDED) {
+    return NOT_FOLDED;
+  }
+  let out: i64 = fold_op(d.str, a, b);
+  if (out < -2147483648i64 || out > 2147483647i64) {
+    return NOT_FOLDED;
+  }
+  return out;
+}
+
+function fold_op(op: string, a: i64, b: i64): i64 {
+  if (op == "<<" && b >= 0i64 && b < 31i64) {
+    return a << b;
+  }
+  if (op == "+") {
+    return a + b;
+  }
+  if (op == "-") {
+    return a - b;
+  }
+  if (op == "*") {
+    return a * b;
+  }
+  if (op == "&") {
+    return a & b;
+  }
+  if (op == "|") {
+    return a | b;
+  }
+  return NOT_FOLDED;
+}
+
+// A constant or a mask below a literal's length or a length a fact bounds.
+function small_below(g: Graph, b: i32, x: i32, base: i32): boolean {
+  let m: i32 = small_max(g, x);
+  return m >= 0 && (m < literal_len(g, base) || length_at_least(g, b, base, m + 1));
+}
+
+// Whether a dominating fact holds `base.len() >= n`.
+function length_at_least(g: Graph, b: i32, base: i32, n: i32): boolean {
+  if (b < 0) {
+    return false;
+  }
+  let c: i32 = g.up[b];
+  while (c >= 0) {
+    let k: i32 = g.first[c];
+    while (k < g.first[c] + g.count[c]) {
+      let r: Rel = g.rels[k];
+      let low: i64 = folded(g, r.lo, 4);
+      if (low != NOT_FOLDED && is_length_of(g, r.hi, base)) {
+        if (low >= n as i64 || r.strict && low >= (n - 1) as i64) {
+          return true;
+        }
       }
       k = k + 1;
     }

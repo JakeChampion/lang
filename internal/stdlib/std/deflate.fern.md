@@ -368,6 +368,10 @@ const DIST_EXTRA: i32[] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7,
 const LIT_BITS: i32 = 10;
 
 const DIST_BITS: i32 = 8;
+
+const LIT_MASK: u64 = 1023u64;
+
+const DIST_MASK: u64 = 255u64;
 ```
 
 ### `12 function __table(h: __Huff, bits: i32, lit: boolean): i32[]`
@@ -600,18 +604,20 @@ const F_DISTANCE_PAST: i32 = 4;
 const F_TOO_FAR: i32 = 5;
 
 // Decodes while eight input bytes and 258 output bytes are left, and stops
-// with F_ROOM when they are not.
+// with F_ROOM when they are not. The guard at the top is what lets the
+// bounds prover drop the checks on the input words and the two tables.
 function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, max_out: i32, lit: i32[], dtab: i32[], lencode: __Huff, distcode: __Huff): __Fast {
-  let lmask: u64 = (1 << LIT_BITS) as u64 - 1u64;
-  let dmask: u64 = (1 << DIST_BITS) as u64 - 1u64;
   let fast_in: i32 = data.len() - 8;
   let fast_out: i32 = max_out - 258;
   let status: i32 = F_ROOM;
+  if (pos < 0 || lit.len() < 1 << LIT_BITS || dtab.len() < 1 << DIST_BITS) {
+    return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
+  }
   while (pos <= fast_in && out.len() <= fast_out) {
     bitbuf = bitbuf | __le64(data, pos) << bitcnt as u64;
-    pos = pos + 7 - (bitcnt >> 3);
+    pos = pos + ((bitcnt >> 3 ^ 7) & 7);
     bitcnt = bitcnt | 56;
-    let e: i32 = lit[(bitbuf & lmask) as i32];
+    let e: i32 = lit[(bitbuf & LIT_MASK) as i32];
     if (e == 0) {
       e = __walk(lencode, bitbuf, bitcnt, true);
     }
@@ -630,7 +636,7 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
     let len: i32 = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
     bitbuf = bitbuf >> lx as u64;
     bitcnt = bitcnt - lx;
-    let d: i32 = dtab[(bitbuf & dmask) as i32];
+    let d: i32 = dtab[(bitbuf & DIST_MASK) as i32];
     if (d == 0) {
       d = __walk(distcode, bitbuf, bitcnt, false);
     }
