@@ -4851,7 +4851,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (lm.params.len() == 0 && vlocal.len() > 0) {
           return vb_store_type(lm.body, vlocal, s);
         }
-        if (lm.params.len() == 0 && lm.origin == parser.ORIGIN_BLOCK) {
+        // A computed scrutinee adds a temporary before the inner value expression.
+        if (lm.params.len() == 0 && (lm.origin == parser.ORIGIN_BLOCK
+          || lm.origin == parser.ORIGIN_MATCH_EXPR || lm.origin == parser.ORIGIN_IF_EXPR)) {
           return value_block_tail_type(lm.body, s);
         }
       },
