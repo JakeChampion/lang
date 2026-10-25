@@ -108,7 +108,7 @@ func (g *Generator) declareRecTree(b *strings.Builder) {
 
 func (g *Generator) declareRecRose(b *strings.Builder) {
 	b.WriteString("enum RR0 { RRLeaf0(i32), RRose0(i32, RR0[]) }\n")
-	if !g.flip(0.5) {
+	if g.flip(0.5) {
 		b.WriteString("function rr0_build(d: i32, k: i32): RR0 { if (d <= 0i32) { return RRLeaf0(k); } " +
 			"return RRose0(k, [rr0_build((d - 1i32), ((k * 3i32) & 255i32)), rr0_build((d - 1i32), ((k + 5i32) & 255i32))]); }\n")
 	} else {
