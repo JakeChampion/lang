@@ -15,7 +15,7 @@ func TestPrinterCorpusMatrixCoversEveryShard(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := jobBlocks(string(data))["verify-heavy"]
-	for _, required := range []string{"name: test-units-${{ matrix.host }}-heavy", "needs: test", "if: always()", "${{ needs.test.result }}", `test "$WORKER_RESULT" = success`} {
+	for _, required := range []string{"name: test-units-${{ matrix.host }}-heavy", "needs: test", "if: ${{ !cancelled() }}", "${{ needs.test.result }}", `test "$WORKER_RESULT" = success`} {
 		if !strings.Contains(gate, required) {
 			t.Errorf("aggregate unit check omits %q", required)
 		}
