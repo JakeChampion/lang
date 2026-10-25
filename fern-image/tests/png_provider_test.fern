@@ -1,0 +1,230 @@
+import "../packages/codecs/png/png";
+import "../packages/codecs/png/provider";
+import "../packages/pipeline/pipeline";
+import "../packages/pipeline/regions";
+import "../packages/pixels/pixels";
+import "../packages/resize/resize";
+import "./fixtures/png" as fixtures;
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function same_bytes(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function make_source(input: u8[]): Result[pipeline.Graph, pipeline.PipelineError] {
+  return provider.source(input, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits());
+}
+
+function collect(graph: pipeline.Graph, limits: pipeline.Limits, cache: i32, fused: boolean, cancelled: () => boolean): Result[pipeline.RowFold[pixels.Image[]], pipeline.RowFailure[string]] {
+  let meta = match (pipeline.metadata(graph, limits)) { Ok(v) => v, Err(e) => { return Err(pipeline.GraphFailure(e)); } };
+  let seed: pixels.Image[] = [];
+  let consume = (rows: pixels.Image[], row: pixels.Image): Result[pixels.Image[], string] => Ok(rows.append(row));
+  if (fused) {
+    return pipeline.fold_rows_fused(graph, 0, meta.height, limits, cache, cancelled, seed, consume);
+  }
+  return pipeline.fold_rows(graph, 0, meta.height, limits, cache, cancelled, seed, consume);
+}
+
+function session_goldens(): test.TestOutcome {
+  for data in [fixtures.rgb0(), fixtures.rgb1(), fixtures.rgb2(), fixtures.rgb3(), fixtures.rgb4(), fixtures.rgba0(), fixtures.rgba1(), fixtures.rgba2(), fixtures.rgba3(), fixtures.rgba4()] {
+    let plan = match (png.inspect_rows(data, pixels.default_limits(), png.default_row_limits())) { Ok(v) => v, Err(_) => { return test.fail("inspect"); } };
+    let padded: u8[] = [7, 11];
+    for byte in data {
+      padded = padded.append(byte);
+    }
+    padded = padded.append(13 as u8);
+    let decoder = match (png.open_rows(padded[2:padded.len() - 1], pixels.default_limits(), png.default_row_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("open"); } };
+    let expected = fixtures.rgb_bytes();
+    if (pixels.channels(plan.layout.format) == 4) {
+      expected = fixtures.rgba_bytes();
+    }
+    let stride = plan.layout.stride;
+    let last = match (decoder.read(1, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("prefix"); } };
+    let repeated = match (decoder.read(1, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("repeat"); } };
+    let backwards = match (decoder.read(0, never_cancel)) { Err(png.DecoderAccess()) => true, _ => false };
+    let low = match (decoder.read(0 - 1, never_cancel)) { Err(png.DecoderBounds()) => true, _ => false };
+    let high = match (decoder.read(2, never_cancel)) { Err(png.DecoderBounds()) => true, _ => false };
+    let fresh = match (png.open_rows(data, pixels.default_limits(), png.default_row_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("fresh"); } };
+    let first = match (fresh.read(0, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("first"); } };
+    if (!same_bytes(last.data, expected[stride:]) || !same_bytes(repeated.data, expected[stride:])
+      || !same_bytes(first.data, expected[:stride]) || !backwards || !low || !high) {
+      return test.fail("independent session golden");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function graph_schedules(): test.TestOutcome {
+  for data in [fixtures.rgb4(), fixtures.rgba4()] {
+    let mask = 0;
+    while (mask < 8) {
+      for fused in [false, true] {
+        let limits = pipeline.default_limits();
+        let graph = match (make_source(data)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+        let eager = match (png.decode(data, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("reference"); } };
+        let widths: i32[] = [3, 5, 2];
+        let heights: i32[] = [3, 4, 5];
+        let i = 0;
+        while (i < 3) {
+          let filter = resize.Nearest;
+          if ((mask & 1 << i) != 0) {
+            filter = resize.Bilinear;
+            graph = match (pipeline.bilinear(graph, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return test.fail("bilinear"); } };
+          } else {
+            graph = match (pipeline.nearest(graph, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return test.fail("nearest"); } };
+          }
+          eager = match (resize.resize(eager, widths[i], heights[i], filter, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("eager resize"); } };
+          i = i + 1;
+        }
+        let cache = match (pipeline.required_cache(graph, limits)) { Ok(v) => v, Err(_) => { return test.fail("cache"); } };
+        let rows = match (collect(graph, limits, cache, fused, never_cancel)) { Ok(v) => v.value, Err(_) => { return test.fail("rows"); } };
+        let y = 0;
+        while (y < rows.len()) {
+          let start = y * eager.layout.stride;
+          if (!same_bytes(rows[y].data, eager.data[start:start + eager.layout.stride])) {
+            return test.fail("graph row");
+          }
+          y = y + 1;
+        }
+        let region = regions.Region { x: 1, y: 1, width: 1, height: 3 };
+        let rendered = if (fused) { regions.render_cached_tile_fused(graph, region, limits, cache, never_cancel) } else { regions.render_cached_tile(graph, region, limits, cache, never_cancel) };
+        let tile = match (rendered) { Ok(v) => v.image, Err(_) => { return test.fail("tile"); } };
+        y = 0;
+        while (y < 3) {
+          let actual = match (pixels.read_pixel(tile, 0, y)) { Ok(v) => v, Err(_) => { return test.fail("tile pixel"); } };
+          let expected = match (pixels.read_pixel(eager, 1, y + 1)) { Ok(v) => v, Err(_) => { return test.fail("reference pixel"); } };
+          if (actual.r != expected.r || actual.g != expected.g || actual.b != expected.b || actual.a != expected.a) {
+            return test.fail("cropped pixel");
+          }
+          y = y + 1;
+        }
+      }
+      mask = mask + 1;
+    }
+  }
+  return test.assert_true(true);
+}
+
+function admission(): test.TestOutcome {
+  let input = fixtures.rgb0();
+  let codec_limits = png.RowLimits { max_payload_bytes: 184i64, max_row_work: 14i64 };
+  let limits = pipeline.Limits { max_pixels: 4, max_row_bytes: 6, max_scratch_bytes: 196, max_nodes: 1, max_samples: 18 };
+  let graph = match (provider.source(input, pixels.default_limits(), codec_limits, limits)) { Ok(v) => v, Err(_) => { return test.fail("exact source"); } };
+  let scratch = match (pipeline.required_scratch(graph, limits)) { Ok(v) => v == 184, _ => false };
+  let setup = match (pipeline.required_setup_samples(graph, limits)) { Ok(v) => v == 14, _ => false };
+  let cache = match (pipeline.required_cache(graph, limits)) { Ok(v) => v == 12, _ => false };
+  let exact = match (collect(graph, limits, 12, true, never_cancel)) { Ok(v) => v.value.len() == 2, _ => false };
+  let work = match (collect(graph, pipeline.Limits { ...limits, max_samples: 17 }, 12, true, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let memory = match (collect(graph, pipeline.Limits { ...limits, max_scratch_bytes: 195 }, 12, false, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let short_cache = match (collect(graph, limits, 11, true, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let codec_memory = match (provider.source(input, pixels.default_limits(), png.RowLimits { ...codec_limits, max_payload_bytes: 183i64 }, limits)) { Err(pipeline.Budget()) => true, _ => false };
+  let codec_work = match (provider.source(input, pixels.default_limits(), png.RowLimits { ...codec_limits, max_row_work: 13i64 }, limits)) { Err(pipeline.Budget()) => true, _ => false };
+  let unsupported = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Err(pipeline.AccessPattern()) => true, _ => false };
+  return test.assert_true(scratch && setup && cache && exact && work && memory && short_cache && codec_memory && codec_work && unsupported);
+}
+
+function rejected(data: u8[], expected: string): boolean {
+  let graph = match (make_source(data)) { Ok(v) => v, Err(pipeline.ProviderFailure(e)) => { return e == expected; }, Err(_) => { return false; } };
+  let cache = match (pipeline.required_cache(graph, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  return match (collect(graph, pipeline.default_limits(), cache, true, never_cancel)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => e == expected, _ => false };
+}
+
+function codec_errors(): test.TestOutcome {
+  let stream = fixtures.rgb0();
+  let crc = stream.with(stream.len() - 1, 1 as u8);
+  let good = rejected(crc, "PNG Crc") && rejected(fixtures.unsupported(), "PNG Unsupported")
+    && rejected(fixtures.bad_filter(), "PNG Scanline") && rejected(fixtures.bad_final_filter(), "PNG Scanline")
+    && rejected(fixtures.short_scanline(), "PNG Scanline") && rejected(fixtures.compressed_trailing(), "PNG Compressed");
+  let graph = match (make_source(fixtures.bad_final_filter())) { Ok(v) => v, Err(_) => { return test.fail("deferred filter validation"); } };
+  let calls = cell_new(0);
+  let consume = (n: i32, _row: pixels.Image): Result[i32, string] => {
+    calls.set(calls.get() + 1);
+    return Ok(n + 1);
+  };
+  let budget = match (pipeline.fold_rows(graph, 0, 1, pipeline.default_limits(), 0, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let invalid = match (pipeline.fold_rows(graph, 0, 1, pipeline.default_limits(), 12, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => e == "PNG Scanline", _ => false };
+  return test.assert_true(good && budget && invalid && calls.get() == 0);
+}
+
+function ownership(): test.TestOutcome {
+  let input: u8[] = [];
+  for byte in fixtures.rgba4() {
+    input = input.append(byte);
+  }
+  let graph = match (make_source(input)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  input = input.with(0, 0 as u8);
+  let alias = graph;
+  let limits = pipeline.default_limits();
+  let first = match (collect(graph, limits, 16, false, never_cancel)) { Ok(v) => v.value, Err(_) => { return test.fail("first"); } };
+  let kept = first[0];
+  let changed = match (pixels.write_pixel(first[0], 0, 0, pixels.Pixel { r: 33, g: 37, b: 41, a: 255 })) { Ok(v) => v, Err(_) => { return test.fail("mutation"); } };
+  let second = match (collect(alias, limits, 16, true, never_cancel)) { Ok(v) => v.value, Err(_) => { return test.fail("second"); } };
+  let expected = fixtures.rgba_bytes();
+  return test.assert_true(input[0] == 0 as u8 && same_bytes(kept.data, expected[:8]) && changed.data[0] == 33 as u8
+    && same_bytes(first[1].data, expected[8:]) && same_bytes(second[0].data, expected[:8]) && same_bytes(second[1].data, expected[8:]));
+}
+
+function cancellation(): test.TestOutcome {
+  let image = match (pixels.create(300, 3, 1200, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("image"); } };
+  let input = match (png.encode(image, 10000)) { Ok(v) => v, Err(_) => { return test.fail("encode"); } };
+  let graph = match (make_source(input)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let limits = pipeline.default_limits();
+  let cache = match (pipeline.required_cache(graph, limits)) { Ok(v) => v, Err(_) => { return test.fail("cache"); } };
+  let polls = cell_new(0);
+  let control_cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let control = match (collect(graph, limits, cache, true, control_cancel)) { Ok(v) => v.value.len() == 3, _ => false };
+  let total = polls.get();
+  let stop = 1;
+  while (stop <= total) {
+    polls.set(0);
+    let cancel = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() >= stop;
+    };
+    let result = match (collect(graph, limits, cache, true, cancel)) { Err(pipeline.GraphFailure(pipeline.Cancelled())) => true, _ => false };
+    if (!result || polls.get() != stop) {
+      return test.fail("cancellation phase");
+    }
+    stop = stop + 1;
+  }
+  let fresh = match (collect(graph, limits, cache, false, never_cancel)) { Ok(v) => v.value.len() == 3, _ => false };
+  return test.assert_true(control && total > 25 && fresh);
+}
+
+function consumer_error(): test.TestOutcome {
+  let graph = match (make_source(fixtures.rgba4())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let text = args()[0] + ": consumer error";
+  let consume = (state: string, _row: pixels.Image): Result[string, string] => Err(state);
+  let error = match (pipeline.fold_rows_fused(graph, 0, 2, pipeline.default_limits(), 16, never_cancel, text, consume)) { Err(pipeline.ConsumerFailure(e)) => e == text, _ => false };
+  let fresh = match (collect(graph, pipeline.default_limits(), 16, true, never_cancel)) { Ok(v) => v.value.len() == 2, _ => false };
+  return test.assert_true(error && fresh);
+}
+
+function main(): i32 {
+  let r = test.test_new("PNG graph providers");
+  r = r.it("fresh sessions preserve all filters, prefixes, repeated rows, and bounds", session_goldens);
+  r = r.it("32 format, scale, and fusion schedules match eager rows and cropped tiles", graph_schedules);
+  r = r.it("exact source payload, work, and cache admission", admission);
+  r = r.it("codec errors and bad final filters precede selected output", codec_errors);
+  r = r.it("graph input and retained output preserve copy-on-write ownership", ownership);
+  r = r.it("every cancellation poll releases private decoder state", cancellation);
+  r = r.it("consumer heap errors permit a fresh decoder execution", consumer_error);
+  return r.finish();
+}
