@@ -1,0 +1,33 @@
+name: Fern image
+on:
+  pull_request:
+    paths:
+      - 'fern-image/**'
+      - 'compiler/**'
+      - 'internal/stdlib/**'
+      - 'bootstrap/**'
+      - 'scripts/fern-embed-stage'
+      - 'Makefile'
+      - '.github/workflows/fern-image.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'fern-image/**'
+      - 'compiler/**'
+      - 'internal/stdlib/**'
+      - 'bootstrap/**'
+      - 'scripts/fern-embed-stage'
+      - 'Makefile'
+      - '.github/workflows/fern-image.yml'
+permissions:
+  contents: read
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - run: make build
+      - run: ./fern-image/scripts/test.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
