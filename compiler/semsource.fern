@@ -5301,7 +5301,8 @@ function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bindin
     let (returned, _) = checker.first_returned(fd.body, scope);
     if (!literal_adapts(returned, declared)) {
       let body: typeinfo.Type = inferred_result(fd, scope, b, contracts);
-      if (semtypes.concrete(body, true) && !is_void(body)) {
+      // `Ok(x)` infers `never` for the error, which the declaration completes.
+      if (semtypes.concrete(body, true) && !is_void(body) && !completes_enum(body, declared)) {
         return body;
       }
       if (calls_synthesised(returned)) {

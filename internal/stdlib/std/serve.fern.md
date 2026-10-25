@@ -599,7 +599,7 @@ function __clock_tick(clk: __Clock): __Clock {
   if (sec == clk.sec && clk.line.len() > 0) {
     return clk;
   }
-  let date: string = time.instant_from_unix(sec).format_http_date();
+  let date: string = time.timestamp_from_unix(sec).format_http_date();
   return __Clock { sec: sec, date: date, line: "Date: " + date + "\r\n" };
 }
 

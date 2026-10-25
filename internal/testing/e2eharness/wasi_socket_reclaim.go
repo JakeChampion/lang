@@ -206,7 +206,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		borrowedListener = "(i32.store (i32.const 0) (i32.const 42))"
 	}
 	if strings.HasPrefix(operation, "recv") {
-		borrowedListener = "(i32.store offset=12 (i32.const 0) (i32.const 1))"
+		borrowedListener = "(i32.store offset=12 (i32.const 0) (i32.const 1)) (i32.store offset=16 (i32.const 0) (i32.const 1))"
 	}
 	census := ""
 	if strings.Contains(wat, "(global $__fern_lc_alloc_count ") {

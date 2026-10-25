@@ -113,7 +113,7 @@ func TestSelfHostArrayMethodMultiElemIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	runDriver := func(args ...string) (string, int) {
+	runDriverEnv := func(env []string, args ...string) (string, int) {
 		argv := append([]string{driver}, args...)
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -121,8 +121,12 @@ func TestSelfHostArrayMethodMultiElemIR(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(runner[1:], argv...)...)
 		}
+		cmd.Env = append(os.Environ(), env...)
 		out, _ := cmd.Output()
 		return string(out), cmd.ProcessState.ExitCode()
+	}
+	runDriver := func(args ...string) (string, int) {
+		return runDriverEnv(nil, args...)
 	}
 
 	for _, tc := range arrayMethodMultiElemIRCases {
@@ -140,8 +144,11 @@ func TestSelfHostArrayMethodMultiElemIR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}
+			// The inliner splices a leaf-sized clone into its caller, so the
+			// clones are counted with splicing off.
+			clones, _ := runDriverEnv([]string{"FERN_SEM_INLINE=0"}, entry, root)
 			for _, sym := range tc.syms {
-				if !strings.Contains(asm, sym) {
+				if !strings.Contains(clones, sym) {
 					t.Errorf("%s: no %s clone in asm — that element type's call did not ride the IR array-method path", tc.name, sym)
 				}
 			}

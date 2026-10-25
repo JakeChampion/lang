@@ -4486,7 +4486,7 @@ function main(): i32 { return pick(9); }
 	{name: "std-time-format-rfc3339-is-produced", atLeast: 65, want: "20|1970-01-02T01:01:01Z\n", src: `
 import "std/time";
 function main(): i32 {
-    let s: string = time.instant_from_unix(90061 as i64).format_rfc3339();
+    let s: string = time.timestamp_from_unix(90061 as i64).format_rfc3339();
     print(s);
     return s.len();
 }

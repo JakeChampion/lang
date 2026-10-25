@@ -77,6 +77,7 @@ node examples/showcase/prepare.mjs build/showcase-assets build/showcase
 ```
 
 The output contains the showcase source, web assets, and compressed source lessons.
+It also copies the documentation site's fonts from `site/src/assets/fonts`. The pages share the site's palette and type. Without the fonts, the fallback stacks apply.
 The script also prepares variants next to the fractal assets. Git ignores these build files.
 
 `Netlify-Original-Accept-Encoding` takes precedence when present. Otherwise the server uses ordinary Accept-Encoding.

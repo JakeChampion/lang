@@ -1536,8 +1536,11 @@ func builtinTcpAccept(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return Number(-1), nil
 	}
-	conn, err := ln.Accept()
+	conn, err := acceptSocket(ln, i.tcpNonblocking[int64(id)])
 	if err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return Number(-11), nil
+		}
 		return Number(-1), nil
 	}
 	if i.tcpConns == nil {
@@ -1878,6 +1881,13 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	}
 	if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
 		return r, nil
+	}
+	if _, isListener := i.tcpListeners[int64(id)]; isListener && op == 3 {
+		if i.tcpNonblocking == nil {
+			i.tcpNonblocking = map[int64]bool{}
+		}
+		i.tcpNonblocking[int64(id)] = arg != 0
+		return Number(0), nil
 	}
 	conn, ok := i.tcpConns[int64(id)].(*net.TCPConn)
 	if !ok {
