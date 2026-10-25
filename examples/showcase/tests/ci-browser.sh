@@ -13,13 +13,9 @@ if [ ! -x "$fern" ]; then
 fi
 out="$(mktemp -d)"
 
-echo "==> compiling the server and the browser kernels"
+echo "==> compiling the server and the browser assets"
 "$fern" -target x86-64-linux -O -o "$out/showcase" examples/showcase/server.fern.md
-"$fern" -target wasm32-wasi -emit core-module -O -o examples/showcase/web/swarm/kernel.wasm examples/showcase/swarm.fern.md
-"$fern" -target wasm32-wasi -emit core-module -O -o examples/showcase/web/blockyard/kernel.wasm examples/showcase/voxel.fern.md
-for kernel in foundry patchbay prism circuit; do
-  "$fern" -target wasm32-wasi -emit core-module -O -o "examples/showcase/web/labs/$kernel.wasm" "examples/showcase/$kernel.fern.md"
-done
+examples/showcase/build-assets.sh "$fern"
 
 echo "==> preparing assets"
 mkdir -p "$out/root"
@@ -35,7 +31,7 @@ for _ in $(seq 120); do
 done
 
 export CHROMIUM="${CHROMIUM:-$(cd examples/showcase/tests && node -e 'import("playwright").then((p) => console.log(p.chromium.executablePath()))')}"
-for suite in theme.browser browser interaction.browser labs.browser blockyard.browser; do
+for suite in theme.browser browser interaction.browser labs.browser blockyard.browser editor.browser; do
   echo "==> $suite"
   if ! node "examples/showcase/tests/$suite.mjs" http://localhost:8080; then
     echo "--- server log" >&2

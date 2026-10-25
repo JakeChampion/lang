@@ -91,7 +91,7 @@ pub function files(): string[] {
     "showcase/web/blockyard/index.html", "showcase/web/blockyard/style.css", "showcase/web/blockyard/app.mjs", "showcase/web/blockyard/protocol.mjs", "showcase/web/blockyard/mesh.mjs", "showcase/web/blockyard/mesh-worker.mjs", "showcase/web/blockyard/renderer.mjs",
     "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/rally/prediction.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",
     "showcase/web/gather/index.html", "showcase/web/gather/app.mjs", "showcase/web/gather/protocol.mjs", "showcase/web/gather/style.css",
-    "showcase/web/swarm/index.html", "showcase/web/swarm/app.mjs", "showcase/web/swarm/kernel.mjs", "showcase/web/swarm/audio-worker.mjs", "showcase/web/swarm/style.css",
+    "showcase/web/swarm/index.html", "showcase/web/swarm/app.mjs", "showcase/web/swarm/kernel.mjs", "showcase/web/swarm/audio-worker.mjs", "showcase/web/swarm/editor.mjs", "showcase/web/swarm/style.css",
     "showcase/web/wave/index.html", "showcase/web/wave/app.mjs", "showcase/web/pulse/index.html", "showcase/web/pulse/app.mjs",
   ];
 }

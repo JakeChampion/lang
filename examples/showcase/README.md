@@ -28,12 +28,7 @@ Build the compiler from the repository root:
 ```sh
 make build
 bin/fern -target x86-64-linux -O -o build/showcase examples/showcase/server.fern.md
-bin/fern -target wasm32-wasi -emit core-module -O -o examples/showcase/web/swarm/kernel.wasm examples/showcase/swarm.fern.md
-bin/fern -target wasm32-wasi -emit core-module -O -o examples/showcase/web/blockyard/kernel.wasm examples/showcase/voxel.fern.md
-for kernel in foundry patchbay prism circuit; do
-  bin/fern -target wasm32-wasi -emit core-module -O \
-    -o "examples/showcase/web/labs/$kernel.wasm" "examples/showcase/$kernel.fern.md"
-done
+examples/showcase/build-assets.sh bin/fern
 ./build/showcase examples
 ```
 
