@@ -80,7 +80,7 @@ pub function document(state: State, req: HttpRequest, notice: string, status: i3
     token = signed(state, common.token());
   }
   let entries: Note[] = state.entries.get();
-  let html: string = "<section class=\"notes-intro app-intro\"><div class=\"eyebrow\">05 / THE HYPERTEXT WEB</div><h1><em>Guestbook.</em></h1>"
+  let html: string = "<section class=\"notes-intro app-intro\"><div class=\"eyebrow\"><span>05</span>The hypertext web</div><h1><em>Guestbook.</em></h1>"
     + "<p>Post a public note with an HTML form. The server validates submissions and adds them to an Atom feed.</p>"
     + "<div class=\"tech-chips\"><span>Server-rendered HTML</span><span>POST → 303 → GET</span><span>Signed cookies</span><a href=\"/notes/feed.xml\">Atom feed ↗</a></div></section>";
   if (notice != "") {
@@ -93,7 +93,7 @@ pub function document(state: State, req: HttpRequest, notice: string, status: i3
     + "<button class=\"button primary\" type=\"submit\">Post note</button><p class=\"fine-print\">Notes are public. This demo keeps the last 80 notes in server memory and resets on restart.</p></form>"
     + "<section class=\"note-wall\" aria-label=\"Guestbook notes\">";
   if (entries.len() == 0) {
-    html = html + "<article class=\"paper-note seed-note\"><span class=\"note-pin\"></span><p>No notes yet. Add the first one.</p><footer>Fern, in action <span>✳</span></footer></article>";
+    html = html + "<article class=\"paper-note seed-note\"><span class=\"note-pin\"></span><p>No notes yet. Add the first one.</p><footer>Fern, in action</footer></article>";
   }
   let at: i32 = entries.len() - 1;
   while (at >= 0) {
