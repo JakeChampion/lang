@@ -26,11 +26,11 @@ pub function universe(c: Config): i32 {
 }
 
 function number(argv: string[], at: i32): i32 {
-  match (argv[at].parse_int()) {
-    Some(n) => {
+  match (i32.parse_i32(argv[at])) {
+    Ok(n) => {
       return n;
     },
-    None => {
+    Err(_) => {
       return -1;
     }
   }

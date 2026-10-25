@@ -1,0 +1,47 @@
+function bad_i32(x: i32): string {
+  return x.to_string(1);
+}
+
+function bad_i64(x: i64): string {
+  return x.to_string(1);
+}
+
+function bad_u8(x: u8): string {
+  return x.to_string(1);
+}
+
+function bad_u32(x: u32): string {
+  return x.to_string(1);
+}
+
+function bad_u64(x: u64): string {
+  return x.to_string(1);
+}
+
+function bad_usize(x: usize): string {
+  return x.to_string(1);
+}
+
+function bad_f32(x: f32): string {
+  return x.to_string(1);
+}
+
+function bad_f64(x: f64): string {
+  return x.to_string(1);
+}
+
+function bad_boolean(x: boolean): string {
+  return x.to_string(1);
+}
+
+function bad_char(x: char): string {
+  return x.to_string(1);
+}
+
+function bad_string(x: string): string {
+  return x.to_string(1);
+}
+
+function main(): i32 {
+  return 0;
+}

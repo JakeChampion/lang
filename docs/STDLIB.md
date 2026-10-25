@@ -35,6 +35,11 @@ Import a module to use its functions and receiver methods.
 A qualified call uses the final path segment, or an explicit `as` alias.
 A receiver method uses the value's type to select an implementation.
 
+Use names that read clearly after the module qualifier.
+Do not repeat the module name in a function prefix.
+Constructors use `new`, `of`, or `from`.
+Constants use `pub const`.
+
 ```fern
 import "std/array";
 import "std/i32";
@@ -71,6 +76,14 @@ Import `std/option` or `std/result` for their combinators.
 A `dyn error.Error` can hold different concrete error types that implement that trait.
 See [error propagation](TRY.md) for the `?` operator and its conversion rules.
 
+Regex patterns are checked by `regex.compile`, which returns
+`Result[Regex, CompileError]`. Search and replacement methods use the compiled
+receiver. Text outputs return `Result` for invalid UTF-8; capture accessors
+also use `Option` to distinguish absence from a matched empty string.
+`peg.new` validates grammar references with `GrammarError`; `peg.parse` and
+`peg.parse_pattern` report input failures with `ParseError`.
+
+
 ## Text and bytes
 
 A `string` contains valid UTF-8 text.
@@ -81,7 +94,7 @@ Use a checked UTF-8 conversion for external bytes before you treat them as text.
 String byte offsets and Unicode character positions are different units.
 The `std/utf8` and `std/unicode` modules describe code-point and text operations.
 
-`std/parse.int64(text)` returns `Result[i64, parse.IntError]` for checked decimal conversion.
+`i64.parse_i64(text)` returns `Result[i64, number_parse.ParseNumberError]` for checked decimal conversion.
 It accepts an optional sign and the full signed 64-bit range.
 Errors distinguish empty input, an invalid digit offset, and overflow.
 

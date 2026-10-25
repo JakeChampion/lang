@@ -350,7 +350,7 @@ function test_parse_scheme_anchored(): test.TestOutcome {
 }
 
 function test_decode_ill_formed_is_replacement(): test.TestOutcome {
-  let fffd: string = utf8.utf8_encode(65533 as char);
+  let fffd: string = utf8.encode(65533 as char);
   if (url.url_decode("a%FFb") != "a" + fffd + "b") {
     return test.fail("url_decode %FF");
   }

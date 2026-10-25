@@ -18,41 +18,41 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
-<<2 pub function __map_pow2_ceil(n: i32): i32>>
+<<2 pub(package) function __map_pow2_ceil(n: i32): i32>>
 
 <<3 function __map_hdr(buf: usize): i32>>
 
-<<4 pub function __map_hash(k: i32, keyKind: i32): i32>>
+<<4 pub(package) function __map_hash(k: i32, keyKind: i32): i32>>
 
 <<5 function __map_own_copied_cols(buf: usize): void>>
 
-<<6 pub function __map_clone(m: usize): usize>>
+<<6 pub(package) function __map_clone(m: usize): usize>>
 
 <<7 function __map_hash_scalar(k: usize): i32>>
 
-<<8 pub function __map_lookup(m: usize, k: usize): i32>>
+<<8 pub(package) function __map_lookup(m: usize, k: usize): i32>>
 
 <<9 function __map_val_kind(buf: usize): i32>>
 
-<<10 pub function __map_get_impl(m: usize, k: usize): Option[usize]>>
+<<10 pub(package) function __map_get_impl(m: usize, k: usize): Option[usize]>>
 
-<<11 pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[]>>
+<<11 pub(package) function __map_cell_f64_column(m: usize, kvOffset: i32): f64[]>>
 
-<<12 pub function __map_drop_values(m: usize): usize>>
+<<12 pub(package) function __map_drop_values(m: usize): usize>>
 
 <<13 function __map_free_table(m: usize): usize>>
 
-<<14 pub function __map_key_of(m: usize, k: usize): usize>>
+<<14 pub(package) function __map_key_of(m: usize, k: usize): usize>>
 
 <<15 function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize)>>
 
-<<16 pub function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>
+<<16 pub(package) function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>
 
 <<17 function __map_grow_keyed(m: usize, hash_fn: (usize)>>
 
-<<18 pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)>>
+<<18 pub(package) function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)>>
 
-<<19 pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>
+<<19 pub(package) function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>
 
 <<20 Map entry snapshots>>
 ```
@@ -66,11 +66,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "core/iter";
 ```
 
-### `2 pub function __map_pow2_ceil(n: i32): i32`
+### `2 pub(package) function __map_pow2_ceil(n: i32): i32`
 
 ```fern
-<<2 pub function __map_pow2_ceil(n: i32): i32>>=
-pub function __map_pow2_ceil(n: i32): i32 {
+<<2 pub(package) function __map_pow2_ceil(n: i32): i32>>=
+pub(package) function __map_pow2_ceil(n: i32): i32 {
   if (n <= 4) {
     return 4;
   }
@@ -84,7 +84,7 @@ pub function __map_pow2_ceil(n: i32): i32 {
   return p;
 }
 
-pub function __map_hdr_bytes(keyKind: i32): i32 {
+pub(package) function __map_hdr_bytes(keyKind: i32): i32 {
   return 24;
 }
 ```
@@ -173,15 +173,15 @@ function __map_fnv_str_seeded(s: string, seed: i32): i32 {
 }
 ```
 
-### `4 pub function __map_hash(k: i32, keyKind: i32): i32`
+### `4 pub(package) function __map_hash(k: i32, keyKind: i32): i32`
 
 ```fern
-<<4 pub function __map_hash(k: i32, keyKind: i32): i32>>=
-pub function __map_hash(k: i32, keyKind: i32): i32 {
+<<4 pub(package) function __map_hash(k: i32, keyKind: i32): i32>>=
+pub(package) function __map_hash(k: i32, keyKind: i32): i32 {
   return __map_wang_mix(k);
 }
 
-pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
+pub(package) function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
   let keyKind: i32 = keyTag & 255;
   let cap: i32 = __map_pow2_ceil(cap_hint);
   let hdr: i32 = __map_hdr_bytes(keyKind);
@@ -205,7 +205,7 @@ pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
   return m;
 }
 
-pub function __map_cow_inplace(m: usize): usize {
+pub(package) function __map_cow_inplace(m: usize): usize {
   let rc: i32 = __load_i32(m - 8);
   if (rc <= 1) {
     return m;
@@ -289,11 +289,11 @@ function __map_own_str_slot(slot: usize): usize {
 }
 ```
 
-### `6 pub function __map_clone(m: usize): usize`
+### `6 pub(package) function __map_clone(m: usize): usize`
 
 ```fern
-<<6 pub function __map_clone(m: usize): usize>>=
-pub function __map_clone(m: usize): usize {
+<<6 pub(package) function __map_clone(m: usize): usize>>=
+pub(package) function __map_clone(m: usize): usize {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let bufBytes: i32 = __map_buf_bytes(cap, __map_hdr(buf));
@@ -307,7 +307,7 @@ pub function __map_clone(m: usize): usize {
   return nm;
 }
 
-pub function __map_len_impl(m: usize): i32 {
+pub(package) function __map_len_impl(m: usize): i32 {
   let buf: usize = __load_ptr(m);
   return __load_i32(buf + 4);
 }
@@ -352,11 +352,11 @@ function __map_bucket_hash(k: usize, hash_fn: (usize) => i32, seed: i32): i32 {
 }
 ```
 
-### `8 pub function __map_lookup(m: usize, k: usize): i32`
+### `8 pub(package) function __map_lookup(m: usize, k: usize): i32`
 
 ```fern
-<<8 pub function __map_lookup(m: usize, k: usize): i32>>=
-pub function __map_lookup(m: usize, k: usize): i32 {
+<<8 pub(package) function __map_lookup(m: usize, k: usize): i32>>=
+pub(package) function __map_lookup(m: usize, k: usize): i32 {
   let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_lookup_keyed(m, k, __map_hash_scalar, __map_eq_scalar);
@@ -367,7 +367,7 @@ pub function __map_lookup(m: usize, k: usize): i32 {
   return __map_lookup_keyed(m, k, __map_hash_str, __map_eq_str);
 }
 
-pub function __map_has_impl(m: usize, k: usize): boolean {
+pub(package) function __map_has_impl(m: usize, k: usize): boolean {
   return __map_lookup(m, k) != 0 - 1;
 }
 ```
@@ -472,11 +472,11 @@ function __map_val_at(m: usize, idx: i32): usize {
 }
 ```
 
-### `10 pub function __map_get_impl(m: usize, k: usize): Option[usize]`
+### `10 pub(package) function __map_get_impl(m: usize, k: usize): Option[usize]`
 
 ```fern
-<<10 pub function __map_get_impl(m: usize, k: usize): Option[usize]>>=
-pub function __map_get_impl(m: usize, k: usize): Option[usize] {
+<<10 pub(package) function __map_get_impl(m: usize, k: usize): Option[usize]>>=
+pub(package) function __map_get_impl(m: usize, k: usize): Option[usize] {
   let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return None;
@@ -484,7 +484,7 @@ pub function __map_get_impl(m: usize, k: usize): Option[usize] {
   return Some(__map_retain_val(__load_ptr(m), __map_val_at(m, idx)));
 }
 
-pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
+pub(package) function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
   let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return __map_retain_val(__load_ptr(m), fallback);
@@ -492,7 +492,7 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
   return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
 }
 
-pub function __map_lookup_val(m: usize, k: usize): usize {
+pub(package) function __map_lookup_val(m: usize, k: usize): usize {
   let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return 0;
@@ -500,7 +500,7 @@ pub function __map_lookup_val(m: usize, k: usize): usize {
   return __map_val_at(m, idx);
 }
 
-pub function __map_grow(m: usize): usize {
+pub(package) function __map_grow(m: usize): usize {
   let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_grow_keyed(m, __map_hash_scalar);
@@ -511,7 +511,7 @@ pub function __map_grow(m: usize): usize {
   return __map_grow_keyed(m, __map_hash_str);
 }
 
-pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
+pub(package) function __map_set_impl(m: usize, k: usize, v: usize): usize {
   let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_set_keyed_impl(m, k, v, __map_hash_scalar, __map_eq_scalar);
@@ -522,7 +522,7 @@ pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
   return __map_set_keyed_impl(m, k, v, __map_hash_str, __map_eq_str);
 }
 
-pub function __map_put_impl(m: usize, k: usize, v: usize): usize {
+pub(package) function __map_put_impl(m: usize, k: usize, v: usize): usize {
   let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_put_keyed(m, k, v, __map_hash_scalar, __map_eq_scalar);
@@ -533,7 +533,7 @@ pub function __map_put_impl(m: usize, k: usize, v: usize): usize {
   return __map_put_keyed(m, k, v, __map_hash_str, __map_eq_str);
 }
 
-pub function __map_i32_column(m: usize, kvOffset: i32): i32[] {
+pub(package) function __map_i32_column(m: usize, kvOffset: i32): i32[] {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -548,22 +548,22 @@ pub function __map_i32_column(m: usize, kvOffset: i32): i32[] {
   return out;
 }
 
-pub function __map_cell(v: i64): usize {
+pub(package) function __map_cell(v: i64): usize {
   let c: usize = __alloc(8);
   __store_i64(c, v);
   return c;
 }
 
-pub function __map_cell_load(c: usize): i64 {
+pub(package) function __map_cell_load(c: usize): i64 {
   return __load_i64(c);
 }
 
-pub function __map_cell_free(c: usize): usize {
+pub(package) function __map_cell_free(c: usize): usize {
   __free(c, 8);
   return c;
 }
 
-pub function __map_get_cell_impl(m: usize, k: usize): Option[i64] {
+pub(package) function __map_get_cell_impl(m: usize, k: usize): Option[i64] {
   let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return None;
@@ -571,7 +571,7 @@ pub function __map_get_cell_impl(m: usize, k: usize): Option[i64] {
   return Some(__load_i64(__map_val_at(m, idx)));
 }
 
-pub function __map_get_cell_f64_impl(m: usize, k: usize): Option[f64] {
+pub(package) function __map_get_cell_f64_impl(m: usize, k: usize): Option[f64] {
   let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return None;
@@ -579,7 +579,7 @@ pub function __map_get_cell_f64_impl(m: usize, k: usize): Option[f64] {
   return Some(f64_from_bits(__load_i64(__map_val_at(m, idx))));
 }
 
-pub function __map_get_cell_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[i64] {
+pub(package) function __map_get_cell_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[i64] {
   let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return None;
@@ -587,7 +587,7 @@ pub function __map_get_cell_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i
   return Some(__load_i64(__map_val_at(m, idx)));
 }
 
-pub function __map_get_cell_f64_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[f64] {
+pub(package) function __map_get_cell_f64_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[f64] {
   let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return None;
@@ -595,7 +595,7 @@ pub function __map_get_cell_f64_keyed_impl(m: usize, k: usize, hash_fn: (usize) 
   return Some(f64_from_bits(__load_i64(__map_val_at(m, idx))));
 }
 
-pub function __map_cell_column(m: usize, kvOffset: i32): i64[] {
+pub(package) function __map_cell_column(m: usize, kvOffset: i32): i64[] {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -611,11 +611,11 @@ pub function __map_cell_column(m: usize, kvOffset: i32): i64[] {
 }
 ```
 
-### `11 pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[]`
+### `11 pub(package) function __map_cell_f64_column(m: usize, kvOffset: i32): f64[]`
 
 ```fern
-<<11 pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[]>>=
-pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
+<<11 pub(package) function __map_cell_f64_column(m: usize, kvOffset: i32): f64[]>>=
+pub(package) function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -630,7 +630,7 @@ pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
   return out;
 }
 
-pub function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
+pub(package) function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -645,7 +645,7 @@ pub function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
   return out;
 }
 
-pub function __map_u8_column(m: usize, kvOffset: i32): u8[] {
+pub(package) function __map_u8_column(m: usize, kvOffset: i32): u8[] {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -661,7 +661,7 @@ pub function __map_u8_column(m: usize, kvOffset: i32): u8[] {
   return out;
 }
 
-pub function __map_keys_impl(m: usize): usize {
+pub(package) function __map_keys_impl(m: usize): usize {
   let buf: usize = __load_ptr(m);
   let keyKind: i32 = __load_i32(buf + 8);
   if (keyKind == 1) {
@@ -674,7 +674,7 @@ pub function __map_keys_impl(m: usize): usize {
   return __fern_rc_inc(col as usize);
 }
 
-pub function __map_values_impl(m: usize): usize {
+pub(package) function __map_values_impl(m: usize): usize {
   let buf: usize = __load_ptr(m);
   let valKind: i32 = __map_val_kind(buf);
   let ptrW: i32 = __ptr_width();
@@ -688,7 +688,7 @@ pub function __map_values_impl(m: usize): usize {
   return __fern_rc_inc(col as usize);
 }
 
-pub function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32): usize {
+pub(package) function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32): usize {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -712,7 +712,7 @@ pub function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32): usize {
   return data;
 }
 
-pub function __map_string_column(m: usize, kvOffset: i32): usize {
+pub(package) function __map_string_column(m: usize, kvOffset: i32): usize {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -730,7 +730,7 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
   return __fern_rc_inc(out as usize);
 }
 
-pub function __map_box_column(m: usize, kvOffset: i32, retain: boolean): usize {
+pub(package) function __map_box_column(m: usize, kvOffset: i32, retain: boolean): usize {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -750,11 +750,11 @@ pub function __map_box_column(m: usize, kvOffset: i32, retain: boolean): usize {
 }
 ```
 
-### `12 pub function __map_drop_values(m: usize): usize`
+### `12 pub(package) function __map_drop_values(m: usize): usize`
 
 ```fern
-<<12 pub function __map_drop_values(m: usize): usize>>=
-pub function __map_drop_values(m: usize): usize {
+<<12 pub(package) function __map_drop_values(m: usize): usize>>=
+pub(package) function __map_drop_values(m: usize): usize {
   if (m == 0) {
     return m;
   }
@@ -779,7 +779,7 @@ pub function __map_drop_values(m: usize): usize {
   return m;
 }
 
-pub function __map_drop_impl(m: usize): usize {
+pub(package) function __map_drop_impl(m: usize): usize {
   if (m == 0) {
     return m;
   }
@@ -821,11 +821,11 @@ function __map_free_table(m: usize): usize {
 }
 ```
 
-### `14 pub function __map_key_of(m: usize, k: usize): usize`
+### `14 pub(package) function __map_key_of(m: usize, k: usize): usize`
 
 ```fern
-<<14 pub function __map_key_of(m: usize, k: usize): usize>>=
-pub function __map_key_of(m: usize, k: usize): usize {
+<<14 pub(package) function __map_key_of(m: usize, k: usize): usize>>=
+pub(package) function __map_key_of(m: usize, k: usize): usize {
   let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return 0;
@@ -835,7 +835,7 @@ pub function __map_key_of(m: usize, k: usize): usize {
   return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
 }
 
-pub function __map_key_of_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+pub(package) function __map_key_of_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return 0;
@@ -845,7 +845,7 @@ pub function __map_key_of_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_
   return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
 }
 
-pub function __map_drop_keyed_impl(m: usize, key_release: (usize) => usize, val_release: (usize) => usize): usize {
+pub(package) function __map_drop_keyed_impl(m: usize, key_release: (usize) => usize, val_release: (usize) => usize): usize {
   if (m == 0) {
     return m;
   }
@@ -865,7 +865,7 @@ pub function __map_drop_keyed_impl(m: usize, key_release: (usize) => usize, val_
   return __map_free_table(m);
 }
 
-pub function __map_drop_strcols_impl(m: usize): usize {
+pub(package) function __map_drop_strcols_impl(m: usize): usize {
   if (m == 0) {
     return m;
   }
@@ -895,7 +895,7 @@ pub function __map_drop_strcols_impl(m: usize): usize {
   return __map_free_table(m);
 }
 
-pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
+pub(package) function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
   if (m == 0) {
     return m;
   }
@@ -920,7 +920,7 @@ pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
   return __map_free_table(m);
 }
 
-pub function __map_delete_impl(m: usize, k: usize): boolean {
+pub(package) function __map_delete_impl(m: usize, k: usize): boolean {
   let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_delete_keyed_impl(m, k, __map_hash_scalar, __map_eq_scalar);
@@ -931,7 +931,7 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
   return __map_delete_keyed_impl(m, k, __map_hash_str, __map_eq_str);
 }
 
-pub function __map_clear_impl(m: usize): void {
+pub(package) function __map_clear_impl(m: usize): void {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   if (__map_val_cell_bytes(buf) != 0 || __map_key_cell_bytes(buf) != 0) {
@@ -1018,15 +1018,15 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
 }
 ```
 
-### `16 pub function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize)`
+### `16 pub(package) function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize)`
 
 ```fern
-<<16 pub function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>=
-pub function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
+<<16 pub(package) function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>=
+pub(package) function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
   return __map_lookup_keyed(m, k, hash_fn, eq_fn) != 0 - 1;
 }
 
-pub function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[usize] {
+pub(package) function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[usize] {
   let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return None;
@@ -1034,7 +1034,7 @@ pub function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, e
   return Some(__map_retain_val(__load_ptr(m), __map_val_at(m, idx)));
 }
 
-pub function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+pub(package) function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return __map_retain_val(__load_ptr(m), fallback);
@@ -1042,7 +1042,7 @@ pub function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_f
   return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
 }
 
-pub function __map_lookup_val_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+pub(package) function __map_lookup_val_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return 0;
@@ -1107,17 +1107,17 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
 }
 ```
 
-### `18 pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)`
+### `18 pub(package) function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)`
 
 ```fern
-<<18 pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)>>=
-pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+<<18 pub(package) function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)>>=
+pub(package) function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   m = __map_cow_inplace(m);
   __map_put_keyed(m, k, v, hash_fn, eq_fn);
   return m;
 }
 
-pub function __map_put_keyed(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+pub(package) function __map_put_keyed(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -1194,11 +1194,11 @@ pub function __map_put_keyed(m: usize, k: usize, v: usize, hash_fn: (usize) => i
 }
 ```
 
-### `19 pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize)`
+### `19 pub(package) function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize)`
 
 ```fern
-<<19 pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>=
-pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
+<<19 pub(package) function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>=
+pub(package) function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
   let buf: usize = __load_ptr(m);
   let seed: i32 = __map_seed(buf);
   let cap: i32 = __load_i32(buf);

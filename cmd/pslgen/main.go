@@ -207,7 +207,8 @@ const header = `// This module identifies public suffixes and registrable domain
 
 `
 
-const body = `import "std/string";
+const body = `import "std/unicode";
+import "std/string";
 import "std/array";
 
 pub const COUNT: i32 = %d;

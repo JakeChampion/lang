@@ -1,3 +1,9 @@
+// The server scripts/net-httplint reads: one response of each shape
+// std/http and its middleware produce, so httplint's notes cover a routed
+// text and JSON API, a redirect, a problem, a 405 with its Allow, an
+// upload echoed back, a compressed body, a static file with its
+// validators and a response that says how long it may be cached.
+import "std/i32";
 import "std/http";
 import "std/http/router";
 import "std/http/static";
@@ -61,11 +67,11 @@ function www(plat: platform.Host): string {
 function port(): i32 {
   match (env("PORT")) {
     Some(p) => {
-      match (int.parse_int_radix(p, 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(p, 10)) {
+        Ok(n) => {
           return n;
         },
-        None => {
+        Err(_) => {
           return 8080;
         }
       }

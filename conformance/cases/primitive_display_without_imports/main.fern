@@ -1,0 +1,42 @@
+function owned_view_text(): string {
+  let source: string = "longer than inline strings";
+  let view: str = slice_unchecked(source, 2, 20);
+  return view.to_string();
+}
+
+// All primitive formatters are available without importing their modules.
+function main(): i32 {
+  let a: i32 = -2147483648;
+  let b: i64 = -9223372036854775808;
+  let c: u8 = 255;
+  let d: u32 = 4294967295;
+  let e: u64 = 18446744073709551615;
+  let f: usize = 42;
+  let g: f32 = 1.5;
+  let h: f64 = 1.25;
+  let yes: boolean = true;
+  let scalar: char = '🦊';
+  let text: string = "hello";
+  print(f"{a}|{b}|{c}|{d}|{e}|{f}|{g}|{h}|{yes}|{scalar}|{text}");
+  print(a);
+  print(b);
+  print(c);
+  print(d);
+  print(e);
+  print(f);
+  print(g);
+  print(h);
+  print(yes);
+  print(scalar);
+  print(text);
+  let original: string = "longer than inline strings";
+  let copy: string = original.to_string();
+  original = "changed";
+  if (copy != "longer than inline strings") {
+    return 1;
+  }
+  if (owned_view_text() != "nger than inline s") {
+    return 2;
+  }
+  return 0;
+}

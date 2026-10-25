@@ -1,0 +1,537 @@
+import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+import "std/number_parse";
+import "std/error";
+import "core/cmp";
+import "std/f32";
+import "std/f64";
+import "std/string";
+import "std/result";
+import "std/json";
+
+function rendered[T: cmp.Display](x: T): string {
+  return x.to_string();
+}
+
+function integer_cases(): i32 {
+  match (i32.parse_i32("+2147483647")) {
+    Ok(n) => {
+      if (n != 2147483647) {
+        return 1;
+      }
+    },
+    Err(_) => {
+      return 2;
+    }
+  }
+  match (i32.parse_i32("-2147483648")) {
+    Ok(n) => {
+      if (n != -2147483648) {
+        return 3;
+      }
+    },
+    Err(_) => {
+      return 4;
+    }
+  }
+  match (i64.parse_i64("-9223372036854775808")) {
+    Ok(n) => {
+      if (n + 1 as i64 != -(9223372036854775807 as i64)) {
+        return 5;
+      }
+    },
+    Err(_) => {
+      return 6;
+    }
+  }
+  match (u64.parse_u64("18446744073709551615")) {
+    Ok(n) => {
+      if (n != 0 as u64 - 1 as u64) {
+        return 7;
+      }
+    },
+    Err(_) => {
+      return 8;
+    }
+  }
+  match (u32.parse_u32_radix("FFFFFFFF", 16)) {
+    Ok(n) => {
+      if (n != 4294967295 as u32) {
+        return 9;
+      }
+    },
+    Err(_) => {
+      return 10;
+    }
+  }
+  match (i64.parse_i64_radix("-8000000000000000", 16)) {
+    Ok(n) => {
+      if (n + 1 as i64 != -(9223372036854775807 as i64)) {
+        return 11;
+      }
+    },
+    Err(_) => {
+      return 12;
+    }
+  }
+  match (u64.parse_u64("18446744073709551616")) {
+    Err(e) => {
+      if (e.message() != "number is out of range") {
+        return 13;
+      }
+      if (rendered(e) != e.message()) {
+        return 14;
+      }
+      let boxed: dyn error.Error = e;
+      if (boxed.message() != e.message()) {
+        return 15;
+      }
+    },
+    Ok(_) => {
+      return 16;
+    }
+  }
+  match (i32.parse_i32("12x")) {
+    Err(e) => {
+      match (e) {
+        number_parse.InvalidDigit(at) => {
+          if (at != 2) {
+            return 17;
+          }
+        },
+        _ => {
+          return 18;
+        }
+      }
+    },
+    Ok(_) => {
+      return 19;
+    }
+  }
+  match (i32.parse_i32("")) {
+    Err(e) => {
+      match (e) {
+        number_parse.EmptyInput => {},
+        _ => {
+          return 20;
+        }
+      }
+    },
+    Ok(_) => {
+      return 21;
+    }
+  }
+  match (u64.parse_u64("-0")) {
+    Err(e) => {
+      match (e) {
+        number_parse.InvalidDigit(at) => {
+          if (at != 0) {
+            return 22;
+          }
+        },
+        _ => {
+          return 23;
+        }
+      }
+    },
+    Ok(_) => {
+      return 24;
+    }
+  }
+  match (u32.parse_u32_radix("1", 37)) {
+    Err(e) => {
+      match (e) {
+        number_parse.InvalidRadix(base) => {
+          if (base != 37) {
+            return 25;
+          }
+        },
+        _ => {
+          return 26;
+        }
+      }
+    },
+    Ok(_) => {
+      return 27;
+    }
+  }
+  return 0;
+}
+
+function float_cases(): i32 {
+  for text in ["-0", "-0.0", "-1e-9999", "-0.0000000000000000000000000000", "-1.2345678901234567890123456e-9999"] {
+    match (f64.parse_f64(text)) {
+      Ok(n) => {
+        if (f64_bits(n) != 1 as i64 << 63) {
+          return 1;
+        }
+      },
+      Err(_) => {
+        return 2;
+      }
+    }
+    match (f32.parse_f32(text)) {
+      Ok(n) => {
+        if (f32_bits(n) != 1 << 31) {
+          return 3;
+        }
+      },
+      Err(_) => {
+        return 4;
+      }
+    }
+  }
+  match (f64.parse_f64("+1.5e3")) {
+    Ok(n) => {
+      if (n != 1500.0) {
+        return 5;
+      }
+    },
+    Err(_) => {
+      return 6;
+    }
+  }
+  match (f32.parse_f32("1.0000000596046448")) {
+    Ok(n) => {
+      if (f32_bits(n) != 1065353217) {
+        return 7;
+      }
+    },
+    Err(_) => {
+      return 8;
+    }
+  }
+  match (f32.parse_f32("1.000000059604644775390625")) {
+    Ok(n) => {
+      if (f32_bits(n) != 1065353216) {
+        return 9;
+      }
+    },
+    Err(_) => {
+      return 10;
+    }
+  }
+  match (f32.parse_f32("1.0000000596046447")) {
+    Ok(n) => {
+      if (f32_bits(n) != 1065353216) {
+        return 11;
+      }
+    },
+    Err(_) => {
+      return 12;
+    }
+  }
+  match (f32.parse_f32("340282356779733661637539395458142568447")) {
+    Ok(n) => {
+      if (f32_bits(n) != 2139095039) {
+        return 13;
+      }
+    },
+    Err(_) => {
+      return 14;
+    }
+  }
+  match (f32.parse_f32("340282356779733661637539395458142568448")) {
+    Err(e) => {
+      match (e) {
+        number_parse.OutOfRange => {},
+        _ => {
+          return 15;
+        }
+      }
+    },
+    Ok(_) => {
+      return 16;
+    }
+  }
+  match (f32.parse_f32("-340282356779733661637539395458142568447")) {
+    Ok(n) => {
+      if (f32_bits(n) != (2139095039 | 1 << 31)) {
+        return 17;
+      }
+    },
+    Err(_) => {
+      return 18;
+    }
+  }
+  match (f64.parse_f64("1e9999")) {
+    Err(e) => {
+      match (e) {
+        number_parse.OutOfRange => {},
+        _ => {
+          return 19;
+        }
+      }
+    },
+    Ok(_) => {
+      return 20;
+    }
+  }
+  match (f64.parse_f64("+Infinity")) {
+    Ok(n) => {
+      if (f64_bits(n) != 9218868437227405312) {
+        return 21;
+      }
+    },
+    Err(_) => {
+      return 22;
+    }
+  }
+  match (f32.parse_f32("NaN")) {
+    Ok(n) => {
+      if (n == n) {
+        return 23;
+      }
+    },
+    Err(_) => {
+      return 24;
+    }
+  }
+  match (f64.parse_f64("1e+")) {
+    Err(e) => {
+      match (e) {
+        number_parse.InvalidDigit(at) => {
+          if (at != 3) {
+            return 25;
+          }
+        },
+        _ => {
+          return 26;
+        }
+      }
+    },
+    Ok(_) => {
+      return 27;
+    }
+  }
+  return 0;
+}
+
+function format_cases(): i32 {
+  let min: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
+  let max: u64 = 0 as u64 - 1 as u64;
+  if (min.to_hex() != "-8000000000000000") {
+    return 1;
+  }
+  if (min.to_oct() != "-1000000000000000000000") {
+    return 2;
+  }
+  if (min.to_string_padded(22) != "-009223372036854775808") {
+    return 3;
+  }
+  if (min.to_string_with_sep(",") != "-9,223,372,036,854,775,808") {
+    return 4;
+  }
+  if (max.to_hex() != "ffffffffffffffff") {
+    return 5;
+  }
+  if (max.to_oct() != "1777777777777777777777") {
+    return 6;
+  }
+  if (max.to_string_padded(22) != "0018446744073709551615") {
+    return 7;
+  }
+  if (max.to_string_with_sep("·") != "18·446·744·073·709·551·615") {
+    return 8;
+  }
+  if ((4294967295 as u32).to_hex() != "ffffffff") {
+    return 9;
+  }
+  if ((4294967295 as u32).to_binary() != "11111111111111111111111111111111") {
+    return 10;
+  }
+  if ((255 as u8).to_hex() != "ff" || (255 as u8).to_oct() != "377") {
+    return 11;
+  }
+  if ((255 as u8).to_string_padded(5) != "00255") {
+    return 12;
+  }
+  if ((15 as usize).to_binary() != "1111" || (15 as usize).to_hex() != "f") {
+    return 13;
+  }
+  if ((12345 as usize).to_string_with_sep(",") != "12,345") {
+    return 14;
+  }
+  if ((-42).to_string_padded(5) != "-0042") {
+    return 15;
+  }
+  if ((-1234567).to_string_with_sep(",") != "-1,234,567") {
+    return 16;
+  }
+  if ((42 as u64).to_string_radix(36) != "16") {
+    return 17;
+  }
+  if ((42 as u64).to_string_radix(1) != "") {
+    return 18;
+  }
+  if ((42 as u32).to_string_with_sep("") != "42") {
+    return 19;
+  }
+  if ((0 as u8).to_binary() != "0") {
+    return 20;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let status = integer_cases();
+  if (status != 0) {
+    print("integer: " + status.to_string());
+    return 1;
+  }
+  status = float_cases();
+  if (status != 0) {
+    print("float: " + status.to_string());
+    return 2;
+  }
+  status = format_cases();
+  if (status != 0) {
+    print("format: " + status.to_string());
+    return 3;
+  }
+  for text in ["", "+", "-", "0", "-0", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "1e3", " 1", "1_0", "é"] {
+    if (text.is_int() != i32.parse_i32(text).is_ok()) {
+      return 4;
+    }
+  }
+  for text in ["", "+", "-", ".", "+1.5", "1e3", "1e+", "1e9999", "-1e-9999", "NaN", "+INF", "-Infinity", " 1", "1_0", "1.2.3"] {
+    if (text.is_float() != f64.parse_f64(text).is_ok()) {
+      return 5;
+    }
+  }
+  let original = "x+255y";
+  let Some(view) = original[1:5] else {
+    return 6;
+  };
+  if (i32.parse_u8(view).unwrap_or(0 as u8) != 255 as u8) {
+    return 7;
+  }
+  match (i32.parse_i32_radix(s = "7f", radix = 16)) {
+    Ok(n) => {
+      if (n != 127) {
+        return 8;
+      }
+    },
+    Err(_) => {
+      return 9;
+    }
+  }
+  match (json.decode[f32]("1.0000000596046448")) {
+    Ok(n) => {
+      if (f32_bits(n) != 1065353217) {
+        return 10;
+      }
+    },
+    Err(_) => {
+      return 11;
+    }
+  }
+  if (json.decode[f32]("340282356779733661637539395458142568448").is_ok()) {
+    return 12;
+  }
+  if (target_arch() == "wasm32") {
+    match (u64.parse_usize("4294967295")) {
+      Ok(n) => {
+        if (n.to_string() != "4294967295") {
+          return 13;
+        }
+      },
+      Err(_) => {
+        return 14;
+      }
+    }
+    if (u64.parse_usize("4294967296").is_ok()) {
+      return 15;
+    }
+  } else {
+    match (u64.parse_usize("18446744073709551615")) {
+      Ok(n) => {
+        if (n.to_string() != "18446744073709551615") {
+          return 16;
+        }
+      },
+      Err(_) => {
+        return 17;
+      }
+    }
+    if (u64.parse_usize("18446744073709551616").is_ok()) {
+      return 18;
+    }
+  }
+  for radix in 2..37 {
+    for n in [-2147483648, -100, -1, 0, 1, 100, 2147483647] {
+      match (i32.parse_i32_radix(n.to_string_radix(radix), radix)) {
+        Ok(value) => {
+          if (value != n) {
+            return 19;
+          }
+        },
+        Err(_) => {
+          return 20;
+        }
+      }
+    }
+    for n in [-9223372036854775807i64 - 1i64, -100i64, -1i64, 0i64, 1i64, 9223372036854775807i64] {
+      match (i64.parse_i64_radix(n.to_string_radix(radix), radix)) {
+        Ok(value) => {
+          if (value != n) {
+            return 21;
+          }
+        },
+        Err(_) => {
+          return 22;
+        }
+      }
+    }
+    for n in [0u64, 1u64, 255u64, 4294967295u64, 18446744073709551615u64] {
+      match (u64.parse_u64_radix(n.to_string_radix(radix), radix)) {
+        Ok(value) => {
+          if (value != n) {
+            return 23;
+          }
+        },
+        Err(_) => {
+          return 24;
+        }
+      }
+    }
+    for n in [0u32, 1u32, 255u32, 4294967295u32] {
+      match (u32.parse_u32_radix(n.to_string_radix(radix), radix)) {
+        Ok(value) => {
+          if (value != n) {
+            return 25;
+          }
+        },
+        Err(_) => {
+          return 26;
+        }
+      }
+    }
+    for n in [0 as u8, 1 as u8, 127 as u8, 255 as u8] {
+      match (i32.parse_u8_radix(n.to_string_radix(radix), radix)) {
+        Ok(value) => {
+          if (value != n) {
+            return 27;
+          }
+        },
+        Err(_) => {
+          return 28;
+        }
+      }
+    }
+    let max_size: usize = 0 as usize - 1 as usize;
+    match (u64.parse_usize_radix(max_size.to_string_radix(radix), radix)) {
+      Ok(value) => {
+        if (value != max_size) {
+          return 29;
+        }
+      },
+      Err(_) => {
+        return 30;
+      }
+    }
+  }
+  return 0;
+}

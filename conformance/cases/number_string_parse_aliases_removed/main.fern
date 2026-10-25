@@ -1,0 +1,13 @@
+import "std/string";
+import "std/i32";
+import "std/f64";
+
+function main(): i32 {
+  "1".parse_int();
+  "1".parse_int_or(0);
+  "1".parse_int_radix(10);
+  "1".parse_hex_int();
+  "1".parse_bin_int();
+  "1".parse_float();
+  return 0;
+}

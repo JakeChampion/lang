@@ -74,14 +74,14 @@ function literal_body(status: i32): string {
 }
 
 function counter_id(path: string): i32 {
-  match (slice_unchecked(path, 9, path.len()).to_owned().parse_int()) {
-    Some(id) => {
+  match (i32.parse_i32(slice_unchecked(path, 9, path.len()).to_owned())) {
+    Ok(id) => {
       if (id < 0 || id >= id_space()) {
         return 0 - 1;
       }
       return id;
     },
-    None => {
+    Err(_) => {
       return 0 - 1;
     }
   }

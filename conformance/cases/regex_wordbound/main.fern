@@ -1,36 +1,34 @@
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
   let r: i32 = 0;
-  if (regex.regex_match("\\bcat\\b", "the cat sat")) {
+  if ({ let __checked_regex_7: regex.Regex = match (regex.compile("\\bcat\\b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_7.is_match("the cat sat") }) {  // whole word
     r = r + 1;
   }
-  if (!regex.regex_match("\\bcat\\b", "scatter")) {
+  if (!{ let __checked_regex_6: regex.Regex = match (regex.compile("\\bcat\\b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.is_match("scatter") }) {  // inside a word: no
     r = r + 2;
   }
-  if let Some(2) = regex.regex_find("\\bcat\\b", "a cat") {
+  let __checked_regex_5: regex.Regex = match (regex.compile("\\bcat\\b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } };
+  if let Some(2) = __checked_regex_5.index_of("a cat") {  // boundary position
     r = r + 4;
   }
-  if (regex.regex_match("\\bword\\b", "word")) {
+  if ({ let __checked_regex_4: regex.Regex = match (regex.compile("\\bword\\b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.is_match("word") }) {  // boundaries at edges
     r = r + 8;
   }
-  if (regex.regex_match("ca\\Bt", "cat")) {
+  if ({ let __checked_regex_3: regex.Regex = match (regex.compile("ca\\Bt")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.is_match("cat") }) {  // \B inside a word
     r = r + 16;
   }
-  if (!regex.regex_match("cat\\B", "cat ")) {
+  if (!{ let __checked_regex_2: regex.Regex = match (regex.compile("cat\\B")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.is_match("cat ") }) {  // \B is false at a boundary
     r = r + 32;
   }
 
-  let ms: regex.RMatch[] = regex.regex_find_all("\\b\\w+\\b", "one two three");
-  if (ms.len() == 3) {
+  let ms: regex.Match[] = { let __checked_regex_1: regex.Regex = match (regex.compile("\\b\\w+\\b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.find_all("one two three") };
+  if (ms.len() == 3) {  // word tokenisation
     r = r + 64;
   }
 
-  if (require_regex_text(regex.regex_replace_all("\\bcat\\b", "cat cats category", "X")) == "X cats category") {
+  if (require_regex_text(match ({ let __checked_regex_0: regex.Regex = match (regex.compile("\\bcat\\b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.replace_all("cat cats category", "X") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "X cats category") {
     r = r + 128;
   }
   return r;

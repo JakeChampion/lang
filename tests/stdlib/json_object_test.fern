@@ -26,8 +26,8 @@ function test_from_pairs(): test.TestOutcome {
 }
 
 function parsed(text: string): json.JsonObject {
-  match (json.json_parse(text)) {
-    Some(v) => {
+  match (json.parse(text)) {
+    Ok(v) => {
       match (v) {
         JObject(o) => {
           return o;
@@ -37,7 +37,7 @@ function parsed(text: string): json.JsonObject {
         }
       }
     },
-    None => {
+    Err(_) => {
       return json.object();
     }
   }
@@ -155,7 +155,7 @@ function test_object_of(): test.TestOutcome {
 
 function test_document_order(): test.TestOutcome {
   let text: string = "{\"z\":1,\"a\":2,\"m\":{\"q\":[],\"b\":{}}}";
-  return test.assert_eq(json.json_encode(json.json_parse(text).unwrap_or(JNull)), text);
+  return test.assert_eq(json.json_encode(json.parse(text).unwrap_or(JNull)), text);
 }
 
 function main(): i32 {

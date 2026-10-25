@@ -5,16 +5,16 @@ import "testing"
 const stringCountMatchesProg = `
 import "std/string";
 function main(): i32 {
-    if ("aaaa".count_matches("a") != 4) { return 1; }
-    if ("aaaa".count_matches("aa") != 2) { return 2; }     // non-overlapping
-    if ("aaaaa".count_matches("aa") != 2) { return 3; }    // last "a" left over
-    if ("a.b.c.d".count_matches(".") != 3) { return 4; }
-    if ("hello".count_matches("z") != 0) { return 5; }
-    if ("hello".count_matches("") != 0) { return 6; }      // empty needle
-    if ("".count_matches("a") != 0) { return 7; }
-    if ("abcabc".count_matches("abc") != 2) { return 8; }
+    if ("aaaa".count("a") != 4) { return 1; }
+    if ("aaaa".count("aa") != 2) { return 2; }     // non-overlapping
+    if ("aaaaa".count("aa") != 2) { return 3; }    // last "a" left over
+    if ("a.b.c.d".count(".") != 3) { return 4; }
+    if ("hello".count("z") != 0) { return 5; }
+    if ("hello".count("") != 0) { return 6; }      // empty needle
+    if ("".count("a") != 0) { return 7; }
+    if ("abcabc".count("abc") != 2) { return 8; }
     // Agrees with find_all().len().
-    if ("mississippi".count_matches("ss") != "mississippi".find_all("ss").len()) { return 9; }
+    if ("mississippi".count("ss") != "mississippi".find_all("ss").len()) { return 9; }
     return 42;
 }
 `

@@ -53,7 +53,7 @@ function ts_named_tag(tag: string): boolean {
   }
   let i: i32 = 0;
   while (i < tag.len()) {
-    if (!lexer.is_alnum(tag[i] as i32)) {
+    if (!lexer.is_alphanumeric(tag[i] as i32)) {
       return false;
     }
     i = i + 1;
@@ -253,6 +253,16 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
     if let ast.ExprCall(c) = e {
       if let ast.ExprFieldAccess(fa) = c.callee {
         return typed_method_name_of(fa, lt, names);
+      }
+      // Drivers may prune before the checker rewrites display arguments.
+      // Keep the same receiver-qualified method that rewrite will call.
+      if let ast.ExprIdent(id) = c.callee {
+        if (id.name == "print" || id.name == "write" || id.name == "eprint") {
+          for arg in c.args {
+            let display: ast.ExprFieldAccess = ast.ExprFieldAccess { obj: arg, field: "to_string", line: c.line, col: c.col, ty: "", const_read: false };
+            names = typed_method_name_of(display, lt, names);
+          }
+        }
       }
     }
     return ts_name_of(e, names);
@@ -554,6 +564,14 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (fd.receiver_type.len() == 0 && refset_has(refs, ts_free_root(fd.name))) {
     return true;
   }
+  // Primitive method syntax can dispatch to a private free runtime body.
+  // Unknown generic receivers contribute the bare method root until bound.
+  if (fd.receiver_type.len() == 0 && util.str_has_prefix(fd.name, "__primitive_") && util.str_has_suffix(fd.name, "_to_string")) {
+    let owner: string = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
+    if (refset_has(refs, "to_string") || refset_has(refs, ts_qualified_root(owner, "to_string"))) {
+      return true;
+    }
+  }
   let im: string = ts_interposed_method_name(fd.name);
   if (im.len() > 0 && refset_has(refs, im)) {
     return true;
@@ -675,12 +693,12 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
 function ts_add_type_words(names: util.NameIndex, t: string): util.NameIndex {
   let i: i32 = 0;
   while (i < t.len()) {
-    if (!lexer.is_alnum(t[i] as i32)) {
+    if (!lexer.is_alphanumeric(t[i] as i32)) {
       i = i + 1;
       continue;
     }
     let j: i32 = i;
-    while (j < t.len() && lexer.is_alnum(t[j] as i32)) {
+    while (j < t.len() && lexer.is_alphanumeric(t[j] as i32)) {
       j = j + 1;
     }
     let w: string = slice_unchecked(t, i, j) + "";

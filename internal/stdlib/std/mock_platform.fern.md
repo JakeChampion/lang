@@ -46,6 +46,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
+import "std/i64";
+import "std/result";
 import "std/string";
 import "std/platform";
 import "std/fetch";
@@ -392,35 +395,13 @@ function __canned_unescape(v: string): string {
 function __canned_i64(m: MockPlatform, key: string, fallback: i64): i64 {
   match (m.canned(key)) {
     Some(v) => {
-      return __parse_i64(v);
+      return i64.parse_i64(v).unwrap_or(fallback);
     },
     None => {
       return fallback;
     }
   }
   return fallback;
-}
-
-function __parse_i64(s: string): i64 {
-  let n: i64 = 0 as i64;
-  let neg: boolean = false;
-  let i: i32 = 0;
-  if (s.len() > 0 && s[0] == 45 as u8) {
-    neg = true;
-    i = 1;
-  }
-  while (i < s.len()) {
-    let d: i32 = s[i] as i32 - 48;
-    if (d < 0 || d > 9) {
-      break;
-    }
-    n = n * (10 as i64) + d as i64;
-    i = i + 1;
-  }
-  if (neg) {
-    return 0 as i64 - n;
-  }
-  return n;
 }
 ```
 
@@ -498,11 +479,11 @@ function __canned_response(v: string): HttpResponse {
     body = slice_unchecked(v, sp + 1, v.len()).to_owned();
   }
   let status: i32 = 200;
-  match (int.parse_int_radix(code, 10)) {
-    Some(n) => {
+  match (i32.parse_i32_radix(code, 10)) {
+    Ok(n) => {
       status = n;
     },
-    None => {}
+    Err(_) => {}
   }
   return http.text(status, body);
 }

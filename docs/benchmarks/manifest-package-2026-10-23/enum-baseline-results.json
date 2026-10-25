@@ -1,0 +1,58 @@
+[
+  {
+    "scope": "pub(package)",
+    "inside": true,
+    "name": "go",
+    "code": 1,
+    "out": "/workspace/scratch/lang-manifest-package/enum-project/main.fern:1:58: error[E087]: nodes.Leaf is a variant of enum Node, which is not exported (declare it as `pub enum Node \u2026` to make it accessible from other modules)\n    import \"./nodes\"; function main(): i32 { let node = nodes.Leaf(42); return 42; }\n                                                             ^\n"
+  },
+  {
+    "scope": "pub(package)",
+    "inside": true,
+    "name": "self",
+    "code": 0,
+    "out": ""
+  },
+  {
+    "scope": "pub(package)",
+    "inside": false,
+    "name": "go",
+    "code": 1,
+    "out": "/workspace/scratch/lang-manifest-package/enum-project/main.fern:1:62: error[E087]: nodes.Leaf is a variant of enum Node, which is not exported (declare it as `pub enum Node \u2026` to make it accessible from other modules)\n    import \"./sub/nodes\"; function main(): i32 { let node = nodes.Leaf(42); return 42; }\n                                                                 ^\n"
+  },
+  {
+    "scope": "pub(package)",
+    "inside": false,
+    "name": "self",
+    "code": 0,
+    "out": ""
+  },
+  {
+    "scope": "",
+    "inside": true,
+    "name": "go",
+    "code": 1,
+    "out": "/workspace/scratch/lang-manifest-package/enum-project/main.fern:1:58: error[E087]: nodes.Leaf is a variant of enum Node, which is not exported (declare it as `pub enum Node \u2026` to make it accessible from other modules)\n    import \"./nodes\"; function main(): i32 { let node = nodes.Leaf(42); return 42; }\n                                                             ^\n"
+  },
+  {
+    "scope": "",
+    "inside": true,
+    "name": "self",
+    "code": 0,
+    "out": ""
+  },
+  {
+    "scope": "",
+    "inside": false,
+    "name": "go",
+    "code": 1,
+    "out": "/workspace/scratch/lang-manifest-package/enum-project/main.fern:1:62: error[E087]: nodes.Leaf is a variant of enum Node, which is not exported (declare it as `pub enum Node \u2026` to make it accessible from other modules)\n    import \"./sub/nodes\"; function main(): i32 { let node = nodes.Leaf(42); return 42; }\n                                                                 ^\n"
+  },
+  {
+    "scope": "",
+    "inside": false,
+    "name": "self",
+    "code": 0,
+    "out": ""
+  }
+]

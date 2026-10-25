@@ -15,9 +15,9 @@ var charMethodCases = []struct {
 	{"to_upper", "import \"std/i32\"; function main(): i32 { let c: u8 = 122; return c.to_ascii_upper() as i32; }", 90},
 	{"is_digit", "import \"std/i32\"; function main(): i32 { let c: u8 = 53; if (c.is_ascii_digit()) { return 1; } return 0; }", 1},
 	{"is_digit-false", "import \"std/i32\"; function main(): i32 { let c: u8 = 65; if (c.is_ascii_digit()) { return 1; } return 0; }", 0},
-	{"is_alpha-upper", "import \"std/i32\"; function main(): i32 { let c: u8 = 90; if (c.is_ascii_alpha() && c.is_ascii_upper() && !c.is_ascii_lower()) { return 1; } return 0; }", 1},
-	{"is_hex-alnum", "import \"std/i32\"; function main(): i32 { let c: u8 = 102; if (c.is_ascii_hex_digit() && c.is_ascii_alnum()) { return 1; } return 0; }", 1},
-	{"punct-neither", "import \"std/i32\"; function main(): i32 { let c: u8 = 35; if (c.is_ascii_alnum() || c.is_ascii_hex_digit()) { return 1; } return 0; }", 0},
+	{"is_alpha-upper", "import \"std/i32\"; function main(): i32 { let c: u8 = 90; if (c.is_ascii_letter() && c.is_ascii_upper() && !c.is_ascii_lower()) { return 1; } return 0; }", 1},
+	{"is_hex-alnum", "import \"std/i32\"; function main(): i32 { let c: u8 = 102; if (c.is_ascii_hex_digit() && c.is_ascii_alphanumeric()) { return 1; } return 0; }", 1},
+	{"punct-neither", "import \"std/i32\"; function main(): i32 { let c: u8 = 35; if (c.is_ascii_alphanumeric() || c.is_ascii_hex_digit()) { return 1; } return 0; }", 0},
 	{"to_ascii_string", "import \"std/i32\"; function main(): i32 { let c: u8 = 65; return c.to_ascii_string()[0] as i32; }", 65},
 }
 

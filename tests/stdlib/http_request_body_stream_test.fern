@@ -152,7 +152,7 @@ function test_bodyless_request_reads_empty(): test.TestOutcome {
 }
 
 function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
-  let fffd: string = utf8.utf8_encode(65533 as char);
+  let fffd: string = utf8.encode(65533 as char);
   let raw: string = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
   let req: HttpRequest = parsed(raw);
   let (line, rest) = req.body_stream().read_line();
