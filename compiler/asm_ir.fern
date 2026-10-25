@@ -6890,7 +6890,22 @@ function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmc
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
-function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// An instruction whose caller registers are saved around its call.
+function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, saves: SlowSaves, own s: asmcore.EmitState): asmcore.EmitState {
+  if (saves.mask != 0 && ssa_inline_rc_dec(blk.insts[ii], s)) {
+    return ssa_rc_dec(blk.insts[ii], reg_of, lp, saves, ssa_x0_forget(s));
+  }
+  s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
+  s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
+  return ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
+}
+
+// A release whose count test is inline, so only its freeing call is slow.
+function ssa_inline_rc_dec(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  return ins.kind_tag == 11 && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && ins.imm != 5;
+}
+
+function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   if (ins.imm == 5) {
     return ssa_helper_entry(ins, reg_of, ".u", s);
   }
@@ -6911,7 +6926,9 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), J_JG, dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), J_JS, kept);
+  s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
   s = ssa_helper_entry(ins, reg_of, ".u", s);
+  s = ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
   s = ssa_branch(s, J_JMP, done).lab_def(dec);
   s = ssa_alu_im(s, 5, 32, 1, p, 0 - 8).lab_def(kept);
   s = ssa_store(reg_of, ins.result, p, s);
@@ -6924,7 +6941,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   }
   s = ssa_x0_forget(s);
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
-    return ssa_rc_dec(ins, reg_of, lp, s);
+    return ssa_rc_dec(ins, reg_of, lp, SlowSaves { mask: 0, base: 0, save: 0 }, s);
   }
   if (s.ssa_trap_suffix != "" && ins.args.len() == 0 && util.has_str(ssa_called_traps(), ins.str)) {
     return ssa_call_sym(helper_call_needs(ins.str, s.need(ins.str + ".c")), ins.str + ".c");
@@ -8925,10 +8942,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
         tailed = true;
       } else {
         s = ssa_prepared_loc(prepared.source.values, ins.result, s);
-        let around: i32 = cold.by_pos[pos + ii];
-        s = ssa_cold_save(s, around, fr.cold_base, save, false);
-        s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
-        s = ssa_cold_save(s, around, fr.cold_base, save, true);
+        s = ssa_saved_inst(blk, ii, reg_of, lp, fr, r, SlowSaves { mask: cold.by_pos[pos + ii], base: fr.cold_base, save: save }, s);
       }
       ii = ii + 1;
     }
