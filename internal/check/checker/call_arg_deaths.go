@@ -122,10 +122,12 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		return true
 	})
 	isParam := map[string]bool{}
+	ownParam := map[string]bool{}
 	frameOwns := map[string]bool{}
 	for _, p := range fn.Params {
 		isParam[p.Name] = true
 		if p.Own {
+			ownParam[p.Name] = true
 			frameOwns[p.Name] = true
 		}
 	}
@@ -173,7 +175,8 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			return true
 		}
 		hid, isID := fa.Target.(*ast.Ident)
-		if !isID || !freshInitLocal[hid.Name] {
+		// An own parameter holds its fields as a fresh local does.
+		if !isID || !freshInitLocal[hid.Name] && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
 			return true
 		}
 		if fieldSelections == nil {
@@ -398,6 +401,8 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 
 func freshInit(init ast.Expr) bool {
 	switch init := init.(type) {
+	case *ast.TryOp:
+		return freshInit(init.Inner)
 	case *ast.Call:
 		_, named := init.Callee.(*ast.Ident)
 		return named

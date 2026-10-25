@@ -561,6 +561,44 @@ function f(): Result[i32, string] {
 }`)
 }
 
+func TestOwnGuardAllowsATryResult(t *testing.T) {
+	wantOK(t, "try-result-into-own", ownConsumer+`
+function make(n: i32): Result[i32[], string] { return Ok([n]); }
+function f(): Result[i32, string] {
+    let a: i32 = consume(make(1)?);
+    let xs: i32[] = make(2)?;
+    return Ok(a + consume(xs));
+}`)
+}
+
+func TestOwnGuardAllowsAFieldUnpackedFromAnOwnParam(t *testing.T) {
+	wantOK(t, "own-param-field-unpack", ownConsumer+`
+function f(own p: Pair): i32 {
+    let n: i32 = p.n;
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k + n;
+}`)
+}
+
+func TestOwnGuardRejectsAFieldOfAnOwnParamReadTwice(t *testing.T) {
+	wantE051(t, "own-param-field-read-twice", ownConsumer+`
+function f(own p: Pair): i32 {
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k + p.items.len();
+}`)
+}
+
+func TestOwnGuardRejectsAFieldOfABorrowedParam(t *testing.T) {
+	wantE051(t, "borrowed-param-field-unpack", ownConsumer+`
+function f(p: Pair): i32 {
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k;
+}`)
+}
+
 func TestOwnGuardAllowsSelfReassignMoveInLambda(t *testing.T) {
 	wantOK(t, "self-reassign-in-lambda", ownConsumer+`
 struct B { items: i32[] }

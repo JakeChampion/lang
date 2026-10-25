@@ -9299,6 +9299,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
+		case *ast.TryOp:
+			return isOwnedExpr(x.Inner)
 		case *ast.Ident:
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true

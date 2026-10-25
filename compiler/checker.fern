@@ -16625,6 +16625,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
+    ast.ExprUnary(u) => {
+      return u.op == "try_" && ow_is_owned_expr(u.operand, ctx);
+    },
     ast.ExprIdent(id) => {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
         return true;
@@ -16678,7 +16681,7 @@ struct LuSel { obj: string, field: string }
 
 struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[] }
 
-struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFuncs }
+struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs }
 
 struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, fresh: string[], in_iife: boolean }
 
@@ -16825,7 +16828,15 @@ function lu_fresh_init(fx: LuFn, name: string): boolean {
   return li.ok && lu_fresh_expr(li.init);
 }
 
+// An own parameter holds its fields as a fresh local does, so a field unpacked from it is owned the same way.
+function lu_own_param(fx: LuFn, name: string): boolean {
+  return util.has_str(fx.owned, name) && lu_decl_count(fx, name) == 0;
+}
+
 function lu_fresh_expr(e: ast.Expr): boolean {
+  if let ast.ExprUnary(u) = e {
+    return u.op == "try_" && lu_fresh_expr(u.operand);
+  }
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(_) = c.callee {
       return true;
@@ -16853,7 +16864,7 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
   }
   if let ast.ExprFieldAccess(fa) = li.init {
     let h: string = ow_ident_name(fa.obj);
-    if (h.len() == 0 || !lu_fresh_init(fx, h)) {
+    if (h.len() == 0 || !lu_fresh_init(fx, h) && !lu_own_param(fx, h)) {
       return false;
     }
     let reads: i32 = 0;
@@ -17311,7 +17322,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_nested_fn, lu_outside_nested_fn);
   }
-  let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), ofuncs: ofuncs };
+  let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), owned: ow_own_param_names(fn), ofuncs: ofuncs };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let out: string[] = lu_stmts(fn.body, false, [], false, none, false, fx, []);
   for lm in nested {
@@ -17894,6 +17905,16 @@ function ow_param_names(fn: parser.FuncDecl): string[] {
   let out: string[] = [];
   for p in fn.params {
     out = out.append(p.name);
+  }
+  return out;
+}
+
+function ow_own_param_names(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for p in fn.params {
+    if (p.own) {
+      out = out.append(p.name);
+    }
   }
   return out;
 }
