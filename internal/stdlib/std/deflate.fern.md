@@ -1693,20 +1693,33 @@ function __put_header(w: __Bits, h: __Header): __Bits {
   return w;
 }
 
+// The chains link positions with the same four-byte hash, as libdeflate's
+// do, and a second table holds the last position of each three-byte hash.
 function __tokens(input: [u8], window: i32): i32[] {
   let n: i32 = input.len();
-  let head: i32[] = __filled(32768, 0 - 1);
+  let head3: i32[] = __filled(32768, 0 - 1);
+  let head4: i32[] = __filled(65536, 0 - 1);
   let prev: i32[] = __filled(window, 0 - 1);
   let out: i32[] = [];
   let held: (i32, i32) = (0 - 1, 0);
   let skip: i32 = 0;
   let pos: i32 = 0;
   while (pos < n) {
-    let cur: (i32, i32) = __match_at(input, pos, skip, head, prev, window);
-    if (pos + 2 < n) {
-      let h: i32 = __hash3(input, pos);
-      prev = prev.with(pos & window - 1, head[h]);
-      head = head.with(h, pos);
+    let c3: i32 = 0 - 1;
+    let c4: i32 = 0 - 1;
+    if (pos + 3 < n) {
+      let w: u32 = __le32(input, pos);
+      let h3: i32 = ((w << 8) * 506832829u32 >> 17) as i32;
+      let h4: i32 = (w * 506832829u32 >> 16) as i32;
+      c3 = head3[h3];
+      c4 = head4[h4];
+      head3 = head3.with(h3, pos);
+      head4 = head4.with(h4, pos);
+      prev = prev.with(pos & window - 1, c4);
+    }
+    let cur: (i32, i32) = (0, 0);
+    if (pos >= skip && held.0 < 65) {
+      cur = __longest(input, pos, c3, c4, prev, window, held.0);
     }
     if (pos >= skip && held.0 >= 3 && cur.0 <= held.0) {
       out = out.append(held.0 << 16 | held.1);
@@ -1765,13 +1778,6 @@ function __fast_tokens(input: [u8]): i32[] {
   return out;
 }
 
-function __match_at(input: [u8], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32): (i32, i32) {
-  if (pos < skip || pos + 2 >= input.len()) {
-    return (0, 0);
-  }
-  return __longest(input, pos, head[__hash3(input, pos)], prev, window);
-}
-
 function __filled(n: i32, v: i32): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -1794,26 +1800,59 @@ function __common(input: [u8], from: i32, pos: i32): i32 {
   return __mismatch_bytes(input, from, input, pos, 258);
 }
 
-function __longest(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {
-  let n: i32 = input.len();
+// The longest match at pos, longer than a held match of 3 or more bytes. A
+// search visits at most 35 candidates and stops at a match of 65 bytes. The
+// search for the lazy step visits half as many. A match of 3 bytes further
+// back than 8192 costs more than its literals.
+function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], window: i32, held: i32): (i32, i32) {
+  let max: i32 = cmp.min(258, input.len() - pos);
+  let nice: i32 = cmp.min(65, max);
+  if (max < 4 || held >= nice) {
+    return (0, 0);
+  }
+  let first: u32 = __le32(input, pos);
   let best_len: i32 = 0;
   let best_dist: i32 = 0;
-  let depth: i32 = 0;
-  while (cand >= 0 && pos - cand < window && depth < 32) {
-    let len: i32 = 0;
-    if (pos + best_len >= n || input[cand + best_len] == input[pos + best_len]) {
-      len = __common(input, cand, pos);
-    }
-    if (len > best_len) {
-      best_len = len;
-      best_dist = pos - cand;
-    }
-    if (len == 258) {
-      return (best_len, best_dist);
+  let depth: i32 = 35;
+  if (held >= 3) {
+    best_len = held;
+    depth = 17;
+  } else if (c3 >= 0 && pos - c3 <= 8192 && (__le32(input, c3) ^ first) << 8 == 0u32) {
+    best_len = 3;
+    best_dist = pos - c3;
+  }
+  while (cand >= 0 && pos - cand < window && depth > 0) {
+    if (input[cand + best_len] == input[pos + best_len] && __le32(input, cand) == first) {
+      let len: i32 = __extend(input, cand, pos, max);
+      if (len > best_len) {
+        best_len = len;
+        best_dist = pos - cand;
+        if (len >= nice) {
+          return (best_len, best_dist);
+        }
+      }
     }
     cand = prev[cand & window - 1];
-    depth = depth + 1;
+    depth = depth - 1;
   }
   return (best_len, best_dist);
+}
+
+// The length of the match past its first four bytes, eight bytes at a time.
+// A call here would keep the chain walk's values out of registers.
+@inline
+function __extend(input: [u8], cand: i32, pos: i32, max: i32): i32 {
+  let len: i32 = 4;
+  while (len + 8 <= max) {
+    let x: u64 = __le64(input, cand + len) ^ __le64(input, pos + len);
+    if (x != 0u64) {
+      return len + (__ctz64(x) >> 3);
+    }
+    len = len + 8;
+  }
+  while (len < max && input[cand + len] == input[pos + len]) {
+    len = len + 1;
+  }
+  return len;
 }
 ```
