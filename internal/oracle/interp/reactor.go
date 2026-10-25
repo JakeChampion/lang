@@ -233,7 +233,7 @@ func builtinReactorWait(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return Number(-int64(syscall.EBADF)), nil
 	}
-	cap := len(events.E) / 2
+	cap := len(events.Elems()) / 2
 	if cap <= 0 {
 		return Number(-int64(syscall.EINVAL)), nil
 	}
@@ -241,6 +241,7 @@ func builtinReactorWait(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return Number(errnoOf(err)), nil
 	}
+	slots := events.intoElems()
 	for k, e := range got {
 		handle := r.handles[e.raw]
 		ready := e.ready
@@ -248,8 +249,8 @@ func builtinReactorWait(i *Interp, args []Value) (Value, error) {
 			r.drainSignal(e.raw)
 			ready = 1
 		}
-		events.E[2*k] = Number(handle)
-		events.E[2*k+1] = Number(ready)
+		slots[2*k] = Number(handle)
+		slots[2*k+1] = Number(ready)
 	}
 	return Number(len(got)), nil
 }
@@ -270,13 +271,14 @@ func builtinTcpRecvInto(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return Number(-int64(syscall.EBADF)), nil
 	}
-	if len(arr.E) == 0 {
+	if len(arr.Elems()) == 0 {
 		return Number(0), nil
 	}
-	buf := make([]byte, len(arr.E))
+	buf := make([]byte, len(arr.Elems()))
 	n, err := readSocket(conn, buf, i.tcpNonblocking[int64(id)])
+	into := arr.intoElems()
 	for j := 0; j < n; j++ {
-		arr.E[j] = Number(buf[j])
+		into[j] = Number(buf[j])
 	}
 	if n > 0 {
 		return Number(n), nil

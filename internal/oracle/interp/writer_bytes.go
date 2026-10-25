@@ -22,8 +22,8 @@ func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("byte write: content must be a byte view")
 	}
-	b := make([]byte, len(a.E))
-	for n, v := range a.E {
+	b := make([]byte, len(a.Elems()))
+	for n, v := range a.Elems() {
 		b[n] = byte(v.(Number))
 	}
 	failure := func(e error) Value {
