@@ -21,7 +21,7 @@ function main(): i32 {
   let acc: i32 = 0;
   let r: i32 = 0;
   while (r < 1500) {
-    if (utf8.is_valid_utf8(text)) {
+    if (utf8.is_valid(text)) {
       acc = acc + 1;
     }
     r = r + 1;

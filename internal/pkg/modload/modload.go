@@ -62,6 +62,16 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit, mans); err != nil {
 		return nil, srcs, lit, err
 	}
+	if _, present := loaded[stdlibPrefix+"core/primitive_text.fern"]; !present {
+		for _, mod := range loaded {
+			if needsPrimitiveDisplay(mod.prog) {
+				if err := loadRecursive(stdlibPrefix+"core/primitive_text.fern", loaded, stack, srcs, overrides, lit, mans); err != nil {
+					return nil, srcs, lit, err
+				}
+				break
+			}
+		}
+	}
 	resolveCyclicImports(loaded)
 	prog, err := combine(loaded, entryAbs)
 	if err != nil {
@@ -140,6 +150,7 @@ type module struct {
 	importPaths      map[string]string
 	publicFuncs      map[string]bool
 	publicMethods    map[string]bool
+	packageRoot      string
 	publicPlainFuncs map[string]bool
 	publicStructs    map[string]bool
 	publicConsts     map[string]bool
@@ -153,15 +164,37 @@ type module struct {
 	reexportTypes    map[string]string
 	pubUses          []pubUseEntry
 	packageScoped    map[string]bool
+	packageVariants  map[string]string
 }
 
+// packageIdentity uses the manifest already read by the loader. The embedded
+// stdlib has one identity across its std/ and core/ modules.
+func packageIdentity(path string, man *manifest.Manifest) string {
+	if strings.HasPrefix(path, stdlibPrefix) {
+		return stdlibPrefix
+	}
+	if man != nil {
+		return man.Dir
+	}
+	return filepath.Dir(path)
+}
+
+// samePackage is also used by the boundary unit tests. Production references
+// compare the identities cached on their loaded modules.
 func samePackage(a, b string) bool {
-	aStd := strings.HasPrefix(a, stdlibPrefix)
-	bStd := strings.HasPrefix(b, stdlibPrefix)
+	aStd, bStd := strings.HasPrefix(a, stdlibPrefix), strings.HasPrefix(b, stdlibPrefix)
 	if aStd || bStd {
 		return aStd && bStd
 	}
-	return filepath.Dir(a) == filepath.Dir(b)
+	am, err := manifest.FindForDir(filepath.Dir(a))
+	if err != nil {
+		return false
+	}
+	bm, err := manifest.FindForDir(filepath.Dir(b))
+	if err != nil {
+		return false
+	}
+	return packageIdentity(a, am) == packageIdentity(b, bm)
 }
 
 type pubUseEntry struct {
@@ -197,9 +230,12 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	}
 
 	dir := ""
+	var governingManifest *manifest.Manifest
 	if !strings.HasPrefix(path, stdlibPrefix) {
 		dir = filepath.Dir(path)
-		if _, err := manifestFor(dir, mans); err != nil {
+
+		governingManifest, err = manifestFor(dir, mans)
+		if err != nil {
 			return err
 		}
 	}
@@ -232,6 +268,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 
 	mod := &module{
 		path:             path,
+		packageRoot:      packageIdentity(path, governingManifest),
 		name:             importLocalName(path),
 		manglePrefix:     importLocalName(path) + "__",
 		prog:             prog,
@@ -245,6 +282,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicEnums:      map[string]bool{},
 		allEnums:         map[string]bool{},
 		publicVariants:   map[string]string{},
+		packageVariants:  map[string]string{},
 		allVariants:      map[string]string{},
 		allConsts:        map[string]bool{},
 		allDecls:         map[string]bool{},
@@ -287,6 +325,13 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 		for _, v := range ed.Variants {
 			mod.allVariants[v.Name] = ed.Name
+			if ed.PackageScoped {
+				if _, dup := mod.packageVariants[v.Name]; dup {
+					mod.packageVariants[v.Name] = ""
+				} else {
+					mod.packageVariants[v.Name] = ed.Name
+				}
+			}
 			if !ed.Public {
 				continue
 			}
@@ -822,6 +867,20 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	}
 	for _, p := range sortedPaths(loaded) {
 		mod := loaded[p]
+		privateViewers := map[string]bool{p: true}
+		packageViewers := map[string]bool{}
+		for from, peer := range loaded {
+			if peer.packageRoot == mod.packageRoot {
+				packageViewers[from] = true
+			}
+		}
+		for _, ed := range mod.prog.Enums {
+			if ed.PackageScoped {
+				ed.VisibleFrom = packageViewers
+			} else if !ed.Public {
+				ed.VisibleFrom = privateViewers
+			}
+		}
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
 		combined.Enums = append(combined.Enums, mod.prog.Enums...)
@@ -923,23 +982,43 @@ func (m *module) exportedMangled(name string) (mangled string, isType bool, ok b
 	return "", false, false
 }
 
+type pendingReexport struct {
+	mod     *module
+	child   *module
+	name    string
+	pos     ast.Position
+	modPath string
+}
+
+func reexportFailure(work []pendingReexport) error {
+	type key struct {
+		mod  *module
+		name string
+	}
+	pending := make(map[key]bool, len(work))
+	for _, w := range work {
+		pending[key{w.mod, w.name}] = true
+	}
+	failed := work[0]
+	for _, w := range work {
+		if !pending[key{w.child, w.name}] {
+			failed = w
+			break
+		}
+	}
+	return &importError{path: failed.modPath, pos: failed.pos, code: "E087", msg: fmt.Sprintf("module %q does not export %q (cannot `pub use` it)", importLocalName(failed.child.path), failed.name)}
+}
+
 func resolveReexports(loaded map[string]*module) error {
 	paths := sortedPaths(loaded)
 
-	type pending struct {
-		mod     *module
-		child   *module
-		name    string
-		pos     ast.Position
-		modPath string
-	}
-	var work []pending
+	var work []pendingReexport
 	for _, p := range paths {
 		mod := loaded[p]
 		for _, pu := range mod.pubUses {
 			child := loaded[pu.childPath]
 			for _, name := range pu.names {
-				work = append(work, pending{mod: mod, child: child, name: name, pos: pu.pos, modPath: p})
+				work = append(work, pendingReexport{mod: mod, child: child, name: name, pos: pu.pos, modPath: p})
 			}
 		}
 	}
@@ -949,7 +1028,7 @@ func resolveReexports(loaded map[string]*module) error {
 		remaining := work[:0]
 		for _, w := range work {
 			if w.child == nil {
-				return fmt.Errorf("%s: `pub use` target module was not loaded", w.modPath)
+				return &importError{path: w.modPath, pos: w.pos, code: "E087", msg: "`pub use` target module was not loaded"}
 			}
 			mangled, isType, ok := w.child.exportedMangled(w.name)
 			if !ok {
@@ -970,14 +1049,16 @@ func resolveReexports(loaded map[string]*module) error {
 		}
 		work = remaining
 		if len(work) > 0 && !progress {
-			w := work[0]
-			return fmt.Errorf("%s:%s: module %q does not export %q (cannot `pub use` it)", w.modPath, w.pos, importLocalName(w.child.path), w.name)
+			return reexportFailure(work)
 		}
 	}
 	return nil
 }
 
 func isRuntimeHelperName(name string) bool {
+	if strings.HasPrefix(name, "__primitive_") {
+		return true
+	}
 	if strings.HasPrefix(name, "__method_") {
 		return true
 	}
@@ -1027,6 +1108,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 
 	r := &rewriter{
 		modPath:       m.path,
+		packageRoot:   m.packageRoot,
 		selfPrefix:    selfPrefix,
 		ownFuncs:      ownFuncs,
 		ownStructs:    ownStructs,
@@ -1163,6 +1245,7 @@ type rewriter struct {
 	errs          []error
 	localVars     map[string]bool
 	typeParams    map[string]bool
+	packageRoot   string
 	flatNamespace bool
 	skipPaths     map[string]bool
 }
@@ -1175,7 +1258,7 @@ func (r *rewriter) packageScopedOK(mod *module, name string, pos ast.Position) (
 	if !mod.packageScoped[name] {
 		return false, false
 	}
-	if samePackage(r.modPath, mod.path) {
+	if r.packageRoot == mod.packageRoot {
 		return true, true
 	}
 	r.refuse(pos, "%s.%s is `pub(package)` — only modules in the same package as %s may use it", mod.name, name, mod.name)
@@ -1510,6 +1593,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 					}
 					r.checkPublicFunc(mod, fa.Field, fa.P)
 					mangled := prefix + fa.Field
+					if strings.HasPrefix(fa.Field, "__primitive_") {
+						mangled = fa.Field
+					}
+					// A `pub use`-re-exported name resolves to its original
+					// module's mangled name, not this module's prefix.
 					if rx, ok := mod.reexports[fa.Field]; ok {
 						mangled = rx
 					}
@@ -1562,6 +1650,9 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				}
 				r.checkPublicValue(mod, x.Field, x.P)
 				target := prefix + x.Field
+				if strings.HasPrefix(x.Field, "__primitive_") {
+					target = x.Field
+				}
 				if rx, ok := mod.reexports[x.Field]; ok {
 					target = rx
 				}
@@ -1683,6 +1774,14 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 		if _, isVariant := mod.publicVariants[*armName]; isVariant && !mod.publicStructs[*armName] {
 			return
 		}
+		if en, scoped := mod.packageVariants[*armName]; scoped && !mod.publicStructs[*armName] {
+			if en == "" {
+				r.refuse(pos, "%s.%s is a variant of more than one package enum; name the enum in the pattern", mod.name, *armName)
+			} else {
+				r.packageScopedOK(mod, en, pos)
+			}
+			return
+		}
 		if en, private := mod.allVariants[*armName]; private && !mod.publicStructs[*armName] {
 			r.refuse(pos, "%s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)", mod.name, *armName, en, en)
 			return
@@ -1720,6 +1819,16 @@ func (r *rewriter) qualifiedVariant(mod *module, prefix, name string, pos ast.Po
 	if en, ok := mod.publicVariants[name]; ok {
 		if en == "" {
 			r.refuse(pos, "%s.%s is a variant of more than one exported enum in module %q; match on a value of the enum you mean", mod.name, name, mod.name)
+			return "", true
+		}
+		return prefix + en, true
+	}
+	if en, scoped := mod.packageVariants[name]; scoped {
+		if en == "" {
+			r.refuse(pos, "%s.%s is a variant of more than one package enum; name the enum in the constructor", mod.name, name)
+			return "", true
+		}
+		if ok, _ := r.packageScopedOK(mod, en, pos); !ok {
 			return "", true
 		}
 		return prefix + en, true

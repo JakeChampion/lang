@@ -52,7 +52,7 @@ function main(): i32 {
     if (a.hash() != b.hash()) { n = n + 1; }
     if (a.to_json().len() > 0) { n = n + 1; }
     if (http.http_status_text(200).len() > 0) { n = n + 1; }
-    if (regex.regex_match("a", "a")) { n = n + 1; }
+    if ({ let __checked_regex_0: regex.Regex = match (regex.compile("a")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("a") }) { n = n + 1; }
     let d = time.date_make(2026, 6, 28);
     if (d.year == 2026) { n = n + 1; }
     return n;

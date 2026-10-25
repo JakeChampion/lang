@@ -1,11 +1,12 @@
+import "std/unicode";
 import "std/string";
 
 function main(): i32 {
-    let s: string = "Hello, Fern";
-    print(s.to_upper());
-    print(s.len().to_string());
-    if (s.contains("Fern")) {
-        print("has-fern");
-    }
-    return 0;
+  let s: string = "Hello, Fern";
+  print(s.to_upper());
+  print(s.len().to_string());
+  if (s.contains("Fern")) {
+    print("has-fern");
+  }
+  return 0;
 }

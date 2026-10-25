@@ -53,7 +53,7 @@ func TestUnknownMethodDiagnostics(t *testing.T) {
 func TestUnknownMethodDiagnosticsLeaveNeighboursAlone(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"scalar method still names the missing import",
-			`function main(): i32 { let n: i32 = 5; print(n.to_string()); return 0; }`,
+			`function main(): i32 { let n: i32 = 5; print(n.to_string_radix(16)); return 0; }`,
 			"add `import \"std/i32\"`"},
 		{"struct field typo still reads as a field",
 			`struct Point { x: i32, y: i32 }

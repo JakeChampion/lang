@@ -1,0 +1,4 @@
+function main(): i32 {
+  print(f"{42}");
+  return 42.gcd(2);
+}

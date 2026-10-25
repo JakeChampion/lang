@@ -64,6 +64,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module reads and writes multipart form data under RFC 7578.
+
+import "std/unicode";
+// This module reads and writes multipart form data under RFC 7578.
 ```
 
 ### `dependencies 2`

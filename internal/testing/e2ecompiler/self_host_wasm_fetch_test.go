@@ -44,7 +44,7 @@ func selfHostWasmFetch(t *testing.T, src string, env ...string) []byte {
 	return sout.Bytes()
 }
 
-func TestSelfHostWasmFetchFutureFanout(t *testing.T) {
+func TestSelfHostWasmTaskFetchFanout(t *testing.T) {
 	pSlow := e2eharness.StartDelayedUpstream(t, "AAA", 200*time.Millisecond)
 	pFast := e2eharness.StartDelayedUpstream(t, "BBB", 10*time.Millisecond)
 	out := selfHostWasmFetch(t, e2eharness.WasmFetchFanoutSource,

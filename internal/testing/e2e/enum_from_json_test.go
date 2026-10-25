@@ -11,14 +11,14 @@ const enumFromJsonSrc = `import "std/json" as json;
 enum Shape { Empty, Circle(f64), Pair(i32, i32), Rect { w: i32, h: i32 }, Tagged(string[]) }
 @derive(json.FromJson)
 enum Opt { Maybe(Option[i32]), Two(i32, Option[string]) }
-function show(r: Result[Shape, string]): string {
+function show(r: Result[Shape, json.JsonError]): string {
   match (r) {
     Ok(s) => { return "ok " + s.to_json(); },
-    Err(e) => { return "err " + e; }
+    Err(e) => { return "err " + e.to_string(); }
   }
   return "";
 }
-function opt(r: Result[Opt, string]): string {
+function opt(r: Result[Opt, json.JsonError]): string {
   match (r) {
     Ok(o) => {
       match (o) {
@@ -26,7 +26,7 @@ function opt(r: Result[Opt, string]): string {
         Two(a, b) => { match (b) { Some(t) => { return "two " + a.to_string() + " " + t; }, None => { return "two " + a.to_string() + " none"; } } }
       }
     },
-    Err(e) => { return "err " + e; }
+    Err(e) => { return "err " + e.to_string(); }
   }
   return "";
 }

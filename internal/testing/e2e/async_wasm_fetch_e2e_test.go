@@ -10,7 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-func TestAsyncWasmFetchFutureFanout(t *testing.T) {
+func TestAsyncWasmTaskFetchFanout(t *testing.T) {
 	skipIfPreview2Missing(t)
 
 	pSlow := e2eharness.StartDelayedUpstream(t, "AAA", 200*time.Millisecond)

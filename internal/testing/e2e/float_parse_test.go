@@ -91,11 +91,11 @@ func TestParseFloatCorrectlyRounded(t *testing.T) {
 	}
 
 	var b strings.Builder
-	b.WriteString("import \"std/string\";\nfunction main(): i32 {\n")
+	b.WriteString("import \"std/f64\";\nimport \"std/string\";\nfunction main(): i32 {\n")
 	for _, s := range vals {
-		b.WriteString(fmt.Sprintf("    match (%q.parse_float()) {\n", s))
-		b.WriteString("        Some(v) => { write(f64_bits(v).to_string()); write(\"\\n\"); },\n")
-		b.WriteString("        None => { write(\"None\\n\"); },\n    }\n")
+		b.WriteString(fmt.Sprintf("    match (f64.parse_f64(%q)) {\n", s))
+		b.WriteString("        Ok(v) => { write(f64_bits(v).to_string()); write(\"\\n\"); },\n")
+		b.WriteString("        Err(_) => { write(\"None\\n\"); },\n    }\n")
 	}
 	b.WriteString("    return 0;\n}\n")
 
@@ -148,7 +148,7 @@ func TestFloatStringRoundTripIsExactIdentity(t *testing.T) {
 	b.WriteString("function main(): i32 {\n    let bad: i32 = 0;\n")
 	for _, v := range vals {
 		bits := int64(math.Float64bits(v))
-		fmt.Fprintf(&b, "    match ((f64_from_bits(%d).to_string()).parse_float()) { Some(x) => { if (f64_bits(x) != %d) { bad = bad + 1; write(\"%d -> \"); write(f64_bits(x).to_string()); write(\"\\n\"); } }, None => { bad = bad + 1; write(\"%d -> None\\n\"); } }\n",
+		fmt.Fprintf(&b, "    match (f64.parse_f64((f64_from_bits(%d).to_string()))) { Ok(x) => { if (f64_bits(x) != %d) { bad = bad + 1; write(\"%d -> \"); write(f64_bits(x).to_string()); write(\"\\n\"); } }, Err(_) => { bad = bad + 1; write(\"%d -> None\\n\"); } }\n",
 			bits, bits, bits, bits)
 	}
 	b.WriteString("    write(\"failures=\"); write(bad.to_string()); write(\"\\n\");\n    return 0;\n}\n")
@@ -182,9 +182,9 @@ var eiselLemireFallbackInputs = []string{
 
 func TestParseFloatEiselLemireFallback(t *testing.T) {
 	var b strings.Builder
-	b.WriteString("import \"std/string\";\nimport \"std/i64\";\nfunction main(): i32 {\n")
+	b.WriteString("import \"std/f64\";\nimport \"std/string\";\nimport \"std/i64\";\nfunction main(): i32 {\n")
 	for _, s := range eiselLemireFallbackInputs {
-		fmt.Fprintf(&b, "    match ((%q).parse_float()) { Some(x) => { write(f64_bits(x).to_string()); }, None => { write(\"NONE\"); } } write(\"\\n\");\n", s)
+		fmt.Fprintf(&b, "    match (f64.parse_f64((%q))) { Ok(x) => { write(f64_bits(x).to_string()); }, Err(_) => { write(\"NONE\"); } } write(\"\\n\");\n", s)
 	}
 	b.WriteString("    return 0;\n}\n")
 

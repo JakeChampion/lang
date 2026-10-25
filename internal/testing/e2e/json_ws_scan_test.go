@@ -9,7 +9,7 @@ import (
 const jsonWsScanSrc = `import "std/json";
 
 function show(text: string): string {
-  match (json.json_parse_result(text)) {
+  match (json.parse(text)) {
     Ok(v) => {
       return json.json_encode(v);
     },

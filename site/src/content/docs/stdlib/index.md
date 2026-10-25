@@ -28,7 +28,8 @@ import "core/iter" as it;
 function main(): i32 {
     let words: string[] = "alpha beta gamma".split(" ");
     print(words.len().to_string());                         // 3
-    print(regex.regex_match("^b", words[1]).to_string());   // true
+    let Ok(pattern) = regex.compile("^b") else { return 1; };
+    print(pattern.is_match(words[1]).to_string());          // true
     print(it.sum(it.of([1, 2, 3])).to_string());            // 6
     return 0;
 }

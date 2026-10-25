@@ -1,0 +1,905 @@
+{
+  "source_commit": "97f686adeee9baa851df24b6b3d7ee2621fcc910",
+  "base_commit": "9344a74be12163ec9d95cf56a882e835a8a774fd",
+  "source_patch_paths": [
+    ".",
+    ":(exclude)docs/benchmarks"
+  ],
+  "issues": [
+    12704,
+    13081,
+    13082,
+    13083,
+    13084,
+    13085,
+    12718,
+    13086,
+    12713,
+    13087,
+    13089,
+    13093,
+    13164,
+    13102,
+    12844,
+    13161
+  ],
+  "tests": [
+    {
+      "file": "go-regressions.jsonl",
+      "cases": 2820,
+      "passed": 2820,
+      "skipped": 0,
+      "packages": 7
+    },
+    {
+      "file": "native-regressions.jsonl",
+      "cases": 11021,
+      "passed": 11021,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "gnu-9.12-regressions.jsonl",
+      "cases": 5786,
+      "passed": 5786,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "targeted-regressions.jsonl",
+      "cases": 30,
+      "passed": 30,
+      "skipped": 0,
+      "packages": 1
+    },
+    {
+      "file": "nested-pattern-regressions.jsonl",
+      "cases": 7,
+      "passed": 7,
+      "skipped": 0,
+      "packages": 1
+    }
+  ],
+  "matrices": [
+    {
+      "file": "contracts-matrix-results.json",
+      "commands": 144,
+      "balanced_censuses": 24,
+      "raw_trace_events": 0
+    },
+    {
+      "file": "verified-negative.json",
+      "commands": 6,
+      "balanced_censuses": 0,
+      "raw_trace_events": 0
+    },
+    {
+      "file": "text-matrix-results.json",
+      "commands": 40,
+      "balanced_censuses": 6,
+      "raw_trace_events": 314
+    },
+    {
+      "file": "package-compatibility/committed-matrix-final-results.json",
+      "commands": 90,
+      "balanced_censuses": 15,
+      "raw_trace_events": 0
+    },
+    {
+      "file": "package-compatibility/package-project-matrix-final-results.json",
+      "commands": 19,
+      "balanced_censuses": 3,
+      "raw_trace_events": 0
+    },
+    {
+      "file": "package-compatibility/reexport-matrix-final-results.json",
+      "commands": 86,
+      "balanced_censuses": 12,
+      "raw_trace_events": 0
+    },
+    {
+      "file": "all-coreutils-checks.json",
+      "commands": 212,
+      "balanced_censuses": 0,
+      "raw_trace_events": 0
+    },
+    {
+      "file": "numeric-matrix-results.json",
+      "commands": 80,
+      "balanced_censuses": 9,
+      "raw_trace_events": 6508
+    },
+    {
+      "file": "receiver-alias-matrix.json",
+      "commands": 260,
+      "balanced_censuses": 39,
+      "raw_trace_events": 1748
+    },
+    {
+      "file": "matrix-results.json",
+      "commands": 24,
+      "balanced_censuses": 3,
+      "raw_trace_events": 0
+    },
+    {
+      "file": "io-result-matrix.json",
+      "commands": 80,
+      "balanced_censuses": 12,
+      "raw_trace_events": 1456
+    }
+  ],
+  "matrix_commands": 1041,
+  "balanced_matrix_censuses": 123,
+  "raw_matrix_trace_events": 10026,
+  "embedded_commands": 100,
+  "balanced_embedded_censuses": 33,
+  "embedded_trace_events": 7698,
+  "darwin_builds": 63,
+  "compiler": {
+    "path": "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/bootstrap/stage3",
+    "bytes": 14545088,
+    "sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68"
+  },
+  "oracle": {
+    "path": "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/oracle",
+    "sha256": "05e83535706b2f09afb6480fa7e8501abe3331f48e0897da951cd7e16ad9fe6d"
+  },
+  "bootstrap": {
+    "source_git": "97f686adeee9baa851df24b6b3d7ee2621fcc910",
+    "source_sha256": "6e3e5bc4911be364b2bebd1931e33d1638d7d5cdbe79e8cefd7dbcc8aa90dc4e",
+    "stages": [
+      {
+        "stage": "stage1",
+        "producer_sha256": "a4d655b3ce09712582951702c8fce5d0cba0dbe58736c7da95ef2a60a9b3674f",
+        "seconds": 32.034918464007205,
+        "bytes": 14541008,
+        "sha256": "3263ddd0d129c1112f1debdf63dae7c08423dbb7dfc66337c74ecf59c17d2bbb"
+      },
+      {
+        "stage": "stage2",
+        "producer_sha256": "3263ddd0d129c1112f1debdf63dae7c08423dbb7dfc66337c74ecf59c17d2bbb",
+        "seconds": 55.81763100200624,
+        "bytes": 14545088,
+        "sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68"
+      },
+      {
+        "stage": "stage3",
+        "producer_sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68",
+        "seconds": 26.79486693900253,
+        "bytes": 14545088,
+        "sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68"
+      }
+    ],
+    "fixedpoint": true
+  },
+  "performance": [
+    {
+      "case": "integer",
+      "variant": "before",
+      "iterations": 4096,
+      "checksum": "126419793920",
+      "allocations": 0,
+      "instructions": 695221,
+      "source_commit": "e568db05a0a054e898df83c5597aadabce26fe28",
+      "compiler_sha256": "7016e4d8981c88ccb251278aefb4febafc48480144b69fdc19e26a748584195a",
+      "build_args": [
+        "/workspace/scratch/lang-text-api-cohesion/module-driver-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/integer-before",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/integer-before.fern",
+        "/tmp/lang-text-api-cohesion-publish/internal/stdlib"
+      ],
+      "source_sha256": "2843bca97712962501d839ed1dbab28c710ecc5210d5b054a4cb7a4928983d37",
+      "binary_sha256": "18fdd8401d4b51804a27c11c501d16010dcfbec5890051b00dcfa21937fa9682",
+      "bytes": 8416
+    },
+    {
+      "case": "integer",
+      "variant": "after",
+      "iterations": 4096,
+      "checksum": "126419793920",
+      "allocations": 0,
+      "instructions": 946106,
+      "source_commit": "97f686adeee9baa851df24b6b3d7ee2621fcc910",
+      "compiler_sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68",
+      "build_args": [
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/integer-after",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/integer-after.fern",
+        "/tmp/lang-stdlib-cohesion-integration/internal/stdlib"
+      ],
+      "source_sha256": "48fe6280772eb6b79e19973ea7a7311d447f7268315a51262524ff58e2bc6af2",
+      "binary_sha256": "191810a2ce89ee07f9fb5c0c2ccad9ee437cab0b3f347007a331ef684cf3c441",
+      "bytes": 8416
+    },
+    {
+      "case": "float-fast",
+      "variant": "before",
+      "iterations": 4096,
+      "checksum": "121026560",
+      "allocations": 0,
+      "instructions": 1875829,
+      "source_commit": "e568db05a0a054e898df83c5597aadabce26fe28",
+      "compiler_sha256": "7016e4d8981c88ccb251278aefb4febafc48480144b69fdc19e26a748584195a",
+      "build_args": [
+        "/workspace/scratch/lang-text-api-cohesion/module-driver-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-fast-before",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-fast-before.fern",
+        "/tmp/lang-text-api-cohesion-publish/internal/stdlib"
+      ],
+      "source_sha256": "56fa6127a92485da3e8c3531a517a550623f1ecb069087c5a08912d2f8da668d",
+      "binary_sha256": "27e93f0f5a628366092d52786dec4568eee6ffd5cb04e871e1df58331105d41d",
+      "bytes": 31248
+    },
+    {
+      "case": "float-fast",
+      "variant": "after",
+      "iterations": 4096,
+      "checksum": "121026560",
+      "allocations": 0,
+      "instructions": 1907573,
+      "source_commit": "97f686adeee9baa851df24b6b3d7ee2621fcc910",
+      "compiler_sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68",
+      "build_args": [
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-fast-after",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-fast-after.fern",
+        "/tmp/lang-stdlib-cohesion-integration/internal/stdlib"
+      ],
+      "source_sha256": "0ed6ce3b5dc1315f492076f0661238d16fdf6a8e837eede89528bb89a2fea49a",
+      "binary_sha256": "cce5441af14a76f02df9370cb5e5118344399d293a6a1b9ec9d6b35a07a2ebc4",
+      "bytes": 31312
+    },
+    {
+      "case": "float-exact",
+      "variant": "before",
+      "iterations": 8,
+      "checksum": "8",
+      "allocations": 1732,
+      "instructions": 969642,
+      "source_commit": "e568db05a0a054e898df83c5597aadabce26fe28",
+      "compiler_sha256": "7016e4d8981c88ccb251278aefb4febafc48480144b69fdc19e26a748584195a",
+      "build_args": [
+        "/workspace/scratch/lang-text-api-cohesion/module-driver-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-exact-before",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-exact-before.fern",
+        "/tmp/lang-text-api-cohesion-publish/internal/stdlib"
+      ],
+      "source_sha256": "7367f313e50b5a23d54623122b911f59cd4b750eef9296e5b3913f780a8093f8",
+      "binary_sha256": "d9d7cdea71b8cc4dc64666d1211d10efd171541e4902528cf3b34e8bd6ef1a5c",
+      "bytes": 31184
+    },
+    {
+      "case": "float-exact",
+      "variant": "after",
+      "iterations": 8,
+      "checksum": "8",
+      "allocations": 1732,
+      "instructions": 970014,
+      "source_commit": "97f686adeee9baa851df24b6b3d7ee2621fcc910",
+      "compiler_sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68",
+      "build_args": [
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-exact-after",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/float-exact-after.fern",
+        "/tmp/lang-stdlib-cohesion-integration/internal/stdlib"
+      ],
+      "source_sha256": "0ecf7e76b0c23971b64061a28e49a6f9446b31a9278e52b7936d607875a33a2b",
+      "binary_sha256": "b74ab9068e9dd35b60e006092acdf1e88819d7251b55e614b2233ca80efbe969",
+      "bytes": 31248
+    },
+    {
+      "case": "group-format",
+      "variant": "before",
+      "iterations": 4096,
+      "checksum": "53248",
+      "allocations": 57344,
+      "instructions": 9606033,
+      "source_commit": "e568db05a0a054e898df83c5597aadabce26fe28",
+      "compiler_sha256": "7016e4d8981c88ccb251278aefb4febafc48480144b69fdc19e26a748584195a",
+      "build_args": [
+        "/workspace/scratch/lang-text-api-cohesion/module-driver-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/group-format-before",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/group-format-before.fern",
+        "/tmp/lang-text-api-cohesion-publish/internal/stdlib"
+      ],
+      "source_sha256": "1a668b11da5bfe0ef845095743b3fb2eb3d1eeef37cc45f54db2471cece951b8",
+      "binary_sha256": "9a0c581d83f6df6621563557d507ad5ff1fc0c8622109e4b2a54fdadb7d25de7",
+      "bytes": 11568
+    },
+    {
+      "case": "group-format",
+      "variant": "after",
+      "iterations": 4096,
+      "checksum": "53248",
+      "allocations": 16384,
+      "instructions": 4694929,
+      "source_commit": "97f686adeee9baa851df24b6b3d7ee2621fcc910",
+      "compiler_sha256": "628c9e6fb1eb4a0bd1923cd82f176199cf8269f5fdd069f56ddde1ec24dc0a68",
+      "build_args": [
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/group-format-after",
+        "/workspace/scratch/lang-stdlib-cohesion-integration/final-validation/profiles/group-format-after.fern",
+        "/tmp/lang-stdlib-cohesion-integration/internal/stdlib"
+      ],
+      "source_sha256": "1a668b11da5bfe0ef845095743b3fb2eb3d1eeef37cc45f54db2471cece951b8",
+      "binary_sha256": "66bb2baa7ce24ac7db8aa9a8036259cfd92e4e88cb5c20eddd96a2c3d658457a",
+      "bytes": 11536
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 3160,
+      "sha256": "4aec77be04b36a2be818e7d84efb1e6fb2e1b0d7efdad6382f92b122038e0c64"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 238381,
+      "sha256": "2d5fee84067e190b96f71b7effd7891c847758ba9c07ec6e5156940d0afcbea0"
+    },
+    {
+      "path": "README.md.gz",
+      "bytes": 1517,
+      "sha256": "28d8b67edf78cfcb9b16dbbc6c95e0badb2af40ebb59086334f46986acc54dc1"
+    },
+    {
+      "path": "pr-body.md.gz",
+      "bytes": 1318,
+      "sha256": "8089a980c3c55c380b41e54e1d64d1b6009d8b01a382263f8eb664b1f8403612"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "pr-body-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 3172,
+      "sha256": "58ab8b6817e0bd2202ba0f6e3eea6cb58829bf62ae40c5badfa98fa25754fb91"
+    },
+    {
+      "path": "publication-source-certificate.json.gz",
+      "bytes": 186,
+      "sha256": "ea41be5568e2f71a835c52b1154f6d13142489599f4570d28d4f6afcd2e712fc"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 170667,
+      "sha256": "d21be9e5cf5c230f72e80fd02c7412bd1bda75cee6854b5bc82cd75c503dabcb"
+    },
+    {
+      "path": "native-regressions.jsonl.gz",
+      "bytes": 662412,
+      "sha256": "51f52a728d7deef91d880a5848e753d684edea146e2ee71320ce51de85c163a0"
+    },
+    {
+      "path": "gnu-9.12-regressions.jsonl.gz",
+      "bytes": 309397,
+      "sha256": "031bfe251f0c6f1d173709ec38bebb6e797e2e7cd479a19bb65a82037edc7a5d"
+    },
+    {
+      "path": "targeted-regressions.jsonl.gz",
+      "bytes": 2719,
+      "sha256": "e8ad8b7e6e9129c0db4f75e54742ee2125711dc0aad93baedd634f30b7b5d69d"
+    },
+    {
+      "path": "nested-pattern-regressions.jsonl.gz",
+      "bytes": 740,
+      "sha256": "91c71ac1ac97db8349b17ace1b7b67ab32ff0daa8bffccaa4ac490ec98685e59"
+    },
+    {
+      "path": "native-selection.json.gz",
+      "bytes": 2636,
+      "sha256": "e1ff7bf2ed77c59b177a8a65b21e8eca25f12440f385df932e6a5c526f4a540a"
+    },
+    {
+      "path": "gnu-selection.json.gz",
+      "bytes": 481,
+      "sha256": "57e7b249c67413495374f0b79f96bdbcd519c166f6a2c20796cf4ce7aaa6c452"
+    },
+    {
+      "path": "bootstrap.log.gz",
+      "bytes": 276,
+      "sha256": "d79dd4fbc210a849b01c59681aecbe47710299f4247e71665fea16c3672e1bfe"
+    },
+    {
+      "path": "bootstrap__bootstrap.json.gz",
+      "bytes": 394,
+      "sha256": "e8f1a822f6097f2e22d52948c7c4dc4e510292bdff77bac46a919987c0c9e2d9"
+    },
+    {
+      "path": "bootstrap__completed-intermediates.json.gz",
+      "bytes": 240,
+      "sha256": "3ef4ab11c1784fb9fa013e1026fdbd8d13920e83f5d94917e721c227c0b01df8"
+    },
+    {
+      "path": "bootstrap__stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap__stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap__stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 353,
+      "sha256": "a0b6bffa523c06b69fe00fd43c10e96131c4810ca031e8686a3a00a4605cb5af"
+    },
+    {
+      "path": "contracts-matrix.py.gz",
+      "bytes": 1447,
+      "sha256": "3a0f15acb295c4b7a0ebbc6724c246065959b1b3d6d2a77efd3b9759e3528cf9"
+    },
+    {
+      "path": "contracts-matrix-results.json.gz",
+      "bytes": 4816,
+      "sha256": "0c58eeb30a6dd368b4b7ee74e5cdfbe2e2d7c9ada00beceda42178ffbd5ecb62"
+    },
+    {
+      "path": "contracts-matrix.log.gz",
+      "bytes": 185,
+      "sha256": "7528648243f72fef96dba55b954470030f537c4376fd0637dd71c9ba6c435244"
+    },
+    {
+      "path": "verified-negative.py.gz",
+      "bytes": 718,
+      "sha256": "3fbe1d21dbcce5bed29cc99b6859b215971b6507737ed15efde3ad2566b05284"
+    },
+    {
+      "path": "verified-negative.json.gz",
+      "bytes": 790,
+      "sha256": "24f09363774f289b01828a33f9c2090124d906e6768804b96fbcd96fa9510ed7"
+    },
+    {
+      "path": "verified-negative.log.gz",
+      "bytes": 121,
+      "sha256": "fa62a15b4a9a954f18e789bc7a1e537a0cb27fbb2e5491901effdbcf7415d204"
+    },
+    {
+      "path": "check-text-matrix.py.gz",
+      "bytes": 1647,
+      "sha256": "322a2cd0e96fd1be96d90a3b672ccdf4b839c5ddb1d0b61233ba69a07ee21343"
+    },
+    {
+      "path": "check-text-matrix.log.gz",
+      "bytes": 48,
+      "sha256": "446a42eab985b649cbcb215db10392555ac1f7a732c22918d2360216ae1df1e6"
+    },
+    {
+      "path": "text-matrix-results.json.gz",
+      "bytes": 4564,
+      "sha256": "0996a815201fb8879702f58ed0be26c1c5eb3b578f9ffb8753145eb78214e7fd"
+    },
+    {
+      "path": "final-matrix__results.json.gz",
+      "bytes": 4327,
+      "sha256": "13a3c02d9336e2113cb153e0356303c9203d6c5f7b6316c6e98fa4b519d900fb"
+    },
+    {
+      "path": "check-all-coreutils.py.gz",
+      "bytes": 651,
+      "sha256": "adfda25dd82f04c38934528cb584676bcb4fab31520d815764847f0b6c76059d"
+    },
+    {
+      "path": "all-coreutils-checks.json.gz",
+      "bytes": 1815,
+      "sha256": "4da42f6cedf65ae69ad77f1095026e0acc2192cec81480388f192c0925012bcf"
+    },
+    {
+      "path": "all-coreutils-checks.log.gz",
+      "bytes": 438,
+      "sha256": "9c56d79f28ef22bb35a32cbb346037402f41ec0d69149040b22d06c3ab8de5de"
+    },
+    {
+      "path": "numeric-matrix.py.gz",
+      "bytes": 1830,
+      "sha256": "b1dba639366502e807f5f3ae96caf651c433d73b77e0a9e96be5ddfd5f0e46f3"
+    },
+    {
+      "path": "numeric-matrix-results.json.gz",
+      "bytes": 46421,
+      "sha256": "18eb9a39560b1dccd0d42a6db7a8f94daeba48ff77f38c2eefca3978cbebf5d2"
+    },
+    {
+      "path": "numeric-matrix.log.gz",
+      "bytes": 119,
+      "sha256": "4e71408bc76834943e23eae37ab6cc028c90c4deed5f0eebe4e9a916732cd27e"
+    },
+    {
+      "path": "receiver-alias-matrix.py.gz",
+      "bytes": 1644,
+      "sha256": "1474ae30ef1a59ea148955fe204a2ae69f9566353dcb70b819ea2c7d8d97fad4"
+    },
+    {
+      "path": "receiver-alias-matrix.json.gz",
+      "bytes": 8179,
+      "sha256": "ef64774b4f00d315c77821f88bf3cea6cea93f03ce15fcb3d7af4a16a668b032"
+    },
+    {
+      "path": "receiver-alias-matrix.log.gz",
+      "bytes": 155,
+      "sha256": "5f9f64d11185d47ecd98b80838a25da41a9d557022e391ab93e4119b06c62ec1"
+    },
+    {
+      "path": "nested-matrix.py.gz",
+      "bytes": 1532,
+      "sha256": "5e31662116000f38685238c6c6797db678042be7e5b4262571860f8f2c4c1869"
+    },
+    {
+      "path": "matrix-results.json.gz",
+      "bytes": 1112,
+      "sha256": "f53dfb6a252fec57af74864a42e636b5bc34beec02ca40b39df4bb3000bb4b10"
+    },
+    {
+      "path": "nested-matrix.log.gz",
+      "bytes": 101,
+      "sha256": "95598f25a0f8752843963ea087d6daba82a6e9addacbfccc0a92f4001b1c8d75"
+    },
+    {
+      "path": "documented-section.md.gz",
+      "bytes": 443,
+      "sha256": "4edd889bce66813596c06b6dba78907b280ee60f6f4952af05fcd2bd84da88e5"
+    },
+    {
+      "path": "io-result-matrix.py.gz",
+      "bytes": 1898,
+      "sha256": "f754eb4991783ff8bccbd840469a8dbef593521b659579a85c2798882b8b3b11"
+    },
+    {
+      "path": "io-result-matrix.json.gz",
+      "bytes": 10735,
+      "sha256": "371a56b497cddb8a7412d1054564da3c0efc3bc0395cf2b07455f221072d755f"
+    },
+    {
+      "path": "io-result-matrix.log.gz",
+      "bytes": 81,
+      "sha256": "3811d712412289705123239967afa43893e4d130777908bdb73c317ff0833c8f"
+    },
+    {
+      "path": "check-embedded.py.gz",
+      "bytes": 1516,
+      "sha256": "867b84354a2645ae2881067008416e1e75c559a977444079aef35be6bbff073a"
+    },
+    {
+      "path": "embedded-results.json.gz",
+      "bytes": 35777,
+      "sha256": "6a53bee43fef149b1d426e49073646c3c5ea2bdeab81e9755291a17137439d88"
+    },
+    {
+      "path": "embedded-results.log.gz",
+      "bytes": 47,
+      "sha256": "19f8767c4cb03101381cf0e5a0788c9d68a15cc080042e63136890d9ce723148"
+    },
+    {
+      "path": "embedded-build.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "embed-stage.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "embedded-asset-inventory.json.gz",
+      "bytes": 12981,
+      "sha256": "dc11567253cfe54c47b8fce8fd3a62960061b85e738c05ce321b51757bc98f77"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 893,
+      "sha256": "dba6e1a613e762a56c408e0476c40f5267136fb80d7d5f11a487333a7e247d7f"
+    },
+    {
+      "path": "check-sizes.log.gz",
+      "bytes": 181,
+      "sha256": "c30d1d0c4b1f7536198cefab6625a803537dc4a3d259dc29ea646ee8d636c4c4"
+    },
+    {
+      "path": "final-driver-builds.json.gz",
+      "bytes": 1009,
+      "sha256": "c0c37e633f2dcfcbbad2e465c1e9fe685a2d98c7b8e4cc9839cfb74fed0b1b41"
+    },
+    {
+      "path": "final-driver-sizes.txt.gz",
+      "bytes": 168,
+      "sha256": "8e9652e23b28919840cba5fb4594508b8f0f23586f3e01f7c76de02c72395f9c"
+    },
+    {
+      "path": "final-driver-gate.log.gz",
+      "bytes": 356,
+      "sha256": "f97b22fd0d867858999400eb2d0a1d87b240d7f3860882f04dd7436c32e62025"
+    },
+    {
+      "path": "format-final.json.gz",
+      "bytes": 137,
+      "sha256": "04f1a667d6885eeefde44d89db2081cfb969924e2ccc49c4e18ca2e254516290"
+    },
+    {
+      "path": "format-check.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "darwin-extra-builds.json.gz",
+      "bytes": 807,
+      "sha256": "8e80f43865e5c0000b8ed802540726904514db37a4332e8b3f5e27330740483f"
+    },
+    {
+      "path": "profile-kernels.py.gz",
+      "bytes": 1683,
+      "sha256": "d202014a468d8b200dad459fc45582813b0810b6f17cb063d7dbe6d4ad6066bd"
+    },
+    {
+      "path": "profile-kernels.log.gz",
+      "bytes": 1351,
+      "sha256": "f9d376b5b8aa9a255e07911dc9bb80f0612af517f9e6bdb69fec767b36c7ab8b"
+    },
+    {
+      "path": "profiles__results.json.gz",
+      "bytes": 1372,
+      "sha256": "3ec7b8e2d469e35fd6742a23dd7b64adba13e2594e3d8c5bfa7592680959a2b4"
+    },
+    {
+      "path": "f32-midpoints.fern.gz",
+      "bytes": 3134,
+      "sha256": "dd792d22bd806ecb2da438a8436b46b5f9b207848faa494a5ef95bea4f040720"
+    },
+    {
+      "path": "float-probe.fern.gz",
+      "bytes": 550,
+      "sha256": "4304fef762c66b82163ad3df6f783c38766670d77d657943e8a68f0add8b2a2d"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final.py.gz",
+      "bytes": 1481,
+      "sha256": "80d139f96862f55b9a9483b73dfcebfaea3e06abe708474e1f424adc2bca718d"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final-results.json.gz",
+      "bytes": 4464,
+      "sha256": "78dd8ca39b0293afc6efe1af85285879e6cadbf3a6d741cf5e08676393cbbece"
+    },
+    {
+      "path": "package-compatibility__committed-matrix-final.log.gz",
+      "bytes": 124,
+      "sha256": "8edcbf5558214d86451e1074acc72511c4747f77450718ea845c31f1542001a7"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final.py.gz",
+      "bytes": 1417,
+      "sha256": "5bdf024a338229ab968ebac8565de70c7af7ceff99e27aeccc4f1b437e3f8049"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final-results.json.gz",
+      "bytes": 1201,
+      "sha256": "fa82389bbb4290e6c94972d68ff655a5d52f15694a532f2773cdf837e9b55c12"
+    },
+    {
+      "path": "package-compatibility__package-project-matrix-final.log.gz",
+      "bytes": 37,
+      "sha256": "e57eb7b80fdb6dbdaf9407d5baa11d279635b44a2b00a02240cc4fe340f1cfad"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final.py.gz",
+      "bytes": 1466,
+      "sha256": "864b16a7a41ad9c17a809b5dd2f2cc66d4b59f4e2f2f1c347669146c0b6e8a92"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final-results.json.gz",
+      "bytes": 2192,
+      "sha256": "22251cb1e2cc51c305f6679624a5408113be2bff1c69335b20399521a48a318d"
+    },
+    {
+      "path": "package-compatibility__reexport-matrix-final.log.gz",
+      "bytes": 163,
+      "sha256": "f8f66368fe2fd2489ccff28a184f6953a367c691ccd2321b7d9f574f467d8279"
+    },
+    {
+      "path": "profiles__integer-before.fern.gz",
+      "bytes": 293,
+      "sha256": "01e536486edd6a4cda026900ff4a1d9336ea3b96a2ac521ac0b809b3120c7be2"
+    },
+    {
+      "path": "profiles__integer-before.callgrind.gz",
+      "bytes": 544,
+      "sha256": "0e52b6b65bbbb6c988d119a35677f0ff0b1c6d652dc784a6ad352f9a71558260"
+    },
+    {
+      "path": "profiles__integer-before.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__integer-before.profile.log.gz",
+      "bytes": 322,
+      "sha256": "8f0848b6a34b8606694e298a668dff3e66443415855295b812edd9b8a9007a22"
+    },
+    {
+      "path": "profiles__integer-after.fern.gz",
+      "bytes": 296,
+      "sha256": "0a4e5c421fbf354582acd84576c63bba270dcfb45a40ef5b84996db3ddcb1768"
+    },
+    {
+      "path": "profiles__integer-after.callgrind.gz",
+      "bytes": 521,
+      "sha256": "39a0dd636a8a567e06fc3a29a17f50b5303f46dcc351bc308aaec59930b67ecb"
+    },
+    {
+      "path": "profiles__integer-after.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__integer-after.profile.log.gz",
+      "bytes": 322,
+      "sha256": "06c9553e8bbfecf882d0bff7e679f111222217bc8df1f4ce82e85a69d459c4c3"
+    },
+    {
+      "path": "profiles__float-fast-before.fern.gz",
+      "bytes": 316,
+      "sha256": "afe4cdb70c55a23847b5493678e76eaeec44ccc7908e446833ce4821a06addc4"
+    },
+    {
+      "path": "profiles__float-fast-before.callgrind.gz",
+      "bytes": 578,
+      "sha256": "bc386ef323ac22be79e80a61193ac6ecd47f666f1b5c561203ded1b8f7b04ceb"
+    },
+    {
+      "path": "profiles__float-fast-before.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__float-fast-before.profile.log.gz",
+      "bytes": 329,
+      "sha256": "63cb4011fd5002e72d190ef63594ccd1bda450a22dd9b567a8fec04810e0d388"
+    },
+    {
+      "path": "profiles__float-fast-after.fern.gz",
+      "bytes": 315,
+      "sha256": "e92584264bff884baddd88bf0529c815322d15bc9c142ccfda6efcd3fccc8276"
+    },
+    {
+      "path": "profiles__float-fast-after.callgrind.gz",
+      "bytes": 578,
+      "sha256": "fed0a1d9fa8806b1585a45f17fa2169e8fade0fa0eaebbe30627c04b024d5813"
+    },
+    {
+      "path": "profiles__float-fast-after.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__float-fast-after.profile.log.gz",
+      "bytes": 327,
+      "sha256": "1eca9e5b8377197777b15198565adb9371a38a79de991b8e0a6b710aeb1fce3c"
+    },
+    {
+      "path": "profiles__float-exact-before.fern.gz",
+      "bytes": 446,
+      "sha256": "423ec069722bad3c444822f6b9ba584a8beca5f3a9814707130f64332ced158a"
+    },
+    {
+      "path": "profiles__float-exact-before.callgrind.gz",
+      "bytes": 1322,
+      "sha256": "224e80be6c41da91acf2e5b5a511c7cdb0018ea189502800cfd60bf851c9d2f4"
+    },
+    {
+      "path": "profiles__float-exact-before.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__float-exact-before.profile.log.gz",
+      "bytes": 328,
+      "sha256": "e67fed0fb043235b63fc5b5299504b606981a81e2e03180ae00ed84b587beb1d"
+    },
+    {
+      "path": "profiles__float-exact-after.fern.gz",
+      "bytes": 445,
+      "sha256": "c4e54e50ce33dd5ffd49ab45bb23c6035ea36f560658fdb324a8bdf7144699d6"
+    },
+    {
+      "path": "profiles__float-exact-after.callgrind.gz",
+      "bytes": 1329,
+      "sha256": "21cd3aa9a257c46a65ebcc63b09697002de7fcc63bbfb7283c73c897ff74eaa0"
+    },
+    {
+      "path": "profiles__float-exact-after.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__float-exact-after.profile.log.gz",
+      "bytes": 325,
+      "sha256": "926605ec468d6829037dbc23fe627c103f33257537e4e5dae747ff1dbeee99d5"
+    },
+    {
+      "path": "profiles__group-format-before.fern.gz",
+      "bytes": 228,
+      "sha256": "21f763a6c0e4bc86efeaa6584d111083bfb3d897c6048247f27170152cab406d"
+    },
+    {
+      "path": "profiles__group-format-before.callgrind.gz",
+      "bytes": 807,
+      "sha256": "dff65b59d87bdd365765fca53dddae166678b28559f30aa3bb7084a857cfe5e3"
+    },
+    {
+      "path": "profiles__group-format-before.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__group-format-before.profile.log.gz",
+      "bytes": 331,
+      "sha256": "7c8ee35828bbb7de512270ec8d54fd2225c32e0399eab573274c4b06afe7aaf4"
+    },
+    {
+      "path": "profiles__group-format-after.fern.gz",
+      "bytes": 228,
+      "sha256": "21f763a6c0e4bc86efeaa6584d111083bfb3d897c6048247f27170152cab406d"
+    },
+    {
+      "path": "profiles__group-format-after.callgrind.gz",
+      "bytes": 703,
+      "sha256": "190b37b0eb444fa21cdef64dc838b1d82cab92e8b5ff161686de5dcdcd61ea32"
+    },
+    {
+      "path": "profiles__group-format-after.compile.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "profiles__group-format-after.profile.log.gz",
+      "bytes": 329,
+      "sha256": "b23c616f314bda1de1dca1c99f76f232e27fb8b35de420b8cb00c1b803009af6"
+    }
+  ]
+}

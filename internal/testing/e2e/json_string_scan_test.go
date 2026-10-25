@@ -10,7 +10,7 @@ const jsonStringScanSrc = `import "std/json";
 import "std/i32";
 
 function show(text: string): string {
-  match (json.json_parse_result(text)) {
+  match (json.parse(text)) {
     Ok(v) => {
       return json.json_encode(v);
     },

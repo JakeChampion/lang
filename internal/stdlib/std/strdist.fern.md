@@ -53,8 +53,8 @@ import "std/utf8";
 ```fern
 <<3 pub function levenshtein(a: string, b: string): i32>>=
 pub function levenshtein(a: string, b: string): i32 {
-  let ca: char[] = utf8.codepoints(a);
-  let cb: char[] = utf8.codepoints(b);
+  let ca: char[] = a.chars();
+  let cb: char[] = b.chars();
   let n: i32 = ca.len();
   let m: i32 = cb.len();
   if (n == 0) {
@@ -99,8 +99,8 @@ pub function levenshtein(a: string, b: string): i32 {
 }
 
 pub function similarity(a: string, b: string): f64 {
-  let la: i32 = utf8.codepoint_count(a);
-  let lb: i32 = utf8.codepoint_count(b);
+  let la: i32 = a.codepoint_count();
+  let lb: i32 = b.codepoint_count();
   let longer: i32 = la;
   if (lb > longer) {
     longer = lb;

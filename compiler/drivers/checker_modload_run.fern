@@ -21,7 +21,7 @@ function main(): i32 {
       if (modloader.report_unresolved(missing, "checker_modload_run")) {
         return 2;
       }
-      let merged: parser.Module = flatten.bundle(entry, loaded, "");
+      let merged: parser.Module = modloader.bundle(entry_path, entry, loaded, "", "");
       let mt: checker.ModuleTypes = checker.check_module(merged);
       let j: i32 = 0;
       while (j < mt.diags.len()) {
