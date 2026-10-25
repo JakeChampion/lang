@@ -190,7 +190,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     let Ok(k) = identity.private_key_from_pem(ED_PKCS8) else { return 2; };
     let Ok(id) = identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k) else { return 3; };
-    return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id)).with_h3(), keep_alive_requests: %d }, handle);
+    return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))).with_h3(), keep_alive_requests: %d }, handle);
 }
 
 // Decode a valid fixture. Report a malformed fixture before ending the test.
@@ -214,7 +214,9 @@ import "std/option";
 import "std/string";
 import "std/hex";
 import "std/i64";
-` + serveAllocsH3Identity + `
+` + serveAllocsH3Identity + `import "std/i32";
+import "std/result";
+
 function now(): i64 {
   return monotonic_ns();
 }
@@ -280,17 +282,22 @@ function get(k0: Cli, path: string): (Cli, string) {
 
 function count(k: Cli): (Cli, i64) {
   let (k2, body) = get(k, "/count");
-  return (k2, body.parse_int().unwrap_or(0 - 1) as i64);
+  return (k2, i32.parse_i32(body).unwrap_or(0 - 1) as i64);
 }
 `
 
-var ServeAllocsH3ClientSource = serveAllocsH3ClientCommon + `
+// ServeAllocsH3ClientSource drives the server serially: one HTTP/3
+// connection to 127.0.0.1 on the port in its first argument, the warm-up,
+// then its second argument's rounds of hello requests one at a time,
+// counted as serveAllocsRounds counts them. It prints `allocs TOTAL SECONDS`.
+var ServeAllocsH3ClientSource = serveAllocsH3ClientCommon + `import "std/i32";
+
 function main(): i32 {
   let argv: string[] = args();
   let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
-  let Some(rounds) = argv[2].parse_int() else {
+  let Ok(rounds) = i32.parse_i32(argv[2]) else {
     return 2;
   };
   let Ok(root) = hex.decode(ROOT) else { return 2; };
@@ -356,7 +363,14 @@ function main(): i32 {
 }
 `
 
-var ServeAllocsH3MuxClientSource = serveAllocsH3ClientCommon + `
+// ServeAllocsH3MuxClientSource is ServeAllocsH3ClientSource with up to its
+// third argument's requests in flight on the one connection at a time
+// (`drive`), the multiplexed path the 1x256 nightly row exercises. It
+// prints `allocs TOTAL SECONDS peak PEAK`, peak the most it held at once:
+// the server grants 100 request streams, so a higher argument tops out
+// there.
+var ServeAllocsH3MuxClientSource = serveAllocsH3ClientCommon + `import "std/i32";
+
 // drive keeps up to m hello requests in flight until rounds are answered,
 // pumping the socket between top-ups, and returns the peak held at once and
 // how many were answered. Fewer than rounds means the 30-second no-progress
@@ -413,10 +427,10 @@ function main(): i32 {
   let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
-  let Some(rounds) = argv[2].parse_int() else {
+  let Ok(rounds) = i32.parse_i32(argv[2]) else {
     return 2;
   };
-  let Some(m) = argv[3].parse_int() else {
+  let Ok(m) = i32.parse_i32(argv[3]) else {
     return 2;
   };
   let Ok(root) = hex.decode(ROOT) else { return 2; };

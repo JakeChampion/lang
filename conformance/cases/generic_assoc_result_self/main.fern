@@ -1,42 +1,74 @@
 import "std/i32";
 import "std/json";
 
-
-
-
 @derive(json.FromJson)
 struct Box[T] { v: T }
 
 trait Wrap[T] {
-    function wrap(v: T): Result[Self, string];
-    function wrap_opt(v: T): Option[Self];
+  function wrap(v: T): Result[Self, string];
+  function wrap_opt(v: T): Option[Self];
 }
 
 impl[T] Wrap[T] for Box[T] {
-    function wrap(v: T): Result[Self, string] {
-        return Ok(Box { v: v });
-    }
-    function wrap_opt(v: T): Option[Self] {
-        return Some(Box { v: v });
-    }
+  function wrap(v: T): Result[Self, string] {
+    return Ok(Box { v: v });
+  }
+  function wrap_opt(v: T): Option[Self] {
+    return Some(Box { v: v });
+  }
 }
 
 function made(n: i32): Result[Box[i32], string] {
-    return Box.wrap(n);
+  return Box.wrap(n);
 }
 
-function decoded(): Result[Box[i32], string] {
-    return Box.from_json("{\"v\":7}");
+function decoded(): Result[Box[i32], json.JsonError] {
+  return Box.from_json("{\"v\":7}");
 }
 
 function main(): i32 {
-    let b: Result[Box[string], string] = Box.wrap("hi");
-    match (b) { Ok(x) => { print(x.v); }, Err(e) => { print(e); } }
-    let o: Option[Box[i32]] = Box.wrap_opt(40);
-    match (o) { Some(y) => { print(y.v.to_string()); }, None => { print("none"); } }
-    match (made(1)) { Ok(z) => { print(z.v.to_string()); }, Err(e) => { print(e); } }
-    let j: Result[Box[string], string] = Box.from_json("{\"v\":\"boxed\"}");
-    match (j) { Ok(w) => { print(w.v); }, Err(e) => { print(e); } }
-    match (decoded()) { Ok(d) => { print(d.v.to_string()); }, Err(e) => { print(e); } }
-    return 0;
+  let b: Result[Box[string], string] = Box.wrap("hi");
+  match (b) {
+    Ok(x) => {
+      print(x.v);
+    },
+    Err(e) => {
+      print(e);
+    }
+  }
+  let o: Option[Box[i32]] = Box.wrap_opt(40);
+  match (o) {
+    Some(y) => {
+      print(y.v.to_string());
+    },
+    None => {
+      print("none");
+    }
+  }
+  match (made(1)) {
+    Ok(z) => {
+      print(z.v.to_string());
+    },
+    Err(e) => {
+      print(e);
+    }
+  }
+  let j: Result[Box[string], json.JsonError] = Box.from_json("{\"v\":\"boxed\"}");
+  match (j) {
+    Ok(w) => {
+      print(w.v);
+    },
+    Err(e) => {
+      print(e);
+    }
+  }
+  match (decoded()) {
+    Ok(d) => {
+      print(d.v.to_string());
+    },
+    Err(e) => {
+      print(e);
+    }
+  }
+  return 0;
 }

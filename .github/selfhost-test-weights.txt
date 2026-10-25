@@ -16,6 +16,8 @@
 # Sixty-nine entries raised on 2026-10-18 from run 39087054640's audit (the
 # "Corrected weights" list scripts/ci-test-weights check prints: ceil of 1.5
 # times the measurement), after x86_64 shard 9 timed out on the stale ones.
+# Seven rows added on 2026-10-25 for the whole-compiler proofs that left
+# OWN_JOB_TESTS for the shards: ceil of 1.5 times run 40179239803's measurement.
 
 TestSelfHostASCIIByteText 2
 TestSelfHostAbortBacktraceOffArm64 2
@@ -181,7 +183,6 @@ TestSelfHostArrtupCallBindWasm 2
 TestSelfHostAsmArm64Bootstrap 20
 TestSelfHostAsmIRArm64Path 18
 TestSelfHostAsmIRPath 39
-TestSelfHostAsmLoadRunConcatX86_64 2
 TestSelfHostAsmLoadRunStdlibX86_64 11
 TestSelfHostAsmRunX86_64 7
 TestSelfHostAssertIR 2
@@ -259,6 +260,7 @@ TestSelfHostCCallFPShimsReturnInTheResultRegister 2
 TestSelfHostCLIBuildsForEveryNativeTarget 37
 TestSelfHostCLIByteViewEscape 4
 TestSelfHostCLIPrunesStdlibImportClosureX86_64 2
+TestSelfHostCLIStage2X86_64 73
 TestSelfHostCLIStderrIsOneLine 19
 TestSelfHostCLIX86_64 31
 TestSelfHostCRC32Array 2
@@ -342,6 +344,7 @@ TestSelfHostConstAggregateArm64PIE 2
 TestSelfHostConstArm64 2
 TestSelfHostConstExprFoldWasm 2
 TestSelfHostConstExprFoldX86_64 2
+TestSelfHostConstFuncGen2 78
 TestSelfHostConstGrammarX86_64 3
 TestSelfHostConstRefCheckX86_64 2
 TestSelfHostConstStringIR 2
@@ -513,9 +516,6 @@ TestSelfHostFerndocSelfChecks 2
 TestSelfHostFetchAccumulatorStaysLinearX86_64 14
 TestSelfHostFetchClient 136
 TestSelfHostFetchDeadline 126
-TestSelfHostFetchFutureFanoutX86_64 116
-TestSelfHostFetchFutureLargeBodyX86_64 99
-TestSelfHostFetchFutureModloadIRX86_64 4
 TestSelfHostFetchTask 12
 TestSelfHostFieldAppendInPlaceArm64 3
 TestSelfHostFieldAppendInPlaceWasmIR 2
@@ -911,6 +911,7 @@ TestSelfHostMixedStructReleaseWasm 2
 TestSelfHostMixedStructReleaseX86_64 2
 TestSelfHostMktempRetry 3
 TestSelfHostMockPlatformIR 2
+TestSelfHostModloadPerModuleWholeCompilerArm64 248
 TestSelfHostModloadPerModuleWholeCompilerX86_64 94
 TestSelfHostModuleNameMangle 17
 TestSelfHostModuleNameMangleCollision 12
@@ -1047,18 +1048,13 @@ TestSelfHostPerModuleCaptureTypes 17
 TestSelfHostPerModuleCellBytes 3
 TestSelfHostPerModuleClosureArgLinkWasm 12
 TestSelfHostPerModuleClosureArgLinkX86_64 9
-TestSelfHostPerModuleConcatArm64 2
-TestSelfHostPerModuleConcatDynArm64 2
-TestSelfHostPerModuleConcatDynX86_64 2
-TestSelfHostPerModuleConcatObjectCacheX86_64 12
-TestSelfHostPerModuleConcatX86_64 2
 TestSelfHostPerModuleCounterBSSLinkArm64 2
 TestSelfHostPerModuleCounterBSSLinkX86_64 2
 TestSelfHostPerModuleDynDispatchCrossModule 4
+TestSelfHostPerModuleEmitAllFixpointX86_64 204
 TestSelfHostPerModuleEmitAllObjectCacheX86_64 5
 TestSelfHostPerModuleFileBytes 3
 TestSelfHostPerModuleIncrementalCodegenX86_64 5
-TestSelfHostPerModuleLabelNS_X86_64 3
 TestSelfHostPerModuleMapFreeLinks 3
 TestSelfHostPerModuleObjectCacheArm64 3
 TestSelfHostPerModuleObjectCacheX86_64 6
@@ -1236,6 +1232,7 @@ TestSelfHostSemanticSourcePrint 7
 TestSelfHostSemanticSourceRC 19
 TestSelfHostSemanticTailRecursion 33
 TestSelfHostSemanticTrmc 4
+TestSelfHostSemanticWholeCompilerX86_64 156
 TestSelfHostServeAcceptDistribution 13
 TestSelfHostServeAllocsPerRequest 11
 TestSelfHostServeAllocsPerRequestArm64 7
@@ -1289,7 +1286,6 @@ TestSelfHostShredBytes 4
 TestSelfHostShredPatternBytes 2
 TestSelfHostShufBytes 2
 TestSelfHostSignalDispositionIRArm64 2
-TestSelfHostSimPrograms 3
 TestSelfHostSimTasks 118
 TestSelfHostSimulationDriver 7
 TestSelfHostSimulationDriverArguments 2
@@ -1314,6 +1310,7 @@ TestSelfHostSplitEmptySepIRX86_64 2
 TestSelfHostSplitEmptySepWasmIR 2
 TestSelfHostStage2Bootstrap 34
 TestSelfHostStage2Compiler 35
+TestSelfHostStage2FixpointArm64 139
 TestSelfHostStatBytes 3
 TestSelfHostStateMachineIR 2
 TestSelfHostStatementTerminators 25
@@ -1437,6 +1434,8 @@ TestSelfHostTabsBytes 4
 TestSelfHostTacBytes 5
 TestSelfHostTargetCapabilityDifferentialX86_64 2
 TestSelfHostTaskCombinators 2
+TestSelfHostTaskFetchFanoutX86_64 116
+TestSelfHostTaskFetchLargeBodyX86_64 99
 TestSelfHostTaskFrame 2
 TestSelfHostTaskPortable 2
 TestSelfHostTaskProgramsBalanceTheLeakCensus 3
@@ -1468,9 +1467,9 @@ TestSelfHostTraitsArm64 3
 TestSelfHostTraitsX86_64 4
 TestSelfHostTransitiveDepsDifferentialX86_64 2
 TestSelfHostTreeshakeBareNameKeepsFreeFunctionOnly 19
-TestSelfHostTreeshakeKeepsMapKeyMethodsX86_64 2
 TestSelfHostTreeshakeKeepsDisplayToStringX86_64 2
 TestSelfHostTreeshakeKeepsDropFinalizerX86_64 2
+TestSelfHostTreeshakeKeepsMapKeyMethodsX86_64 2
 TestSelfHostTreeshakeStdlibIR 13
 TestSelfHostTryBindingReclaimWasm 2
 TestSelfHostTryDefer 2
@@ -1622,7 +1621,6 @@ TestSelfHostWasmEveryNeedLinksAlone 5
 TestSelfHostWasmExternSum 3
 TestSelfHostWasmFailedReadLine 2
 TestSelfHostWasmFailedWriteFile 2
-TestSelfHostWasmFetchFutureFanout 3
 TestSelfHostWasmFuncRangeShard 11
 TestSelfHostWasmHTTPHandlerCensus 24
 TestSelfHostWasmHTTPKeepAlive 91
@@ -1651,10 +1649,12 @@ TestSelfHostWasmStdoutClose 2
 TestSelfHostWasmStringAlignment 3
 TestSelfHostWasmTCPRecvLifecycleCensus 2
 TestSelfHostWasmTCPSendLifecycleCensus 2
+TestSelfHostWasmTaskFetchFanout 3
 TestSelfHostWasmUDPGuestStorage 2
 TestSelfHostWasmUDPLifecycleCensus 2
 TestSelfHostWasmUnitsN2 11
 TestSelfHostWasmUnsupportedOpRefused 2
+TestSelfHostWasmWholeCompilerShardedLink 107
 TestSelfHostWatbinFlat 2
 TestSelfHostWatbinUndefinedReference 2
 TestSelfHostWatchParentGone 3

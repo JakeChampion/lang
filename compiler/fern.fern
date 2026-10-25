@@ -1145,7 +1145,7 @@ function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRang
   };
 }
 
-struct ImportQueue { paths: string[], dirs: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string }
+struct ImportQueue { paths: string[], dirs: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string, display_queued: boolean }
 
 function queued(paths: string[], dirs: string[], ip: string, from_dir: string): boolean {
   let i: i32 = 0;
@@ -1158,6 +1158,21 @@ function queued(paths: string[], dirs: string[], ip: string, from_dir: string): 
   return false;
 }
 
+function queue_display(q: ImportQueue, mod: parser.Module, from_dir: string, root: string): ImportQueue {
+  if (root.len() == 0 || q.display_queued || !modloader.needs_primitive_display(mod)) {
+    return q;
+  }
+  return ImportQueue {
+    ...q,
+    paths: q.paths.append("core/primitive_text"),
+    dirs: q.dirs.append(from_dir),
+    lines: q.lines.append(0),
+    cols: q.cols.append(0),
+    stdlibs: q.stdlibs.append(true),
+    display_queued: true,
+  };
+}
+
 function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[], parent_stdlib: boolean): ImportQueue {
   let paths: string[] = q.paths;
   let dirs: string[] = q.dirs;
@@ -1165,9 +1180,13 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
   let cols: i32[] = q.cols;
   let stdlibs: boolean[] = q.stdlibs;
   let unrooted: string = q.unrooted;
+  let display_queued: boolean = q.display_queued;
   let i: i32 = 0;
   while (i < mod.imports.len()) {
     let ip: string = mod.imports[i].path;
+    if (ip == "core/primitive_text" || ip == "core/primitive_text.fern") {
+      display_queued = true;
+    }
     if (root.len() == 0 && unrooted.len() == 0 && util.is_stdlib_path(ip) && !util.should_load(ip, root, deps)) {
       unrooted = ip;
     }
@@ -1180,7 +1199,7 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
     }
     i = i + 1;
   }
-  return ImportQueue { paths: paths, dirs: dirs, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted };
+  return queue_display(ImportQueue { paths: paths, dirs: dirs, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted, display_queued: display_queued }, mod, from_dir, root);
 }
 
 function is_flag(a: string): boolean {
@@ -2346,6 +2365,7 @@ struct Bundle {
   loaded: flatten.LoadedModule[],
   merged: parser.Module,
   pkgs: caps.Pkg[],
+  package_roots: string[],
   files: string[],
   maps: util.LineMap[],
   srcs: string[],
@@ -2504,6 +2524,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let deps: string[] = fern_toml.dep_names(gov.man);
   let root_package: caps.Pkg = root_pkg(gov.man, pkggrants.canonical_dir(gov.dir));
   let pkgs: caps.Pkg[] = [root_package];
+  let package_roots: string[] = [visibility.package_root(entry_ident, root, root_package.dir)];
   let module_packages: pkggrants.ModuleAt[] = [];
   let grant_mans: pkggrants.ManifestAt[] = pkggrants.with_manifest([], gov.dir, gov.man);
   let no_mods: flatten.LoadedModule[] = [];
@@ -2511,14 +2532,14 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let maps: util.LineMap[] = [s.maps[0]];
   let srcs: string[] = [s.srcs[0]];
   if (gov.man.err.len() > 0) {
-    return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, gov.dir, gov.man);
+    return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: no_files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, gov.dir, gov.man);
   }
   let missing: util.Diag = emitforms.http_entry_refused(entry_mod, target);
   if (missing.message.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing.message, err_code: missing.code, err_line: missing.line, err_col: missing.col };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: no_files, maps: maps, srcs: srcs, err: missing.message, err_code: missing.code, err_line: missing.line, err_col: missing.col };
   }
 
-  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], lines: [], cols: [], stdlibs: [], unrooted: "" }, entry_mod, dir_slash, root, deps, false);
+  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], lines: [], cols: [], stdlibs: [], unrooted: "", display_queued: false }, entry_mod, dir_slash, root, deps, false);
   let loaded: flatten.LoadedModule[] = [];
   let files: string[] = [];
   let done_paths: string[] = [];
@@ -2539,7 +2560,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       done_paths = done_paths.append(mpath);
       let rm: modloader.Resolved = read_bundle_module(s, mpath, from, ipath);
       if (!rm.ok) {
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: unloaded_error(rm, ipath), err_code: "E086", err_line: at_line, err_col: at_col };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: unloaded_error(rm, ipath), err_code: "E086", err_line: at_line, err_col: at_col };
       }
       let mdir: string = modloader.dirname(util.clean_path(rm.shown));
       let origin: string = "";
@@ -2558,30 +2579,43 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
       let module_gov: Governed = governing_manifest(mdir);
       if (module_gov.man.err.len() > 0) {
-        return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, module_gov.dir, module_gov.man);
+        return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, module_gov.dir, module_gov.man);
       }
-      module_packages = module_packages.append(module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib));
+      let module_at: pkggrants.ModuleAt = module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib);
+      module_packages = module_packages.append(module_at);
+      let owner: string = module_at.dir;
+      if (module_gov.found) {
+        owner = module_at.owner_dir;
+      }
+      package_roots = package_roots.append(visibility.package_root(flatten.module_ident(mpath), root, owner));
       grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
       q = queue_imports(q, m, mdir, root, fern_toml.dep_names(module_gov.man), is_stdlib);
     }
   }
   if (q.unrooted.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_code: "", err_line: 0, err_col: 0 };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_code: "", err_line: 0, err_col: 0 };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
   if let Some(imp) = flatten.import_cycle(entry_r, entry_ident, loaded, root) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: modloader.import_cycle_message(imp.path), err_code: "E086", err_line: imp.line, err_col: imp.col };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: modloader.import_cycle_message(imp.path), err_code: "E086", err_line: imp.line, err_col: imp.col };
   }
   let prefixes: string[] = flatten.assign_prefixes(loaded);
   let checked: pkggrants.Checked = pkggrants.checked(grant_mans, root_package, module_packages, prefixes);
   pkgs = checked.pkgs;
   if (checked.err.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err, err_code: "", err_line: 0, err_col: 0 };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err, err_code: "", err_line: 0, err_col: 0 };
+  }
+  let reexports: util.Diag[] = visibility.reexport_diags(entry_r, loaded);
+  if (reexports.len() > 0) {
+    let d: util.Diag = reexports[0];
+    return Bundle { entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: entry_r, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: d.message, err_code: d.code, err_line: d.line, err_col: d.col };
   }
   let merged: parser.Module = flatten.bundle_with_prefixes(entry_r, loaded, target, prefixes);
+  merged = visibility.scope_enums(merged, prefixes, package_roots);
+
   merged = parser.fill_default_args_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 };
+  return Bundle { entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: merged, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 };
 }
 
 function unloaded_error(rm: modloader.Resolved, ipath: string): string {
@@ -2604,7 +2638,7 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
   if (fold_errs.len() > 0) {
     return Loaded { b: b, refused: fold_errs };
   }
-  let vis: util.Diag[] = visibility.export_diags(folded.entry, folded.entry_ident, folded.loaded, folded.root);
+  let vis: util.Diag[] = visibility.export_diags(folded.entry, folded.entry_ident, folded.loaded, folded.package_roots);
   return Loaded { b: folded, refused: errors_of(vis) };
 }
 
@@ -2649,7 +2683,7 @@ function load_source(entry_path: string, src: string, open: modloader.Buffers, r
   let (s, err) = entry_sources(entry_path, src);
   if (err.len() > 0) {
     let none: parser.Module = parser.parse_module(lexer.tokenize(""));
-    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], files: [], maps: [], srcs: [], err: err, err_code: "", err_line: 0, err_col: 0 }, refused: [refusal(err)] };
+    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], package_roots: [], files: [], maps: [], srcs: [], err: err, err_code: "", err_line: 0, err_col: 0 }, refused: [refusal(err)] };
   }
   return load_checked(Sources { ...s, open: open }, root, target, embed_dir);
 }
@@ -5162,7 +5196,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     for n in shared_roots {
-      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
+      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true, method: false }) };
     }
   }
   if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {

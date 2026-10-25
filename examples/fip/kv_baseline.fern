@@ -337,19 +337,19 @@ function options(argv: string[]): (string, i32, i32) {
     mix_name = argv[1];
   }
   if (argv.len() > 2) {
-    match (argv[2].parse_int()) {
-      Some(n) => {
+    match (i32.parse_i32(argv[2])) {
+      Ok(n) => {
         load_pct = n;
       },
-      None => {}
+      Err(_) => {}
     }
   }
   if (argv.len() > 3) {
-    match (argv[3].parse_int()) {
-      Some(n) => {
+    match (i32.parse_i32(argv[3])) {
+      Ok(n) => {
         rounds = n;
       },
-      None => {}
+      Err(_) => {}
     }
   }
   return (mix_name, load_pct, rounds);

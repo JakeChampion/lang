@@ -1,15 +1,55 @@
+import "std/i32";
 import "core/int";
 
-
-
-
 function main(): i32 {
-    match (int.parse_int_radix("ff", 16)) { Some(v) => { print(int.int_to_string(v)); }, None => { print("none"); }, }
-    match (int.parse_int_radix("-42", 10)) { Some(v) => { print(int.int_to_string(v)); }, None => { print("none"); }, }
-    match (int.parse_int_radix("101", 2)) { Some(v) => { print(int.int_to_string(v)); }, None => { print("none"); }, }
-    match (int.parse_int_radix("zz", 36)) { Some(v) => { print(int.int_to_string(v)); }, None => { print("none"); }, }
-    match (int.parse_int_radix("12x", 10)) { Some(v) => { print("ok"); }, None => { print("none"); }, }
-    match (int.parse_int_radix("", 10)) { Some(v) => { print("ok"); }, None => { print("none"); }, }
-    print(int.int_to_string_radix(255, 16));
-    return 0;
+  match (i32.parse_i32_radix("ff", 16)) {
+    Ok(v) => {
+      print(int.int_to_string(v));
+    },
+    Err(_) => {
+      print("none");
+    }
+  }
+  match (i32.parse_i32_radix("-42", 10)) {
+    Ok(v) => {
+      print(int.int_to_string(v));
+    },
+    Err(_) => {
+      print("none");
+    }
+  }
+  match (i32.parse_i32_radix("101", 2)) {
+    Ok(v) => {
+      print(int.int_to_string(v));
+    },
+    Err(_) => {
+      print("none");
+    }
+  }
+  match (i32.parse_i32_radix("zz", 36)) {
+    Ok(v) => {
+      print(int.int_to_string(v));
+    },
+    Err(_) => {
+      print("none");
+    }
+  }
+  match (i32.parse_i32_radix("12x", 10)) {
+    Ok(v) => {
+      print("ok");
+    },
+    Err(_) => {
+      print("none");
+    }
+  }
+  match (i32.parse_i32_radix("", 10)) {
+    Ok(v) => {
+      print("ok");
+    },
+    Err(_) => {
+      print("none");
+    }
+  }
+  print(int.int_to_string_radix(255, 16));
+  return 0;
 }

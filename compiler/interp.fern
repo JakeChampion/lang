@@ -9,10 +9,10 @@ import "./checker";
 import "./aesref";
 import "./platforms";
 import "./typeinfo";
-import "std/io_outcome";
 import "std/utf8";
+import "std/f64";
 
-pub struct VInt { v: i32, is_char: boolean }
+pub struct VInt { v: i32, is_char: boolean, is_byte: boolean }
 
 pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean, ptr: boolean }
 
@@ -26,7 +26,12 @@ pub struct VFloat { v: f64 }
 
 pub struct VFloat32 { v: f64 }
 
-pub struct VArr { elements: Value[], elem: string, view: boolean, reserved: Value[] }
+// Every copy of a VArr shares `store`, as every holder of a compiled array
+// shares its box: a builtin that fills an array the caller owns, or sets its
+// length, writes there. Empty until that first write, and from then on
+// [length, each slot of the capacity] and read in place of `items`. A view
+// keeps its own length and reads its parent's store from `offset`.
+pub struct VArr { items: Value[], elem: string, view: boolean, store: Cell[i64[]], offset: i32 }
 
 pub struct VTuple { elements: Value[] }
 
@@ -38,7 +43,7 @@ pub struct VStruct { type_name: string, field_names: string[], field_values: Val
 
 pub struct VErr { msg: string, abort: boolean }
 
-pub struct VCellI { c: Cell[i32], is_char: boolean, is_bool: boolean }
+pub struct VCellI { c: Cell[i32], is_char: boolean, is_byte: boolean, is_bool: boolean }
 
 pub struct VCellF { c: Cell[f64] }
 
@@ -53,16 +58,19 @@ pub struct VType { name: string }
 
 pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
 
-pub struct VCellA { c: Cell[i64[]], elem: string, length: Cell[i32] }
-
 pub struct VCellV { c: Cell[string] }
 
 pub struct VLanes { width: i32, bits: i64[] }
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VControl | VType | VHandle | VCellA | VCellV;
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VControl | VType | VHandle | VCellV;
 
 function v_int(n: i32): Value {
-  return VInt { v: n, is_char: false };
+  return VInt { v: n, is_char: false, is_byte: false };
+}
+
+// A byte keeps its own receiver namespace, including generic inference.
+function v_byte(n: i32): Value {
+  return VInt { v: n & 255, is_char: false, is_byte: true };
 }
 
 function char_value(v: Value): Value {
@@ -72,7 +80,7 @@ function char_value(v: Value): Value {
     }
   }
   if (is_int_like(v)) {
-    return VInt { v: vint_as_i64(v) as i32, is_char: true };
+    return VInt { v: vint_as_i64(v) as i32, is_char: true, is_byte: false };
   }
   return v;
 }
@@ -80,6 +88,9 @@ function char_value(v: Value): Value {
 function int_type_name(n: VInt): string {
   if (n.is_char) {
     return "char";
+  }
+  if (n.is_byte) {
+    return "u8";
   }
   return "i32";
 }
@@ -153,7 +164,7 @@ function box_i64(n: i64): Value {
 
 function zero_value_of(type_name: string): Value {
   if (parser.spelling_is_view(type_name)) {
-    return VArr { elements: [], elem: parser.array_method_element(type_name), view: true, reserved: [] };
+    return v_view_of([], parser.array_method_element(type_name));
   }
   if (name_ends_with(type_name, "[]")) {
     return v_arr_of([], slice_unchecked(type_name, 0, type_name.len() - 2) + "");
@@ -204,7 +215,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
     return v_int(vint_as_i64(val) as i32);
   }
   if (type_name == "u8" && is_int_like(val)) {
-    return v_int(vint_as_i64(val) as i32 & 255);
+    return v_byte(vint_as_i64(val) as i32);
   }
   if (type_name == "u32") {
     match (val) {
@@ -248,7 +259,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
         if (elem.len() == 0 && parser.type_str_vars(declared, []).len() == 0) {
           elem = declared;
         }
-        return VArr { ...a, elem: elem, view: parser.spelling_is_view(type_name) };
+        return arr_retyped(a, elem, parser.spelling_is_view(type_name));
       },
       _ => {
         return val;
@@ -559,11 +570,127 @@ function v_float32(x: f64): Value {
 }
 
 function v_arr(elements: Value[]): Value {
-  return VArr { elements: elements, elem: "", view: false, reserved: [] };
+  return v_arr_of(elements, "");
 }
 
 function v_arr_of(elements: Value[], elem: string): Value {
-  return VArr { elements: elements, elem: elem, view: false, reserved: [] };
+  let unwritten: i64[] = [];
+  return VArr { items: elements, elem: elem, view: false, store: cell_new(unwritten), offset: 0 };
+}
+
+function v_view_of(elements: Value[], elem: string): Value {
+  let unwritten: i64[] = [];
+  return VArr { items: elements, elem: elem, view: true, store: cell_new(unwritten), offset: 0 };
+}
+
+function arr_len(a: VArr): i32 {
+  let st: i64[] = a.store.get();
+  if (st.len() == 0 || a.view) {
+    return a.items.len();
+  }
+  return st[0] as i32;
+}
+
+function arr_at(a: VArr, i: i32): Value {
+  let st: i64[] = a.store.get();
+  if (st.len() == 0) {
+    return coerce_int_width(a.items[i], a.elem);
+  }
+  return coerce_int_width(v_int(st[1 + a.offset + i] as i32), a.elem);
+}
+
+function arr_els(a: VArr): Value[] {
+  let st: i64[] = a.store.get();
+  if (st.len() == 0) {
+    return a.items;
+  }
+  let out: Value[] = [];
+  let n: i32 = arr_len(a);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(v_int(st[1 + a.offset + i] as i32));
+    i = i + 1;
+  }
+  return out;
+}
+
+// The same array under a declared type. An array taken as a view keeps the
+// length it has now; a view taken as an array is a copy.
+function arr_retyped(a: VArr, elem: string, view: boolean): Value {
+  if (view == a.view) {
+    return VArr { ...a, elem: elem };
+  }
+  if (view) {
+    return arr_view(VArr { ...a, elem: elem }, 0, arr_len(a));
+  }
+  return v_arr_of(arr_els(a), elem);
+}
+
+// A view of a[from:to], reading what a builtin later writes into `a`.
+function arr_view(a: VArr, from: i32, to: i32): Value {
+  let els: Value[] = arr_els(a);
+  let out: Value[] = [];
+  let i: i32 = from;
+  while (i < to) {
+    out = out.append(els[i]);
+    i = i + 1;
+  }
+  return VArr { items: out, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
+}
+
+// Every slot of the array's capacity, as the integers a builtin writes.
+function arr_slots(a: VArr): i64[] {
+  let st: i64[] = a.store.get();
+  let out: i64[] = [];
+  if (st.len() > 0) {
+    let i: i32 = 1;
+    while (i < st.len()) {
+      out = out.append(st[i]);
+      i = i + 1;
+    }
+    return out;
+  }
+  for e in a.items {
+    out = out.append(vint_as_i64(e));
+  }
+  return out;
+}
+
+function arr_store_set(a: VArr, n: i32, slots: i64[]): void {
+  let st: i64[] = [n as i64];
+  for x in slots {
+    st = st.append(x);
+  }
+  a.store.set(st);
+}
+
+// Writes xs over the array's first elements, for every holder of it.
+function arr_fill(v: Value, xs: i64[]): void {
+  if let VArr(a) = v {
+    let slots: i64[] = arr_slots(a);
+    let i: i32 = 0;
+    while (i < xs.len() && i < slots.len()) {
+      slots = slots.with(i, xs[i]);
+      i = i + 1;
+    }
+    arr_store_set(a, arr_len(a), slots);
+  }
+}
+
+function bytes_as_i64s(b: u8[]): i64[] {
+  let out: i64[] = [];
+  for x in b {
+    out = out.append(x as i64);
+  }
+  return out;
+}
+
+function i32s_as_i64s(b: i32[]): i64[] {
+  let out: i64[] = [];
+  for x in b {
+    out = out.append(x as i64);
+  }
+  return out;
 }
 
 function v_tuple(elements: Value[]): Value {
@@ -770,7 +897,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable, ret: string }
+pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string }
 
 function new_env(): Env {
   let ns: string[] = [];
@@ -779,14 +906,14 @@ function new_env(): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), outs: builtin_outs(), ret: "" };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), ret: "" };
 }
 
-function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[], outs: OutTable): Env {
+function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, outs: outs, ret: "" };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "" };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -912,26 +1039,10 @@ function deref_cell(v: Value): Value {
       if (ci.is_bool) {
         return VBool { v: ci.c.get() != 0 };
       }
-      return VInt { v: ci.c.get(), is_char: ci.is_char };
+      return VInt { v: ci.c.get(), is_char: ci.is_char, is_byte: ci.is_byte };
     },
     VCellF(cf) => {
       return VFloat { v: cf.c.get() };
-    },
-    VCellA(ca) => {
-      let full: Value[] = [];
-      for x in ca.c.get() {
-        full = full.append(v_int(x as i32));
-      }
-      let els: Value[] = full;
-      if (ca.length.get() < full.len()) {
-        els = [];
-        let i: i32 = 0;
-        while (i < ca.length.get()) {
-          els = els.append(full[i]);
-          i = i + 1;
-        }
-      }
-      return VArr { elements: els, elem: ca.elem, view: false, reserved: full };
     },
     VCellV(cv) => {
       return cell_any_value(cv.c.get(), cell_new(0));
@@ -1131,216 +1242,6 @@ function cellify_env(e: Env, names: string[]): Env {
   return out;
 }
 
-pub struct OutTable { names: string[], keys: string[] }
-
-function builtin_outs(): OutTable {
-  return OutTable { names: ["tcp_recv_into", "udp_recvfrom", "reactor_wait", "__arr_set_len"], keys: ["tcp_recv_into#1", "udp_recvfrom#1", "udp_recvfrom#2", "reactor_wait#1", "__arr_set_len#0"] };
-}
-
-function out_key(callee: string, k: i32): string {
-  return callee + "#" + util.i32_to_string(k);
-}
-
-function callee_names(callee: ast.Expr): string[] {
-  match (callee) {
-    ast.ExprIdent(id) => {
-      return [id.name];
-    },
-    ast.ExprFieldAccess(fa) => {
-      if let ast.ExprIdent(ns) = fa.obj {
-        return [ns.name + "." + fa.field, fa.field];
-      }
-      return [fa.field];
-    },
-    _ => {
-      return [];
-    }
-  }
-}
-
-function out_idents_of(e: ast.Expr, own acc: string[], outs: OutTable): string[] {
-  let out: string[] = acc;
-  match (e) {
-    ast.ExprCall(c) => {
-      for cn in callee_names(c.callee) {
-        if (util.has_str(outs.names, cn)) {
-          out = out_args_of(c, cn, out, outs);
-        }
-      }
-    },
-    _ => {}
-  }
-  return out;
-}
-
-function out_args_of(c: ast.ExprCall, callee: string, own acc: string[], outs: OutTable): string[] {
-  let out: string[] = acc;
-  let k: i32 = 0;
-  while (k < c.args.len()) {
-    if let ast.ExprIdent(id) = c.args[k] {
-      if (util.has_str(outs.keys, out_key(callee, k))) {
-        out = out.append(id.name);
-      }
-    }
-    k = k + 1;
-  }
-  return out;
-}
-
-function out_table(funcs: parser.FuncDecl[]): OutTable {
-  let t: OutTable = builtin_outs();
-  let grown: boolean = true;
-  while (grown) {
-    let next: OutTable = t;
-    for fd in funcs {
-      next = mark_out_params(fd, next);
-    }
-    grown = next.keys.len() > t.keys.len();
-    t = next;
-  }
-  return t;
-}
-
-function mark_out_params(fd: parser.FuncDecl, t: OutTable): OutTable {
-  let passed: string[] = [];
-  let scanned: boolean = false;
-  let out: OutTable = t;
-  let k: i32 = 0;
-  while (k < fd.params.len()) {
-    let key: string = out_key(fd.name, k);
-    if (name_ends_with(fd.params[k].type_name, "[]") && !util.has_str(out.keys, key)) {
-      if (!scanned) {
-        passed = body_out_idents(fd.body, out);
-        scanned = true;
-      }
-      if (util.has_str(passed, fd.params[k].name)) {
-        out = OutTable { names: out.names.append(fd.name), keys: out.keys.append(key) };
-      }
-    }
-    k = k + 1;
-  }
-  return out;
-}
-
-function body_out_idents(body: ast.Stmt[], outs: OutTable): string[] {
-  function visit(e: ast.Expr, own a: string[]): string[] {
-    return out_idents_of(e, a, outs);
-  }
-  let acc: string[] = [];
-  for st in body {
-    acc = astwalk.fold_stmt_pruned(st, acc, visit, not_lambda_expr);
-  }
-  return acc;
-}
-
-function stmt_out_idents(st: ast.Stmt, outs: OutTable): string[] {
-  function visit(e: ast.Expr, own a: string[]): string[] {
-    return out_idents_of(e, a, outs);
-  }
-  return astwalk.fold_stmt_own_pruned(st, no_names(), visit, not_lambda_expr);
-}
-
-function eval_out_stmt(st: ast.Stmt, env: Env): StepResult {
-  let names: string[] = stmt_out_idents(st, env.outs);
-  if (names.len() == 0) {
-    return eval_stmt(st, env);
-  }
-  let celled: Env = env;
-  let made: string[] = [];
-  for n in names {
-    let idx: i32 = celled.raw_slot(n);
-    if (idx >= 0) {
-      if let VArr(a) = celled.values[idx] {
-        let xs: i64[] = [];
-        let capacity: i32 = a.elements.len();
-        if (a.reserved.len() > capacity) {
-          capacity = a.reserved.len();
-        }
-        let i: i32 = 0;
-        while (i < capacity) {
-          if (i < a.elements.len()) {
-            xs = xs.append(vint_as_i64(a.elements[i]));
-          } else {
-            xs = xs.append(vint_as_i64(a.reserved[i]));
-          }
-          i = i + 1;
-        }
-        celled = celled.update(n, VCellA { c: cell_new(xs), elem: a.elem, length: cell_new(a.elements.len()) });
-        made = made.append(n);
-      }
-    }
-  }
-  let r: StepResult = eval_stmt(st, celled);
-  return StepResult { env: uncell_outs(r.env, made), ret: r.ret, sig: r.sig };
-}
-
-function uncell_outs(env: Env, names: string[]): Env {
-  let out: Env = env;
-  for n in names {
-    let idx: i32 = out.raw_slot(n);
-    if (idx >= 0) {
-      if let VCellA(_) = out.values[idx] {
-        out = out.update(n, deref_cell(out.values[idx]));
-      }
-    }
-  }
-  return out;
-}
-
-function eval_call_arg(arg: ast.Expr, callee: string, k: i32, env: Env): Value {
-  if let ast.ExprIdent(id) = arg {
-    if (util.has_str(env.outs.names, callee) && util.has_str(env.outs.keys, out_key(callee, k))) {
-      let idx: i32 = env.raw_slot(id.name);
-      if (idx >= 0) {
-        if let VCellA(_) = env.values[idx] {
-          return env.values[idx];
-        }
-      }
-    }
-  }
-  return eval_expr(arg, env);
-}
-
-function store_out(args: Value[], k: i32, xs: i64[]): void {
-  if (k < args.len()) {
-    if let VCellA(ca) = args[k] {
-      let old: i64[] = ca.c.get();
-      if (xs.len() >= old.len()) {
-        ca.c.set(xs);
-        ca.length.set(xs.len());
-      } else {
-        let merged: i64[] = [];
-        let i: i32 = 0;
-        while (i < old.len()) {
-          if (i < xs.len()) {
-            merged = merged.append(xs[i]);
-          } else {
-            merged = merged.append(old[i]);
-          }
-          i = i + 1;
-        }
-        ca.c.set(merged);
-      }
-    }
-  }
-}
-
-function bytes_as_i64s(b: u8[]): i64[] {
-  let out: i64[] = [];
-  for x in b {
-    out = out.append(x as i64);
-  }
-  return out;
-}
-
-function i32s_as_i64s(b: i32[]): i64[] {
-  let out: i64[] = [];
-  for x in b {
-    out = out.append(x as i64);
-  }
-  return out;
-}
-
 function is_cell(v: Value): boolean {
   match (v) {
     VCellI(_) => {
@@ -1361,13 +1262,13 @@ function is_cell(v: Value): boolean {
 function cell_for(v: Value): Value {
   match (v) {
     VInt(n) => {
-      return VCellI { c: cell_new(n.v), is_char: n.is_char, is_bool: false };
+      return VCellI { c: cell_new(n.v), is_char: n.is_char, is_byte: n.is_byte, is_bool: false };
     },
     VBool(bb) => {
       if (bb.v) {
-        return VCellI { c: cell_new(1), is_char: false, is_bool: true };
+        return VCellI { c: cell_new(1), is_char: false, is_byte: false, is_bool: true };
       }
-      return VCellI { c: cell_new(0), is_char: false, is_bool: true };
+      return VCellI { c: cell_new(0), is_char: false, is_byte: false, is_bool: true };
     },
     VFloat(f) => {
       return VCellF { c: cell_new(f.v) };
@@ -1392,6 +1293,9 @@ function cell_value(v: Value): Value {
       c.ci.set(n.v);
       if (n.is_char) {
         return VCell { ...c, kind: "char" };
+      }
+      if (n.is_byte) {
+        return VCell { ...c, kind: "u8" };
       }
       return VCell { ...c, kind: "i32" };
     },
@@ -1465,6 +1369,9 @@ function cell_scalar_text(h: usize, v: Value): boolean {
       if (n.is_char) {
         tag = 99;
       }
+      if (n.is_byte) {
+        tag = 121;
+      }
       cell_bits_text(h, tag, n.v as i64);
     },
     VUint(n) => {
@@ -1518,7 +1425,7 @@ function cell_any_text(h: usize, v: Value): boolean {
     VArr(a) => {
       buf_push_byte(h, 97);
       cell_name_text(h, a.elem);
-      return cell_parts_text(h, a.elements);
+      return cell_parts_text(h, arr_els(a));
     },
     VTuple(t) => {
       buf_push_byte(h, 116);
@@ -1568,11 +1475,14 @@ function cell_value_text(v: Value): Value {
 }
 
 function cell_scalar_value(tag: i32, bits: i64): Value {
+  if (tag == 121) {
+    return v_byte(bits as i32);
+  }
   if (tag == 105) {
     return v_int(bits as i32);
   }
   if (tag == 99) {
-    return VInt { v: bits as i32, is_char: true };
+    return VInt { v: bits as i32, is_char: true, is_byte: false };
   }
   if (tag == 110) {
     return VUint { v: bits as i32 };
@@ -1670,7 +1580,7 @@ function cell_set_value(c: VCell, v: Value): Value {
     }
     return encoded;
   }
-  if ((c.kind == "i32" || c.kind == "u32" || c.kind == "char") && is_i32_arg(v)) {
+  if ((c.kind == "i32" || c.kind == "u32" || c.kind == "char" || c.kind == "u8") && is_i32_arg(v)) {
     c.ci.set(vint_bits(v));
     return v_void();
   }
@@ -1719,8 +1629,11 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "i32") {
       return v_int(c.ci.get());
     }
+    if (c.kind == "u8") {
+      return v_byte(c.ci.get());
+    }
     if (c.kind == "char") {
-      return VInt { v: c.ci.get(), is_char: true };
+      return VInt { v: c.ci.get(), is_char: true, is_byte: false };
     }
     if (c.kind == "u32") {
       return v_uint(c.ci.get());
@@ -1817,13 +1730,13 @@ function call_xattr(name: string, args: Value[]): Value {
   let result: Result[void, IoError] = Err(Unsupported);
   if (name == "setxattr_bytes" || name == "lsetxattr_bytes") {
     if let VArr(a) = args[2] {
-      let bytes: u8[] = __alloc_u8(a.elements.len());
+      let bytes: u8[] = __alloc_u8(arr_len(a));
       let i: i32 = 0;
-      while (i < a.elements.len()) {
-        if (!is_i32_arg(a.elements[i])) {
+      while (i < arr_len(a)) {
+        if (!is_i32_arg(arr_at(a, i))) {
           return v_err(name + ": expected byte array");
         }
-        bytes = bytes.with(i, vint_bits(a.elements[i]) as u8);
+        bytes = bytes.with(i, vint_bits(arr_at(a, i)) as u8);
         i = i + 1;
       }
       if (follow) {
@@ -1851,17 +1764,6 @@ function call_xattr(name: string, args: Value[]): Value {
     },
     Err(e) => {
       return v_variant("Err", [io_error_value(e)]);
-    }
-  }
-}
-
-function io_failure_value(error: Option[IoError]): Value {
-  match (error) {
-    Some(e) => {
-      return io_err_value(e);
-    },
-    None => {
-      return ok_value(v_tuple([]));
     }
   }
 }
@@ -1945,7 +1847,7 @@ function arg_bool(args: Value[], i: i32): boolean {
 function arg_bytes(args: Value[], i: i32): u8[] {
   let out: u8[] = [];
   if let VArr(a) = arg_at(args, i) {
-    for e in a.elements {
+    for e in arr_els(a) {
       out = out.append(vint_as_i64(e) as u8);
     }
   }
@@ -1955,7 +1857,7 @@ function arg_bytes(args: Value[], i: i32): u8[] {
 function arg_i32s(args: Value[], i: i32): i32[] {
   let out: i32[] = [];
   if let VArr(a) = arg_at(args, i) {
-    for e in a.elements {
+    for e in arr_els(a) {
       out = out.append(vint_as_i64(e) as i32);
     }
   }
@@ -1965,7 +1867,7 @@ function arg_i32s(args: Value[], i: i32): i32[] {
 function arg_i64s(args: Value[], i: i32): i64[] {
   let out: i64[] = [];
   if let VArr(a) = arg_at(args, i) {
-    for e in a.elements {
+    for e in arr_els(a) {
       out = out.append(vint_as_i64(e));
     }
   }
@@ -1975,7 +1877,7 @@ function arg_i64s(args: Value[], i: i32): i64[] {
 function arg_strs(args: Value[], i: i32): string[] {
   let out: string[] = [];
   if let VArr(a) = arg_at(args, i) {
-    for e in a.elements {
+    for e in arr_els(a) {
       out = out.append(vstr_of(e));
     }
   }
@@ -2492,7 +2394,7 @@ function lanes_of(width: i32, args: Value[]): Value {
 function lane_window(width: i32, args: Value[]): i32 {
   if let VArr(a) = args[0] {
     let at: i32 = vint_as_i64(args[1]) as i32;
-    if (at >= 0 && at + 128 / width <= a.elements.len()) {
+    if (at >= 0 && at + 128 / width <= arr_len(a)) {
       return at;
     }
   }
@@ -2507,7 +2409,7 @@ function lanes_load(width: i32, args: Value[]): Value {
   if let VArr(a) = args[0] {
     let xs: Value[] = [];
     while (xs.len() < 128 / width) {
-      xs = xs.append(a.elements[at + xs.len()]);
+      xs = xs.append(arr_at(a, at + xs.len()));
     }
     return lanes_of(width, xs);
   }
@@ -2521,13 +2423,16 @@ function lanes_with(width: i32, args: Value[]): Value {
     return v_err("lane with out of bounds");
   }
   if let VArr(a) = args[0] {
-    let out: Value[] = a.elements;
+    let out: Value[] = arr_els(a);
     let i: i32 = 0;
     while (i < ls[0].bits.len()) {
       out = out.with(at + i, lane_value(ls[0], i));
       i = i + 1;
     }
-    return VArr { ...a, elements: out };
+    if (a.view) {
+      return v_view_of(out, a.elem);
+    }
+    return v_arr_of(out, a.elem);
   }
   return v_err("lane with: expected an array");
 }
@@ -2785,7 +2690,7 @@ function call_host_reactor(name: string, args: Value[]): Value {
   if (name == "reactor_wait") {
     let events: i32[] = arg_i32s(args, 1);
     let n: i32 = reactor_wait(arg_i32(args, 0), events, arg_i32(args, 2));
-    store_out(args, 1, i32s_as_i64s(events));
+    arr_fill(arg_at(args, 1), i32s_as_i64s(events));
     return v_int(n);
   }
   return v_err("undefined function: " + name);
@@ -2948,8 +2853,8 @@ function call_host_udp(name: string, args: Value[]): Value {
     let buf: u8[] = arg_bytes(args, 1);
     let from: u8[] = arg_bytes(args, 2);
     let n: i32 = udp_recvfrom(arg_i32(args, 0), buf, from);
-    store_out(args, 1, bytes_as_i64s(buf));
-    store_out(args, 2, bytes_as_i64s(from));
+    arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
+    arr_fill(arg_at(args, 2), bytes_as_i64s(from));
     return v_int(n);
   }
   return v_int(udp_connect(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2)));
@@ -2976,7 +2881,7 @@ function call_host_tcp_io(name: string, args: Value[]): Value {
   if (name == "tcp_recv_into") {
     let buf: u8[] = arg_bytes(args, 1);
     let n: i32 = tcp_recv_into(fd, buf);
-    store_out(args, 1, bytes_as_i64s(buf));
+    arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
     return v_int(n);
   }
   return v_int(tcp_sendfile(fd, arg_i32(args, 1), arg_i32(args, 2)));
@@ -3234,7 +3139,7 @@ function reader_method(r: Reader, name: string, args: Value[]): Value {
     return read_chunk_value(r, arg_i32(args, 0));
   }
   if (name == "close") {
-    return io_failure_value(r.close().failure());
+    return void_result_value(r.close());
   }
   if (name == "splice_to" || name == "copy_range_to") {
     return io_err_value(Unsupported);
@@ -3285,29 +3190,29 @@ function reader_fd_method(r: Reader, name: string, args: Value[]): Value {
     return v_bool(r.isatty());
   }
   if (name == "fsync") {
-    return io_failure_value(r.fsync().failure());
+    return void_result_value(r.fsync());
   }
   if (name == "fdatasync") {
-    return io_failure_value(r.fdatasync().failure());
+    return void_result_value(r.fdatasync());
   }
   if (name == "syncfs") {
-    return io_failure_value(r.syncfs().failure());
+    return void_result_value(r.syncfs());
   }
   if (name == "drop_cache") {
-    return io_failure_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)).failure());
+    return void_result_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
   }
-  return io_failure_value(r.dup_onto(arg_i32(args, 0)).failure());
+  return void_result_value(r.dup_onto(arg_i32(args, 0)));
 }
 
 function writer_method(w: Writer, name: string, args: Value[]): Value {
   if (name == "write") {
-    return io_failure_value(w.write(arg_str(args, 0)).failure());
+    return void_result_value(w.write(arg_str(args, 0)));
   }
   if (name == "write_some") {
     return i64_result_value(w.write_some(arg_str(args, 0)));
   }
   if (name == "write_bytes") {
-    return io_failure_value(w.write_bytes(arg_bytes(args, 0)).failure());
+    return void_result_value(w.write_bytes(arg_bytes(args, 0)));
   }
   if (name == "write_some_bytes") {
     return i64_result_value(w.write_some_bytes(arg_bytes(args, 0)));
@@ -3316,10 +3221,10 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
     return io_err_value(Unsupported);
   }
   if (name == "close") {
-    return io_failure_value(w.close().failure());
+    return void_result_value(w.close());
   }
   if (name == "truncate") {
-    return io_failure_value(w.truncate(arg_i64(args, 0)).failure());
+    return void_result_value(w.truncate(arg_i64(args, 0)));
   }
   return writer_fd_method(w, name, args);
 }
@@ -3338,18 +3243,18 @@ function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
     return v_bool(w.isatty());
   }
   if (name == "fsync") {
-    return io_failure_value(w.fsync().failure());
+    return void_result_value(w.fsync());
   }
   if (name == "fdatasync") {
-    return io_failure_value(w.fdatasync().failure());
+    return void_result_value(w.fdatasync());
   }
   if (name == "syncfs") {
-    return io_failure_value(w.syncfs().failure());
+    return void_result_value(w.syncfs());
   }
   if (name == "drop_cache") {
-    return io_failure_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)).failure());
+    return void_result_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
   }
-  return io_failure_value(w.dup_onto(arg_i32(args, 0)).failure());
+  return void_result_value(w.dup_onto(arg_i32(args, 0)));
 }
 
 function call_dir_method(d: Dir, name: string, args: Value[]): Value {
@@ -3378,7 +3283,7 @@ function dir_method(d: Dir, name: string, args: Value[]): Value {
     return stat_result_value(d.lstat(entry));
   }
   if (name == "close") {
-    return io_failure_value(d.close().failure());
+    return void_result_value(d.close());
   }
   return dir_change_method(d, name, entry, args);
 }
@@ -4292,19 +4197,19 @@ function eval_unary(op: string, ov: Value): Value {
   if (op == "as_u8" || op == "as_byte") {
     match (ov) {
       VInt(i) => {
-        return v_int(i.v & 255);
+        return v_byte(i.v & 255);
       },
       VInt64(i) => {
-        return v_int((unpack_i64(i) & 255) as i32);
+        return v_byte((unpack_i64(i) & 255) as i32);
       },
       VUint(u) => {
-        return v_int(u.v & 255);
+        return v_byte(u.v & 255);
       },
       VFloat(f) => {
-        return v_int(f64_trunc_u32(f.v) & 255);
+        return v_byte(f64_trunc_u32(f.v) & 255);
       },
       VFloat32(f) => {
-        return v_int(f64_trunc_u32(f.v) & 255);
+        return v_byte(f64_trunc_u32(f.v) & 255);
       },
       _ => {
         return v_err("`as` integer cast operand not numeric");
@@ -4524,7 +4429,7 @@ function resolve_ident_value(name: string, env: Env): Value {
     while (ci < env.funcs.len()) {
       if (env.funcs[ci].name == name && env.funcs[ci].receiver_type.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
         let no_args: Value[] = [];
-        return call_func(name, no_args, env.funcs, env.aliases, env.type_decls, env.outs);
+        return call_func(name, no_args, env.funcs, env.aliases, env.type_decls);
       }
       ci = ci + 1;
     }
@@ -4584,14 +4489,14 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   }
   let overload: string = struct_op_method(b.op, lv);
   if (overload.len() > 0) {
-    return call_method(lv, overload, [rv], env.funcs, env.aliases, env.type_decls, env.outs);
+    return call_method(lv, overload, [rv], env.funcs, env.aliases, env.type_decls);
   }
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
   if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
     if let VStruct(sv) = lv {
-      let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls, env.outs);
+      let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
       if (is_err(c)) {
         return c;
       }
@@ -4671,7 +4576,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       }
       if (u.op == "-") {
         if let VStruct(_) = ov {
-          return call_method(ov, "neg", [], env.funcs, env.aliases, env.type_decls, env.outs);
+          return call_method(ov, "neg", [], env.funcs, env.aliases, env.type_decls);
         }
       }
       // Negate the wide magnitude before conversion to the checked result width.
@@ -4709,9 +4614,9 @@ function eval_expr(e: ast.Expr, env: Env): Value {
     ast.ExprBytes(bs) => {
       let elems: Value[] = [];
       for b in bs.value {
-        elems = elems.append(v_int(b as i32));
+        elems = elems.append(v_byte(b as i32));
       }
-      return v_arr(elems);
+      return v_arr_of(elems, "u8");
     },
     ast.ExprIndex(x) => {
       return eval_expr_index(x, env);
@@ -4880,7 +4785,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
   let arg_vals: Value[] = [];
   let i: i32 = 0;
   while (i < c.args.len()) {
-    let av: Value = eval_pinned_arg(c, i, name, callee_fd, callee_known, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
+    let av: Value = eval_pinned_arg(c, i, callee_fd, callee_known, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
     if (is_err(av)) {
       return av;
     }
@@ -4891,7 +4796,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     return v_variant_of(variant_enum, variant_name, arg_vals);
   }
   if (is_method) {
-    return call_method_targs(recv, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls, env.outs);
+    return call_method_targs(recv, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
   }
   if (is_closure) {
     let inline_value: boolean = false;
@@ -4902,12 +4807,12 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
         }
       }
     }
-    return call_closure_mode(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs, inline_value);
+    return call_closure_mode(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
   }
-  return call_func_targs(name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls, env.outs);
+  return call_func_targs(name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls);
 }
 
-function eval_pinned_arg(c: ast.ExprCall, i: i32, name: string, fd: parser.FuncDecl, known: boolean, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], env: Env): Value {
+function eval_pinned_arg(c: ast.ExprCall, i: i32, fd: parser.FuncDecl, known: boolean, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], env: Env): Value {
   if (known && i < fd.params.len() && fd.type_params.len() > 0) {
     if let ast.ExprCall(ac) = c.args[i] {
       let pinned: Env = bind_tyargs(env, fd, has_recv, recv, earlier, targs, "");
@@ -4917,11 +4822,11 @@ function eval_pinned_arg(c: ast.ExprCall, i: i32, name: string, fd: parser.FuncD
       }
     }
   }
-  return eval_call_arg(c.args[i], name, i, env);
+  return eval_expr(c.args[i], env);
 }
 
 function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): (parser.FuncDecl, boolean) {
-  let none: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+  let none: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
   if (is_closure) {
     return (none, false);
   }
@@ -5018,18 +4923,18 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
   }
   match (av) {
     VArr(arr) => {
-      let i: i32 = index_in(iv, arr.elements.len());
+      let i: i32 = index_in(iv, arr_len(arr));
       if (i < 0) {
-        return index_abort(aborts.arr_oob(), value_text(iv), arr.elements.len());
+        return index_abort(aborts.arr_oob(), value_text(iv), arr_len(arr));
       }
-      return arr.elements[i];
+      return arr_at(arr, i);
     },
     VString(s) => {
       let si: i32 = index_in(iv, s.v.len());
       if (si < 0) {
         return index_abort(aborts.str_oob(), value_text(iv), s.v.len());
       }
-      return v_int(s.v[si] as i32);
+      return v_byte(s.v[si] as i32);
     },
     _ => {
       return v_err("can only index into an array or string");
@@ -5063,7 +4968,7 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
         eb = oes.v.len();
       },
       VArr(oea) => {
-        eb = oea.elements.len();
+        eb = arr_len(oea);
       },
       _ => {
         return v_err("can only slice array or string");
@@ -5096,16 +5001,10 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
       return v_variant("Some", [v_string(slice_unchecked(s.v, sb, eb))]);
     },
     VArr(a) => {
-      if (sb < 0 || eb > a.elements.len() || sb > eb) {
-        return slice_abort(aborts.slice_range(), "slice", sb, eb, a.elements.len());
+      if (sb < 0 || eb > arr_len(a) || sb > eb) {
+        return slice_abort(aborts.slice_range(), "slice", sb, eb, arr_len(a));
       }
-      let out: Value[] = [];
-      let i: i32 = sb;
-      while (i < eb) {
-        out = out.append(a.elements[i]);
-        i = i + 1;
-      }
-      return VArr { elements: out, elem: a.elem, view: true, reserved: [] };
+      return arr_view(a, sb, eb);
     },
     _ => {
       return v_err("can only slice array or string");
@@ -5306,7 +5205,17 @@ function variant_simple_name(name: string): string {
   return name;
 }
 
-function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[]): parser.TypeAlias[] {
+function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
+  for ed in enums {
+    if (ed.name == name) {
+      return ed.type_params;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+
+function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
   let out: parser.TypeAlias[] = aliases;
   let base: i32 = aliases.len();
   let i: i32 = 0;
@@ -5318,7 +5227,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
         k = k + 1;
       }
       if (k == out.len()) {
-        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: [], line: 0, col: 0, is_pub: true, is_package: false, module: "" });
+        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: enum_type_params(enums, owner), line: 0, col: 0, is_pub: true, is_package: false, module: "" });
       } else {
         out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
       }
@@ -5328,11 +5237,11 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
   return out;
 }
 
-function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
-  return call_closure_mode(cv, args, funcs, aliases, type_decls, outs, false);
+function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  return call_closure_mode(cv, args, funcs, aliases, type_decls, false);
 }
 
-function call_closure_mode(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable, inline_value: boolean): Value {
+function call_closure_mode(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
   let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
   match (cv) {
     VFunc(v) => {
@@ -5343,12 +5252,12 @@ function call_closure_mode(cv: Value, args: Value[], funcs: parser.FuncDecl[], a
     }
   }
   if (fv.generic_name.len() > 0) {
-    return call_func_targs(fv.generic_name, args, [], "", funcs, aliases, type_decls, outs);
+    return call_func_targs(fv.generic_name, args, [], "", funcs, aliases, type_decls);
   }
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, outs: outs, ret: "" };
+  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "" };
   let j: i32 = 0;
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -5408,17 +5317,22 @@ function applied_in_ref(r: parser.TypeRef, base: string): string {
   return "";
 }
 
-function struct_type_params(decls: parser.StructDecl[], name: string): string[] {
+function decl_type_params(decls: parser.StructDecl[], aliases: parser.TypeAlias[], name: string): string[] {
   for d in decls {
     if (d.name == name) {
       return d.type_params;
+    }
+  }
+  for a in aliases {
+    if (a.name == name) {
+      return a.type_params;
     }
   }
   let none: string[] = [];
   return none;
 }
 
-function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
+function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let ai: i32 = assoc_index(funcs, type_name, name);
   if (ai < 0) {
     return v_err("undefined associated function `" + name + "` on `" + type_name + "`");
@@ -5427,11 +5341,11 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
+  let env: Env = Env { ...new_module_env(funcs, aliases, type_decls), ret: fd.ret_type };
   let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
   let tps: string[] = fd.type_params;
   if (tps.len() == 0) {
-    tps = struct_type_params(type_decls, util.base_type_name(type_name));
+    tps = decl_type_params(type_decls, aliases, util.base_type_name(type_name));
   }
   let t: i32 = 0;
   while (t < tps.len() && t < targs.len()) {
@@ -5527,10 +5441,13 @@ function tyarg_match(decl: string, tp: string, v: Value): string {
   if (decl == tp + "[]" || decl == "[" + tp + "]") {
     match (v) {
       VArr(a) => {
-        if (a.elements.len() > 0) {
-          return tyarg_of_value(a.elements[0]);
+        if (a.elem.len() > 0) {
+          return a.elem;
         }
-        return a.elem;
+        if (arr_len(a) > 0) {
+          return tyarg_of_value(arr_at(a, 0));
+        }
+        return "";
       },
       _ => {}
     }
@@ -5681,12 +5598,12 @@ function dispatch_type_name(v: Value): string {
   return value_type_name(v);
 }
 
-function map_key_index(m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): i32 {
+function map_key_index(m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
   let by_eq: boolean = has_key_eq(k, funcs, aliases);
   let i: i32 = 0;
   while (i < m.keys.len()) {
     if (by_eq) {
-      if let VBool(b) = call_method(m.keys[i], "eq", [k], funcs, aliases, type_decls, outs) {
+      if let VBool(b) = call_method(m.keys[i], "eq", [k], funcs, aliases, type_decls) {
         if (b.v) {
           return i;
         }
@@ -5711,14 +5628,91 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   return false;
 }
 
-function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
-  return call_method_targs(recv, name, args, [], funcs, aliases, type_decls, outs);
+function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  return call_method_targs(recv, name, args, [], funcs, aliases, type_decls);
 }
 
-function call_method_targs(recv: Value, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
+// .len, .bytes and .as_bytes on a string; None for any other method.
+function string_method(sv: VString, name: string, args: Value[]): Option[Value] {
+  if (name == "len") {
+    if (args.len() != 0) {
+      return Some(v_err("string.len: takes no arguments"));
+    }
+    return Some(v_int(sv.v.len()));
+  }
+  if (name == "bytes" || name == "as_bytes") {
+    if (args.len() != 0) {
+      return Some(v_err("string." + name + ": takes no arguments"));
+    }
+    let bs: Value[] = [];
+    let bi: i32 = 0;
+    while (bi < sv.v.len()) {
+      bs = bs.append(v_byte(sv.v[bi] as i32));
+      bi = bi + 1;
+    }
+    if (name == "as_bytes") {
+      return Some(v_view_of(bs, "u8"));
+    }
+    return Some(v_arr_of(bs, "u8"));
+  }
+  return None;
+}
+
+function array_with(av: VArr, args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("array.with: need 2 args");
+  }
+  if (!is_i32_arg(args[0])) {
+    return v_err("array.with: index must be an integer");
+  }
+  let wi: i32 = vint_bits(args[0]);
+  if (wi < 0 || wi >= arr_len(av)) {
+    return index_abort(aborts.arr_oob(), util.i32_to_string(wi), arr_len(av));
+  }
+  let wout: Value[] = [];
+  let wj: i32 = 0;
+  while (wj < arr_len(av)) {
+    if (wj == wi) {
+      wout = wout.append(args[1]);
+    } else {
+      wout = wout.append(arr_at(av, wj));
+    }
+    wj = wj + 1;
+  }
+  return v_arr(wout);
+}
+
+// .len, .with and .append on an array; None for any other method.
+function array_method(av: VArr, name: string, args: Value[]): Option[Value] {
+  if (name == "len") {
+    if (args.len() != 0) {
+      return Some(v_err("array.len: takes no arguments"));
+    }
+    return Some(v_int(arr_len(av)));
+  }
+  if (name == "with" && !av.view) {
+    return Some(array_with(av, args));
+  }
+  if (name == "append" && !av.view) {
+    if (args.len() != 1) {
+      return Some(v_err("array.append: need 1 arg"));
+    }
+    let out: Value[] = [];
+    let ai: i32 = 0;
+    while (ai < arr_len(av)) {
+      out = out.append(arr_at(av, ai));
+      ai = ai + 1;
+    }
+    out = out.append(args[0]);
+    return Some(v_arr(out));
+  }
+  return None;
+}
+
+function call_method_targs(recv: Value, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   match (recv) {
     VType(tv) => {
-      return call_assoc(tv.name, name, args, funcs, aliases, type_decls, outs);
+      return call_assoc(tv.name, name, args, funcs, aliases, type_decls);
     },
     VCell(uc) => {
       return cell_method(uc, name, args);
@@ -5732,67 +5726,13 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
   }
   match (recv) {
     VString(sv) => {
-      if (name == "len") {
-        if (args.len() != 0) {
-          return v_err("string.len: takes no arguments");
-        }
-        return v_int(sv.v.len());
-      }
-      if (name == "bytes" || name == "as_bytes") {
-        if (args.len() != 0) {
-          return v_err("string." + name + ": takes no arguments");
-        }
-        let bs: Value[] = [];
-        let bi: i32 = 0;
-        while (bi < sv.v.len()) {
-          bs = bs.append(v_int(sv.v[bi] as i32));
-          bi = bi + 1;
-        }
-        return VArr { elements: bs, elem: "u8", view: name == "as_bytes", reserved: [] };
+      if let Some(r) = string_method(sv, name, args) {
+        return r;
       }
     },
     VArr(av) => {
-      if (name == "len") {
-        if (args.len() != 0) {
-          return v_err("array.len: takes no arguments");
-        }
-        return v_int(av.elements.len());
-      }
-      if (name == "with" && !av.view) {
-        if (args.len() != 2) {
-          return v_err("array.with: need 2 args");
-        }
-        if (!is_i32_arg(args[0])) {
-          return v_err("array.with: index must be an integer");
-        }
-        let wi: i32 = vint_bits(args[0]);
-        if (wi < 0 || wi >= av.elements.len()) {
-          return index_abort(aborts.arr_oob(), util.i32_to_string(wi), av.elements.len());
-        }
-        let wout: Value[] = [];
-        let wj: i32 = 0;
-        while (wj < av.elements.len()) {
-          if (wj == wi) {
-            wout = wout.append(args[1]);
-          } else {
-            wout = wout.append(av.elements[wj]);
-          }
-          wj = wj + 1;
-        }
-        return v_arr(wout);
-      }
-      if (name == "append" && !av.view) {
-        if (args.len() != 1) {
-          return v_err("array.append: need 1 arg");
-        }
-        let out: Value[] = [];
-        let ai: i32 = 0;
-        while (ai < av.elements.len()) {
-          out = out.append(av.elements[ai]);
-          ai = ai + 1;
-        }
-        out = out.append(args[0]);
-        return v_arr(out);
+      if let Some(r) = array_method(av, name, args) {
+        return r;
       }
     },
     VMap(m) => {
@@ -5800,7 +5740,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         if (args.len() != 2) {
           return v_err("map.set: need 2 args");
         }
-        let i: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
+        let i: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
         if (i >= 0) {
           let nvs: Value[] = [];
           let j: i32 = 0;
@@ -5820,7 +5760,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         if (args.len() != 1) {
           return v_err("map.get: need 1 arg");
         }
-        let oi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
+        let oi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
         if (oi >= 0) {
           return v_variant("Some", [m.values[oi]]);
         }
@@ -5831,7 +5771,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         if (args.len() != 2) {
           return v_err("map.get_or: need 2 args");
         }
-        let gi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
+        let gi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
         if (gi >= 0) {
           return m.values[gi];
         }
@@ -5841,13 +5781,13 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         if (args.len() != 1) {
           return v_err("map.contains: need 1 arg");
         }
-        return v_bool(map_key_index(m, args[0], funcs, aliases, type_decls, outs) >= 0);
+        return v_bool(map_key_index(m, args[0], funcs, aliases, type_decls) >= 0);
       }
       if (name == "remove") {
         if (args.len() != 1) {
           return v_err("map.remove: need 1 arg");
         }
-        let at: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
+        let at: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
         let last: i32 = m.keys.len() - 1;
         let nk: Value[] = [];
         let nv: Value[] = [];
@@ -5885,7 +5825,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
       if (ti >= 0 && ti < tv.elements.len()) {
         match (tv.elements[ti]) {
           VFunc(_) => {
-            return call_closure(tv.elements[ti], args, funcs, aliases, type_decls, outs);
+            return call_closure(tv.elements[ti], args, funcs, aliases, type_decls);
           },
           _ => {}
         }
@@ -5893,20 +5833,20 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     },
     _ => {}
   }
+  return call_declared_method(recv, name, args, type_args, funcs, aliases, type_decls);
+}
+
+function call_declared_method(recv: Value, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type: string = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
   let own_method: boolean = has_receiver_method(funcs, recv_type, name);
-  let byte_recv: boolean = recv_type == "i32" && !own_method;
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: parser.FuncDecl = funcs[i];
     let receiver_base: string = runtime_receiver_name(fd.receiver_type);
     let rt_match: boolean = receiver_base == recv_type;
-    if (!rt_match && byte_recv && fd.receiver_type == "u8") {
-      rt_match = true;
-    }
     if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
       rt_match = true;
     }
@@ -5917,7 +5857,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
+      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls), ret: fd.ret_type };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       env = env.bind(fd.receiver_name, recv);
       let j: i32 = 0;
@@ -5933,6 +5873,32 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     }
     i = i + 1;
   }
+  if (name == "to_string" && args.len() == 0) {
+    match (recv) {
+      VInt(_) => {
+        return v_string(value_text(recv));
+      },
+      VInt64(_) => {
+        return v_string(value_text(recv));
+      },
+      VUint(_) => {
+        return v_string(value_text(recv));
+      },
+      VBool(_) => {
+        return v_string(value_text(recv));
+      },
+      VString(t) => {
+        return v_string(t.v);
+      },
+      VFloat(f) => {
+        return v_string(f.v.to_string());
+      },
+      VFloat32(f) => {
+        return v_string((f.v as f32).to_string());
+      },
+      _ => {}
+    }
+  }
   match (recv) {
     VStruct(sv2) => {
       let fi: i32 = 0;
@@ -5940,7 +5906,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         if (sv2.field_names[fi] == name) {
           match (sv2.field_values[fi]) {
             VFunc(_) => {
-              return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls, outs);
+              return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls);
             },
             _ => {}
           }
@@ -6011,8 +5977,8 @@ function call_count_byte_bytes(args: Value[]): Value {
     if (byte < 0 || byte > 255) {
       return v_int(0);
     }
-    while (at < a.elements.len()) {
-      if (vint_bits(a.elements[at]) == byte) {
+    while (at < arr_len(a)) {
+      if (vint_bits(arr_at(a, at)) == byte) {
         count = count + 1;
       }
       at = at + 1;
@@ -6026,10 +5992,10 @@ function byte_args(args: Value[]): u8[][] {
   let out: u8[][] = [];
   for a in args {
     if let VArr(av) = a {
-      let b: u8[] = __alloc_u8(av.elements.len());
+      let b: u8[] = __alloc_u8(arr_len(av));
       let i: i32 = 0;
-      while (i < av.elements.len()) {
-        let e: Value = av.elements[i];
+      while (i < arr_len(av)) {
+        let e: Value = arr_at(av, i);
         if (!is_i32_arg(e) || vint_bits(e) < 0 || vint_bits(e) > 255) {
           return out;
         }
@@ -6131,7 +6097,7 @@ function call_crc32_cksum_array(args: Value[]): Value {
   }
   if let VArr(a) = args[1] {
     let crc: i32 = vint_bits(args[0]);
-    for element in a.elements {
+    for element in arr_els(a) {
       if (!is_i32_arg(element)) {
         return v_err("__crc32_cksum_array: elements must be u8");
       }
@@ -6163,8 +6129,8 @@ function call_scale_f64(args: Value[]): Value {
     if let VFloat(kf) = args[1] {
       let sout: Value[] = [];
       let sidx: i32 = 0;
-      while (sidx < xa.elements.len()) {
-        if let VFloat(ef) = xa.elements[sidx] {
+      while (sidx < arr_len(xa)) {
+        if let VFloat(ef) = arr_at(xa, sidx) {
           sout = sout.append(v_float(ef.v * kf.v));
         } else {
           return v_err("__scale_f64: elements must be f64");
@@ -6231,7 +6197,7 @@ function call_inner_mul_add_f64(args: Value[]): Value {
         if let VInt(k) = args[3] {
           if let VInt(n) = args[4] {
             if let VFloat(init) = args[5] {
-              return inner_mul_values(a.elements, b.elements, m.v, k.v, n.v, init.v);
+              return inner_mul_values(arr_els(a), arr_els(b), m.v, k.v, n.v, init.v);
             }
           }
         }
@@ -6269,7 +6235,7 @@ function call_outer_mul_f64(args: Value[]): Value {
   }
   if let VArr(a) = args[0] {
     if let VArr(b) = args[1] {
-      return outer_mul_values(a.elements, b.elements);
+      return outer_mul_values(arr_els(a), arr_els(b));
     }
   }
   return v_err("__outer_mul_f64: inputs must be arrays");
@@ -6294,11 +6260,11 @@ function call_byte_reduction(name: string, args: Value[]): Value {
         sum = vint_bits(args[1]) as u32 & 0xffff;
       }
       let i = 0;
-      while (i < a.elements.len()) {
+      while (i < arr_len(a)) {
         if (bsd) {
           sum = (sum >> 1 | sum << 15) & 0xffff;
         }
-        sum = sum + vint_bits(a.elements[i]) as u32;
+        sum = sum + vint_bits(arr_at(a, i)) as u32;
         if (bsd) {
           sum = sum & 0xffff;
         }
@@ -6333,9 +6299,9 @@ function call_byte_set_scan(name: string, args: Value[]): Value {
               at = 0;
             }
           }
-          while (at < a.elements.len()) {
-            let b = vint_bits(a.elements[at]);
-            let member = b >= 0 && b < set.elements.len() && vint_bits(set.elements[b]) != 0;
+          while (at < arr_len(a)) {
+            let b = vint_bits(arr_at(a, at));
+            let member = b >= 0 && b < arr_len(set) && vint_bits(arr_at(set, b)) != 0;
             if (scan && member) {
               return v_int(at);
             }
@@ -6346,7 +6312,7 @@ function call_byte_set_scan(name: string, args: Value[]): Value {
             at = at + 1;
           }
           if (scan) {
-            return v_int(a.elements.len());
+            return v_int(arr_len(a));
           }
           return v_int(runs);
         },
@@ -6376,27 +6342,27 @@ function call_mismatch_bytes(args: Value[]): Value {
       if (ao < 0) {
         ao = 0;
       }
-      if (ao > a.elements.len()) {
-        ao = a.elements.len();
+      if (ao > arr_len(a)) {
+        ao = arr_len(a);
       }
       if (bo < 0) {
         bo = 0;
       }
-      if (bo > b.elements.len()) {
-        bo = b.elements.len();
+      if (bo > arr_len(b)) {
+        bo = arr_len(b);
       }
-      if (n > a.elements.len() - ao) {
-        n = a.elements.len() - ao;
+      if (n > arr_len(a) - ao) {
+        n = arr_len(a) - ao;
       }
-      if (n > b.elements.len() - bo) {
-        n = b.elements.len() - bo;
+      if (n > arr_len(b) - bo) {
+        n = arr_len(b) - bo;
       }
       if (n < 0) {
         n = 0;
       }
       let i: i32 = 0;
       while (i < n) {
-        if (vint_bits(a.elements[ao + i]) != vint_bits(b.elements[bo + i])) {
+        if (vint_bits(arr_at(a, ao + i)) != vint_bits(arr_at(b, bo + i))) {
           return v_int(i);
         }
         i = i + 1;
@@ -6420,11 +6386,11 @@ function call_mismatch_bytes_str(args: Value[]): Value {
   }
   if let VArr(a) = args[0] {
     let b: string = vstr_of(args[2]);
-    let ao: i32 = clamp_offset(vint_bits(args[1]), a.elements.len());
+    let ao: i32 = clamp_offset(vint_bits(args[1]), arr_len(a));
     let bo: i32 = clamp_offset(vint_bits(args[3]), b.len());
     let n: i32 = vint_bits(args[4]);
-    if (n > a.elements.len() - ao) {
-      n = a.elements.len() - ao;
+    if (n > arr_len(a) - ao) {
+      n = arr_len(a) - ao;
     }
     if (n > b.len() - bo) {
       n = b.len() - bo;
@@ -6434,7 +6400,7 @@ function call_mismatch_bytes_str(args: Value[]): Value {
     }
     let i: i32 = 0;
     while (i < n) {
-      if (vint_bits(a.elements[ao + i]) != b[bo + i] as i32) {
+      if (vint_bits(arr_at(a, ao + i)) != b[bo + i] as i32) {
         return v_int(i);
       }
       i = i + 1;
@@ -6460,8 +6426,8 @@ function call_memchr_bytes(args: Value[]): Value {
     if (at < 0) {
       at = 0;
     }
-    while (at < a.elements.len()) {
-      if (vint_bits(a.elements[at]) == byte) {
+    while (at < arr_len(a)) {
+      if (vint_bits(arr_at(a, at)) == byte) {
         return v_int(at);
       }
       at = at + 1;
@@ -6484,11 +6450,11 @@ function call_rmemchr_bytes(args: Value[]): Value {
     if (byte < 0 || byte > 255) {
       return v_int(0 - 1);
     }
-    if (at >= a.elements.len()) {
-      at = a.elements.len() - 1;
+    if (at >= arr_len(a)) {
+      at = arr_len(a) - 1;
     }
     while (at >= 0) {
-      if (vint_bits(a.elements[at]) == byte) {
+      if (vint_bits(arr_at(a, at)) == byte) {
         return v_int(at);
       }
       at = at - 1;
@@ -6512,11 +6478,11 @@ function call_buf_push_bytes_range(h: usize, args: Value[]): Value {
       if (lo < 0) {
         lo = 0;
       }
-      if (hi > a.elements.len()) {
-        hi = a.elements.len();
+      if (hi > arr_len(a)) {
+        hi = arr_len(a);
       }
       while (lo < hi) {
-        buf_push_byte(h, vint_bits(a.elements[lo]) & 255);
+        buf_push_byte(h, vint_bits(arr_at(a, lo)) & 255);
         lo = lo + 1;
       }
       return v_void();
@@ -6553,10 +6519,11 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
   }
   match (args[2]) {
     VArr(tv) => {
+      let table: Value[] = arr_els(tv);
       if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded") {
         if let VArr(src) = args[1] {
-          for e in src.elements {
-            push_table_byte(name, h, vint_bits(e) & 255, tv.elements);
+          for e in arr_els(src) {
+            push_table_byte(name, h, vint_bits(e) & 255, table);
           }
           return v_void();
         }
@@ -6568,7 +6535,7 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
       let s: string = vstr_of(args[1]);
       let i: i32 = 0;
       while (i < s.len()) {
-        push_table_byte(name, h, s[i] as i32, tv.elements);
+        push_table_byte(name, h, s[i] as i32, table);
         i = i + 1;
       }
       return v_void();
@@ -6725,11 +6692,11 @@ function str_hash_low32(h: i64): i32 {
   return lo as i32;
 }
 
-function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
-  return call_func_targs(name, args, [], "", funcs, aliases, type_decls, outs);
+function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  return call_func_targs(name, args, [], "", funcs, aliases, type_decls);
 }
 
-function call_func_targs(name: string, args: Value[], type_args: string[], expect: string, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
+function call_func_targs(name: string, args: Value[], type_args: string[], expect: string, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
     if (args.len() != 1) {
       return v_err(name + " takes exactly 1 argument");
@@ -6739,7 +6706,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       VString(_) => {},
       _ => {
         let no_args: Value[] = [];
-        text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls, outs);
+        text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls);
       }
     }
     match (text_val) {
@@ -6818,11 +6785,11 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       VArr(a) => {
         let raw: u8[] = [];
         let ri: i32 = 0;
-        while (ri < a.elements.len()) {
-          if (!is_i32_arg(a.elements[ri])) {
+        while (ri < arr_len(a)) {
+          if (!is_i32_arg(arr_at(a, ri))) {
             return v_err("string_from_bytes_unchecked: element " + util.i32_to_string(ri) + " is not an integer");
           }
-          raw = raw.append((vint_bits(a.elements[ri]) & 255) as u8);
+          raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
           ri = ri + 1;
         }
         return v_string(string_from_bytes_unchecked(raw));
@@ -6840,13 +6807,13 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     let end: i32 = vint_bits(args[2]);
     match (args[0]) {
       VArr(a) => {
-        if (from < 0 || end > a.elements.len() || from > end) {
+        if (from < 0 || end > arr_len(a) || from > end) {
           return v_err("string_from_bytes_range_unchecked: range out of bounds");
         }
         let raw: u8[] = [];
         let ri: i32 = from;
         while (ri < end) {
-          raw = raw.append((vint_bits(a.elements[ri]) & 255) as u8);
+          raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
           ri = ri + 1;
         }
         return v_string(string_from_bytes_unchecked(raw));
@@ -6997,7 +6964,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       VArr(set) => {
         while (si < ss.len()) {
           let sb: i32 = ss[si] as i32;
-          if (sb < set.elements.len() && vint_bits(set.elements[sb]) != 0) {
+          if (sb < arr_len(set) && vint_bits(arr_at(set, sb)) != 0) {
             return v_int(si);
           }
           si = si + 1;
@@ -7066,7 +7033,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
         let ri: i32 = 0;
         while (ri < rs.len()) {
           let rb: i32 = rs[ri] as i32;
-          let member: boolean = rb < set.elements.len() && vint_bits(set.elements[rb]) != 0;
+          let member: boolean = rb < arr_len(set) && vint_bits(arr_at(set, rb)) != 0;
           if (member && !prev) {
             runs = runs + 1;
           }
@@ -7272,15 +7239,16 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     if (args.len() != 2 || !is_i32_arg(args[1])) {
       return v_err("__arr_set_len: expected an array and a length");
     }
-    if let VCellA(a) = args[0] {
+    if let VArr(a) = args[0] {
       let n: i32 = vint_bits(args[1]);
-      if (n < 0 || n > a.c.get().len()) {
+      let slots: i64[] = arr_slots(a);
+      if (n < 0 || n > slots.len()) {
         return v_err("__arr_set_len: length exceeds reserved storage");
       }
-      a.length.set(n);
+      arr_store_set(a, n, slots);
       return v_void();
     }
-    return v_err("__arr_set_len: expected an array binding");
+    return v_err("__arr_set_len: expected an array");
   }
   if (name == "cell_new") {
     if (args.len() != 1) {
@@ -7319,7 +7287,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
-      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
+      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls), ret: fd.ret_type };
       let no_recv: Value = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
       let j: i32 = 0;
@@ -7437,12 +7405,12 @@ function value_eq(a: Value, b: Value): boolean {
     VArr(aa) => {
       match (b) {
         VArr(ba) => {
-          if (aa.elements.len() != ba.elements.len()) {
+          if (arr_len(aa) != arr_len(ba)) {
             return false;
           }
           let ai: i32 = 0;
-          while (ai < aa.elements.len()) {
-            if (!value_eq(aa.elements[ai], ba.elements[ai])) {
+          while (ai < arr_len(aa)) {
+            if (!value_eq(arr_at(aa, ai), arr_at(ba, ai))) {
               return false;
             }
             ai = ai + 1;
@@ -7535,9 +7503,6 @@ function value_eq(a: Value, b: Value): boolean {
         return handle_kind(ah) == handle_kind(bh) && value_eq(handle_fd(ah), handle_fd(bh));
       }
       return false;
-    },
-    VCellA(_) => {
-      return false;
     }
   }
   return false;
@@ -7564,7 +7529,7 @@ function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult
   let assigned = body_assign_names(body, []);
   for i in 0..body.len() - 1 {
     cur = cellify_captures(cur, body[i], assigned);
-    let step = eval_out_stmt(body[i], cur);
+    let step = eval_stmt(body[i], cur);
     if (step.sig != 0) {
       return step;
     }
@@ -7779,6 +7744,14 @@ function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
   if (name_ends_with(iter_ty, "[]")) {
     elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
   }
+  if (elem_ty.len() == 0) {
+    if let VArr(a) = iv {
+      elem_ty = a.elem;
+    }
+    if let VString(_) = iv {
+      elem_ty = "u8";
+    }
+  }
   let base: i32 = env.names.len();
   let cur: Env = env;
   let i: i32 = 0;
@@ -7917,11 +7890,11 @@ function for_elements(iv: Value): Option[Value[]] {
   let elems: Value[] = [];
   match (iv) {
     VArr(a) => {
-      return Some(a.elements);
+      return Some(arr_els(a));
     },
     VString(sv) => {
       for b in sv.v {
-        elems = elems.append(v_int(b as i32));
+        elems = elems.append(v_byte(b as i32));
       }
       return Some(elems);
     },
@@ -7951,7 +7924,7 @@ function bind_element(env: Env, header: string, elem: Value, elem_ty: string): E
 }
 
 function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
-  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "" };
+  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "", builtin: false };
   let subject: ast.Expr = held;
   if (!receiver_has_method(env.funcs, iv, "next")) {
     if (!receiver_has_method(env.funcs, iv, "iter")) {
@@ -7997,7 +7970,7 @@ function eval_block(body: ast.Stmt[], env: Env): StepResult {
   let i: i32 = 0;
   while (i < body.len()) {
     cur = cellify_captures(cur, body[i], reassigned);
-    let r: StepResult = eval_out_stmt(body[i], cur);
+    let r: StepResult = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
       return StepResult { env: cur, ret: r.ret, sig: r.sig };
@@ -8013,7 +7986,7 @@ function eval_program(prog: ast.Stmt[]): Value {
   let i: i32 = 0;
   while (i < prog.len()) {
     env = cellify_captures(env, prog[i], preassigned);
-    let r: StepResult = eval_out_stmt(prog[i], env);
+    let r: StepResult = eval_stmt(prog[i], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
@@ -8056,22 +8029,21 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   set_args(argv);
   let mod: parser.Module = lowered(raw_mod);
   let all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
-  let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants);
-  let outs: OutTable = out_table(mod.funcs);
+  let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants, mod.enums);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == "main") {
       let empty_args: Value[] = [];
-      return call_func("main", empty_args, mod.funcs, all_aliases, all_variants, outs);
+      return call_func("main", empty_args, mod.funcs, all_aliases, all_variants);
     }
     i = i + 1;
   }
-  let env: Env = new_module_env(mod.funcs, all_aliases, all_variants, outs);
+  let env: Env = new_module_env(mod.funcs, all_aliases, all_variants);
   let mreassigned: string[] = body_assign_names(mod.top_stmts, []);
   let j: i32 = 0;
   while (j < mod.top_stmts.len()) {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
-    let r: StepResult = eval_out_stmt(mod.top_stmts[j], env);
+    let r: StepResult = eval_stmt(mod.top_stmts[j], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
@@ -8085,7 +8057,7 @@ pub struct Session { decls: parser.Module, env: Env }
 
 pub function new_session(): Session {
   set_args(["-"]);
-  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env([], [], module_type_decls([]), builtin_outs()) };
+  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env([], [], module_type_decls([])) };
 }
 
 function lowered(raw: parser.Module): parser.Module {
@@ -8119,7 +8091,7 @@ pub function (s: Session) declare(m: parser.Module): Session {
   let decls: parser.Module = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
   let mod: parser.Module = lowered(decls);
   let types: parser.StructDecl[] = module_type_decls(mod.structs);
-  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types), type_decls: types, outs: out_table(mod.funcs) } };
+  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
 }
 
 function declares_func(m: parser.Module, name: string): boolean {
@@ -8150,7 +8122,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
         _ => {}
       }
     }
-    let r: StepResult = eval_out_stmt(body[k], env);
+    let r: StepResult = eval_stmt(body[k], env);
     env = r.env;
     if (r.sig != 0 && is_err(r.ret)) {
       return (Session { ...s, env: session_env(env) }, true, r.ret);
@@ -8192,7 +8164,7 @@ pub function (s: Session) show(v: Value): string {
     return value_text(v);
   }
   if (method_ret_type(s.env.funcs, value_type_name(v), "to_string") == "string") {
-    match (call_method(v, "to_string", [], s.env.funcs, s.env.aliases, s.env.type_decls, s.env.outs)) {
+    match (call_method(v, "to_string", [], s.env.funcs, s.env.aliases, s.env.type_decls)) {
       VString(t) => {
         let text: string = t.v;
         return text;
@@ -8210,7 +8182,7 @@ function value_text(v: Value): string {
   match (v) {
     VInt(n) => {
       if (n.is_char) {
-        return utf8.utf8_encode(n.v as char);
+        return utf8.encode(n.v as char);
       }
       return util.i32_to_string(n.v);
     },
@@ -8232,7 +8204,7 @@ function value_text(v: Value): string {
       return text;
     },
     VArr(a) => {
-      return "[" + values_text(a.elements) + "]";
+      return "[" + values_text(arr_els(a)) + "]";
     },
     VTuple(t) => {
       return "(" + values_text(t.elements) + ")";

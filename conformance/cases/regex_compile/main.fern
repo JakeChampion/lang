@@ -1,0 +1,139 @@
+import "std/regex";
+
+struct Bad { pattern: string, kind: regex.CompileErrorKind, offset: i32 }
+
+struct ClassCase { pattern: string, text: string, hit: boolean }
+
+function main(): i32 {
+  let bad: Bad[] = [
+    Bad { pattern: "\\", kind: TrailingEscape, offset: 0 },
+    Bad { pattern: "a(b", kind: UnclosedGroup, offset: 1 },
+    Bad { pattern: "a[b", kind: UnclosedClass, offset: 1 },
+    Bad { pattern: "a)", kind: UnexpectedClose, offset: 1 },
+    Bad { pattern: "*a", kind: MissingAtom, offset: 0 },
+    Bad { pattern: "a**", kind: MissingAtom, offset: 2 },
+    Bad { pattern: "a{3,2}", kind: InvalidRepeat, offset: 1 },
+    Bad { pattern: "a{1,x}", kind: InvalidRepeat, offset: 1 },
+    Bad { pattern: "a{", kind: InvalidRepeat, offset: 1 },
+    Bad { pattern: "a{1001}", kind: RepeatLimit, offset: 1 },
+    Bad { pattern: "a{0,2147483648}", kind: RepeatLimit, offset: 1 },
+    Bad { pattern: "a{999999999999999999999999}", kind: RepeatLimit, offset: 1 },
+    Bad { pattern: "(?=a)", kind: UnsupportedGroup, offset: 0 },
+    Bad { pattern: "(?<=a)", kind: UnsupportedGroup, offset: 0 },
+    Bad { pattern: "a(?i)b", kind: UnsupportedGroup, offset: 1 },
+    Bad { pattern: "[z-a]", kind: InvalidClassRange, offset: 1 },
+    Bad { pattern: "[a-\\d]", kind: InvalidClassRange, offset: 1 },
+    Bad { pattern: "(a{1000}){1000}", kind: ProgramLimit, offset: 15 },
+  ];
+  for item in bad {
+    match (regex.compile(item.pattern)) {
+      Ok(_) => {
+        eprint("accepted invalid pattern: " + item.pattern);
+        return 1;
+      },
+      Err(e) => {
+        if (e.kind != item.kind || e.offset != item.offset || e.message() != e.to_string()) {
+          eprint(e.to_string());
+          return 2;
+        }
+      }
+    }
+  }
+  let cases: ClassCase[] = [
+    ClassCase { pattern: "[\\]]", text: "]", hit: true },
+    ClassCase { pattern: "[\\]]", text: "x", hit: false },
+    ClassCase { pattern: "[\\\\]", text: "\\", hit: true },
+    ClassCase { pattern: "[\\-]", text: "-", hit: true },
+    ClassCase { pattern: "[\\n\\t\\r]", text: "\n", hit: true },
+    ClassCase { pattern: "[\\d]", text: "7", hit: true },
+    ClassCase { pattern: "[\\D]", text: "7", hit: false },
+    ClassCase { pattern: "[^\\D]", text: "7", hit: true },
+    ClassCase { pattern: "[\\w]", text: "_", hit: true },
+    ClassCase { pattern: "[\\W]", text: "_", hit: false },
+    ClassCase { pattern: "[\\s]", text: "\t", hit: true },
+    ClassCase { pattern: "[\\S]", text: "\t", hit: false },
+    ClassCase { pattern: "(?i)[A-Z]", text: "q", hit: true },
+    ClassCase { pattern: "(?i)[^A-Z]", text: "q", hit: false },
+    ClassCase { pattern: "(?i)[A-z]", text: "[", hit: true },
+    ClassCase { pattern: "[a-c]", text: "d", hit: false },
+    ClassCase { pattern: "[-a]", text: "-", hit: true },
+    ClassCase { pattern: "[a-]", text: "-", hit: true },
+  ];
+  for item in cases {
+    let Ok(compiled) = regex.compile(item.pattern) else {
+      return 3;
+    };
+    if (compiled.is_full_match(item.text) != item.hit) {
+      eprint(item.pattern);
+      return 4;
+    }
+    let captured: boolean = match (compiled.captures(item.text)) { Some(_) => true, None => false };
+    if (captured != item.hit) {
+      eprint(item.pattern);
+      return 5;
+    }
+  }
+  let nested: string = "";
+  for i in 0..128 {
+    nested = nested + "(";
+  }
+  nested = nested + "x";
+  for i in 0..128 {
+    nested = nested + ")";
+  }
+  let Ok(_) = regex.compile(nested) else {
+    return 6;
+  };
+  match (regex.compile("(" + nested + ")")) {
+    Err(e) => {
+      if (e.kind != NestingLimit || e.offset != 128) {
+        return 7;
+      }
+    },
+    Ok(_) => {
+      return 8;
+    }
+  }
+  let Ok(empty) = regex.compile("(?<empty>)a(b)?") else {
+    return 9;
+  };
+  let Some(caps) = empty.captures("a") else {
+    return 10;
+  };
+  if (!match (caps.group_named("empty")) { Ok(Some(text)) => text == "", _ => false }) {
+    return 11;
+  }
+  if (!match (caps.group(2)) { Ok(None()) => true, _ => false }) {
+    return 12;
+  }
+  if (!match (caps.group_named("missing")) { Ok(None()) => true, _ => false }) {
+    return 13;
+  }
+  if (!match (caps.group_bytes(2)) { None => true, _ => false }) {
+    return 14;
+  }
+  let Ok(dot) = regex.compile(".") else {
+    return 15;
+  };
+  let Some(bytes) = dot.captures("é") else {
+    return 16;
+  };
+  if (!match (bytes.group(0)) { Err(InvalidUtf8Output()) => true, _ => false }) {
+    return 17;
+  }
+  if (!match (bytes.group_bytes(0)) { Some(raw) => raw.len() == 1 && raw[0] == 195, None => false }) {
+    return 18;
+  }
+  if (!match (dot.replace("é", "x")) { Err(InvalidUtf8Output()) => true, _ => false }) {
+    return 19;
+  }
+  if (dot.replace_bytes("é", "x").len() != 2) {
+    return 20;
+  }
+  for i in 0..3 {
+    if (empty.count("aaa") != 3 || !empty.is_match("a") || empty.is_match("z")) {
+      return 21;
+    }
+  }
+  return 0;
+}

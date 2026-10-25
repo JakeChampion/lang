@@ -1,3 +1,7 @@
+// The server h2spec drives: std/serve with HTTP/2 on, answering every
+// request with a small body, so each conformance case sees a server that
+// takes the request it sends and answers the frames it checks.
+import "std/i32";
 import "std/http";
 import "std/platform";
 import "std/serve";
@@ -15,11 +19,11 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 function port(): i32 {
   match (env("PORT")) {
     Some(p) => {
-      match (int.parse_int_radix(p, 10)) {
-        Some(n) => {
+      match (i32.parse_i32_radix(p, 10)) {
+        Ok(n) => {
           return n;
         },
-        None => {
+        Err(_) => {
           return 8080;
         }
       }
@@ -56,7 +60,7 @@ function tls_config(cfg: serve.Config): Result[serve.Config, string] {
           }
           match (identity.from_pem(cert, key)) {
             Ok(id) => {
-              return Ok(cfg.with_tls(server.config(id)));
+              return Ok(cfg.with_tls(server.config(id, random_bytes(32))));
             },
             Err(e) => {
               return Err(e.message());

@@ -47,13 +47,13 @@ acceptable.
 
 **A1. `todo` statement builtin.** [status: shipped]
 Shipped as designed, with two refinements over the sketch below:
-the desugar wraps in `loop { … }` / `while (true) { … }` (native /
-self-host) instead of a bare statement pair, which makes the stub
-**diverge** for E052 missing-return and `let else` — so `todo;`
-can be a whole non-void function body, no checker changes needed —
-and the formatter round-trips the sugar via `IsTodo`/`TodoMsg` on
-`ast.Loop` (deliberately better than `assert`, which formats as
-its desugared body). `-check` warns per remaining entry-module
+the stub **diverges** for E052 missing-return and `let else`,
+because its desugar ends in a call to the builtin `exit` (marked
+as the builtin, so a local named `exit` cannot capture it), which
+both checkers treat as a terminator — so `todo;` can be a whole
+non-void function body — and the formatter round-trips the sugar
+via `IsTodo`/`TodoMsg` on `ast.Block` (the self-host parser tags
+the block's `if` with origin `todo`). `-check` warns per remaining entry-module
 stub; runtime message is `todo: not implemented` / `todo: <msg>`
 (byte-identical native vs self-host), exit 101.
 Gleam-inspired typed hole, scoped first to statement position
@@ -153,7 +153,7 @@ parity) any implementation must clear.
 Shipped as designed with one API adjustment: the `Pattern` enum
 variants ARE the construction API (no wrapper functions needed —
 `PSeq([PLit("("), PRef("b"), …])`), plus class helpers
-(`peg_digit()` etc.). The matcher threads its state functionally
+(`digit()` etc.). The matcher threads its state functionally
 (struct fields are immutable — E048), which makes PEG
 backtracking undo-free: a failed alternative resumes from the
 pre-attempt state binding, and only the furthest-failure
@@ -170,7 +170,7 @@ slice 1: pattern constructors as an enum tree (`Lit`, `CharSet`,
 grammar `Map[string, Pattern]`, position + named **captures**
 (the thing regex.fern lacks), and error position reporting.
 API sketch: `peg.compile(rules) -> Grammar`,
-`g.parse(input) -> Result[Match, PegError]`,
+`g.parse(input) -> Result[Match, ParseError]`,
 `match.capture("name") -> Option[string]`. Bounded: no
 left-recursion support (documented), packrat memoisation deferred
 until a real workload needs it. Tests: std-test-runner suite

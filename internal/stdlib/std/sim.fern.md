@@ -48,22 +48,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<9 function __settled[T](t: async.Task[T], st: async.TaskStatus[T]): async.TaskStatus[T]>>
 
 <<10 pub function future_at[T](drv: Sim, at_ns: i64, v: T): async.Future[T]>>
-
-<<11 pub struct Endpoint>>
-
-<<12 pub function net(drv: Sim): Net>>
-
-<<13 function __find(n: Net, host_be: i32, port: i32, path: string): i32>>
-
-<<14 pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64>>
-
-<<15 function __with_fault(n: Net, host_be: i32, port: i32, path: string, mode: i32, k: i32, pct: i32): Net>>
-
-<<16 pub function (n: Net) fault_fail(host_be: i32, port: i32, path: string): Net>>
-
-<<17 function __net_stall(): async.Future[string]>>
-
-<<18 pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async.Future[string]>>
 ```
 
 ### `module introduction`
@@ -77,10 +61,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/i32";
 import "core/int";
 import "std/async";
 import "std/rand";
-import "std/time";
 ```
 
 ### `3 pub struct Sim`
@@ -119,11 +103,11 @@ function __sim_rows(table: string): string[][] {
 }
 
 function __sim_field(row: string[], i: i32): i32 {
-  match (int.parse_int_radix(row[i], 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(row[i], 10)) {
+    Ok(v) => {
       return v;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }
@@ -505,242 +489,5 @@ pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32
     i = i - 1;
   }
   return f;
-}
-```
-
-### `11 pub struct Endpoint`
-
-```fern
-<<11 pub struct Endpoint>>=
-pub struct Endpoint {
-  host_be: i32,
-  port: i32,
-  path: string,
-  body: string,
-  first_ns: i64,
-  chunk_ns: i64,
-  chunk_lens: i32[],
-  hits: Cell[i64],
-  fault: i32,
-  fault_k: i32,
-  flaky_pct: i32,
-}
-
-pub struct Net { drv: Sim, eps: Endpoint[] }
-```
-
-### `12 pub function net(drv: Sim): Net`
-
-```fern
-<<12 pub function net(drv: Sim): Net>>=
-pub function net(drv: Sim): Net {
-  return Net { drv: drv, eps: [] };
-}
-
-pub function (n: Net) serve(host_be: i32, port: i32, path: string, body: string, latency: Duration): Net {
-  let none: i32[] = [];
-  return n.serve_chunked(host_be, port, path, body, latency, time.duration_nanos(0 as i64), none);
-}
-
-pub function (n: Net) serve_chunked(host_be: i32, port: i32, path: string, body: string, first_byte: Duration, chunk: Duration, chunk_lens: i32[]): Net {
-  let ep: Endpoint = Endpoint {
-    host_be: host_be, port: port, path: path, body: body,
-    first_ns: first_byte.as_nanos(), chunk_ns: chunk.as_nanos(), chunk_lens: chunk_lens,
-    hits: cell_new(0 as i64),
-    fault: 0, fault_k: 0, flaky_pct: -1,
-  };
-  return Net { drv: n.drv, eps: n.eps.append(ep) };
-}
-
-pub function chunks_of(body_len: i32, size: i32): i32[] {
-  let out: i32[] = [];
-  if (size <= 0) {
-    return out;
-  }
-  let pos: i32 = 0;
-  while (pos < body_len) {
-    let take: i32 = size;
-    if (body_len - pos < take) {
-      take = body_len - pos;
-    }
-    out = out.append(take);
-    pos = pos + take;
-  }
-  return out;
-}
-```
-
-### `13 function __find(n: Net, host_be: i32, port: i32, path: string): i32`
-
-```fern
-<<13 function __find(n: Net, host_be: i32, port: i32, path: string): i32>>=
-function __find(n: Net, host_be: i32, port: i32, path: string): i32 {
-  let i: i32 = 0;
-  while (i < n.eps.len()) {
-    let e: Endpoint = n.eps[i];
-    if (e.host_be == host_be && e.port == port) {
-      if (e.path == "" || e.path == path) {
-        return i;
-      }
-    }
-    i = i + 1;
-  }
-  return -1;
-}
-```
-
-### `14 pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64`
-
-```fern
-<<14 pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64>>=
-pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64 {
-  let i: i32 = __find(n, host_be, port, path);
-  if (i < 0) {
-    return 0 as i64;
-  }
-  return n.eps[i].hits.get();
-}
-```
-
-### `15 function __with_fault(n: Net, host_be: i32, port: i32, path: string, mode: i32, k: i32, pct: i32): Net`
-
-```fern
-<<15 function __with_fault(n: Net, host_be: i32, port: i32, path: string, mode: i32, k: i32, pct: i32): Net>>=
-function __with_fault(n: Net, host_be: i32, port: i32, path: string, mode: i32, k: i32, pct: i32): Net {
-  let idx: i32 = __find(n, host_be, port, path);
-  if (idx < 0) {
-    return n;
-  }
-  let e: Endpoint = n.eps[idx];
-  let ne: Endpoint = Endpoint {
-    host_be: e.host_be, port: e.port, path: e.path, body: e.body,
-    first_ns: e.first_ns, chunk_ns: e.chunk_ns, chunk_lens: e.chunk_lens,
-    hits: e.hits,
-    fault: mode, fault_k: k, flaky_pct: pct,
-  };
-  return Net { drv: n.drv, eps: n.eps.with(idx, ne) };
-}
-```
-
-### `16 pub function (n: Net) fault_fail(host_be: i32, port: i32, path: string): Net`
-
-```fern
-<<16 pub function (n: Net) fault_fail(host_be: i32, port: i32, path: string): Net>>=
-pub function (n: Net) fault_fail(host_be: i32, port: i32, path: string): Net {
-  return __with_fault(n, host_be, port, path, 1, 0, -1);
-}
-
-pub function (n: Net) fault_stall(host_be: i32, port: i32, path: string): Net {
-  return __with_fault(n, host_be, port, path, 2, 0, -1);
-}
-
-pub function (n: Net) fault_partial(host_be: i32, port: i32, path: string, k: i32): Net {
-  return __with_fault(n, host_be, port, path, 3, k, -1);
-}
-
-pub function (n: Net) fault_flaky(host_be: i32, port: i32, path: string, p_percent: i32): Net {
-  let idx: i32 = __find(n, host_be, port, path);
-  if (idx < 0) {
-    return n;
-  }
-  let e: Endpoint = n.eps[idx];
-  let mode: i32 = e.fault;
-  if (mode == 0) {
-    mode = 1;
-  }
-  return __with_fault(n, host_be, port, path, mode, e.fault_k, p_percent);
-}
-```
-
-### `17 function __net_stall(): async.Future[string]`
-
-```fern
-<<17 function __net_stall(): async.Future[string]>>=
-function __net_stall(): async.Future[string] {
-  function resume(woken: i32): async.Future[string] {
-    return __net_stall();
-  }
-  return Pending(-1, resume);
-}
-
-function __net_drain_stall(at_ms: i32[], i: i32, k: i32): async.Future[string] {
-  if (i >= k) {
-    return __net_stall();
-  }
-  function resume(woken: i32): async.Future[string] {
-    return __net_drain_stall(at_ms, i + 1, k);
-  }
-  return Pending(at_ms[i], resume);
-}
-
-function __net_drain(at_ms: i32[], body: string, i: i32): async.Future[string] {
-  function resume(woken: i32): async.Future[string] {
-    if (i + 1 >= at_ms.len()) {
-      return Ready(body);
-    }
-    return __net_drain(at_ms, body, i + 1);
-  }
-  return Pending(at_ms[i], resume);
-}
-```
-
-### `18 pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async.Future[string]`
-
-```fern
-<<18 pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async.Future[string]>>=
-pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async.Future[string] {
-  let idx: i32 = __find(n, host_be, port, path);
-  if (idx < 0) {
-    return Ready("");
-  }
-  let e: Endpoint = n.eps[idx];
-  e.hits.set(e.hits.get() + 1 as i64);
-  let mode: i32 = e.fault;
-  if (mode != 0 && e.flaky_pct >= 0) {
-    if (__roll(n.drv, 100) >= e.flaky_pct) {
-      mode = 0;
-    }
-  }
-  if (mode == 1) {
-    return Ready("");
-  }
-  if (mode == 2) {
-    return __net_stall();
-  }
-  let chunks: i32 = 0;
-  let pos: i32 = 0;
-  let k: i32 = 0;
-  while (k < e.chunk_lens.len() && pos < e.body.len()) {
-    let take: i32 = e.chunk_lens[k];
-    if (e.body.len() - pos < take) {
-      take = e.body.len() - pos;
-    }
-    if (take > 0) {
-      chunks = chunks + 1;
-      pos = pos + take;
-    }
-    k = k + 1;
-  }
-  if (pos < e.body.len() || chunks == 0) {
-    chunks = chunks + 1;
-  }
-  let now: i64 = n.drv.now_ns();
-  let at_ms: i32[] = [];
-  let c: i32 = 0;
-  while (c < chunks) {
-    at_ms = at_ms.append(((now + e.first_ns + c as i64 * e.chunk_ns) / 1000000) as i32);
-    c = c + 1;
-  }
-  if (mode == 3) {
-    let keep: i32 = e.fault_k;
-    if (keep < 0) {
-      keep = 0;
-    }
-    if (keep > chunks) {
-      keep = chunks;
-    }
-    return __net_drain_stall(at_ms, 0, keep);
-  }
-  return __net_drain(at_ms, e.body, 0);
 }
 ```

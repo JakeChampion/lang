@@ -1,0 +1,147 @@
+import "../packages/codecs/png/png";
+import "../packages/codecs/png/compression";
+import "../packages/pixels/pixels";
+import "./fixtures/png" as fixtures;
+import "std/test";
+import "core/cmp";
+
+function bytes_equal(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function golden(data: u8[], expected: u8[]): boolean {
+  let image = match (png.decode(data, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  return image.layout.width == 2 && image.layout.height == 2 && bytes_equal(image.data, expected);
+}
+
+function filters(): test.TestOutcome {
+  let a = fixtures.rgb_bytes();
+  let b = fixtures.rgba_bytes();
+  return test.assert_true(golden(fixtures.rgb0(), a) && golden(fixtures.rgb1(), a) && golden(fixtures.rgb2(), a)
+    && golden(fixtures.rgb3(), a) && golden(fixtures.rgb4(), a) && golden(fixtures.rgba0(), b)
+    && golden(fixtures.rgba1(), b) && golden(fixtures.rgba2(), b) && golden(fixtures.rgba3(), b) && golden(fixtures.rgba4(), b));
+}
+
+function roundtrip(data: u8[]): boolean {
+  let image = match (png.decode(data, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  let encoded = match (png.encode(image, 10000)) { Ok(v) => v, Err(_) => { return false; } };
+  let decoded = match (png.decode(encoded, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  let limited = match (png.encode(image, 1)) { Ok(_) => false, Err(png.PngError.Limit()) => true, Err(_) => false };
+  return bytes_equal(decoded.data, image.data) && limited;
+}
+
+function roundtrips(): test.TestOutcome {
+  return test.assert_true(roundtrip(fixtures.rgb4()) && roundtrip(fixtures.rgba4()));
+}
+
+function malformed(): test.TestOutcome {
+  let stream = fixtures.rgb0();
+  let signature = match (png.decode(stream.with(0, 0 as u8), pixels.default_limits())) { Err(png.Signature()) => true, _ => false };
+  let crc = match (png.decode(stream.with(stream.len() - 1, 1 as u8), pixels.default_limits())) { Err(png.Crc()) => true, _ => false };
+  let length = match (png.decode(stream.with(8, 127 as u8), pixels.default_limits())) { Err(png.Length()) => true, _ => false };
+  let order = match (png.decode(stream.append(0 as u8), pixels.default_limits())) { Err(png.Order()) => true, _ => false };
+  let unsupported = match (png.decode(fixtures.unsupported(), pixels.default_limits())) { Err(png.Unsupported()) => true, _ => false };
+  let filter = match (png.decode(fixtures.bad_filter(), pixels.default_limits())) { Err(png.Scanline()) => true, _ => false };
+  let compressed = match (png.decode(fixtures.compressed_trailing(), pixels.default_limits())) { Err(png.Compressed()) => true, _ => false };
+  if (!signature) {
+    return test.fail("signature rejection");
+  }
+  if (!crc) {
+    return test.fail("crc rejection");
+  }
+  if (!length) {
+    return test.fail("length rejection");
+  }
+  if (!order) {
+    return test.fail("order rejection");
+  }
+  if (!unsupported) {
+    return test.fail("unsupported rejection");
+  }
+  if (!filter) {
+    return test.fail("filter rejection");
+  }
+  if (!compressed) {
+    return test.fail("compressed rejection");
+  }
+  return test.assert_true(true);
+}
+
+function budgets(): test.TestOutcome {
+  let stream = fixtures.rgb0();
+  let pixel_limit = match (png.decode(stream, pixels.Limits { max_pixels: 3, max_bytes: 100 })) { Err(png.PngError.Limit()) => true, _ => false };
+  let byte_limit = match (png.decode(stream, pixels.Limits { max_pixels: 4, max_bytes: 12 })) { Err(png.PngError.Limit()) => true, _ => false };
+  let compressed = match (compression.decode([120 as u8, 156 as u8], 0)) { Err(compression.CompressionError.Truncated()) => true, _ => false };
+  return test.assert_true(pixel_limit && byte_limit && compressed);
+}
+
+function truncations(): test.TestOutcome {
+  let stream = fixtures.rgb0();
+  let i = 0;
+  while (i < stream.len()) {
+    match (png.decode(stream[:i], pixels.default_limits())) {
+      Ok(_) => {
+        return test.fail("accepted truncated PNG");
+      },
+      Err(_) => {}
+    }
+    i = i + 1;
+  }
+  return test.assert_true(true);
+}
+
+function rejects(data: u8[], expected: png.PngError): boolean {
+  return match (png.decode(data, pixels.default_limits())) { Ok(_) => false, Err(e) => e == expected };
+}
+
+function semantics(): test.TestOutcome {
+  return test.assert_true(rejects(fixtures.transparency(), png.Unsupported)
+    && rejects(fixtures.profile(), png.Unsupported) && rejects(fixtures.animation(), png.Unsupported)
+    && rejects(fixtures.critical(), png.Unsupported) && rejects(fixtures.short_scanline(), png.Scanline));
+}
+
+function chunk_budget(): test.TestOutcome {
+  let stream = fixtures.rgb0();
+  let bytes: u8[] = [];
+  let i = 0;
+  while (i < 33) {
+    bytes = bytes.append(stream[i]);
+    i = i + 1;
+  }
+  let empty_chunk: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 118 as u8, 112 as u8, 65 as u8, 103 as u8, 1 as u8, 85 as u8, 194 as u8, 179 as u8];
+  let count = 0;
+  while (count < 1025) {
+    for b in empty_chunk {
+      bytes = bytes.append(b);
+    }
+    count = count + 1;
+  }
+  i = 33;
+  while (i < stream.len()) {
+    bytes = bytes.append(stream[i]);
+    i = i + 1;
+  }
+  return test.assert_true(rejects(bytes, png.PngError.Limit));
+}
+
+function main(): i32 {
+  let r = test.test_new("PNG RGB8/RGBA8");
+  r = r.it("independent goldens for all five scanline filters", filters);
+  r = r.it("native codec round trips and encoder output limit", roundtrips);
+  r = r.it("malformed chunks and unsupported modes", malformed);
+  r = r.it("pixel and filtered output budgets", budgets);
+  r = r.it("every truncated prefix fails", truncations);
+  r = r.it("transparency, profiles, animation and short scanlines", semantics);
+  r = r.it("chunk count CPU-work guard", chunk_budget);
+  return r.finish();
+}

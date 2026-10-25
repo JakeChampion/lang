@@ -1,0 +1,261 @@
+import "../../pixels/pixels";
+import "./compression";
+import "std/hash";
+import "std/deflate";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum PngError { Signature, Truncated, Length, Crc, Order, Unsupported, Dimensions, Limit, Compressed, Scanline }
+
+function be32(input: [u8], at: i32): u32 {
+  return input[at] as u32 << 24 | input[at + 1] as u32 << 16 | input[at + 2] as u32 << 8 | input[at + 3] as u32;
+}
+
+function absolute(n: i32): i32 {
+  if (n < 0) {
+    return 0 - n;
+  }
+  return n;
+}
+
+function paeth(a: i32, b: i32, c: i32): i32 {
+  let p = a + b - c;
+  let da = absolute(p - a);
+  let db = absolute(p - b);
+  let dc = absolute(p - c);
+  if (da <= db && da <= dc) {
+    return a;
+  }
+  if (db <= dc) {
+    return b;
+  }
+  return c;
+}
+
+function reconstruct(filtered: [u8], layout: pixels.Layout): Result[pixels.Image, PngError] {
+  let bytes: u8[] = __alloc_u8(layout.bytes);
+  let channels = pixels.channels(layout.format);
+  let y = 0;
+  while (y < layout.height) {
+    let start = y * (layout.stride + 1);
+    let filter = filtered[start] as i32;
+    if (filter > 4) {
+      return Err(PngError.Scanline);
+    }
+    let x = 0;
+    while (x < layout.stride) {
+      let at = y * layout.stride + x;
+      let left = 0;
+      let above = 0;
+      let upper_left = 0;
+      if (x >= channels) {
+        left = bytes[at - channels] as i32;
+      }
+      if (y > 0) {
+        above = bytes[at - layout.stride] as i32;
+      }
+      if (y > 0 && x >= channels) {
+        upper_left = bytes[at - layout.stride - channels] as i32;
+      }
+      let prediction = 0;
+      if (filter == 1) {
+        prediction = left;
+      }
+      if (filter == 2) {
+        prediction = above;
+      }
+      if (filter == 3) {
+        prediction = (left + above) / 2;
+      }
+      if (filter == 4) {
+        prediction = paeth(left, above, upper_left);
+      }
+      bytes = bytes.with(at, (filtered[start + 1 + x] as i32 + prediction) as u8);
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(pixels.Image { layout: layout, data: bytes });
+}
+
+pub function decode(input: [u8], limits: pixels.Limits): Result[pixels.Image, PngError] {
+  if (input.len() > 16777216) {
+    return Err(PngError.Limit);
+  }
+  let signature: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
+  if (input.len() < 8) {
+    return Err(PngError.Signature);
+  }
+  let i = 0;
+  while (i < 8) {
+    if (input[i] != signature[i]) {
+      return Err(PngError.Signature);
+    }
+    i = i + 1;
+  }
+  let layout = pixels.Layout { width: 0, height: 0, stride: 0, format: pixels.RGB8, bytes: 0 };
+  let header = false;
+  let data_seen = false;
+  let data_closed = false;
+  let compressed: u8[] = [];
+  let pos = 8;
+  let ended = false;
+  let chunk_count = 0;
+  while (pos < input.len()) {
+    chunk_count = chunk_count + 1;
+    if (chunk_count > 1024) {
+      return Err(PngError.Limit);
+    }
+    if (input.len() - pos < 12) {
+      return Err(PngError.Truncated);
+    }
+    let length_u = be32(input, pos);
+    if (length_u > (input.len() - pos - 12) as u32) {
+      return Err(PngError.Length);
+    }
+    let length = length_u as i32;
+    let kind = be32(input, pos + 4);
+    let body = pos + 8;
+    let end = body + length;
+    let actual = hash.crc32_new().update(input[pos + 4:end]).finish();
+    if (actual != be32(input, end)) {
+      return Err(PngError.Crc);
+    }
+    let k = 0;
+    while (k < 4) {
+      let letter = input[pos + 4 + k] as i32;
+      if (!(letter >= 65 && letter <= 90 || letter >= 97 && letter <= 122)) {
+        return Err(PngError.Unsupported);
+      }
+      k = k + 1;
+    }
+    if ((input[pos + 6] as i32 & 32) != 0) {
+      return Err(PngError.Unsupported);
+    }
+    if (!header && kind != 1229472850 as u32) {
+      return Err(PngError.Order);
+    }
+    if (kind == 1229472850 as u32) {
+      if (header || pos != 8 || length != 13) {
+        return Err(PngError.Order);
+      }
+      let w = be32(input, body);
+      let h = be32(input, body + 4);
+      if (w == 0 as u32 || h == 0 as u32 || w > 2147483647 as u32 || h > 2147483647 as u32) {
+        return Err(PngError.Dimensions);
+      }
+      let format = pixels.RGB8;
+      if (input[body + 9] == 6 as u8) {
+        format = pixels.RGBA8;
+      } else if (input[body + 9] != 2 as u8) {
+        return Err(PngError.Unsupported);
+      }
+      if (input[body + 8] != 8 as u8 || input[body + 10] != 0 as u8 || input[body + 11] != 0 as u8 || input[body + 12] != 0 as u8) {
+        return Err(PngError.Unsupported);
+      }
+      let stride = match (w as i32 *? pixels.channels(format)) { Some(v) => v, None => { return Err(PngError.Limit); } };
+      layout = match (pixels.checked_layout(w as i32, h as i32, stride, format, limits)) { Ok(v) => v, Err(_) => { return Err(PngError.Limit); } };
+      header = true;
+    } else if (kind == 1229209940 as u32) {
+      if (data_closed) {
+        return Err(PngError.Order);
+      }
+      let j = body;
+      while (j < end) {
+        compressed = compressed.append(input[j]);
+        j = j + 1;
+      }
+      data_seen = true;
+    } else if (kind == 1229278788 as u32) {
+      if (!data_seen || length != 0 || end + 4 != input.len()) {
+        return Err(PngError.Order);
+      }
+      ended = true;
+      pos = end + 4;
+      break;
+    } else {
+      if (data_seen) {
+        data_closed = true;
+      }
+      // Reject transparency and animation rather than silently discard their semantics.
+      if ((input[pos + 4] as i32 & 32) == 0 || kind == 1951551059 as u32 || kind == 1633899596 as u32 || kind == 1766015824 as u32 || kind == 1732332865 as u32 || kind == 1665684045 as u32) {
+        return Err(PngError.Unsupported);
+      }
+    }
+    pos = end + 4;
+  }
+  if (!header || !ended) {
+    return Err(PngError.Order);
+  }
+  let filtered_size = match (layout.stride +? 1) { Some(v) => v, None => { return Err(PngError.Limit); } };
+  let total = match (filtered_size *? layout.height) { Some(v) => v, None => { return Err(PngError.Limit); } };
+  if (total > limits.max_bytes || total > 67108864) {
+    return Err(PngError.Limit);
+  }
+  let filtered = match (compression.decode(compressed, total)) { Ok(v) => v, Err(_) => { return Err(PngError.Compressed); } };
+  if (filtered.len() != total) {
+    return Err(PngError.Scanline);
+  }
+  return reconstruct(filtered, layout);
+}
+
+function append32(bytes: u8[], n: u32): u8[] {
+  return bytes.append((n >> 24) as u8).append((n >> 16) as u8).append((n >> 8) as u8).append(n as u8);
+}
+
+function chunk(output: u8[], kind: u32, body: [u8]): u8[] {
+  let type_bytes = append32([], kind);
+  let crc = hash.crc32_new().update(type_bytes).update(body).finish();
+  let bytes = append32(output, body.len() as u32);
+  bytes = append32(bytes, kind);
+  for b in body {
+    bytes = bytes.append(b);
+  }
+  return append32(bytes, crc);
+}
+
+pub function encode(image: pixels.Image, max_bytes: i32): Result[u8[], PngError] {
+  if (max_bytes <= 0 || max_bytes > 16777216) {
+    return Err(PngError.Limit);
+  }
+  let first = match (pixels.read_pixel(image, 0, 0)) { Ok(v) => v, Err(_) => { return Err(PngError.Dimensions); } };
+  let channels = pixels.channels(image.layout.format);
+  let row = image.layout.width * channels;
+  let filtered_size = match ((row + 1) *? image.layout.height) { Some(v) => v, None => { return Err(PngError.Limit); } };
+  if (filtered_size > 16777216) {
+    return Err(PngError.Limit);
+  }
+  let raw: u8[] = [];
+  let y = 0;
+  while (y < image.layout.height) {
+    raw = raw.append(0 as u8);
+    let x = 0;
+    while (x < row) {
+      raw = raw.append(image.data[y * image.layout.stride + x]);
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  let compressed = deflate.deflate(raw);
+  let checksum = deflate.adler32(raw);
+  let zlib: u8[] = [120 as u8, 156 as u8];
+  for b in compressed {
+    zlib = zlib.append(b);
+  }
+  zlib = append32(zlib, checksum);
+  // The signature and the three chunk envelopes require 57 bytes.
+  if (zlib.len() > max_bytes - 57) {
+    return Err(PngError.Limit);
+  }
+  let header = append32(append32([], image.layout.width as u32), image.layout.height as u32);
+  header = header.append(8 as u8);
+  let color_type: u8 = 2;
+  if (channels == 4) {
+    color_type = 6;
+  }
+  header = header.append(color_type).append(0 as u8).append(0 as u8).append(0 as u8);
+  let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
+  output = chunk(output, 1229472850 as u32, header);
+  output = chunk(output, 1229209940 as u32, zlib);
+  return Ok(chunk(output, 1229278788 as u32, []));
+}

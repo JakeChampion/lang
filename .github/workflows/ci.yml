@@ -1,10 +1,10 @@
 name: CI
 
-# Lint, lane selection and the Preflight tier run outside the full-suite
-# queue, so a queued PR gets useful feedback without waiting for earlier
-# compiler suites, and a red Preflight cancels the queued suite before it takes
-# a slot. The Lint / lint check remains unconditional and keeps its name.
-# ci-suite.yml owns the PR FIFO; ci-main.yml still coalesces pending main tips.
+# A pull request runs Lint, lane selection and the Preflight tier, all outside
+# the full-suite queue. The full suite runs on main after the merge (ci-main.yml
+# coalesces pending main tips) and on a pull request labelled ci-full, through
+# the ci-suite.yml FIFO. The Lint / lint check remains unconditional and keeps
+# its name.
 
 on:
   pull_request:
@@ -268,7 +268,7 @@ jobs:
               // or did not run runs here, so main stays the backstop for the
               // filters. A run still in flight with its suite under way is
               // waited for, polling until it completes or the wait budget
-              // runs out (cancel-on-merge.yml and reap-stale-runs.yml spare
+              // runs out (cancel-on-merge.yml and the reap-stale-runs action spare
               // exactly that run); one whose suite is still queued is not,
               // since main alone is faster than the queue. perf always runs,
               // because its main run records the history. Any error proves
@@ -462,22 +462,27 @@ jobs:
     uses: ./.github/workflows/lint.yml
     secrets: inherit
 
-  # The fail-fast tier: the fixture corpus through the self-host compiler, run
-  # beside Lint and outside the suite queue. It reads the lane table like a
-  # suite lane, so a doc-only change skips it, and reap-preflight below cancels
-  # the whole run, queued suite included, when a leg fails.
+  # The fail-fast tier: the fixture corpus through the self-host compiler and
+  # the x86-64 legs of the unit, e2e, wasm, differential and coreutils lanes,
+  # run beside Lint and outside the suite queue. It reads the lane table like
+  # a suite lane, so a doc-only change skips it, and reap-preflight below
+  # cancels the whole run when a leg fails. It runs only where the suite does
+  # not: the suite already holds every leg, so the two never run together.
   preflight:
     name: Preflight
     needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['preflight']
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-full') && fromJSON(needs.changes.outputs.lanes)['preflight']
     uses: ./.github/workflows/preflight.yml
     secrets: inherit
 
   suite:
     name: Full suite
-    # Preserve independent lanes on main and live ci-full opt-outs. The lint
-    # reaper reads current labels and cancels this run when appropriate.
+    # A pull request runs Preflight alone; the suite runs on main after the
+    # merge, on a dispatch, and on a pull request labelled ci-full. The label
+    # is read from the event, so it must be on the pull request before the
+    # push that should run the suite.
     needs: [changes]
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
     uses: ./.github/workflows/ci-suite.yml
     with:
       lanes: ${{ needs.changes.outputs.lanes }}

@@ -1,0 +1,9 @@
+function (n: i32) to_string(): string {
+  return "custom";
+}
+
+function main(): i32 {
+  print(f"{42}");
+  print(42);
+  return 0;
+}

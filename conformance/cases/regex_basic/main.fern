@@ -1,19 +1,31 @@
-
-
-
-
-
 import "std/regex";
+import "std/result";
 
 function main(): i32 {
-    let r: i32 = 0;
-    if (regex.regex_match("abc", "xxabcyy")) { r = r + 1; }
-    if (regex.regex_match("^a.c$", "axc")) { r = r + 2; }
-    if (regex.regex_match("a*b", "aaab")) { r = r + 4; }
-    if (regex.regex_match("colou?r", "color")) { r = r + 8; }
-    if (regex.regex_match("[0-9]+", "abc123")) { r = r + 16; }
-    if (regex.regex_match("gr(a|e)y", "grey")) { r = r + 32; }
-    if (regex.regex_match("^(ab)+$", "ababab")) { r = r + 64; }
-    if (regex.regex_match("^(cat|dog|bird)$", "dog")) { r = r + 128; }
-    return r;
+  let r: i32 = 0;
+  if ({ let __checked_regex_7: regex.Regex = match (regex.compile("abc")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_7.is_match("xxabcyy") }) {  // literal, searched
+    r = r + 1;
+  }
+  if ({ let __checked_regex_6: regex.Regex = match (regex.compile("^a.c$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_6.is_match("axc") }) {  // anchors + `.`
+    r = r + 2;
+  }
+  if ({ let __checked_regex_5: regex.Regex = match (regex.compile("a*b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_5.is_match("aaab") }) {  // `*` greedy
+    r = r + 4;
+  }
+  if ({ let __checked_regex_4: regex.Regex = match (regex.compile("colou?r")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_4.is_match("color") }) {  // `?` optional
+    r = r + 8;
+  }
+  if ({ let __checked_regex_3: regex.Regex = match (regex.compile("[0-9]+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.is_match("abc123") }) {  // class + `+`
+    r = r + 16;
+  }
+  if ({ let __checked_regex_2: regex.Regex = match (regex.compile("gr(a|e)y")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.is_match("grey") }) {  // group + alternation
+    r = r + 32;
+  }
+  if ({ let __checked_regex_1: regex.Regex = match (regex.compile("^(ab)+$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.is_match("ababab") }) {  // quantifier over a group
+    r = r + 64;
+  }
+  if ({ let __checked_regex_0: regex.Regex = match (regex.compile("^(cat|dog|bird)$")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("dog") }) {  // multi-way alternation
+    r = r + 128;
+  }
+  return r;
 }

@@ -1,6 +1,7 @@
+import "std/unicode";
 import "std/string";
 
 function main(): i32 {
-    print("  hello  ".trim().to_upper());
-    return 0;
+  print("  hello  ".trim().to_upper());
+  return 0;
 }

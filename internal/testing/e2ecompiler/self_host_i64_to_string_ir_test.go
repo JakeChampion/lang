@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// interpreter. The high-bit u64 case uses its public to_string method.
 var i64ToStringIRCases = []struct {
 	name string
 	src  string
@@ -16,8 +17,11 @@ var i64ToStringIRCases = []struct {
 function main(): i32 { let n: i64 = 0 - (9876543210 as i64); if (n.to_string() == "-9876543210") { return 42; } return 0; }`},
 	{"i64-pos-large", `import "std/i64";
 function main(): i32 { let n: i64 = 9876543210 as i64; if (n.to_string() == "9876543210") { return 42; } return 0; }`},
-	{"u64-highbit-direct", `import "core/int";
-function main(): i32 { let n: u64 = 18000000000000000007 as u64; if (int.__int_to_string_u64(n as i64, 0) == "18000000000000000007") { return 42; } return 0; }`},
+	// The public u64 formatter retains all magnitude bits above 2^63.
+
+	{"u64-highbit", `import "std/u64";
+function main(): i32 { let n: u64 = 18000000000000000007 as u64; if (n.to_string() == "18000000000000000007") { return 42; } return 0; }`},
+
 	{"i64-as-u64-mod", `import "core/int";
 function main(): i32 { let m: i64 = 9876543210 as i64; return (m as u64 % (7 as u64)) as i32; }`},
 }

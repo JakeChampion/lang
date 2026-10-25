@@ -128,7 +128,7 @@ function number_site(e: ast.Expr, t: Tab): ast.Expr {
     return e;
   }
   let n: ast.Expr = ast.ExprNumber { text: util.i32_to_string(find(t, key)), suffix: "", raw: "", is_float: false, line: 0, col: 0 };
-  return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "" }, args: [n], line: 0, col: 0, type_args: [], ty: "" };
+  return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "", builtin: false }, args: [n], line: 0, col: 0, type_args: [], ty: "" };
 }
 
 function file_of(c: Ctx, line: i32): string {
@@ -149,7 +149,7 @@ function branch_key(c: Ctx, line: i32, col: i32, edge: string): string {
 
 function hit(key: string): ast.Expr {
   let k: ast.Expr = ast.ExprString { value: key, line: 0, col: 0 };
-  return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "" }, args: [k], line: 0, col: 0, type_args: [], ty: "" };
+  return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "", builtin: false }, args: [k], line: 0, col: 0, type_args: [], ty: "" };
 }
 
 function hit_stmt(key: string): ast.Stmt {
@@ -162,7 +162,7 @@ function and(a: ast.Expr, b: ast.Expr): ast.Expr {
 
 function report_stmt(): ast.Stmt {
   let none: ast.Expr[] = [];
-  return ast.StmtExpr { value: ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_report", line: 0, col: 0, ty: "" }, args: none, line: 0, col: 0, type_args: [], ty: "" }, line: 0 };
+  return ast.StmtExpr { value: ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_report", line: 0, col: 0, ty: "", builtin: false }, args: none, line: 0, col: 0, type_args: [], ty: "" }, line: 0 };
 }
 
 function cover_stmts(stmts: ast.Stmt[], c: Ctx, exprs: boolean): ast.Stmt[] {
@@ -215,28 +215,10 @@ function transfers(st: ast.Stmt): boolean {
 }
 
 function is_exit(st: ast.Stmt): boolean {
-  match (st) {
-    ast.StmtExpr(x) => {
-      match (x.value) {
-        ast.ExprCall(c) => {
-          match (c.callee) {
-            ast.ExprIdent(id) => {
-              return id.name == "exit";
-            },
-            _ => {
-              return false;
-            }
-          }
-        },
-        _ => {
-          return false;
-        }
-      }
-    },
-    _ => {
-      return false;
-    }
+  if let ast.StmtExpr(x) = st {
+    return parser.calls_exit(x.value, false);
   }
+  return false;
 }
 
 function guarded(cond: ast.Expr, c: Ctx, line: i32, exprs: boolean): ast.Expr {

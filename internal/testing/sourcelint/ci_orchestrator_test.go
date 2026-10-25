@@ -15,6 +15,7 @@ const ciSuiteFile = "ci-suite.yml"
 const ciMainFile = "ci-main.yml"
 
 const reaperFile = "cancel-on-failure.yml"
+const preflightFile = "preflight.yml"
 
 type ciJob struct {
 	id    string
@@ -178,6 +179,14 @@ func TestCICallsEveryLane(t *testing.T) {
 	for id, j := range ciLanes(t) {
 		called[j.usesFile()] = append(called[j.usesFile()], id)
 	}
+	// The Preflight tier calls the x86-64 legs of some suite lanes a second
+	// time; those calls name the same lane and pass `hosts: x86_64`.
+	tier := map[string]ciJob{}
+	for _, j := range workflowJobs(t, preflightFile) {
+		if f := j.usesFile(); f != "" {
+			tier[f] = j
+		}
+	}
 	for _, wf := range workflowFiles(t) {
 		src := workflowSource(t, wf)
 		on, ok := onBlock(src)
@@ -189,6 +198,18 @@ func TestCICallsEveryLane(t *testing.T) {
 			t.Errorf("%s is a `workflow_call` lane called by %d job(s) of %s (%v); it must be "+
 				"called by exactly one", wf, len(ids), ciFile, ids)
 			continue
+		}
+		if tj, ok := tier[wf]; ok {
+			want, _ := workflowName(src)
+			if tj.keys["name"] != want {
+				t.Errorf("%s: job %q calls %s under the name %q, not the lane's own name %q", preflightFile, tj.id, wf, tj.keys["name"], want)
+			}
+			if tj.keys["secrets"] != "inherit" {
+				t.Errorf("%s: job %q does not pass `secrets: inherit` to %s", preflightFile, tj.id, wf)
+			}
+			if strings.Contains(src, "inputs.hosts") && tj.with["hosts"] != "x86_64" {
+				t.Errorf("%s: job %q calls %s without `hosts: x86_64`; the tier runs the x86-64 legs alone", preflightFile, tj.id, wf)
+			}
 		}
 		delete(called, wf)
 		job := ciLanes(t)[ids[0]]
@@ -343,9 +364,12 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 			t.Errorf("%s: lane %q has needs=%q, want %q",
 				j.file, id, j.keys["needs"], wantNeeds)
 		}
-		if j.keys["if"] != want {
+		// A lane ci.yml runs itself may add an event guard in front of the row,
+		// as Preflight does to stay out of the runs that take the suite.
+		cond := j.keys["if"]
+		if cond != want && !(j.file == ciFile && strings.HasSuffix(cond, " && "+want)) {
 			t.Errorf("%s: lane %q is gated on `%s`, not on its own row `%s`",
-				j.file, id, j.keys["if"], want)
+				j.file, id, cond, want)
 		}
 	}
 	var stale []string

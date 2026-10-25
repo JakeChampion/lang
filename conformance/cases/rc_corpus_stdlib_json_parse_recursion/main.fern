@@ -1,39 +1,49 @@
-
-
-
-
-
-
-
-
-
 import "core/int";
 import "std/json";
 import "std/string";
+
 function main(): i32 {
-    let bad: i32 = 0;
-
-    match (json.json_parse("{\"nums\":[-1,2.5,3e2],\"k\":\"a\\u0041b\",\"o\":{\"d\":[true,null,false]}}")) {
-        Some(v) => {
-            match (json.json_get_string(v, "k")) {
-                Some(s) => { if (s != "aAb") { bad = bad + 1; } },
-                None => { bad = bad + 2; }
-            }
-            match (json.json_get_array(v, "nums")) {
-                Some(a) => { if (a.len() != 3) { bad = bad + 4; } },
-                None => { bad = bad + 8; }
-            }
+  let bad: i32 = 0;
+  // nested arrays + objects + \uXXXX escape round-trip
+  match (json.parse("{\"nums\":[-1,2.5,3e2],\"k\":\"a\\u0041b\",\"o\":{\"d\":[true,null,false]}}")) {
+    Ok(v) => {
+      match (json.json_get_string(v, "k")) {
+        Some(s) => {
+          if (s != "aAb") {
+            bad = bad + 1;
+          }
         },
-        None => { bad = bad + 100; }
+        None => {
+          bad = bad + 2;
+        }
+      }
+      match (json.json_get_array(v, "nums")) {
+        Some(a) => {
+          if (a.len() != 3) {
+            bad = bad + 4;
+          }
+        },
+        None => {
+          bad = bad + 8;
+        }
+      }
+    },
+    Err(_) => {
+      bad = bad + 100;
     }
-
-    match (json.json_parse("{\"a\":}")) {
-        Some(v) => { bad = bad + 1000; },
-        None => { }
-    }
-    match (json.json_parse("[1,2")) {
-        Some(v) => { bad = bad + 2000; },
-        None => { }
-    }
-    return bad + __rc_underflow_count();
+  }
+  // malformed: the failure unwinds to None
+  match (json.parse("{\"a\":}")) {
+    Ok(v) => {
+      bad = bad + 1000;
+    },
+    Err(_) => {}
+  }
+  match (json.parse("[1,2")) {
+    Ok(v) => {
+      bad = bad + 2000;
+    },
+    Err(_) => {}
+  }
+  return bad + __rc_underflow_count();
 }

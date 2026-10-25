@@ -47,11 +47,65 @@ function module_key(lm: flatten.LoadedModule): string {
   return lm.name;
 }
 
+// Public declarations take precedence over hidden variants with the same name.
+function declaration_visible(is_pub: boolean, is_package: boolean, with_package: boolean): boolean {
+  return is_pub || with_package && is_package;
+}
+
+function visible_enum_names(en: parser.EnumDecl, with_package: boolean, own names: string[]): string[] {
+  if (declaration_visible(en.is_pub, en.is_package, with_package)) {
+    names = names.append(en.name);
+    for name in en.variant_names {
+      names = names.append(name);
+    }
+  }
+  return names;
+}
+
+function visible_names(mod: parser.Module, with_package: boolean): util.NameIndex {
+  let names: string[] = [];
+  for f in mod.funcs {
+    if (f.receiver_name.len() == 0 && declaration_visible(f.is_pub, f.is_package, with_package)) {
+      names = names.append(f.name);
+    }
+  }
+  for sd in mod.structs {
+    if (sd.enum_owner.len() == 0 && declaration_visible(sd.is_pub, sd.is_package, with_package)) {
+      names = names.append(sd.name);
+    }
+  }
+  for en in mod.enums {
+    names = visible_enum_names(en, with_package, names);
+  }
+  for al in mod.aliases {
+    if (declaration_visible(al.is_pub, al.is_package, with_package)) {
+      names = names.append(al.name);
+    }
+  }
+  return util.name_index(names);
+}
+
+// Cache private declarations and constructors once for all reference checks.
+// Receiver methods use value dispatch and follow a separate visibility rule.
+function append_hidden_variants(out: string[], en: parser.EnumDecl, prefix: string, visible: util.NameIndex): string[] {
+  for name in en.variant_names {
+    if (!visible.has(name)) {
+      out = out.append(prefix + "." + name);
+    }
+  }
+  return out;
+}
+
+function private_top_function(f: parser.FuncDecl): boolean {
+  return !f.is_pub && !f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0;
+}
+
 function private_keys(loaded: flatten.LoadedModule[]): string[] {
   let out: string[] = [];
   for lm in loaded {
+    let visible: util.NameIndex = visible_names(lm.mod, true);
     for f in lm.mod.funcs {
-      if (!f.is_pub && !f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
+      if (private_top_function(f)) {
         out = out.append(module_key(lm) + "." + f.name);
       }
     }
@@ -63,6 +117,7 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
     for en in lm.mod.enums {
       if (!en.is_pub && !en.is_package) {
         out = out.append(module_key(lm) + "." + en.name);
+        out = append_hidden_variants(out, en, module_key(lm), visible);
       }
     }
     for al in lm.mod.aliases {
@@ -78,7 +133,7 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
   let out: string[] = [];
   for lm in loaded {
     for f in lm.mod.funcs {
-      if (f.is_const && !f.is_pub && !f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
+      if (f.is_const && private_top_function(f)) {
         out = out.append(module_key(lm) + "." + f.name);
       }
     }
@@ -86,16 +141,48 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
   return out;
 }
 
-function package_of(ident: string, root: string): string {
-  if (root.len() > 0 && (util.str_has_prefix(ident, root + "/std/") || util.str_has_prefix(ident, root + "/core/"))) {
+// The loader supplies the manifest root or directory fallback it already
+// resolved. A stdlib module belongs to the whole configured library root.
+pub function package_root(ident: string, root: string, owner: string): string {
+  let lib: string = util.clean_path(root);
+  if (util.str_has_prefix(ident, "stdlib://") || root.len() > 0 && (util.str_has_prefix(ident, lib + "/std/") || util.str_has_prefix(ident, lib + "/core/"))) {
     return "(stdlib)";
   }
-  return util.clean_path(util.dir_of(ident));
+  return util.clean_path(owner);
+}
+
+// Restrict bare constructors and patterns through the checker's enum metadata.
+// Qualified references also retain their earlier source visibility checks.
+pub function scope_enums(mod: parser.Module, prefixes: string[], packages: string[]): parser.Module {
+  let modules: string[] = [""];
+  for prefix in prefixes {
+    modules = modules.append(prefix);
+  }
+  let index: util.NameIndex = util.name_index(modules);
+  let enums: parser.EnumDecl[] = [];
+  for en in mod.enums {
+    let viewers: string[] = en.visible_from;
+    if (!en.is_pub) {
+      viewers = [];
+      let owner: i32 = index.find(en.module);
+      if (en.is_package && owner >= 0 && owner < packages.len()) {
+        for from in en.visible_from {
+          let at: i32 = index.find(from);
+          if (at >= 0 && at < packages.len() && packages[at] == packages[owner]) {
+            viewers = viewers.append(from);
+          }
+        }
+      }
+    }
+    enums = enums.append(parser.EnumDecl { ...en, visible_from: viewers });
+  }
+  return parser.Module { ...mod, enums: enums };
 }
 
 function package_keys(loaded: flatten.LoadedModule[]): string[] {
   let out: string[] = [];
   for lm in loaded {
+    let exported: util.NameIndex = visible_names(lm.mod, false);
     for f in lm.mod.funcs {
       if (f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
         out = out.append(lm.ident + "." + f.name);
@@ -109,6 +196,7 @@ function package_keys(loaded: flatten.LoadedModule[]): string[] {
     for en in lm.mod.enums {
       if (en.is_package) {
         out = out.append(lm.ident + "." + en.name);
+        out = append_hidden_variants(out, en, lm.ident, exported);
       }
     }
     for al in lm.mod.aliases {
@@ -120,19 +208,144 @@ function package_keys(loaded: flatten.LoadedModule[]): string[] {
   return out;
 }
 
+// Index declarations once. Member checks do not scan a module at each use.
+function declared_keys(loaded: flatten.LoadedModule[]): string[] {
+  let out: string[] = [];
+  for lm in loaded {
+    let prefix = module_key(lm) + ".";
+    for f in lm.mod.funcs {
+      if (f.receiver_name.len() == 0) {
+        out = out.append(prefix + f.name);
+      }
+    }
+    for sd in lm.mod.structs {
+      out = out.append(prefix + sd.name);
+    }
+    for en in lm.mod.enums {
+      out = out.append(prefix + en.name);
+    }
+    for al in lm.mod.aliases {
+      out = out.append(prefix + al.name);
+    }
+    for im in lm.mod.imports {
+      if (im.is_reexport) {
+        for name in im.reexport_names {
+          out = out.append(prefix + name);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function member_name_after(a: string, b: string): boolean {
+  return a > b;
+}
+
+function member_quote(value: string): string {
+  return "\"" + value + "\"";
+}
+
+function member_closest(name: string, candidates: string[]): string {
+  let best = "";
+  let distance = name.len() / 3 + 1;
+  for candidate in util.sorted_by(candidates, member_name_after) {
+    let d = util.levenshtein(name, candidate);
+    if (d <= distance && (best.len() == 0 || d < distance)) {
+      best = candidate;
+      distance = d;
+    }
+  }
+  return best;
+}
+
+function enum_exported(mod: parser.Module, name: string): boolean {
+  for en in mod.enums {
+    if (en.name == name) {
+      return en.is_pub;
+    }
+  }
+  return false;
+}
+
+function struct_exported(mod: parser.Module, sd: parser.StructDecl): boolean {
+  return sd.is_pub || sd.enum_owner.len() > 0 && enum_exported(mod, sd.enum_owner);
+}
+
+function member_candidates(mod: parser.Module, methods: boolean): string[] {
+  let out: string[] = [];
+  for f in mod.funcs {
+    if (f.is_pub && f.receiver_name.len() > 0 == methods) {
+      out = out.append(f.name);
+    }
+  }
+  if (methods) {
+    return out;
+  }
+  for sd in mod.structs {
+    if (struct_exported(mod, sd)) {
+      out = out.append(sd.name);
+    }
+  }
+  for en in mod.enums {
+    if (en.is_pub) {
+      out = out.append(en.name);
+    }
+  }
+  for im in mod.imports {
+    if (im.is_reexport) {
+      out = util.append_all(out, im.reexport_names);
+    }
+  }
+  return out;
+}
+
+function missing_member(mod: parser.Module, name: string, r: astwalk.QualRef): util.Diag {
+  let methods = member_candidates(mod, true);
+  let hint = "";
+  let message = "";
+  if (r.call && util.has_str(methods, r.name)) {
+    message = name + "." + r.name + " is a method — call it on the value: `x." + r.name + "(…)`";
+  } else {
+    let closest = member_closest(r.name, member_candidates(mod, false));
+    if (closest.len() > 0) {
+      hint = " (did you mean " + member_quote(closest) + "?)";
+    } else {
+      let method = member_closest(r.name, methods);
+      if (method.len() > 0) {
+        hint = " — " + member_quote(method) + " is a method, call it on the value: `x." + method + "(…)`";
+      }
+    }
+    let kind = "function or const";
+    if (r.call) {
+      kind = "function";
+    }
+    message = "module " + member_quote(name) + " has no " + kind + " " + member_quote(r.name) + hint;
+  }
+  return util.Diag { length: 0, related: [], code: "E087", message: message, line: r.line, col: r.col, fix: None };
+}
+
+// Reference checks share the module declarations and package identities.
 struct VisCtx {
   src: parser.Module,
   quals: string[],
   loaded: flatten.LoadedModule[],
   priv: util.NameIndex,
+  declared: util.NameIndex,
   priv_consts: string[],
   pkg: util.NameIndex,
   src_pkg: string,
-  root: string,
+  owners: util.NameIndex,
+  packages: string[],
 }
 
-function vis_ctx(src: parser.Module, src_ident: string, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: util.NameIndex, root: string): VisCtx {
-  return VisCtx { src: src, quals: import_quals(src), loaded: loaded, priv: priv, priv_consts: priv_consts, pkg: pkg, src_pkg: package_of(src_ident, root), root: root };
+function vis_ctx(src: parser.Module, src_ident: string, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: util.NameIndex, declared: util.NameIndex, owners: util.NameIndex, packages: string[]): VisCtx {
+  let at: i32 = owners.find(src_ident);
+  let own: string = "";
+  if (at >= 0 && at < packages.len()) {
+    own = packages[at];
+  }
+  return VisCtx { src: src, quals: import_quals(src), loaded: loaded, priv: priv, declared: declared, priv_consts: priv_consts, pkg: pkg, src_pkg: own, owners: owners, packages: packages };
 }
 
 function owner_ident(src: parser.Module, qual: string): string {
@@ -164,7 +377,11 @@ function package_scope(cx: VisCtx, qual: string, name: string): (boolean, boolea
   if (owner.len() == 0 || !cx.pkg.has(owner + "." + name)) {
     return (false, false);
   }
-  return (true, package_of(owner, cx.root) != cx.src_pkg);
+  let at: i32 = cx.owners.find(owner);
+  if (at < 0 || at >= cx.packages.len()) {
+    return (true, true);
+  }
+  return (true, cx.packages[at] != cx.src_pkg);
 }
 
 function package_diag(cx: VisCtx, qual: string, name: string, line: i32, col: i32): util.Diag {
@@ -185,16 +402,35 @@ function module_diags(cx: VisCtx): util.Diag[] {
   if (cx.quals.len() == 0) {
     return out;
   }
-  let refs: astwalk.QualRef[] = [];
   for fd in cx.src.funcs {
-    for st in fd.body {
-      refs = astwalk.collect_qualrefs_stmt(st, cx.quals, refs);
+    let bound: string[] = [];
+    for param in fd.params {
+      bound = astwalk.append_bound_name(bound, param.name);
+    }
+    bound = astwalk.append_bound_name(bound, fd.receiver_name);
+    let refs = astwalk.collect_qualrefs_body(fd.body, cx.quals, bound, []);
+    for r in refs {
+      if (!derived_json_helper(cx, fd, r)) {
+        out = ref_diag(cx, r, out);
+      }
     }
   }
+  let refs = astwalk.collect_qualrefs_body(cx.src.top_stmts, cx.quals, [], []);
   for r in refs {
     out = ref_diag(cx, r, out);
   }
   return out;
+}
+
+// Only parser-generated FromJson bodies can call these stdlib helpers.
+// Source functions keep their positive source line, including manual impls.
+function derived_json_helper(cx: VisCtx, fd: parser.FuncDecl, r: astwalk.QualRef): boolean {
+  if (fd.line != 0 || fd.col != 0 || fd.impl_trait != "FromJson" || fd.name != "from_json_value" || r.line != 0 || r.col != 0) {
+    return false;
+  }
+  let owner: string = owner_ident(cx.src, r.qual);
+  let at: i32 = cx.owners.find(owner);
+  return at >= 0 && at < cx.packages.len() && cx.packages[at] == "(stdlib)" && util.str_has_suffix(owner, "/std/json") && util.str_has_prefix(r.name, "from_json_");
 }
 
 function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[] {
@@ -210,8 +446,16 @@ function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[]
     return out;
   }
   let key: string = module_key(cx.loaded[mi]) + "." + r.name;
+  if (!cx.declared.has(key)) {
+    return out.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r));
+  }
   if (!cx.priv.has(key)) {
     return out;
+  }
+  for en in cx.loaded[mi].mod.enums {
+    if (!en.is_pub && !en.is_package && util.has_str(en.variant_names, r.name)) {
+      return out.append(util.Diag { length: 0, related: [], code: "E087", message: cx.loaded[mi].name + "." + r.name + " is a variant of enum " + en.name + ", which is not exported (declare it as `pub enum " + en.name + " …` to make it accessible from other modules)", line: r.line, col: r.col, fix: None });
+    }
   }
   let kw: string = "function";
   if (util.has_str(cx.priv_consts, key)) {
@@ -228,17 +472,24 @@ function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[]
   });
 }
 
-pub function export_diags(entry: parser.Module, entry_ident: string, loaded: flatten.LoadedModule[], root: string): util.Diag[] {
+// its own resolved file. Package identities follow the entry and loaded order.
+pub function export_diags(entry: parser.Module, entry_ident: string, loaded: flatten.LoadedModule[], packages: string[]): util.Diag[] {
   let priv: util.NameIndex = util.name_index(private_keys(loaded));
   let priv_consts: string[] = private_const_keys(loaded);
   let pkg: util.NameIndex = util.name_index(package_keys(loaded));
-  let ecx: VisCtx = vis_ctx(entry, entry_ident, loaded, priv, priv_consts, pkg, root);
+  let idents: string[] = [entry_ident];
+  for lm in loaded {
+    idents = idents.append(lm.ident);
+  }
+  let owners: util.NameIndex = util.name_index(idents);
+  let declared = util.name_index(declared_keys(loaded));
+  let ecx: VisCtx = vis_ctx(entry, entry_ident, loaded, priv, priv_consts, pkg, declared, owners, packages);
   let out: util.Diag[] = module_diags(ecx);
   for d in type_diags(ecx) {
     out = out.append(d);
   }
   for lm in loaded {
-    let cx: VisCtx = vis_ctx(lm.mod, lm.ident, loaded, priv, priv_consts, pkg, root);
+    let cx: VisCtx = vis_ctx(lm.mod, lm.ident, loaded, priv, priv_consts, pkg, declared, owners, packages);
     for d in module_diags(cx) {
       out = out.append(d);
     }
@@ -545,4 +796,105 @@ function expr_type_diags(e: ast.Expr, cx: VisCtx, acc: util.Diag[]): util.Diag[]
     }
   }
   return acc;
+}
+
+function public_value_name(mod: parser.Module, name: string): boolean {
+  for f in mod.funcs {
+    if (f.is_pub && f.receiver_name.len() == 0 && f.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function public_aggregate_name(mod: parser.Module, name: string): boolean {
+  for sd in mod.structs {
+    if (sd.is_pub && sd.enum_owner.len() == 0 && sd.name == name) {
+      return true;
+    }
+  }
+  for al in mod.aliases {
+    if (al.is_pub && al.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function public_enum_or_trait_name(mod: parser.Module, name: string): boolean {
+  for en in mod.enums {
+    if (en.is_pub && en.name == name) {
+      return true;
+    }
+  }
+  for tr in mod.trait_decls {
+    if (tr.is_pub && tr.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function public_declared_name(mod: parser.Module, name: string): boolean {
+  return public_value_name(mod, name) || public_aggregate_name(mod, name) || public_enum_or_trait_name(mod, name);
+}
+
+function reexport_of_name(mod: parser.Module, name: string): Option[parser.Import] {
+  for imp in mod.imports {
+    if (imp.is_reexport && util.has_str(imp.reexport_names, name)) {
+      return Some(imp);
+    }
+  }
+  return None;
+}
+
+function reexport_refusal(imp: parser.Import, name: string, loaded: flatten.LoadedModule[], ids: util.NameIndex): Option[parser.Import] {
+  let at: parser.Import = imp;
+  let steps: i32 = 0;
+  while (steps <= loaded.len()) {
+    let mi: i32 = ids.find(at.resolved);
+    if (mi < 0) {
+      return Some(at);
+    }
+    let mod: parser.Module = loaded[mi].mod;
+    if (public_declared_name(mod, name)) {
+      return None;
+    }
+    match (reexport_of_name(mod, name)) {
+      Some(next) => {
+        at = next;
+      },
+      None => {
+        return Some(at);
+      }
+    }
+    steps = steps + 1;
+  }
+  return Some(at);
+}
+
+function module_reexport_diags(mod: parser.Module, loaded: flatten.LoadedModule[], ids: util.NameIndex, out: util.Diag[]): util.Diag[] {
+  for imp in mod.imports {
+    if (imp.is_reexport) {
+      for name in imp.reexport_names {
+        if let Some(bad) = reexport_refusal(imp, name, loaded, ids) {
+          out = out.append(util.Diag { code: "E087", message: "module \"" + bad.path + "\" does not export \"" + name + "\" (cannot `pub use` it)", line: bad.line, col: bad.col, length: 0, fix: None, related: [] });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+pub function reexport_diags(entry: parser.Module, loaded: flatten.LoadedModule[]): util.Diag[] {
+  let idents: string[] = [];
+  for lm in loaded {
+    idents = idents.append(lm.ident);
+  }
+  let ids: util.NameIndex = util.name_index(idents);
+  let out: util.Diag[] = module_reexport_diags(entry, loaded, ids, []);
+  for lm in loaded {
+    out = module_reexport_diags(lm.mod, loaded, ids, out);
+  }
+  return out;
 }

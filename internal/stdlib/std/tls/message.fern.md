@@ -712,21 +712,46 @@ pub function split(buf: [u8]): Result[Split, MsgError] {
   let out: Raw[] = [];
   let at: i32 = 0;
   while (at + 4 <= buf.len()) {
-    let kind: i32 = buf[at] as i32;
-    if (!__known(kind)) {
-      return Err(UnexpectedMessage(kind));
-    }
-    let len: i32 = __get24(buf, at + 1);
-    if (len > __limit(kind)) {
-      return Err(TooLarge(kind, len));
-    }
-    if (at + 4 + len > buf.len()) {
+    let n: i32 = __framed(buf, at)?;
+    if (n < 0) {
       break;
     }
-    out = out.append(Raw { kind: kind, bytes: __copy(buf, at, at + 4 + len) });
-    at = at + 4 + len;
+    out = out.append(Raw { kind: buf[at] as i32, bytes: __copy(buf, at, at + n) });
+    at = at + n;
   }
   return Ok(Split { messages: out, rest: __copy(buf, at, buf.len()) });
+}
+
+// The length of the first whole message in buf, 0 when there is none, with every whole header checked as split checks it.
+pub function head(buf: [u8]): Result[i32, MsgError] {
+  let first: i32 = 0;
+  let at: i32 = 0;
+  while (at + 4 <= buf.len()) {
+    let n: i32 = __framed(buf, at)?;
+    if (n < 0) {
+      break;
+    }
+    if (first == 0) {
+      first = n;
+    }
+    at = at + n;
+  }
+  return Ok(first);
+}
+
+function __framed(buf: [u8], at: i32): Result[i32, MsgError] {
+  let kind: i32 = buf[at] as i32;
+  if (!__known(kind)) {
+    return Err(UnexpectedMessage(kind));
+  }
+  let len: i32 = __get24(buf, at + 1);
+  if (len > __limit(kind)) {
+    return Err(TooLarge(kind, len));
+  }
+  if (at + 4 + len > buf.len()) {
+    return Ok(0 - 1);
+  }
+  return Ok(4 + len);
 }
 
 pub function find(exts: Extension[], kind: i32): Option[u8[]] {

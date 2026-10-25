@@ -26,11 +26,11 @@ import "std/string";
 function main(): i32 {
   let zone: tz.Zone = tz.utc_zone();
   let text: datetime.Result = datetime.parse_full("é", zone, "UTC0", true, 0, 0, 0, true);
-  if (text.ok || !utf8.is_valid_utf8(text.dbg)) { return 1; }
+  if (text.ok || !utf8.is_valid(text.dbg)) { return 1; }
   let original: u8[] = [120 as u8, 195 as u8, 169 as u8, 121 as u8];
   let raw: datetime.ByteResult = datetime.parse_full_bytes(original[1:3], zone, "UTC0", true, 0, 0, 0, true);
   original = [];
-  if (raw.result.ok || raw.tail.len() == 0 || !utf8.is_valid_utf8(raw.result.dbg)) { return 2; }
+  if (raw.result.ok || raw.tail.len() == 0 || !utf8.is_valid(raw.result.dbg)) { return 2; }
   let i: i32 = 0;
   let found: boolean = false;
   while (i < raw.tail.len()) {

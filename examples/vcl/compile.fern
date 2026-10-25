@@ -1,3 +1,32 @@
+// examples/vcl/compile.fern — compile VCL to Fern source.
+//
+// Fern does not emit C and will not, so the route to a native binary runs
+// through Fern itself: this module turns a checked VCL program into a Fern
+// module, and `fern` turns that into machine code. No new backend, no C.
+//
+// What compiling actually buys, over the tree-walk in `eval.fern`:
+//
+//   * A variable becomes a STRUCT FIELD READ. `req.url` compiles to
+//     `t.req.url`, not a lookup of "req.url" in a table followed by a
+//     scope check. The check has already happened — `check.fern` proved
+//     the name legal in that subroutine — so none of it survives to run
+//     time.
+//   * Control flow becomes Fern control flow. An `if` is an `if`, not a
+//     walk over an arm list.
+//   * Constants fold. `1h` is `VDuration(3600.0)` in the output, and an
+//     ACL's `/24` becomes a pre-computed mask in a generated function.
+//
+// Expressions are emitted in A-normal form: each subexpression lands in
+// its own local, and anything that can fail is followed by an explicit
+// check. That is more verbose than nesting calls, and it is what keeps
+// compiled and interpreted behaviour identical — `&&` short-circuits
+// through a real `if`, and an arithmetic type error returns the same
+// diagnostic the interpreter would, rather than being swallowed.
+//
+// The state machine is NOT generated: `machine.fern` takes a `Driver`, and
+// generated code supplies its own dispatcher. The graph is the same for
+// every policy, so there is one copy of it.
+import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
@@ -223,31 +252,31 @@ function bind_checked(ind: string, n: i32, expr: string): Emit {
 
 function num_literal(text: string): string {
   if (text.contains(".")) {
-    match (text.parse_float()) {
-      Some(f) => {
+    match (f64.parse_f64(text)) {
+      Ok(f) => {
         return "VReal(" + f.to_string() + ")";
       },
-      None => {
+      Err(_) => {
         return "";
       }
     }
   }
-  match (text.parse_int()) {
-    Some(v) => {
+  match (i32.parse_i32(text)) {
+    Ok(v) => {
       return "VInt(" + v.to_string() + ")";
     },
-    None => {
+    Err(_) => {
       return "";
     }
   }
 }
 
 function qty_number(text: string): f64 {
-  match (text.parse_float()) {
-    Some(f) => {
+  match (f64.parse_f64(text)) {
+    Ok(f) => {
       return f;
     },
-    None => {
+    Err(_) => {
       return 0.0;
     }
   }
@@ -440,7 +469,7 @@ function emit_match(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
   if (!right.ok) {
     return right;
   }
-  let m: Emit = bind(ind, right.next, "VBool(" + negate + "regex.regex_match(value.to_str(" + right.name + "), value.to_str(" + left.name + ")))");
+  let m: Emit = bind_checked(ind, right.next, "eval.match_pattern(value.to_str(" + right.name + "), value.to_str(" + left.name + "), " + (if (b.op == "!~") { "true" } else { "false" }) + ")");
   return Emit { code: left.code + right.code + m.code, name: m.name, next: m.next, ok: true, err: "" };
 }
 
@@ -684,11 +713,11 @@ function emit_acl(a: ast.AclDecl): Result[string, string] {
       Some(base) => {
         let bits: i32 = 32;
         if (e.mask != "") {
-          match (e.mask.parse_int()) {
-            Some(b) => {
+          match (i32.parse_i32(e.mask)) {
+            Ok(b) => {
               bits = b;
             },
-            None => {
+            Err(_) => {
               return Err("ACL mask '" + e.mask + "' is not a number");
             }
           }
@@ -787,7 +816,7 @@ function backend_list(env: Env): string {
 
 pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] {
   let env: Env = env_of(decls);
-  let out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/f64\";\nimport \"std/regex\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
+  let out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/f64\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
   let i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {

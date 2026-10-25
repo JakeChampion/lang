@@ -78,6 +78,9 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
 }
 
 pub function is_runtime_helper_name(name: string): boolean {
+  if (util.str_has_prefix(name, "__primitive_")) {
+    return true;
+  }
   if (name == "map_new_impl") {
     return true;
   }
@@ -497,16 +500,16 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     return entry;
   }
   let port: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
-  let handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "" };
-  let init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: init_args, line: 0, col: 0, type_args: [], ty: "" };
-  let hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "" };
+  let handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "", builtin: false };
+  let init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "", builtin: false }, args: init_args, line: 0, col: 0, type_args: [], ty: "" };
+  let hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "", builtin: false };
   let body: ast.Stmt[] = [];
   let opts: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "config"), args: [], line: 0, col: 0, type_args: [], ty: "" };
   let state: ast.Expr = init_call;
   if (init_kind == 3) {
     body = body.append(ast.StmtVar { name: "__fern_opts,__fern_state", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
-    opts = ast.ExprIdent { name: "__fern_opts", line: 0, col: 0, ty: "" };
-    state = ast.ExprIdent { name: "__fern_state", line: 0, col: 0, ty: "" };
+    opts = ast.ExprIdent { name: "__fern_opts", line: 0, col: 0, ty: "", builtin: false };
+    state = ast.ExprIdent { name: "__fern_state", line: 0, col: 0, ty: "", builtin: false };
   } else if (init_kind == 2) {
     opts = init_call;
   } else if (ii >= 0 && init_kind == 0) {
@@ -529,7 +532,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   let serve: ast.Expr = ast.ExprCall { callee: serve_ref(qual, entry_name), args: args, line: 0, col: 0, type_args: [], ty: "" };
   body = body.append(ast.StmtReturn { value: serve, line: 0, col: 0 });
   let main: parser.FuncDecl = parser.FuncDecl {
-    stdlib: "", no_inline: false,
+    stdlib: "", no_inline: false, always_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],
@@ -582,19 +585,19 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
   }
   let args: ast.Expr[] = [];
   for p in handle.params {
-    args = args.append(ast.ExprIdent { name: p.name, line: 0, col: 0, ty: "" });
+    args = args.append(ast.ExprIdent { name: p.name, line: 0, col: 0, ty: "", builtin: false });
   }
-  let inner: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__fern_handle_result", line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
+  let inner: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__fern_handle_result", line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
   let adapter: string = "respond" + with_state;
   let adapter_args: ast.Expr[] = [inner];
   if (result_err_is_dyn_error(error_pfx, result)) {
     adapter = "respond_error" + with_state;
-    adapter_args = adapter_args.append(ast.ExprIdent { name: handle.params[handle.params.len() - 1].name, line: 0, col: 0, ty: "" });
+    adapter_args = adapter_args.append(ast.ExprIdent { name: handle.params[handle.params.len() - 1].name, line: 0, col: 0, ty: "", builtin: false });
   }
   if (http_pfx.len() > 0) {
     adapter = mangled_name(http_pfx, adapter);
   }
-  let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "" }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "", builtin: false }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
   let wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
   let funcs: parser.FuncDecl[] = [];
   let i: i32 = 0;
@@ -677,9 +680,9 @@ function strip_spaces(t: string): string {
 
 function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
-    return ast.ExprIdent { name: name, line: 0, col: 0, ty: "" };
+    return ast.ExprIdent { name: name, line: 0, col: 0, ty: "", builtin: false };
   }
-  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "", const_read: false };
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "", builtin: false }, field: name, line: 0, col: 0, ty: "", const_read: false };
 }
 
 function index_of_str(want: string, list: string[]): i32 {
@@ -955,19 +958,25 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
       if (is_in(id.name, ctx.locals)) {
-        return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: id.ty };
+        return ast.ExprIdent { ...id };
       }
-      return ast.ExprIdent { name: mangle_bare_value(id.name, ctx), line: id.line, col: id.col, ty: id.ty };
+      return ast.ExprIdent { ...id, name: mangle_bare_value(id.name, ctx) };
     },
     ast.ExprFieldAccess(fa) => {
       match (fa.obj) {
         ast.ExprIdent(id) => {
           if (is_in(id.name, ctx.modnames) && !is_in(id.name, ctx.locals)) {
             let mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
-            return ast.ExprIdent { name: mangled, line: id.line, col: id.col, ty: "" };
+            // Primitive display bodies share the compiler's canonical ABI.
+            if (util.str_has_prefix(fa.field, "__primitive_")) {
+              mangled = fa.field;
+            }
+            // `ty: ""` and not `id.ty`: the result names a module-qualified
+            // FUNCTION, so the module ident's own tag says nothing about it.
+            return ast.ExprIdent { ...id, name: mangled, ty: "" };
           }
           if (!is_in(id.name, ctx.locals) && is_in(id.name, ctx.enumnames)) {
-            return ast.ExprFieldAccess { ...fa, obj: ast.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty }, field: mangle_bare(fa.field, ctx) };
+            return ast.ExprFieldAccess { ...fa, obj: ast.ExprIdent { ...id, name: mangle_bare(id.name, ctx) }, field: mangle_bare(fa.field, ctx) };
           }
         },
         _ => {}
@@ -1137,7 +1146,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      return ast.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(f) => {
       let loop_locals: string[] = ctx.locals;
@@ -1486,8 +1495,8 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
       col: e.col,
       must_consume: e.must_consume,
       try_marker: e.try_marker,
-      is_pub: true,
-      is_package: false, module: ctx.prefix,
+      is_pub: e.is_pub,
+      is_package: e.is_package, module: ctx.prefix,
       instance: rewrite_type_name(e.instance, with_type_params(ctx, e.type_params)),
       visible_from: e.visible_from,
     });

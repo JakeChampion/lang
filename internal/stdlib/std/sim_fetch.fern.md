@@ -54,6 +54,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module provides a scripted HTTP network with virtual time.
+import "std/i32";
 import "std/sim";
 import "std/fetch";
 import "std/http";
@@ -230,6 +231,13 @@ impl fetch.Transport for Net {
   }
   function wall_ms(self: Net): i64 {
     return self.drv.clock_ns.get() / 1000000;
+  }
+  function random_bytes(self: Net, n: i32): u8[] {
+    let out: u8[] = [];
+    while (out.len() < n) {
+      out = out.append((self.drv.random_i32() & 255) as u8);
+    }
+    return out;
   }
   function lookup(self: Net, host: string, checked: boolean): Result[fetch.Lookup, dns.DnsError] {
     let found: net.IpAddr[] = __addrs_of(self, host);
@@ -457,8 +465,8 @@ struct __Exchange { host: string, port: i32, target: string, answer: Answer }
 ```fern
 <<13 function __exchange(line: string): Option[__Exchange]>>=
 function __exchange(line: string): Option[__Exchange] {
-  match (json.json_parse(line)) {
-    Some(v) => {
+  match (json.parse(line)) {
+    Ok(v) => {
       match (v) {
         json.JObject(o) => {
           return __exchange_of(o);
@@ -468,7 +476,7 @@ function __exchange(line: string): Option[__Exchange] {
         }
       }
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }
@@ -872,11 +880,11 @@ function __int(s: string): i32 {
   if (s.len() > 0 && s[0] == b'-') {
     return 0 - __int(s.split("-")[1]);
   }
-  match (int.parse_int_radix(s, 10)) {
-    Some(v) => {
+  match (i32.parse_i32_radix(s, 10)) {
+    Ok(v) => {
       return v;
     },
-    None => {
+    Err(_) => {
       return 0;
     }
   }

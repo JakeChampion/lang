@@ -16,7 +16,7 @@ Strict conversion rejects malformed UTF-8. Lossy conversion replaces invalid inp
 import "std/utf8";
 
 function main(): i32 {
-  if (utf8.codepoint_count("Aé") != 2 || !utf8.is_valid_utf8("Aé")) { return 1; }
+  if (("Aé").codepoint_count() != 2 || !utf8.is_valid("Aé")) { return 1; }
   return 0;
 }
 ```
@@ -29,26 +29,27 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<dependencies 1>>
 
-<<2 pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)]>>
+<<2 pub function decode_at(s: string, i: i32): Option[(i32, i32)]>>
 
-<<3 pub function is_valid_utf8(s: string): boolean>>
+<<3 pub function is_valid(s: string): boolean>>
 
 <<4 pub function is_char_boundary(s: string, i: i32): boolean>>
 ```
-
 ### `dependencies 1`
 
 ```fern
 <<dependencies 1>>=
 // This module encodes, decodes, and validates UTF-8 code points.
-import "std/string";
-```
 
-### `2 pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)]`
+// This module encodes, decodes, and validates UTF-8 code points.
+import "std/string";
+import "core/utf8_scalar";
+```
+### `2 pub function decode_at(s: string, i: i32): Option[(i32, i32)]`
 
 ```fern
-<<2 pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)]>>=
-pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
+<<2 pub function decode_at(s: string, i: i32): Option[(i32, i32)]>>=
+pub function decode_at(s: string, i: i32): Option[(i32, i32)] {
   let n: i32 = s.len();
   if (i < 0 || i >= n) {
     return None;
@@ -133,41 +134,15 @@ pub function char_from_i32(n: i32): Option[char] {
   return Some(n as char);
 }
 
-pub function utf8_encode(ch: char): string {
-  let c: i32 = ch as i32;
-  if (c < 0 || c > 1114111 || c >= 55296 && c <= 57343) {
-    c = 65533;
-  }
-  if (c < 128) {
-    let one: u8[] = [c as u8];
-    return string_from_bytes_unchecked(one);
-  }
-  if (c < 2048) {
-    let two: u8[] = [(192 + (c >> 6)) as u8, (128 + (c & 63)) as u8];
-    return string_from_bytes_unchecked(two);
-  }
-  if (c < 65536) {
-    let three: u8[] = [(224 + (c >> 12)) as u8, (128 + (c >> 6 & 63)) as u8, (128 + (c & 63)) as u8];
-    return string_from_bytes_unchecked(three);
-  }
-  let four: u8[] = [(240 + (c >> 18)) as u8, (128 + (c >> 12 & 63)) as u8, (128 + (c >> 6 & 63)) as u8, (128 + (c & 63)) as u8];
-  return string_from_bytes_unchecked(four);
-}
-
-pub function codepoints(s: string): char[] {
-  return s.chars();
-}
-
-pub function codepoint_count(s: string): i32 {
-  return s.codepoint_count();
+pub function encode(ch: char): string {
+  return utf8_scalar.from_codepoint(ch);
 }
 ```
-
-### `3 pub function is_valid_utf8(s: string): boolean`
+### `3 pub function is_valid(s: string): boolean`
 
 ```fern
-<<3 pub function is_valid_utf8(s: string): boolean>>=
-pub function is_valid_utf8(s: string): boolean {
+<<3 pub function is_valid(s: string): boolean>>=
+pub function is_valid(s: string): boolean {
   let n: i32 = s.len();
   let i: i32 = 0;
   while (i < n) {
@@ -246,7 +221,7 @@ pub function is_valid_utf8(s: string): boolean {
 
 pub function from_bytes(b: [u8]): Option[string] {
   let s: string = string_from_bytes_unchecked(__bytes_owned(b));
-  if (is_valid_utf8(s)) {
+  if (is_valid(s)) {
     return Some(s);
   }
   return None;
@@ -254,25 +229,18 @@ pub function from_bytes(b: [u8]): Option[string] {
 
 pub function from_bytes_lossy(b: [u8]): string {
   let s: string = string_from_bytes_unchecked(__bytes_owned(b));
-  if (is_valid_utf8(s)) {
+  if (is_valid(s)) {
     return s;
   }
   return encode_all(s.chars());
 }
 
 pub function encode_all(cps: char[]): string {
-  let out: string = "";
-  let i: i32 = 0;
-  let n: i32 = cps.len();
-  while (i < n) {
-    out = out + utf8_encode(cps[i]);
-    i = i + 1;
-  }
-  return out;
+  return utf8_scalar.from_codepoints(cps);
 }
 
 pub function codepoint_at(s: string, byte_index: i32): Option[char] {
-  match (utf8_decode_at(s, byte_index)) {
+  match (decode_at(s, byte_index)) {
     Some(pair) => {
       return Some(pair.0 as char);
     },
@@ -291,19 +259,18 @@ pub function char_at(s: string, index: i32): Option[string] {
   let cp_idx: i32 = 0;
   while (i < n) {
     let start: i32 = i;
-    i = i + string.__utf8_step(s, i, n);
+    i = i + utf8_scalar.step(s, i, n);
     if (cp_idx == index) {
-      if (is_valid_utf8(slice_unchecked(s, start, i))) {
+      if (is_valid(slice_unchecked(s, start, i))) {
         return Some(slice_unchecked(s, start, i).to_owned());
       }
-      return Some(utf8_encode(65533 as char));
+      return Some(encode(65533 as char));
     }
     cp_idx = cp_idx + 1;
   }
   return None;
 }
 ```
-
 ### `4 pub function is_char_boundary(s: string, i: i32): boolean`
 
 ```fern
@@ -375,7 +342,7 @@ pub function substring(s: string, start: i32, end: i32): string {
     if (cp_idx == end) {
       byte_end = i;
     }
-    i = i + string.__utf8_step(s, i, n);
+    i = i + utf8_scalar.step(s, i, n);
     cp_idx = cp_idx + 1;
   }
   if (cp_idx == lo) {
@@ -391,5 +358,28 @@ pub function substring(s: string, start: i32, end: i32): string {
     return "";
   }
   return slice_unchecked(s, byte_start, byte_end) + "";
+}
+
+pub function (s: string) chars(): char[] {
+  let n: i32 = s.len();
+  let out: char[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    let step: i32 = utf8_scalar.step(s, i, n);
+    out = out.append(utf8_scalar.decode_at(s, i, step) as char);
+    i = i + step;
+  }
+  return out;
+}
+
+pub function (s: string) codepoint_count(): i32 {
+  let n: i32 = s.len();
+  let count: i32 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    i = i + utf8_scalar.step(s, i, n);
+    count = count + 1;
+  }
+  return count;
 }
 ```

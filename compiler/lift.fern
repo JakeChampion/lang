@@ -157,9 +157,9 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
       if (irtables.lambda_has_no_captures(lam, gfns)) {
         let nm: string = "__lam_" + util.i32_to_string(acc.counter);
         let tp: string[] = [];
-        let nf: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+        let nf: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
         let nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
-        return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
+        return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "", builtin: false }, acc: nacc };
       }
       return lift_lambda_body_only(lam, acc, gfns);
     },
@@ -200,10 +200,10 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
       return declined;
     }
     params = params.append(ast.ParamDecl { ...cp, own: false, has_default: false, default_value: parser.e_unknown("") });
-    capargs = capargs.append(ast.ExprIdent { name: cap.name, line: 0, col: 0, ty: "" });
+    capargs = capargs.append(ast.ExprIdent { name: cap.name, line: 0, col: 0, ty: "", builtin: false });
   }
   let nm: string = "__lam_" + util.i32_to_string(acc.counter);
-  let nf: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+  let nf: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
   let a: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
   let nargs: ast.Expr[] = [];
   for arg in c.args {
@@ -214,7 +214,7 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
   for ca in capargs {
     nargs = nargs.append(ca);
   }
-  return LiftExpr { expr: ast.ExprCall { callee: ast.ExprIdent { name: nm, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, acc: a };
+  return LiftExpr { expr: ast.ExprCall { callee: ast.ExprIdent { name: nm, line: c.line, col: c.col, ty: "", builtin: false }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, acc: a };
 }
 
 function lift_lambda_body_only(lam: ast.ExprLambda, acc: LiftAcc, gfns: string[]): LiftExpr {
@@ -479,7 +479,7 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
           let rn: string = "$lamret$" + util.i32_to_string(c);
           c = c + 1;
           out = out.append(lamret_slot(rn, r.value, sig, r.line, r.col));
-          out = out.append(ast.StmtReturn { value: ast.ExprIdent { name: rn, line: r.line, col: r.col, ty: "" }, line: r.line, col: r.col });
+          out = out.append(ast.StmtReturn { value: ast.ExprIdent { name: rn, line: r.line, col: r.col, ty: "", builtin: false }, line: r.line, col: r.col });
         } else {
           out = out.append(body[i]);
         }
@@ -494,7 +494,7 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
       ast.StmtWhile(w) => {
         let wd: DesugarRet = desugar_lambda_returns(w.body, c, sig);
         c = wd.counter;
-        out = out.append(ast.StmtWhile { cond: w.cond, body: wd.body, label: w.label, line: 0, is_loop: w.is_loop, todo: w.todo });
+        out = out.append(ast.StmtWhile { cond: w.cond, body: wd.body, label: w.label, line: 0, is_loop: w.is_loop });
       },
       ast.StmtFor(fo) => {
         let fod: DesugarRet = desugar_lambda_returns(fo.body, c, sig);
@@ -573,7 +573,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     ast.StmtWhile(w) => {
       let ce: LiftExpr = lift_expr_walk(w.cond, acc, gfns);
       let b: LiftStmts = lift_stmts(w.body, ce.acc, gfns);
-      let ns: ast.Stmt = ast.StmtWhile { cond: ce.expr, body: b.stmts, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
+      let ns: ast.Stmt = ast.StmtWhile { cond: ce.expr, body: b.stmts, label: w.label, line: w.line, is_loop: w.is_loop };
       return LiftStmts { stmts: [ns], acc: b.acc };
     },
     ast.StmtFor(fo) => {
@@ -694,11 +694,11 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
   if (lam.origin == ast.ORIGIN_NESTED_FN) {
     lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body;
   }
-  let newfn: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: lname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+  let newfn: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: lname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
   let capargs: ast.Expr[] = [];
   let ca: i32 = 0;
   while (ca < caps.len()) {
-    capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" });
+    capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "", builtin: false });
     ca = ca + 1;
   }
   let rest: ast.Stmt[] = [];
@@ -770,7 +770,7 @@ function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, prefix: string,
       ast.StmtWhile(w) => {
         let sw: ClosureLift = closure_lift_one(w.body, fd, prefix, acc, gfns, structs, mfuncs);
         if (sw.changed) {
-          return ClosureLift { body: cl_replace_at(body, i, ast.StmtWhile { cond: w.cond, body: sw.body, label: w.label, line: 0, is_loop: w.is_loop, todo: w.todo }), acc: sw.acc, changed: true };
+          return ClosureLift { body: cl_replace_at(body, i, ast.StmtWhile { cond: w.cond, body: sw.body, label: w.label, line: 0, is_loop: w.is_loop }), acc: sw.acc, changed: true };
         }
       },
       ast.StmtFor(fr) => {
@@ -854,7 +854,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
   let bd: ast.Stmt[] = [];
   let cj: i32 = 0;
   while (cj < caps.len()) {
-    let idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
+    let idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
     bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
     cj = cj + 1;
   }
@@ -864,7 +864,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     bk = bk + 1;
   }
   let notp: string[] = [];
-  let clo: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: cloname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [] };
+  let clo: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: cloname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [] };
   return HoistResult { func: clo, ok: true };
 }
 
@@ -892,10 +892,10 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
   let capargs: ast.Expr[] = [];
   let ci: i32 = 0;
   while (ci < caps.len()) {
-    capargs = capargs.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "" });
+    capargs = capargs.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "", builtin: false });
     ci = ci + 1;
   }
-  let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + cloname, line: 0, col: 0, ty: "" }, args: capargs, line: 0, col: 0, type_args: [], ty: "" };
+  let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + cloname, line: 0, col: 0, ty: "", builtin: false }, args: capargs, line: 0, col: 0, type_args: [], ty: "" };
   return InlineCloRes { expr: marker, funcs: funcs.append(hr.func), counter: counter + 1 };
 }
 
@@ -907,11 +907,11 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
     pj = pj + 1;
   }
   let notp: string[] = [];
-  return parser.FuncDecl { stdlib: "", no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+  return parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
 }
 
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-  let none: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+  let none: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
   let fi: i32 = 0;
   while (fi < mfuncs.decls.len()) {
     if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
@@ -921,17 +921,17 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
       let pj: i32 = 0;
       while (pj < tgt.params.len()) {
         ps = ps.append(tgt.params[pj]);
-        args = args.append(ast.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0, ty: "" });
+        args = args.append(ast.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0, ty: "", builtin: false });
         pj = pj + 1;
       }
-      let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: fnname, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
+      let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: fnname, line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
       let body: ast.Stmt = ast.StmtReturn { value: call, line: 0, col: 0 };
       if (tgt.ret_type == "void") {
         body = ast.StmtExpr { value: call, line: 0 };
       }
       let bd: ast.Stmt[] = [body];
       let notp: string[] = [];
-      return HoistResult { func: parser.FuncDecl { stdlib: "", no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, ok: true };
+      return HoistResult { func: parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, ok: true };
     }
     fi = fi + 1;
   }
@@ -963,7 +963,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, fu
       }
       let wn: string = clo_owner_name(fd) + "$wrap" + util.i32_to_string(counter);
       let wf: parser.FuncDecl = make_wrap_lambda_func(lam, wn);
-      let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+      let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "", builtin: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
       return InlineCloRes { expr: marker, funcs: funcs.append(wf), counter: counter + 1 };
     },
     ast.ExprIdent(id) => {
@@ -975,7 +975,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, fu
       if (!hr.ok) {
         return InlineCloRes { expr: e, funcs: funcs, counter: counter };
       }
-      let marker2: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn2, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+      let marker2: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn2, line: 0, col: 0, ty: "", builtin: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
       return InlineCloRes { expr: marker2, funcs: with_hoisted(funcs, hr.func), counter: counter + 1 };
     },
     ast.ExprCall(c) => {
@@ -2264,7 +2264,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
       return InlineCloRes { expr: ast.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter };
     }
     ps = ps.append(cp);
-    args = args.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "" });
+    args = args.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "", builtin: false });
     ci = ci + 1;
   }
   let nm: string = clo_owner_name(fd) + "$iife" + util.i32_to_string(counter);
@@ -2277,8 +2277,8 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     fnptys = armptys;
   }
   let dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-  let nf: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [] };
-  let ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
+  let nf: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [] };
+  let ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
   return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
 
@@ -2844,7 +2844,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, vars:
             let wn: string = named_wrap_name(vid.name, fd, ct, mfuncs);
             let hr: HoistResult = make_wrap_named_func(vid.name, wn, mfuncs);
             if (hr.ok) {
-              let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+              let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "", builtin: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
               return (ast.StmtVar { ...v, init: marker }, InlineCloAcc { funcs: with_hoisted(fs, hr.func), counter: ct + 1 }, true);
             }
           }
@@ -3161,12 +3161,12 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 }
 
 function wcap_cell_decl(c: string, ty: string): ast.Stmt {
-  let src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "" };
+  let src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "", builtin: false };
   return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
 }
 
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
-  let cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "" };
+  let cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "", builtin: false };
   let idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
   return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
 }
@@ -3369,7 +3369,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
     ast.StmtWhile(w) => {
       let cr: WCapExpr = wcap_expr(w.cond, fd, gfns, structs, mfuncs, acc, atargets);
       let wb: WCapBody = box_wide_captures_stmts(w.body, fd, gfns, structs, mfuncs, atargets);
-      return WCapStmt { stmt: ast.StmtWhile { cond: cr.expr, body: wb.stmts, label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo }, caps: cr.caps, changed: cr.changed || wb.changed };
+      return WCapStmt { stmt: ast.StmtWhile { cond: cr.expr, body: wb.stmts, label: w.label, line: w.line, is_loop: w.is_loop }, caps: cr.caps, changed: cr.changed || wb.changed };
     },
     ast.StmtFor(fr) => {
       let itr: WCapExpr = wcap_expr(fr.iter, fd, gfns, structs, mfuncs, acc, atargets);
@@ -3644,7 +3644,7 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
   let pi: i32 = 0;
   while (pi < boxed.len()) {
     if (bsites[pi].len() == 0 && is_param_name(fd.params, boxed[pi])) {
-      let pref: ast.Expr = ast.ExprIdent { name: boxed[pi], line: fd.line, col: fd.col, ty: "" };
+      let pref: ast.Expr = ast.ExprIdent { name: boxed[pi], line: fd.line, col: fd.col, ty: "", builtin: false };
       pcells = pcells.append(capturebox.cell_decl(boxed[pi], btypes[pi], pref, fd.line, fd.col));
     }
     pi = pi + 1;

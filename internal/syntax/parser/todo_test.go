@@ -20,21 +20,20 @@ func firstStmtOfFunc(t *testing.T, prog *ast.Program, name string) ast.Stmt {
 	return nil
 }
 
-func requireTodoLoop(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Loop {
+func requireTodoBlock(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Block {
 	t.Helper()
-	lp, ok := s.(*ast.Loop)
+	body, ok := s.(*ast.Block)
 	if !ok {
-		t.Fatalf("stmt = %T, want *ast.Loop", s)
+		t.Fatalf("stmt = %T, want *ast.Block", s)
 	}
-	if !lp.IsTodo {
-		t.Fatalf("Loop.IsTodo = false, want true")
+	if !body.IsTodo {
+		t.Fatalf("Block.IsTodo = false, want true")
 	}
-	if (lp.TodoMsg != nil) != wantMsg {
-		t.Fatalf("Loop.TodoMsg present = %v, want %v", lp.TodoMsg != nil, wantMsg)
+	if (body.TodoMsg != nil) != wantMsg {
+		t.Fatalf("Block.TodoMsg present = %v, want %v", body.TodoMsg != nil, wantMsg)
 	}
-	body, ok := lp.Body.(*ast.Block)
-	if !ok || len(body.Stmts) != 2 {
-		t.Fatalf("todo body = %T with %d stmts, want *ast.Block with 2", lp.Body, len(body.Stmts))
+	if len(body.Stmts) != 2 {
+		t.Fatalf("todo body has %d stmts, want 2", len(body.Stmts))
 	}
 	es0, ok := body.Stmts[0].(*ast.ExprStmt)
 	if !ok {
@@ -44,8 +43,8 @@ func requireTodoLoop(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Loop {
 	if !ok {
 		t.Fatalf("body[0] expr = %T, want *ast.Call", es0.Expr)
 	}
-	if id, ok := call0.Callee.(*ast.Ident); !ok || id.Name != "eprint" {
-		t.Fatalf("body[0] callee = %v, want eprint", call0.Callee)
+	if id, ok := call0.Callee.(*ast.Ident); !ok || id.Name != "eprint" || !id.Builtin {
+		t.Fatalf("body[0] callee = %#v, want the builtin eprint", call0.Callee)
 	}
 	es1, ok := body.Stmts[1].(*ast.ExprStmt)
 	if !ok {
@@ -55,14 +54,14 @@ func requireTodoLoop(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Loop {
 	if !ok {
 		t.Fatalf("body[1] expr = %T, want *ast.Call", es1.Expr)
 	}
-	if id, ok := call1.Callee.(*ast.Ident); !ok || id.Name != "exit" {
-		t.Fatalf("body[1] callee = %v, want exit", call1.Callee)
+	if id, ok := call1.Callee.(*ast.Ident); !ok || id.Name != "exit" || !id.Builtin {
+		t.Fatalf("body[1] callee = %#v, want the builtin exit", call1.Callee)
 	}
 	num, ok := call1.Args[0].(*ast.NumberLit)
 	if !ok || num.Value != 101 {
 		t.Fatalf("exit arg = %v, want 101", call1.Args[0])
 	}
-	return lp
+	return body
 }
 
 func TestParseTodoBare(t *testing.T) {
@@ -70,7 +69,7 @@ func TestParseTodoBare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	requireTodoLoop(t, firstStmtOfFunc(t, prog, "f"), false)
+	requireTodoBlock(t, firstStmtOfFunc(t, prog, "f"), false)
 	if len(prog.TodoSites) != 1 {
 		t.Fatalf("TodoSites = %d entries, want 1", len(prog.TodoSites))
 	}
@@ -84,12 +83,11 @@ func TestParseTodoWithMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	lp := requireTodoLoop(t, firstStmtOfFunc(t, prog, "f"), true)
-	msg, ok := lp.TodoMsg.(*ast.StringLit)
+	body := requireTodoBlock(t, firstStmtOfFunc(t, prog, "f"), true)
+	msg, ok := body.TodoMsg.(*ast.StringLit)
 	if !ok || msg.Value != "wide-K maps" {
-		t.Fatalf("TodoMsg = %#v, want StringLit \"wide-K maps\"", lp.TodoMsg)
+		t.Fatalf("TodoMsg = %#v, want StringLit \"wide-K maps\"", body.TodoMsg)
 	}
-	body := lp.Body.(*ast.Block)
 	call := body.Stmts[0].(*ast.ExprStmt).Expr.(*ast.Call)
 	bin, ok := call.Args[0].(*ast.Binary)
 	if !ok || bin.Op != "+" {
@@ -105,7 +103,7 @@ func TestParseTodoEmptyParens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	requireTodoLoop(t, firstStmtOfFunc(t, prog, "f"), false)
+	requireTodoBlock(t, firstStmtOfFunc(t, prog, "f"), false)
 }
 
 func TestTodoUsableAsIdentifier(t *testing.T) {

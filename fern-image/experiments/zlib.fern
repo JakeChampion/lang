@@ -1,0 +1,56 @@
+import "std/deflate";
+import "std/test";
+
+function stored(): u8[] {
+  return [120 as u8, 1 as u8, 1 as u8, 33 as u8, 0 as u8, 222 as u8, 255 as u8, 70 as u8, 101 as u8, 114 as u8, 110 as u8, 32 as u8, 80 as u8, 78 as u8, 71 as u8, 32 as u8, 99 as u8, 111 as u8, 109 as u8, 112 as u8, 114 as u8, 101 as u8, 115 as u8, 115 as u8, 105 as u8, 111 as u8, 110 as u8, 32 as u8, 102 as u8, 111 as u8, 117 as u8, 110 as u8, 100 as u8, 97 as u8, 116 as u8, 105 as u8, 111 as u8, 110 as u8, 46 as u8, 32 as u8, 202 as u8, 24 as u8, 12 as u8, 8 as u8];
+}
+
+function fixed(): u8[] {
+  return [120 as u8, 1 as u8, 115 as u8, 75 as u8, 45 as u8, 202 as u8, 83 as u8, 8 as u8, 240 as u8, 115 as u8, 87 as u8, 72 as u8, 206 as u8, 207 as u8, 45 as u8, 40 as u8, 74 as u8, 45 as u8, 46 as u8, 206 as u8, 204 as u8, 207 as u8, 83 as u8, 72 as u8, 203 as u8, 47 as u8, 205 as u8, 75 as u8, 73 as u8, 44 as u8, 1 as u8, 50 as u8, 245 as u8, 20 as u8, 220 as u8, 70 as u8, 21 as u8, 140 as u8, 42 as u8, 24 as u8, 85 as u8, 48 as u8, 170 as u8, 96 as u8, 84 as u8, 193 as u8, 168 as u8, 130 as u8, 81 as u8, 5 as u8, 163 as u8, 10 as u8, 70 as u8, 21 as u8, 140 as u8, 42 as u8, 24 as u8, 85 as u8, 48 as u8, 170 as u8, 96 as u8, 84 as u8, 193 as u8, 168 as u8, 130 as u8, 81 as u8, 5 as u8, 163 as u8, 10 as u8, 40 as u8, 83 as u8, 0 as u8, 0 as u8, 154 as u8, 175 as u8, 3 as u8, 219 as u8];
+}
+
+function dynamic(): u8[] {
+  return [120 as u8, 156 as u8, 237 as u8, 202 as u8, 177 as u8, 13 as u8, 192 as u8, 32 as u8, 12 as u8, 0 as u8, 193 as u8, 85 as u8, 60 as u8, 1 as u8, 99 as u8, 56 as u8, 29 as u8, 202 as u8, 10 as u8, 17 as u8, 113 as u8, 36 as u8, 10 as u8, 108 as u8, 4 as u8, 201 as u8, 254 as u8, 97 as u8, 7 as u8, 218 as u8, 239 as u8, 174 as u8, 56 as u8, 181 as u8, 225 as u8, 114 as u8, 230 as u8, 67 as u8, 74 as u8, 180 as u8, 62 as u8, 108 as u8, 206 as u8, 26 as u8, 46 as u8, 79 as u8, 124 as u8, 126 as u8, 95 as u8, 239 as u8, 98 as u8, 18 as u8, 37 as u8, 16 as u8, 8 as u8, 4 as u8, 2 as u8, 129 as u8, 64 as u8, 32 as u8, 16 as u8, 8 as u8, 4 as u8, 2 as u8, 129 as u8, 64 as u8, 216 as u8, 11 as u8, 63 as u8, 154 as u8, 175 as u8, 3 as u8, 219 as u8];
+}
+
+function known(stream: u8[], expected: i32): boolean {
+  let out = match (deflate.zlib_decode(stream, 4224)) { Ok(v) => v, Err(_) => { return false; } };
+  if (out.len() != expected) {
+    return false;
+  }
+  let phrase: string = "Fern PNG compression foundation. ";
+  let i = 0;
+  while (i < out.len()) {
+    if (out[i] != phrase[i % phrase.len()]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function golden(): test.TestOutcome {
+  return test.assert_true(known(stored(), 33) && known(fixed(), 4224) && known(dynamic(), 4224));
+}
+
+function limited(): test.TestOutcome {
+  let limited = match (deflate.zlib_decode(dynamic(), 4223)) { Ok(_) => false, Err(deflate.OutputLimit()) => true, Err(_) => false };
+  let zero = match (deflate.zlib_decode(dynamic(), 0)) { Ok(_) => false, Err(deflate.OutputLimit()) => true, Err(_) => false };
+  return test.assert_true(limited && zero);
+}
+
+function corrupt(): test.TestOutcome {
+  let stream = dynamic();
+  let checksum = match (deflate.zlib_decode(stream.with(stream.len() - 1, 0 as u8), 4224)) { Ok(_) => false, Err(deflate.BadChecksum()) => true, Err(_) => false };
+  let truncated = match (deflate.zlib_decode(stream[:stream.len() - 1], 4224)) { Ok(_) => false, Err(_) => true };
+  let header = match (deflate.zlib_decode(stream.with(0, 0 as u8), 4224)) { Ok(_) => false, Err(_) => true };
+  return test.assert_true(checksum && truncated && header);
+}
+
+function main(): i32 {
+  let r = test.test_new("native PNG compression audit");
+  r = r.it("stored, fixed and dynamic zlib goldens", golden);
+  r = r.it("exact decompression limit", limited);
+  r = r.it("checksum, truncation and header rejection", corrupt);
+  return r.finish();
+}

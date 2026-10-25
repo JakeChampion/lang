@@ -40,6 +40,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module connects HTTP/3 protocol state to a QUIC connection.
+
+import "std/i32";
+import "std/unicode";
+// This module connects HTTP/3 protocol state to a QUIC connection.
 ```
 
 ### `dependencies 2`
@@ -370,7 +374,7 @@ function __response(p: Partial): HttpResponse {
   let hs: HeaderMap = headers.header_map_new();
   for f in p.fields {
     if (f.name == ":status") {
-      status = f.value.parse_int_or(0);
+      status = i32.parse_i32(f.value).unwrap_or(0);
     } else if (!f.name.starts_with(":")) {
       hs = hs.append(f.name, f.value);
     }

@@ -98,7 +98,7 @@ Unknown capabilities do not support production features in M0.
 | Profiling | Documented, not executed | `-g`, `FERN_PROFILE`, and pprof output appear in tooling reference |
 | Alternate targets | Listed, not verified | `fern -targets` lists ARM64 and WASI. M0 runs only on x86-64 Linux |
 | Recoverable allocation failure | Unknown or absent in current API | `__alloc_u8` returns an array, not Result. No forced OOM probe |
-| Native zlib/DEFLATE | Present in source, unverified | `std/deflate.fern.md` exists. PNG compatibility requires an independent audit |
+| Native zlib/DEFLATE | Selected native paths verified | See [compression audit](compression-audit.md) for stored, fixed, dynamic, limit, and checksum probes |
 
 `__alloc_u8` is an internal-style compiler builtin used by the standard library.
 The probe verifies it on this compiler only.
