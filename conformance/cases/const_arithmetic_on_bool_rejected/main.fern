@@ -1,0 +1,9 @@
+// An ill-typed const initializer is a type error, reported at the
+// operator like the same expression anywhere else. B reads A, and adds
+// no diagnostic of its own.
+const A: i32 = 1 + true;
+const B: i32 = A + 1;
+
+function main(): i32 {
+    return B;
+}

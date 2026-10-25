@@ -1,0 +1,8 @@
+return value: expected P, got P[i32]
+argument 1 to "take": expected P, got P[i32]
+argument 1 to "size": expected Bag, got Bag[i32]
+array element: expected P, got P[i32]
+field "p": expected P, got P[i32]
+variable "w": expected W, got W[i32]
+variable "o": expected Option[P], got Option[P[i32]]
+variable "l": expected Q, got Q[i32, _]

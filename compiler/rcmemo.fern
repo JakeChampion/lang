@@ -7,7 +7,7 @@ import "std/envflag";
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
 
 function version(): string {
-  return "9";
+  return "10";
 }
 
 function keep(): i32 {
@@ -101,7 +101,8 @@ pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rcc
 function roll_abi(d: i64, a: rccertify.Abi): i64 {
   let out: i64 = util.roll_words(util.roll_flag(d, a.known), a.modes);
   out = util.roll_flag(util.roll_flag(out, a.result_unit), a.pair_first);
-  return util.roll_flag(util.roll(out, a.pair_second), a.result_word);
+  out = util.roll(util.roll(util.roll(out, a.pair_second), a.split_second), a.split_third);
+  return util.roll_flag(out, a.result_word);
 }
 
 pub function hit(m: Memo, k: string): boolean {

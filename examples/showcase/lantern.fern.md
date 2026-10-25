@@ -32,6 +32,7 @@ Lengths include the title and body. The index also retains byte and token counts
 <<Documents and postings>>=
 import "std/array";
 import "std/string";
+import "std/unicode";
 import "std/result";
 import "std/option";
 import "std/json";

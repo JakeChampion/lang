@@ -156,8 +156,8 @@ func TestParseAssertDesugar(t *testing.T) {
 		if !ok {
 			t.Fatalf("stmt %d: then[0] not a Call", idx)
 		}
-		if id, ok := epCall.Callee.(*ast.Ident); !ok || id.Name != "eprint" {
-			t.Errorf("stmt %d: then[0] callee should be eprint, got %v", idx, epCall.Callee)
+		if id, ok := epCall.Callee.(*ast.Ident); !ok || id.Name != "eprint" || !id.Builtin {
+			t.Errorf("stmt %d: then[0] callee should be the builtin eprint, got %#v", idx, epCall.Callee)
 		}
 		_, isConcat := epCall.Args[0].(*ast.Binary)
 		if isConcat != wantConcat {
@@ -171,8 +171,8 @@ func TestParseAssertDesugar(t *testing.T) {
 		if !ok {
 			t.Fatalf("stmt %d: then[1] not a Call", idx)
 		}
-		if id, ok := exCall.Callee.(*ast.Ident); !ok || id.Name != "exit" {
-			t.Errorf("stmt %d: then[1] callee should be exit, got %v", idx, exCall.Callee)
+		if id, ok := exCall.Callee.(*ast.Ident); !ok || id.Name != "exit" || !id.Builtin {
+			t.Errorf("stmt %d: then[1] callee should be the builtin exit, got %#v", idx, exCall.Callee)
 		}
 	}
 	check(0, true)
@@ -2411,6 +2411,76 @@ function f(): i32 {
 	}
 	if len(m.Arms[1].Body.Stmts) != 1 {
 		t.Errorf("else arm should hold the else block; got %+v", m.Arms[1].Body.Stmts)
+	}
+}
+
+func TestIfLetRecordsChainedElse(t *testing.T) {
+	for _, tc := range []struct {
+		name, els string
+		chained   bool
+	}{
+		{"else-if-let", `else if let Some(y) = o { return y; }`, true},
+		{"else-if", `else if (true) { return 2; }`, true},
+		{"else-block-if-let", `else { if let Some(y) = o { return y; } }`, false},
+		{"else-block", `else { return 3; }`, false},
+		{"no-else", ``, false},
+	} {
+		prog, err := Parse(`enum Option[T] { Some(T), None }
+function f(o: Option[i32]): i32 {
+	if let Some(x) = o { return x; } ` + tc.els + `
+	return 0;
+}`)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+		if !ok {
+			t.Fatalf("%s: first stmt should be the desugared *ast.Match; got %T", tc.name, prog.Funcs[0].Body.Stmts[0])
+		}
+		if m.ElseChained != tc.chained {
+			t.Errorf("%s: ElseChained = %v, want %v", tc.name, m.ElseChained, tc.chained)
+		}
+	}
+}
+
+func TestValueIfRecordsChainedElse(t *testing.T) {
+	for _, tc := range []struct {
+		name, expr string
+		chained    bool
+	}{
+		{"if-else-if", `if (n > 1) { 1 } else if (n > 0) { 2 } else { 3 }`, true},
+		{"if-else-if-let", `if (n > 1) { 1 } else if let Some(y) = o { y } else { 3 }`, true},
+		{"if-else-block-if", `if (n > 1) { 1 } else { if (n > 0) { 2 } else { 3 } }`, false},
+		{"if-else", `if (n > 1) { 1 } else { 3 }`, false},
+		{"if-let-else-if-let", `if let Some(x) = o { x } else if let Some(y) = o { y } else { 0 }`, true},
+		{"if-let-else-if", `if let Some(x) = o { x } else if (n > 0) { 2 } else { 0 }`, true},
+		{"if-let-else-block-if-let", `if let Some(x) = o { x } else { if let Some(y) = o { y } else { 0 } }`, false},
+		{"if-let-else", `if let Some(x) = o { x } else { 0 }`, false},
+	} {
+		prog, err := Parse(`enum Option[T] { Some(T), None }
+function f(o: Option[i32], n: i32): i32 {
+	let r: i32 = ` + tc.expr + `;
+	return r;
+}`)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		v, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+		if !ok {
+			t.Fatalf("%s: first stmt should be *ast.Var; got %T", tc.name, prog.Funcs[0].Body.Stmts[0])
+		}
+		var got bool
+		switch x := v.Init.(type) {
+		case *ast.IfExpr:
+			got = x.ElseChained
+		case *ast.MatchExpr:
+			got = x.ElseChained
+		default:
+			t.Fatalf("%s: initialiser should be *ast.IfExpr or *ast.MatchExpr; got %T", tc.name, v.Init)
+		}
+		if got != tc.chained {
+			t.Errorf("%s: ElseChained = %v, want %v", tc.name, got, tc.chained)
+		}
 	}
 }
 
