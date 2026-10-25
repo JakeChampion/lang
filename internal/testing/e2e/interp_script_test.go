@@ -685,12 +685,12 @@ func TestInterpScriptTimeTypes(t *testing.T) {
 		wantExit                 int
 	}{
 		{
-			name: "Instant from unix seconds",
+			name: "Timestamp from unix seconds",
 			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    let ts: Instant = time.instant_from_unix(1700000000 as i64);
+    let ts: time.Timestamp = time.timestamp_from_unix(1700000000 as i64);
     print(ts.sec.to_string());
     return ts.nsec;
 }`,
@@ -752,25 +752,28 @@ function main(): i32 {
 			wantStdout: "724\n",
 		},
 		{
-			name: "TimeZone UTC carries name + zero offset",
+			name: "UTC zone carries its abbreviation + zero offset",
 			source: `import "std/time";
+import "std/tz";
 function main(): i32 {
-    let utc: TimeZone = time.timezone_utc();
-    print(utc.name);
-    return utc.offset_seconds;
+    let utc: tz.Zone = tz.utc_zone();
+    let t0: time.Timestamp = time.timestamp_from_unix(0 as i64);
+    print(utc.abbrev_at(t0));
+    return utc.offset_at(t0);
 }`,
 			wantStdout: "UTC\n",
 		},
 		{
-			name: "Zoned struct composes Instant + TimeZone",
+			name: "Zoned struct composes Timestamp + Zone",
 			source: `import "std/time";
+import "std/tz";
 function main(): i32 {
-    let z: Zoned = Zoned {
-        instant: time.instant_from_unix(0 as i64),
-        zone: time.timezone_utc(),
+    let z: tz.Zoned = tz.Zoned {
+        timestamp: time.timestamp_from_unix(0 as i64),
+        zone: tz.utc_zone(),
     };
-    print(z.zone.name);
-    return z.instant.nsec;
+    print(z.zone.abbrev_at(z.timestamp));
+    return z.timestamp.nsec;
 }`,
 			wantStdout: "UTC\n",
 		},
@@ -809,14 +812,15 @@ function main(): i32 {
 	}
 }
 
-func TestInterpScriptInstantNow(t *testing.T) {
+func TestInterpScriptTimestampNow(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := `
 import "std/string";
 import "std/time";
+import "std/clock";
 
 function main(): i32 {
-    let ts: Instant = time.instant_now();
+    let ts: time.Timestamp = clock.now();
     // 1700000000 = 2023-11-14T22:13:20Z. Anything before is
     // either a badly wrong clock or a sign-handling bug.
     if (ts.sec < (1700000000 as i64)) { return 1; }
@@ -1060,27 +1064,27 @@ function main(): i32 {
 			wantStdout: "rejected \nrejected 2026/05/19\nrejected 2026-05-19T00\nACCEPTED 2026-13-01\nrejected abcd-05-19\nrejected 2026-05-XX\nrejected 2026-5-19\n",
 		},
 		{
-			name: "Instant.format_rfc3339 emits canonical Z form",
+			name: "Timestamp.format_rfc3339 emits canonical Z form",
 			source: `import "std/time";
 function main(): i32 {
     // Epoch.
-    print((Instant { sec: 0 as i64, nsec: 0 }).format_rfc3339());
+    print((time.Timestamp { sec: 0 as i64, nsec: 0 }).format_rfc3339());
     // 2025-01-01T00:00:00Z: epoch sec = 55 years * 365.25 * 86400 ≈ 1735689600.
-    print((Instant { sec: 1735689600 as i64, nsec: 0 }).format_rfc3339());
+    print((time.Timestamp { sec: 1735689600 as i64, nsec: 0 }).format_rfc3339());
     // With ns fraction.
-    print((Instant { sec: 0 as i64, nsec: 123456789 }).format_rfc3339());
-    print((Instant { sec: 0 as i64, nsec: 1 }).format_rfc3339());
+    print((time.Timestamp { sec: 0 as i64, nsec: 123456789 }).format_rfc3339());
+    print((time.Timestamp { sec: 0 as i64, nsec: 1 }).format_rfc3339());
     // Pre-epoch (negative sec).
-    print((Instant { sec: (0 as i64) - (1 as i64), nsec: 0 }).format_rfc3339());
+    print((time.Timestamp { sec: (0 as i64) - (1 as i64), nsec: 0 }).format_rfc3339());
     return 0;
 }`,
 			wantStdout: "1970-01-01T00:00:00Z\n2025-01-01T00:00:00Z\n1970-01-01T00:00:00.123456789Z\n1970-01-01T00:00:00.000000001Z\n1969-12-31T23:59:59Z\n",
 		},
 		{
-			name: "instant_parse_rfc3339 round-trips through format",
+			name: "timestamp_parse_rfc3339 round-trips through format",
 			source: `import "std/time";
 function show(s: string): void {
-    match (time.instant_parse_rfc3339(s)) {
+    match (time.timestamp_parse_rfc3339(s)) {
         Some(p) => { print(p.format_rfc3339()); },
         None => { print("rejected"); }
     }
@@ -1099,10 +1103,10 @@ function main(): i32 {
 			wantStdout: "2026-05-19T14:30:00Z\n1970-01-01T00:00:00Z\n2024-02-29T23:59:59Z\n2026-05-19T14:30:00.500000000Z\n2026-05-19T14:30:00.123456789Z\n2023-02-28T23:59:59Z\n2023-12-31T00:00:00Z\n",
 		},
 		{
-			name: "instant_parse_rfc3339 rejects malformed input",
+			name: "timestamp_parse_rfc3339 rejects malformed input",
 			source: `import "std/time";
 function show(s: string): void {
-    match (time.instant_parse_rfc3339(s)) {
+    match (time.timestamp_parse_rfc3339(s)) {
         Some(_) => { print("ACCEPTED"); },
         None => { print("rejected"); }
     }
@@ -1113,7 +1117,7 @@ function main(): i32 {
     show("2026-05-19T14:30:00");                  // missing Z
     show("2026-05-19t14:30:00z");                 // lowercase
     show("2026-05-19 14:30:00Z");                 // space instead of T
-    show("2026-05-19T14:30:00+00:00");            // offset form (Phase 5)
+    show("2026-05-19T14:30:00+0000");             // offset without a colon
     show("2026-05-19T14:30:00.Z");                // empty fraction
     show("2026-05-19T14:30:00.1234567890Z");      // 10-digit fraction
     // RFC 3339 §5.6 constrains every field, so an out-of-range one is a
@@ -1163,29 +1167,36 @@ func TestInterpScriptZonedFixedOffset(t *testing.T) {
 		name, source, wantStdout string
 	}{
 		{
-			name: "timezone_fixed_offset emits canonical UTC±HH:MM names",
-			source: `import "std/time";
+			name: "zoned_parse_rfc3339 names offset zones UTC±HH:MM",
+			source: `import "std/tz";
+function show(s: string): void {
+    match (tz.zoned_parse_rfc3339(s)) {
+        Some(z) => { print(z.zone.abbrev_at(z.timestamp)); },
+        None => { print("rejected"); }
+    }
+}
 function main(): i32 {
-    print(time.timezone_fixed_offset(9 * 3600).name);
-    print(time.timezone_fixed_offset(-5 * 3600).name);
-    print(time.timezone_fixed_offset(0).name);
-    print(time.timezone_fixed_offset(5 * 3600 + 30 * 60).name);   // India +05:30
-    print(time.timezone_fixed_offset(-((9 * 3600) + (30 * 60))).name); // Marquesas -09:30
+    show("2026-05-19T14:30:00+09:00");
+    show("2026-05-19T14:30:00-05:00");
+    show("2026-05-19T14:30:00Z");
+    show("2026-05-19T14:30:00+05:30");   // India +05:30
+    show("2026-05-19T14:30:00-09:30");   // Marquesas -09:30
     return 0;
 }`,
-			wantStdout: "UTC+09:00\nUTC-05:00\nUTC+00:00\nUTC+05:30\nUTC-09:30\n",
+			wantStdout: "UTC+09:00\nUTC-05:00\nUTC\nUTC+05:30\nUTC-09:30\n",
 		},
 		{
 			name: "Zoned shifts wall-clock by offset",
 			source: `import "std/time";
+import "std/tz";
 function main(): i32 {
-    // Pick an arbitrary UTC instant. The wall-clock at the
+    // Pick an arbitrary UTC timestamp. The wall-clock at the
     // zone offsets is exactly UTC ± offset hours.
-    let ts: Instant = Instant { sec: 1735689600 as i64, nsec: 0 };  // 2025-01-01T00:00:00Z
-    print(ts.in_zone(time.timezone_utc()).format_rfc3339());
-    print(ts.in_zone(time.timezone_fixed_offset(9 * 3600)).format_rfc3339());
-    print(ts.in_zone(time.timezone_fixed_offset(-5 * 3600)).format_rfc3339());
-    print(ts.in_zone(time.timezone_fixed_offset(0)).format_rfc3339());  // still Z, offset 0 collapses
+    let ts: time.Timestamp = time.Timestamp { sec: 1735689600 as i64, nsec: 0 };  // 2025-01-01T00:00:00Z
+    print(tz.utc_zone().at(ts).format_rfc3339());
+    print(tz.fixed_zone(9 * 3600, "JST").at(ts).format_rfc3339());
+    print(tz.fixed_zone(-5 * 3600, "EST").at(ts).format_rfc3339());
+    print(tz.fixed_zone(0, "GMT").at(ts).format_rfc3339());  // still Z, offset 0 collapses
     return 0;
 }`,
 			wantStdout: "2025-01-01T00:00:00Z\n2025-01-01T09:00:00+09:00\n2024-12-31T19:00:00-05:00\n2025-01-01T00:00:00Z\n",
@@ -1193,18 +1204,19 @@ function main(): i32 {
 		{
 			name: "Zoned format preserves nanoseconds",
 			source: `import "std/time";
+import "std/tz";
 function main(): i32 {
-    let ts: Instant = Instant { sec: 1735689600 as i64, nsec: 123456789 };
-    print(ts.in_zone(time.timezone_fixed_offset(9 * 3600)).format_rfc3339());
+    let ts: time.Timestamp = time.Timestamp { sec: 1735689600 as i64, nsec: 123456789 };
+    print(tz.fixed_zone(9 * 3600, "JST").at(ts).format_rfc3339());
     return 0;
 }`,
 			wantStdout: "2025-01-01T09:00:00.123456789+09:00\n",
 		},
 		{
 			name: "Zoned round-trip parse / format",
-			source: `import "std/time";
+			source: `import "std/tz";
 function show(s: string): void {
-    match (time.instant_zoned_parse_rfc3339(s)) {
+    match (tz.zoned_parse_rfc3339(s)) {
         Some(z) => { print(z.format_rfc3339()); },
         None => { print("rejected"); }
     }
@@ -1226,16 +1238,17 @@ function main(): i32 {
 		{
 			name: "Parse computes correct UTC instant for an offset",
 			source: `import "std/time";
+import "std/tz";
 function main(): i32 {
     // "2026-05-19T14:30:00+09:00" means wall-clock 14:30 in
     // a +9-hour zone, which is UTC 05:30 on the same date.
     // The equivalent UTC RFC 3339 string parses to the same
-    // Instant.sec.
-    match (time.instant_zoned_parse_rfc3339("2026-05-19T14:30:00+09:00")) {
+    // Timestamp.sec.
+    match (tz.zoned_parse_rfc3339("2026-05-19T14:30:00+09:00")) {
         Some(zonedJp) => {
-            match (time.instant_parse_rfc3339("2026-05-19T05:30:00Z")) {
+            match (time.timestamp_parse_rfc3339("2026-05-19T05:30:00Z")) {
                 Some(utc) => {
-                    if (zonedJp.instant.sec == utc.sec) { print("match"); } else { print("mismatch"); }
+                    if (zonedJp.timestamp.sec == utc.sec) { print("match"); } else { print("mismatch"); }
                 },
                 None => { print("utc parse fail"); }
             }
@@ -1248,9 +1261,9 @@ function main(): i32 {
 		},
 		{
 			name: "Parser rejects malformed zoned input",
-			source: `import "std/time";
+			source: `import "std/tz";
 function show(s: string): void {
-    match (time.instant_zoned_parse_rfc3339(s)) {
+    match (tz.zoned_parse_rfc3339(s)) {
         Some(_) => { print("ACCEPTED"); },
         None => { print("rejected"); }
     }
@@ -1378,50 +1391,50 @@ function main(): i32 {
 			wantStdout: "2026-2-15\n2025-12-15\n2024-12-15\n",
 		},
 		{
-			name: "Instant.add_duration handles nsec carry",
+			name: "Timestamp.add handles nsec carry",
 			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
     // 1000.5 + 5.75 = 1006.25 (carry: 500e6 + 750e6 = 1.25e9 → +1 sec, 250e6 ns).
-    let t1: Instant = Instant { sec: 1000 as i64, nsec: 500000000 };
-    let sum: Instant = t1.add_duration(Duration { sec: 5 as i64, nsec: 750000000 });
+    let t1: time.Timestamp = time.Timestamp { sec: 1000 as i64, nsec: 500000000 };
+    let sum: time.Timestamp = t1.add(Duration { sec: 5 as i64, nsec: 750000000 });
     print(sum.sec.to_string() + "." + sum.nsec.to_string());
 
     // Exact 1-second carry: 999_999_999 + 1 = 1_000_000_000 → +1 sec.
-    let edge: Instant = (Instant { sec: 0 as i64, nsec: 999999999 }).add_duration(Duration { sec: 0 as i64, nsec: 1 });
+    let edge: time.Timestamp = (time.Timestamp { sec: 0 as i64, nsec: 999999999 }).add(Duration { sec: 0 as i64, nsec: 1 });
     print(edge.sec.to_string() + "." + edge.nsec.to_string());
     return 0;
 }`,
 			wantStdout: "1006.250000000\n1.0\n",
 		},
 		{
-			name: "Instant.add_duration with negative shifts backward",
+			name: "Timestamp.add with negative shifts backward",
 			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    let t: Instant = Instant { sec: 1000 as i64, nsec: 0 };
-    let back: Instant = t.add_duration(Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
+    let t: time.Timestamp = time.Timestamp { sec: 1000 as i64, nsec: 0 };
+    let back: time.Timestamp = t.add(Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
     print(back.sec.to_string());
     return 0;
 }`,
 			wantStdout: "990\n",
 		},
 		{
-			name: "Instant.duration_since computes signed delta with borrow",
+			name: "Timestamp.since computes signed delta with borrow",
 			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    let a: Instant = Instant { sec: 1000 as i64, nsec: 200000000 };
-    let b: Instant = Instant { sec: 1005 as i64, nsec: 700000000 };
+    let a: time.Timestamp = time.Timestamp { sec: 1000 as i64, nsec: 200000000 };
+    let b: time.Timestamp = time.Timestamp { sec: 1005 as i64, nsec: 700000000 };
     // b - a = 5.5s
-    let fwd: Duration = b.duration_since(a);
+    let fwd: Duration = b.since(a);
     print(fwd.sec.to_string() + "+" + fwd.nsec.to_string());
     // Borrow case: a - b should produce nsec >= 0 by adjustment.
     // a.nsec(200M) - b.nsec(700M) = -500M → borrow 1 sec, nsec = 500M.
-    let rev: Duration = a.duration_since(b);
+    let rev: Duration = a.since(b);
     print(rev.sec.to_string() + "+" + rev.nsec.to_string());
     return 0;
 }`,

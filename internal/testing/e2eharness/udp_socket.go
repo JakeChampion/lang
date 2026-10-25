@@ -64,7 +64,7 @@ function main(): i32 {
     if (udp_bind(odd, 0) != 0 - eafnosupport()) { return fail(20); }
     if (udp_sendto(a, odd, pb, "x") != 0 - eafnosupport()) { return fail(21); }
     if (target_os() == "wasi") {
-        // wasi:sockets has no blocking mode to switch off, on any socket.
+        // A wasi:sockets datagram socket has no blocking mode to switch off.
         if (tcp_socket_ctl(a, 3, 1) != 0 - 58) { return fail(17); }
     } else {
         if (tcp_socket_ctl(a, 3, 1) != 0) { return fail(17); }
@@ -327,9 +327,8 @@ function main(): i32 {
     if (tcp_socket_ctl(c, 5, 0) != 0) { return fail(6); }
     // Blocking again for the exchange: loopback delivery is not synchronous
     // on every kernel, so a non-blocking read of the reply could find
-    // nothing queued yet. wasm has no blocking mode to switch back to, and
-    // its tcp_recv waits regardless.
-    if (target_os() != "wasi" && tcp_socket_ctl(c, 3, 0) != 0) { return fail(7); }
+    // nothing queued yet.
+    if (tcp_socket_ctl(c, 3, 0) != 0) { return fail(7); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(8); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(9); }

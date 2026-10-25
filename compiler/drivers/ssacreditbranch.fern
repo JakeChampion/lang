@@ -36,10 +36,24 @@ function check(fs: ssa.SFunc[], f: ssa.SFunc, why: string): void {
   }
 }
 
+function block(f: ssa.SFunc, id: i32): ssa.SBlock {
+  for b in f.blocks {
+    if (b.id == id) {
+      return b;
+    }
+  }
+  exit(95);
+  return f.blocks[0];
+}
+
+// The first branch whose true successor is entered only from it and defines a value.
 function conditional(f: ssa.SFunc): ssa.SBlock {
   for b in f.blocks {
-    if (b.term.kind_tag == 3 && b.term.t == b.term.f) {
-      return b;
+    if (b.term.kind_tag == 3 && b.term.t != b.term.f) {
+      let target = block(f, b.term.t);
+      if (target.preds.len() == 1 && target.insts.len() > 0) {
+        return b;
+      }
     }
   }
   exit(95);
@@ -61,11 +75,7 @@ function condition(f: ssa.SFunc, mode: i32): ssa.SFunc {
       } else if (mode == 3) {
         id = 0;
       } else if (mode == 5) {
-        for target in f.blocks {
-          if (target.id == selected.term.t) {
-            id = target.insts[0].result;
-          }
-        }
+        id = block(f, selected.term.t).insts[0].result;
       } else if (mode == 6) {
         for before in f.blocks {
           for op in before.insts {
@@ -107,6 +117,8 @@ function topology(f: ssa.SFunc, mode: i32): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + (if (mode >= 2) { 1 } else { 0 }) };
 }
 
+// Routes the true edge through a block that branches on a false constant, so
+// the block it guards is unreachable and branches on `value`.
 function infeasible(f: ssa.SFunc, value: i32): ssa.SFunc {
   let selected = conditional(f);
   let id: i32 = 0;
@@ -117,18 +129,43 @@ function infeasible(f: ssa.SFunc, value: i32): ssa.SFunc {
   }
   let zero = ssa.SInst { kind_tag: 1, result: f.nvals, args: [], imm: 0, str: "" };
   let bad = ssa.SInst { ...zero, result: f.nvals + 1, imm: value };
-  let dead = ssa.SBlock { id: id, preds: [selected.id], insts: [bad], term: ssa.STerm { ...selected.term, cond: bad.result } };
+  let guard = ssa.SBlock { id: id, preds: [selected.id], insts: [zero], term: ssa.STerm { ...selected.term, cond: zero.result, t: id + 1, f: selected.term.t } };
+  let dead = ssa.SBlock { id: id + 1, preds: [id], insts: [bad], term: ssa.STerm { ...selected.term, cond: bad.result } };
   let blocks: ssa.SBlock[] = [];
   for b in f.blocks {
     let changed = b;
     if (b.id == selected.id) {
-      changed = ssa.SBlock { ...b, insts: b.insts.append(zero), term: ssa.STerm { ...b.term, cond: zero.result, t: id } };
+      changed = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, t: id } };
     } else if (b.id == selected.term.t) {
-      changed = ssa.SBlock { ...b, preds: b.preds.append(id) };
+      changed = ssa.SBlock { ...b, preds: [id, id + 1] };
+    } else if (b.id == selected.term.f) {
+      changed = ssa.SBlock { ...b, preds: b.preds.append(id + 1) };
     }
     blocks = blocks.append(changed);
   }
-  return ssa.SFunc { ...f, nvals: f.nvals + 2, blocks: blocks.append(dead) };
+  return ssa.SFunc { ...f, nvals: f.nvals + 2, blocks: blocks.append(guard).append(dead) };
+}
+
+// Sends both edges of the selected branch to its true successor.
+function converged(f: ssa.SFunc): ssa.SFunc {
+  let selected = conditional(f);
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let changed = b;
+    if (b.id == selected.id) {
+      changed = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, f: b.term.t } };
+    } else if (b.id == selected.term.f) {
+      let preds: i32[] = [];
+      for p in b.preds {
+        if (p != selected.id) {
+          preds = preds.append(p);
+        }
+      }
+      changed = ssa.SBlock { ...b, preds: preds };
+    }
+    blocks = blocks.append(changed);
+  }
+  return ssa.SFunc { ...f, blocks: blocks };
 }
 
 function credit(f: ssa.SFunc): ssa.SFunc {
@@ -175,8 +212,8 @@ pub function run(source: string, target: string): void {
     reversed = reversed.append(f.blocks[i]);
   }
   check(fs, ssa.SFunc { ...f, blocks: reversed }, "proved checked-capacity consumer invocation");
-  check(fs, condition(f, 0), "proved checked-capacity consumer invocation");
-  check(fs, condition(f, 1), "proved checked-capacity consumer invocation");
+  check(fs, condition(f, 0), "releasing a shared child slot");
+  check(fs, condition(f, 1), "storage transfer requires discharged children");
   check(fs, condition(f, 2), "non-Boolean guarded mask");
   check(fs, condition(f, 3), "scalar reuse condition required");
   check(fs, condition(f, 4), "undefined reuse operand");
@@ -188,5 +225,6 @@ pub function run(source: string, target: string): void {
   check(fs, topology(f, 3), "proved checked-capacity consumer invocation");
   check(fs, infeasible(f, 0), "proved checked-capacity consumer invocation");
   check(fs, infeasible(f, 2), "non-Boolean guarded mask");
+  check(fs, converged(f), "invalid reuse terminator");
   check(fs, credit(f), "slot store without local child credit");
 }

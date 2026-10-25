@@ -10,12 +10,10 @@
   <body class="app-page wave-page">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="app-nav">
-      <a class="brand" href="/"
-        ><span class="brand-mark" aria-hidden="true">✳</span> fern<span
-          class="brand-suffix"
-        >
-          / in action</span
-        ></a
+      <a class="brand" href="/" aria-label="Fern, in action home"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
       >
       <nav>
         <a href="/">All examples</a
@@ -25,7 +23,7 @@
     <main id="main">
       <div class="app-heading">
         <section class="app-intro">
-          <div class="eyebrow">04 / SOUND FROM SCRATCH</div>
+          <div class="eyebrow"><span>04</span>SOUND FROM SCRATCH</div>
           <h1>WAV <em>sequencer.</em></h1>
           <p>Build a 16-step pattern. Fern synthesizes it into a WAV file.</p>
           <div class="tech-chips">
@@ -67,12 +65,7 @@
           </div>
           <div class="wave-controls">
             <button class="button primary" id="play">Play ▶</button
-            ><button
-              class="button"
-              id="stop"
-              style="color: #dce8ce; border-color: #506447"
-            >
-              Stop</button
+            ><button class="button" id="stop">Stop</button
             ><label
               >Tempo
               <input
@@ -84,7 +77,7 @@
               /><output id="bpm-value" for="bpm">112</output> BPM</label
             ><label
               >Oscillator
-              <select id="voice" style="border-color: #506447">
+              <select id="voice">
                 <option value="sine">Sine / soft</option>
                 <option value="triangle">Triangle / warm</option>
                 <option value="square">Square / arcade</option>

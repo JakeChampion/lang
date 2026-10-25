@@ -81,4 +81,4 @@ python fern-image/benchmarks/measure_row_cache.py \
 
 The earlier allocation record describes its own compiler and source hashes.
 It does not describe the new cache implementation.
-Decoder providers, fusion, aggregate memory, and worker isolation remain separate work.
+Decoder providers, fusion with cache accounting, aggregate memory, and worker isolation remain separate work.

@@ -16530,7 +16530,7 @@ function orphan_impl_diags(mod: parser.Module): util.Diag[] {
 
 function impl_type_is_local(mod: parser.Module, im: parser.ImplInfo): boolean {
   let base: string = util.base_type_name(im.impl_type);
-  if (!declares_nominal(mod, base)) {
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base) || !declares_nominal(mod, base)) {
     return false;
   }
   if (im.module.len() == 0) {
@@ -17971,12 +17971,12 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return ow_walk_call(c, moved, ctx);
     },
     ast.ExprBinary(b) => {
-      let r1: OwnWalk = ru_expr(b.left, moved, ctx);
-      let r2: OwnWalk = ru_expr(b.right, r1.moved, ctx);
+      let r1: OwnWalk = ru_borrow(b.left, moved, ctx);
+      let r2: OwnWalk = ru_borrow(b.right, r1.moved, ctx);
       return OwnWalk { moved: r2.moved, diags: util.append_diags(r1.diags, r2.diags) };
     },
     ast.ExprUnary(u) => {
-      return ru_expr(u.operand, moved, ctx);
+      return ru_borrow(u.operand, moved, ctx);
     },
     ast.ExprArray(a) => {
       let m: MovedEntry[] = moved;
@@ -18149,10 +18149,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     ast.StmtMatch(m) => {
       let scrut_owned: boolean = ow_is_owned_scrutinee(m.scrutinee, ctx);
       let rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
+      let whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       if let ast.ExprIdent(sid) = m.scrutinee {
         let takes: boolean = false;
         for arm in m.arms {
-          takes = takes || ow_arm_takes_pointer(ctx, arm.pattern);
+          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern);
         }
         if (!takes) {
           rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
@@ -18160,7 +18161,6 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       }
       let mv: MovedEntry[] = rs.moved;
       let d: util.Diag[] = rs.diags;
-      let whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       for arm in m.arms {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
@@ -18171,7 +18171,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         }
         let ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
-        mv = ow_moved_join(mv, ra.moved, block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
+        let arm_moved: MovedEntry[] = ra.moved;
+        for name in actx.owned {
+          if (!util.has_str(ctx.owned, name)) {
+            arm_moved = ow_unmove(arm_moved, rs.moved, name);
+          }
+        }
+        mv = ow_moved_join(mv, arm_moved, block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
       }
       return OwnWalk { moved: mv, diags: d };
     },
@@ -18312,7 +18318,9 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
       return ctx;
     }
     let names: string[] = ctx.owned;
+    let declared: boolean = false;
     for sd in ctx.structs {
+      declared = declared || sd.name == vname;
       if (sd.name == vname && sd.enum_owner.len() == 0) {
         if (binds[0] != "_" && !util.has_str(names, binds[0])) {
           names = names.append(binds[0]);
@@ -18328,9 +18336,18 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
         }
       }
     }
+    if (!declared && ow_builtin_payload_variant(vname) && binds[0] != "_" && !util.has_str(names, binds[0])
+      && ow_type_is_pointer_name(typeinfo.spelling(ctx.scope.lookup(binds[0])), ctx.ofuncs)) {
+      names = names.append(binds[0]);
+    }
     return OwnCtx { ...ctx, owned: names };
   }
   return ctx;
+}
+
+// Some, Ok and Err have no struct declaration, so the arm scope gives the payload's type.
+function ow_builtin_payload_variant(vname: string): boolean {
+  return vname == "Some" || vname == "Ok" || vname == "Err";
 }
 
 function collect_own_funcs(mod: parser.Module): OwnFuncs {

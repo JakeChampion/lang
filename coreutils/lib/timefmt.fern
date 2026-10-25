@@ -2,22 +2,24 @@ import "std/array";
 import "std/string";
 import "std/io_buffered";
 import "./gnu";
+import "std/i64";
+import "std/time";
 import "std/tz";
 
 pub struct Tm { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32, offset: i32, abbrev: string }
 
 pub function break_time(z: tz.Zone, t: i64): Tm {
-  let e: tz.Entry = z.entry_at(t);
-  let c: tz.Civil = tz.civil_at(t + e.off as i64);
-  return Tm { year: c.year, month: c.month, day: c.day, hour: c.hour, min: c.min, sec: c.sec, wday: c.wday, yday: c.yday, offset: e.off, abbrev: e.abbrev };
+  let e: tz.Entry = z.entry_at(time.timestamp_from_unix(t));
+  return Tm { ...civil_at(t + e.off as i64), offset: e.off, abbrev: e.abbrev };
 }
 
-function floor_div(a: i64, b: i64): i64 {
-  return tz.floor_div(a, b);
-}
-
-function floor_mod(a: i64, b: i64): i64 {
-  return tz.floor_mod(a, b);
+// The UTC fields of `local` seconds after the epoch.
+pub function civil_at(local: i64): Tm {
+  let days: i64 = local.div_euclid(86400);
+  let rem: i32 = local.rem_euclid(86400) as i32;
+  let ymd: (i64, i32, i32) = time.civil_from_days(days);
+  let yday: i32 = (days - time.days_from_civil(ymd.0, 1, 1)) as i32;
+  return Tm { year: ymd.0, month: ymd.1, day: ymd.2, hour: rem / 3600, min: rem / 60 % 60, sec: rem % 60, wday: (days + 4).rem_euclid(7) as i32, yday: yday, offset: 0, abbrev: "" };
 }
 
 function pad_zero(): i32 {
@@ -82,9 +84,9 @@ function abbrev3(s: string): string {
 }
 
 function iso_weeks_in(y: i64): i32 {
-  let p: i64 = floor_mod(y + floor_div(y, 4 as i64) - floor_div(y, 100 as i64) + floor_div(y, 400 as i64), 7 as i64);
+  let p: i64 = (y + y.div_euclid(4) - y.div_euclid(100) + y.div_euclid(400)).rem_euclid(7);
   let q: i64 = y - 1 as i64;
-  let pp: i64 = floor_mod(q + floor_div(q, 4 as i64) - floor_div(q, 100 as i64) + floor_div(q, 400 as i64), 7 as i64);
+  let pp: i64 = (q + q.div_euclid(4) - q.div_euclid(100) + q.div_euclid(400)).rem_euclid(7);
   if (p == 4 as i64 || pp == 3 as i64) {
     return 53;
   }
@@ -405,7 +407,7 @@ function century(tm: Tm): (i64, boolean) {
 }
 
 function c_int(v: i64): i64 {
-  let w: i64 = tz.floor_mod(v, 4294967296 as i64);
+  let w: i64 = v.rem_euclid(4294967296);
   if (w >= 2147483648 as i64) {
     return w - 4294967296 as i64;
   }
@@ -450,7 +452,7 @@ function c_century(year: i64): string {
   if (target_os() == "darwin") {
     return apple_yconv(c_int(year - 1900 as i64), false);
   }
-  return tz.floor_div(c_int(c_int(year - 1900 as i64) + 1900 as i64), 100 as i64).to_string();
+  return c_int(c_int(year - 1900 as i64) + 1900 as i64).div_euclid(100).to_string();
 }
 
 function two_digit_year(y: i64): i64 {

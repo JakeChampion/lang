@@ -107,7 +107,8 @@ func ianaData(t *testing.T) (string, int) {
 	return strings.Join(zones, ";"), n
 }
 
-const ianaProgram = `import "std/tz";
+const ianaProgram = `import "std/time";
+import "std/tz";
 import "std/string";
 
 function data(): string {
@@ -125,7 +126,7 @@ function digits(s: string): i64 {
 }
 
 function render(z: tz.Zone, sec: i64): string {
-  let e: tz.Entry = z.entry_at(sec);
+  let e: tz.Entry = z.entry_at(time.timestamp_from_unix(sec));
   let d: string = "0";
   if (e.dst) {
     d = "1";

@@ -1,0 +1,12 @@
+send: 3
+received 3: 65 66 67
+non-blocking: 0
+nothing queued: true
+blocking: 0
+send: 2
+received 2: 68 69
+shutdown: 0
+end of stream: 0
+non-blocking listener: 0
+nothing pending: true
+close: 0 0 0

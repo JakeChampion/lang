@@ -1,0 +1,49 @@
+// The payload of a fresh Result or Option is owned by the function that
+// matches it, so it can move into an `own` parameter. A payload bound in a
+// loop is bound again on each iteration, so moving it there is not a use
+// after move.
+function make(n: i32): Result[i32[], string] { return Ok([n]); }
+function fail(): Result[i32[], string] { return Err("no"); }
+function opt(n: i32): Option[i32[]] { return Some([n]); }
+function keep(own ys: i32[]): i32 { return ys[0]; }
+function keep_text(own s: string): i32 { return s.len() as i32; }
+
+function by_match(): i32 {
+    match (make(1)) {
+        Ok(xs) => { return keep(xs); },
+        Err(_) => { return 0; }
+    }
+    return 0;
+}
+
+function by_error(): i32 {
+    match (fail()) {
+        Ok(_) => { return 0; },
+        Err(e) => { return keep_text(e); }
+    }
+    return 0;
+}
+
+function by_let_else(): i32 {
+    let Some(xs) = opt(4) else { return 0; };
+    let k: i32 = keep(xs);
+    return k;
+}
+
+function in_loop(): i32 {
+    let n: i32 = 0;
+    let total: i32 = 0;
+    while (n < 3) {
+        match (opt(n)) {
+            Some(r) => { total = total + keep(r); },
+            None => { return total; }
+        }
+        n = n + 1;
+    }
+    return total;
+}
+
+function main(): i32 {
+    print(f"{by_match()} {by_error()} {by_let_else()} {in_loop()}");
+    return 0;
+}

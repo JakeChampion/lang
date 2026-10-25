@@ -314,6 +314,22 @@ func writeSocket(conn net.Conn, data []byte, nonblocking bool) (int, error) {
 	return n, nil
 }
 
+// acceptSocket on a non-blocking listener tries one accept and answers
+// os.ErrDeadlineExceeded when no connection is pending.
+func acceptSocket(ln net.Listener, nonblocking bool) (net.Conn, error) {
+	dl, ok := ln.(interface{ SetDeadline(time.Time) error })
+	if !ok {
+		return ln.Accept()
+	}
+	if !nonblocking {
+		dl.SetDeadline(time.Time{})
+		return ln.Accept()
+	}
+	dl.SetDeadline(time.Now().Add(time.Millisecond))
+	defer dl.SetDeadline(time.Time{})
+	return ln.Accept()
+}
+
 func readSocket(conn net.Conn, buf []byte, nonblocking bool) (int, error) {
 	if !nonblocking {
 		conn.SetReadDeadline(time.Time{})

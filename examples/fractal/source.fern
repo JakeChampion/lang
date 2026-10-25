@@ -79,7 +79,7 @@ pub function render_files(name: string, text: string, files: string[]): string {
         html = html.replace(weave.highlight_fern(line), highlight_from(line, name, files));
       }
     }
-    return html.replace_first("<body>", "<body><header style=\"padding:1rem\"><a href=\"/\">← All examples</a> · <a href=\"/_src/\">Application source</a></header>");
+    return html.replace_first("</head>", "<style>" + theme() + lesson_styles() + "</style></head>").replace_first("<body>", "<body>" + header());
   }
   let body: string = "<h1>" + weave.html_escape(name) + "</h1>" + navigation(name, files) + "<pre class=\"code\"><code>";
   let lines: string[] = text.split("\n");
@@ -215,21 +215,54 @@ function navigation(current: string, files: string[]): string {
 
 function layout(title: string, body: string): string {
   return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    + "<title>" + weave.html_escape(title) + " · Fern source</title><style>" + styles() + "</style></head><body>"
-    + "<header><a href=\"/\">← All examples</a><a href=\"/_src/\">Application source</a></header><main>" + body + "</main></body></html>";
+    + "<title>" + weave.html_escape(title) + " · Fern source</title><style>" + theme() + styles() + "</style></head><body>"
+    + header() + "<main>" + body + "</main></body></html>";
+}
+
+function header(): string {
+  return "<header class=\"source-nav\"><a class=\"brand\" href=\"/\">Fern<span>source</span></a>"
+    + "<nav><a href=\"/\">All examples</a><a href=\"/_src/\">Application source</a></nav></header>";
+}
+
+// The palette and fonts of the Fern documentation site, shared with the showcase.
+function theme(): string {
+  return "@font-face{font-family:'Fraunces';font-weight:400 700;font-display:swap;src:url(/assets/fonts/fraunces-400-700-latin.woff2) format('woff2')}"
+    + "@font-face{font-family:'IBM Plex Mono';font-weight:400;font-display:swap;src:url(/assets/fonts/ibm-plex-mono-400-latin.woff2) format('woff2')}"
+    + ":root{color-scheme:dark;--bg:#101a15;--nav:#141f19;--raised:#131e18;--line:#2c3d33;--text:#b9c8be;--strong:#f2f7f3;--muted:#8ba394;--accent:#9ddcbc;--accent-low:#12291f;--spore:#b08331;"
+    + "--kw:#d9b169;--ty:#9ddcbc;--st:#c3d99a;--nu:#e0a387;--display:'Fraunces',Georgia,serif;--mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace}"
+    + "@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#faf7f0;--nav:#f6f2e9;--raised:#f5f1e7;--line:#ddd8c9;--text:#3b4d43;--strong:#16241d;--muted:#5d6f64;--accent:#2b6a4d;--accent-low:#d8f3dc;--spore:#8a6520;"
+    + "--kw:#8a6520;--ty:#2b6a4d;--st:#5b6b1f;--nu:#a4472d}}"
+    + "*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}"
+    + "a{color:var(--accent);text-underline-offset:.22em}a:focus-visible{outline:2px solid var(--spore);outline-offset:2px}"
+    + "h1,h2,h3{color:var(--strong);font-family:var(--display);font-weight:600;font-variation-settings:'SOFT' 30,'WONK' 1;letter-spacing:-.01em}"
+    + ".source-nav{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.5rem 1rem;min-height:3.5rem;padding:.5rem max(1rem,calc((100% - 100rem)/2));background:var(--nav);border-bottom:1px solid var(--line)}"
+    + ".source-nav .brand{display:flex;align-items:baseline;gap:.7rem;color:var(--strong);font:600 1.25rem var(--display);text-decoration:none}"
+    + ".source-nav .brand span{padding-left:.7rem;border-left:1px solid var(--line);font:500 .68rem var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}"
+    + ".source-nav nav{display:flex;gap:.25rem;margin:0;max-height:none}.source-nav nav a{padding:.35rem .65rem;border:0;border-radius:.35rem;color:var(--text);font:.875rem/1.4 inherit;text-decoration:none}"
+    + ".source-nav nav a:hover{color:var(--strong);background:var(--accent-low)}";
 }
 
 function styles(): string {
-  return ":root{color-scheme:dark;--muted:#9ca8be;--accent:#7fe0b0}"
-    + "*{box-sizing:border-box}body{margin:0;background:#090d15;color:#e6edf5;font:15px/1.6 system-ui,sans-serif}"
-    + "header{display:flex;justify-content:space-between;gap:1rem;padding:1rem 1.5rem;border-bottom:1px solid #273145}"
-    + "main{max-width:100rem;margin:auto;padding:1.5rem}h1{font-size:1.5rem;overflow-wrap:anywhere}p{color:var(--muted)}"
-    + "a{color:var(--accent);text-underline-offset:.2em}nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0 1.5rem;max-height:12rem;overflow:auto}"
-    + "nav a{padding:.3rem .7rem;border:1px solid #273145;border-radius:.4rem;text-decoration:none}nav a[aria-current]{background:#1b3a31}"
-    + ".code{overflow-x:auto;padding:1rem 0;background:#101724;border:1px solid #273145;border-radius:.5rem;font:13px/1.7 ui-monospace,monospace;tab-size:2}"
-    + ".line{display:block;min-height:1.7em;padding-right:1rem}.line:target{background:#293b32}"
+  return "main{max-width:100rem;margin:auto;padding:2rem 1.5rem}h1{font-size:2rem;overflow-wrap:anywhere;margin:.5rem 0}p{color:var(--muted)}"
+    + "main nav{display:flex;flex-wrap:wrap;gap:.4rem;margin:1.25rem 0 1.5rem;max-height:12rem;overflow:auto}"
+    + "main nav a{padding:.25rem .6rem;border:1px solid var(--line);border-radius:.25rem;color:var(--text);font:.78rem/1.5 var(--mono);text-decoration:none}"
+    + "main nav a:hover{border-color:var(--accent);color:var(--strong)}main nav a[aria-current]{background:var(--accent-low);border-color:var(--accent);color:var(--strong)}"
+    + ".code{overflow-x:auto;padding:1rem 0;background:var(--raised);border:1px solid var(--line);border-radius:.5rem;color:var(--strong);font:13px/1.7 var(--mono);tab-size:2}"
+    + ".line{display:block;min-height:1.7em;padding-right:1rem}.line:target{background:var(--accent-low);box-shadow:inset 2px 0 var(--spore)}"
     + ".line-number{display:inline-block;width:5em;padding-right:1.5em;color:var(--muted);text-align:right;text-decoration:none;user-select:none}"
-    + ".code .k{color:#ff9abd}.code .t{color:#b8b0ff}.code .s{color:#a9e0a9}.code .n{color:#e9bf8e}.code .c{color:var(--muted)}"
-    + ".import{color:inherit;text-decoration:underline;text-decoration-color:#648476}.import:hover{background:#203329}"
-    + "a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}@media(max-width:600px){main{padding:.75rem}.line-number{width:3.5em;padding-right:1em}}";
+    + ".code .k{color:var(--kw)}.code .t{color:var(--ty)}.code .s{color:var(--st)}.code .n{color:var(--nu)}.code .c{color:var(--muted);font-style:italic}"
+    + ".import{color:inherit;text-decoration:underline;text-decoration-color:var(--line)}.import:hover{background:var(--accent-low)}"
+    + "@media(max-width:600px){main{padding:1rem .75rem}.line-number{width:3.5em;padding-right:1em}}";
+}
+
+// Maps the woven lesson's own variables and type onto the theme.
+function lesson_styles(): string {
+  return ":root{--fg:var(--text);--code-bg:var(--raised);--border:var(--line);--type:var(--ty);--str:var(--st);--com:var(--muted);--num:var(--nu)}"
+    + "main{padding-top:2.5rem}h1{font-size:2.4rem;border:0;line-height:1.1}"
+    + "h2{position:relative;margin-top:2.5em;padding:1.2rem 0 0;border:0;border-top:1px solid var(--line)}"
+    + "h2::before{content:'';position:absolute;top:-1px;left:0;width:2.5rem;height:2px;background:var(--spore)}"
+    + "code,pre.code code,section.chunk-index li{font-family:var(--mono)}code{border-radius:.25rem}"
+    + ".chunk-label{font:500 .75rem/1.5 var(--mono);letter-spacing:.04em}.chunk-name{color:var(--strong)}"
+    + "nav.toc{border-radius:.5rem}nav.toc .toc-title{font:500 .68rem var(--mono);letter-spacing:.14em}"
+    + "blockquote{border-left:2px solid var(--spore)}";
 }

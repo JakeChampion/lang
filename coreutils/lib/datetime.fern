@@ -1,6 +1,8 @@
 import "std/string";
 import "std/array";
 import "std/utf8";
+import "std/i64";
+import "std/time";
 import "std/tz";
 import "./timefmt";
 
@@ -1571,10 +1573,10 @@ function parse_items(pc: Pc, toks: Tok[], bad_word: string): Pc {
   return done(p, i, false);
 }
 
-struct Mk { ok: boolean, t: i64, f: tz.Civil, isdst: boolean, gmtoff: i64 }
+struct Mk { ok: boolean, t: i64, f: timefmt.Tm, isdst: boolean, gmtoff: i64 }
 
 function mk_fail(): Mk {
-  return Mk { ok: false, t: 0, f: tz.civil_at(0), isdst: false, gmtoff: 0 };
+  return Mk { ok: false, t: 0, f: timefmt.civil_at(0), isdst: false, gmtoff: 0 };
 }
 
 function year_ok(y: i64): boolean {
@@ -1586,7 +1588,7 @@ function big(v: i64): boolean {
 }
 
 function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, isdst: i32, hint: i64): Mk {
-  let q: i64 = tz.floor_div(mon, 12 as i64);
+  let q: i64 = mon.div_euclid(12);
   let m: i32 = (mon - q * (12 as i64)) as i32 + 1;
   let y: i64 = year + q;
   if (!year_ok(y) || big(mday) || big(hour) || big(min) || big(sec)) {
@@ -1599,7 +1601,7 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
   if (sec_clamped > 59 as i64) {
     sec_clamped = 59;
   }
-  let days: i64 = tz.days_from_civil(y, m, 1) + mday - 1 as i64;
+  let days: i64 = time.days_from_civil(y, m, 1) + mday - 1 as i64;
   let local: i64 = days * (86400 as i64) + hour * (3600 as i64) + min * (60 as i64) + sec_clamped;
   let t: i64 = local - hint;
   let prev: i64 = t;
@@ -1607,7 +1609,7 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
   let found: boolean = false;
   let n: i32 = 0;
   while (n < 64 && !found) {
-    let off: i64 = z.offset_at(t) as i64;
+    let off: i64 = z.offset_at(time.timestamp_from_unix(t)) as i64;
     let t1: i64 = local - off;
     if (t1 == t) {
       found = true;
@@ -1625,7 +1627,7 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
     }
     n = n + 1;
   }
-  if (isdst >= 0 && isdst != 0 != z.is_dst_at(t)) {
+  if (isdst >= 0 && isdst != 0 != z.is_dst_at(time.timestamp_from_unix(t))) {
     let want: boolean = isdst != 0;
     let delta: i64 = 601200;
     let bound: i64 = 268828200;
@@ -1640,8 +1642,8 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
         if (dir == 1) {
           ot = t + delta;
         }
-        if (z.is_dst_at(ot) == want) {
-          t = local - z.offset_at(ot) as i64;
+        if (z.is_dst_at(time.timestamp_from_unix(ot)) == want) {
+          t = local - z.offset_at(time.timestamp_from_unix(ot)) as i64;
           settled = true;
         }
         dir = dir + 1;
@@ -1659,12 +1661,12 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
   if (sec_clamped != sec) {
     t = t + sec - sec_clamped;
   }
-  let e: tz.Entry = z.entry_at(t);
-  let f: tz.Civil = tz.civil_at(t + e.off as i64);
+  let e: tz.Entry = z.entry_at(time.timestamp_from_unix(t));
+  let f: timefmt.Tm = timefmt.civil_at(t + e.off as i64);
   return Mk { ok: year_ok(f.year), t: t, f: f, isdst: e.dst, gmtoff: e.off as i64 };
 }
 
-function mktime_ok(year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, f: tz.Civil): boolean {
+function mktime_ok(year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, f: timefmt.Tm): boolean {
   return f.year == year && (f.month - 1) as i64 == mon && f.day as i64 == mday && f.hour as i64 == hour && f.min as i64 == min && f.sec as i64 == sec;
 }
 
@@ -1705,7 +1707,7 @@ function fields_text(year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i
   return "(Y-M-D) " + timefmt.c_year(year) + "-" + pad(mon + 1 as i64, 2) + "-" + pad(mday, 2) + " " + pad(hour, 2) + ":" + pad(min, 2) + ":" + pad(sec, 2);
 }
 
-function civil_text(f: tz.Civil): string {
+function civil_text(f: timefmt.Tm): string {
   return fields_text(f.year, (f.month - 1) as i64, f.day as i64, f.hour as i64, f.min as i64, f.sec as i64);
 }
 
@@ -1739,7 +1741,7 @@ function trace_not_ok(pc: Pc, year: i64, mon: i64, mday: i64, hour: i64, min: i6
   p = dline(p, "    user provided time: '" + fields_tz(pc, fields_text(year, mon, mday, hour, min, sec)) + "'");
   if (r.ok) {
     p = dline(p, "       normalized time: '" + fields_tz(pc, civil_text(r.f)) + "'");
-    let f: tz.Civil = r.f;
+    let f: timefmt.Tm = r.f;
     let line: string = right(mark(f.year == year, "----"), 37) + " " + right(mark((f.month - 1) as i64 == mon, "--"), 2) + " " + right(mark(f.day as i64 == mday, "--"), 2) + " " + right(mark(f.hour as i64 == hour, "--"), 2) + " " + right(mark(f.min as i64 == min, "--"), 2) + " " + right(mark(f.sec as i64 == sec, "--"), 2);
     let end: i32 = line.len();
     while (end > 0 && line[end - 1] as i32 == 32) {
@@ -1959,7 +1961,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     pc = dline(pc, "'" + fields_tz(pc, civil_text(r.f)) + "' = " + start.to_string() + " epoch-seconds");
   }
   let sum_ns: i64 = nsec + pc.rel.ns;
-  let norm_ns: i64 = tz.floor_mod(sum_ns, 1000000000 as i64);
+  let norm_ns: i64 = sum_ns.rem_euclid(1000000000);
   let norm_sec: i64 = (sum_ns - norm_ns) / (1000000000 as i64);
   if (pc.rel.minutes > 153722867280912930 as i64 || pc.rel.minutes < 0 as i64 - 153722867280912930 as i64 || pc.rel.hour > 2562047788015215 as i64 || pc.rel.hour < 0 as i64 - 2562047788015215 as i64) {
     pc = dline(pc, "error: adding relative time caused an overflow");
@@ -1982,7 +1984,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     if (pc.debug) {
       pc = dline(pc, "    new time = " + start.to_string() + " epoch-seconds");
     }
-    if (z.is_dst_at(start) != r.isdst) {
+    if (z.is_dst_at(time.timestamp_from_unix(start)) != r.isdst) {
       pc = dline(pc, "warning: daylight saving time changed after time adjustment");
     }
   }
@@ -1996,7 +1998,7 @@ function local_of(r: Mk): i64 {
 function local_table(z: tz.Zone, now: i64): LocalTable {
   let names: string[] = [];
   let flags: i32[] = [];
-  let e0: tz.Entry = z.entry_at(now);
+  let e0: tz.Entry = z.entry_at(time.timestamp_from_unix(now));
   if (e0.abbrev.len() > 0) {
     names = [e0.abbrev];
     flags = [dst_flag(e0.dst)];
@@ -2004,7 +2006,7 @@ function local_table(z: tz.Zone, now: i64): LocalTable {
   let q: i32 = 1;
   while (q <= 3) {
     let probe: i64 = now + (q * 90 * 24 * 60 * 60) as i64;
-    let pe: tz.Entry = z.entry_at(probe);
+    let pe: tz.Entry = z.entry_at(time.timestamp_from_unix(probe));
     let pdst: i32 = dst_flag(pe.dst);
     if (names.len() == 0 || pdst != flags[0]) {
       if (pe.abbrev.len() > 0) {
@@ -2109,8 +2111,8 @@ pub function parse_full_bytes(text: [u8], z: tz.Zone, tzstring: string, has_tz: 
   if (s.len() == 0) {
     s = midnight.as_bytes();
   }
-  let now_entry: tz.Entry = zone.entry_at(now_sec);
-  let f: tz.Civil = tz.civil_at(now_sec + now_entry.off as i64);
+  let now_entry: tz.Entry = zone.entry_at(time.timestamp_from_unix(now_sec));
+  let f: timefmt.Tm = timefmt.civil_at(now_sec + now_entry.off as i64);
   let pc: Pc = Pc { ok: true, next: 0, year: f.year, year_digits: 0, month: f.month as i64, day: f.day as i64, hour: f.hour as i64, minutes: f.min as i64, sec: f.sec as i64, nsec: now_nsec, meridian: 0, time_zone: 0, local_isdst: 0, day_ordinal: 0, day_number: 0, rels_seen: false, timespec_seen: false, ts_sec: 0, ts_nsec: 0, dates_seen: 0, days_seen: 0, times_seen: 0, local_zones_seen: 0, zones_seen: 0, j_zones_seen: 0, dsts_seen: 0, year_seen: false, rel: rel_zero(), la: false, debug: debug, dbg: "", d_dates: false, d_days: false, d_times: false, d_local: false, d_zones: false, d_year: false, d_ordinal: false };
   let lexed: (Tok[], string) = lex(s, local_table(zone, now_sec));
   let toks: Tok[] = lexed.0;
@@ -2164,8 +2166,8 @@ pub function parse_full_bytes(text: [u8], z: tz.Zone, tzstring: string, has_tz: 
     out = out + "date: timezone: TZ=\"" + tzs + "\" environment value\n";
   }
   out = out + "date: final: " + r.sec.to_string() + "." + pad(r.nsec, 9) + " (epoch-seconds)\n";
-  out = out + "date: final: " + civil_text(tz.civil_at(r.sec)) + " (UTC)\n";
-  out = out + "date: final: " + civil_text(zone.local_fields(r.sec)) + " (UTC" + time_zone_str(zone.offset_at(r.sec) as i64) + ")\n";
+  out = out + "date: final: " + civil_text(timefmt.civil_at(r.sec)) + " (UTC)\n";
+  out = out + "date: final: " + civil_text(timefmt.break_time(zone, r.sec)) + " (UTC" + time_zone_str(zone.offset_at(time.timestamp_from_unix(r.sec)) as i64) + ")\n";
   return byte_result(Result { ...r, dbg: out });
 }
 
@@ -2256,7 +2258,7 @@ pub function posixtime(s: string, bits: i32, z: tz.Zone, now: i64, hint: i64): (
 
 function posix_year(pairs: i32[], at: i32, count: i32, bits: i32, z: tz.Zone, now: i64): (boolean, i64) {
   if (count == 0) {
-    return (true, z.local_fields(now).year);
+    return (true, timefmt.break_time(z, now).year);
   }
   if (count == 1) {
     let y: i64 = pairs[at] as i64;
