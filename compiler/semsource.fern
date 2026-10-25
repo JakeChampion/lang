@@ -3305,23 +3305,25 @@ function type_head(obj: ast.Expr, s: State): string {
     if (checker.variant_owner_of(s.scope, id.name).len() > 0) {
       return "";
     }
-    let base = util.base_type_name(id.name);
-    if (base != id.name && (checker.struct_sig(s.scope, base).name.len() > 0 || union_variants(s, base).len() > 0 || builtin_union_layout(base) != 0)) {
-      return base;
+    return declared_type_head(id.name, s);
+  }
+  return "";
+}
+
+function declared_type_head(name: string, s: State): string {
+  let base = util.base_type_name(name);
+  if (base != name && (checker.struct_sig(s.scope, base).name.len() > 0 || union_variants(s, base).len() > 0 || builtin_union_layout(base) != 0)) {
+    return base;
+  }
+  let sig = checker.struct_sig(s.scope, name);
+  if (sig.name.len() > 0) {
+    if (sig.enum_owner.len() > 0) {
+      return "";
     }
-    let sig: checker.StructSig = checker.struct_sig(s.scope, id.name);
-    if (sig.name.len() > 0) {
-      if (sig.enum_owner.len() > 0) {
-        return "";
-      }
-      return id.name;
-    }
-    if (union_variants(s, id.name).len() > 0 || builtin_union_layout(id.name) != 0) {
-      return id.name;
-    }
-    if (typeinfo.is_primitive_type_name(id.name)) {
-      return id.name;
-    }
+    return name;
+  }
+  if (union_variants(s, name).len() > 0 || builtin_union_layout(name) != 0 || typeinfo.is_primitive_type_name(name)) {
+    return name;
   }
   return "";
 }
@@ -3344,6 +3346,17 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
     return refused(s, "call target has no semantic contract: " + head + "." + name);
   }
   let contract = s.contracts.list[at];
+  let binding = qualified_binding(c, contract, head, name, s);
+  if (c.args.len() != contract.params.len()) {
+    return refused(s, "call arity");
+  }
+  if (is_void(contract.result) && !statement) {
+    return refused(s, "unsupported void call");
+  }
+  return invoke(c.args, contract, s, binding, destination_binding(contract, expected));
+}
+
+function qualified_binding(c: ast.ExprCall, contract: ssasem.Contract, head: string, name: string, s: State): ssasem.Binding {
   let binding = written_binding(c, contract, s);
   let sig = s.scope.lookup_assoc_sig(head, name);
   if (sig.receiver.len() > 0) {
@@ -3357,13 +3370,7 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
       }
     }
   }
-  if (c.args.len() != contract.params.len()) {
-    return refused(s, "call arity");
-  }
-  if (is_void(contract.result) && !statement) {
-    return refused(s, "unsupported void call");
-  }
-  return invoke(c.args, contract, s, binding, destination_binding(contract, expected));
+  return binding;
 }
 
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {

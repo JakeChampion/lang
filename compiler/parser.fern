@@ -10400,6 +10400,17 @@ function stamped_type(tag: string): string {
   return "";
 }
 
+function mono_cell_get_type(field: ast.ExprFieldAccess, argc: i32, env: MEnv, funcs: MFns): string {
+  if (field.field != "get" || argc != 0) {
+    return "";
+  }
+  let receiver = parse_type_ref(mono_infer(field.obj, env, funcs));
+  if (receiver.base == "Cell" && receiver.args.len() == 1) {
+    return render_type_ref(receiver.args[0]);
+  }
+  return "";
+}
+
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
   match (e) {
     ast.ExprNumber(n) => {
@@ -10541,11 +10552,9 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           return crt;
         },
         ast.ExprFieldAccess(cfa) => {
-          if (cfa.field == "get" && c.args.len() == 0) {
-            let receiver = parse_type_ref(mono_infer(cfa.obj, env, funcs));
-            if (receiver.base == "Cell" && receiver.args.len() == 1) {
-              return render_type_ref(receiver.args[0]);
-            }
+          let cell_type = mono_cell_get_type(cfa, c.args.len(), env, funcs);
+          if (cell_type.len() > 0) {
+            return cell_type;
           }
           if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) {
             return "string";
