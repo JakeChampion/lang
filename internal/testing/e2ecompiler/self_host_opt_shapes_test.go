@@ -270,6 +270,12 @@ function main(): i32 {
 	{name: "be_word_view_u64", fn: "bigend64", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
+	{name: "le_word_view_i64", fn: "iword64", exit: 125, src: signedWordSrc,
+		want:   oneCheck,
+		forbid: wordForbid},
+	{name: "le_word_owned_i32", fn: "iword32", exit: 125, src: signedWordSrc,
+		want:   oneCheck,
+		forbid: wordForbid},
 	{name: "le_word_bytes_scrambled", fn: "scrambled", exit: 5, src: wordLoadSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
@@ -564,6 +570,23 @@ function main(): i32 {
     let y: u64 = bigend64(b[1:20], 3) ^ swapped(b, 11) as u64;
     let z: u32 = scrambled(b, 7) ^ header(b);
     return ((x ^ (y >> 13u64) as u32 ^ y as u32 ^ z) & 127u32) as i32;
+}
+`
+
+const signedWordSrc = `
+@noinline function iword64(bs: [u8], o: i32): i64 {
+    return bs[o] as i64 | bs[o + 1] as i64 << 8 | bs[o + 2] as i64 << 16 | bs[o + 3] as i64 << 24 | bs[o + 4] as i64 << 32 | bs[o + 5] as i64 << 40 | bs[o + 6] as i64 << 48 | bs[o + 7] as i64 << 56;
+}
+@noinline function iword32(bs: u8[], o: i32): i32 {
+    return bs[o] as i32 | bs[o + 1] as i32 << 8 | bs[o + 2] as i32 << 16 | bs[o + 3] as i32 << 24;
+}
+function main(): i32 {
+    let b: u8[] = [];
+    let i: i32 = 0;
+    while (i < 24) { b = b.append(((i * 29 + 3) & 255) as u8); i = i + 1; }
+    let x: i64 = iword64(b, 9) ^ iword32(b, 5) as i64;
+    let y: i32 = iword32(b, 13);
+    return ((x ^ x >> 29 ^ y as i64) & 127) as i32;
 }
 `
 

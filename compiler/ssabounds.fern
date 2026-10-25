@@ -1114,9 +1114,9 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
   }
   let t: typeinfo.Type = f.values[ins.result];
   let n: i32 = 0;
-  if (ssasem.is_u32(t)) {
+  if (ssasem.is_u32(t) || ssasem.is_i32(t)) {
     n = 4;
-  } else if (ssasem.is_u64(t)) {
+  } else if (ssasem.is_wide(t)) {
     n = 8;
   } else {
     return none;
