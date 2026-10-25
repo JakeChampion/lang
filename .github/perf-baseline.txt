@@ -4,6 +4,8 @@
 # by 7%. struct_drop.ir (+7.2%) and string_build.ir (+2.6%) count more because
 # callgrind counts a short rep movsb as one instruction. Their wall time is 6%
 # and 22% lower. __fern_memcpy adds 1-5% `.text` to the string and sort rows.
+# After the merge of main at ec11dd1e, the utf8_ingest_*.text rows take main's
+# typed JSON decoding, which main's own compiler emits at 8213 and 9486.
 # 2026-10-25: the x86_64 perceus_rbtree rows re-pinned from a local perf-bench for the carried-token change (ssaunits.dying_unclaimed).
 # Re-pinned 2026-10-25 (#13177) from Perf run 40168342835 on both arches. The
 # word-refill decoder and the hash-chain matcher cut deflate_decode.ir by 36-41%
@@ -125,7 +127,7 @@ x86_64/sort_ints.text	1879
 x86_64/sort_ints.ir	30644556
 x86_64/sort_strings.text	3134
 x86_64/sort_strings.ir	105294698
-x86_64/string_build.text	1887
+x86_64/string_build.text	1907
 x86_64/string_build.ir	43517008
 x86_64/string_count_byte.text	1142
 x86_64/string_count_byte.ir	135589342
@@ -133,17 +135,17 @@ x86_64/string_find_byte.text	1500
 x86_64/string_find_byte.ir	43717394
 x86_64/string_rfind_byte.text	1679
 x86_64/string_rfind_byte.ir	43732300
-x86_64/string_scan.text	2131
+x86_64/string_scan.text	2157
 x86_64/string_scan.ir	52603745
 x86_64/string_slice.text	803
 x86_64/string_slice.ir	38700086
-x86_64/struct_drop.text	2301
+x86_64/struct_drop.text	2327
 x86_64/struct_drop.ir	205020574
 x86_64/tokenize.text	1104
 x86_64/tokenize.ir	37880086
-x86_64/utf8_ingest_unchecked.text	7334
+x86_64/utf8_ingest_unchecked.text	8288
 x86_64/utf8_ingest_unchecked.ir	2205771
-x86_64/utf8_ingest_validated.text	7902
+x86_64/utf8_ingest_validated.text	8802
 x86_64/utf8_ingest_validated.ir	5297772
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
