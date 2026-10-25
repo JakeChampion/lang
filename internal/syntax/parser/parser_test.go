@@ -2414,6 +2414,35 @@ function f(): i32 {
 	}
 }
 
+func TestIfLetRecordsChainedElse(t *testing.T) {
+	for _, tc := range []struct {
+		name, els string
+		chained   bool
+	}{
+		{"else-if-let", `else if let Some(y) = o { return y; }`, true},
+		{"else-if", `else if (true) { return 2; }`, true},
+		{"else-block-if-let", `else { if let Some(y) = o { return y; } }`, false},
+		{"else-block", `else { return 3; }`, false},
+		{"no-else", ``, false},
+	} {
+		prog, err := Parse(`enum Option[T] { Some(T), None }
+function f(o: Option[i32]): i32 {
+	if let Some(x) = o { return x; } ` + tc.els + `
+	return 0;
+}`)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+		if !ok {
+			t.Fatalf("%s: first stmt should be the desugared *ast.Match; got %T", tc.name, prog.Funcs[0].Body.Stmts[0])
+		}
+		if m.ElseChained != tc.chained {
+			t.Errorf("%s: ElseChained = %v, want %v", tc.name, m.ElseChained, tc.chained)
+		}
+	}
+}
+
 func TestParseContextCancellationShortCircuits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -1225,7 +1225,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.formatBlock(success, depth)
 			if len(els.Stmts) > 0 {
 				f.b.WriteString(" else ")
-				f.formatBlock(els, depth)
+				if x.ElseChained && len(els.Stmts) == 1 {
+					f.formatStmt(els.Stmts[0], depth)
+				} else {
+					f.formatBlock(els, depth)
+				}
 			}
 			return
 		}

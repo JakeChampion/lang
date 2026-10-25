@@ -529,7 +529,7 @@ pub function no_match_sugar(): ast.MatchSugar {
   let no_struct: ast.StructArm[] = [];
   let no_lit: ast.LitArm[] = [];
   let no_arms: ast.MatchArm[] = [];
-  return ast.MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, arms: no_arms, line: 0, col: 0, origin: "" };
+  return ast.MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, arms: no_arms, line: 0, col: 0, origin: "", else_chained: false };
 }
 
 function s_if_match(body: ast.Stmt[], sugar: ast.MatchSugar): ast.Stmt {
@@ -612,16 +612,16 @@ function s_assign_at(target: string, value: ast.Expr, line: i32, col: i32, targe
 
 function s_match(scrutinee: ast.Expr, arms: ast.MatchArm[]): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "", sugar: no_sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "", sugar: no_sugar, else_chained: false };
 }
 
 function s_match_at(scrutinee: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: no_sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: no_sugar, else_chained: false };
 }
 
 function s_match_sugared(scrutinee: ast.Expr, arms: ast.MatchArm[], sugar: ast.MatchArm[], line: i32, col: i32): ast.Stmt {
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: sugar, else_chained: false };
 }
 
 function array_builder_elem(t: string): string {
@@ -861,11 +861,11 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
 
 function s_match_origin(scrutinee: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar, else_chained: false };
 }
 
 function s_match_origin_sugared(scrutinee: ast.Expr, arms: ast.MatchArm[], sugar: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: sugar, else_chained: false };
 }
 
 function p_variant(type_name: string, binding: string): ast.Pattern {
@@ -3085,10 +3085,14 @@ function with_written_scrut(st: ast.Stmt, written: ast.Expr): ast.Stmt {
   }
 }
 
-function with_sugar_origin(st: ast.Stmt, origin: string): ast.Stmt {
+// else_chained records that an if-let's else was written `else if`.
+function with_sugar_origin(st: ast.Stmt, origin: string, else_chained: boolean): ast.Stmt {
   match (st) {
     ast.StmtIf(i) => {
-      return ast.StmtIf { ...i, sugar: ast.MatchSugar { ...i.sugar, origin: origin } };
+      return ast.StmtIf { ...i, sugar: ast.MatchSugar { ...i.sugar, origin: origin, else_chained: else_chained } };
+    },
+    ast.StmtMatch(m) => {
+      return ast.StmtMatch { ...m, origin: origin, else_chained: else_chained };
     },
     _ => {
       return st;
@@ -4963,7 +4967,7 @@ pub function lower_struct_record_match(m: ast.StmtMatch, value: string): ast.Stm
     }
     arms = arms.append(ast.StructArm { is_wild: wild, type_name: name, binds: binds, fields: fields, field_kinds: kinds, field_lits: lits, field_pats: pats, at_binding: at, rest_written: rest, guard: arm.guard, has_guard: arm.has_guard, body: body, line: arm.line, col: arm.col });
   }
-  return with_sugar_origin(build_struct_match_fields(m.scrutinee, arms, m.line, m.col, true), m.origin);
+  return with_sugar_origin(build_struct_match_fields(m.scrutinee, arms, m.line, m.col, true), m.origin, m.else_chained);
 }
 
 function record_slot_literal(cond: ast.Expr, slot: string): Option[ast.Expr] {
@@ -4990,7 +4994,7 @@ pub function struct_record_source(st: ast.Stmt): Option[ast.StmtMatch] {
   if let ast.StmtIf(f) = st {
     let sg: ast.MatchSugar = f.sugar;
     if (sg.arms.len() > 0) {
-      return Some(ast.StmtMatch { scrutinee: sg.scrut, arms: sg.arms, sugar: [], line: sg.line, col: sg.col, origin: sg.origin });
+      return Some(ast.StmtMatch { scrutinee: sg.scrut, arms: sg.arms, sugar: [], line: sg.line, col: sg.col, origin: sg.origin, else_chained: sg.else_chained });
     }
   }
   return None;
@@ -5773,7 +5777,7 @@ function parse_let_pattern(p: Par, start: Par, qualified_record: boolean, vline:
   lsp_arms = lsp_arms.append(lsp_wild);
   lsp_written = lsp_written.append(lsp_wild);
   if (arms_take_flag_chain(lsp_arms)) {
-    return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else"), p);
+    return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else", false), p);
   }
   lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
   let lsp_sugar: ast.MatchArm[] = [];
@@ -5856,7 +5860,7 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
       lel_i = lel_i + 1;
     }
     lel_arms = lel_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
-    return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else"), p);
+    return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else", false), p);
   }
   let name: string = p.peek_ident();
   if (name.len() == 0) {
@@ -5877,19 +5881,22 @@ function at_local_struct_pattern(p: Par): boolean {
   return is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{");
 }
 
-struct PatternIfBranches { par: Par, yes: ast.Stmt[], no: ast.Stmt[], rt: string }
+struct PatternIfBranches { par: Par, yes: ast.Stmt[], no: ast.Stmt[], rt: string, else_chained: boolean }
 
 function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: string): PatternIfBranches {
   if (!value_form) {
     let (yes, next) = parse_block_or_stmt(p);
     p = next;
     let no: ast.Stmt[] = [];
+    let chained: boolean = false;
     if (p.peek_keyword() == "else") {
-      let (body, after) = parse_block_or_stmt(p.advance());
+      p = p.advance();
+      chained = p.peek_keyword() == "if";
+      let (body, after) = parse_block_or_stmt(p);
       no = body;
       p = after;
     }
-    return PatternIfBranches { par: p, yes: yes, no: no, rt: "" };
+    return PatternIfBranches { par: p, yes: yes, no: no, rt: "", else_chained: chained };
   }
   let (yes, yes_rt, next) = parse_branch_body(p);
   p = next.expect("else");
@@ -5907,7 +5914,7 @@ function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: str
     no_rt = rt;
     p = after;
   }
-  return PatternIfBranches { par: p, yes: value_arm_body(yes, value_local), no: value_arm_body(no, value_local), rt: wider_rt(yes_rt, no_rt) };
+  return PatternIfBranches { par: p, yes: value_arm_body(yes, value_local), no: value_arm_body(no, value_local), rt: wider_rt(yes_rt, no_rt), else_chained: false };
 }
 
 function pattern_if_chain(stmt: ast.Stmt, p: Par, rt: string, value_form: boolean, value_local: string): IfChain {
@@ -5962,7 +5969,7 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
     let ils_no_lits: ast.Expr[] = [];
     let ils_nf: string[] = [];
     ils_arms = ils_arms.append(ast.StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
-    return pattern_if_chain(with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
     let ilt_line: i32 = p.peek_line();
@@ -6009,7 +6016,7 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
     let ilt_wl: ast.Expr[] = [];
     let ilt_wp: ast.Pattern[] = [];
     ilt_arms = ilt_arms.append(ast.TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
-    return pattern_if_chain(with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   // Literal and range patterns share the literal match builder.
   if (p.peek_is_pat_literal() || p.peek_at_literal()) {
@@ -6034,7 +6041,7 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
     }
     ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
 
-    return pattern_if_chain(with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   let il_line: i32 = p.peek_line();
   let il_col: i32 = p.peek_col();
@@ -6067,14 +6074,14 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
   ilarms = ilarms.append(ilwild);
   ilwritten = ilwritten.append(ilwild);
   if (arms_take_flag_chain(ilarms)) {
-    return pattern_if_chain(with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   ilarms = desugar_nested_arms(ilarms, 0, "");
   let ilsugar: ast.MatchArm[] = [];
   if (arms_have_written_form(ilwritten)) {
     ilsugar = ilwritten;
   }
-  return pattern_if_chain(s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p, rt, value_form, value_local);
+  return pattern_if_chain(with_sugar_origin(s_match_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
 }
 
 function parse_if_stmt(p: Par): (ast.Stmt, Par) {

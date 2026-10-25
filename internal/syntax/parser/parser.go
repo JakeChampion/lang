@@ -3297,14 +3297,18 @@ func (p *parser) parseIfLet(ifPos ast.Position) (ast.Stmt, error) {
 		return nil, err
 	}
 	elseBlk := &ast.Block{P: ifPos}
+	chained := false
 	if _, ok := p.accept(lexer.Keyword, "else"); ok {
+		chained = p.match(lexer.Keyword, "if")
 		els, err := p.parseStmt()
 		if err != nil {
 			return nil, err
 		}
 		elseBlk = stmtAsBlock(els)
 	}
-	return p.buildPatternBindingMatch(ifPos, pats, src, stmtAsBlock(then), elseBlk, ast.OriginIfLet)
+	m := p.buildPatternBindingMatch(ifPos, pats, src, stmtAsBlock(then), elseBlk, ast.OriginIfLet)
+	m.ElseChained = chained
+	return m, nil
 }
 
 func (p *parser) parseOrPatterns() ([]matchPattern, error) {
@@ -3324,7 +3328,7 @@ func (p *parser) parseOrPatterns() ([]matchPattern, error) {
 	return pats, nil
 }
 
-func (p *parser) buildPatternBindingMatch(pos ast.Position, pats []matchPattern, src ast.Expr, success, els *ast.Block, origin string) (ast.Stmt, error) {
+func (p *parser) buildPatternBindingMatch(pos ast.Position, pats []matchPattern, src ast.Expr, success, els *ast.Block, origin string) *ast.Match {
 	raw := make([]stmtRawArm, 0, len(pats)+1)
 	for i, pat := range pats {
 		b := success
@@ -3334,7 +3338,7 @@ func (p *parser) buildPatternBindingMatch(pos ast.Position, pats []matchPattern,
 		raw = append(raw, stmtRawArm{pat: pat, body: b})
 	}
 	raw = append(raw, stmtRawArm{pat: matchPattern{P: pos, IsWildcard: true}, body: els})
-	return &ast.Match{P: pos, Tag: src, Arms: flatStmtArms(raw), Origin: origin}, nil
+	return &ast.Match{P: pos, Tag: src, Arms: flatStmtArms(raw), Origin: origin}
 }
 
 func stmtAsBlock(s ast.Stmt) *ast.Block {
@@ -4076,7 +4080,7 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	if captureRest {
 		p.parseBlockStmts(rest, false)
 	}
-	return p.buildPatternBindingMatch(kw.Pos, pats, src, rest, elseBlk, ast.OriginLetElse)
+	return p.buildPatternBindingMatch(kw.Pos, pats, src, rest, elseBlk, ast.OriginLetElse), nil
 }
 
 func (p *parser) atLetBindingHead() bool {

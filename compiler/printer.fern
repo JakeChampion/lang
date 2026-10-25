@@ -472,7 +472,7 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32): string 
     return "";
   }
   if (m.origin == "if_let") {
-    let sg: ast.MatchSugar = ast.MatchSugar { scrut: m.scrutinee, tup: [], strct: [], lits: [], arms: arms, line: m.line, col: m.col, origin: "if_let" };
+    let sg: ast.MatchSugar = ast.MatchSugar { scrut: m.scrutinee, tup: [], strct: [], lits: [], arms: arms, line: m.line, col: m.col, origin: "if_let", else_chained: m.else_chained };
     return print_sugared_match_expr(sg, v, depth);
   }
   let out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
@@ -1632,13 +1632,8 @@ function print_sugared_if_let(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, 
     i = i + 1;
   }
   out = out + " = " + print_expr(sg.scrut, depth) + " " + then_block;
-  let els: ast.Stmt[] = arms[arms.len() - 1].body;
-  if (els.len() > 0) {
-    let (else_block, g2) = print_block(els, depth, g);
-    g = g2;
-    out = out + " else " + else_block;
-  }
-  return (out, g);
+  let (else_text, g2) = print_else(arms[arms.len() - 1].body, sg.else_chained, depth, g);
+  return (out + else_text, g2);
 }
 
 function print_lit_pat(a: ast.LitArm): string {
@@ -1708,13 +1703,8 @@ function print_if_let(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     i = i + 1;
   }
   out = out + " = " + print_expr(m.scrutinee, depth) + " " + then_block;
-  let els: ast.Stmt[] = arms[arms.len() - 1].body;
-  if (els.len() > 0) {
-    let (else_block, g2) = print_block(els, depth, g);
-    g = g2;
-    out = out + " else " + else_block;
-  }
-  return (out, g);
+  let (else_text, g2) = print_else(arms[arms.len() - 1].body, m.else_chained, depth, g);
+  return (out + else_text, g2);
 }
 
 function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
@@ -2151,16 +2141,20 @@ function strip_semi(s: string): string {
 function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
   let (cond_text, cf) = print_expr_c(ifs.cond, prec_lowest(), depth, f);
   let (then_text, g) = print_block(ifs.then_body, depth, cf);
-  let out: string = "if (" + cond_text + ") " + then_text;
-  if (ifs.else_body.len() == 0) {
-    return (out, g);
+  let (else_text, g2) = print_else(ifs.else_body, ifs.else_chained, depth, g);
+  return ("if (" + cond_text + ") " + then_text + else_text, g2);
+}
+
+function print_else(els: ast.Stmt[], chained: boolean, depth: i32, f: Fmt): (string, Fmt) {
+  if (els.len() == 0) {
+    return ("", f);
   }
-  if (ifs.else_chained && ifs.else_body.len() == 1) {
-    let (nested_text, g2) = print_stmt_body(ifs.else_body[0], depth, g);
-    return (out + " else " + nested_text, g2);
+  if (chained && els.len() == 1) {
+    let (nested_text, g) = print_stmt_body(els[0], depth, f);
+    return (" else " + nested_text, g);
   }
-  let (else_text, g3) = print_block(ifs.else_body, depth, g);
-  return (out + " else " + else_text, g3);
+  let (block_text, g2) = print_block(els, depth, f);
+  return (" else " + block_text, g2);
 }
 
 function loop_label(label: string): string {
