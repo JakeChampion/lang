@@ -6513,6 +6513,7 @@ function main(): i32 {
 
 func TestArm64StdlibBundle18(t *testing.T) {
 	src := `
+import "std/time";
 import "std/format";
 import "std/uuid";
 function main(): i32 {
@@ -6541,13 +6542,13 @@ function main(): i32 {
     if ("file.txt".remove_suffix(".txt") != "file") { return 16; }
     if ("file.txt".remove_suffix(".log") != "file.txt") { return 17; }
 
-    // format_duration_ms
-    if (format.format_duration_ms(0) != "0ms") { return 18; }
-    if (format.format_duration_ms(500) != "500ms") { return 19; }
-    if (format.format_duration_ms(1500) != "1s 500ms") { return 20; }
-    if (format.format_duration_ms(90000) != "1m 30s") { return 21; }
-    if (format.format_duration_ms(3661000) != "1h 1m 1s") { return 22; }
-    if (format.format_duration_ms(0 - 1500) != "-1s 500ms") { return 23; }
+    // format_duration
+    if (format.format_duration(time.duration_millis(0)) != "0ms") { return 18; }
+    if (format.format_duration(time.duration_millis(500)) != "500ms") { return 19; }
+    if (format.format_duration(time.duration_millis(1500)) != "1s 500ms") { return 20; }
+    if (format.format_duration(time.duration_millis(90000)) != "1m 30s") { return 21; }
+    if (format.format_duration(time.duration_millis(3661000)) != "1h 1m 1s") { return 22; }
+    if (format.format_duration(time.duration_millis(0 - 1500)) != "-1s 500ms") { return 23; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)

@@ -1264,7 +1264,7 @@ function now_ms(): i64 {
 
 function readable_within(fd: i32, wait_ms: i32): boolean {
   let set: i32[] = [fd, 1];
-  return async.wait_any(set, wait_ms) == 0;
+  return async.wait_any(set, time.millis_timeout(wait_ms)) == 0;
 }
 
 function local_for(ns: net.SocketAddr): net.SocketAddr {
@@ -1449,7 +1449,7 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
     set = set.append(1);
     i = i + 1;
   }
-  return async.wait_any(set, wait_ms);
+  return async.wait_any(set, time.millis_timeout(wait_ms));
 }
 ```
 
@@ -2378,7 +2378,7 @@ pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Re
     if (race.open.len() == 0) {
       return Err(race.last);
     }
-    let woke: i32 = async.wait_any(writable(race.open), wait_window(race, addrs.len(), now, deadline));
+    let woke: i32 = async.wait_any(writable(race.open), time.millis_timeout(wait_window(race, addrs.len(), now, deadline)));
     if (woke == async.cancelled()) {
       close_attempts(race.open);
       return Err(net.Interrupted);

@@ -61,8 +61,8 @@ import "std/time";
 function bound(plat: platform.Host): string {
   match (plat.deadline()) {
     Some(at) => {
-      let left: i64 = at - plat.elapsed_ns();
-      if (left > 0 as i64 && left <= 1500000000 as i64) {
+      let left: Duration = at.since(plat.instant());
+      if (!left.is_negative() && !left.is_zero() && left.cmp(time.duration_millis(1500)) <= 0) {
         return "bounded";
       }
       return "out of range";
@@ -79,7 +79,7 @@ function hangup(plat: platform.Host): HttpResponse {
   let early: boolean = false;
   match (plat.deadline()) {
     Some(at) => {
-      early = plat.elapsed_ns() < at;
+      early = plat.instant().cmp(at) < 0;
     },
     None => {}
   }

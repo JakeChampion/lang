@@ -60,7 +60,7 @@ function main(): i32 {
         Err(e) => { return fail(10); }
     }
     let set: i32[] = [a2, 1];
-    if (async.wait_any(set, 5000) != 0) { return fail(11); }
+    if (async.wait_any(set, Some(time.duration_millis(5000))) != 0) { return fail(11); }
     closed = net.close(a2);
     match (net.read_deadline(c2, 16, wait)) {
         Ok(net.Chunk(b)) => { return fail(12); },

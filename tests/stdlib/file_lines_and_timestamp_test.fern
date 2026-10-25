@@ -1,4 +1,6 @@
 import "std/test";
+import "std/time";
+import "std/clock";
 
 function test_file_lines_pass(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "lines-pass");
@@ -119,14 +121,13 @@ function test_file_lines_missing_file(): test.TestOutcome {
   }
 }
 
-function test_close_to_now_ms_now_passes(): test.TestOutcome {
-  let t: i64 = now_unix_ms();
-  return test.assert_close_to_now_ms(t, 5000 as i64);
+function test_close_to_now_passes(): test.TestOutcome {
+  return test.assert_close_to_now(clock.now(), time.duration_seconds(5));
 }
 
-function test_close_to_now_ms_old_fails(): test.TestOutcome {
-  let t: i64 = now_unix_ms() - 3600000 as i64;
-  match (test.assert_close_to_now_ms(t, 1000 as i64)) {
+function test_close_to_now_old_fails(): test.TestOutcome {
+  let t: time.Timestamp = clock.now().sub(time.duration_hours(1));
+  match (test.assert_close_to_now(t, time.duration_seconds(1))) {
     Pass => {
       return test.fail("old timestamp should fail");
     },
@@ -139,9 +140,9 @@ function test_close_to_now_ms_old_fails(): test.TestOutcome {
   }
 }
 
-function test_close_to_now_ms_future_skew_fails(): test.TestOutcome {
-  let t: i64 = now_unix_ms() + 3600000 as i64;
-  match (test.assert_close_to_now_ms(t, 1000 as i64)) {
+function test_close_to_now_future_skew_fails(): test.TestOutcome {
+  let t: time.Timestamp = clock.now().add(time.duration_hours(1));
+  match (test.assert_close_to_now(t, time.duration_seconds(1))) {
     Pass => {
       return test.fail("future timestamp should fail");
     },
@@ -162,16 +163,16 @@ function main(): i32 {
     test_file_lines_missing_file,
   );
   r = r.it(
-    "close_to_now_ms now passes",
-    test_close_to_now_ms_now_passes,
+    "close_to_now now passes",
+    test_close_to_now_passes,
   );
   r = r.it(
-    "close_to_now_ms 1h-old fails",
-    test_close_to_now_ms_old_fails,
+    "close_to_now 1h-old fails",
+    test_close_to_now_old_fails,
   );
   r = r.it(
-    "close_to_now_ms future-skew fails",
-    test_close_to_now_ms_future_skew_fails,
+    "close_to_now future-skew fails",
+    test_close_to_now_future_skew_fails,
   );
   return r.finish();
 }

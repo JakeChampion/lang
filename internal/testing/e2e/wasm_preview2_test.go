@@ -441,7 +441,8 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echo.fern")
-	src := `import "core/int";
+	src := `import "std/time";
+import "core/int";
 import "std/net";
 
 function main(): i32 {
@@ -452,7 +453,7 @@ function main(): i32 {
     print(int.int_to_string(port));
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+    let msg: u8[] = match (net.read_watched(conn, 1024, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => b,
         _ => { return 5; },
     };
@@ -573,7 +574,8 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echolog.fern")
-	src := strings.Replace(`import "std/net";
+	src := strings.Replace(`import "std/time";
+import "std/net";
 
 function main(): i32 {
     let sock = tcp_listen(__PORT__);
@@ -581,7 +583,7 @@ function main(): i32 {
     print("LISTENING");
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+    let msg: u8[] = match (net.read_watched(conn, 1024, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => b,
         _ => { return 5; },
     };
@@ -1710,8 +1712,8 @@ import "std/http";
 import "std/platform";
 import "std/serve";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    let t: i64 = plat.now_ms();
-    let m: i64 = plat.elapsed_ns();
+    let t: i64 = plat.now().unix_millis();
+    let m: Instant = plat.instant();
     let r: i32 = plat.random_i32();
     if (t > 0) { return http.ok("clock-ok"); }
     return http.ok("no-clock");
@@ -1938,10 +1940,10 @@ import "std/platform" as platform;
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("handled " + req.path);
     let floor: i64 = 1600000000000;
-    if (plat.now_ms() < floor) {
+    if (plat.now().unix_millis() < floor) {
         return http.text(500, "clock");
     }
-    if (plat.elapsed_ns() < 0) {
+    if (plat.instant().sec < 0) {
         return http.text(500, "monotonic");
     }
     if (plat.random_i32() == 0 && plat.random_i32() == 0 && plat.random_i32() == 0) {

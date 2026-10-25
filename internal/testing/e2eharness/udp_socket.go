@@ -270,13 +270,14 @@ function main(): i32 {
 }
 
 func ConnectProbe() string {
-	return `import "core/int";
+	return `import "std/time";
+import "core/int";
 import "std/net";
 
 // recv reads once from fd within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
 function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, 5000i64, 1)) {
+    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }
@@ -353,14 +354,15 @@ function main(): i32 {
 }
 
 func NetConnectProbe() string {
-	return `import "core/int";
+	return `import "std/time";
+import "core/int";
 import "std/net";
 import "std/errno";
 
 // recv reads once from fd within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
 function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, 5000i64, 1)) {
+    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }

@@ -8,11 +8,12 @@ import (
 	"testing"
 )
 
-const suspendShapesProgram = `import "std/async";
+const suspendShapesProgram = `import "std/time";
+import "std/async";
 
 function wait(): i32 {
   let set: i32[] = [timer_fd(5), 1];
-  return async.wait_any(set, 0 - 1);
+  return async.wait_any(set, None);
 }
 
 function ready(): boolean {
@@ -54,7 +55,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        st = async.task_resume(t, async.wait_any(w.set, w.timeout_ms));
+        st = async.task_resume(t, async.wait_any(w.set, w.timeout));
       },
       Cancelled => {
         return 0 - 2;

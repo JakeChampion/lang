@@ -4,6 +4,7 @@ import "std/fetch";
 import "std/mock_platform";
 import "std/i64";
 import "std/platform";
+import "std/time";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   let region: string = "nowhere";
@@ -22,7 +23,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
       upstream = e.message();
     }
   }
-  return http.ok(region + " " + plat.now_ms().to_string() + " " + plat.random_i32().to_string() + " " + upstream);
+  return http.ok(region + " " + plat.now().unix_millis().to_string() + " " + plat.random_i32().to_string() + " " + upstream);
 }
 
 function test_defaults_without_canned_answers(): test.TestOutcome {
@@ -34,7 +35,7 @@ function test_defaults_without_canned_answers(): test.TestOutcome {
 function test_canned_answers_reach_the_handler(): test.TestOutcome {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.env_set("REGION", "eu-west");
-  m.now_set(1700000000123 as i64);
+  m.now_set(time.timestamp_from_unix_millis(1700000000123));
   m.random_set(42);
   m.http_set("GET", "http://10.0.0.1:8080/health", 204, "fine");
   let resp: HttpResponse = handle(http.request("GET", "/"), m);
@@ -68,7 +69,7 @@ function test_the_last_answer_wins(): test.TestOutcome {
 function test_canned_rows_are_not_calls_and_survive_reset(): test.TestOutcome {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.env_set("REGION", "eu-west");
-  m.elapsed_set(5 as i64);
+  m.instant_set(Instant { sec: 0, nsec: 5 });
   let plat: mock_platform.MockPlatform = m;
   plat.env("REGION");
   if (m.call_count() != 1) {
@@ -81,7 +82,7 @@ function test_canned_rows_are_not_calls_and_survive_reset(): test.TestOutcome {
   if (m.call_count() != 0) {
     return test.fail("calls after reset: " + m.call_count().to_string());
   }
-  if (plat.elapsed_ns() != 5 as i64) {
+  if (!plat.instant().eq(Instant { sec: 0, nsec: 5 })) {
     return test.fail("the canned clock did not survive reset");
   }
   return test.pass();
@@ -188,7 +189,7 @@ function __bound(plat: platform.Platform): string {
   }
   match (plat.deadline()) {
     Some(at) => {
-      return cancelled + " due " + at.to_string();
+      return cancelled + " due " + at.sec.to_string() + "s";
     },
     None => {
       return cancelled + " unbounded";
@@ -222,13 +223,13 @@ function __traced(plat: platform.Platform): boolean {
 function test_the_deadline_and_cancellation_answer_what_was_canned(): test.TestOutcome {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   let before: string = __bound(m);
-  m.deadline_set(5000 as i64);
+  m.deadline_set(Instant { sec: 5, nsec: 0 });
   m.cancel();
   let after: string = __bound(m);
   if (m.call_count() != 4) {
     return test.fail("calls: " + m.call_count().to_string());
   }
-  return test.assert_eq(before + "|" + after, "live unbounded|cancelled due 5000");
+  return test.assert_eq(before + "|" + after, "live unbounded|cancelled due 5s");
 }
 
 function main(): i32 {

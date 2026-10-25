@@ -5,6 +5,17 @@ import "std/time";
 import "std/array";
 import "std/option";
 
+function retry_ms(r: Option[Duration]): i64 {
+  match (r) {
+    Some(d) => {
+      return d.as_millis();
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+}
+
 function test_encode_simple(): test.TestOutcome {
   return test.assert_eq(sse.event("hi").encode(), "data: hi\n\n");
 }
@@ -14,7 +25,7 @@ function test_encode_lines(): test.TestOutcome {
 }
 
 function test_encode_fields(): test.TestOutcome {
-  let e: sse.Event = sse.event("x").with_name("tick\nbreak").with_id("7\r\n").with_retry(2500);
+  let e: sse.Event = sse.event("x").with_name("tick\nbreak").with_id("7\r\n").with_retry(time.duration_millis(2500));
   return test.assert_eq(e.encode(), "event: tickbreak\nid: 7\nretry: 2500\ndata: x\n\n");
 }
 
@@ -67,8 +78,8 @@ function test_decode_pieces(): test.TestOutcome {
       evs = evs.concat(fed.1);
       at = end;
     }
-    if (shown(evs) != want || d.retry != 1500) {
-      return test.fail("pieces of " + cut.to_string() + " bytes: " + shown(evs) + " retry " + d.retry.to_string());
+    if (shown(evs) != want || retry_ms(d.retry) != 1500) {
+      return test.fail("pieces of " + cut.to_string() + " bytes: " + shown(evs) + " retry " + retry_ms(d.retry).to_string());
     }
     cut = cut + 1;
   }
@@ -78,7 +89,7 @@ function test_decode_pieces(): test.TestOutcome {
 function test_decode_ignored_fields(): test.TestOutcome {
   let bs: u8[] = "id: a".bytes().append(0 as u8).concat("b\nretry: 3x\nretry:\nother: x\ndata: v\n\n".bytes());
   let fed: (sse.Decoder, sse.Event[]) = sse.decoder().feed(bs);
-  return test.assert_eq(shown(fed.1) + " retry " + fed.0.retry.to_string(), "[||v] retry -1");
+  return test.assert_eq(shown(fed.1) + " retry " + retry_ms(fed.0.retry).to_string(), "[||v] retry -1");
 }
 
 function ticks(i: i32): Option[sse.Event] {

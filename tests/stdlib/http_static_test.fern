@@ -7,14 +7,15 @@ import "std/mock_platform";
 import "std/sim";
 import "std/sim_fetch";
 import "std/sim_platform";
+import "std/time";
 
-function changed(): i64 {
-  return 784111777 as i64;
+function changed(): time.Timestamp {
+  return time.timestamp_from_unix(784111777);
 }
 
 function site(): mock_platform.MockPlatform {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.now_set(1791768000000 as i64);
+  m.now_set(time.timestamp_from_unix(1791768000));
   m.dir_set("www");
   m.file_set("www/a.txt", "hello world", changed());
   m.file_set("www/a.txt.gz", "GZ-BYTES", changed());
@@ -165,7 +166,7 @@ function test_precompressed_range_and_off(): test.TestOutcome {
 }
 
 function test_cache_control(): test.TestOutcome {
-  let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, max_age: Some(3600 as i64) };
+  let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, max_age: Some(time.duration_hours(1)) };
   let d: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), cache_control: Some(cc) } };
   let a: HttpResponse = fetch_with(d, "GET", "/a.txt", []);
   let b: HttpResponse = fetch_with(d, "GET", "/a.txt", ["If-None-Match", "*"]);

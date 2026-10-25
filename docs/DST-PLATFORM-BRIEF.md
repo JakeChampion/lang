@@ -42,14 +42,14 @@ on (`watch`, `unwatch`, `wait`, `close`; the sim leg scripts readiness with
 
 ```fern
 pub trait Driver {
-    function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
-    function now_ns(self: Self): i64;
-    function timer(self: Self, ns: i64): i32;
+    function poll_ready(self: Self, toks: i32[], timeout: Option[Duration]): i32;
+    function now(self: Self): Instant;
+    function timer(self: Self, after: Duration): i32;
     function drop_token(self: Self, tok: i32): i32;
     function watch(self: Self, fd: i32, interest: i32): i32;
     function unwatch(self: Self, fd: i32): i32;
-    function wait_into(self: Self, own events: i32[], timeout_ms: i32): i32[];
-    function wait(self: Self, max: i32, timeout_ms: i32): i32[] { … }
+    function wait_into(self: Self, own events: i32[], timeout: Option[Duration]): i32[];
+    function wait(self: Self, max: i32, timeout: Option[Duration]): i32[] { … }
     function close(self: Self): i32;
 }
 ```
@@ -76,17 +76,18 @@ PRNG (`sim.new(seed)` — a small explicit-state LCG/xorshift in Fern;
 `std/math.random_int`'s CSPRNG is deliberately NOT used, determinism
 is the point).
 
-- `timer(ns)` allocates a token that becomes ready at `now + ns`.
-- `sim.future_at(ns, v)` — a `Future[T]` that resolves to `v` at
-  virtual time `ns` (token + resume closure returning `Ready(v)`).
+- `timer(after)` allocates a token that becomes ready at `now + after`.
+- `sim.future_at(drv, at, v)` — a `Future[T]` that resolves to `v` at
+  the virtual `Instant` `at`, written `sim.at(offset)` (token + resume
+  closure returning `Ready(v)`).
 - `sim.future_chain(...)` — multi-step pending chains, for testing
   re-suspension shapes like a read loop that parks on each chunk.
-- `poll_ready(toks, timeout_ms)`: find the earliest ready-at among
-  `toks` (and the timeout, when `>= 0`); **advance the virtual clock
+- `poll_ready(toks, timeout)`: find the earliest ready-at among
+  `toks` (and the timeout, when `Some`); **advance the virtual clock
   to it**; return its index (or the timeout sentinel per the real
   `poll` contract). Ties broken by the seeded PRNG — so interleaving
   order is exercised but reproducible from the seed.
-- `now_ns()` returns the virtual clock. Time never advances except
+- `now()` returns the virtual clock. Time never advances except
   through `poll_ready` — a busy loop that never waits is a hang in
   simulation exactly as in production.
 
@@ -120,7 +121,7 @@ results.
   **Status: shipped.** Faults are scripted answers on `sim_fetch.Net`
   routes: `reset()` (the connection closes with nothing sent),
   `silent()` (never answers; the client's timeout or a cancellation
-  ends the fetch) and `in_chunks(size, every_ms)` with `held()` (a
+  ends the fetch) and `in_chunks(size, every)` with `held()` (a
   prefix, then silence). `sim.sweep_seeds(n, prop)` is the seed-replay
   workflow in miniature (first failing seed, 0 if all pass) and
   `Sim.rng_state()` supports lockstep assertions. Suites:
@@ -140,7 +141,7 @@ results.
   `gather_on` / `race_on` / `with_deadline_on` stages over mixes of
   `future_at` / `future_chain` / those upstreams, and prints a digest
   of everything observable (results, winner indices, `None` slots,
-  final `now_ns`, `rng_state`). Interp, native x86-64, and wasm must produce byte-identical
+  final virtual clock, `rng_state`). Interp, native x86-64, and wasm must produce byte-identical
   stdout — any divergence is a miscompile or a nondeterminism leak,
   and the failing subtest prints the whole program for replay.
   `TestSimProperty` is the bounded 25-seed CI sweep,

@@ -109,6 +109,7 @@ import "std/i64";
 import "std/net";
 import "std/f64";
 import "std/string";
+import "std/time";
 ```
 
 ### `3 pub struct Counter`
@@ -375,7 +376,8 @@ pub function server_metrics(): ServerMetrics {
   return ServerMetrics { methods: [], statuses: [], durations: [], accepted: counter("http_server_connections_accepted_total", "Connections accepted."), open: gauge("http_server_open_connections", "Connections open.") };
 }
 
-pub function (m: ServerMetrics) request(method: string, status: i32, ns: i64): ServerMetrics {
+pub function (m: ServerMetrics) request(method: string, status: i32, took: Duration): ServerMetrics {
+  let ns: i64 = took.as_nanos();
   let k: i32 = 0;
   while (k < m.methods.len()) {
     if (m.statuses[k] == status && m.methods[k] == method) {

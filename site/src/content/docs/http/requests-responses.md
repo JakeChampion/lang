@@ -210,6 +210,7 @@ import "std/http";
 import "std/serve";
 import "std/http/cookie";
 import "std/platform";
+import "std/time";
 
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, cookie.CookieError] {
     match (req.cookie("sid")) {
@@ -219,7 +220,7 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
     let c: cookie.SetCookie = cookie.SetCookie {
         ...cookie.new("sid", "abc123"),
         secure: true,
-        max_age: 3600,
+        max_age: Some(time.duration_hours(1)),
         same_site: cookie.Strict,
     };
     return http.plain("hello\n").with_cookie(c);

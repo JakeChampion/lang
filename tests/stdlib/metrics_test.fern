@@ -1,6 +1,7 @@
 import "std/metrics";
 import "std/test";
 import "std/string";
+import "std/time";
 
 function test_counter_renders(): test.TestOutcome {
   let c: metrics.Counter = metrics.counter("jobs_total", "Jobs taken.");
@@ -68,9 +69,9 @@ function test_head_once_per_name(): test.TestOutcome {
 
 function test_server_metrics_by_method_and_status(): test.TestOutcome {
   let m: metrics.ServerMetrics = metrics.server_metrics();
-  m = m.request("GET", 200, 4000000 as i64);
-  m = m.request("GET", 200, 300000000 as i64);
-  m = m.request("POST", 404, 1 as i64);
+  m = m.request("GET", 200, time.duration_millis(4));
+  m = m.request("GET", 200, time.duration_millis(300));
+  m = m.request("POST", 404, time.duration_nanos(1));
   m.accepted.inc();
   m.open.inc();
   m.open.dec();

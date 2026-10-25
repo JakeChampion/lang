@@ -139,9 +139,9 @@ whose last parameter is the handler it wraps**, and it answers the same
 
 ```fern
 function timed(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-    let started: i64 = plat.elapsed_ns();
+    let started: Instant = plat.instant();
     let resp: HttpResponse = http.respond(next(req));
-    plat.log(req.path + " took " + (plat.elapsed_ns() - started).to_string() + "ns");
+    plat.log(req.path + " took " + plat.instant().since(started).to_string());
     return Ok(resp);
 }
 ```
@@ -358,12 +358,12 @@ import "std/time";
 import "std/platform";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    let now: time.Timestamp = time.timestamp_from_unix(plat.now_ms() / 1000 as i64);
+    let now: time.Timestamp = plat.now();
     let v: cache.Validators = cache.Validators {
         etag: Some(cache.strong("v42")),
         last_modified: Some(time.timestamp_from_unix(1760000000 as i64)),
     };
-    let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_age: Some(60 as i64) };
+    let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_age: Some(time.duration_seconds(60)) };
     return cache.respond(req, v, now, http.html("<p>the page</p>")).with_cache_control(cc);
 }
 ```
