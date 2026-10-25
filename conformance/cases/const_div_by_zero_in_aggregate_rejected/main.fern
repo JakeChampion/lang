@@ -1,0 +1,11 @@
+// spec: IS-15
+// Each element of an array, tuple or struct literal is evaluated.
+struct Pair { a: i32, b: i32 }
+
+const XS: i32[] = [1, 2 / 0];
+const T: (i32, i32) = (1, 1 % 0);
+const P: Pair = Pair { a: 1, b: 3 / (2 - 2) };
+
+function main(): i32 {
+    return XS[0] + T.0 + P.a;
+}

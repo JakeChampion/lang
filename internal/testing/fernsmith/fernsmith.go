@@ -1203,7 +1203,30 @@ func (g *Generator) stringExpr(b *strings.Builder, sc *scope, depth int) {
 func (g *Generator) fstringLitSegment(b *strings.Builder) {
 	n := g.ch.intN(6)
 	for i := 0; i < n; i++ {
+		g.stringChar(b)
+	}
+}
+
+var simpleEscapes = []string{`\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`}
+
+// stringChar writes one character of a string literal: a lowercase letter,
+// or an escape the lexer decodes, a control byte or a multi-byte scalar.
+func (g *Generator) stringChar(b *strings.Builder) {
+	if g.flip(0.85) {
 		b.WriteByte(byte('a' + g.ch.intN(26)))
+		return
+	}
+	switch g.ch.intN(5) {
+	case 0:
+		b.WriteString(simpleEscapes[g.ch.intN(len(simpleEscapes))])
+	case 1:
+		fmt.Fprintf(b, `\x%02x`, g.ch.intN(0x80))
+	case 2:
+		fmt.Fprintf(b, `\u{%x}`, 0x80+g.ch.intN(0x800-0x80))
+	case 3:
+		fmt.Fprintf(b, `\u{%x}`, 0x800+g.ch.intN(0xD800-0x800))
+	default:
+		fmt.Fprintf(b, `\u{%x}`, 0x10000+g.ch.intN(0x10000))
 	}
 }
 
@@ -2050,7 +2073,7 @@ func (g *Generator) stringLiteral() string {
 	var sb strings.Builder
 	sb.WriteByte('"')
 	for i := 0; i < n; i++ {
-		sb.WriteByte(byte('a' + g.ch.intN(26)))
+		g.stringChar(&sb)
 	}
 	sb.WriteByte('"')
 	return sb.String()
