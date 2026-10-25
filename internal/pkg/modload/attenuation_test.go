@@ -5,9 +5,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/pkg/manifest"
-	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
 func TestLoadAttenuationChainOK(t *testing.T) {
@@ -159,20 +156,10 @@ pub function one(): i32 { return b.one() + c.one(); }`,
 		t.Fatal("expected amplification errors, got none")
 	}
 	manPath := filepath.Join(root, "a", "fern.toml")
-	want := manPath + `:5:1: error[E088]: dependency "b" of "a" is granted 'env' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
-		manPath + `:5:1: error[E088]: dependency "b" of "a" is granted 'net' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
-		manPath + `:6:1: error[E088]: dependency "c" of "a" is granted 'fs' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)`
+	want := manPath + `: dependency "b" of "a" is granted 'env' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
+		manPath + `: dependency "b" of "a" is granted 'net' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)` + "\n" +
+		manPath + `: dependency "c" of "a" is granted 'fs' but "a" itself holds only [] (attenuation: a dependency may grant at most what it holds)`
 	if got := err.Error(); got != want {
 		t.Errorf("violations:\ngot  %q\nwant %q", got, want)
-	}
-	errors, ok := err.(diag.Errors)
-	if !ok || len(errors) != 3 {
-		t.Fatalf("want three structured errors, got %T: %v", err, err)
-	}
-	for i, one := range errors {
-		located, ok := one.(*manifest.Error)
-		if !ok || located.Code() != "E088" || located.Path != manPath || located.Line != []int{5, 5, 6}[i] {
-			t.Errorf("diagnostic %d: %#v", i, one)
-		}
 	}
 }

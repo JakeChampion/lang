@@ -16,7 +16,6 @@ const FileName = "fern.toml"
 const DefaultLib = "lib.fern"
 
 type Dep struct {
-	Line         int
 	Path         string
 	URL          string
 	Hash         string
@@ -222,7 +221,6 @@ func Parse(src string) (*Manifest, error) {
 			if !validDepName(key) {
 				return nil, lineError(ln+1, "invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", key)
 			}
-			dep.Line = ln + 1
 			m.Deps[key] = dep
 		case "workspace":
 			if key != "members" {

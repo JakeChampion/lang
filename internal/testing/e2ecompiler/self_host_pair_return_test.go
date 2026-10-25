@@ -693,9 +693,200 @@ function main(): i32 {
 }
 `
 
+const pairSplitProg = `import "std/bench";
+
+struct Sealed { record: u8[], next: string }
+struct Mixed { n: i32, s: string }
+struct Run { server: string, out: u8[] }
+
+enum Step { Go(Run), Wait(Sealed), Done(i32) }
+enum Fault { Bad(i32) }
+enum Wrapped { Inner(Fault), Odd(string) }
+
+@noinline function seal(n: i32, buf: u8[], s: string): Result[Sealed, string] {
+  if (n % 5 == 4) {
+    return Err(s);
+  }
+  return Ok(Sealed { record: buf, next: s });
+}
+
+@noinline function pair(n: i32, s: string): Result[(string, i32), i32] {
+  if (n % 3 == 2) {
+    return Err(n);
+  }
+  return Ok((s, n * 2));
+}
+
+// The payload is a parameter, so the callee reads its fields out.
+@noinline function mixed(n: i32, m: Mixed): Option[Mixed] {
+  if (n % 2 == 1) {
+    return None;
+  }
+  return Some(m);
+}
+
+@noinline function fwd(n: i32, buf: u8[], s: string): Result[Sealed, string] {
+  return seal(n + 1, buf, s);
+}
+
+@noinline function step(server: string, out: u8[], n: i32): Result[Run, string] {
+  if (n > 1000) {
+    return Err(server);
+  }
+  return Ok(Run { server: server, out: out });
+}
+
+// A payload carried round a loop, as std/tls's __server_drain does.
+@noinline function drain(s: string, o: u8[], k: i32): Result[Run, string] {
+  let r: Run = step(s, o, 0)?;
+  let i: i32 = 0;
+  while (i < k) {
+    r = step(r.server, r.out, i)?;
+    i = i + 1;
+  }
+  return Ok(Run { server: r.server, out: r.out });
+}
+
+// Named like Sealed's field, which must not count as a use of the function.
+@noinline function next(n: i32, s: string, buf: u8[]): Step {
+  if (n % 3 == 0) {
+    return Go(Run { server: s, out: buf });
+  }
+  if (n % 3 == 1) {
+    return Wait(Sealed { record: buf, next: s });
+  }
+  return Done(n);
+}
+
+// Called only where a caller keeps the payload, so it keeps one word.
+@noinline function kept(n: i32, s: string): Result[Mixed, i32] {
+  if (n < 0) {
+    return Err(n);
+  }
+  return Ok(Mixed { n: n, s: s });
+}
+
+// An instance of a generic re-wraps its argument's payload.
+function wrap[T](r: Result[T, Fault]): Result[T, Wrapped] {
+  match (r) {
+    Ok(v) => {
+      return Ok(v);
+    },
+    Err(e) => {
+      return Err(Inner(e));
+    }
+  }
+  return Err(Odd("unreachable"));
+}
+
+@noinline function built(n: i32, buf: u8[]): Result[Sealed, Fault] {
+  if (n > 2) {
+    return Err(Bad(n));
+  }
+  return Ok(Sealed { record: buf, next: "x" + "".to_string() });
+}
+
+function main(): i32 {
+  let s: string = "hey" + "".to_string();
+  let buf: u8[] = [1 as u8, 2 as u8, 3 as u8];
+  let m: Mixed = Mixed { n: 7, s: s };
+  let total: i32 = 0;
+  let i: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  while (i < 20) {
+    match (seal(i, buf, s)) {
+      Ok(x) => {
+        total = total + x.record.len() + x.next.len();
+      },
+      Err(e) => {
+        total = total + e.len() * 10;
+      }
+    }
+    match (pair(i, s)) {
+      Ok(p) => {
+        total = total + p.0.len() + p.1;
+      },
+      Err(e) => {
+        total = total + e * 100;
+      }
+    }
+    match (mixed(i, m)) {
+      Some(x) => {
+        total = total + x.n + x.s.len();
+      },
+      None => {
+        total = total + 1;
+      }
+    }
+    match (fwd(i, buf, s)) {
+      Ok(x) => {
+        total = total + x.record.len();
+      },
+      Err(e) => {
+        total = total + e.len();
+      }
+    }
+    match (drain(s, buf, i % 4)) {
+      Ok(r) => {
+        total = total + r.server.len() + r.out.len();
+      },
+      Err(e) => {
+        total = total + e.len();
+      }
+    }
+    match (next(i, s, buf)) {
+      Go(r) => {
+        total = total + r.server.len() * 1000;
+      },
+      Wait(w) => {
+        total = total + w.record.len() * 10000;
+      },
+      Done(d) => {
+        total = total + d;
+      }
+    }
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  let held: Mixed[] = [];
+  i = 0;
+  while (i < 3) {
+    match (kept(i, s)) {
+      Ok(x) => {
+        held = held.append(x);
+      },
+      Err(_) => {}
+    }
+    match (wrap(built(i, buf))) {
+      Ok(x) => {
+        total = total + x.record.len() + x.next.len();
+      },
+      Err(_) => {
+        total = total + 50;
+      }
+    }
+    i = i + 1;
+  }
+  for h in held {
+    total = total + h.n + h.s.len();
+  }
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 237595) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {

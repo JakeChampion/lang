@@ -5754,23 +5754,22 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 
 func (c *checker) validateKnownTypes(prog *ast.Program) {
 	for _, fn := range prog.Funcs {
-		mod := fn.BodyModule()
 		params := typeParamSet(fn.TypeParams)
 		if fn.Receiver != nil {
-			c.checkTypeKnown(mod, fn.Receiver.Type, params, fn.P)
+			c.checkTypeKnown(fn.Receiver.Type, params, fn.P)
 		}
 		for i := range fn.Params {
-			c.checkTypeKnown(mod, fn.Params[i].Type, params, paramPos(fn.Params[i], fn.P))
-			c.lanesContained(mod, fn.Params[i].Type, paramPos(fn.Params[i], fn.P))
+			c.checkTypeKnown(fn.Params[i].Type, params, paramPos(fn.Params[i], fn.P))
+			c.lanesContained(fn.Params[i].Type, paramPos(fn.Params[i], fn.P))
 		}
-		c.checkTypeKnown(mod, fn.ReturnType, params, fn.P)
-		c.lanesContained(mod, fn.ReturnType, fn.P)
+		c.checkTypeKnown(fn.ReturnType, params, fn.P)
+		c.lanesContained(fn.ReturnType, fn.P)
 		if fn.Body != nil {
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
 					if *t != nil {
-						c.checkTypeKnown(mod, *t, params, pos)
-						c.lanesContained(mod, *t, pos)
+						c.checkTypeKnown(*t, params, pos)
+						c.lanesContained(*t, pos)
 					}
 				})
 				return true
@@ -5778,27 +5777,24 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		}
 	}
 	for _, sd := range prog.Structs {
-		mod := sd.SourceModule
 		params := typeParamSet(sd.TypeParams)
 		for i := range sd.Fields {
-			c.checkTypeKnown(mod, sd.Fields[i].Type, params, paramPos(sd.Fields[i], sd.P))
-			c.lanesHeld(mod, sd.Fields[i].Type, paramPos(sd.Fields[i], sd.P))
+			c.checkTypeKnown(sd.Fields[i].Type, params, paramPos(sd.Fields[i], sd.P))
+			c.lanesHeld(sd.Fields[i].Type, paramPos(sd.Fields[i], sd.P))
 		}
 	}
 	for _, ed := range prog.Enums {
-		mod := ed.SourceModule
 		params := typeParamSet(ed.TypeParams)
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
-				c.checkTypeKnown(mod, ed.Variants[i].Payloads[j], params, ed.Variants[i].P)
-				c.lanesHeld(mod, ed.Variants[i].Payloads[j], ed.Variants[i].P)
+				c.checkTypeKnown(ed.Variants[i].Payloads[j], params, ed.Variants[i].P)
+				c.lanesHeld(ed.Variants[i].Payloads[j], ed.Variants[i].P)
 			}
 		}
 	}
 	for _, impl := range prog.Impls {
-		mod := impl.SourceModule
 		params := typeParamSet(impl.TypeParams)
-		c.checkTypeKnown(mod, impl.Type, params, impl.P)
+		c.checkTypeKnown(impl.Type, params, impl.P)
 	}
 }
 
@@ -5880,37 +5876,37 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 	}
 }
 
-func (c *checker) checkTypeKnown(mod string, t ast.Type, params map[string]bool, pos ast.Position) {
+func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Position) {
 	switch x := t.(type) {
 	case ast.StructType:
 		if !c.knownTypeName(x.Name, params) {
-			c.report(mod, pos, "E064", fmt.Sprintf("cannot find type %q in this scope%s", demangle(x.Name), c.unknownTypeHint(x.Name)))
+			c.errfCode(pos, "E064", "cannot find type %q in this scope%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
-			c.checkTypeKnown(mod, a, params, pos)
+			c.checkTypeKnown(a, params, pos)
 		}
 	case ast.EnumType:
 		if !c.knownTypeName(x.Name, params) {
-			c.report(mod, pos, "E064", fmt.Sprintf("cannot find type %q in this scope%s", demangle(x.Name), c.unknownTypeHint(x.Name)))
+			c.errfCode(pos, "E064", "cannot find type %q in this scope%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
-			c.checkTypeKnown(mod, a, params, pos)
+			c.checkTypeKnown(a, params, pos)
 		}
 	case ast.ArrayType:
-		c.checkTypeKnown(mod, x.Elem, params, pos)
+		c.checkTypeKnown(x.Elem, params, pos)
 	case ast.SliceType:
-		c.checkTypeKnown(mod, x.Elem, params, pos)
+		c.checkTypeKnown(x.Elem, params, pos)
 	case ast.TupleType:
 		for _, e := range x.Elems {
-			c.checkTypeKnown(mod, e, params, pos)
+			c.checkTypeKnown(e, params, pos)
 		}
 	case *ast.FuncType:
 		for _, p := range x.Params {
-			c.checkTypeKnown(mod, p, params, pos)
+			c.checkTypeKnown(p, params, pos)
 		}
-		c.checkTypeKnown(mod, x.Result, params, pos)
+		c.checkTypeKnown(x.Result, params, pos)
 	}
 }
 
@@ -12701,7 +12697,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		for _, el := range n.Elems {
 			c.settleNumeric(el, elemT)
 		}
-		c.lanesContained(c.currentModule(), ast.ArrayType{Elem: elemT}, n.P)
+		c.lanesContained(ast.ArrayType{Elem: elemT}, n.P)
 		return ast.ArrayType{Elem: elemT}
 	case *ast.Index:
 		at := c.checkExpr(n.Array, s)
@@ -14208,7 +14204,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			elems[i] = t
 		}
-		c.lanesContained(c.currentModule(), ast.TupleType{Elems: elems}, n.P)
+		c.lanesContained(ast.TupleType{Elems: elems}, n.P)
 		return ast.TupleType{Elems: elems}
 	case *ast.MapLit:
 		c.needCoreMap(n.P)
@@ -15828,15 +15824,15 @@ func lanesSignature(params []ast.Param, result ast.Type) bool {
 	return isLanes(result) || slices.ContainsFunc(params, func(p ast.Param) bool { return isLanes(p.Type) })
 }
 
-func (c *checker) lanesContained(mod string, t ast.Type, pos ast.Position) {
+func (c *checker) lanesContained(t ast.Type, pos ast.Position) {
 	if t != nil && lanesInside(t) {
-		c.report(mod, pos, "E085", fmt.Sprintf("%s holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", t))
+		c.errfCode(pos, "E085", "%s holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", t)
 	}
 }
 
-func (c *checker) lanesHeld(mod string, t ast.Type, pos ast.Position) {
+func (c *checker) lanesHeld(t ast.Type, pos ast.Position) {
 	if t != nil && holdsLanes(t) {
-		c.report(mod, pos, "E085", fmt.Sprintf("a field or payload of type %s holds a lane value; a lane value lives only in a local, a parameter or a result", t))
+		c.errfCode(pos, "E085", "a field or payload of type %s holds a lane value; a lane value lives only in a local, a parameter or a result", t)
 	}
 }
 

@@ -36,7 +36,7 @@ pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
   let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
   let dot: i32 = member_dot(toks, line, col);
   if (dot >= 0) {
-    return sorted(source_items(members(v.types, toks, quals, m, dot), v.names, quals));
+    return sorted(members(v.types, toks, quals, m, dot));
   }
   let items: Item[] = [];
   let f: i32 = lspquery.enclosing(v.types.mod, toks, m, line, col);
@@ -47,15 +47,7 @@ pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
   for kw in lexer.keywords() {
     items = items.append(Item { label: kw, kind: CI_KEYWORD, detail: "" });
   }
-  return sorted(source_items(items, v.names, quals));
-}
-
-function source_items(items: Item[], names: util.NameIndex, quals: flatten.Qualifiers): Item[] {
-  let out: Item[] = [];
-  for item in items {
-    out = out.append(Item { ...item, label: lspquery.source_text(item.label, names, quals), detail: lspquery.source_text(item.detail, names, quals) });
-  }
-  return out;
+  return sorted(items);
 }
 
 function bound_items(bs: Bound[]): Item[] {

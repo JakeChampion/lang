@@ -417,7 +417,7 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
           names = names.append(name);
           let fields: parser.StructFieldDecl[] = [];
           for fl in rec.fields {
-            fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+            fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
           }
           out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
         }
@@ -443,7 +443,7 @@ function instance_variants(built: semsource.Built): parser.StructDecl[] {
         names = names.append(name);
         let fields: parser.StructFieldDecl[] = [];
         for fl in v.fields {
-          fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+          fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
         }
         out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
       }
@@ -878,7 +878,7 @@ function substitution_of(im: parser.Module, opts: semsource.BuildOpts): ircore.S
   let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
   let sub: ircore.Sub = substitution(im, stab, opts);
-  return ircore.Sub { ...sub, rt_lower: runtime_lowering, diagnostics: ircore.fip_claims(im.funcs, 0, im.funcs.len(), sub.bodies) };
+  return ircore.Sub { ...sub, rt_lower: runtime_lowering };
 }
 
 pub struct Driven { full: parser.Module, sub: ircore.Sub }

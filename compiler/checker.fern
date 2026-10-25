@@ -12365,7 +12365,7 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
     for field in esd.fields {
       let ft: typeinfo.Type = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
       if (holds_lanes(ft)) {
-        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", field.line, field.col));
+        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
       }
     }
   }
@@ -21695,7 +21695,7 @@ function source_named_diag(d: util.Diag, mangled: util.NameIndex): util.Diag {
 
 // imported_decl_names is every bundle name an imported module's declaration
 // carries; an entry-module name is never mangled, whatever it contains.
-pub function imported_decl_names(mod: parser.Module): string[] {
+function imported_decl_names(mod: parser.Module): string[] {
   let out: string[] = [];
   for fd in mod.funcs {
     out = with_mangled(out, fd.name, fd.module);
@@ -22069,7 +22069,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       for field in esd.fields {
         let fu: string = e064_unknown_name(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), field.line, field.col));
+          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
         }
       }
     }

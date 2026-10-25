@@ -10,7 +10,7 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 
 pub struct FuncDecl { stdlib: string, no_inline: boolean, always_inline: boolean, name: string, receiver_name: string, receiver_type: string, receiver_own: boolean, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string, impl_trait: string, dyn_traits: string[], streams: i32[] }
 
-pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string, fn_param_types: string, line: i32, col: i32 }
+pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string, fn_param_types: string }
 
 pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, variant_field_names: string[], is_pub: boolean, is_package: boolean, opaque: boolean, module: string }
 
@@ -532,7 +532,7 @@ pub function no_match_sugar(): ast.MatchSugar {
   let no_struct: ast.StructArm[] = [];
   let no_lit: ast.LitArm[] = [];
   let no_arms: ast.MatchArm[] = [];
-  return ast.MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, arms: no_arms, line: 0, col: 0, origin: "" };
+  return ast.MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, arms: no_arms, line: 0, col: 0, origin: "", else_chained: false };
 }
 
 function s_if_match(body: ast.Stmt[], sugar: ast.MatchSugar): ast.Stmt {
@@ -615,16 +615,16 @@ function s_assign_at(target: string, value: ast.Expr, line: i32, col: i32, targe
 
 function s_match(scrutinee: ast.Expr, arms: ast.MatchArm[]): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "", sugar: no_sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "", sugar: no_sugar, else_chained: false };
 }
 
 function s_match_at(scrutinee: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: no_sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: no_sugar, else_chained: false };
 }
 
 function s_match_sugared(scrutinee: ast.Expr, arms: ast.MatchArm[], sugar: ast.MatchArm[], line: i32, col: i32): ast.Stmt {
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: sugar, else_chained: false };
 }
 
 function array_builder_elem(t: string): string {
@@ -864,11 +864,11 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
 
 function s_match_origin(scrutinee: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar, else_chained: false };
 }
 
 function s_match_origin_sugared(scrutinee: ast.Expr, arms: ast.MatchArm[], sugar: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: sugar };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: sugar, else_chained: false };
 }
 
 function p_variant(type_name: string, binding: string): ast.Pattern {
@@ -3088,10 +3088,14 @@ function with_written_scrut(st: ast.Stmt, written: ast.Expr): ast.Stmt {
   }
 }
 
-function with_sugar_origin(st: ast.Stmt, origin: string): ast.Stmt {
+// else_chained records that an if-let's else was written `else if`.
+function with_sugar_origin(st: ast.Stmt, origin: string, else_chained: boolean): ast.Stmt {
   match (st) {
     ast.StmtIf(i) => {
-      return ast.StmtIf { ...i, sugar: ast.MatchSugar { ...i.sugar, origin: origin } };
+      return ast.StmtIf { ...i, sugar: ast.MatchSugar { ...i.sugar, origin: origin, else_chained: else_chained } };
+    },
+    ast.StmtMatch(m) => {
+      return ast.StmtMatch { ...m, origin: origin, else_chained: else_chained };
     },
     _ => {
       return st;
@@ -4001,10 +4005,14 @@ function parse_if_chain(p: Par): IfChain {
   let rt: string = thenb_rt;
   let else_body: ast.Stmt[] = [];
   let else_dead = false;
-  if (p.peek_keyword() == "if" && else_written) {
+  let chained: boolean = p.peek_keyword() == "if" && else_written;
+  if (chained) {
     let nested: IfChain = parse_if_chain(p);
-    p = nested.par;
     else_body = [nested.stmt];
+    if (nested.value_local.len() > 0) {
+      else_body = [s_return(value_chain_expr(nested, ORIGIN_IF_EXPR, p.peek_line(), p.peek_col()))];
+    }
+    p = nested.par;
   } else if (else_written || p.peek_punct() == "{") {
     let (elseb_body, elseb_rt, elseb_dead, elseb_p) = parse_branch_body_written(p);
     p = elseb_p;
@@ -4020,7 +4028,8 @@ function parse_if_chain(p: Par): IfChain {
   } else if (else_dead) {
     origin = ORIGIN_IF_DEAD_ELSE;
   }
-  return IfChain { par: p, stmt: s_if_origin(condr_expr, then_body, else_body, origin), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
+  let stmt: ast.Stmt = ast.StmtIf { cond: condr_expr, then_body: then_body, else_body: else_body, line: 0, else_chained: chained, sugar: no_match_sugar(), origin: origin };
+  return IfChain { par: p, stmt: stmt, rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
 }
 
 function parse_match_expr(p: Par): IfChain {
@@ -4979,7 +4988,7 @@ pub function lower_struct_record_match(m: ast.StmtMatch, value: string): ast.Stm
     }
     arms = arms.append(ast.StructArm { is_wild: wild, type_name: name, binds: binds, fields: fields, field_kinds: kinds, field_lits: lits, field_pats: pats, at_binding: at, rest_written: rest, guard: arm.guard, has_guard: arm.has_guard, body: body, line: arm.line, col: arm.col });
   }
-  return with_sugar_origin(build_struct_match_fields(m.scrutinee, arms, m.line, m.col, true), m.origin);
+  return with_sugar_origin(build_struct_match_fields(m.scrutinee, arms, m.line, m.col, true), m.origin, m.else_chained);
 }
 
 function record_slot_literal(cond: ast.Expr, slot: string): Option[ast.Expr] {
@@ -5006,7 +5015,7 @@ pub function struct_record_source(st: ast.Stmt): Option[ast.StmtMatch] {
   if let ast.StmtIf(f) = st {
     let sg: ast.MatchSugar = f.sugar;
     if (sg.arms.len() > 0) {
-      return Some(ast.StmtMatch { scrutinee: sg.scrut, arms: sg.arms, sugar: [], line: sg.line, col: sg.col, origin: sg.origin });
+      return Some(ast.StmtMatch { scrutinee: sg.scrut, arms: sg.arms, sugar: [], line: sg.line, col: sg.col, origin: sg.origin, else_chained: sg.else_chained });
     }
   }
   return None;
@@ -5273,7 +5282,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
     if (!tuple_covers && has_fall) {
       tarms = tarms.append(ast.TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: e_bool(true), has_guard: false, body: fall, line: gp_line, col: gp_col, alt_cont: false });
     }
-    let tmatch: ast.Stmt = with_sugar_origin(build_tuple_match(e_ident(tmp), tarms, gp_line, gp_col), ORIGIN_PATTERN_PROBE);
+    let tmatch: ast.Stmt = with_sugar_origin(build_tuple_match(e_ident(tmp), tarms, gp_line, gp_col), ORIGIN_PATTERN_PROBE, false);
     let t_no_extra: string[] = [];
     let t_no_nested: ast.Pattern[] = [];
     let t_nk: i32[] = [];
@@ -5789,7 +5798,7 @@ function parse_let_pattern(p: Par, start: Par, qualified_record: boolean, vline:
   lsp_arms = lsp_arms.append(lsp_wild);
   lsp_written = lsp_written.append(lsp_wild);
   if (arms_take_flag_chain(lsp_arms)) {
-    return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else"), p);
+    return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else", false), p);
   }
   lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
   let lsp_sugar: ast.MatchArm[] = [];
@@ -5872,7 +5881,7 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
       lel_i = lel_i + 1;
     }
     lel_arms = lel_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
-    return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else"), p);
+    return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else", false), p);
   }
   let name: string = p.peek_ident();
   if (name.len() == 0) {
@@ -5893,25 +5902,29 @@ function at_local_struct_pattern(p: Par): boolean {
   return is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{");
 }
 
-struct PatternIfBranches { par: Par, yes: ast.Stmt[], no: ast.Stmt[], rt: string }
+struct PatternIfBranches { par: Par, yes: ast.Stmt[], no: ast.Stmt[], rt: string, else_chained: boolean }
 
 function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: string): PatternIfBranches {
   if (!value_form) {
     let (yes, next) = parse_block_or_stmt(p);
     p = next;
     let no: ast.Stmt[] = [];
+    let chained: boolean = false;
     if (p.peek_keyword() == "else") {
-      let (body, after) = parse_block_or_stmt(p.advance());
+      p = p.advance();
+      chained = p.peek_keyword() == "if";
+      let (body, after) = parse_block_or_stmt(p);
       no = body;
       p = after;
     }
-    return PatternIfBranches { par: p, yes: yes, no: no, rt: "" };
+    return PatternIfBranches { par: p, yes: yes, no: no, rt: "", else_chained: chained };
   }
   let (yes, yes_rt, next) = parse_branch_body(p);
   p = next.expect("else");
   let no: ast.Stmt[] = [];
   let no_rt: string = "i32";
-  if (p.peek_keyword() == "if") {
+  let chained: boolean = p.peek_keyword() == "if";
+  if (chained) {
     let chain: IfChain = parse_if_chain(p);
     let expr: ast.Expr = value_chain_expr(chain, ORIGIN_IF_EXPR, p.peek_line(), p.peek_col());
     no = [s_return(expr)];
@@ -5923,7 +5936,7 @@ function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: str
     no_rt = rt;
     p = after;
   }
-  return PatternIfBranches { par: p, yes: value_arm_body(yes, value_local), no: value_arm_body(no, value_local), rt: wider_rt(yes_rt, no_rt) };
+  return PatternIfBranches { par: p, yes: value_arm_body(yes, value_local), no: value_arm_body(no, value_local), rt: wider_rt(yes_rt, no_rt), else_chained: chained };
 }
 
 function pattern_if_chain(stmt: ast.Stmt, p: Par, rt: string, value_form: boolean, value_local: string): IfChain {
@@ -5978,7 +5991,7 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
     let ils_no_lits: ast.Expr[] = [];
     let ils_nf: string[] = [];
     ils_arms = ils_arms.append(ast.StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
-    return pattern_if_chain(with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
     let ilt_line: i32 = p.peek_line();
@@ -6025,7 +6038,7 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
     let ilt_wl: ast.Expr[] = [];
     let ilt_wp: ast.Pattern[] = [];
     ilt_arms = ilt_arms.append(ast.TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
-    return pattern_if_chain(with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   // Literal and range patterns share the literal match builder.
   if (p.peek_is_pat_literal() || p.peek_at_literal()) {
@@ -6050,7 +6063,7 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
     }
     ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
 
-    return pattern_if_chain(with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   let il_line: i32 = p.peek_line();
   let il_col: i32 = p.peek_col();
@@ -6083,14 +6096,14 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
   ilarms = ilarms.append(ilwild);
   ilwritten = ilwritten.append(ilwild);
   if (arms_take_flag_chain(ilarms)) {
-    return pattern_if_chain(with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let"), p, rt, value_form, value_local);
+    return pattern_if_chain(with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   ilarms = desugar_nested_arms(ilarms, 0, "");
   let ilsugar: ast.MatchArm[] = [];
   if (arms_have_written_form(ilwritten)) {
     ilsugar = ilwritten;
   }
-  return pattern_if_chain(s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p, rt, value_form, value_local);
+  return pattern_if_chain(with_sugar_origin(s_match_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
 }
 
 function parse_if_stmt(p: Par): (ast.Stmt, Par) {
@@ -7805,23 +7818,21 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
 }
 
 function parse_struct_field(p: Par): (StructFieldDecl, Par) {
-  let line: i32 = p.peek_line();
-  let col: i32 = p.peek_col();
   let name: string = p.peek_ident();
   if (name.len() == 0) {
-    return (StructFieldDecl { name: "", type_name: "", fn_ret: "", fn_param_types: "", line: line, col: col }, p);
+    return (StructFieldDecl { name: "", type_name: "", fn_ret: "", fn_param_types: "" }, p);
   }
   p = p.advance();
   if (p.peek_punct() != ":") {
-    return (StructFieldDecl { name: name, type_name: "", fn_ret: "", fn_param_types: "", line: line, col: col }, p);
+    return (StructFieldDecl { name: name, type_name: "", fn_ret: "", fn_param_types: "" }, p);
   }
   p = p.advance();
-  return parse_field_type(p, name, line, col);
+  return parse_field_type(p, name);
 }
 
-function parse_field_type(p: Par, name: string, line: i32, col: i32): (StructFieldDecl, Par) {
+function parse_field_type(p: Par, name: string): (StructFieldDecl, Par) {
   let (ty, end) = parse_decl_type(p);
-  return (StructFieldDecl { name: name, type_name: ty.name, fn_ret: ty.fn_ret, fn_param_types: ty.fn_params, line: line, col: col }, end);
+  return (StructFieldDecl { name: name, type_name: ty.name, fn_ret: ty.fn_ret, fn_param_types: ty.fn_params }, end);
 }
 
 function parse_decl_tparams(p: Par, kind: string, name: string): (string[], Par) {
@@ -7989,7 +8000,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
         if (rnum > 0) {
           mark = "__ev" + dl_itoa(rnum);
         }
-        let (rf, rf_p) = parse_field_type(p, mark, vline, vcol);
+        let (rf, rf_p) = parse_field_type(p, mark);
         p = rf_p;
         fields = fields.append(rf);
         vfnames = vfnames.append(rfname);
@@ -8005,14 +8016,14 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
       }
     } else if (p.peek_punct() == "(") {
       p = p.advance();
-      let (tr, tr_p) = parse_field_type(p, "__ev", vline, vcol);
+      let (tr, tr_p) = parse_field_type(p, "__ev");
       p = tr_p;
       fields = fields.append(tr);
       let pnum: i32 = 1;
       let (pmore, pmore_p) = p.more_elems(")");
       p = pmore_p;
       while (pmore) {
-        let (tr2, tr2_p) = parse_field_type(p, "__ev" + dl_itoa(pnum), vline, vcol);
+        let (tr2, tr2_p) = parse_field_type(p, "__ev" + dl_itoa(pnum));
         p = tr2_p;
         fields = fields.append(tr2);
         pnum = pnum + 1;
@@ -8207,7 +8218,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_types: str
     if (fields.len() > 0) {
       field = "__ev" + dl_itoa(fields.len());
     }
-    fields = fields.append(StructFieldDecl { name: field, type_name: t, fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fields = fields.append(StructFieldDecl { name: field, type_name: t, fn_ret: "", fn_param_types: "" });
   }
   return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
@@ -8307,109 +8318,109 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_variant(structs, "Other", ["string", "string", "i32"], "IoError");
   if (!name_declared(structs, "FileStat")) {
     let fsf: StructFieldDecl[] = [];
-    fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "mode", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "nlink", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "uid", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "gid", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "rdev", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "blksize", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "atime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "atime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "mtime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "btime", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fsf = fsf.append(StructFieldDecl { name: "btime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "mode", type_name: "u32", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "nlink", type_name: "u32", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "uid", type_name: "u32", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "gid", type_name: "u32", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "rdev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "blksize", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "atime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "atime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "mtime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "btime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "btime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "DirEntry")) {
     let def: StructFieldDecl[] = [];
-    def = def.append(StructFieldDecl { name: "name", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    def = def.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    def = def.append(StructFieldDecl { name: "kind", type_name: "u32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    def = def.append(StructFieldDecl { name: "name", type_name: "string", fn_ret: "", fn_param_types: "" });
+    def = def.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    def = def.append(StructFieldDecl { name: "kind", type_name: "u32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "DirEntry", fields: def, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "FsStat")) {
     let fvf: StructFieldDecl[] = [];
-    fvf = fvf.append(StructFieldDecl { name: "block_size", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "blocks_free", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "blocks_avail", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "files", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "files_free", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "fs_type", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "fsid", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    fvf = fvf.append(StructFieldDecl { name: "fs_type_name", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    fvf = fvf.append(StructFieldDecl { name: "block_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "blocks_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "blocks_avail", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "files", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "files_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fs_type", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fsid", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fs_type_name", type_name: "string", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "MountEntry")) {
     let mef: StructFieldDecl[] = [];
-    mef = mef.append(StructFieldDecl { name: "source", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    mef = mef.append(StructFieldDecl { name: "target", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    mef = mef.append(StructFieldDecl { name: "fstype", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    mef = mef.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    mef = mef.append(StructFieldDecl { name: "source", type_name: "string", fn_ret: "", fn_param_types: "" });
+    mef = mef.append(StructFieldDecl { name: "target", type_name: "string", fn_ret: "", fn_param_types: "" });
+    mef = mef.append(StructFieldDecl { name: "fstype", type_name: "string", fn_ret: "", fn_param_types: "" });
+    mef = mef.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "MountEntry", fields: mef, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "WinSize")) {
     let wsf: StructFieldDecl[] = [];
-    wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "WinSize", fields: wsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Pipe")) {
     let pf: StructFieldDecl[] = [];
-    pf = pf.append(StructFieldDecl { name: "r", type_name: "Reader", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    pf = pf.append(StructFieldDecl { name: "w", type_name: "Writer", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    pf = pf.append(StructFieldDecl { name: "r", type_name: "Reader", fn_ret: "", fn_param_types: "" });
+    pf = pf.append(StructFieldDecl { name: "w", type_name: "Writer", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Pipe", fields: pf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "ProcessResult")) {
     let prf: StructFieldDecl[] = [];
-    prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "", fn_param_types: "" });
+    prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "", fn_param_types: "" });
+    prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HeaderMap")) {
     let hmf: StructFieldDecl[] = [];
-    hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "", fn_param_types: "" });
+    hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
-    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32", line: 0, col: 0 });
-    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
+    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HttpRequest")) {
     let hrf: StructFieldDecl[] = [];
-    hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hrf = hrf.append(StructFieldDecl { name: "body", type_name: "ByteStream", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hrf = hrf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "" });
+    hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
+    hrf = hrf.append(StructFieldDecl { name: "body", type_name: "ByteStream", fn_ret: "", fn_param_types: "" });
+    hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+    hrf = hrf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HttpResponse")) {
     let hsf: StructFieldDecl[] = [];
-    hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    hsf = hsf.append(StructFieldDecl { name: "background", type_name: "Option[() => void]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "" });
+    hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+    hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+    hsf = hsf.append(StructFieldDecl { name: "background", type_name: "Option[() => void]", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
@@ -8419,53 +8430,53 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_struct2(structs, "Zoned", "instant", "Instant", "zone", "TimeZone");
   if (!name_declared(structs, "Date")) {
     let df: StructFieldDecl[] = [];
-    df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Time")) {
     let tf: StructFieldDecl[] = [];
-    tf = tf.append(StructFieldDecl { name: "hour", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    tf = tf.append(StructFieldDecl { name: "second", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    tf = tf.append(StructFieldDecl { name: "hour", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    tf = tf.append(StructFieldDecl { name: "second", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Span")) {
     let spf: StructFieldDecl[] = [];
-    spf = spf.append(StructFieldDecl { name: "years", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    spf = spf.append(StructFieldDecl { name: "months", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    spf = spf.append(StructFieldDecl { name: "weeks", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    spf = spf.append(StructFieldDecl { name: "days", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    spf = spf.append(StructFieldDecl { name: "hours", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    spf = spf.append(StructFieldDecl { name: "years", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "months", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "weeks", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "days", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "hours", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
-    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32", line: 0, col: 0 });
-    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "", line: 0, col: 0 });
+    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
+    cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "BytesWriter")) {
     let bwf: StructFieldDecl[] = [];
-    bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Url")) {
     let urlf: StructFieldDecl[] = [];
-    urlf = urlf.append(StructFieldDecl { name: "scheme", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    urlf = urlf.append(StructFieldDecl { name: "host", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    urlf = urlf.append(StructFieldDecl { name: "port", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    urlf = urlf.append(StructFieldDecl { name: "scheme", type_name: "string", fn_ret: "", fn_param_types: "" });
+    urlf = urlf.append(StructFieldDecl { name: "host", type_name: "string", fn_ret: "", fn_param_types: "" });
+    urlf = urlf.append(StructFieldDecl { name: "port", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
+    urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string", fn_ret: "", fn_param_types: "" });
+    urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
@@ -8474,16 +8485,16 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
 function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
   if (!name_declared(structs, "BodySource")) {
     let bsf: StructFieldDecl[] = [];
-    bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "", line: 0, col: 0 });
-    bsf = bsf.append(StructFieldDecl { name: "fault", type_name: "Cell[i32]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]", line: 0, col: 0 });
+    bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "" });
+    bsf = bsf.append(StructFieldDecl { name: "fault", type_name: "Cell[i32]", fn_ret: "", fn_param_types: "" });
+    bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]" });
     structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "ByteStream")) {
     let stf: StructFieldDecl[] = [];
-    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-    stf = stf.append(StructFieldDecl { name: "source", type_name: "Option[BodySource]", fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    stf = stf.append(StructFieldDecl { name: "source", type_name: "Option[BodySource]", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "ByteStream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
@@ -8494,8 +8505,8 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
     return structs;
   }
   let fields: StructFieldDecl[] = [];
-  fields = fields.append(StructFieldDecl { name: f0, type_name: t0, fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-  fields = fields.append(StructFieldDecl { name: f1, type_name: t1, fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+  fields = fields.append(StructFieldDecl { name: f0, type_name: t0, fn_ret: "", fn_param_types: "" });
+  fields = fields.append(StructFieldDecl { name: f1, type_name: t1, fn_ret: "", fn_param_types: "" });
   return structs.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
@@ -14305,7 +14316,7 @@ function ms_module(mod: Module): Module {
         let ffr: TyIns = mg_ty(sd.fields[fj].fn_ret, gstructs, ft.mins);
         let ffl: TyIns = mg_ty_list(sd.fields[fj].fn_param_types, gstructs, ffr.mins);
         ins = ffl.mins;
-        nf = nf.append(StructFieldDecl { ...sd.fields[fj], type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.ty });
+        nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.ty });
         fj = fj + 1;
       }
       nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
@@ -14377,7 +14388,7 @@ function ms_module(mod: Module): Module {
         let gfr: TyIns = mg_ty(ms_enum_clone_ty(subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), mod.enums), gstructs, ft2.mins);
         let gfl: TyIns = mg_ty_list(ms_enum_clone_ty(subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), mod.enums), gstructs, gfr.mins);
         ins = gfl.mins;
-        cf = cf.append(StructFieldDecl { ...gd.fields[cfi], type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
+        cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
         cfi = cfi + 1;
       }
       nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names, is_pub: true, is_package: false, opaque: gd.opaque, module: gd.module });
@@ -16048,7 +16059,7 @@ pub function monomorphize_enums(mod: Module): Module {
               f_ptys = fn_spelling_params(f_ty);
               f_ty = "fn";
             }
-            nf = nf.append(StructFieldDecl { ...vs.fields[fj2], type_name: f_ty, fn_ret: f_ret, fn_param_types: f_ptys });
+            nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: f_ty, fn_ret: f_ret, fn_param_types: f_ptys });
             fj2 = fj2 + 1;
           }
           cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume, variant_field_names: vs.variant_field_names, is_pub: true, is_package: false, opaque: vs.opaque, module: vs.module });
@@ -16097,7 +16108,7 @@ pub function monomorphize_enums(mod: Module): Module {
       let rfj: i32 = 0;
       while (rfj < sd.fields.len()) {
         let fslot: MeSlot = me_rewrite_slot(sd.fields[rfj].type_name, sd.fields[rfj].fn_ret, sd.fields[rfj].fn_param_types, menums);
-        rf = rf.append(StructFieldDecl { ...sd.fields[rfj], type_name: fslot.ty, fn_ret: fslot.fn_ret, fn_param_types: fslot.fn_params });
+        rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: fslot.ty, fn_ret: fslot.fn_ret, fn_param_types: fslot.fn_params });
         rfj = rfj + 1;
       }
       out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
@@ -18048,7 +18059,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       if (vi < al.variant_args.len() && al.variant_args[vi].len() > 0) {
         payload = member + "[" + al.variant_args[vi] + "]";
       }
-      structs = structs.append(StructDecl { name: member, fields: [StructFieldDecl { name: "__ev", type_name: payload, fn_ret: "", fn_param_types: "", line: 0, col: 0 }], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+      structs = structs.append(StructDecl { name: member, fields: [StructFieldDecl { name: "__ev", type_name: payload, fn_ret: "", fn_param_types: "" }], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
       vi = vi + 1;
     }
     enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });

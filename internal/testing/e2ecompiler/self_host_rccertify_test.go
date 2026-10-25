@@ -438,7 +438,7 @@ function main(): i32 {
     // pair1, pair3 and pair7 return a variant in two words whose payload is
     // a reference under tag 0, under tags 0 and 1, and under every tag of
     // 0..2.
-    let abis: rccertify.Abis = rccertify.abis_of(["case", "pair1", "pair3", "pair7", "take"], [c.modes, [], [], [], [rccertify.counted_mode()]], [c.returns_unit, false, false, false, false], [false, false, false, false, false], [0, 1, 3, 7, 0], [false, false, false, false, false]);
+    let abis: rccertify.Abis = rccertify.abis_of(["case", "pair1", "pair3", "pair7", "take"], [c.modes, [], [], [], [rccertify.counted_mode()]], [c.returns_unit, false, false, false, false], [false, false, false, false, false], [0, 1, 3, 7, 0], [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]], [false, false, false, false, false]);
     let irops: ir.Op[] = [];
     let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), rcsigs.op_table());
     for x in r.findings {

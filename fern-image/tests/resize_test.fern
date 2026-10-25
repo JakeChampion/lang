@@ -1,0 +1,121 @@
+import "../packages/pixels/pixels";
+import "../packages/color/color";
+import "../packages/resize/resize";
+import "std/test";
+
+function solid(width: i32, height: i32): Result[pixels.Image, pixels.ImageError] {
+  let image = pixels.create(width, height, width * 4, pixels.RGBA8, pixels.default_limits())?;
+  let y = 0;
+  while (y < height) {
+    let x = 0;
+    while (x < width) {
+      image = pixels.write_pixel(image, x, y, color.rgba(17 as u8, 33 as u8, 99 as u8, 128 as u8))?;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(image);
+}
+
+function same_color(width: i32, height: i32, out_width: i32, out_height: i32, filter: resize.Filter): boolean {
+  let source = match (solid(width, height)) { Ok(v) => v, Err(_) => { return false; } };
+  let output = match (resize.resize(source, out_width, out_height, filter, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  let good = true;
+  let y = 0;
+  while (y < out_height) {
+    let x = 0;
+    while (x < out_width) {
+      let p = match (pixels.read_pixel(output, x, y)) { Ok(v) => v, Err(_) => { return false; } };
+      good = good && p.r == 17 as u8 && p.g == 33 as u8 && p.b == 99 as u8 && p.a == 128 as u8;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return good && output.layout.width == out_width && output.layout.height == out_height;
+}
+
+function edges(): test.TestOutcome {
+  return test.assert_true(same_color(1, 1, 3, 5, resize.Nearest) && same_color(1, 1, 3, 5, resize.Bilinear)
+    && same_color(7, 1, 1, 9, resize.Bilinear) && same_color(1, 9, 7, 1, resize.Bilinear)
+    && same_color(5, 3, 5, 3, resize.Bilinear) && same_color(33, 17, 1, 1, resize.Bilinear));
+}
+
+function golden(alpha: u8, filter: resize.Filter): Result[pixels.Image, pixels.ImageError] {
+  let source = pixels.create(2, 1, 8, pixels.RGBA8, pixels.default_limits())?;
+  source = pixels.write_pixel(source, 0, 0, color.rgba(255 as u8, 0 as u8, 0 as u8, alpha))?;
+  source = pixels.write_pixel(source, 1, 0, color.rgba(0 as u8, 0 as u8, 255 as u8, 255 as u8))?;
+  return resize.resize(source, 3, 1, filter, pixels.default_limits());
+}
+
+function interpolation(): test.TestOutcome {
+  let output = match (golden(255 as u8, resize.Bilinear)) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
+  let mid = match (pixels.read_pixel(output, 1, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  let last = match (pixels.read_pixel(output, 2, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(mid.r == 188 as u8 && mid.b == 188 as u8 && mid.g == 0 as u8
+    && mid.a == 255 as u8 && last.b == 255 as u8 && last.r == 0 as u8);
+}
+
+function transparency(): test.TestOutcome {
+  let output = match (golden(0 as u8, resize.Bilinear)) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
+  let mid = match (pixels.read_pixel(output, 1, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(mid.r == 0 as u8 && mid.b == 255 as u8 && mid.a == 128 as u8);
+}
+
+function mixed_alpha_grid(): test.TestOutcome {
+  let source = match (pixels.create(2, 2, 8, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  source = match (pixels.write_pixel(source, 0, 0, color.rgba(255 as u8, 0 as u8, 0 as u8, 255 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 1, 0, color.rgba(0 as u8, 255 as u8, 0 as u8, 0 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 0, 1, color.rgba(0 as u8, 0 as u8, 255 as u8, 255 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 1, 1, color.rgba(255 as u8, 255 as u8, 255 as u8, 128 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  let output = match (resize.resize(source, 1, 1, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
+  let p = match (pixels.read_pixel(output, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(p.r == 203 as u8 && p.g == 124 as u8 && p.b == 203 as u8 && p.a == 160 as u8);
+}
+
+function nearest(): test.TestOutcome {
+  let output = match (golden(255 as u8, resize.Nearest)) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
+  let first = match (pixels.read_pixel(output, 0, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  let mid = match (pixels.read_pixel(output, 1, 0)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(first.r == 255 as u8 && first.b == 0 as u8 && mid.r == 0 as u8 && mid.b == 255 as u8);
+}
+
+function aspect(): test.TestOutcome {
+  let a = match (resize.fit_dimensions(7, 3, 5, 5)) { Ok(v) => v, Err(_) => { return test.fail("fit"); } };
+  let b = match (resize.fit_dimensions(1, 2147483647, 1, 1)) { Ok(v) => v, Err(_) => { return test.fail("fit"); } };
+  let c = match (resize.fit_dimensions(2147483647, 1, 1, 1)) { Ok(v) => v, Err(_) => { return test.fail("fit"); } };
+  let bad = match (resize.fit_dimensions(0, 3, 5, 5)) { Ok(_) => false, Err(e) => e == pixels.Dimensions };
+  return test.assert_true(a.width == 5 && a.height == 2 && b.width == 1 && b.height == 1 && c.width == 1 && c.height == 1 && bad);
+}
+
+function rejection(): test.TestOutcome {
+  let source = match (solid(1, 1)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let zero = match (resize.resize(source, 0, 1, resize.Nearest, pixels.default_limits())) { Ok(_) => false, Err(e) => e == pixels.Dimensions };
+  let overflow = match (resize.resize(source, 2147483647, 1, resize.Bilinear, pixels.default_limits())) { Ok(_) => false, Err(e) => e == pixels.Overflow };
+  let limited = match (resize.resize(source, 2, 2, resize.Bilinear, pixels.Limits { max_pixels: 3, max_bytes: 16 })) { Ok(_) => false, Err(e) => e == pixels.Limit };
+  let forged = pixels.Image { layout: source.layout, data: [] };
+  let storage = match (resize.resize(forged, 1, 1, resize.Nearest, pixels.default_limits())) { Ok(_) => false, Err(e) => e == pixels.Storage };
+  return test.assert_true(zero && overflow && limited && storage);
+}
+
+function rgb_grid(): test.TestOutcome {
+  let source = match (pixels.create(2, 2, 6, pixels.RGB8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  source = match (pixels.write_pixel(source, 1, 0, color.rgb(255 as u8, 255 as u8, 255 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 0, 1, color.rgb(255 as u8, 0 as u8, 0 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  source = match (pixels.write_pixel(source, 1, 1, color.rgb(0 as u8, 255 as u8, 0 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  let output = match (resize.resize(source, 3, 3, resize.Bilinear, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("resize"); } };
+  let mid = match (pixels.read_pixel(output, 1, 1)) { Ok(v) => v, Err(_) => { return test.fail("read"); } };
+  return test.assert_true(mid.r == 188 as u8 && mid.g == 188 as u8 && mid.b == 137 as u8 && mid.a == 255 as u8);
+}
+
+function main(): i32 {
+  let r = test.test_new("resize M2");
+  r = r.it("solid images, odd dimensions, single rows and columns", edges);
+  r = r.it("linear-light golden interpolation", interpolation);
+  r = r.it("transparent color does not bleed", transparency);
+  r = r.it("two-dimensional mixed-alpha golden", mixed_alpha_grid);
+  r = r.it("nearest center map", nearest);
+  r = r.it("aspect ratio and extreme dimensions", aspect);
+  r = r.it("unsafe output and source rejection", rejection);
+  r = r.it("RGB8 two-dimensional bilinear grid", rgb_grid);
+  return r.finish();
+}

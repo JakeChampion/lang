@@ -1,3 +1,4 @@
+// CI-DARK: FERN_STAGE2_SELF — gen2 recompiling the whole compiler under qemu is left to a human with time, not paid on every push.
 package e2ecompiler
 
 import (
