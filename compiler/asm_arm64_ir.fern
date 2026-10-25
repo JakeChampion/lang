@@ -3594,7 +3594,7 @@ function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boole
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false });
 }
 
 function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {

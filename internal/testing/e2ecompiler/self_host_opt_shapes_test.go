@@ -270,6 +270,12 @@ function main(): i32 {
 	{name: "be_word_view_u64", fn: "bigend64", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
+	{name: "and_mask_branch_is_one_test", fn: "masked", exit: 66, src: maskTestSrc,
+		want:   map[string][]string{"x86-64-linux": {`testq \$256, %r\w+`}},
+		forbid: map[string][]string{"x86-64-linux": {`andq \$256`}}},
+	{name: "and_mask_loop_header_tests_each_trip", fn: "pad", exit: 66, src: maskTestSrc,
+		want:   map[string][]string{"x86-64-linux": {`testq \$15, %r\w+`}},
+		forbid: map[string][]string{"x86-64-linux": {`andq \$15`}}},
 	{name: "le_word_view_i64", fn: "iword64", exit: 125, src: signedWordSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
@@ -570,6 +576,21 @@ function main(): i32 {
     let y: u64 = bigend64(b[1:20], 3) ^ swapped(b, 11) as u64;
     let z: u32 = scrambled(b, 7) ^ header(b);
     return ((x ^ (y >> 13u64) as u32 ^ y as u32 ^ z) & 127u32) as i32;
+}
+`
+
+const maskTestSrc = `
+@noinline function masked(x: i32, tag: string): i32 {
+    if ((x & 256) != 0) { print(tag); return 5; }
+    return 3;
+}
+@noinline function pad(own xs: u8[]): u8[] {
+    while (xs.len() % 16 != 0) { xs = xs.append(7u8); }
+    return xs;
+}
+function main(): i32 {
+    let p: u8[] = pad([1u8, 2u8, 3u8]);
+    return masked(args().len() * 300, "set") * 10 + p.len();
 }
 `
 
