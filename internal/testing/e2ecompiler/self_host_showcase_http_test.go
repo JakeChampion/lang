@@ -30,7 +30,7 @@ func TestSelfHostShowcaseAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal("Node 22.15 or newer is required for asset codec tests")
 	}
-	cmd := exec.Command(node, "--test", "../../../examples/showcase/tests/prepare.test.mjs", "../../../examples/showcase/tests/gather-protocol.test.mjs")
+	cmd := exec.Command(node, "--test", "../../../examples/showcase/tests/prepare.test.mjs", "../../../examples/showcase/tests/gather-protocol.test.mjs", "../../../examples/showcase/tests/blockyard-protocol.test.mjs")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("asset encoders: %v\n%s", err, out)
 	}

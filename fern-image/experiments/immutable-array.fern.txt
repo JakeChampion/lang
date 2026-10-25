@@ -1,0 +1,5 @@
+function main(): i32 {
+  let bytes: u8[] = [0 as u8];
+  bytes[0] = 1 as u8;
+  return 0;
+}

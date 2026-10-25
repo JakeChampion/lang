@@ -37,6 +37,7 @@ import "./common";
 import "./mosaic";
 import "./rally";
 import "./gather";
+import "./blockyard";
 import "../fractal/server" as fractal;
 
 @derive(json.Json)
@@ -69,6 +70,8 @@ pub struct Snapshot {
   memory: Memory,
   recent: Request[],
   arena_players: i32,
+  voxel_players: i32,
+  voxel_blocks: i32,
   game_rooms: i32,
   canvas_rooms: i32,
   strokes: i64,
@@ -91,6 +94,7 @@ pub struct State {
   canvases: mosaic.State,
   games: rally.State,
   arena: gather.State,
+  voxels: blockyard.State,
   fractal: fractal.Stats,
 }
 ```
@@ -102,10 +106,10 @@ Handler time ends when a handler returns a response. It does not include the lif
 
 ```fern
 <<Record HTTP requests>>=
-pub function state(canvases: mosaic.State, games: rally.State, fractals: fractal.Stats, arena: gather.State): State {
+pub function state(canvases: mosaic.State, games: rally.State, fractals: fractal.Stats, arena: gather.State, voxels: blockyard.State): State {
   return State {
     instance: fractals.instance, started: now_ns(), requests: cell_new(0 as i64), client_errors: cell_new(0 as i64), server_errors: cell_new(0 as i64),
-    recent: cell_new([] as Request[]), sampled: cell_new(0 as i64), ticks: cell_new(None as Option[i64]), memory: cell_new(None as Option[Memory]), canvases: canvases, games: games, fractal: fractals, arena: arena,
+    recent: cell_new([] as Request[]), sampled: cell_new(0 as i64), ticks: cell_new(None as Option[i64]), memory: cell_new(None as Option[Memory]), canvases: canvases, games: games, fractal: fractals, arena: arena, voxels: voxels,
   };
 }
 
@@ -228,7 +232,7 @@ RSS includes resident process pages and can differ from both runtime counters.
 <<Expose application counters>>=
 pub function snapshot(state: State): Snapshot {
   let strokes: i64 = 0;
-  let peers: i64 = state.arena.count.get() as i64 + state.fractal.sockets.get() + state.games.live.listeners.get().len() as i64 + state.canvases.live.listeners.get().len() as i64;
+  let peers: i64 = blockyard.participants(state.voxels) as i64 + state.arena.count.get() as i64 + state.fractal.sockets.get() + state.games.live.listeners.get().len() as i64 + state.canvases.live.listeners.get().len() as i64;
   for board in state.canvases.rooms.get() {
     strokes = strokes + board.revision;
   }
@@ -236,7 +240,7 @@ pub function snapshot(state: State): Snapshot {
     instance: state.instance, at_ms: now_unix_ms(), uptime_ms: (now_ns() - state.started) / 1000000,
     requests: state.requests.get(), client_errors: state.client_errors.get(), server_errors: state.server_errors.get(),
     allocations_total: __heap_alloc_count(), arena_bytes: __heap_bump_bytes(), memory: measure(state), recent: state.recent.get(),
-    arena_players: state.arena.count.get(), game_rooms: state.games.rooms.get().len(), canvas_rooms: state.canvases.rooms.get().len(), strokes: strokes, websocket_messages: state.games.messages.get() + state.arena.inputs.get(), websocket_connections: peers, rendered_tiles: state.fractal.tiles.get(), active_renders: state.fractal.active.get(),
+    arena_players: state.arena.count.get(), voxel_players: blockyard.participants(state.voxels), voxel_blocks: blockyard.edited_blocks(state.voxels), game_rooms: state.games.rooms.get().len(), canvas_rooms: state.canvases.rooms.get().len(), strokes: strokes, websocket_messages: state.games.messages.get() + state.arena.inputs.get() + blockyard.inputs(state.voxels), websocket_connections: peers, rendered_tiles: state.fractal.tiles.get(), active_renders: state.fractal.active.get(),
   };
 }
 ```
@@ -281,7 +285,9 @@ pub function prometheus(state: State): HttpResponse {
     + gauge("fern_heap_arena_high_water_bytes", "Runtime arena high-water mark, not live heap bytes", Some(value.arena_bytes))
     + gauge("fern_container_memory_bytes", "Memory used by this cgroup", value.memory.container_bytes)
     + gauge("fern_container_memory_limit_bytes", "Memory limit of this cgroup", value.memory.container_limit)
-    + gauge("fern_gather_participants", "Active participants in the shared arena", Some(value.arena_players as i64));
+    + gauge("fern_gather_participants", "Active participants in the shared arena", Some(value.arena_players as i64))
+    + gauge("fern_blockyard_participants", "Active participants in voxel worlds", Some(value.voxel_players as i64))
+    + gauge("fern_blockyard_edited_blocks", "Stored differences from procedural terrain", Some(value.voxel_blocks as i64));
   return http.text(200, text).with_content_type("text/plain; version=0.0.4; charset=utf-8").with_header("Cache-Control", "no-store");
 }
 ```

@@ -1,0 +1,4 @@
+[package]
+name = "fern-image"
+version = "0.0.1"
+lib = "packages/pixels/pixels.fern"
