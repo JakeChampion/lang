@@ -613,10 +613,12 @@ function (c: Conn) __tick(now: i64): Conn {
   if (t == 0 || now < t) {
     return c.__stepped();
   }
-  let o: recovery.Outcome = c.recovery.on_timeout(now);
-  let after: Conn = Conn { ...c, recovery: o.recovery }.__requeue(o.lost);
-  if (o.probe >= 0) {
-    after = Conn { ...after, probes: after.probes.append(o.probe) };
+  let cur: Conn = Conn { ...c, recovery: c.recovery.on_timeout(now) };
+  let lost: recovery.Sent[] = cur.recovery.lost;
+  let probe: i32 = cur.recovery.probe;
+  let after: Conn = Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__requeue(lost);
+  if (probe >= 0) {
+    after = Conn { ...after, probes: after.probes.append(probe) };
   }
   return after.__stepped();
 }
@@ -1072,18 +1074,18 @@ function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
     exponent = p.ack_delay_exponent;
   }
   let delay: i64 = (a.delay << exponent) * 1000;
-  match (c.recovery.on_ack(space, a, delay, now, c.spaces[space].next_pn - 1)) {
-    Ok(o) => {
-      let r: recovery.Recovery = o.recovery;
-      if (!c.server && space == recovery.HANDSHAKE) {
-        r = r.validated();
-      }
-      return Conn { ...c, recovery: r }.__delivered(o.acked).__requeue(o.lost);
-    },
-    Err(code) => {
-      return c.__fail(code, frames.ACK, "an ACK of a packet never sent", now);
-    }
+  let cur: Conn = Conn { ...c, recovery: c.recovery.on_ack(space, a, delay, now, c.spaces[space].next_pn - 1) };
+  let refused: i64 = cur.recovery.refused;
+  if (refused != 0) {
+    return Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__fail(refused, frames.ACK, "an ACK of a packet never sent", now);
   }
+  let acked: recovery.Sent[] = cur.recovery.acked;
+  let lost: recovery.Sent[] = cur.recovery.lost;
+  cur = Conn { ...cur, recovery: cur.recovery.outcome_taken() };
+  if (!cur.server && space == recovery.HANDSHAKE) {
+    cur = Conn { ...cur, recovery: cur.recovery.validated() };
+  }
+  return cur.__delivered(acked).__requeue(lost);
 }
 
 function (c: Conn) __delivered(acked: recovery.Sent[]): Conn {
