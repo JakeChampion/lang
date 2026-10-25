@@ -132,7 +132,7 @@ on `HEAD`, 1xx, 204 and 304.
 
 The second parameter is the handler's platform: every host effect the
 handler may use, as methods. Logging is `plat.log(line)`, not `eprint`;
-an upstream call is `plat.http(request)`; the clock is `plat.now_ms()`.
+an upstream call is `plat.http(request)`; the clock is `plat.now()`.
 
 ```fern
 import "std/http";
@@ -143,14 +143,14 @@ import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log(req.method + " " + req.path);
     let region: string = plat.config("REGION").unwrap_or("local");
-    return http.plain("served from " + region + " at " + plat.now_ms().to_string() + "\n");
+    return http.plain("served from " + region + " at " + plat.now().format_rfc3339() + "\n");
 }
 ```
 
 | Method | What it gives |
 |---|---|
 | `log(msg)` | A line on the host's log (stderr natively) |
-| `now_ms()` / `elapsed_ns()` | Wall clock / monotonic clock |
+| `now()` / `instant()` | Wall clock (a `time.Timestamp`) / monotonic clock (an `Instant`) |
 | `config(name)` / `secret(name)` / `env(name)` | Configuration; `config` reads the environment natively and `wasi:config/store` under wasi-http |
 | `random_i32()` | A CSPRNG value |
 | `sleep(d)` | Wait; parks the handler under the server loop |

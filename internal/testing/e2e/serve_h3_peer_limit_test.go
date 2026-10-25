@@ -63,7 +63,9 @@ func TestServeH3PeerLimitX86_64(t *testing.T) {
 	}
 }
 
-const serveH3AdmissionClient = `import "std/net";
+const serveH3AdmissionClient = `import "std/time";
+import "std/clock";
+import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
 import "std/http/h3q";
@@ -83,11 +85,11 @@ function added(cs: h3q.Conn[], socks: i32[], cfg: conn.Config, ip: string): Resu
   let Ok(_) = net.set_nonblocking(sock, true) else {
     return Err("nonblocking failed");
   };
-  let q: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), monotonic_ns(), now_unix_ms())?;
+  let q: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), clock.instant(), clock.now())?;
   return Ok((cs.append(h3q.client(q, h3.config())), socks.append(sock)));
 }
 
-function driven(cs: h3q.Conn[], socks: i32[], peer: net.SocketAddr, buf: u8[], now: i64): h3q.Conn[] {
+function driven(cs: h3q.Conn[], socks: i32[], peer: net.SocketAddr, buf: u8[], now: Instant): h3q.Conn[] {
   let cur: h3q.Conn[] = cs;
   let i: i32 = 0;
   while (i < cur.len()) {
@@ -110,8 +112,10 @@ function driven(cs: h3q.Conn[], socks: i32[], peer: net.SocketAddr, buf: u8[], n
         }
       }
     }
-    if (c.deadline() != 0 && now >= c.deadline()) {
-      c = c.tick(now);
+    if let Some(at) = c.deadline() {
+      if (now.cmp(at) >= 0) {
+        c = c.tick(now);
+      }
     }
     cur = cur.with(i, c);
     i = i + 1;
@@ -134,10 +138,10 @@ function main(): i32 {
   let cs: h3q.Conn[] = first.0;
   let socks: i32[] = first.1;
   let buf: u8[] = __alloc_u8(65536);
-  let started: i64 = monotonic_ns();
-  let second_at: i64 = 0 as i64;
-  while (monotonic_ns() - started < 60000000000) {
-    let now: i64 = monotonic_ns();
+  let started: Instant = clock.instant();
+  let second_at: Instant = started;
+  while (clock.elapsed(started).cmp(time.duration_seconds(60)) < 0) {
+    let now: Instant = clock.instant();
     cs = driven(cs, socks, peer, buf, now);
     if (cs.len() == 1 && cs[0].ready()) {
       let Ok(second) = added(cs, socks, cfg, argv[3]) else {
@@ -147,14 +151,14 @@ function main(): i32 {
       socks = second.1;
       second_at = now;
     }
-    if (cs.len() == 2 && (cs[1].ready() || now - second_at >= 8000000000)) {
+    if (cs.len() == 2 && (cs[1].ready() || now.since(second_at).cmp(time.duration_seconds(8)) >= 0)) {
       if (!cs[0].ready()) {
         return 5;
       }
       print("first=true second=" + cs[1].ready().to_string());
       return 0;
     }
-    let woke: i32 = async.wait_any([socks[0], 1], 10);
+    let woke: i32 = async.wait_any([socks[0], 1], Some(time.duration_millis(10)));
   }
   eprint("first handshake did not complete");
   return 1;

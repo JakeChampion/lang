@@ -9,7 +9,7 @@ import "std/time";
 function nap(label: string, ms: i32, v: i32): i32 {
   defer print("done " + label);
   let set: i32[] = [timer_fd(ms), 1];
-  let r: i32 = async.wait_any(set, 0 - 1);
+  let r: i32 = async.wait_any(set, None);
   if (r == async.cancelled()) {
     print("cancelled " + label);
     return 0 - 1;
@@ -72,7 +72,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, woke);
       },
       Cancelled => {

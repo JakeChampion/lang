@@ -146,6 +146,8 @@ impl Display for string {}
 
 impl Display for IoError {}
 
+impl Display for StreamFault {}
+
 impl Display for u8 {
   function to_string(self: u8): string {
     return (self as i32).to_string();

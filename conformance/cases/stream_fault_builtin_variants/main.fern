@@ -1,0 +1,54 @@
+// StreamFault is a builtin enum, like IoError: every variant is
+// constructible bare and qualified, and matches by name.
+
+function code(f: StreamFault): i32 {
+  match (f) {
+    StreamTooLarge => {
+      return 1;
+    },
+    StreamFramingTooLarge => {
+      return 2;
+    },
+    StreamTimeout => {
+      return 3;
+    },
+    StreamMalformed => {
+      return 4;
+    },
+    StreamCutShort => {
+      return 5;
+    },
+    StreamCancelled => {
+      return 6;
+    }
+  }
+  return 0;
+}
+
+function first(f: Option[StreamFault]): i32 {
+  match (f) {
+    Some(StreamTimeout()) => {
+      return 30;
+    },
+    Some(other) => {
+      return code(other);
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  let all: StreamFault[] = [StreamTooLarge, StreamFramingTooLarge, StreamTimeout, StreamMalformed, StreamCutShort, StreamCancelled];
+  let sum: i32 = 0;
+  for f in all {
+    sum = sum * 10 + code(f);
+  }
+  print(sum.to_string());
+  let none: Option[StreamFault] = None;
+  print(first(Some(StreamFault.StreamTimeout)).to_string());
+  print(first(Some(StreamFault.StreamCancelled)).to_string());
+  print(first(none).to_string());
+  return 0;
+}

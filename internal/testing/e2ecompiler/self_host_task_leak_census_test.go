@@ -47,14 +47,15 @@ function main(): i32 {
 }
 `
 
-const callSchedulerProgram = `import "std/async";
+const callSchedulerProgram = `import "std/time";
+import "std/async";
 import "std/i32";
 
 // leaf parks once per call; mid calls it twice; top holds a string across
 // both, and takes a second argument so it runs as a call of two parts.
 function leaf(n: i32): i32 {
   let set: i32[] = [timer_fd(1), 1];
-  let r: i32 = async.wait_any(set, 0 - 1);
+  let r: i32 = async.wait_any(set, None);
   return r + n;
 }
 
@@ -99,7 +100,7 @@ function main(): i32 {
           c = async.call_of(w, top, 5, 100);
         }
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.call_resume(c, 7);
       },
       Cancelled => { out = 0 - 2; going = false; }

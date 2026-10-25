@@ -1,0 +1,240 @@
+import "../packages/pipeline/pipeline";
+import "../packages/pipeline/regions";
+import "../packages/pixels/pixels";
+import "../packages/color/color";
+import "../packages/resize/resize";
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function source(format: pixels.Format): Result[pixels.Image, pixels.ImageError] {
+  let image = pixels.create(4, 4, 4 * pixels.channels(format) + 3, format, pixels.default_limits())?;
+  let y = 0;
+  while (y < 4) {
+    let x = 0;
+    while (x < 4) {
+      let alpha: u8 = 255;
+      if (pixels.channels(format) == 4) {
+        alpha = ((x + y) * 30) as u8;
+      }
+      image = pixels.write_pixel(image, x, y, color.rgba((10 + x * 30 + y * 4) as u8, (40 + x * 4 + y * 30) as u8, (100 + x + y) as u8, alpha))?;
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  return Ok(image);
+}
+
+function chain(image: pixels.Image, limits: pipeline.Limits): Result[pipeline.Graph, pipeline.PipelineError] {
+  let graph = pipeline.from_image(image, limits)?;
+  graph = pipeline.nearest(graph, 3, 3, limits)?;
+  return pipeline.nearest(graph, 2, 2, limits);
+}
+
+function golden(format: pixels.Format, cache: i32): boolean {
+  let limits = pipeline.default_limits();
+  let image = match (source(format)) { Ok(v) => v, Err(_) => { return false; } };
+  let graph = match (chain(image, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let region = regions.Region { x: 1, y: 0, width: 1, height: 2 };
+  let result = match (regions.render_cached_tile_fused(graph, region, limits, cache, never_cancel)) { Ok(v) => v, Err(_) => { return false; } };
+  let reds: u8[] = [100, 112];
+  let greens: u8[] = [52, 142];
+  let blues: u8[] = [103, 106];
+  let alphas: u8[] = [90, 180];
+  let y = 0;
+  while (y < 2) {
+    let p = match (pixels.read_pixel(result.image, 0, y)) { Ok(v) => v, Err(_) => { return false; } };
+    let alpha: u8 = 255;
+    if (pixels.channels(format) == 4) {
+      alpha = alphas[y];
+    }
+    if (p.r != reds[y] || p.g != greens[y] || p.b != blues[y] || p.a != alpha) {
+      return false;
+    }
+    y = y + 1;
+  }
+  return result.image.layout.width == 1 && result.image.layout.height == 2
+    && result.image.data.len() == 2 * pixels.channels(format) && result.stats.rows == 2
+    && result.stats.misses == 4 && result.stats.peak_cache_bytes <= cache;
+}
+
+function coordinates(): test.TestOutcome {
+  let good = true;
+  for cache in [0, 1, 72] {
+    good = good && golden(pixels.RGB8, cache) && golden(pixels.RGBA8, cache);
+  }
+  return test.assert_true(good);
+}
+
+function statistics(): test.TestOutcome {
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 160, max_samples: 20 };
+  let image = match (source(pixels.RGBA8)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let graph = match (chain(image, limits)) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
+  let region = regions.Region { x: 1, y: 0, width: 1, height: 2 };
+  let plan = match (regions.cached_plan(graph, region, limits, 72)) { Ok(v) => v, Err(_) => { return test.fail("plan"); } };
+  let legacy = match (regions.render_cached_tile(graph, region, limits, 72, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("legacy"); } };
+  let fused = match (regions.render_cached_tile_fused(graph, region, limits, 72, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("fused"); } };
+  let same = legacy.image.data.len() == fused.image.data.len();
+  let i = 0;
+  while (i < fused.image.data.len()) {
+    same = same && legacy.image.data[i] == fused.image.data[i];
+    i = i + 1;
+  }
+  return test.assert_true(same && plan.scratch_bytes == 160 && plan.samples == 20
+    && legacy.stats.rows == 2 && legacy.stats.misses == 6 && legacy.stats.peak_cache_bytes == 72
+    && fused.stats.rows == 2 && fused.stats.misses == 4 && fused.stats.peak_cache_bytes == 48);
+}
+
+function agrees(format: pixels.Format, cache: i32): boolean {
+  let image = match (source(format)) { Ok(v) => v, Err(_) => { return false; } };
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.from_image(image, limits)) { Ok(v) => v, Err(_) => { return false; } };
+  let eager = image;
+  let widths: i32[] = [5, 4, 3, 2, 3, 2];
+  let heights: i32[] = [7, 5, 3, 4, 5, 3];
+  let i = 0;
+  while (i < widths.len()) {
+    let filter = resize.Nearest;
+    if (i == 0 || i == 3) {
+      filter = resize.Bilinear;
+      graph = match (pipeline.bilinear(graph, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    } else {
+      graph = match (pipeline.nearest(graph, widths[i], heights[i], limits)) { Ok(v) => v, Err(_) => { return false; } };
+    }
+    eager = match (resize.resize(eager, widths[i], heights[i], filter, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+    i = i + 1;
+  }
+  let tile = match (regions.render_cached_tile_fused(graph, regions.Region { x: 1, y: 1, width: 1, height: 2 }, limits, cache, never_cancel)) { Ok(v) => v, Err(_) => { return false; } };
+  let y = 0;
+  while (y < 2) {
+    let a = match (pixels.read_pixel(tile.image, 0, y)) { Ok(v) => v, Err(_) => { return false; } };
+    let b = match (pixels.read_pixel(eager, 1, y + 1)) { Ok(v) => v, Err(_) => { return false; } };
+    if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+      return false;
+    }
+    y = y + 1;
+  }
+  return tile.stats.rows == 2 && tile.stats.peak_cache_bytes <= cache;
+}
+
+function mixed(): test.TestOutcome {
+  let good = true;
+  for cache in [0, 1, 31, 256] {
+    good = good && agrees(pixels.RGB8, cache) && agrees(pixels.RGBA8, cache);
+  }
+  return test.assert_true(good);
+}
+
+function rejected(graph: pipeline.Graph, region: regions.Region, limits: pipeline.Limits, cache: i32, expected: pipeline.PipelineError): boolean {
+  let polls = cell_new(0);
+  let cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let result = match (regions.render_cached_tile_fused(graph, region, limits, cache, cancel)) { Err(e) => e == expected, _ => false };
+  return result && polls.get() == 1;
+}
+
+function admission(): test.TestOutcome {
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 160, max_samples: 20 };
+  let image = match (source(pixels.RGBA8)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let graph = match (chain(image, limits)) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
+  let region = regions.Region { x: 1, y: 0, width: 1, height: 2 };
+  let hidden = pipeline.Graph { nodes: graph.nodes.with(1, pipeline.Node { ...graph.nodes[1], operation: pipeline.NearestSource(1) }) };
+  let bad = pixels.Image { layout: pixels.Layout { width: 1, height: 1, stride: 4, format: pixels.RGBA8, bytes: 4 }, data: [] };
+  let forged = pipeline.Graph { nodes: [pipeline.Node { width: 1, height: 1, format: pixels.RGBA8, operation: pipeline.ImageSource(bad) }] };
+  return test.assert_true(rejected(graph, region, pipeline.Limits { ...limits, max_scratch_bytes: 159 }, 72, pipeline.Budget)
+    && rejected(graph, region, pipeline.Limits { ...limits, max_samples: 19 }, 72, pipeline.Budget)
+    && rejected(graph, region, limits, 0 - 1, pipeline.Budget) && rejected(graph, region, limits, 2147483647, pipeline.Budget)
+    && rejected(graph, regions.Region { ...region, height: 0 }, limits, 72, pipeline.PipelineError.Dimensions)
+    && rejected(graph, regions.Region { ...region, x: 2147483647 }, limits, 72, pipeline.PipelineError.Bounds)
+    && rejected(hidden, region, limits, 72, pipeline.InvalidGraph)
+    && rejected(forged, regions.Region { x: 0, y: 0, width: 1, height: 1 }, limits, 0, pipeline.Pixel(pixels.Storage)));
+}
+
+function cancellation(): test.TestOutcome {
+  let limits = pipeline.default_limits();
+  let graph = match (pipeline.solid(384, 2, pixels.RGBA8, color.rgb(17 as u8, 23 as u8, 99 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.nearest(graph, 256, 4, limits)) { Ok(v) => v, Err(_) => { return test.fail("middle"); } };
+  graph = match (pipeline.nearest(graph, 128, 8, limits)) { Ok(v) => v, Err(_) => { return test.fail("output"); } };
+  let region = regions.Region { x: 0, y: 1, width: 128, height: 4 };
+  let polls = cell_new(0);
+  let control_cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let control = match (regions.render_cached_tile_fused(graph, region, limits, 4096, control_cancel)) { Ok(v) => v.stats.rows == 4, _ => false };
+  let total = polls.get();
+  let stop = 1;
+  while (stop <= total) {
+    polls.set(0);
+    let cancel = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() >= stop;
+    };
+    let result = match (regions.render_cached_tile_fused(graph, region, limits, 4096, cancel)) { Err(pipeline.Cancelled()) => true, _ => false };
+    if (!result || polls.get() != stop) {
+      return test.fail("cancellation phase");
+    }
+    stop = stop + 1;
+  }
+  let after = match (regions.render_cached_tile_fused(graph, region, limits, 4096, never_cancel)) { Ok(v) => v.stats.rows == 4, _ => false };
+  return test.assert_true(control && total > 20 && after);
+}
+
+function ownership(): test.TestOutcome {
+  let limits = pipeline.default_limits();
+  let image = match (source(pixels.RGBA8)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let graph = match (chain(image, limits)) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
+  let region = regions.Region { x: 1, y: 0, width: 1, height: 2 };
+  let first = match (regions.render_cached_tile_fused(graph, region, limits, 72, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("first"); } };
+  let kept = first.image;
+  let changed = match (pixels.write_pixel(first.image, 0, 0, color.rgb(255 as u8, 0 as u8, 0 as u8))) { Ok(v) => v, Err(_) => { return test.fail("write"); } };
+  let after = match (regions.render_cached_tile_fused(graph, region, limits, 72, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("after"); } };
+  return test.assert_true(kept.data[0] == 100 as u8 && kept.data[3] == 90 as u8 && changed.data[0] == 255 as u8
+    && after.image.data[0] == 100 as u8 && after.image.data[7] == 180 as u8 && image.data[0] == 10 as u8 && image.data[3] == 0 as u8);
+}
+
+function fallback(): test.TestOutcome {
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 1576, max_samples: 197 };
+  let graph = match (pipeline.solid(4, 1, pixels.RGBA8, color.rgb(17 as u8, 23 as u8, 99 as u8), limits)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  graph = match (pipeline.nearest(graph, 1, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("small"); } };
+  graph = match (pipeline.nearest(graph, 128, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("large"); } };
+  let region = regions.Region { x: 64, y: 0, width: 64, height: 1 };
+  let tile = match (regions.render_cached_tile_fused(graph, region, limits, 0, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("tile"); } };
+  let plan = match (regions.cached_plan(graph, region, limits, 0)) { Ok(v) => v, Err(_) => { return test.fail("plan"); } };
+  return test.assert_true(plan.scratch_bytes == 1576 && plan.samples == 197 && tile.stats.misses == 3
+    && tile.image.data.len() == 256 && tile.image.data[252] == 17 as u8);
+}
+
+function depth(): test.TestOutcome {
+  let limits = pipeline.Limits { ...pipeline.default_limits(), max_nodes: 64 };
+  let image = match (source(pixels.RGBA8)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let graph = match (pipeline.from_image(image, limits)) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
+  let i = 1;
+  while (i < 64) {
+    graph = match (pipeline.nearest(graph, 4, 4, limits)) { Ok(v) => v, Err(_) => { return test.fail("depth"); } };
+    i = i + 1;
+  }
+  let region = regions.Region { x: 1, y: 1, width: 2, height: 2 };
+  let tile = match (regions.render_cached_tile_fused(graph, region, limits, 256, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("tile"); } };
+  let invalid = pipeline.Graph { nodes: graph.nodes.append(pipeline.Node { ...graph.nodes[63], operation: pipeline.NearestSource(63) }) };
+  let rejected_depth = rejected(invalid, region, limits, 256, pipeline.InvalidGraph);
+  return test.assert_true(rejected_depth && tile.stats.rows == 2 && tile.stats.misses == 4
+    && tile.image.data[0] == 44 as u8 && tile.image.data[3] == 60 as u8);
+}
+
+function main(): i32 {
+  let r = test.test_new("cached tile fusion");
+  r = r.it("independent padded RGB/RGBA cropped coordinates across cache limits", coordinates);
+  r = r.it("equal tile admission with actual fused and legacy work statistics", statistics);
+  r = r.it("mixed-filter cropped tiles agree with eager output", mixed);
+  r = r.it("invalid plans and skipped nodes reject before allocation", admission);
+  r = r.it("every cancellation phase releases rows, cache, and partial tiles", cancellation);
+  r = r.it("retained, modified, and later tiles preserve source values", ownership);
+  r = r.it("expanding nearest chains retain the admitted fallback", fallback);
+  r = r.it("64-node tiles preserve metadata validation and byte ownership", depth);
+  return r.finish();
+}

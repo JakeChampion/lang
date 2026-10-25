@@ -23,6 +23,7 @@ The sample rate is 24000 Hz and the output contains one signed 16-bit channel.
 ```fern
 <<Audio data>>=
 // Render a sixteen-step melody as a standard mono PCM WAV file.
+import "std/time";
 import "std/http";
 import "std/result";
 import "std/option";
@@ -146,7 +147,7 @@ pub function render(pattern: Pattern): u8[] {
     }
     bytes = little16(bytes, 44 + at * 2, (value * 32767.0) as i32);
     if (at % 4096 == 0 && async.in_task()) {
-      let ready: i32 = async.wait_any([], 1);
+      let ready: i32 = async.wait_any([], Some(time.duration_millis(1)));
     }
     at = at + 1;
   }

@@ -215,7 +215,7 @@ const NOT_AFTER_MS: i64 = 4102444800000;
 struct Pair { client: client.Session, server: server.Session, tickets: client.Ticket[] }
 
 function crd(s: client.Session, input: u8[]): Result[client.Step, string] {
-  match (s.read(input, WALL_MS)) {
+  match (s.read(input, time.timestamp_from_unix_millis(WALL_MS))) {
     Ok(step) => {
       return Ok(step);
     },
@@ -231,7 +231,7 @@ function srd(s: server.Session, input: u8[]): Result[server.Step, string] {
 }
 
 function srd_at(s: server.Session, input: u8[], now: i64): Result[server.Step, string] {
-  match (s.read(input, now)) {
+  match (s.read(input, time.timestamp_from_unix_millis(now))) {
     Ok(step) => {
       return Ok(step);
     },
@@ -247,7 +247,7 @@ function started(cfg: client.Config): Result[client.Step, string] {
 }
 
 function started_with(cfg: client.Config, entropy: u8[]): Result[client.Step, string] {
-  match (client.start(cfg, entropy, WALL_MS)) {
+  match (client.start(cfg, entropy, time.timestamp_from_unix_millis(WALL_MS))) {
     Ok(step) => {
       return Ok(step);
     },
@@ -390,12 +390,12 @@ function refusal_alert(cc: client.Config, sc: server.Config): Result[string, str
   let c0: client.Step = started(cc)?;
   let s0: server.Session = listening(sc)?;
   let s1: server.Step = srd(s0, c0.output)?;
-  match (c0.session.read(s1.output, WALL_MS)) {
+  match (c0.session.read(s1.output, time.timestamp_from_unix_millis(WALL_MS))) {
     Ok(step) => {
       return Ok("client: accepted");
     },
     Err(f) => {
-      match (s1.session.read(f.alert, WALL_MS)) {
+      match (s1.session.read(f.alert, time.timestamp_from_unix_millis(WALL_MS))) {
         Ok(_) => {
           return Ok("client: " + f.message() + " / server: read on");
         },
@@ -415,7 +415,7 @@ function test_no_common_scheme(): test.TestOutcome {
     Ok(c0) => {
       match (server.start(sc, random_bytes(server.entropy(sc)))) {
         Ok(s0) => {
-          match (s0.read(c0.output, WALL_MS)) {
+          match (s0.read(c0.output, time.timestamp_from_unix_millis(WALL_MS))) {
             Ok(_) => {
               return test.fail("accepted");
             },
@@ -562,7 +562,7 @@ function how(r: Result[Pair, string]): string {
 function test_resumption(): test.TestOutcome {
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)).with_alpn(["http/1.1"]);
   let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
-  let t: client.Ticket = client.Ticket { identity: [], psk: [], suite: 0, lifetime: 0 as u32, age_add: 0 as u32, received_ms: 0 as i64, server_name: "" };
+  let t: client.Ticket = client.Ticket { identity: [], psk: [], suite: 0, lifetime: time.DURATION_ZERO, age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "" };
   match (connect(cc, sc)) {
     Ok(p) => {
       if (p.tickets.len() != 1 || p.client.resumed()) {
@@ -722,7 +722,7 @@ function refused_with(cc: client.Config, sc: server.Config): string {
             Ok(s1) => {
               match (crd(c0.session, s1.output)) {
                 Ok(c1) => {
-                  match (s1.session.read(c1.output, WALL_MS)) {
+                  match (s1.session.read(c1.output, time.timestamp_from_unix_millis(WALL_MS))) {
                     Ok(_) => {
                       return "accepted";
                     },
@@ -809,16 +809,16 @@ function client_refusal(cc: client.Config, sc: server.Config): string {
     Ok(c0) => {
       match (listening(sc)) {
         Ok(s0) => {
-          match (s0.read(c0.output, WALL_MS)) {
+          match (s0.read(c0.output, time.timestamp_from_unix_millis(WALL_MS))) {
             Ok(s1) => {
-              match (c0.session.read(s1.output, WALL_MS)) {
+              match (c0.session.read(s1.output, time.timestamp_from_unix_millis(WALL_MS))) {
                 Ok(c1) => {
-                  match (s1.session.read(c1.output, WALL_MS)) {
+                  match (s1.session.read(c1.output, time.timestamp_from_unix_millis(WALL_MS))) {
                     Ok(_) => {
                       return "accepted";
                     },
                     Err(f) => {
-                      match (c1.session.read(f.alert, WALL_MS)) {
+                      match (c1.session.read(f.alert, time.timestamp_from_unix_millis(WALL_MS))) {
                         Ok(_) => {
                           return "client: read on";
                         },

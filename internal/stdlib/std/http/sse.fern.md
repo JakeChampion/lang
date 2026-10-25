@@ -66,7 +66,8 @@ import "std/array";
 
 ```fern
 <<3 pub struct Event>>=
-pub struct Event { data: string, name: string, id: string, retry: i32 }
+// `retry` is the reconnection delay the event asks for, sent in milliseconds.
+pub struct Event { data: string, name: string, id: string, retry: Option[Duration] }
 ```
 
 ### `4 pub function event(data: string): Event`
@@ -74,7 +75,7 @@ pub struct Event { data: string, name: string, id: string, retry: i32 }
 ```fern
 <<4 pub function event(data: string): Event>>=
 pub function event(data: string): Event {
-  return Event { data: data, name: "", id: "", retry: -1 };
+  return Event { data: data, name: "", id: "", retry: None };
 }
 
 pub function (e: Event) with_name(name: string): Event {
@@ -85,8 +86,8 @@ pub function (e: Event) with_id(id: string): Event {
   return Event { ...e, id: id };
 }
 
-pub function (e: Event) with_retry(ms: i32): Event {
-  return Event { ...e, retry: ms };
+pub function (e: Event) with_retry(delay: Duration): Event {
+  return Event { ...e, retry: Some(delay) };
 }
 
 pub function (e: Event) encode(): string {
@@ -97,8 +98,8 @@ pub function (e: Event) encode(): string {
   if (e.id.len() > 0) {
     out = out + "id: " + __one_line(e.id) + "\n";
   }
-  if (e.retry >= 0) {
-    out = out + "retry: " + e.retry.to_string() + "\n";
+  if let Some(delay) = e.retry {
+    out = out + "retry: " + delay.as_millis().to_string() + "\n";
   }
   for line in __lines(e.data) {
     out = out + "data: " + line + "\n";
@@ -174,7 +175,7 @@ function __lines(s: string): string[] {
 
 ```fern
 <<6 pub struct Decoder>>=
-pub struct Decoder { buf: u8[], data: string, name: string, last_id: string, retry: i32, started: boolean }
+pub struct Decoder { buf: u8[], data: string, name: string, last_id: string, retry: Option[Duration], started: boolean }
 ```
 
 ### `7 pub function decoder(): Decoder`
@@ -183,7 +184,7 @@ pub struct Decoder { buf: u8[], data: string, name: string, last_id: string, ret
 <<7 pub function decoder(): Decoder>>=
 pub function decoder(): Decoder {
   let none: u8[] = [];
-  return Decoder { buf: none, data: "", name: "", last_id: "", retry: -1, started: false };
+  return Decoder { buf: none, data: "", name: "", last_id: "", retry: None, started: false };
 }
 
 pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
@@ -282,7 +283,7 @@ function __field(d: Decoder, field: string, value: string): Decoder {
   if (field == "retry" && value.is_ascii_digits()) {
     match (i32.parse_i32(value)) {
       Ok(ms) => {
-        return Decoder { ...d, retry: ms };
+        return Decoder { ...d, retry: Some(time.duration_millis(ms as i64)) };
       },
       Err(_) => {
         return d;
@@ -307,6 +308,6 @@ function __dispatch(d: Decoder): (Decoder, Option[Event]) {
     return (cleared, None);
   }
   let data: string = d.data.slice_snap(0, d.data.len() - 1);
-  return (cleared, Some(Event { data: data, name: d.name, id: d.last_id, retry: -1 }));
+  return (cleared, Some(Event { data: data, name: d.name, id: d.last_id, retry: None }));
 }
 ```

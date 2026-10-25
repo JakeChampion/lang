@@ -1,4 +1,5 @@
 import "std/test";
+import "std/time";
 
 function test_rel_tol_passes_within_ratio(): test.TestOutcome {
   return test.assert_eq_f64_rel(100.5, 100.0, 0.01);
@@ -129,9 +130,9 @@ function main(): i32 {
     test_rel_tol_f32_mirror,
   );
 
-  r = r.bench_max_ms(
+  r = r.bench_max(
     "tiny loop under 1000ms budget",
-    10, workload_tiny, 1000 as i64,
+    10, workload_tiny, time.duration_millis(1000),
   );
   return r.finish();
 }

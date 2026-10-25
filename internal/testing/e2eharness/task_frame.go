@@ -1,6 +1,7 @@
 package e2eharness
 
-const TaskFrameProgram = `import "std/async";
+const TaskFrameProgram = `import "std/time";
+import "std/async";
 import "std/i32";
 import "std/string";
 
@@ -12,7 +13,7 @@ function hold_views(s: string): i32 {
   let w: str = own.trim();
   let b: [u8] = s.as_bytes();
   let set: i32[] = [timer_fd(10), 1];
-  let r: i32 = async.wait_any(set, 0 - 1);
+  let r: i32 = async.wait_any(set, None);
   return v.len() * 100 + w.len() * 10 + b.len() + r;
 }
 
@@ -21,7 +22,7 @@ function counter(): i32 {
   let n: i32 = 0;
   let bump: () => i32 = (): i32 => { n = n + 1; return n; };
   let set: i32[] = [timer_fd(10), 1];
-  let r: i32 = async.wait_any(set, 0 - 1);
+  let r: i32 = async.wait_any(set, None);
   bump();
   bump();
   n = n + 10;
@@ -39,7 +40,7 @@ function counter(): i32 {
   let i: i32 = 0;
   while (i < 3) {
     let set: i32[] = [timer_fd(5), 1];
-    let r: i32 = async.wait_any(set, 0 - 1);
+    let r: i32 = async.wait_any(set, None);
     if (i == 1) {
       total = total + near + r;
     } else {
@@ -68,7 +69,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, woke);
       },
       Cancelled => {

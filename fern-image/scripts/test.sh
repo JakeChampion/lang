@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
-for source in experiments/essentials.fern experiments/io.fern experiments/zlib.fern tests/pixels_test.fern tests/color_test.fern tests/resize_test.fern tests/png_test.fern tests/pipeline_test.fern tests/pipeline_bilinear_test.fern tests/regions_test.fern tests/row_cache_test.fern tests/cached_regions_test.fern tests/linux_rss_test.fern tests/nearest_fusion_test.fern experiments/png-encode.fern examples/pixels.fern; do
+for source in experiments/essentials.fern experiments/io.fern experiments/zlib.fern experiments/provider_factories.fern tests/pixels_test.fern tests/color_test.fern tests/resize_test.fern tests/png_test.fern tests/png_rows_test.fern tests/pipeline_test.fern tests/pipeline_bilinear_test.fern tests/providers_test.fern tests/regions_test.fern tests/row_cache_test.fern tests/cached_regions_test.fern tests/cached_tile_fusion_test.fern tests/linux_rss_test.fern tests/nearest_fusion_test.fern tests/cached_fusion_test.fern experiments/png-encode.fern examples/pixels.fern; do
   output="build/$(basename "$source" .fern)"
   "$FERN" -check "$source"
   "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
@@ -31,6 +31,13 @@ done
 "$FERN" -target x86-64-linux -sanitize -o build/nearest-fusion benchmarks/nearest_fusion.fern
 for count in 8 32; do
   ./build/nearest-fusion "$count"
+done
+"$FERN" -check benchmarks/cached_fusion.fern
+"$FERN" -target x86-64-linux -sanitize -o build/cached-fusion benchmarks/cached_fusion.fern
+for mode in legacy fused; do
+  for cache_bytes in 0 12000; do
+    ./build/cached-fusion "$mode" "$cache_bytes" 8
+  done
 done
 for spec in immutable-array:E056 immutable-field:E048 usize-checked:E009; do
   name=${spec%:*}

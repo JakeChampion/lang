@@ -1,13 +1,14 @@
 package e2eharness
 
-const TaskPortableProgram = `import "std/async";
+const TaskPortableProgram = `import "std/time";
+import "std/async";
 import "std/i32";
 
 // leaf parks on a bound alone: the park answers -1, as the plain wait does
 // once the bound passes.
 function leaf(n: i32): i32 {
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, 1);
+  let r: i32 = async.wait_any(none, Some(time.duration_millis(1)));
   return r + n;
 }
 
@@ -40,7 +41,7 @@ function main(): i32 {
       Done(v) => { out = v; going = false; },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        let woke: i32 = async.wait_any(w.set, w.timeout);
         st = async.task_resume(t, woke);
       },
       Cancelled => { out = 0 - 2; going = false; }

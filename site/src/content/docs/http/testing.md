@@ -111,7 +111,7 @@ function main(): i32 {
 
 `m.calls()` lists every call in order as `MockCall { name, args }` —
 an HTTP call's args are `"METHOD url"` — and `find_call`, `call_count`
-and `reset` query it. `now_set`, `random_set`, `peer_set`,
+and `reset` query it. `now_set`, `instant_set`, `random_set`, `peer_set`,
 `deadline_set`, `trace_set`, `file_set` and `cancel()` can the rest.
 `m.materialize(resp)` reads a file body into bytes so a test can look
 at what `http.file` or `std/http/static` would have sent.
@@ -147,19 +147,19 @@ function run(answers: sim_fetch.Answer[]): (HttpResponse, i64) {
     let d: sim.Sim = sim.new(1);
     let n: sim_fetch.Net = sim_fetch.net(d)
         .host("api.test", [API])
-        .listen(API, 80, 5)
+        .listen(API, 80, time.duration_millis(5))
         .route(API, 80, "/price", answers);
     let resp: HttpResponse = handle(http.request("GET", "/"), sim_platform.new(d, n));
-    return (resp, d.now_ns() / (1000000 as i64));
+    return (resp, d.elapsed().as_nanos() / (1000000 as i64));
 }
 
 function test_slow_but_in_time(): test.TestOutcome {
-    let got: (HttpResponse, i64) = run([sim_fetch.reply(200, "42").after(300)]);
+    let got: (HttpResponse, i64) = run([sim_fetch.reply(200, "42").after(time.duration_millis(300))]);
     return test.assert_eq(got.0.status.to_string() + " at " + got.1.to_string() + "ms", "200 at 305ms");
 }
 
 function test_too_slow(): test.TestOutcome {
-    let got: (HttpResponse, i64) = run([sim_fetch.reply(200, "42").after(900)]);
+    let got: (HttpResponse, i64) = run([sim_fetch.reply(200, "42").after(time.duration_millis(900))]);
     return test.assert_status(got.0, 504);
 }
 
@@ -197,8 +197,8 @@ What a script can say:
 | `sim_fetch.raw(text)` / `raw_bytes(bs)` | Exact bytes on the wire, malformed or not |
 | `sim_fetch.reset()` | The connection resets |
 | `sim_fetch.silent()` | The server accepts and never answers |
-| `.after(ms)` | Wait before the first byte |
-| `.in_chunks(size, every_ms)` | Dribble the response out |
+| `.after(d)` | Wait a `Duration` before the first byte |
+| `.in_chunks(size, every)` | Dribble the response out, a chunk each `every` |
 | `.kept()` / `.held()` | Keep the connection open for reuse, or open but idle |
 
 A route's answers are used in order, the last repeating; an unrouted
